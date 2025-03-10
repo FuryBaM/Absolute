@@ -1,5 +1,5 @@
+#include "pch.h"
 #include "lexer.h"
-#include <regex>
 
 std::unordered_map<TokenType, std::string> token_spec = {
     {TokenType::NUMBER, R"(\d+(\.\d+)?)"},

@@ -1,5 +1,4 @@
-﻿#include <iostream>
-#include "lexer.h"
+﻿#include "pch.h"
 
 int main()
 {

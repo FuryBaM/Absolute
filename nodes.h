@@ -1,14 +1,15 @@
 #pragma once
-#include <vector>
-#include <string>
-#include <memory>
 #include "lexer.h"
+
 
 struct ASTNode {
     virtual ~ASTNode() = default;
 };
 
+
 struct Expression : ASTNode {};
+
+struct Statement;
 
 struct Program : ASTNode {
     std::vector<std::unique_ptr<Statement>> statements;

@@ -1,3 +1,4 @@
+#include "pch.h"
 #include "parser.h"
 
 void Parser::Consume(TokenType tokenType)
@@ -25,6 +26,7 @@ Statement* Parser::ParseStatement()
 	Token* token = CurrentToken();
     if (token->type == TokenType::KEYWORD)
     {
-        return ParseDeclaration();
+        return nullptr; //parse statement
     }
+    return nullptr;
 }

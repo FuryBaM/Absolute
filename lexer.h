@@ -1,9 +1,4 @@
 #pragma once
-#include <string>
-#include <unordered_map>
-#include <iostream>
-#include <iterator>
-#include <regex>
 
 enum TokenType {
 	NUMBER = 0,
