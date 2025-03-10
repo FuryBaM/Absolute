@@ -6,16 +6,16 @@
 #include <regex>
 
 enum TokenType {
-	NUMBER,
-	KEYWORD,
-	IDENTIFIER,
-	OPERATOR,
-	DELIMETER,
-	STRING,
-	CHAR,
-	BRACKET,
-	COMMENT,
-	WHITESPACE
+	NUMBER = 0,
+	KEYWORD = 1,
+	IDENTIFIER = 2,
+	OPERATOR = 3,
+	DELIMETER = 4,
+	STRING = 5,
+	CHAR = 6,
+	COMMENT = 7,
+	BRACKET = 8,
+	WHITESPACE = 9,
 };
 
 struct Token {
