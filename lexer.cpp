@@ -3,11 +3,11 @@
 
 std::unordered_map<TokenType, std::string> token_spec = {
     {TokenType::NUMBER, R"(\d+(\.\d+)?)"},
-    {TokenType::KEYWORD, R"(\b(int|float|double|char|bool|string|void|if|else|switch|case|default|for|while|foreach|do|break|continue|new|delete|using|namespace|return|keep|true|false|nullptr|class|struct|enum|this|public|private|protected|sealed|internal|virtual|override|const|static|auto|async|await|catch|finally|try|throw|yield|get|set|operator)\b)"},
+    {TokenType::KEYWORD, R"(\b(int|float|double|char|bool|string|void|dynamic|if|else|switch|case|default|for|while|foreach|do|break|continue|new|delete|using|namespace|return|keep|true|false|nullptr|class|struct|enum|this|public|private|protected|sealed|internal|virtual|override|const|static|auto|async|await|catch|finally|try|throw|yield|get|set|operator)\b)"},
     {TokenType::IDENTIFIER, R"([_a-zA-Z][_a-zA-Z0-9]*)"},
     {TokenType::COMMENT, R"(\/\*[\s\S]*?\*\/|\/\/.*)"},
     {TokenType::OPERATOR, R"(\+\+|--|==|!=|<=|>=|&&|\|\||!|~|<<|>>|\+=|-=|\*=|/=|%=|&=|\|=|\^=|[+\-*/=<>&|^])"},
-    {TokenType::DELIMETER, R"([;,.])"},
+    {TokenType::DELIMITER, R"([;,.])"},
     {TokenType::STRING, R"("(\\.|[^"\\])*")"},
     {TokenType::CHAR, R"('((\\.)|[^'\\])')"},
     {TokenType::BRACKET, R"([\{\}\[\]\(\)])"},

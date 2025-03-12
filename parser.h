@@ -1,6 +1,8 @@
 #pragma once
 #include "nodes.h"
 
+int GetOperatorPrecedence(const std::string& op);
+
 class Parser {
 public:
     std::vector<Token> tokens;
@@ -14,9 +16,26 @@ public:
         return (pos < tokens.size()) ? &tokens[pos] : nullptr;
     }
 
-    void Consume(TokenType tokenType);
-    ASTNode* Parse();
-	Statement* ParseStatement();
-	Expression* ParseExpression();
-    
+	Token* PeekToken(size_t offset = 1) {
+		return (pos + offset < tokens.size()) ? &tokens[pos + offset] : nullptr;
+    }
+
+    Token* Consume(TokenType tokenType);
+    std::unique_ptr<Program> Parse();
+    std::unique_ptr<Expression> ParseExpression();
+    std::unique_ptr<Expression> ParseAssignmentExpr();
+    std::unique_ptr<Identifier> ParseIdentifierExpr();
+    std::unique_ptr<NumberLiteral> ParseNumberLiteralExpr();
+    std::unique_ptr<StringLiteral> ParseStringLiteralExpr();
+    std::unique_ptr<CharLiteral> ParseCharLiteralExpr();
+    std::unique_ptr<Expression> ParseBinaryExpr(int minPrecedence);
+    std::unique_ptr<Expression> ParsePrimaryExpr();
+    std::unique_ptr<FunctionCallExpr> ParseFunctionCallExpr();
+    std::unique_ptr<Statement> ParseStatement();
+    std::unique_ptr<Statement> ParseIdentifier();
+    std::unique_ptr<CompoundStmt> ParseCompoundStatement();
+    std::unique_ptr<Statement> ParseNumberDeclaration();
+    std::unique_ptr<Statement> ParseFunctionDeclaration();
+    std::unique_ptr<Statement> ParseFunctionCall();
+    std::unique_ptr<Statement> ParseAssignment();
 };
