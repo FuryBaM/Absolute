@@ -94,11 +94,13 @@ struct FunctionCallExpr : Expression {
         : callee(std::move(callee)), arguments(std::move(args)) {
     }
     void print(int indent = 0) const override {
-        std::cout << "Function call: " << callee->name << "\n";
-        for (const auto& arg : arguments) {
-            arg.get()->print();
+        std::cout << std::string(indent, ' ') << "Function call: " << callee->name << "\n";
+        if (arguments.size()) {
+            std::cout << std::string(indent + 1, ' ') << "Arguments: " << "\n";
+            for (const auto& arg : arguments) {
+                arg.get()->print(indent + 2);
+            }
         }
-        std::cout << "\n";
     }
 };
 
@@ -119,7 +121,7 @@ struct FunctionCallStmt : Statement {
         : name(std::move(name)), call(std::move(call)) {
     }
     void print(int indent = 0) const override {
-        call.get()->print();
+        call.get()->print(indent);
     }
 };
 
@@ -132,7 +134,8 @@ struct VarDeclStmt : Statement {
         : type(std::move(type)), name(std::move(name)), value(std::move(value)) {
     }
     void print(int indent = 0) const override {
-        std::cout << "Variable declaration: " << type << " " << name << " " << value.get() << "\n";
+        std::cout << std::string(indent, ' ') << "Variable declaration: " << type << " " << name << "\n";
+		if (value) value->print(indent + 1);
     }
 };
 
@@ -143,8 +146,10 @@ struct CompoundStmt : Statement {
         : statements(std::move(statements)) {
     }
     void print(int indent = 0) const override {
+        std::cout << std::string(indent, ' ') << "Compound statement: " << "\n";
         for (const auto& stmt : statements) {
-			stmt->print();
+            if (stmt)
+			stmt->print(indent + 1);
 		}
     }
 };
@@ -172,8 +177,14 @@ struct FunctionDecl : Statement {
     }
 
     void print(int indent = 0) const override {
-        std::cout << "Function declaration: " << returnType->value << " " << name->value << "\n";
-        if (body) body->print();
+        std::cout << std::string(indent, ' ') << "Function declaration: " << returnType->value << " " << name->value << "\n";
+        if (parameters.size()) {
+            std::cout << std::string(indent + 1, ' ') << "Function parameters: " << "\n";
+            for (const auto& param : parameters) {
+                param.get()->print(indent + 2);
+            }
+        }
+        if (body) body->print(indent + 1);
     }
 };
 

@@ -198,9 +198,19 @@ std::unique_ptr<Expression> Parser::ParsePrimaryExpr() {
         return std::make_unique<Identifier>(value);
     }
 
+    if (token->type == TokenType::STRING) {
+        std::string value = token->value;
+        Consume(TokenType::STRING);
+        return std::make_unique<StringLiteral>(value);
+    }
+
+    if (token->type == TokenType::CHAR) {
+        return ParseExpression();
+    }
+
     if (token->type == TokenType::BRACKET && token->value == "(") {
         Consume(TokenType::BRACKET); // Пропускаем "("
-        auto expr = ParseBinaryExpr(0); // Парсим выражение внутри скобок
+        auto expr = ParseExpression(); // Парсим выражение внутри скобок
         if (!expr)
             return nullptr;
 
@@ -260,6 +270,8 @@ std::unique_ptr<Statement> Parser::ParseStatement()
         case Hash("int"):
         case Hash("float"):
         case Hash("double"):
+        case Hash("string"):
+        case Hash("char"):
         {
             printf("Token: %s\n", token->value.c_str());
             Token* nextToken = PeekToken();
@@ -271,7 +283,7 @@ std::unique_ptr<Statement> Parser::ParseStatement()
                     return ParseFunctionDeclaration();
                 }
             }
-            return ParseNumberDeclaration();
+            return ParseVarDeclaration();
         }
         case Hash("void"):
             return ParseFunctionDeclaration();
@@ -316,7 +328,7 @@ std::unique_ptr<CompoundStmt> Parser::ParseCompoundStatement()
     return std::make_unique<CompoundStmt>(std::move(statements));
 }
 
-std::unique_ptr<Statement> Parser::ParseNumberDeclaration()
+std::unique_ptr<Statement> Parser::ParseVarDeclaration()
 {
     Token* token = CurrentToken();
     if (token && token->type == TokenType::KEYWORD) {
@@ -329,8 +341,8 @@ std::unique_ptr<Statement> Parser::ParseNumberDeclaration()
             Consume(TokenType::IDENTIFIER);
             Consume(TokenType::OPERATOR);
 
-            Token* numberToken = CurrentToken();
-            if (numberToken->type == TokenType::NUMBER) {
+            Token* valueToken = CurrentToken();
+            if (valueToken->type == TokenType::NUMBER || valueToken->type == TokenType::STRING || valueToken->type == TokenType::CHAR) {
                 std::unique_ptr<Expression> value = ParseExpression();
                 Consume(TokenType::DELIMITER);
                 return std::make_unique<VarDeclStmt>(token->value, identifier->value, std::move(value));

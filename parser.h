@@ -34,7 +34,7 @@ public:
     std::unique_ptr<Statement> ParseStatement();
     std::unique_ptr<Statement> ParseIdentifier();
     std::unique_ptr<CompoundStmt> ParseCompoundStatement();
-    std::unique_ptr<Statement> ParseNumberDeclaration();
+    std::unique_ptr<Statement> ParseVarDeclaration();
     std::unique_ptr<Statement> ParseFunctionDeclaration();
     std::unique_ptr<Statement> ParseFunctionCall();
     std::unique_ptr<Statement> ParseAssignment();
