@@ -4,7 +4,7 @@
 void printTokens(const std::vector<Token>& tokens) {
     // Выводим токены (исправлено)
     for (const Token& token : tokens) {
-        std::cout << "[" << token.type << "]: " << token.value << "\n";
+        std::cout << "[" << (int)token.type << "]: " << token.value << "\n";
     }
 }
 
@@ -15,9 +15,10 @@ int main()
         "float y = 3.14;\n"
         "string b = \"dfs\";"
 		"char a = 'a';\n"
+        "c += 5 + 6;\n"
         "int test(int x = 6) { int z = 5; float c = 2.7; }\n"
         "{\n"
-        "main(3 + (c - 6) * 7 - x, 7);\n"
+        "main(3 + (c = 5 - 6) * (c *= foo()) - x, 7);\n"
         "foo(x+4);\n"
         "}\n";
     std::vector<Token> tokens = lexer(code);

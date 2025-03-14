@@ -56,8 +56,9 @@ std::unique_ptr<Statement> Parser::ParseIdentifier()
 		if (nextToken && nextToken->value == "(") {
 			return ParseFunctionCall();
 		}
-        if (nextToken && nextToken->value == "=") {
-			return ParseAssignment();
+        if (nextToken && GetOperatorCategory(nextToken->value) == OperatorCategory::Assignment) {
+            std::cout << "Assignment " << token->value << " " << nextToken->value << "\n";
+			return ParseAssignmentStmt();
         }
     }
     return nullptr;
@@ -72,8 +73,10 @@ std::unique_ptr<Expression> Parser::ParseExpression() {
     }
 
     // Присваивание (a = b + c)
-    if (token->type == TokenType::IDENTIFIER && PeekToken(1) && PeekToken(1)->type == TokenType::OPERATOR && PeekToken(1)->value == "=") {
-        return ParseAssignmentExpr();
+    if (token->type == TokenType::IDENTIFIER && PeekToken(1) && PeekToken(1)->type == TokenType::OPERATOR) {
+		Token* op = PeekToken(1);
+        if (GetOperatorCategory(op->value) == OperatorCategory::Assignment)
+            return ParseAssignmentExpr();
     }
 
     // Вызов функции (foo(...))
@@ -84,71 +87,82 @@ std::unique_ptr<Expression> Parser::ParseExpression() {
         }
     }
 
-    // Число (42, 3.14)
-    if (token->type == TokenType::NUMBER) {
-        return ParseNumberLiteralExpr();
-    }
-
     // Переменная (x, y)
     if (token->type == TokenType::IDENTIFIER) {
         return ParseIdentifierExpr();
     }
 
-    // **Строка** ("Hello world")
-    if (token->type == TokenType::STRING) {
-        return ParseStringLiteralExpr();
-    }
-
-    // **Символ** ('A')
-    if (token->type == TokenType::CHAR) {
-        return ParseCharLiteralExpr();
-    }
-
-    // Бинарное выражение (a + b, 3 * 5)
-    return ParseBinaryExpr(0);
+	// Литералы (42, "Hello", 'A')
+    return ParseLiteralExpr();
 }
 
 
-std::unique_ptr<Expression> Parser::ParseAssignmentExpr()
+std::unique_ptr<AssignmentExpr> Parser::ParseAssignmentExpr()
 {
-    return std::unique_ptr<Expression>();
+	Token* identifier = CurrentToken();
+    if (identifier && identifier->type == TokenType::IDENTIFIER) {
+		Consume(TokenType::IDENTIFIER);
+		Token* op = CurrentToken();
+		Consume(TokenType::OPERATOR); // Assignment operator
+		std::unique_ptr<Expression> value = ParseExpression();
+		return std::make_unique<AssignmentExpr>(std::make_unique<IdentifierExpr>(identifier->value), std::move(op->value), std::move(value));
+    }
+    return nullptr;
 }
 
-std::unique_ptr<Identifier> Parser::ParseIdentifierExpr()
+std::unique_ptr<IdentifierExpr> Parser::ParseIdentifierExpr()
 {
     Token* identifier = CurrentToken();
 	if (identifier && identifier->type == TokenType::IDENTIFIER) {
 		Consume(TokenType::IDENTIFIER);
-		return std::make_unique<Identifier>(identifier->value);
+		return std::make_unique<IdentifierExpr>(identifier->value);
 	}
     return nullptr;
 }
 
-std::unique_ptr<NumberLiteral> Parser::ParseNumberLiteralExpr()
+std::unique_ptr<Expression> Parser::ParseLiteralExpr()
 {
-    Token* numberToken = CurrentToken();
-	if (numberToken && numberToken->type == TokenType::NUMBER) {
-		Consume(TokenType::NUMBER);
-		return std::make_unique<NumberLiteral>(numberToken->value);
-	}
-    return nullptr;
-}
-
-std::unique_ptr<StringLiteral> Parser::ParseStringLiteralExpr() {
     Token* token = CurrentToken();
-    if (token && token->type == TokenType::STRING) {
-        std::string value = token->value.substr(1, token->value.size() - 2); // Убираем кавычки
-        Consume(TokenType::STRING);
-        return std::make_unique<StringLiteral>(value);
+    // Число (42, 3.14)
+    if (token->type == TokenType::NUMBER) {
+        return ParseNumberLiteralExpr();
+    }
+    // **Строка** ("Hello world")
+    if (token->type == TokenType::STRING) {
+        return ParseStringLiteralExpr();
+    }
+    // **Символ** ('A')
+    if (token->type == TokenType::CHAR) {
+        return ParseCharLiteralExpr();
     }
     return nullptr;
 }
 
-std::unique_ptr<CharLiteral> Parser::ParseCharLiteralExpr() {
+std::unique_ptr<NumberLiteralExpr> Parser::ParseNumberLiteralExpr()
+{
+    Token* numberToken = CurrentToken();
+	if (numberToken && numberToken->type == TokenType::NUMBER) {
+		Consume(TokenType::NUMBER);
+		return std::make_unique<NumberLiteralExpr>(numberToken->value);
+	}
+    return nullptr;
+}
+
+std::unique_ptr<StringLiteralExpr> Parser::ParseStringLiteralExpr() {
+    Token* token = CurrentToken();
+    if (token && token->type == TokenType::STRING) {
+        std::string value = token->value.substr(1, token->value.size() - 2); // Убираем кавычки
+        Consume(TokenType::STRING);
+        return std::make_unique<StringLiteralExpr>(value);
+    }
+    return nullptr;
+}
+
+std::unique_ptr<CharLiteralExpr> Parser::ParseCharLiteralExpr() {
     Token* token = CurrentToken();
     if (token && token->type == TokenType::CHAR) {
         Consume(TokenType::CHAR);
-        return std::make_unique<CharLiteral>(token->value[1]); // Символ внутри кавычек
+        return std::make_unique<CharLiteralExpr>(token->value[1]); // Символ внутри кавычек
     }
     return nullptr;
 }
@@ -186,26 +200,16 @@ std::unique_ptr<Expression> Parser::ParsePrimaryExpr() {
     if (!token)
         return nullptr;
 
-    if (token->type == TokenType::NUMBER) {
-        std::string value = token->value;
-        Consume(TokenType::NUMBER);
-        return std::make_unique<NumberLiteral>(value);
+    if (token->type == TokenType::NUMBER || token->type == TokenType::STRING || token->type == TokenType::CHAR) {
+        return ParseLiteralExpr();
+    }
+
+    if (token->type == TokenType::IDENTIFIER && GetOperatorCategory(PeekToken(1)->value) == OperatorCategory::Assignment) {
+        return ParseAssignmentExpr();
     }
 
     if (token->type == TokenType::IDENTIFIER) {
-        std::string value = token->value;
-        Consume(TokenType::IDENTIFIER);
-        return std::make_unique<Identifier>(value);
-    }
-
-    if (token->type == TokenType::STRING) {
-        std::string value = token->value;
-        Consume(TokenType::STRING);
-        return std::make_unique<StringLiteral>(value);
-    }
-
-    if (token->type == TokenType::CHAR) {
-        return ParseExpression();
+        return ParseIdentifierExpr();
     }
 
     if (token->type == TokenType::BRACKET && token->value == "(") {
@@ -234,7 +238,7 @@ std::unique_ptr<Expression> Parser::ParsePrimaryExpr() {
 std::unique_ptr<FunctionCallExpr> Parser::ParseFunctionCallExpr()
 {
     Token* identifier = CurrentToken();
-    if (identifier && identifier->type == IDENTIFIER)
+    if (identifier && identifier->type == TokenType::IDENTIFIER)
     {
         Consume(TokenType::IDENTIFIER);
         Consume(TokenType::BRACKET); // "("
@@ -251,7 +255,7 @@ std::unique_ptr<FunctionCallExpr> Parser::ParseFunctionCallExpr()
             }
         }
         Consume(TokenType::BRACKET); // ")"
-        std::unique_ptr<Identifier> callee = std::make_unique<Identifier>(identifier->value);
+        std::unique_ptr<IdentifierExpr> callee = std::make_unique<IdentifierExpr>(identifier->value);
         return std::make_unique<FunctionCallExpr>(std::move(callee), std::move(arguments));
     }
 
@@ -328,7 +332,7 @@ std::unique_ptr<CompoundStmt> Parser::ParseCompoundStatement()
     return std::make_unique<CompoundStmt>(std::move(statements));
 }
 
-std::unique_ptr<Statement> Parser::ParseVarDeclaration()
+std::unique_ptr<VarDeclStmt> Parser::ParseVarDeclaration()
 {
     Token* token = CurrentToken();
     if (token && token->type == TokenType::KEYWORD) {
@@ -353,7 +357,7 @@ std::unique_ptr<Statement> Parser::ParseVarDeclaration()
 }
 
 
-std::unique_ptr<Statement> Parser::ParseFunctionDeclaration()
+std::unique_ptr<FunctionDeclStmt> Parser::ParseFunctionDeclaration()
 {
     Token* ret = Consume(TokenType::KEYWORD);
     Token* identifier = Consume(TokenType::IDENTIFIER);
@@ -388,7 +392,7 @@ std::unique_ptr<Statement> Parser::ParseFunctionDeclaration()
     // Парсим тело функции
     std::unique_ptr<CompoundStmt> body = ParseCompoundStatement();
 
-    return std::make_unique<FunctionDecl>(
+    return std::make_unique<FunctionDeclStmt>(
         std::make_unique<Token>(*ret),   // Создаём `unique_ptr` на копию токена
         std::make_unique<Token>(*identifier),
         std::move(parameters),
@@ -396,7 +400,7 @@ std::unique_ptr<Statement> Parser::ParseFunctionDeclaration()
     );
 }
 
-std::unique_ptr<Statement> Parser::ParseFunctionCall()
+std::unique_ptr<FunctionCallStmt> Parser::ParseFunctionCall()
 {
     Token* identifier = CurrentToken();
     if (!identifier) return nullptr;
@@ -404,24 +408,13 @@ std::unique_ptr<Statement> Parser::ParseFunctionCall()
     return std::make_unique<FunctionCallStmt>(identifier->value, std::move(call));
 }
 
-std::unique_ptr<Statement> Parser::ParseAssignment()
+std::unique_ptr<AssignmentStmt> Parser::ParseAssignmentStmt()
 {
     Token* token = CurrentToken();
-    if (token->type == TokenType::IDENTIFIER) {
-        auto target = std::make_unique<Identifier>(token->value);
-        Consume(TokenType::IDENTIFIER);
-
-        Token* op = CurrentToken();
-        if (!op || op->value != "=") {
-            return nullptr; // Это не присваивание
-        }
-        Consume(TokenType::OPERATOR);
-
-        auto value = ParseExpression(); // `ParseExpression()` уже вернёт `std::unique_ptr<Expression>`
-
-        return std::make_unique<AssignmentStmt>(
-            std::make_unique<AssignmentExpr>(std::move(target), std::move(value))
-        );
+    if (token && token->type == TokenType::IDENTIFIER) {
+		std::unique_ptr<AssignmentExpr> expr = ParseAssignmentExpr();
+		std::unique_ptr<AssignmentStmt> stmt = std::make_unique<AssignmentStmt>(std::move(expr));
+        return stmt;
     }
     return nullptr;
 }

@@ -42,34 +42,34 @@ struct BinaryExpr : Expression {
 };
 
 // 🔹 Литералы
-struct Identifier : Expression {
+struct IdentifierExpr : Expression {
     std::string name;
-    explicit Identifier(std::string name) : name(std::move(name)) {}
-    Identifier(Identifier& other) : name(std::move(other.name)) {}
+    explicit IdentifierExpr(std::string name) : name(std::move(name)) {}
+    IdentifierExpr(IdentifierExpr& other) : name(std::move(other.name)) {}
     void print(int indent = 0) const override {
         std::cout << std::string(indent, ' ') << "Identifier : " << name << "\n";
     }
 };
 
-struct NumberLiteral : Expression {
+struct NumberLiteralExpr : Expression {
     std::string value;
-    explicit NumberLiteral(std::string value) : value(std::move(value)) {}
+    explicit NumberLiteralExpr(std::string value) : value(std::move(value)) {}
     void print(int indent = 0) const override {
 		std::cout << std::string(indent, ' ') << "Number literal: " << value << "\n";
     }
 };
 
-struct StringLiteral : Expression {
+struct StringLiteralExpr : Expression {
     std::string value;
-    explicit StringLiteral(std::string value) : value(std::move(value)) {}
+    explicit StringLiteralExpr(std::string value) : value(std::move(value)) {}
     void print(int indent = 0) const override {
         std::cout << std::string(indent, ' ') << "String literal: " << value << "\n";
     }
 };
 
-struct CharLiteral : Expression {
+struct CharLiteralExpr : Expression {
     char value;
-    explicit CharLiteral(char value) : value(std::move(value)) {}
+    explicit CharLiteralExpr(char value) : value(std::move(value)) {}
 	void print(int indent = 0) const override {
 		std::cout << std::string(indent, ' ') << "Char literal: " << value << "\n";
 	}
@@ -77,20 +77,25 @@ struct CharLiteral : Expression {
 
 // 🔹 Присваивание (x = 5)
 struct AssignmentExpr : Expression {
-    std::unique_ptr<Identifier> target;
+    std::unique_ptr<IdentifierExpr> target;
+	std::string op;
     std::unique_ptr<Expression> value;
 
-    AssignmentExpr(std::unique_ptr<Identifier> target, std::unique_ptr<Expression> value)
-        : target(std::move(target)), value(std::move(value)) {
+    AssignmentExpr(std::unique_ptr<IdentifierExpr> target, std::string op, std::unique_ptr<Expression> value)
+        : target(std::move(target)), op(std::move(op)), value(std::move(value)) {
     }
+	void print(int indent = 0) const override {
+		std::cout << std::string(indent, ' ') << "Assignment: " << target->name << " " << op << "\n";
+		if (value) value->print(indent + 1);
+	}
 };
 
 // 🔹 Вызов функции (foo())
 struct FunctionCallExpr : Expression {
-    std::unique_ptr<Identifier> callee;
+    std::unique_ptr<IdentifierExpr> callee;
     std::vector<std::unique_ptr<Expression>> arguments;
 
-    FunctionCallExpr(std::unique_ptr<Identifier> callee, std::vector<std::unique_ptr<Expression>> args)
+    FunctionCallExpr(std::unique_ptr<IdentifierExpr> callee, std::vector<std::unique_ptr<Expression>> args)
         : callee(std::move(callee)), arguments(std::move(args)) {
     }
     void print(int indent = 0) const override {
@@ -111,6 +116,9 @@ struct AssignmentStmt : Statement {
     explicit AssignmentStmt(std::unique_ptr<AssignmentExpr> expr)
         : expr(std::move(expr)) {
     }
+	void print(int indent = 0) const override {
+        expr.get()->print(indent);
+	}
 };
 
 // 🔹 Вызов функции без использования результата (foo();)
@@ -161,13 +169,13 @@ struct ReturnStmt : Statement {
 };
 
 // 🔹 Объявление функции
-struct FunctionDecl : Statement {
+struct FunctionDeclStmt : Statement {
     std::unique_ptr<Token> returnType;
     std::unique_ptr<Token> name;
     std::vector<std::unique_ptr<VarDeclStmt>> parameters;
     std::unique_ptr<CompoundStmt> body;
 
-    FunctionDecl(std::unique_ptr<Token> returnType, std::unique_ptr<Token> name,
+    FunctionDeclStmt(std::unique_ptr<Token> returnType, std::unique_ptr<Token> name,
         std::vector<std::unique_ptr<VarDeclStmt>> params,
         std::unique_ptr<CompoundStmt> body)
         : returnType(std::move(returnType)),

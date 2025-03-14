@@ -14,6 +14,35 @@ std::unordered_map<TokenType, std::string> token_spec = {
     {TokenType::WHITESPACE, R"(\s+)"},
 };
 
+OperatorCategory GetOperatorCategory(const std::string& op) {
+    static const std::unordered_map<std::string, OperatorCategory> categories = {
+        {"+", OperatorCategory::Arithmetic}, {"-", OperatorCategory::Arithmetic},
+        {"*", OperatorCategory::Arithmetic}, {"/", OperatorCategory::Arithmetic},
+        {"%", OperatorCategory::Arithmetic}, {"++", OperatorCategory::Arithmetic},
+        {"--", OperatorCategory::Arithmetic},
+
+        {"==", OperatorCategory::Comparison}, {"!=", OperatorCategory::Comparison},
+        {"<", OperatorCategory::Comparison},  {">", OperatorCategory::Comparison},
+        {"<=", OperatorCategory::Comparison}, {">=", OperatorCategory::Comparison},
+
+        {"&&", OperatorCategory::Logical}, {"||", OperatorCategory::Logical},
+        {"!", OperatorCategory::Logical},
+
+        {"&", OperatorCategory::Bitwise}, {"|", OperatorCategory::Bitwise},
+        {"^", OperatorCategory::Bitwise}, {"~", OperatorCategory::Bitwise},
+        {"<<", OperatorCategory::Bitwise}, {">>", OperatorCategory::Bitwise},
+
+        {"=", OperatorCategory::Assignment},  {"+=", OperatorCategory::Assignment},
+        {"-=", OperatorCategory::Assignment}, {"*=", OperatorCategory::Assignment},
+        {"/=", OperatorCategory::Assignment}, {"%=", OperatorCategory::Assignment},
+        {"&=", OperatorCategory::Assignment}, {"|=", OperatorCategory::Assignment},
+        {"^=", OperatorCategory::Assignment}
+    };
+
+    auto it = categories.find(op);
+    return (it != categories.end()) ? it->second : OperatorCategory::Unknown;
+}
+
 std::vector<Token> lexer(const std::string& code)
 {
     std::vector<Token> tokens;

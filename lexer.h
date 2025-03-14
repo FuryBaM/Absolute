@@ -1,6 +1,6 @@
 #pragma once
 
-enum TokenType {
+enum class TokenType {
 	NUMBER = 0,
 	KEYWORD = 1,
 	IDENTIFIER = 2,
@@ -11,6 +11,15 @@ enum TokenType {
 	COMMENT = 7,
 	BRACKET = 8,
 	WHITESPACE = 9,
+};
+
+enum class OperatorCategory {
+	Arithmetic,
+	Comparison,
+	Logical,
+	Bitwise,
+	Assignment,
+	Unknown
 };
 
 struct Token {
@@ -26,5 +35,6 @@ struct Token {
 
 extern std::unordered_map<TokenType, std::string> token_spec;
 
+OperatorCategory GetOperatorCategory(const std::string& op);
 std::vector<Token> lexer(const std::string& code);
 
