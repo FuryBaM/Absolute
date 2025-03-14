@@ -11,10 +11,12 @@ void printTokens(const std::vector<Token>& tokens) {
 int main()
 {
     std::string code = 
+        "int arr[7] = {5, 6, 6, 5, 4};\n"
         "int x = 42;\n"
         "float y = 3.14;\n"
         "string b = \"dfs\";"
 		"char a = 'a';\n"
+        "char b;\n"
         "c += 5 + 6;\n"
         "int test(int x = 6) { int z = 5; float c = 2.7; }\n"
         "{\n"

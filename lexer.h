@@ -22,6 +22,17 @@ enum class OperatorCategory {
 	Unknown
 };
 
+enum class Type {
+	INTEGER,
+	LONG,
+	FLOAT,
+	DOUBLE,
+	STRING,
+	CHAR,
+	BOOL,
+	VOID
+};
+
 struct Token {
 	TokenType type;
 	std::string value;
@@ -35,6 +46,8 @@ struct Token {
 
 extern std::unordered_map<TokenType, std::string> token_spec;
 
+bool IsLiteral(const TokenType& type);
+bool IsEndOfStatement(const Token& token);
 OperatorCategory GetOperatorCategory(const std::string& op);
 std::vector<Token> lexer(const std::string& code);
 

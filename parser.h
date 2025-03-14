@@ -36,6 +36,7 @@ public:
     std::unique_ptr<Statement> ParseIdentifier();
     std::unique_ptr<CompoundStmt> ParseCompoundStatement();
     std::unique_ptr<VarDeclStmt> ParseVarDeclaration();
+	std::unique_ptr<VarDeclStmt> ParseVarDeclarationArray(const Token& type);
     std::unique_ptr<FunctionDeclStmt> ParseFunctionDeclaration();
     std::unique_ptr<FunctionCallStmt> ParseFunctionCall();
     std::unique_ptr<AssignmentStmt> ParseAssignmentStmt();

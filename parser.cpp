@@ -68,33 +68,32 @@ std::unique_ptr<Expression> Parser::ParseExpression() {
     Token* token = CurrentToken();
     if (!token) return nullptr;
 
-    if (PeekToken(1) && PeekToken(1)->type == TokenType::OPERATOR) {
+    Token* next = PeekToken(1); // Получаем следующий токен один раз
+
+    // Бинарные операторы
+    if (next && next->type == TokenType::OPERATOR) {
         return ParseBinaryExpr(0);
     }
 
     // Присваивание (a = b + c)
-    if (token->type == TokenType::IDENTIFIER && PeekToken(1) && PeekToken(1)->type == TokenType::OPERATOR) {
-		Token* op = PeekToken(1);
-        if (GetOperatorCategory(op->value) == OperatorCategory::Assignment)
+    if (token->type == TokenType::IDENTIFIER && next) {
+        if (next->type == TokenType::OPERATOR && GetOperatorCategory(next->value) == OperatorCategory::Assignment) {
             return ParseAssignmentExpr();
-    }
+        }
 
-    // Вызов функции (foo(...))
-    if (token->type == TokenType::IDENTIFIER) {
-        Token* next = PeekToken(1);
-        if (next && next->type == TokenType::BRACKET && next->value == "(") {
+        // Вызов функции (foo(...))
+        if (next->type == TokenType::BRACKET && next->value == "(") {
             return ParseFunctionCallExpr();
         }
-    }
 
-    // Переменная (x, y)
-    if (token->type == TokenType::IDENTIFIER) {
+        // Переменная (x, y)
         return ParseIdentifierExpr();
     }
 
-	// Литералы (42, "Hello", 'A')
+    // Литералы (42, "Hello", 'A')
     return ParseLiteralExpr();
 }
+
 
 
 std::unique_ptr<AssignmentExpr> Parser::ParseAssignmentExpr()
@@ -272,6 +271,7 @@ std::unique_ptr<Statement> Parser::ParseStatement()
         switch (Hash(token->value.c_str()))
         {
         case Hash("int"):
+        case Hash("long"):
         case Hash("float"):
         case Hash("double"):
         case Hash("string"):
@@ -341,21 +341,98 @@ std::unique_ptr<VarDeclStmt> Parser::ParseVarDeclaration()
 
         Token* identifier = CurrentToken();
         if (identifier->type == TokenType::IDENTIFIER) {
-            std::string varName = identifier->value; // Сохраняем имя переменной
-            Consume(TokenType::IDENTIFIER);
-            Consume(TokenType::OPERATOR);
-
-            Token* valueToken = CurrentToken();
-            if (valueToken->type == TokenType::NUMBER || valueToken->type == TokenType::STRING || valueToken->type == TokenType::CHAR) {
-                std::unique_ptr<Expression> value = ParseExpression();
+            // Объявление переменной без инициализации
+            if (IsEndOfStatement(*PeekToken(1))) {
+                Consume(TokenType::IDENTIFIER);
                 Consume(TokenType::DELIMITER);
-                return std::make_unique<VarDeclStmt>(token->value, identifier->value, std::move(value));
+                return std::make_unique<VarDeclStmt>(token->value, identifier->value, nullptr);
+            }
+            // Объявление переменной с инициализацией
+            else if (PeekToken(1)->type == TokenType::OPERATOR) {
+                std::string varName = identifier->value; // Сохраняем имя переменной
+                Consume(TokenType::IDENTIFIER);
+                Consume(TokenType::OPERATOR);
+
+                Token* valueToken = CurrentToken();
+                if (IsLiteral(valueToken->type)) {
+                    std::unique_ptr<Expression> value = ParseExpression();
+                    Consume(TokenType::DELIMITER);
+                    return std::make_unique<VarDeclStmt>(token->value, identifier->value, std::move(value));
+                }
+            }
+            // Объявление переменной массива
+            else if (PeekToken(1)->type == TokenType::BRACKET) {
+                return ParseVarDeclarationArray(*token);
             }
         }
     }
     return nullptr;
 }
 
+std::unique_ptr<VarDeclStmt> Parser::ParseVarDeclarationArray(const Token& type)
+{
+    Token* identifier = Consume(TokenType::IDENTIFIER);
+    std::vector<std::unique_ptr<Expression>> sizes;  // Размеры массива
+
+    while (CurrentToken()->value == "[") {  // Проверяем именно значение токена
+        Consume(TokenType::BRACKET);  // `[`
+        Token* size = CurrentToken();
+        if (IsLiteral(size->type) || size->type == TokenType::IDENTIFIER) {
+            sizes.push_back(ParseExpression()); // Парсим число внутри `[]`
+        }
+        else {
+            throw std::runtime_error("Ошибка: ожидается размер массива");
+        }
+        Consume(TokenType::BRACKET);  // `]`
+    }
+
+    Token* next = CurrentToken();
+    if (next && next->type == TokenType::DELIMITER) {
+        Consume(TokenType::DELIMITER); // `;`
+        return std::make_unique<VarDeclStmt>(
+            type.value,
+            identifier->value,
+            std::make_unique<ArrayExpr>(std::move(sizes), std::vector<std::unique_ptr<Expression>>()),
+            true  // Это массив
+        );
+    }
+    else if (next && GetOperatorCategory(next->value) == OperatorCategory::Assignment) {
+        std::vector<std::unique_ptr<Expression>> values; // Значения массива
+        Consume(TokenType::OPERATOR);
+
+        next = CurrentToken();
+        if (next && next->value == "{") {  // Начало инициализации массива
+            Consume(TokenType::BRACKET);  // `{`
+
+            while (CurrentToken()->value != "}") {  // Пока не закроем массив
+                values.push_back(ParseExpression());  // Парсим элемент массива
+
+                // Проверяем `,` между значениями
+                if (CurrentToken()->value == ",") {
+                    Consume(TokenType::DELIMITER);  // `,`
+                }
+                else if (CurrentToken()->value == "}") {
+                    break;  // Закрыли массив
+                }
+                else {
+                    throw std::runtime_error("Ошибка: ожидается ',' или '}'");
+                }
+            }
+
+            Consume(TokenType::BRACKET);  // `}`
+        }
+
+        Consume(TokenType::DELIMITER);  // `;`
+        return std::make_unique<VarDeclStmt>(
+            type.value,
+            identifier->value,
+            std::make_unique<ArrayExpr>(std::move(sizes), std::move(values)),
+            true  // Это массив
+        );
+    }
+
+    return nullptr;
+}
 
 std::unique_ptr<FunctionDeclStmt> Parser::ParseFunctionDeclaration()
 {

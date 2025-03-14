@@ -75,6 +75,28 @@ struct CharLiteralExpr : Expression {
 	}
 };
 
+struct ArrayExpr : Expression {
+    std::vector<std::unique_ptr<Expression>> sizes;
+    std::vector<std::unique_ptr<Expression>> values;
+    explicit ArrayExpr(std::vector<std::unique_ptr<Expression>> sizes, 
+        std::vector<std::unique_ptr<Expression>> values) : 
+		sizes(std::move(sizes)),
+        values(std::move(values)) {}
+    void print(int indent = 0) const override {
+        std::cout << std::string(indent, ' ') << "Array: " << "\n";
+
+        std::cout << std::string(indent + 1, ' ') << "Sizes:\n";
+        for (const auto& size : sizes) {
+            size->print(indent + 2);
+        }
+
+        std::cout << std::string(indent + 1, ' ') << "Values:\n";
+        for (const auto& value : values) {
+            value->print(indent + 2);
+        }
+    }
+};
+
 // 🔹 Присваивание (x = 5)
 struct AssignmentExpr : Expression {
     std::unique_ptr<IdentifierExpr> target;
@@ -137,15 +159,25 @@ struct FunctionCallStmt : Statement {
 struct VarDeclStmt : Statement {
     std::string type;
     std::string name;
-    std::unique_ptr<Expression> value;
-    explicit VarDeclStmt(std::string type, std::string name, std::unique_ptr<Expression> value)
-        : type(std::move(type)), name(std::move(name)), value(std::move(value)) {
+    std::unique_ptr<Expression> value;  // Для присваивания
+    bool isArray = false;
+    bool isInstance = false;
+
+    explicit VarDeclStmt(std::string type, std::string name, std::unique_ptr<Expression> value,
+        bool isArray = false,
+        bool isInstance = false)
+        : type(std::move(type)), name(std::move(name)), value(std::move(value)),
+        isArray(isArray), isInstance(isInstance) {
     }
+
     void print(int indent = 0) const override {
-        std::cout << std::string(indent, ' ') << "Variable declaration: " << type << " " << name << "\n";
+        std::cout << std::string(indent, ' ') << "Variable declaration: " << type << " " << name << 
+            " array: " << isArray << 
+            " instance: " << isInstance << "\n";
 		if (value) value->print(indent + 1);
     }
 };
+
 
 // 🔹 Блок кода { }
 struct CompoundStmt : Statement {

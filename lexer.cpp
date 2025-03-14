@@ -3,7 +3,7 @@
 
 std::unordered_map<TokenType, std::string> token_spec = {
     {TokenType::NUMBER, R"(\d+(\.\d+)?)"},
-    {TokenType::KEYWORD, R"(\b(int|float|double|char|bool|string|void|dynamic|if|else|switch|case|default|for|while|foreach|do|break|continue|new|delete|using|namespace|return|keep|true|false|nullptr|class|struct|enum|this|public|private|protected|sealed|internal|virtual|override|const|static|auto|async|await|catch|finally|try|throw|yield|get|set|operator)\b)"},
+    {TokenType::KEYWORD, R"(\b(int|long|float|double|char|bool|string|void|dynamic|if|else|switch|case|default|for|while|foreach|do|break|continue|new|delete|using|namespace|return|keep|true|false|nullptr|class|struct|enum|this|public|private|protected|sealed|internal|virtual|override|const|static|auto|async|await|catch|finally|try|throw|yield|get|set|operator)\b)"},
     {TokenType::IDENTIFIER, R"([_a-zA-Z][_a-zA-Z0-9]*)"},
     {TokenType::COMMENT, R"(\/\*[\s\S]*?\*\/|\/\/.*)"},
     {TokenType::OPERATOR, R"(\+\+|--|==|!=|<=|>=|&&|\|\||!|~|<<|>>|\+=|-=|\*=|/=|%=|&=|\|=|\^=|[+\-*/=<>&|^])"},
@@ -13,6 +13,16 @@ std::unordered_map<TokenType, std::string> token_spec = {
     {TokenType::BRACKET, R"([\{\}\[\]\(\)])"},
     {TokenType::WHITESPACE, R"(\s+)"},
 };
+
+bool IsLiteral(const TokenType& type)
+{
+    return type == TokenType::NUMBER || type == TokenType::STRING || type == TokenType::CHAR;
+}
+
+bool IsEndOfStatement(const Token& token)
+{
+	return token.type == TokenType::DELIMITER && token.value == ";";
+}
 
 OperatorCategory GetOperatorCategory(const std::string& op) {
     static const std::unordered_map<std::string, OperatorCategory> categories = {
