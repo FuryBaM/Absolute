@@ -112,6 +112,28 @@ struct AssignmentExpr : Expression {
 	}
 };
 
+struct VarDeclExpr : Expression {
+    std::string type;
+    std::string name;
+    std::unique_ptr<Expression> value;  // Для присваивания
+    bool isArray = false;
+    bool isInstance = false;
+
+    explicit VarDeclExpr(std::string type, std::string name, std::unique_ptr<Expression> value,
+        bool isArray = false,
+        bool isInstance = false)
+        : type(std::move(type)), name(std::move(name)), value(std::move(value)),
+        isArray(isArray), isInstance(isInstance) {
+    }
+
+    void print(int indent = 0) const override {
+        std::cout << std::string(indent, ' ') << "Variable declaration: " << type << " " << name <<
+            " array: " << isArray <<
+            " instance: " << isInstance << "\n";
+        if (value) value->print(indent + 1);
+    }
+};
+
 // 🔹 Вызов функции (foo())
 struct FunctionCallExpr : Expression {
     std::unique_ptr<IdentifierExpr> callee;
@@ -125,7 +147,7 @@ struct FunctionCallExpr : Expression {
         if (arguments.size()) {
             std::cout << std::string(indent + 1, ' ') << "Arguments: " << "\n";
             for (const auto& arg : arguments) {
-                arg.get()->print(indent + 2);
+                arg->print(indent + 2);
             }
         }
     }
@@ -139,7 +161,7 @@ struct AssignmentStmt : Statement {
         : expr(std::move(expr)) {
     }
 	void print(int indent = 0) const override {
-        expr.get()->print(indent);
+        expr->print(indent);
 	}
 };
 
@@ -151,33 +173,18 @@ struct FunctionCallStmt : Statement {
         : name(std::move(name)), call(std::move(call)) {
     }
     void print(int indent = 0) const override {
-        call.get()->print(indent);
+        call->print(indent);
     }
 };
 
 // 🔹 Объявление переменной (int x;)
 struct VarDeclStmt : Statement {
-    std::string type;
-    std::string name;
-    std::unique_ptr<Expression> value;  // Для присваивания
-    bool isArray = false;
-    bool isInstance = false;
-
-    explicit VarDeclStmt(std::string type, std::string name, std::unique_ptr<Expression> value,
-        bool isArray = false,
-        bool isInstance = false)
-        : type(std::move(type)), name(std::move(name)), value(std::move(value)),
-        isArray(isArray), isInstance(isInstance) {
-    }
-
-    void print(int indent = 0) const override {
-        std::cout << std::string(indent, ' ') << "Variable declaration: " << type << " " << name << 
-            " array: " << isArray << 
-            " instance: " << isInstance << "\n";
-		if (value) value->print(indent + 1);
-    }
+	std::unique_ptr<VarDeclExpr> expr;
+	explicit VarDeclStmt(std::unique_ptr<VarDeclExpr> expr) : expr(std::move(expr)) {}
+	void print(int indent = 0) const override {
+		expr->print(indent);
+	}
 };
-
 
 // 🔹 Блок кода { }
 struct CompoundStmt : Statement {
@@ -198,17 +205,21 @@ struct CompoundStmt : Statement {
 struct ReturnStmt : Statement {
     std::unique_ptr<Expression> expr;
     explicit ReturnStmt(std::unique_ptr<Expression> expr) : expr(std::move(expr)) {}
+	void print(int indent = 0) const override {
+		std::cout << std::string(indent, ' ') << "Return statement: " << "\n";
+		if (expr) expr->print(indent + 1);
+	}
 };
 
 // 🔹 Объявление функции
 struct FunctionDeclStmt : Statement {
     std::unique_ptr<Token> returnType;
     std::unique_ptr<Token> name;
-    std::vector<std::unique_ptr<VarDeclStmt>> parameters;
+    std::vector<std::unique_ptr<VarDeclExpr>> parameters;
     std::unique_ptr<CompoundStmt> body;
 
     FunctionDeclStmt(std::unique_ptr<Token> returnType, std::unique_ptr<Token> name,
-        std::vector<std::unique_ptr<VarDeclStmt>> params,
+        std::vector<std::unique_ptr<VarDeclExpr>> params,
         std::unique_ptr<CompoundStmt> body)
         : returnType(std::move(returnType)),
         name(std::move(name)),
@@ -228,18 +239,55 @@ struct FunctionDeclStmt : Statement {
     }
 };
 
+struct IfStmt : Statement {
+    struct Branch {
+        std::unique_ptr<Expression> condition;
+        std::unique_ptr<Statement> body;
+
+        Branch(std::unique_ptr<Expression> cond, std::unique_ptr<Statement> stmt)
+            : condition(std::move(cond)), body(std::move(stmt)) {
+        }
+    };
+
+    std::vector<Branch> branches; // if + else if
+    std::unique_ptr<Statement> elseBranch; // else (если есть)
+
+    IfStmt(std::vector<Branch> branches, std::unique_ptr<Statement> elseBranch)
+        : branches(std::move(branches)), elseBranch(std::move(elseBranch)) {
+    }
+	void print(int indent = 0) const override {
+		std::cout << std::string(indent, ' ') << "If statement: " << "\n";
+		for (const auto& branch : branches) {
+			std::cout << std::string(indent + 1, ' ') << "Branch: " << "\n";
+			branch.condition->print(indent + 2);
+			branch.body->print(indent + 2);
+		}
+		if (elseBranch) {
+			std::cout << std::string(indent + 1, ' ') << "Else branch: " << "\n";
+			elseBranch->print(indent + 2);
+		}
+	}
+};
+
 // 🔹 Циклы
 struct ForStmt : Statement {
-    std::unique_ptr<Statement> init;
+    std::unique_ptr<Expression> init;
     std::unique_ptr<Expression> condition;
-    std::unique_ptr<Statement> update;
+    std::unique_ptr<Expression> update;
     std::unique_ptr<Statement> body;
 
-    ForStmt(std::unique_ptr<Statement> init, std::unique_ptr<Expression> condition,
-        std::unique_ptr<Statement> update, std::unique_ptr<Statement> body)
+    ForStmt(std::unique_ptr<Expression> init, std::unique_ptr<Expression> condition,
+        std::unique_ptr<Expression> update, std::unique_ptr<Statement> body)
         : init(std::move(init)), condition(std::move(condition)),
         update(std::move(update)), body(std::move(body)) {
     }
+	void print(int indent = 0) const override {
+		std::cout << std::string(indent, ' ') << "For statement: " << "\n";
+		if (init) init->print(indent + 1);
+		if (condition) condition->print(indent + 1);
+		if (update) update->print(indent + 1);
+		if (body) body->print(indent + 1);
+	}
 };
 
 struct WhileStmt : Statement {
@@ -261,29 +309,29 @@ struct DoWhileStmt : Statement {
 };
 
 // 🔹 Классы, структуры, enum
-struct ClassDecl : Statement {
+struct ClassDeclStmt : Statement {
     std::string name;
     std::vector<std::unique_ptr<Statement>> members;
 
-    ClassDecl(std::string name, std::vector<std::unique_ptr<Statement>> members)
+    ClassDeclStmt(std::string name, std::vector<std::unique_ptr<Statement>> members)
         : name(std::move(name)), members(std::move(members)) {
     }
 };
 
-struct StructDecl : Statement {
+struct StructDeclStmt : Statement {
     std::string name;
     std::vector<std::unique_ptr<Statement>> members;
 
-    StructDecl(std::string name, std::vector<std::unique_ptr<Statement>> members)
+    StructDeclStmt(std::string name, std::vector<std::unique_ptr<Statement>> members)
         : name(std::move(name)), members(std::move(members)) {
     }
 };
 
-struct EnumDecl : Statement {
+struct EnumDeclStmt : Statement {
     std::string name;
     std::vector<std::string> members;
 
-    EnumDecl(std::string name, std::vector<std::string> members)
+    EnumDeclStmt(std::string name, std::vector<std::string> members)
         : name(std::move(name)), members(std::move(members)) {
     }
 };

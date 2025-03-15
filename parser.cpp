@@ -33,6 +33,7 @@ Token* Parser::Consume(TokenType tokenType)
         pos++;
     }
     else {
+		std::cout << "Unexpected token: " << (token ? token->value : "EOF") << "\n";
         throw std::runtime_error("Unexpected token: " + (token ? token->value : "EOF"));
     }
     return token;
@@ -93,8 +94,6 @@ std::unique_ptr<Expression> Parser::ParseExpression() {
     // Литералы (42, "Hello", 'A')
     return ParseLiteralExpr();
 }
-
-
 
 std::unique_ptr<AssignmentExpr> Parser::ParseAssignmentExpr()
 {
@@ -233,6 +232,112 @@ std::unique_ptr<Expression> Parser::ParsePrimaryExpr() {
     return nullptr;
 }
 
+std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclExpr()
+{
+    Token* token = CurrentToken();
+    if (token && token->type == TokenType::KEYWORD) {
+        std::string type = token->value; // Сохраняем тип переменной
+        Consume(TokenType::KEYWORD);
+
+        Token* identifier = CurrentToken();
+        if (identifier->type == TokenType::IDENTIFIER) {
+            // Объявление переменной без инициализации
+            if (IsEndOfStatement(*PeekToken(1))) {
+                Consume(TokenType::IDENTIFIER);
+                return std::make_unique<VarDeclExpr>(token->value, identifier->value, nullptr);
+            }
+            // Объявление переменной с инициализацией
+            else if (PeekToken(1)->type == TokenType::OPERATOR) {
+                std::string varName = identifier->value; // Сохраняем имя переменной
+                Consume(TokenType::IDENTIFIER);
+                Consume(TokenType::OPERATOR);
+
+                Token* valueToken = CurrentToken();
+                if (IsLiteral(valueToken->type)) {
+                    std::unique_ptr<Expression> value = ParseExpression();
+                    return std::make_unique<VarDeclExpr>(token->value, identifier->value, std::move(value));
+                }
+            }
+            // Объявление переменной массива
+            else if (PeekToken(1)->type == TokenType::BRACKET) {
+                return ParseVarDeclarationArray(*token);
+            }
+        }
+    }
+    return nullptr;
+}
+
+std::unique_ptr<ArrayExpr> Parser::ParseArrayValues() {
+    std::vector<std::unique_ptr<Expression>> values;
+
+    Consume(TokenType::BRACKET);  // `{`
+
+    while (CurrentToken()->value != "}") {
+        if (CurrentToken()->value == "{") {
+            values.push_back(ParseArrayValues());  // Рекурсивный вызов для вложенного массива
+        }
+        else {
+            values.push_back(ParseExpression());  // Парсим обычное значение
+        }
+
+        // Проверяем `,` между значениями
+        if (CurrentToken()->value == ",") {
+            Consume(TokenType::DELIMITER);  // `,`
+        }
+        else if (CurrentToken()->value == "}") {
+            break;
+        }
+        else {
+            throw std::runtime_error("Ошибка: ожидается ',' или '}'");
+        }
+    }
+
+    Consume(TokenType::BRACKET);  // `}`
+    return std::make_unique<ArrayExpr>(std::vector<std::unique_ptr<Expression>>(), std::move(values));
+}
+
+std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclarationArray(const Token& type)
+{
+    Token* identifier = Consume(TokenType::IDENTIFIER);
+    std::vector<std::unique_ptr<Expression>> sizes;  // Размеры массива
+    while (CurrentToken()->value == "[") {
+        Consume(TokenType::BRACKET);  // `[`
+        Token* size = CurrentToken();
+        if (IsLiteral(size->type) || size->type == TokenType::IDENTIFIER) {
+            sizes.push_back(ParseExpression()); // Парсим число внутри `[]`
+        }
+        else {
+            throw std::runtime_error("Ошибка: ожидается размер массива");
+        }
+        Consume(TokenType::BRACKET);  // `]`
+    }
+
+    Token* next = CurrentToken();
+    if (next && next->type == TokenType::DELIMITER) {
+        return std::make_unique<VarDeclExpr>(
+            type.value,
+            identifier->value,
+            std::make_unique<ArrayExpr>(std::move(sizes), std::vector<std::unique_ptr<Expression>>()),
+            true
+        );
+    }
+    else if (next && GetOperatorCategory(next->value) == OperatorCategory::Assignment) {
+        Consume(TokenType::OPERATOR);  // `=`
+        next = CurrentToken();
+        if (next && next->value == "{") {
+            auto values = ParseArrayValues();  // Парсим вложенный массив
+
+            return std::make_unique<VarDeclExpr>(
+                type.value,
+                identifier->value,
+                std::make_unique<ArrayExpr>(std::move(sizes), std::move(values->values)),
+                true
+            );
+        }
+    }
+
+    return nullptr;
+}
 
 std::unique_ptr<FunctionCallExpr> Parser::ParseFunctionCallExpr()
 {
@@ -291,6 +396,22 @@ std::unique_ptr<Statement> Parser::ParseStatement()
         }
         case Hash("void"):
             return ParseFunctionDeclaration();
+		case Hash("return"):
+			return ParseReturnStmt();
+        case Hash("if"):
+			return ParseIfStmt();
+		case Hash("for"):
+			return ParseForStmt();
+		case Hash("while"):
+			return ParseWhileStmt();
+		case Hash("do"):
+			return ParseDoWhileStmt();
+		case Hash("class"):
+			return ParseClassDecl();
+		case Hash("struct"):
+			return ParseStructDecl();
+		case Hash("enum"):
+			return ParseEnumDecl();
         default:
             break;
         }
@@ -332,105 +453,12 @@ std::unique_ptr<CompoundStmt> Parser::ParseCompoundStatement()
     return std::make_unique<CompoundStmt>(std::move(statements));
 }
 
-std::unique_ptr<VarDeclStmt> Parser::ParseVarDeclaration()
-{
-    Token* token = CurrentToken();
-    if (token && token->type == TokenType::KEYWORD) {
-        std::string type = token->value; // Сохраняем тип переменной
-        Consume(TokenType::KEYWORD);
-
-        Token* identifier = CurrentToken();
-        if (identifier->type == TokenType::IDENTIFIER) {
-            // Объявление переменной без инициализации
-            if (IsEndOfStatement(*PeekToken(1))) {
-                Consume(TokenType::IDENTIFIER);
-                Consume(TokenType::DELIMITER);
-                return std::make_unique<VarDeclStmt>(token->value, identifier->value, nullptr);
-            }
-            // Объявление переменной с инициализацией
-            else if (PeekToken(1)->type == TokenType::OPERATOR) {
-                std::string varName = identifier->value; // Сохраняем имя переменной
-                Consume(TokenType::IDENTIFIER);
-                Consume(TokenType::OPERATOR);
-
-                Token* valueToken = CurrentToken();
-                if (IsLiteral(valueToken->type)) {
-                    std::unique_ptr<Expression> value = ParseExpression();
-                    Consume(TokenType::DELIMITER);
-                    return std::make_unique<VarDeclStmt>(token->value, identifier->value, std::move(value));
-                }
-            }
-            // Объявление переменной массива
-            else if (PeekToken(1)->type == TokenType::BRACKET) {
-                return ParseVarDeclarationArray(*token);
-            }
-        }
+std::unique_ptr<VarDeclStmt> Parser::ParseVarDeclaration() {
+    std::unique_ptr<VarDeclExpr> variableDeclaration = ParseVarDeclExpr();
+    if (variableDeclaration) {
+        Consume(TokenType::DELIMITER);  // Теперь `;` съедается здесь
+        return std::make_unique<VarDeclStmt>(std::move(variableDeclaration));
     }
-    return nullptr;
-}
-
-std::unique_ptr<VarDeclStmt> Parser::ParseVarDeclarationArray(const Token& type)
-{
-    Token* identifier = Consume(TokenType::IDENTIFIER);
-    std::vector<std::unique_ptr<Expression>> sizes;  // Размеры массива
-
-    while (CurrentToken()->value == "[") {  // Проверяем именно значение токена
-        Consume(TokenType::BRACKET);  // `[`
-        Token* size = CurrentToken();
-        if (IsLiteral(size->type) || size->type == TokenType::IDENTIFIER) {
-            sizes.push_back(ParseExpression()); // Парсим число внутри `[]`
-        }
-        else {
-            throw std::runtime_error("Ошибка: ожидается размер массива");
-        }
-        Consume(TokenType::BRACKET);  // `]`
-    }
-
-    Token* next = CurrentToken();
-    if (next && next->type == TokenType::DELIMITER) {
-        Consume(TokenType::DELIMITER); // `;`
-        return std::make_unique<VarDeclStmt>(
-            type.value,
-            identifier->value,
-            std::make_unique<ArrayExpr>(std::move(sizes), std::vector<std::unique_ptr<Expression>>()),
-            true  // Это массив
-        );
-    }
-    else if (next && GetOperatorCategory(next->value) == OperatorCategory::Assignment) {
-        std::vector<std::unique_ptr<Expression>> values; // Значения массива
-        Consume(TokenType::OPERATOR);
-
-        next = CurrentToken();
-        if (next && next->value == "{") {  // Начало инициализации массива
-            Consume(TokenType::BRACKET);  // `{`
-
-            while (CurrentToken()->value != "}") {  // Пока не закроем массив
-                values.push_back(ParseExpression());  // Парсим элемент массива
-
-                // Проверяем `,` между значениями
-                if (CurrentToken()->value == ",") {
-                    Consume(TokenType::DELIMITER);  // `,`
-                }
-                else if (CurrentToken()->value == "}") {
-                    break;  // Закрыли массив
-                }
-                else {
-                    throw std::runtime_error("Ошибка: ожидается ',' или '}'");
-                }
-            }
-
-            Consume(TokenType::BRACKET);  // `}`
-        }
-
-        Consume(TokenType::DELIMITER);  // `;`
-        return std::make_unique<VarDeclStmt>(
-            type.value,
-            identifier->value,
-            std::make_unique<ArrayExpr>(std::move(sizes), std::move(values)),
-            true  // Это массив
-        );
-    }
-
     return nullptr;
 }
 
@@ -441,7 +469,7 @@ std::unique_ptr<FunctionDeclStmt> Parser::ParseFunctionDeclaration()
 
     Consume(TokenType::BRACKET); // "("
 
-    std::vector<std::unique_ptr<VarDeclStmt>> parameters;
+    std::vector<std::unique_ptr<VarDeclExpr>> parameters;
     while (CurrentToken()->type != TokenType::BRACKET && CurrentToken()->value != ")")
     {
         Token* type = Consume(TokenType::KEYWORD);
@@ -450,10 +478,10 @@ std::unique_ptr<FunctionDeclStmt> Parser::ParseFunctionDeclaration()
         if (CurrentToken()->type == TokenType::OPERATOR && CurrentToken()->value == "=") {
             Consume(TokenType::OPERATOR);
             std::unique_ptr<Expression> value = ParseExpression();
-            parameters.push_back(std::make_unique<VarDeclStmt>(type->value, name->value, std::move(value)));
+            parameters.push_back(std::make_unique<VarDeclExpr>(type->value, name->value, std::move(value)));
         }
         else {
-            parameters.push_back(std::make_unique<VarDeclStmt>(type->value, name->value, nullptr));
+            parameters.push_back(std::make_unique<VarDeclExpr>(type->value, name->value, nullptr));
         }
 
         if (CurrentToken()->type == TokenType::DELIMITER && CurrentToken()->value == ",") {
@@ -495,3 +523,120 @@ std::unique_ptr<AssignmentStmt> Parser::ParseAssignmentStmt()
     }
     return nullptr;
 }
+
+std::unique_ptr<ReturnStmt> Parser::ParseReturnStmt()
+{
+	Token* token = CurrentToken();
+	if (token && token->type == TokenType::KEYWORD && token->value == "return") {
+		Consume(TokenType::KEYWORD);
+		std::unique_ptr<Expression> expr = ParseExpression();
+		Consume(TokenType::DELIMITER);
+		return std::make_unique<ReturnStmt>(std::move(expr));
+    }
+    return nullptr;
+}
+
+std::unique_ptr<IfStmt> Parser::ParseIfStmt()
+{
+    Token* token = CurrentToken();
+    if (token && token->type == TokenType::KEYWORD && token->value == "if") {
+        Consume(TokenType::KEYWORD);
+        Consume(TokenType::BRACKET); // "("
+        std::unique_ptr<Expression> condition = ParseExpression();
+        Consume(TokenType::BRACKET); // ")"
+
+        std::vector<IfStmt::Branch> branches;
+        branches.emplace_back(std::move(condition), ParseCompoundStatement());
+
+        std::unique_ptr<Statement> elseBranch = nullptr;
+
+        while (CurrentToken()->type == TokenType::KEYWORD && CurrentToken()->value == "else") {
+            Consume(TokenType::KEYWORD);
+            if (CurrentToken()->type == TokenType::KEYWORD && CurrentToken()->value == "if") {
+                // `else if`
+                Consume(TokenType::KEYWORD);
+                Consume(TokenType::BRACKET); // "("
+                std::unique_ptr<Expression> elseCondition = ParseExpression();
+                Consume(TokenType::BRACKET); // ")"
+                branches.emplace_back(std::move(elseCondition), ParseCompoundStatement());
+            }
+            else {
+                // `else`
+                elseBranch = ParseCompoundStatement();
+                break; // `else` — последняя ветка, выходим из цикла
+            }
+        }
+
+        return std::make_unique<IfStmt>(std::move(branches), std::move(elseBranch));
+    }
+    return nullptr;
+}
+
+std::unique_ptr<ForStmt> Parser::ParseForStmt() {
+    if (!CurrentToken() || CurrentToken()->type != TokenType::KEYWORD || CurrentToken()->value != "for")
+        return nullptr;
+    Consume(TokenType::KEYWORD); // "for"
+    Consume(TokenType::BRACKET); // "("
+    std::unique_ptr<Expression> init = nullptr;
+    if (CurrentToken()->type != TokenType::DELIMITER || CurrentToken()->value != ";") {
+        if (CurrentToken()->type == TokenType::KEYWORD) {
+            init = ParseVarDeclExpr();  // Если ключевое слово — это объявление переменной
+        }
+        else {
+            init = ParseExpression();  // Иначе обычное выражение
+        }
+        Consume(TokenType::DELIMITER); // ";"
+    }
+    else {
+        Consume(TokenType::DELIMITER); // ";"
+    }
+
+    std::unique_ptr<Expression> condition = nullptr;
+    if (CurrentToken()->type != TokenType::DELIMITER || CurrentToken()->value != ";") {
+        condition = ParseExpression();
+        Consume(TokenType::DELIMITER); // ";"
+    }
+    else {
+        Consume(TokenType::DELIMITER); // ";"
+    }
+
+    std::unique_ptr<Expression> update = nullptr;
+    if (CurrentToken()->type != TokenType::BRACKET || CurrentToken()->value != ")") {
+        update = ParseExpression();
+        Consume(TokenType::BRACKET); // ")"
+    }
+    else {
+        Consume(TokenType::BRACKET); // ")"
+    }
+
+    std::unique_ptr<Statement> body = ParseCompoundStatement();
+
+    return std::make_unique<ForStmt>(std::move(init), std::move(condition), std::move(update), std::move(body));
+}
+
+std::unique_ptr<WhileStmt> Parser::ParseWhileStmt()
+{
+    return std::unique_ptr<WhileStmt>();
+}
+
+std::unique_ptr<DoWhileStmt> Parser::ParseDoWhileStmt()
+{
+    return std::unique_ptr<DoWhileStmt>();
+}
+
+std::unique_ptr<ClassDeclStmt> Parser::ParseClassDecl()
+{
+    return std::unique_ptr<ClassDeclStmt>();
+}
+
+std::unique_ptr<StructDeclStmt> Parser::ParseStructDecl()
+{
+    return std::unique_ptr<StructDeclStmt>();
+}
+
+std::unique_ptr<EnumDeclStmt> Parser::ParseEnumDecl()
+{
+    return std::unique_ptr<EnumDeclStmt>();
+}
+
+
