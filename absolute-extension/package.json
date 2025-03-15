@@ -1,0 +1,24 @@
+{
+    "name": "absolute-extension",
+    "publisher": "your-name",
+    "version": "0.0.1",
+    "engines": { "vscode": "^1.80.0" },
+    "contributes": {
+      "languages": [
+        {
+          "id": "absolute",
+          "aliases": ["Absolute", "absolute"],
+          "extensions": [".abs"],
+          "configuration": "./language-configuration.json"
+        }
+      ],
+      "grammars": [
+        {
+          "language": "absolute",
+          "scopeName": "source.absolute",
+          "path": "./syntaxes/absolute.tmLanguage.json"
+        }
+      ]
+    }
+  }
+  

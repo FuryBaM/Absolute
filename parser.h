@@ -24,7 +24,7 @@ public:
     std::unique_ptr<Program> Parse();
     std::unique_ptr<Expression> ParseExpression();
     std::unique_ptr<AssignmentExpr> ParseAssignmentExpr();
-    std::unique_ptr<IdentifierExpr> ParseIdentifierExpr();
+    std::unique_ptr<Expression> ParseIdentifierExpr();
 	std::unique_ptr<Expression> ParseLiteralExpr();
     std::unique_ptr<NumberLiteralExpr> ParseNumberLiteralExpr();
     std::unique_ptr<StringLiteralExpr> ParseStringLiteralExpr();
@@ -39,6 +39,7 @@ public:
     std::unique_ptr<VarDeclStmt> ParseVarDeclaration();
 	std::unique_ptr<VarDeclExpr> ParseVarDeclarationArray(const Token& type);
 	std::unique_ptr<ArrayExpr> ParseArrayValues();
+    std::unique_ptr<Expression> ParseArrayAccess(std::unique_ptr<Expression> baseExpr);
     std::unique_ptr<FunctionDeclStmt> ParseFunctionDeclaration();
     std::unique_ptr<FunctionCallStmt> ParseFunctionCall();
     std::unique_ptr<AssignmentStmt> ParseAssignmentStmt();
@@ -47,6 +48,7 @@ public:
 	std::unique_ptr<ForStmt> ParseForStmt();
 	std::unique_ptr<WhileStmt> ParseWhileStmt();
 	std::unique_ptr<DoWhileStmt> ParseDoWhileStmt();
+	std::unique_ptr<ForEachStmt> ParseForEachStmt();
 	std::unique_ptr<ClassDeclStmt> ParseClassDecl();
 	std::unique_ptr<StructDeclStmt> ParseStructDecl();
 	std::unique_ptr<EnumDeclStmt> ParseEnumDecl();
