@@ -1,6 +1,6 @@
 ABSOLUTE LANGUAGE LICENSE (ALL) v1.0  
 
-Effective Date: [YYYY-MM-DD]  
+Effective Date: [17.03.2025]  
 
 1. Definitions  
 1.1 "Software" refers to the Absolute programming language, including its source code, documentation, and any associated files.  
