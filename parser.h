@@ -23,7 +23,7 @@ public:
     Token* Consume(TokenType tokenType);
     std::unique_ptr<Program> Parse();
     std::unique_ptr<Expression> ParseExpression();
-    std::unique_ptr<AssignmentExpr> ParseAssignmentExpr();
+    std::unique_ptr<AssignmentExpr> ParseAssignmentExpr(std::unique_ptr<Expression> leftValue);
     std::unique_ptr<Expression> ParseIdentifierExpr();
 	std::unique_ptr<Expression> ParseLiteralExpr();
     std::unique_ptr<NumberLiteralExpr> ParseNumberLiteralExpr();
@@ -31,7 +31,7 @@ public:
     std::unique_ptr<CharLiteralExpr> ParseCharLiteralExpr();
     std::unique_ptr<Expression> ParseBinaryExpr(int minPrecedence);
     std::unique_ptr<Expression> ParsePrimaryExpr();
-    std::unique_ptr<FunctionCallExpr> ParseFunctionCallExpr();
+    std::unique_ptr<FunctionCallExpr> ParseFunctionCallExpr(std::unique_ptr<Expression> base);
 	std::unique_ptr<VarDeclExpr> ParseVarDeclExpr();
     std::unique_ptr<Statement> ParseStatement();
     std::unique_ptr<Statement> ParseIdentifier();
@@ -39,10 +39,9 @@ public:
     std::unique_ptr<VarDeclStmt> ParseVarDeclaration();
 	std::unique_ptr<VarDeclExpr> ParseVarDeclarationArray(const Token& type);
 	std::unique_ptr<ArrayExpr> ParseArrayValues();
-    std::unique_ptr<Expression> ParseArrayAccess(std::unique_ptr<Expression> baseExpr);
+    std::unique_ptr<Expression> ParseArrayAccess(std::unique_ptr<Expression> base);
+    std::unique_ptr<MemberAccessExpr> ParseMemberAccess(std::unique_ptr<Expression> base);
     std::unique_ptr<FunctionDeclStmt> ParseFunctionDeclaration();
-    std::unique_ptr<FunctionCallStmt> ParseFunctionCall();
-    std::unique_ptr<AssignmentStmt> ParseAssignmentStmt();
 	std::unique_ptr<ReturnStmt> ParseReturnStmt();
 	std::unique_ptr<IfStmt> ParseIfStmt();
 	std::unique_ptr<ForStmt> ParseForStmt();

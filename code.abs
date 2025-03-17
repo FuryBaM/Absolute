@@ -1,10 +1,21 @@
 int main() {
+    var.field.method()[0];
     int size = 8;
-    int board[size][size];
+    int board[size][size] = {{5, 6}, {6, 7}};
     for (int y = 0; y < size; y += 1) {
         for (int x = 0; x < size; x += 1) {
-            board = x + y;
+            board[x][y] = x + y;
         }
     }
     return 0;
+}
+
+class TestClass : BaseClass, ITestInterface {
+    int field1;
+    void run(int life = 0){
+        g_tester.start();
+    }
+    TestClass() {
+        field1 = 0;
+    }
 }

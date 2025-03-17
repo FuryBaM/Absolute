@@ -54,12 +54,8 @@ std::unique_ptr<Statement> Parser::ParseIdentifier()
 
     if (token->type == TokenType::IDENTIFIER) {
 		Token* nextToken = PeekToken();
-		if (nextToken && nextToken->value == "(") {
-			return ParseFunctionCall();
-		}
-        if (nextToken && GetOperatorCategory(nextToken->value) == OperatorCategory::Assignment) {
-			return ParseAssignmentStmt();
-        }
+        std::unique_ptr<Expression> identifier = ParseIdentifierExpr();
+        return std::make_unique<SingleStatement>(std::move(identifier));
     }
     return nullptr;
 }
@@ -78,15 +74,16 @@ std::unique_ptr<Expression> Parser::ParseExpression() {
     return ParsePrimaryExpr();
 }
 
-std::unique_ptr<AssignmentExpr> Parser::ParseAssignmentExpr()
+std::unique_ptr<AssignmentExpr> Parser::ParseAssignmentExpr(std::unique_ptr<Expression> leftValue)
 {
-	Token* identifier = CurrentToken();
-    if (identifier && identifier->type == TokenType::IDENTIFIER) {
-		Consume(TokenType::IDENTIFIER);
+    if (leftValue) {
 		Token* op = CurrentToken();
-		Consume(TokenType::OPERATOR); // Assignment operator
-		std::unique_ptr<Expression> value = ParseExpression();
-		return std::make_unique<AssignmentExpr>(std::make_unique<IdentifierExpr>(identifier->value), std::move(op->value), std::move(value));
+        if (op && GetOperatorCategory(op->value) == OperatorCategory::Assignment) {
+            Consume(TokenType::OPERATOR); // Assignment operator
+            std::unique_ptr<Expression> rightValue = ParseExpression();
+            return std::make_unique<AssignmentExpr>(std::move(leftValue), std::move(op->value), std::move(rightValue));
+        }
+        return nullptr;
     }
     return nullptr;
 }
@@ -99,8 +96,38 @@ std::unique_ptr<Expression> Parser::ParseIdentifierExpr() {
 
     std::unique_ptr<Expression> expr = std::make_unique<IdentifierExpr>(identifier->value);
     Consume(TokenType::IDENTIFIER);
+
+    while (true) {
+        Token* next = CurrentToken();
+        if (!next) break;
+
+        if (next->value == "(") {
+            expr = ParseFunctionCallExpr(std::move(expr));
+
+            // После вызова функции останавливаем цепочку MemberAccess
+            next = CurrentToken();
+            if (!next || next->value != "." && next->value != "[") {
+                break;
+            }
+        }
+        else if (next->value == "[") {
+            expr = ParseArrayAccess(std::move(expr));
+        }
+        else if (next->value == ".") {
+            expr = ParseMemberAccess(std::move(expr));
+        }
+        else {
+            break;
+        }
+    }
+
+    Token* op = CurrentToken();
+    if (op && GetOperatorCategory(op->value) == OperatorCategory::Assignment) {
+        return ParseAssignmentExpr(std::move(expr));
+    }
     return expr;
 }
+
 
 std::unique_ptr<Expression> Parser::ParseLiteralExpr()
 {
@@ -187,22 +214,9 @@ std::unique_ptr<Expression> Parser::ParsePrimaryExpr() {
         return ParseLiteralExpr();
     }
 
-    // Присваивание (a = b)
-    Token* nextToken = PeekToken(1);
-    if (token->type == TokenType::IDENTIFIER && nextToken && GetOperatorCategory(nextToken->value) == OperatorCategory::Assignment) {
-        return ParseAssignmentExpr();
-    }
-
     // Переменная или массив (x, arr[2])
     if (token->type == TokenType::IDENTIFIER) {
-        auto expr = ParseIdentifierExpr();
-
-        // Проверяем `[]` после переменной (может быть обращение к массиву)
-        if (CurrentToken() && CurrentToken()->value == "[") {
-            return ParseArrayAccess(std::move(expr));
-        }
-
-        return expr;
+        return ParseIdentifierExpr();
     }
 
     // Вложенное выражение в скобках: (a + b)
@@ -292,22 +306,35 @@ std::unique_ptr<ArrayExpr> Parser::ParseArrayValues() {
     return std::make_unique<ArrayExpr>(std::vector<std::unique_ptr<Expression>>(), std::move(values));
 }
 
-std::unique_ptr<Expression> Parser::ParseArrayAccess(std::unique_ptr<Expression> baseExpr) {
-    std::cout << "Parse Array Access\n";
-    baseExpr->print();
+std::unique_ptr<Expression> Parser::ParseArrayAccess(std::unique_ptr<Expression> base) {
     std::vector<std::unique_ptr<Expression>> indexes;
 
-    while (CurrentToken()->value == "[") { // Пока есть `[]`
+    while (CurrentToken()->value == "[") {
         Consume(TokenType::BRACKET);
-        indexes.push_back(ParseExpression()); // Читаем индекс
+        indexes.push_back(ParseExpression());
         Consume(TokenType::BRACKET);
     }
 
     if (indexes.empty()) {
-        return baseExpr; // Если `[]` не было, просто вернуть идентификатор
+        return base;
     }
 
-    return std::make_unique<ArrayAccessExpr>(std::move(baseExpr), std::move(indexes));
+    return std::make_unique<ArrayAccessExpr>(std::move(base), std::move(indexes));
+}
+
+std::unique_ptr<MemberAccessExpr> Parser::ParseMemberAccess(std::unique_ptr<Expression> base) {
+    Consume(TokenType::DELIMITER); // Потребляем `.`
+
+    Token* memberToken = CurrentToken();
+    if (!memberToken || memberToken->type != TokenType::IDENTIFIER) {
+        std::cerr << "Ошибка: ожидается идентификатор после '.'\n";
+        return nullptr;
+    }
+
+    std::string memberName = memberToken->value;
+    Consume(TokenType::IDENTIFIER); // Потребляем имя члена
+
+    return std::make_unique<MemberAccessExpr>(std::move(base), memberName);
 }
 
 std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclarationArray(const Token& type)
@@ -353,12 +380,11 @@ std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclarationArray(const Token& type)
     return nullptr;
 }
 
-std::unique_ptr<FunctionCallExpr> Parser::ParseFunctionCallExpr()
+std::unique_ptr<FunctionCallExpr> Parser::ParseFunctionCallExpr(std::unique_ptr<Expression> base)
 {
-    Token* identifier = CurrentToken();
-    if (identifier && identifier->type == TokenType::IDENTIFIER)
+    Token* bracket = CurrentToken();
+    if (bracket && bracket->type == TokenType::BRACKET)
     {
-        Consume(TokenType::IDENTIFIER);
         Consume(TokenType::BRACKET); // "("
         std::vector<std::unique_ptr<Expression>> arguments;
         while (CurrentToken()->type != TokenType::BRACKET && CurrentToken()->value != ")")
@@ -373,8 +399,7 @@ std::unique_ptr<FunctionCallExpr> Parser::ParseFunctionCallExpr()
             }
         }
         Consume(TokenType::BRACKET); // ")"
-        std::unique_ptr<IdentifierExpr> callee = std::make_unique<IdentifierExpr>(identifier->value);
-        return std::make_unique<FunctionCallExpr>(std::move(callee), std::move(arguments));
+        return std::make_unique<FunctionCallExpr>(std::move(base), std::move(arguments));
     }
 
 	return nullptr;
@@ -519,25 +544,6 @@ std::unique_ptr<FunctionDeclStmt> Parser::ParseFunctionDeclaration()
     );
 }
 
-std::unique_ptr<FunctionCallStmt> Parser::ParseFunctionCall()
-{
-    Token* identifier = CurrentToken();
-    if (!identifier) return nullptr;
-	std::unique_ptr<FunctionCallExpr> call = ParseFunctionCallExpr();
-    return std::make_unique<FunctionCallStmt>(identifier->value, std::move(call));
-}
-
-std::unique_ptr<AssignmentStmt> Parser::ParseAssignmentStmt()
-{
-    Token* token = CurrentToken();
-    if (token && token->type == TokenType::IDENTIFIER) {
-		std::unique_ptr<AssignmentExpr> expr = ParseAssignmentExpr();
-		std::unique_ptr<AssignmentStmt> stmt = std::make_unique<AssignmentStmt>(std::move(expr));
-        return stmt;
-    }
-    return nullptr;
-}
-
 std::unique_ptr<ReturnStmt> Parser::ParseReturnStmt()
 {
 	Token* token = CurrentToken();
@@ -676,7 +682,30 @@ std::unique_ptr<ForEachStmt> Parser::ParseForEachStmt()
 
 std::unique_ptr<ClassDeclStmt> Parser::ParseClassDecl()
 {
-    return std::unique_ptr<ClassDeclStmt>();
+    std::vector<std::string> parents;
+
+    Consume(TokenType::KEYWORD); // class
+    Token* identifier = Consume(TokenType::IDENTIFIER); // имя класса
+
+    // Проверяем, есть ли наследование или реализация интерфейсов
+    if (CurrentToken()->value == ":") {
+        Consume(TokenType::OPERATOR); // :
+
+        while (CurrentToken()->value != "{") {
+            Token* parent = Consume(TokenType::IDENTIFIER);
+            parents.push_back(parent->value);
+
+            if (CurrentToken()->value == ",") {
+                Consume(TokenType::DELIMITER);
+            }
+            else {
+                break; // Если нет `,`, значит, список родителей закончился
+            }
+        }
+    }
+
+    std::unique_ptr<Statement> body = ParseStatement();
+    return std::make_unique<ClassDeclStmt>(identifier->value, std::move(parents), std::move(body));
 }
 
 std::unique_ptr<StructDeclStmt> Parser::ParseStructDecl()

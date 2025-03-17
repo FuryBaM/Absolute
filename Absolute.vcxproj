@@ -145,6 +145,7 @@
   <ItemGroup>
     <ClCompile Include="Absolute.cpp" />
     <ClCompile Include="lexer.cpp" />
+    <ClCompile Include="nodes.cpp" />
     <ClCompile Include="parser.cpp" />
     <ClCompile Include="pch.cpp" />
   </ItemGroup>

@@ -1,14 +1,20 @@
 ﻿#pragma once
 #include "lexer.h"
 
+class ExpressionVisitor;
+class BaseIdentifierVisitor;
+
 struct ASTNode {
     virtual ~ASTNode() = default;
-    virtual void print(int indent = 0) const {
+    virtual void print(int indent = 0) {
         std::cout << "ASTNode\n";
     };
 };
 
-struct Expression : ASTNode {};
+struct Expression : ASTNode {
+    virtual void Accept(ExpressionVisitor& visitor) = 0;
+};
+
 struct Statement : ASTNode {};
 
 struct Program : ASTNode {
@@ -19,10 +25,15 @@ struct Program : ASTNode {
 };
 
 // 🔹 Базовый класс для выражений, которые можно использовать в Statements
-struct ExpressionStmt : Statement {
+struct SingleStatement : Statement {
     std::unique_ptr<Expression> expr;
-    explicit ExpressionStmt(std::unique_ptr<Expression> expr)
+    explicit SingleStatement(std::unique_ptr<Expression> expr)
         : expr(std::move(expr)) {
+    }
+    void print(int indent = 0) override {
+        if (expr) {
+            expr->print(indent);
+        }
     }
 };
 
@@ -34,11 +45,12 @@ struct BinaryExpr : Expression {
     BinaryExpr(std::string op, std::unique_ptr<Expression> left, std::unique_ptr<Expression> right)
         : op(std::move(op)), left(std::move(left)), right(std::move(right)) {
     }
-    void print(int indent = 0) const override {
+    void print(int indent = 0) override {
         std::cout << std::string(indent, ' ') << "Binary expression: " << op << "\n";
         if (left) left->print(indent + 2);
         if (right) right->print(indent + 2);
     }
+    void Accept(ExpressionVisitor& visitor) override;
 };
 
 // 🔹 Литералы
@@ -46,33 +58,39 @@ struct IdentifierExpr : Expression {
     std::string name;
     explicit IdentifierExpr(std::string name) : name(std::move(name)) {}
     IdentifierExpr(IdentifierExpr& other) : name(std::move(other.name)) {}
-    void print(int indent = 0) const override {
+
+    void print(int indent = 0) override {
         std::cout << std::string(indent, ' ') << "Identifier : " << name << "\n";
     }
+
+    void Accept(ExpressionVisitor& visitor) override;
 };
 
 struct NumberLiteralExpr : Expression {
     std::string value;
     explicit NumberLiteralExpr(std::string value) : value(std::move(value)) {}
-    void print(int indent = 0) const override {
+    void print(int indent = 0) override {
 		std::cout << std::string(indent, ' ') << "Number literal: " << value << "\n";
     }
+    void Accept(ExpressionVisitor& visitor) override;
 };
 
 struct StringLiteralExpr : Expression {
     std::string value;
     explicit StringLiteralExpr(std::string value) : value(std::move(value)) {}
-    void print(int indent = 0) const override {
+    void print(int indent = 0) override {
         std::cout << std::string(indent, ' ') << "String literal: " << value << "\n";
     }
+    void Accept(ExpressionVisitor& visitor) override;
 };
 
 struct CharLiteralExpr : Expression {
     char value;
     explicit CharLiteralExpr(char value) : value(std::move(value)) {}
-	void print(int indent = 0) const override {
+	void print(int indent = 0) override {
 		std::cout << std::string(indent, ' ') << "Char literal: " << value << "\n";
 	}
+    void Accept(ExpressionVisitor& visitor) override;
 };
 
 struct ArrayExpr : Expression {
@@ -82,7 +100,7 @@ struct ArrayExpr : Expression {
         std::vector<std::unique_ptr<Expression>> values) : 
 		sizes(std::move(sizes)),
         values(std::move(values)) {}
-    void print(int indent = 0) const override {
+    void print(int indent = 0) override {
         std::cout << std::string(indent, ' ') << "Array: " << "\n";
 
         std::cout << std::string(indent + 1, ' ') << "Sizes:\n";
@@ -95,39 +113,49 @@ struct ArrayExpr : Expression {
             value->print(indent + 2);
         }
     }
+
+    void Accept(ExpressionVisitor& visitor) override;
 };
 
 struct ArrayAccessExpr : Expression {
-    std::unique_ptr<Expression> baseExpr; // Может быть IdentifierExpr, вызов функции и т. д.
+    std::unique_ptr<Expression> base; // Может быть IdentifierExpr, вызов функции и т. д.
     std::vector<std::unique_ptr<Expression>> indexes; // Индексы []
 
-    ArrayAccessExpr(std::unique_ptr<Expression> baseExpr, std::vector<std::unique_ptr<Expression>> indexes)
-        : baseExpr(std::move(baseExpr)), indexes(std::move(indexes)) {
+    ArrayAccessExpr(std::unique_ptr<Expression> base, std::vector<std::unique_ptr<Expression>> indexes)
+        : base(std::move(base)), indexes(std::move(indexes)) {
     }
 
-    void print(int indent = 0) const override {
-        std::cout << std::string(indent, ' ') << "Array Access:\n";
-        baseExpr->print(indent + 1);
+    IdentifierExpr* GetIdentifier();
+
+    void print(int indent = 0) override {
+        IdentifierExpr* identifier = GetIdentifier();
+        std::cout << std::string(indent, ' ') << "Array Access: " << identifier->name << "\n";
+        base->print(indent + 1);
         std::cout << std::string(indent + 1, ' ') << "Indexes:" << "\n";
         for (const auto& index : indexes) {
             index->print(indent + 2);
         }
     }
+
+    void Accept(ExpressionVisitor& visitor) override;
 };
 
 // 🔹 Присваивание (x = 5)
 struct AssignmentExpr : Expression {
-    std::unique_ptr<IdentifierExpr> target;
+    std::unique_ptr<Expression> target;
 	std::string op;
     std::unique_ptr<Expression> value;
 
-    AssignmentExpr(std::unique_ptr<IdentifierExpr> target, std::string op, std::unique_ptr<Expression> value)
+    AssignmentExpr(std::unique_ptr<Expression> target, std::string op, std::unique_ptr<Expression> value)
         : target(std::move(target)), op(std::move(op)), value(std::move(value)) {
     }
-	void print(int indent = 0) const override {
-		std::cout << std::string(indent, ' ') << "Assignment: " << target->name << " " << op << "\n";
+	void print(int indent = 0) override {
+		std::cout << std::string(indent, ' ') << "Assignment: " << op << "\n";
+        target->print(indent + 1);
 		if (value) value->print(indent + 1);
 	}
+
+    void Accept(ExpressionVisitor& visitor) override;
 };
 
 struct VarDeclExpr : Expression {
@@ -144,24 +172,31 @@ struct VarDeclExpr : Expression {
         isArray(isArray), isInstance(isInstance) {
     }
 
-    void print(int indent = 0) const override {
+    void print(int indent = 0) override {
         std::cout << std::string(indent, ' ') << "Variable declaration: " << type << " " << name <<
             " identifier: " << isArray <<
             " instance: " << isInstance << "\n";
         if (value) value->print(indent + 1);
     }
+
+    void Accept(ExpressionVisitor& visitor) override;
 };
 
 // 🔹 Вызов функции (foo())
 struct FunctionCallExpr : Expression {
-    std::unique_ptr<IdentifierExpr> callee;
+    std::unique_ptr<Expression> base;
     std::vector<std::unique_ptr<Expression>> arguments;
 
-    FunctionCallExpr(std::unique_ptr<IdentifierExpr> callee, std::vector<std::unique_ptr<Expression>> args)
-        : callee(std::move(callee)), arguments(std::move(args)) {
+    FunctionCallExpr(std::unique_ptr<Expression> base, std::vector<std::unique_ptr<Expression>> args)
+        : base(std::move(base)), arguments(std::move(args)) {
     }
-    void print(int indent = 0) const override {
-        std::cout << std::string(indent, ' ') << "Function call: " << callee->name << "\n";
+
+    IdentifierExpr* GetIdentifier();
+
+    void print(int indent = 0) override {
+        IdentifierExpr* identifier = GetIdentifier();
+        std::cout << std::string(indent, ' ') << "Function call: " << identifier->name << "\n";
+        base->print(indent + 1);
         if (arguments.size()) {
             std::cout << std::string(indent + 1, ' ') << "Arguments: " << "\n";
             for (const auto& arg : arguments) {
@@ -169,7 +204,30 @@ struct FunctionCallExpr : Expression {
             }
         }
     }
+
+    void Accept(ExpressionVisitor& visitor) override;
 };
+
+struct MemberAccessExpr : Expression {
+    std::unique_ptr<Expression> base;  // К чему применяем `.`
+    std::string member;                // Имя члена
+
+    MemberAccessExpr(std::unique_ptr<Expression> base, std::string member)
+        : base(std::move(base)), member(std::move(member)) {
+    }
+
+    IdentifierExpr* GetIdentifier();
+
+    void print(int indent = 0) override {
+        IdentifierExpr* identifier = GetIdentifier();
+        std::cout << std::string(indent, ' ') << "Member Access: " << identifier->name <<"\n";
+        base->print(indent + 1);
+        std::cout << std::string(indent + 1, ' ') << "Member: " << member << "\n";
+    }
+
+    void Accept(ExpressionVisitor& visitor) override;
+};
+
 
 // Обертка, чтобы сделать AssignmentExpr полноценным Statement
 struct AssignmentStmt : Statement {
@@ -178,7 +236,7 @@ struct AssignmentStmt : Statement {
     explicit AssignmentStmt(std::unique_ptr<AssignmentExpr> expr)
         : expr(std::move(expr)) {
     }
-	void print(int indent = 0) const override {
+	void print(int indent = 0) override {
         expr->print(indent);
 	}
 };
@@ -190,7 +248,7 @@ struct FunctionCallStmt : Statement {
     explicit FunctionCallStmt(std::string name, std::unique_ptr<FunctionCallExpr> call)
         : name(std::move(name)), call(std::move(call)) {
     }
-    void print(int indent = 0) const override {
+    void print(int indent = 0) override {
         call->print(indent);
     }
 };
@@ -199,7 +257,7 @@ struct FunctionCallStmt : Statement {
 struct VarDeclStmt : Statement {
 	std::unique_ptr<VarDeclExpr> expr;
 	explicit VarDeclStmt(std::unique_ptr<VarDeclExpr> expr) : expr(std::move(expr)) {}
-	void print(int indent = 0) const override {
+	void print(int indent = 0) override {
 		expr->print(indent);
 	}
 };
@@ -210,7 +268,7 @@ struct CompoundStmt : Statement {
     explicit CompoundStmt(std::vector<std::unique_ptr<Statement>> statements)
         : statements(std::move(statements)) {
     }
-    void print(int indent = 0) const override {
+    void print(int indent = 0) override {
         std::cout << std::string(indent, ' ') << "Compound statement: " << "\n";
         for (const auto& stmt : statements) {
             if (stmt)
@@ -223,7 +281,7 @@ struct CompoundStmt : Statement {
 struct ReturnStmt : Statement {
     std::unique_ptr<Expression> expr;
     explicit ReturnStmt(std::unique_ptr<Expression> expr) : expr(std::move(expr)) {}
-	void print(int indent = 0) const override {
+	void print(int indent = 0) override {
 		std::cout << std::string(indent, ' ') << "Return statement: " << "\n";
 		if (expr) expr->print(indent + 1);
 	}
@@ -245,7 +303,7 @@ struct FunctionDeclStmt : Statement {
         body(std::move(body)) {
     }
 
-    void print(int indent = 0) const override {
+    void print(int indent = 0) override {
         std::cout << std::string(indent, ' ') << "Function declaration: " << returnType->value << " " << name->value << "\n";
         if (parameters.size()) {
             std::cout << std::string(indent + 1, ' ') << "Function parameters: " << "\n";
@@ -273,7 +331,7 @@ struct IfStmt : Statement {
     IfStmt(std::vector<Branch> branches, std::unique_ptr<Statement> elseBranch)
         : branches(std::move(branches)), elseBranch(std::move(elseBranch)) {
     }
-	void print(int indent = 0) const override {
+	void print(int indent = 0) override {
 		std::cout << std::string(indent, ' ') << "If statement: " << "\n";
 		for (const auto& branch : branches) {
 			std::cout << std::string(indent + 1, ' ') << "Branch: " << "\n";
@@ -301,7 +359,7 @@ struct ForStmt : Statement {
         update(std::move(update)), body(std::move(body)) {
     }
 
-    void print(int indent = 0) const override {
+    void print(int indent = 0) override {
         std::cout << std::string(indent, ' ') << "For statement:\n";
 
         for (const auto& expr : init) {
@@ -325,7 +383,7 @@ struct WhileStmt : Statement {
     WhileStmt(std::unique_ptr<Expression> condition, std::unique_ptr<Statement> body)
         : condition(std::move(condition)), body(std::move(body)) {
     }
-    void print(int indent = 0) const override {
+    void print(int indent = 0) override {
         std::cout << std::string(indent, ' ') << "While statement:\n";
         if (condition) condition->print(indent + 1);
         if (body) body->print(indent + 1);
@@ -339,7 +397,7 @@ struct DoWhileStmt : Statement {
     DoWhileStmt(std::unique_ptr<Statement> body, std::unique_ptr<Expression> condition)
         : body(std::move(body)), condition(std::move(condition)) {
     }
-	void print(int indent = 0) const override {
+	void print(int indent = 0) override {
 		std::cout << std::string(indent, ' ') << "Do-while statement:\n";
 		if (body) body->print(indent + 1);
 		if (condition) condition->print(indent + 1);
@@ -353,7 +411,7 @@ struct ForEachStmt : Statement {
     ForEachStmt(std::unique_ptr<VarDeclExpr> var, std::unique_ptr<Expression> iterable, std::unique_ptr<Statement> body)
         : var(std::move(var)), iterable(std::move(iterable)), body(std::move(body)) {
     };
-    void print(int indent = 0) const override {
+    void print(int indent = 0) override {
 		std::cout << std::string(indent, ' ') << "For-each statement:\n";
 		if (var) var->print(indent + 1);
 		if (iterable) iterable->print(indent + 1);
@@ -364,10 +422,20 @@ struct ForEachStmt : Statement {
 // 🔹 Классы, структуры, enum
 struct ClassDeclStmt : Statement {
     std::string name;
-    std::vector<std::unique_ptr<Statement>> members;
+    std::vector<std::string> parents;
+    std::unique_ptr<Statement> body;
 
-    ClassDeclStmt(std::string name, std::vector<std::unique_ptr<Statement>> members)
-        : name(std::move(name)), members(std::move(members)) {
+    ClassDeclStmt(std::string name, std::vector<std::string> parents, std::unique_ptr<Statement> body)
+        : name(std::move(name)), parents(std::move(parents)), body(std::move(body)) {
+    }
+
+    void print(int indent = 0) override {
+        std::cout << std::string(indent, ' ') << "Class Declaration: " << name << " : ";
+        for (const auto& parent : parents) {
+            std::cout << parent << " ";
+        }
+        std::cout << "\n";
+        body->print(indent + 1);
     }
 };
 
