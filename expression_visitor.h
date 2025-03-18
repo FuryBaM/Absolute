@@ -13,6 +13,8 @@ public:
     virtual void Visit(AssignmentExpr* expr) = 0;
     virtual void Visit(VarDeclExpr* expr) = 0;
     virtual void Visit(MemberAccessExpr* expr) = 0;
+    virtual void Visit(ConstructorCallExpr* expr) = 0;
+    virtual void Visit(InstanceDeclExpr* expr) = 0;
 };
 
 class BaseIdentifierVisitor : public ExpressionVisitor {
@@ -64,6 +66,14 @@ public:
         if (expr->base) {
             expr->base->Accept(*this); // Обход базового выражения
         }
+    }
+
+    void Visit(ConstructorCallExpr* expr) override {
+        expr->Accept(*this);
+    }
+
+    void Visit(InstanceDeclExpr* expr) override {
+        expr->Accept(*this);
     }
 };
 

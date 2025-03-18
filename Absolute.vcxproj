@@ -153,6 +153,7 @@
     <ClCompile Include="scope.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="expression_visitor.h" />
     <ClInclude Include="lexer.h" />
     <ClInclude Include="nodes.h" />
     <ClInclude Include="parser.h" />

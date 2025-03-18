@@ -454,7 +454,7 @@ std::unique_ptr<InstanceDeclExpr> Parser::ParseInstanceDeclExpr()
     Token* identifierName = Consume(TokenType::IDENTIFIER);
     Consume(TokenType::OPERATOR, "=");
     std::unique_ptr<ConstructorCallExpr> call = ParseConstructorCall();
-    return std::make_unique<InstanceDeclExpr>(constructTypeName, identifierName, std::move(call));
+    return std::make_unique<InstanceDeclExpr>(std::move(constructTypeName->value), std::move(identifierName->value), std::move(call));
 }
 
 std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclarationArray(const Token& type)

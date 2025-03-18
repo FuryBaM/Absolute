@@ -72,3 +72,11 @@ void VarDeclExpr::Accept(ExpressionVisitor& visitor) {
 void MemberAccessExpr::Accept(ExpressionVisitor& visitor) {
     visitor.Visit(this);
 }
+
+void ConstructorCallExpr::Accept(ExpressionVisitor& visitor) {
+    visitor.Visit(this);
+}
+
+void InstanceDeclExpr::Accept(ExpressionVisitor& visitor) {
+    visitor.Visit(this);
+}

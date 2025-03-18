@@ -242,6 +242,8 @@ struct ConstructorCallExpr : Expression {
             if (argument) argument->print(indent + 1);
         }
     }
+
+    void Accept(ExpressionVisitor& visitor) override;
 };
 
 struct InstanceDeclExpr : Expression {
@@ -259,6 +261,8 @@ struct InstanceDeclExpr : Expression {
         std::cout << std::string(indent, ' ') << "Instance " << constructTypeName << " declaration: " << identifierName << "\n";
         call->print(indent + 1);
     }
+
+    void Accept(ExpressionVisitor& visitor) override;
 };
 
 // Обертка, чтобы сделать AssignmentExpr полноценным Statement

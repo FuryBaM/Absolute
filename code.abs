@@ -40,3 +40,5 @@ group GameSettings {
         enum Effects { Off, On }
     }
 }
+
+MyClass instance = new MyClass();
