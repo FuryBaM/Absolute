@@ -315,6 +315,10 @@ std::unique_ptr<Expression> Parser::ParsePrimaryExpr() {
         return ParseIdentifierExpr();
     }
 
+    if (CurrentToken()->value == "new") {
+        return ParseConstructorCall();
+    }
+
     // Вложенное выражение в скобках: (a + b)
     if (token->type == TokenType::BRACKET && token->value == "(") {
         Consume(TokenType::BRACKET); // Пропускаем "("
@@ -452,9 +456,12 @@ std::unique_ptr<InstanceDeclExpr> Parser::ParseInstanceDeclExpr()
 {
     Token* constructTypeName = Consume(TokenType::IDENTIFIER);
     Token* identifierName = Consume(TokenType::IDENTIFIER);
-    Consume(TokenType::OPERATOR, "=");
-    std::unique_ptr<ConstructorCallExpr> call = ParseConstructorCall();
-    return std::make_unique<InstanceDeclExpr>(std::move(constructTypeName->value), std::move(identifierName->value), std::move(call));
+    std::unique_ptr<Expression> initializer = nullptr;
+    if (CurrentToken()->value == "=") {
+        Consume(TokenType::OPERATOR, "=");
+        initializer = ParseExpression();
+    }
+    return std::make_unique<InstanceDeclExpr>(std::move(constructTypeName->value), std::move(identifierName->value), std::move(initializer));
 }
 
 std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclarationArray(const Token& type)

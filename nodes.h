@@ -249,17 +249,17 @@ struct ConstructorCallExpr : Expression {
 struct InstanceDeclExpr : Expression {
     std::string constructTypeName;
     std::string identifierName;
-    std::unique_ptr<ConstructorCallExpr> call;
+    std::unique_ptr<Expression> call;
 
     InstanceDeclExpr(std::string constructTypeName,
         std::string identifierName,
-        std::unique_ptr<ConstructorCallExpr> call)
+        std::unique_ptr<Expression> call)
         : constructTypeName(constructTypeName), identifierName(identifierName), call(std::move(call)) {
     }
 
     void print(int indent = 0) override {
         std::cout << std::string(indent, ' ') << "Instance " << constructTypeName << " declaration: " << identifierName << "\n";
-        call->print(indent + 1);
+        if (call) call->print(indent + 1);
     }
 
     void Accept(ExpressionVisitor& visitor) override;

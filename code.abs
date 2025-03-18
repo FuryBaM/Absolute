@@ -41,4 +41,4 @@ group GameSettings {
     }
 }
 
-MyClass instance = new MyClass();
+MyClass instance = new MyClass(7, "test", 'c', new Player("player"));
