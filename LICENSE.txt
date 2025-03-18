@@ -21,12 +21,16 @@ Effective Date: [17.03.2025]
 3.3 All modifications must be submitted as pull requests to the official repository. If accepted, they become part of the Software and are governed by this License.  
 3.4 The User may create a separate branch to share modified features and innovations, but such modifications must not be distributed as an independent language or separate product.  
 3.5 Companies may receive special access to modify the Software internally, but any changes made must be reviewed and approved by the Licensor before integration into the main language.  
-3.6 A fork may be created for software development purposes under a specific agreement with the Licensor. Such forks must remain fully compatible with the main language and must not introduce functional differences. Any new features must be approved by the Licensor before implementation to avoid fragmentation and maintain language consistency.  
+3.6 Forks of the Software may only be created under a separate written agreement with the Licensor. Such forks must:  
+   - Retain this License in full and include a reference to the original Software.  
+   - Maintain full compatibility with the original Software, unless explicitly approved by the Licensor.  
+   - Not introduce functional deviations that create fragmentation in the ecosystem.  
 
 4. Redistribution Restrictions  
 4.1 The User may not redistribute the Software under a different name or as part of another project.  
 4.2 The User may not use the Software to create a competing programming language or derivative work.  
 4.3 The User may not distribute modified versions of the toolchain or any core components of the Software.  
+4.4 Any permitted forks must explicitly state that they are derived from the original Software and maintain full compliance with this License.  
 
 5. Patents and Legal Restrictions  
 5.1 The User may not file, support, or enforce any patent claims related to the Software against the Licensor, Contributors, or other Users.  
