@@ -25,6 +25,7 @@ Effective Date: [17.03.2025]
    - Retain this License in full and include a reference to the original Software.  
    - Maintain full compatibility with the original Software, unless explicitly approved by the Licensor.  
    - Not introduce functional deviations that create fragmentation in the ecosystem.  
+3.7 If a User or Company is granted permission to fork the Software, they must sign a written agreement with the Licensor. If the agreement is lost and neither party can provide a copy, the fork license is automatically revoked.
 
 4. Redistribution Restrictions  
 4.1 The User may not redistribute the Software under a different name or as part of another project.  
