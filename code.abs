@@ -1,4 +1,4 @@
-int main() {
+int main(int argc = 0, string argv) {
     var.field.method()[0];
     int size = 8;
     int board[size][size] = {{5, 6}, {6, 7}};
@@ -10,12 +10,33 @@ int main() {
     return 0;
 }
 
+foreach(int element in elements){
+    if (element < 0) {
+        element += elements.size();
+    }
+}
+
 class TestClass : BaseClass, ITestInterface {
     int field1;
     void run(int life = 0){
         g_tester.start();
     }
     TestClass() {
-        field1 = 0;
+        doSmth();
+    }
+}
+
+group GameSettings {
+    enum Difficulty { Easy, Medium, Hard }
+    enum Mode { SinglePlayer, MultiPlayer }
+
+    group Graphics {
+        enum Resolution { Low, Medium, High }
+        enum Quality { Low, Medium, High, Ultra }
+    }
+
+    group Audio {
+        enum Volume { Mute, Low, Medium, High }
+        enum Effects { Off, On }
     }
 }

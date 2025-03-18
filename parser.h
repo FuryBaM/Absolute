@@ -20,9 +20,14 @@ public:
 		return (pos + offset < tokens.size()) ? &tokens[pos + offset] : nullptr;
     }
 
+    void ReportSyntaxError(const Token* token, const std::string& message);
+
     Token* Consume(TokenType tokenType);
-    std::unique_ptr<Program> Parse();
+    Token* Consume(TokenType tokenType, const std::string& expectedValue);
+
     std::unique_ptr<Expression> ParseExpression();
+    std::vector<std::unique_ptr<VarDeclExpr>> ParseParameters();
+    std::vector<std::unique_ptr<Expression>> ParseArguments();
     std::unique_ptr<AssignmentExpr> ParseAssignmentExpr(std::unique_ptr<Expression> leftValue);
     std::unique_ptr<Expression> ParseIdentifierExpr();
 	std::unique_ptr<Expression> ParseLiteralExpr();
@@ -33,14 +38,18 @@ public:
     std::unique_ptr<Expression> ParsePrimaryExpr();
     std::unique_ptr<FunctionCallExpr> ParseFunctionCallExpr(std::unique_ptr<Expression> base);
 	std::unique_ptr<VarDeclExpr> ParseVarDeclExpr();
+	std::unique_ptr<VarDeclExpr> ParseVarDeclarationArray(const Token& type);
+	std::unique_ptr<ArrayExpr> ParseArrayValues();
+    std::unique_ptr<MemberAccessExpr> ParseMemberAccess(std::unique_ptr<Expression> base);
+    std::unique_ptr<ConstructorCallExpr> ParseConstructorCall();
+    std::unique_ptr<InstanceDeclExpr> ParseInstanceDeclExpr();
+
+    std::unique_ptr<Program> Parse();
     std::unique_ptr<Statement> ParseStatement();
     std::unique_ptr<Statement> ParseIdentifier();
     std::unique_ptr<CompoundStmt> ParseCompoundStatement();
     std::unique_ptr<VarDeclStmt> ParseVarDeclaration();
-	std::unique_ptr<VarDeclExpr> ParseVarDeclarationArray(const Token& type);
-	std::unique_ptr<ArrayExpr> ParseArrayValues();
     std::unique_ptr<Expression> ParseArrayAccess(std::unique_ptr<Expression> base);
-    std::unique_ptr<MemberAccessExpr> ParseMemberAccess(std::unique_ptr<Expression> base);
     std::unique_ptr<FunctionDeclStmt> ParseFunctionDeclaration();
 	std::unique_ptr<ReturnStmt> ParseReturnStmt();
 	std::unique_ptr<IfStmt> ParseIfStmt();
@@ -49,6 +58,9 @@ public:
 	std::unique_ptr<DoWhileStmt> ParseDoWhileStmt();
 	std::unique_ptr<ForEachStmt> ParseForEachStmt();
 	std::unique_ptr<ClassDeclStmt> ParseClassDecl();
+    std::unique_ptr<ConstructorDeclStmt> ParseConstructor();
+    std::unique_ptr<SingleStatement> ParseInstanceDeclStmt();
 	std::unique_ptr<StructDeclStmt> ParseStructDecl();
 	std::unique_ptr<EnumDeclStmt> ParseEnumDecl();
+    std::unique_ptr<GroupDeclStmt> ParseGroupDecl();
 };

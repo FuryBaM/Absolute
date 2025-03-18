@@ -36,16 +36,22 @@ enum class Type {
 struct Token {
 	TokenType type;
 	std::string value;
+	int line;   // Номер строки
+	int column; // Номер колонки
 
-	Token(TokenType type, std::string value)
-		: type(type), value(std::move(value)) {
+	Token(TokenType type, std::string value, int line, int column)
+		: type(type), value(std::move(value)), line(line), column(column) {
 	}
 
-	Token(const Token& other) : type(other.type), value(other.value) {}
+	Token(const Token& other)
+		: type(other.type), value(other.value), line(other.line), column(other.column) {
+	}
 };
 
 extern std::unordered_map<TokenType, std::string> token_spec;
+extern std::unordered_map<std::string, int> precedence;
 
+bool IsValidTokenValue(TokenType tokenType, const std::string& value);
 bool IsLiteral(const TokenType& type);
 bool IsEndOfStatement(const Token& token);
 OperatorCategory GetOperatorCategory(const std::string& op);

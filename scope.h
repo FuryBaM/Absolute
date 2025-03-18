@@ -1,0 +1,17 @@
+#pragma once
+enum class ScopeType { None, Class, Struct, Group, Function };
+
+struct Scope {
+    ScopeType type;      // “ип области (Class, Function, Struct и т. д.)
+    std::string name;    // »м€ области (MyClass, myFunction и т. д.)
+
+    Scope(ScopeType t, std::string n = "") : type(t), name(std::move(n)) {}
+};
+
+extern std::vector<Scope> scopeStack;
+
+void EnterScope(ScopeType type, const std::string& name = "");
+void ExitScope();
+std::string GetCurrentScopeName();
+ScopeType GetCurrentScopeType();
+

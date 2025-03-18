@@ -228,6 +228,38 @@ struct MemberAccessExpr : Expression {
     void Accept(ExpressionVisitor& visitor) override;
 };
 
+struct ConstructorCallExpr : Expression {
+    std::string constructName;
+    std::vector<std::unique_ptr<Expression>> arguments;
+
+    ConstructorCallExpr(std::string constructName, std::vector<std::unique_ptr<Expression>> arguments)
+        : constructName(std::move(constructName)), arguments(std::move(arguments)) {
+    }
+
+    void print(int indent = 0) override {
+        std::cout << std::string(indent, ' ') << "Constructor call: " << constructName << "\n";
+        for (const auto& argument : arguments) {
+            if (argument) argument->print(indent + 1);
+        }
+    }
+};
+
+struct InstanceDeclExpr : Expression {
+    std::string constructTypeName;
+    std::string identifierName;
+    std::unique_ptr<ConstructorCallExpr> call;
+
+    InstanceDeclExpr(std::string constructTypeName,
+        std::string identifierName,
+        std::unique_ptr<ConstructorCallExpr> call)
+        : constructTypeName(constructTypeName), identifierName(identifierName), call(std::move(call)) {
+    }
+
+    void print(int indent = 0) override {
+        std::cout << std::string(indent, ' ') << "Instance " << constructTypeName << " declaration: " << identifierName << "\n";
+        call->print(indent + 1);
+    }
+};
 
 // Обертка, чтобы сделать AssignmentExpr полноценным Statement
 struct AssignmentStmt : Statement {
@@ -292,11 +324,11 @@ struct FunctionDeclStmt : Statement {
     std::unique_ptr<Token> returnType;
     std::unique_ptr<Token> name;
     std::vector<std::unique_ptr<VarDeclExpr>> parameters;
-    std::unique_ptr<CompoundStmt> body;
+    std::unique_ptr<Statement> body;
 
     FunctionDeclStmt(std::unique_ptr<Token> returnType, std::unique_ptr<Token> name,
         std::vector<std::unique_ptr<VarDeclExpr>> params,
-        std::unique_ptr<CompoundStmt> body)
+        std::unique_ptr<Statement> body)
         : returnType(std::move(returnType)),
         name(std::move(name)),
         parameters(std::move(params)),
@@ -307,6 +339,28 @@ struct FunctionDeclStmt : Statement {
         std::cout << std::string(indent, ' ') << "Function declaration: " << returnType->value << " " << name->value << "\n";
         if (parameters.size()) {
             std::cout << std::string(indent + 1, ' ') << "Function parameters: " << "\n";
+            for (const auto& param : parameters) {
+                param.get()->print(indent + 2);
+            }
+        }
+        if (body) body->print(indent + 1);
+    }
+};
+
+struct ConstructorDeclStmt : Statement {
+    std::unique_ptr<Token> name;
+    std::vector<std::unique_ptr<VarDeclExpr>> parameters;
+    std::unique_ptr<Statement> body;
+
+    ConstructorDeclStmt(std::unique_ptr<Token> name,
+        std::vector<std::unique_ptr<VarDeclExpr>> parameters, std::unique_ptr<Statement> body)
+        : name(std::move(name)), parameters(std::move(parameters)), body(std::move(body)) {
+    }
+
+    void print(int indent = 0) override {
+        std::cout << std::string(indent, ' ') << "Constructor declaration: " << name->value << "\n";
+        if (parameters.size()) {
+            std::cout << std::string(indent + 1, ' ') << "Constructor parameters: " << "\n";
             for (const auto& param : parameters) {
                 param.get()->print(indent + 2);
             }
@@ -342,7 +396,7 @@ struct IfStmt : Statement {
 			std::cout << std::string(indent + 1, ' ') << "Else branch: " << "\n";
 			elseBranch->print(indent + 2);
 		}
-	}
+	}   
 };
 
 struct ForStmt : Statement {
@@ -454,5 +508,41 @@ struct EnumDeclStmt : Statement {
 
     EnumDeclStmt(std::string name, std::vector<std::string> members)
         : name(std::move(name)), members(std::move(members)) {
+    }
+
+    void print(int indent = 0) override {
+        std::cout << std::string(indent, ' ') << "Enum: " << name << "\n";
+        if (members.size()) {
+            for (const auto& member : members) {
+                std::cout << std::string(indent + 1, ' ') << "Member: " << member << "\n";;
+            }
+        }
+    }
+};
+
+struct GroupDeclStmt : Statement {
+    std::string name;
+    std::vector<std::unique_ptr<EnumDeclStmt>> enums;
+    std::vector<std::unique_ptr<GroupDeclStmt>> subgroups;
+
+    GroupDeclStmt(std::string name, 
+        std::vector<std::unique_ptr<EnumDeclStmt>> enums, 
+        std::vector<std::unique_ptr<GroupDeclStmt>> subgroups)
+        : name(std::move(name)), enums(std::move(enums)), subgroups(std::move(subgroups)) { }
+
+    void print(int indent = 0) override {
+        std::cout << std::string(indent, ' ') << "Group: " << name << "\n";
+        if (subgroups.size()) {
+            std::cout << std::string(indent + 1, ' ') << "Subgroups: \n";
+            for (const auto& subgroup : subgroups) {
+                subgroup->print(indent + 2);
+            }
+        }
+        if (enums.size()) {
+            std::cout << std::string(indent + 1, ' ') << "Enums: \n";
+            for (const auto& en : enums) {
+                en->print(indent + 2);
+            }
+        }
     }
 };

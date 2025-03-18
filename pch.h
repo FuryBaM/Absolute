@@ -9,5 +9,6 @@
 #include <memory>
 
 #include "lexer.h"
+#include "scope.h"
 #include "nodes.h"
 
