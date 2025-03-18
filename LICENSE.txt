@@ -1,39 +1,48 @@
-ABSOLUTE LANGUAGE LICENSE (ALL) v1.0  
+ABSOLUTE LANGUAGE LICENSE (ALL) v1.1  
 
 Effective Date: [17.03.2025]  
 
 1. Definitions  
-1.1 "Software" refers to the Absolute programming language, including its source code, documentation, and any associated files.  
+1.1 "Software" refers to the Absolute programming language, including its source code, documentation, toolchain (compiler and interpreter), and any associated files.  
 1.2 "Licensor" refers to the original author and copyright holder of the Software.  
 1.3 "Contributor" refers to any individual or entity submitting modifications to the Software.  
 1.4 "User" refers to any individual or entity using the Software under this License.  
+1.5 "Company" refers to an organization that has obtained explicit permission from the Licensor to use or modify the Software under special conditions.  
 
 2. Grant of License  
 2.1 The Licensor grants the User a non-exclusive, worldwide, royalty-free license to use, view, and contribute to the Software, subject to the conditions of this License.  
 2.2 The User may use the Software for personal, educational, and commercial purposes without modification.  
+2.3 The User is allowed to use the toolchain to create and distribute their own products, including for commercial purposes. However, this does not grant the right to modify or distribute modified versions of the toolchain or the language itself.  
+2.4 Companies may receive explicit permission from the Licensor to modify the Software for internal use, provided such modifications do not compromise the integrity of the language.  
 
 3. Modification and Contributions  
 3.1 The User may clone the repository and modify the Software only for the purpose of submitting pull requests to the official repository.  
 3.2 The User may not create forks, distribute modified versions, or maintain independent versions of the Software without explicit written permission from the Licensor.  
 3.3 All modifications must be submitted as pull requests to the official repository. If accepted, they become part of the Software and are governed by this License.  
+3.4 The User may create a separate branch to share modified features and innovations, but such modifications must not be distributed as an independent language or separate product.  
+3.5 Companies may receive special access to modify the Software internally, but any changes made must be reviewed and approved by the Licensor before integration into the main language.  
 
 4. Redistribution Restrictions  
 4.1 The User may not redistribute the Software under a different name or as part of another project.  
 4.2 The User may not use the Software to create a competing programming language or derivative work.  
+4.3 The User may not distribute modified versions of the toolchain or any core components of the Software.  
 
 5. Patents and Legal Restrictions  
 5.1 The User may not file, support, or enforce any patent claims related to the Software against the Licensor, Contributors, or other Users.  
 5.2 If the User initiates patent litigation against the Licensor or any Contributor, this License automatically terminates, and all rights granted herein are revoked.  
+5.3 The Licensor does not guarantee that the Software is free from patent claims by third parties. The User assumes all risks associated with patent compliance.  
 
-6. Ownership and Copyright  
+6. Ownership, Copyright, and Updates  
 6.1 The Licensor retains full ownership and copyright of the Software.  
 6.2 The Licensor reserves the right to modify, update, or terminate this License at any time.  
+6.3 Updates to this License apply to all subsequent versions of the Software. Users of previous versions are encouraged to comply with updated terms but are not retroactively bound by them unless explicitly stated.  
 
 7. Termination  
 7.1 The rights granted to the User under this License will be immediately revoked if the User violates any of its terms.  
 7.2 Upon termination, the User must cease all use of the Software and delete any copies in their possession.  
 
 8. Disclaimer of Warranty  
-8.1 The Software is provided "as is", without warranty of any kind, express or implied. The Licensor is not liable for any damages arising from the use of the Software.   
+8.1 The Software is provided "as is", without warranty of any kind, express or implied. The Licensor is not liable for any damages arising from the use of the Software.  
 
 By using or contributing to the Software, the User agrees to the terms of this License.
+
