@@ -30,6 +30,22 @@ std::unordered_map<std::string, int> precedence = {
     {"++", 13}, {"--", 13}  // Инкремент и декремент (постфикс)
 };
 
+std::string TokenTypeToString(TokenType type) {
+    switch (type) {
+    case TokenType::NUMBER: return "NUMBER";
+    case TokenType::KEYWORD: return "KEYWORD";
+    case TokenType::IDENTIFIER: return "IDENTIFIER";
+    case TokenType::OPERATOR: return "OPERATOR";
+    case TokenType::DELIMITER: return "DELIMITER";
+    case TokenType::STRING: return "STRING";
+    case TokenType::CHAR: return "CHAR";
+    case TokenType::COMMENT: return "COMMENT";
+    case TokenType::BRACKET: return "BRACKET";
+    case TokenType::WHITESPACE: return "WHITESPACE";
+    default: return "UNKNOWN";
+    }
+}
+
 // Проверка, входит ли значение в допустимые токены по token_spec
 bool IsValidTokenValue(TokenType tokenType, const std::string& value) {
     auto it = token_spec.find(tokenType);

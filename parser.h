@@ -1,8 +1,6 @@
 #pragma once
 #include "nodes.h"
 
-int GetOperatorPrecedence(const std::string& op);
-
 class Parser {
 public:
     std::vector<Token> tokens;
@@ -18,6 +16,25 @@ public:
 
 	Token* PeekToken(size_t offset = 1) {
 		return (pos + offset < tokens.size()) ? &tokens[pos + offset] : nullptr;
+    }
+
+    Token* PeekTokenAfterIdentifiers() {
+        size_t currentPos = pos;
+
+        // namespace1.namespace2.class
+        while (currentPos + 1 < tokens.size() &&
+            tokens[currentPos].type == TokenType::IDENTIFIER &&
+            tokens[currentPos + 1].type == TokenType::DELIMITER &&
+            tokens[currentPos + 1].value == ".")
+        {
+            currentPos += 2;
+        }
+
+        if (currentPos < tokens.size() && tokens[currentPos].type == TokenType::IDENTIFIER) {
+            currentPos++;
+        }
+
+        return (currentPos < tokens.size()) ? &tokens[currentPos] : nullptr;
     }
 
     void ReportSyntaxError(const Token* token, const std::string& message);
@@ -38,9 +55,9 @@ public:
     std::unique_ptr<Expression> ParsePrimaryExpr();
     std::unique_ptr<FunctionCallExpr> ParseFunctionCallExpr(std::unique_ptr<Expression> base);
 	std::unique_ptr<VarDeclExpr> ParseVarDeclExpr();
-	std::unique_ptr<VarDeclExpr> ParseVarDeclarationArray(const Token& type);
+	std::unique_ptr<VarDeclExpr> ParseVarDeclarationArray(const Token& type, bool isPointer = false, bool isReference = false, bool isAddress = false);
 	std::unique_ptr<ArrayExpr> ParseArrayValues();
-    std::unique_ptr<MemberAccessExpr> ParseMemberAccess(std::unique_ptr<Expression> base);
+    std::unique_ptr<Expression> ParseMemberAccess(std::unique_ptr<Expression> base);
     std::unique_ptr<ConstructorCallExpr> ParseConstructorCall();
     std::unique_ptr<InstanceDeclExpr> ParseInstanceDeclExpr();
 

@@ -26,7 +26,9 @@ Token* Parser::Consume(TokenType tokenType)
         pos++;
     }
     else {
-        ReportSyntaxError(token, "Unexpected token: " + (token ? token->value : "EOF"));
+        std::string errorMsg = "Unexpected token: " + (token ? token->value : "EOF");
+        errorMsg += ", expected: '" + TokenTypeToString(tokenType) + "'";
+        ReportSyntaxError(token, errorMsg);
         std::exit(EXIT_FAILURE);
     }
     return token;
@@ -351,12 +353,28 @@ std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclExpr()
         std::string type = token->value; // Сохраняем тип переменной
         Consume(TokenType::KEYWORD);
 
+        // Флаги для указателей, ссылок, адресов
+        bool isPointer = false;
+        bool isReference = false;
+        bool isAddress = false;
+
+        // Проверяем `*`, `&`, `@` после типа
+        while (CurrentToken() && CurrentToken()->type == TokenType::OPERATOR) {
+            std::string op = CurrentToken()->value;
+            if (op == "*") isPointer = true;
+            else if (op == "&") isReference = true;
+            else if (op == "@") isAddress = true;
+            else break; // Неизвестный оператор — выходим
+
+            Consume(TokenType::OPERATOR);
+        }
+
         Token* identifier = CurrentToken();
         if (identifier->type == TokenType::IDENTIFIER) {
             // Объявление переменной без инициализации
             if (IsEndOfStatement(*PeekToken(1)) || PeekToken(1)->type == TokenType::KEYWORD) {
                 Consume(TokenType::IDENTIFIER);
-                return std::make_unique<VarDeclExpr>(token->value, identifier->value, nullptr);
+                return std::make_unique<VarDeclExpr>(token->value, identifier->value, nullptr, false, false, isPointer, isReference, isAddress);
             }
             // Объявление переменной с инициализацией
             else if (PeekToken(1)->type == TokenType::OPERATOR) {
@@ -367,12 +385,12 @@ std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclExpr()
                 Token* valueToken = CurrentToken();
                 if (IsLiteral(valueToken->type) || valueToken->type == TokenType::IDENTIFIER) {
                     std::unique_ptr<Expression> value = ParseExpression();
-                    return std::make_unique<VarDeclExpr>(token->value, identifier->value, std::move(value));
+                    return std::make_unique<VarDeclExpr>(token->value, identifier->value, std::move(value), false, false, isPointer, isReference, isAddress);
                 }
             }
             // Объявление переменной массива
             else if (PeekToken(1)->type == TokenType::BRACKET) {
-                return ParseVarDeclarationArray(*token);
+                return ParseVarDeclarationArray(*token, isPointer, isReference, isAddress);
             }
         }
     }
@@ -384,7 +402,7 @@ std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclExpr()
 std::unique_ptr<ArrayExpr> Parser::ParseArrayValues() {
     std::vector<std::unique_ptr<Expression>> values;
 
-    Consume(TokenType::BRACKET);  // `{`
+    Consume(TokenType::BRACKET, "{");  // `{`
 
     while (CurrentToken()->value != "}") {
         if (CurrentToken()->value == "{") {
@@ -408,7 +426,7 @@ std::unique_ptr<ArrayExpr> Parser::ParseArrayValues() {
         }
     }
 
-    Consume(TokenType::BRACKET);  // `}`
+    Consume(TokenType::BRACKET, "}");  // `}`
     return std::make_unique<ArrayExpr>(std::vector<std::unique_ptr<Expression>>(), std::move(values));
 }
 
@@ -428,8 +446,8 @@ std::unique_ptr<Expression> Parser::ParseArrayAccess(std::unique_ptr<Expression>
     return std::make_unique<ArrayAccessExpr>(std::move(base), std::move(indexes));
 }
 
-std::unique_ptr<MemberAccessExpr> Parser::ParseMemberAccess(std::unique_ptr<Expression> base) {
-    Consume(TokenType::DELIMITER); // Потребляем `.`
+std::unique_ptr<Expression> Parser::ParseMemberAccess(std::unique_ptr<Expression> base) {
+    Consume(TokenType::DELIMITER, "."); // Потребляем `.`
 
     Token* memberToken = CurrentToken();
     if (!memberToken || memberToken->type != TokenType::IDENTIFIER) {
@@ -454,17 +472,17 @@ std::unique_ptr<ConstructorCallExpr> Parser::ParseConstructorCall()
 
 std::unique_ptr<InstanceDeclExpr> Parser::ParseInstanceDeclExpr()
 {
-    Token* constructTypeName = Consume(TokenType::IDENTIFIER);
+    std::unique_ptr<Expression> constructType = ParseIdentifierExpr();
     Token* identifierName = Consume(TokenType::IDENTIFIER);
     std::unique_ptr<Expression> initializer = nullptr;
     if (CurrentToken()->value == "=") {
         Consume(TokenType::OPERATOR, "=");
         initializer = ParseExpression();
     }
-    return std::make_unique<InstanceDeclExpr>(std::move(constructTypeName->value), std::move(identifierName->value), std::move(initializer));
+    return std::make_unique<InstanceDeclExpr>(std::move(constructType), std::move(identifierName->value), std::move(initializer));
 }
 
-std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclarationArray(const Token& type)
+std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclarationArray(const Token& type, bool isPointer, bool isReference, bool isAddress)
 {
     Token* identifier = Consume(TokenType::IDENTIFIER);
     std::vector<std::unique_ptr<Expression>> sizes;  // Размеры массива
@@ -487,7 +505,11 @@ std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclarationArray(const Token& type)
             type.value,
             identifier->value,
             std::make_unique<ArrayExpr>(std::move(sizes), std::vector<std::unique_ptr<Expression>>()),
-            true
+            true,
+            false,
+            isPointer,
+            isReference,
+            isAddress
         );
     }
     else if (next && GetOperatorCategory(next->value) == OperatorCategory::Assignment) {
@@ -500,7 +522,11 @@ std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclarationArray(const Token& type)
                 type.value,
                 identifier->value,
                 std::make_unique<ArrayExpr>(std::move(sizes), std::move(values->values)),
-                true
+                true,
+                false,
+                isPointer,
+                isReference,
+                isAddress
             );
         }
     }
@@ -575,7 +601,7 @@ std::unique_ptr<Statement> Parser::ParseStatement()
         break;
 
     case TokenType::IDENTIFIER:
-        if (PeekToken(1)->type == TokenType::IDENTIFIER) {
+        if (PeekToken(1)->type == TokenType::IDENTIFIER || PeekTokenAfterIdentifiers()->type == TokenType::IDENTIFIER) {
             return ParseInstanceDeclStmt();
         }
         return ParseIdentifier(); // Обрабатываем идентификатор

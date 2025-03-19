@@ -6,9 +6,14 @@ class BaseIdentifierVisitor;
 
 struct ASTNode {
     virtual ~ASTNode() = default;
+
     virtual void print(int indent = 0) {
-        std::cout << "ASTNode\n";
-    };
+        std::cout << ToString(indent) << "\n";
+    }
+
+    virtual std::string ToString(int indent = 0) const {
+        return std::string(indent, ' ') + "ASTNode";
+    }
 };
 
 struct Expression : ASTNode {
@@ -45,10 +50,16 @@ struct BinaryExpr : Expression {
     BinaryExpr(std::string op, std::unique_ptr<Expression> left, std::unique_ptr<Expression> right)
         : op(std::move(op)), left(std::move(left)), right(std::move(right)) {
     }
+
+    std::string ToString(int indent = 0) const override {
+        std::string result = std::string(indent, ' ') + "Binary expression (" + op + "):\n";
+        if (left) result += left->ToString(indent + 1) + "\n";
+        if (right) result += right->ToString(indent + 1);
+        return result;
+    }
+
     void print(int indent = 0) override {
-        std::cout << std::string(indent, ' ') << "Binary expression: " << op << "\n";
-        if (left) left->print(indent + 2);
-        if (right) right->print(indent + 2);
+        std::cout << ToString(indent) << "\n";
     }
     void Accept(ExpressionVisitor& visitor) override;
 };
@@ -59,8 +70,12 @@ struct IdentifierExpr : Expression {
     explicit IdentifierExpr(std::string name) : name(std::move(name)) {}
     IdentifierExpr(IdentifierExpr& other) : name(std::move(other.name)) {}
 
+    std::string ToString(int indent = 0) const override {
+        return std::string(indent, ' ') + "Identifier: " + name;
+    }
+
     void print(int indent = 0) override {
-        std::cout << std::string(indent, ' ') << "Identifier : " << name << "\n";
+        std::cout << ToString(indent) << "\n";
     }
 
     void Accept(ExpressionVisitor& visitor) override;
@@ -69,72 +84,112 @@ struct IdentifierExpr : Expression {
 struct NumberLiteralExpr : Expression {
     std::string value;
     explicit NumberLiteralExpr(std::string value) : value(std::move(value)) {}
-    void print(int indent = 0) override {
-		std::cout << std::string(indent, ' ') << "Number literal: " << value << "\n";
+
+    std::string ToString(int indent = 0) const override {
+        return std::string(indent, ' ') + "Number literal: " + value;
     }
+
+    void print(int indent = 0) override {
+        std::cout << ToString(indent) << "\n";
+    }
+
     void Accept(ExpressionVisitor& visitor) override;
 };
 
 struct StringLiteralExpr : Expression {
     std::string value;
     explicit StringLiteralExpr(std::string value) : value(std::move(value)) {}
-    void print(int indent = 0) override {
-        std::cout << std::string(indent, ' ') << "String literal: " << value << "\n";
+
+    std::string ToString(int indent = 0) const override {
+        return std::string(indent, ' ') + "String literal: " + value;
     }
+
+    void print(int indent = 0) override {
+        std::cout << ToString(indent) << "\n";
+    }
+
     void Accept(ExpressionVisitor& visitor) override;
 };
 
 struct CharLiteralExpr : Expression {
     char value;
-    explicit CharLiteralExpr(char value) : value(std::move(value)) {}
-	void print(int indent = 0) override {
-		std::cout << std::string(indent, ' ') << "Char literal: " << value << "\n";
-	}
+    explicit CharLiteralExpr(char value) : value(value) {}
+
+    std::string ToString(int indent = 0) const override {
+        return std::string(indent, ' ') + "Char literal: " + value;
+    }
+
+    void print(int indent = 0) override {
+        std::cout << ToString(indent) << "\n";
+    }
+
     void Accept(ExpressionVisitor& visitor) override;
 };
 
 struct ArrayExpr : Expression {
     std::vector<std::unique_ptr<Expression>> sizes;
     std::vector<std::unique_ptr<Expression>> values;
-    explicit ArrayExpr(std::vector<std::unique_ptr<Expression>> sizes, 
-        std::vector<std::unique_ptr<Expression>> values) : 
-		sizes(std::move(sizes)),
-        values(std::move(values)) {}
+
+    explicit ArrayExpr(std::vector<std::unique_ptr<Expression>> sizes,
+        std::vector<std::unique_ptr<Expression>> values)
+        : sizes(std::move(sizes)), values(std::move(values)) {
+    }
+
+    std::string ToString(int indent = 0) const override {
+        std::string result = std::string(indent, ' ') + "Array:";
+
+        if (!sizes.empty()) {
+            result += "\n" + std::string(indent + 1, ' ') + "Sizes:";
+            for (const auto& size : sizes) {
+                result += "\n" + size->ToString(indent + 2);
+            }
+        }
+
+        if (!values.empty()) {
+            result += "\n" + std::string(indent + 1, ' ') + "Values:";
+            for (const auto& value : values) {
+                result += "\n" + value->ToString(indent + 2);
+            }
+        }
+
+        return result;
+    }
+
     void print(int indent = 0) override {
-        std::cout << std::string(indent, ' ') << "Array: " << "\n";
-
-        std::cout << std::string(indent + 1, ' ') << "Sizes:\n";
-        for (const auto& size : sizes) {
-            size->print(indent + 2);
-        }
-
-        std::cout << std::string(indent + 1, ' ') << "Values:\n";
-        for (const auto& value : values) {
-            value->print(indent + 2);
-        }
+        std::cout << ToString(indent);
     }
 
     void Accept(ExpressionVisitor& visitor) override;
 };
 
 struct ArrayAccessExpr : Expression {
-    std::unique_ptr<Expression> base; // Может быть IdentifierExpr, вызов функции и т. д.
-    std::vector<std::unique_ptr<Expression>> indexes; // Индексы []
+    std::unique_ptr<Expression> base;
+    std::vector<std::unique_ptr<Expression>> indexes;
 
     ArrayAccessExpr(std::unique_ptr<Expression> base, std::vector<std::unique_ptr<Expression>> indexes)
         : base(std::move(base)), indexes(std::move(indexes)) {
     }
 
+    std::string ToString(int indent = 0) const override {
+        std::string result = std::string(indent, ' ') + "Array Access";
+
+        if (!indexes.empty()) {
+            result += " [";
+            for (size_t i = 0; i < indexes.size(); i++) {
+                if (i > 0) result += ", ";
+                result += indexes[i]->ToString(0); // Без отступов
+            }
+            result += "]";
+        }
+
+        result += ":\n" + base->ToString(indent + 1) + "\n";
+        return result;
+    }
+
     IdentifierExpr* GetIdentifier();
 
     void print(int indent = 0) override {
-        IdentifierExpr* identifier = GetIdentifier();
-        std::cout << std::string(indent, ' ') << "Array Access: " << identifier->name << "\n";
-        base->print(indent + 1);
-        std::cout << std::string(indent + 1, ' ') << "Indexes:" << "\n";
-        for (const auto& index : indexes) {
-            index->print(indent + 2);
-        }
+        std::cout << ToString(indent);
     }
 
     void Accept(ExpressionVisitor& visitor) override;
@@ -151,8 +206,10 @@ struct AssignmentExpr : Expression {
     }
 	void print(int indent = 0) override {
 		std::cout << std::string(indent, ' ') << "Assignment: " << op << "\n";
-        target->print(indent + 1);
-		if (value) value->print(indent + 1);
+        std::cout << std::string(indent + 1, ' ') << "l-lalue:\n";
+        target->print(indent + 2);
+        std::cout << std::string(indent + 1, ' ') << "r-value:\n";
+		if (value) value->print(indent + 2);
 	}
 
     void Accept(ExpressionVisitor& visitor) override;
@@ -164,19 +221,35 @@ struct VarDeclExpr : Expression {
     std::unique_ptr<Expression> value;  // Для присваивания
     bool isArray = false;
     bool isInstance = false;
+    bool isPointer = false;
+    bool isReference = false;
+    bool isAddress = false;
 
     explicit VarDeclExpr(std::string type, std::string name, std::unique_ptr<Expression> value,
         bool isArray = false,
-        bool isInstance = false)
+        bool isInstance = false,
+        bool isPointer = false,
+        bool isReference = false,
+        bool isAddress = false)
         : type(std::move(type)), name(std::move(name)), value(std::move(value)),
-        isArray(isArray), isInstance(isInstance) {
+        isArray(isArray), isInstance(isInstance),
+        isPointer(isPointer), isReference(isReference), isAddress(isAddress) {
+    }
+
+    std::string ToString(int indent = 0) const override {
+        std::string result = std::string(indent, ' ') + "Variable declaration: " + type + " " + name +
+            ", identifier: " + (isArray ? "true" : "false") +
+            ", instance: " + (isInstance ? "true" : "false") + 
+            ", pointer: " + (isPointer ? "true" : "false") +
+            ", reference: " + (isReference ? "true" : "false") +
+            ", address: " + (isAddress ? "true" : "false");
+
+        if (value) result += "\n" + value->ToString(indent + 1);
+        return result;
     }
 
     void print(int indent = 0) override {
-        std::cout << std::string(indent, ' ') << "Variable declaration: " << type << " " << name <<
-            " identifier: " << isArray <<
-            " instance: " << isInstance << "\n";
-        if (value) value->print(indent + 1);
+        std::cout << ToString(indent) << "\n";
     }
 
     void Accept(ExpressionVisitor& visitor) override;
@@ -193,16 +266,25 @@ struct FunctionCallExpr : Expression {
 
     IdentifierExpr* GetIdentifier();
 
-    void print(int indent = 0) override {
-        IdentifierExpr* identifier = GetIdentifier();
-        std::cout << std::string(indent, ' ') << "Function call: " << identifier->name << "\n";
-        base->print(indent + 1);
-        if (arguments.size()) {
-            std::cout << std::string(indent + 1, ' ') << "Arguments: " << "\n";
+    std::string ToString(int indent = 0) const override {
+        std::string result = std::string(indent, ' ') + "Function call:";
+
+        if (!arguments.empty()) {
+            result += std::string(indent + 1, ' ') + "Arguments:";
             for (const auto& arg : arguments) {
-                arg->print(indent + 2);
+                result += "\n" + arg->ToString(indent + 2);
             }
         }
+        else {
+            result += "\n";
+        }
+        result += base->ToString(indent + 1);
+        return result;
+    }
+
+
+    void print(int indent = 0) override {
+        std::cout << ToString(indent) << "\n";
     }
 
     void Accept(ExpressionVisitor& visitor) override;
@@ -218,11 +300,13 @@ struct MemberAccessExpr : Expression {
 
     IdentifierExpr* GetIdentifier();
 
+    std::string ToString(int indent = 0) const override {
+        return std::string(indent, ' ') + "Member Access: " + member + "\n" +
+            base->ToString(indent + 1);
+    }
+
     void print(int indent = 0) override {
-        IdentifierExpr* identifier = GetIdentifier();
-        std::cout << std::string(indent, ' ') << "Member Access: " << identifier->name <<"\n";
-        base->print(indent + 1);
-        std::cout << std::string(indent + 1, ' ') << "Member: " << member << "\n";
+        std::cout << ToString(indent) << "\n";
     }
 
     void Accept(ExpressionVisitor& visitor) override;
@@ -247,18 +331,19 @@ struct ConstructorCallExpr : Expression {
 };
 
 struct InstanceDeclExpr : Expression {
-    std::string constructTypeName;
+    std::unique_ptr<Expression> constructType;
     std::string identifierName;
     std::unique_ptr<Expression> call;
 
-    InstanceDeclExpr(std::string constructTypeName,
+    InstanceDeclExpr(std::unique_ptr<Expression> constructType,
         std::string identifierName,
         std::unique_ptr<Expression> call)
-        : constructTypeName(constructTypeName), identifierName(identifierName), call(std::move(call)) {
+        : constructType(std::move(constructType)), identifierName(identifierName), call(std::move(call)) {
     }
 
     void print(int indent = 0) override {
-        std::cout << std::string(indent, ' ') << "Instance " << constructTypeName << " declaration: " << identifierName << "\n";
+        std::cout << std::string(indent, ' ') << "Instance declaration: " << identifierName << "\n";
+        constructType->print(indent + 1);
         if (call) call->print(indent + 1);
     }
 

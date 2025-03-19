@@ -10,6 +10,27 @@ int main(int argc = 0, string argv) {
     return 0;
 }
 
+int i = 0;
+while (i < size) {
+    if (element < 0) {
+        element += elements.size();
+    }
+    i += 1;
+}
+
+do {
+    if (element < 0) {
+        element += elements.size();
+    }
+    i += 1;
+} while (i < size);
+
+for (int i = 0; i < size; i += 1){
+    if (element < 0) {
+        element += elements.size();
+    }
+}
+
 foreach(int element in elements){
     if (element < 0) {
         element += elements.size();
@@ -41,4 +62,7 @@ group GameSettings {
     }
 }
 
-MyClass instance = new MyClass(7, "test", 'c', new Player("player"));
+namespace1.namespace2.MyClass instance = new MyClass(7, "test", 'c', new Player("player"));
+TestClass instance = TestClass1.TestClass2;
+int* ptr = 4;
+//int arr[4][3] = {{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11, 12}};
