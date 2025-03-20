@@ -1,5 +1,5 @@
 #pragma once
-enum class ScopeType { None, Class, Struct, Group, Function };
+enum class ScopeType { Global, Class, Struct, Interface, Enum, Group, Function, Namespace };
 
 struct Scope {
     ScopeType type;      // “ип области (Class, Function, Struct и т. д.)
