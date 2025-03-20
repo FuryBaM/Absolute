@@ -55,11 +55,12 @@ public:
     std::unique_ptr<Expression> ParsePrimaryExpr();
     std::unique_ptr<FunctionCallExpr> ParseFunctionCallExpr(std::unique_ptr<Expression> base);
 	std::unique_ptr<VarDeclExpr> ParseVarDeclExpr();
-	std::unique_ptr<VarDeclExpr> ParseVarDeclarationArray(const Token& type, bool isPointer = false, bool isReference = false, bool isAddress = false);
+	std::unique_ptr<VarDeclExpr> ParseVarDeclarationArray(const Token& type);
 	std::unique_ptr<ArrayExpr> ParseArrayValues();
     std::unique_ptr<Expression> ParseMemberAccess(std::unique_ptr<Expression> base);
     std::unique_ptr<ConstructorCallExpr> ParseConstructorCall();
     std::unique_ptr<InstanceDeclExpr> ParseInstanceDeclExpr();
+    std::unique_ptr<Expression> ParseUnaryExpr();
 
     std::unique_ptr<Program> Parse();
     std::unique_ptr<Statement> ParseStatement();

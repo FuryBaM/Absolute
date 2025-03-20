@@ -53,6 +53,7 @@ std::string TokenTypeToString(TokenType type);
 extern std::unordered_map<TokenType, std::string> token_spec;
 extern std::unordered_map<std::string, int> precedence;
 
+bool IsUnary(const Token& token);
 int GetOperatorPrecedence(const std::string& op);
 bool IsValidTokenValue(TokenType tokenType, const std::string& value);
 bool IsLiteral(const TokenType& type);

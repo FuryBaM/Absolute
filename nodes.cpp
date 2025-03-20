@@ -80,3 +80,7 @@ void ConstructorCallExpr::Accept(ExpressionVisitor& visitor) {
 void InstanceDeclExpr::Accept(ExpressionVisitor& visitor) {
     visitor.Visit(this);
 }
+
+void UnaryExpr::Accept(ExpressionVisitor& visitor) {
+    visitor.Visit(this);
+}

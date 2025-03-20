@@ -30,6 +30,34 @@ std::unordered_map<std::string, int> precedence = {
     {"++", 13}, {"--", 13}  // Инкремент и декремент (постфикс)
 };
 
+std::unordered_set<std::string> unaryOps = {
+        "*", "&", "++", "--", "-", "+", "!", "~"
+};
+
+std::unordered_map<std::string, OperatorCategory> categories = {
+        {"+", OperatorCategory::Arithmetic}, {"-", OperatorCategory::Arithmetic},
+        {"*", OperatorCategory::Arithmetic}, {"/", OperatorCategory::Arithmetic},
+        {"%", OperatorCategory::Arithmetic}, {"++", OperatorCategory::Arithmetic},
+        {"--", OperatorCategory::Arithmetic},
+
+        {"==", OperatorCategory::Comparison}, {"!=", OperatorCategory::Comparison},
+        {"<", OperatorCategory::Comparison},  {">", OperatorCategory::Comparison},
+        {"<=", OperatorCategory::Comparison}, {">=", OperatorCategory::Comparison},
+
+        {"&&", OperatorCategory::Logical}, {"||", OperatorCategory::Logical},
+        {"!", OperatorCategory::Logical},
+
+        {"&", OperatorCategory::Bitwise}, {"|", OperatorCategory::Bitwise},
+        {"^", OperatorCategory::Bitwise}, {"~", OperatorCategory::Bitwise},
+        {"<<", OperatorCategory::Bitwise}, {">>", OperatorCategory::Bitwise},
+
+        {"=", OperatorCategory::Assignment},  {"+=", OperatorCategory::Assignment},
+        {"-=", OperatorCategory::Assignment}, {"*=", OperatorCategory::Assignment},
+        {"/=", OperatorCategory::Assignment}, {"%=", OperatorCategory::Assignment},
+        {"&=", OperatorCategory::Assignment}, {"|=", OperatorCategory::Assignment},
+        {"^=", OperatorCategory::Assignment}
+};
+
 std::string TokenTypeToString(TokenType type) {
     switch (type) {
     case TokenType::NUMBER: return "NUMBER";
@@ -44,6 +72,10 @@ std::string TokenTypeToString(TokenType type) {
     case TokenType::WHITESPACE: return "WHITESPACE";
     default: return "UNKNOWN";
     }
+}
+
+bool IsUnary(const Token& token) {
+    return token.type == TokenType::OPERATOR && unaryOps.count(token.value) > 0;
 }
 
 // Проверка, входит ли значение в допустимые токены по token_spec
@@ -72,30 +104,6 @@ bool IsEndOfStatement(const Token& token)
 }
 
 OperatorCategory GetOperatorCategory(const std::string& op) {
-    static const std::unordered_map<std::string, OperatorCategory> categories = {
-        {"+", OperatorCategory::Arithmetic}, {"-", OperatorCategory::Arithmetic},
-        {"*", OperatorCategory::Arithmetic}, {"/", OperatorCategory::Arithmetic},
-        {"%", OperatorCategory::Arithmetic}, {"++", OperatorCategory::Arithmetic},
-        {"--", OperatorCategory::Arithmetic},
-
-        {"==", OperatorCategory::Comparison}, {"!=", OperatorCategory::Comparison},
-        {"<", OperatorCategory::Comparison},  {">", OperatorCategory::Comparison},
-        {"<=", OperatorCategory::Comparison}, {">=", OperatorCategory::Comparison},
-
-        {"&&", OperatorCategory::Logical}, {"||", OperatorCategory::Logical},
-        {"!", OperatorCategory::Logical},
-
-        {"&", OperatorCategory::Bitwise}, {"|", OperatorCategory::Bitwise},
-        {"^", OperatorCategory::Bitwise}, {"~", OperatorCategory::Bitwise},
-        {"<<", OperatorCategory::Bitwise}, {">>", OperatorCategory::Bitwise},
-
-        {"=", OperatorCategory::Assignment},  {"+=", OperatorCategory::Assignment},
-        {"-=", OperatorCategory::Assignment}, {"*=", OperatorCategory::Assignment},
-        {"/=", OperatorCategory::Assignment}, {"%=", OperatorCategory::Assignment},
-        {"&=", OperatorCategory::Assignment}, {"|=", OperatorCategory::Assignment},
-        {"^=", OperatorCategory::Assignment}
-    };
-
     auto it = categories.find(op);
     return (it != categories.end()) ? it->second : OperatorCategory::Unknown;
 }

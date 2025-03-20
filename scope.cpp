@@ -18,5 +18,5 @@ std::string GetCurrentScopeName() {
 }
 
 ScopeType GetCurrentScopeType() {
-    return scopeStack.empty() ? ScopeType::None : scopeStack.back().type;
+    return scopeStack.empty() ? ScopeType::Global : scopeStack.back().type;
 }

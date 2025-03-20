@@ -221,28 +221,18 @@ struct VarDeclExpr : Expression {
     std::unique_ptr<Expression> value;  // Для присваивания
     bool isArray = false;
     bool isInstance = false;
-    bool isPointer = false;
-    bool isReference = false;
-    bool isAddress = false;
 
     explicit VarDeclExpr(std::string type, std::string name, std::unique_ptr<Expression> value,
         bool isArray = false,
-        bool isInstance = false,
-        bool isPointer = false,
-        bool isReference = false,
-        bool isAddress = false)
+        bool isInstance = false)
         : type(std::move(type)), name(std::move(name)), value(std::move(value)),
-        isArray(isArray), isInstance(isInstance),
-        isPointer(isPointer), isReference(isReference), isAddress(isAddress) {
+        isArray(isArray), isInstance(isInstance) {
     }
 
     std::string ToString(int indent = 0) const override {
         std::string result = std::string(indent, ' ') + "Variable declaration: " + type + " " + name +
             ", identifier: " + (isArray ? "true" : "false") +
-            ", instance: " + (isInstance ? "true" : "false") + 
-            ", pointer: " + (isPointer ? "true" : "false") +
-            ", reference: " + (isReference ? "true" : "false") +
-            ", address: " + (isAddress ? "true" : "false");
+            ", instance: " + (isInstance ? "true" : "false");
 
         if (value) result += "\n" + value->ToString(indent + 1);
         return result;
@@ -345,6 +335,38 @@ struct InstanceDeclExpr : Expression {
         std::cout << std::string(indent, ' ') << "Instance declaration: " << identifierName << "\n";
         constructType->print(indent + 1);
         if (call) call->print(indent + 1);
+    }
+
+    void Accept(ExpressionVisitor& visitor) override;
+};
+
+struct UnaryExpr : Expression {
+    std::string op;
+    std::unique_ptr<Expression> operand;
+    int repeats = 1;
+    bool isPostfix = false;
+
+    UnaryExpr(std::string op, std::unique_ptr<Expression> operand, int repeats = 1, bool isPostfix = false)
+        : op(std::move(op)), operand(std::move(operand)), repeats(repeats), isPostfix(isPostfix) {
+    }
+
+    std::string ToString(int indent = 0) const override {
+        std::string result = std::string(indent, ' ') + "Unary expression: ";
+
+        if (!isPostfix) {
+            result += std::string(repeats, op[0]); // Повторяем оператор `repeats` раз
+        }
+        if (operand) {
+            result += operand->ToString(0);
+        }
+        if (isPostfix) {
+            result += std::string(repeats, op[0]); // Повторяем оператор `repeats` раз
+        }
+        return result;
+    }
+
+    void print(int indent = 0) override {
+        std::cout << ToString(indent) << "\n";
     }
 
     void Accept(ExpressionVisitor& visitor) override;
