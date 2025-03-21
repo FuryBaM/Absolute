@@ -81,6 +81,10 @@ void InstanceDeclExpr::Accept(ExpressionVisitor& visitor) {
     visitor.Visit(this);
 }
 
-void UnaryExpr::Accept(ExpressionVisitor& visitor) {
+void PrefixUnaryExpr::Accept(ExpressionVisitor& visitor) {
+    visitor.Visit(this);
+}
+
+void PostfixUnaryExpr::Accept(ExpressionVisitor& visitor) {
     visitor.Visit(this);
 }

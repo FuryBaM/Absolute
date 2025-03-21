@@ -216,13 +216,6 @@ std::unique_ptr<Expression> Parser::ParseIdentifierExpr() {
         return ParseAssignmentExpr(std::move(expr));
     }
 
-    // Проверяем постфиксные операции (x++ и x--)
-    Token* postOp = CurrentToken();
-    if (postOp && (postOp->value == "++" || postOp->value == "--")) {
-        expr = std::make_unique<UnaryExpr>(postOp->value, std::move(expr), 1, true);
-        Consume(TokenType::OPERATOR);
-    }
-
     return expr;
 }
 
@@ -491,17 +484,14 @@ std::unique_ptr<InstanceDeclExpr> Parser::ParseInstanceDeclExpr()
 std::unique_ptr<Expression> Parser::ParseUnaryExpr() {
     std::string op;
     std::unique_ptr<Expression> operand;
-    int repeats = 0;
-    bool isPostfix = false;
 
     if  (CurrentToken()->type == TokenType::OPERATOR &&
         IsUnary(*CurrentToken())){
         op = CurrentToken()->value;
         // Поддерживаем `*`, `&`, `!`, `~`, `+`, `-`
-        while (CurrentToken()->value == op) {
-            Consume(TokenType::OPERATOR, op);
-            ++repeats;
-        }
+        Consume(TokenType::OPERATOR, op);
+        operand = ParseUnaryExpr();
+        return std::make_unique<PrefixUnaryExpr>(op, std::move(operand));
     }
 
     // Теперь парсим операнд
@@ -513,18 +503,10 @@ std::unique_ptr<Expression> Parser::ParseUnaryExpr() {
         std::exit(EXIT_FAILURE);
     }
 
-    // Проверяем `++` и `--` (постфиксные)
-    if (CurrentToken()->type == TokenType::OPERATOR &&
-        (CurrentToken()->value == "++" || CurrentToken()->value == "--")) {
-        op = CurrentToken()->value;
-        isPostfix = true;
-        Consume(TokenType::OPERATOR, op);
-    }
-
     // Если не было унарных операторов, просто возвращаем операнд
     if (op.empty()) return operand;
 
-    return std::make_unique<UnaryExpr>(std::move(op), std::move(operand), repeats, isPostfix);
+    return std::make_unique<PrefixUnaryExpr>(std::move(op), std::move(operand));
 }
 
 std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclarationArray(const Token& type)

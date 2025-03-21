@@ -340,27 +340,45 @@ struct InstanceDeclExpr : Expression {
     void Accept(ExpressionVisitor& visitor) override;
 };
 
-struct UnaryExpr : Expression {
+struct PrefixUnaryExpr : Expression {
     std::string op;
     std::unique_ptr<Expression> operand;
-    int repeats = 1;
-    bool isPostfix = false;
 
-    UnaryExpr(std::string op, std::unique_ptr<Expression> operand, int repeats = 1, bool isPostfix = false)
-        : op(std::move(op)), operand(std::move(operand)), repeats(repeats), isPostfix(isPostfix) {
+    PrefixUnaryExpr(std::string op, std::unique_ptr<Expression> operand)
+        : op(std::move(op)), operand(std::move(operand)) {
     }
 
     std::string ToString(int indent = 0) const override {
-        std::string result = std::string(indent, ' ') + "Unary expression: ";
+        std::string result = std::string(indent, ' ') + "Prefix Unary expression: ";
 
-        if (!isPostfix) {
-            result += std::string(repeats, op[0]); // Повторяем оператор `repeats` раз
-        }
+        result += op; // Повторяем оператор `repeats` раз
         if (operand) {
             result += operand->ToString(0);
         }
-        if (isPostfix) {
-            result += std::string(repeats, op[0]); // Повторяем оператор `repeats` раз
+        return result;
+    }
+
+    void print(int indent = 0) override {
+        std::cout << ToString(indent) << "\n";
+    }
+
+    void Accept(ExpressionVisitor& visitor) override;
+};
+
+struct PostfixUnaryExpr : Expression {
+    std::string op;
+    std::unique_ptr<Expression> operand;
+
+    PostfixUnaryExpr(std::string op, std::unique_ptr<Expression> operand)
+        : op(std::move(op)), operand(std::move(operand)) {
+    }
+
+    std::string ToString(int indent = 0) const override {
+        std::string result = std::string(indent, ' ') + "Prefix Unary expression: ";
+
+        result += op; // Повторяем оператор `repeats` раз
+        if (operand) {
+            result += operand->ToString(0);
         }
         return result;
     }

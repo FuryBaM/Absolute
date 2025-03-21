@@ -18,11 +18,27 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="include\expression_visitor.h" />
+    <ClInclude Include="include\lexer.h" />
+    <ClInclude Include="include\nodes.h" />
+    <ClInclude Include="include\parser.h" />
+    <ClInclude Include="include\pch.h" />
+    <ClInclude Include="include\scope.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\Absolute.cpp" />
+    <ClCompile Include="src\lexer.cpp" />
+    <ClCompile Include="src\nodes.cpp" />
+    <ClCompile Include="src\parser.cpp" />
+    <ClCompile Include="src\pch.cpp" />
+    <ClCompile Include="src\scope.cpp" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
     <ProjectGuid>{295b9417-34ee-4d42-922c-505bafc37b9b}</ProjectGuid>
-    <RootNamespace>Absolute</RootNamespace>
+    <RootNamespace>Absolute-Parser</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
     <ProjectName>Absolute-Parser</ProjectName>
   </PropertyGroup>
@@ -81,6 +97,7 @@
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
       <PrecompiledHeader>Create</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -100,6 +117,7 @@
       <PrecompiledHeader>Create</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -118,6 +136,7 @@
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
       <PrecompiledHeader>Create</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -137,6 +156,7 @@
       <PrecompiledHeader>Create</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -145,22 +165,6 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
   </ItemDefinitionGroup>
-  <ItemGroup>
-    <ClCompile Include="Absolute.cpp" />
-    <ClCompile Include="lexer.cpp" />
-    <ClCompile Include="nodes.cpp" />
-    <ClCompile Include="parser.cpp" />
-    <ClCompile Include="pch.cpp" />
-    <ClCompile Include="scope.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="expression_visitor.h" />
-    <ClInclude Include="lexer.h" />
-    <ClInclude Include="nodes.h" />
-    <ClInclude Include="parser.h" />
-    <ClInclude Include="pch.h" />
-    <ClInclude Include="scope.h" />
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

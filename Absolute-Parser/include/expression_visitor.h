@@ -15,7 +15,8 @@ public:
     virtual void Visit(MemberAccessExpr* expr) = 0;
     virtual void Visit(ConstructorCallExpr* expr) = 0;
     virtual void Visit(InstanceDeclExpr* expr) = 0;
-    virtual void Visit(UnaryExpr* expr) = 0;
+    virtual void Visit(PrefixUnaryExpr* expr) = 0;
+    virtual void Visit(PostfixUnaryExpr* expr) = 0;
 };
 
 class BaseIdentifierVisitor : public ExpressionVisitor {
@@ -77,7 +78,11 @@ public:
         expr->Accept(*this);
     }
 
-    void Visit(UnaryExpr* expr) override {
+    void Visit(PrefixUnaryExpr* expr) override {
+        expr->operand->Accept(*this);
+    }
+
+    void Visit(PostfixUnaryExpr* expr) override {
         expr->operand->Accept(*this);
     }
 };
