@@ -77,6 +77,10 @@ void ConstructorCallExpr::Accept(ExpressionVisitor& visitor) {
     visitor.Visit(this);
 }
 
+void DestructorCallExpr::Accept(ExpressionVisitor& visitor) {
+    visitor.Visit(this);
+}
+
 void InstanceDeclExpr::Accept(ExpressionVisitor& visitor) {
     visitor.Visit(this);
 }

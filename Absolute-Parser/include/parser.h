@@ -4,6 +4,7 @@
 class Parser {
 public:
     std::vector<Token> tokens;
+    std::vector<Token> modifiers;
     size_t pos = 0;
 
     Parser(std::vector<Token> tokens) : tokens(std::move(tokens)) {}
@@ -42,6 +43,8 @@ public:
     Token* Consume(TokenType tokenType);
     Token* Consume(TokenType tokenType, const std::string& expectedValue);
 
+    void ParseModifiers();
+
     std::unique_ptr<Expression> ParseExpression();
     std::vector<std::unique_ptr<VarDeclExpr>> ParseParameters();
     std::vector<std::unique_ptr<Expression>> ParseArguments();
@@ -55,10 +58,11 @@ public:
     std::unique_ptr<Expression> ParsePrimaryExpr();
     std::unique_ptr<FunctionCallExpr> ParseFunctionCallExpr(std::unique_ptr<Expression> base);
 	std::unique_ptr<VarDeclExpr> ParseVarDeclExpr();
-	std::unique_ptr<VarDeclExpr> ParseVarDeclarationArray(const Token& type);
 	std::unique_ptr<ArrayExpr> ParseArrayValues();
+    std::unique_ptr<Expression> ParseArrayAccess(std::unique_ptr<Expression> base);
     std::unique_ptr<Expression> ParseMemberAccess(std::unique_ptr<Expression> base);
     std::unique_ptr<ConstructorCallExpr> ParseConstructorCall();
+    std::unique_ptr<DestructorCallExpr> ParseDestructorCall();
     std::unique_ptr<InstanceDeclExpr> ParseInstanceDeclExpr();
     std::unique_ptr<Expression> ParseUnaryExpr();
 
@@ -67,7 +71,6 @@ public:
     std::unique_ptr<Statement> ParseIdentifier();
     std::unique_ptr<CompoundStmt> ParseCompoundStatement();
     std::unique_ptr<VarDeclStmt> ParseVarDeclaration();
-    std::unique_ptr<Expression> ParseArrayAccess(std::unique_ptr<Expression> base);
     std::unique_ptr<FunctionDeclStmt> ParseFunctionDeclaration();
 	std::unique_ptr<ReturnStmt> ParseReturnStmt();
 	std::unique_ptr<IfStmt> ParseIfStmt();

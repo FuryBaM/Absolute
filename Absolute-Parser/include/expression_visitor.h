@@ -14,6 +14,7 @@ public:
     virtual void Visit(VarDeclExpr* expr) = 0;
     virtual void Visit(MemberAccessExpr* expr) = 0;
     virtual void Visit(ConstructorCallExpr* expr) = 0;
+    virtual void Visit(DestructorCallExpr* expr) = 0;
     virtual void Visit(InstanceDeclExpr* expr) = 0;
     virtual void Visit(PrefixUnaryExpr* expr) = 0;
     virtual void Visit(PostfixUnaryExpr* expr) = 0;
@@ -71,6 +72,10 @@ public:
     }
 
     void Visit(ConstructorCallExpr* expr) override {
+        expr->Accept(*this);
+    }
+    
+    void Visit(DestructorCallExpr* expr) override {
         expr->Accept(*this);
     }
 

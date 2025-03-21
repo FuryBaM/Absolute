@@ -14,6 +14,13 @@ std::unordered_map<TokenType, std::string> token_spec = {
     {TokenType::WHITESPACE, R"(\s+)"},
 };
 
+std::unordered_set<std::string> modifiers = {
+    "public", "private", "protected", "sealed", "internal",
+    "virtual", "override", "const", "static",
+    "async", "await", 
+    "keep"
+};
+
 std::unordered_map<std::string, int> precedence = {
     {"=", 1}, {"+=", 1}, {"-=", 1}, {"*=", 1}, {"/=", 1}, {"%=", 1}, {"&=", 1}, {"|=", 1}, {"^=", 1}, // Присваивание
     {"||", 2}, // Логическое ИЛИ
@@ -30,8 +37,12 @@ std::unordered_map<std::string, int> precedence = {
     {"++", 13}, {"--", 13}  // Инкремент и декремент (постфикс)
 };
 
-std::unordered_set<std::string> unaryOps = {
+std::unordered_set<std::string> prefixUnaryOps = {
         "*", "&", "++", "--", "!", "~"
+};
+
+std::unordered_set<std::string> postfixUnaryOps = {
+        "++", "--"
 };
 
 std::unordered_map<std::string, OperatorCategory> categories = {
@@ -74,8 +85,21 @@ std::string TokenTypeToString(TokenType type) {
     }
 }
 
-bool IsUnary(const Token& token) {
-    return token.type == TokenType::OPERATOR && unaryOps.count(token.value) > 0;
+int GetOperatorPrecedence(const std::string& op) {
+    auto it = precedence.find(op);
+    return (it != precedence.end()) ? it->second : -1; // -1 если оператор не найден
+}
+
+bool IsModifier(const std::string& value) {
+    return modifiers.find(value) != modifiers.end();
+}
+
+bool IsPrefixUnary(const Token& token) {
+    return token.type == TokenType::OPERATOR && prefixUnaryOps.count(token.value) > 0;
+}
+
+bool IsPostfixUnary(const Token& token) {
+    return token.type == TokenType::OPERATOR && postfixUnaryOps.count(token.value) > 0;
 }
 
 // Проверка, входит ли значение в допустимые токены по token_spec
@@ -86,11 +110,6 @@ bool IsValidTokenValue(TokenType tokenType, const std::string& value) {
         return std::regex_match(value, pattern);
     }
     return false;
-}
-
-int GetOperatorPrecedence(const std::string& op) {
-    auto it = precedence.find(op);
-    return (it != precedence.end()) ? it->second : -1; // -1 если оператор не найден
 }
 
 bool IsLiteral(const TokenType& type)
