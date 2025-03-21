@@ -51,7 +51,7 @@ public:
     std::unique_ptr<NumberLiteralExpr> ParseNumberLiteralExpr();
     std::unique_ptr<StringLiteralExpr> ParseStringLiteralExpr();
     std::unique_ptr<CharLiteralExpr> ParseCharLiteralExpr();
-    std::unique_ptr<Expression> ParseBinaryExpr(int minPrecedence);
+    std::unique_ptr<Expression> ParseBinaryExpr(int minPrecedence, std::unique_ptr<Expression> left);
     std::unique_ptr<Expression> ParsePrimaryExpr();
     std::unique_ptr<FunctionCallExpr> ParseFunctionCallExpr(std::unique_ptr<Expression> base);
 	std::unique_ptr<VarDeclExpr> ParseVarDeclExpr();

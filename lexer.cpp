@@ -31,7 +31,7 @@ std::unordered_map<std::string, int> precedence = {
 };
 
 std::unordered_set<std::string> unaryOps = {
-        "*", "&", "++", "--", "-", "+", "!", "~"
+        "*", "&", "++", "--", "!", "~"
 };
 
 std::unordered_map<std::string, OperatorCategory> categories = {

@@ -134,7 +134,7 @@ std::unique_ptr<Statement> Parser::ParseIdentifier()
             return std::make_unique<SingleStatement>(std::move(identifier));
         }
     }
-    ReportSyntaxError(token, "Expected identifier.");
+    ReportSyntaxError(token, "Expected identifier token");
     std::exit(EXIT_FAILURE);
     return nullptr;
 }
@@ -142,19 +142,23 @@ std::unique_ptr<Statement> Parser::ParseIdentifier()
 std::unique_ptr<Expression> Parser::ParseExpression() {
     Token* token = CurrentToken();
     if (!token) {
-        ReportSyntaxError(token, "Expected identifier");
+        ReportSyntaxError(token, "Token is null");
         std::exit(EXIT_FAILURE);
         return nullptr;
     }
+    std::unique_ptr<Expression> left = nullptr;
 
-    // Бинарные операторы
-    Token* next = PeekToken(1);
+    // Парсим первичное выражение
+    left = ParsePrimaryExpr();
+    if (!left) return nullptr;
+
+    // Проверяем, идет ли дальше бинарный оператор
+    Token* next = CurrentToken();
     if (next && next->type == TokenType::OPERATOR) {
-        return ParseBinaryExpr(0);
+        return ParseBinaryExpr(0, std::move(left));
     }
 
-    // Просто парсим любое первичное выражение (числа, идентификаторы, вызовы функций, массивы)
-    return ParsePrimaryExpr();
+    return left;
 }
 
 std::unique_ptr<AssignmentExpr> Parser::ParseAssignmentExpr(std::unique_ptr<Expression> leftValue)
@@ -174,13 +178,6 @@ std::unique_ptr<AssignmentExpr> Parser::ParseAssignmentExpr(std::unique_ptr<Expr
 }
 
 std::unique_ptr<Expression> Parser::ParseIdentifierExpr() {
-    // Проверка на префиксные унарные операции
-    if (CurrentToken()->type == TokenType::OPERATOR &&
-        IsUnary(*CurrentToken()))
-    {
-        return ParseUnaryExpr();
-    }
-
     Token* identifier = CurrentToken();
     if (!identifier || identifier->type != TokenType::IDENTIFIER) {
         ReportSyntaxError(identifier, "Expected identifier");
@@ -285,10 +282,7 @@ std::unique_ptr<CharLiteralExpr> Parser::ParseCharLiteralExpr() {
 }
 
 
-std::unique_ptr<Expression> Parser::ParseBinaryExpr(int minPrecedence) {
-    std::unique_ptr<Expression> left = ParsePrimaryExpr(); // Читаем первый операнд
-    if (!left) return nullptr;
-
+std::unique_ptr<Expression> Parser::ParseBinaryExpr(int minPrecedence, std::unique_ptr<Expression> left) {
     while (true) {
         Token* opToken = CurrentToken();
         if (!opToken || opToken->type != TokenType::OPERATOR)
@@ -301,10 +295,21 @@ std::unique_ptr<Expression> Parser::ParseBinaryExpr(int minPrecedence) {
         // Сохраняем значение оператора до его потребления
         std::string op = opToken->value;
         Consume(TokenType::OPERATOR);
-        std::unique_ptr<Expression> right = ParseBinaryExpr(precedence + 1); // Парсим правый операнд
 
-        if (!right)
-            return nullptr;
+        std::unique_ptr<Expression> right = ParsePrimaryExpr();
+        if (!right) return nullptr;
+
+        while (true) {
+            Token* nextOp = CurrentToken();
+            if (!nextOp || nextOp->type != TokenType::OPERATOR)
+                break;
+
+            int nextPrecedence = GetOperatorPrecedence(nextOp->value);
+            if (nextPrecedence <= precedence)
+                break;
+
+            right = ParseBinaryExpr(precedence + 1, std::move(right));
+        }
 
         left = std::make_unique<BinaryExpr>(op, std::move(left), std::move(right));
     }
@@ -384,12 +389,8 @@ std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclExpr()
                 Consume(TokenType::OPERATOR);
 
                 Token* valueToken = CurrentToken();
-                if (IsLiteral(valueToken->type) || valueToken->type == TokenType::IDENTIFIER) {
+                if (IsLiteral(valueToken->type) || valueToken->type == TokenType::IDENTIFIER || IsUnary(*valueToken)) {
                     std::unique_ptr<Expression> value = ParseExpression();
-                    return std::make_unique<VarDeclExpr>(token->value, identifier->value, std::move(value), false, false);
-                }
-                else if (IsUnary(*valueToken)) {
-                    std::unique_ptr<Expression> value = ParseIdentifierExpr();
                     return std::make_unique<VarDeclExpr>(token->value, identifier->value, std::move(value), false, false);
                 }
             }

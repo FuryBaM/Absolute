@@ -24,6 +24,7 @@
     <ProjectGuid>{295b9417-34ee-4d42-922c-505bafc37b9b}</ProjectGuid>
     <RootNamespace>Absolute</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>Absolute-Parser</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">

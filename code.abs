@@ -64,5 +64,5 @@ group GameSettings {
 
 namespace1.namespace2.MyClass instance = new MyClass(7, "test", 'c', new Player("player"));
 TestClass instance = TestClass1.TestClass2;
-int ptr = testptr;
+int ptr = 3 * **testptr;
 //int arr[4][3] = {{1, 2, 3, 4}, {5, 6, 7, 8}, {9, 10, 11, 12}};
