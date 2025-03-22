@@ -447,6 +447,34 @@ struct PostfixUnaryExpr : Expression {
     void Accept(ExpressionVisitor& visitor) override;
 };
 
+struct TemplateExpr : Expression {
+    std::unique_ptr<Expression> base;
+    std::vector<std::unique_ptr<Expression>> types;
+
+    TemplateExpr(std::unique_ptr<Expression> base, std::vector<std::unique_ptr<Expression>> types) :
+        base(std::move(base)), types(std::move(types)){
+    }
+
+    IdentifierExpr* GetIdentifier();
+
+    std::string ToString(int indent = 0) const override {
+        std::string result = std::string(indent, ' ') + "Template:";
+        if (!types.empty()) {
+            for (const auto& type : types) {
+                result += "\n" + type->ToString(indent + 1);
+            }
+        }
+        result += ":\n" + base->ToString(indent + 1);
+        return result;
+    }
+
+    void print(int indent = 0) override {
+        std::cout << ToString(indent) << "\n";
+    }
+
+    void Accept(ExpressionVisitor& visitor) override;
+};
+
 // Обертка, чтобы сделать AssignmentExpr полноценным Statement
 struct AssignmentStmt : Statement {
     std::unique_ptr<AssignmentExpr> expr;
@@ -547,6 +575,20 @@ struct ReturnStmt : Statement {
 		std::cout << std::string(indent, ' ') << "Return statement: " << "\n";
 		if (expr) expr->print(indent + 1);
 	}
+};
+
+struct ContinueStmt : Statement {
+    explicit ContinueStmt() {}
+    void print(int indent = 0) override {
+        std::cout << std::string(indent, ' ') << "Continue statement" << "\n";
+    }
+};
+
+struct BreakStmt : Statement {
+    explicit BreakStmt() {}
+    void print(int indent = 0) override {
+        std::cout << std::string(indent, ' ') << "Break statement" << "\n";
+    }
 };
 
 // 🔹 Объявление функции
@@ -731,18 +773,25 @@ struct ForEachStmt : Statement {
 struct ClassDeclStmt : Statement {
     std::string name;
     std::vector<std::string> parents;
+    std::vector<Token> templateParams;
     std::unique_ptr<Statement> body;
 
-    ClassDeclStmt(std::string name, std::vector<std::string> parents, std::unique_ptr<Statement> body)
-        : name(std::move(name)), parents(std::move(parents)), body(std::move(body)) {
+    ClassDeclStmt(std::string name, std::vector<std::string> parents, std::vector<Token> templateParams, std::unique_ptr<Statement> body)
+        : name(std::move(name)), parents(std::move(parents)), templateParams(templateParams), body(std::move(body)) {
     }
 
     void print(int indent = 0) override {
-        std::cout << std::string(indent, ' ') << "Class Declaration: " << name << " : ";
+        std::cout << std::string(indent, ' ') << "Class Declaration: " << name;
 
-        for (const auto& parent : parents) {
-            std::cout << parent << " ";
+        if (!templateParams.empty()) {
+            std::cout << " <";
+            for (size_t i = 0; i < templateParams.size(); i++) {
+                if (i > 0) std::cout << ", ";
+                std::cout << templateParams[i].value;
+            }
+            std::cout << ">";
         }
+
         // Выводим модификаторы, если есть
         if (!modifiers.empty()) {
             std::cout << " [";
@@ -751,6 +800,14 @@ struct ClassDeclStmt : Statement {
                 std::cout << modifiers[i].value;
             }
             std::cout << "]";
+        }
+        
+        if (!parents.empty()) {
+            std::cout << " : ";
+
+            for (const auto& parent : parents) {
+                std::cout << parent << " ";
+            }
         }
 
         std::cout << "\n";

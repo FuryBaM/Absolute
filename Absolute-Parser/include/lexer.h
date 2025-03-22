@@ -10,7 +10,8 @@ enum class TokenType {
 	CHAR = 6,
 	COMMENT = 7,
 	BRACKET = 8,
-	WHITESPACE = 9,
+	DOLLAR = 9,
+	WHITESPACE = 10,
 };
 
 enum class OperatorCategory {
@@ -56,6 +57,7 @@ extern std::unordered_map<std::string, int> precedence;
 int GetOperatorPrecedence(const std::string& op);
 
 bool IsModifier(const std::string& value);
+bool IsDataType(const std::string& value);
 bool IsPrefixUnary(const Token& token);
 bool IsValidTokenValue(TokenType tokenType, const std::string& value);
 bool IsLiteral(const TokenType& type);

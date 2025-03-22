@@ -14,31 +14,29 @@ void ArrayAccessExpr::Accept(ExpressionVisitor& visitor) {
     visitor.Visit(this);
 }
 
-IdentifierExpr* ArrayAccessExpr::GetIdentifier() {
+IdentifierExpr* GetIdentifierBase(Expression* base) {
     if (!base) return nullptr;
 
     BaseIdentifierVisitor visitor;
     base->Accept(visitor); // Запускаем визитор
 
     return visitor.identifierExpr; // Возвращаем найденный IdentifierExpr
+}
+
+IdentifierExpr* ArrayAccessExpr::GetIdentifier() {
+    return GetIdentifierBase(base.get());
 }
 
 IdentifierExpr* FunctionCallExpr::GetIdentifier() {
-    if (!base) return nullptr;
-
-    BaseIdentifierVisitor visitor;
-    base->Accept(visitor); // Запускаем визитор
-
-    return visitor.identifierExpr; // Возвращаем найденный IdentifierExpr
+    return GetIdentifierBase(base.get());
 }
 
 IdentifierExpr* MemberAccessExpr::GetIdentifier() {
-    if (!base) return nullptr;
+    return GetIdentifierBase(base.get());
+}
 
-    BaseIdentifierVisitor visitor;
-    base->Accept(visitor); // Запускаем визитор
-
-    return visitor.identifierExpr; // Возвращаем найденный IdentifierExpr
+IdentifierExpr* TemplateExpr::GetIdentifier() {
+    return GetIdentifierBase(base.get());
 }
 
 void BinaryExpr::Accept(ExpressionVisitor& visitor) {
@@ -92,3 +90,8 @@ void PrefixUnaryExpr::Accept(ExpressionVisitor& visitor) {
 void PostfixUnaryExpr::Accept(ExpressionVisitor& visitor) {
     visitor.Visit(this);
 }
+
+void TemplateExpr::Accept(ExpressionVisitor& visitor) {
+    visitor.Visit(this);
+}
+

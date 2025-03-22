@@ -63,6 +63,17 @@ void Parser::ParseModifiers() {
     }
 }
 
+void Parser::ConsumeTemplateClose()
+{
+    if (CurrentToken()->value == ">>") {
+        tokens[pos].value = ">";  // Первый '>'
+        Token twin(TokenType::OPERATOR, ">", CurrentToken()->line, CurrentToken()->column + 1);
+        tokens.insert(tokens.begin() + pos + 1, twin);  // Второй '>'
+    }
+
+    Consume(TokenType::OPERATOR, ">");
+}
+
 std::vector<std::unique_ptr<VarDeclExpr>> Parser::ParseParameters()
 {
     if (CurrentToken()->value != "(") {
@@ -210,10 +221,6 @@ std::unique_ptr<Expression> Parser::ParseIdentifierExpr() {
 
         if (next->value == "(") {
             expr = ParseFunctionCallExpr(std::move(expr));
-            next = CurrentToken();
-            if (!next || (next->value != "." && next->value != "[")) {
-                break;
-            }
         }
         else if (next->value == "[") {
             expr = ParseArrayAccess(std::move(expr));
@@ -221,12 +228,46 @@ std::unique_ptr<Expression> Parser::ParseIdentifierExpr() {
         else if (next->value == ".") {
             expr = ParseMemberAccess(std::move(expr));
         }
+        else if (next->value == "$" && PeekToken(1)->value == "<") {
+            expr = ParseTemplateExpr(std::move(expr));
+        }
         else {
             break;
         }
     }
 
     return expr;
+}
+
+std::unique_ptr<Expression> Parser::ParseTemplateExpr(std::unique_ptr<Expression> base)
+{
+    std::vector<std::unique_ptr<Expression>> types;
+    Consume(TokenType::DOLLAR); // $
+    Consume(TokenType::OPERATOR, "<");
+
+    while (CurrentToken()->value != ">") {
+        if (CurrentToken()->type == TokenType::IDENTIFIER) {
+            types.push_back(ParseIdentifierExpr());
+        }
+        else if (IsDataType(CurrentToken()->value)) {
+            types.push_back(std::make_unique<IdentifierExpr>(CurrentToken()->value));
+            Consume(TokenType::KEYWORD);
+        }
+        else {
+            ReportSyntaxError(CurrentToken(), "Expected type name in template expression");
+            std::exit(EXIT_FAILURE);
+        }
+
+        if (CurrentToken()->value == ",") {
+            Consume(TokenType::DELIMITER, ",");
+        }
+        else {
+            ConsumeTemplateClose();
+            break;
+        }
+    }
+    
+    return std::make_unique<TemplateExpr>(std::move(base), std::move(types));
 }
 
 std::unique_ptr<Expression> Parser::ParseLiteralExpr()
@@ -557,6 +598,14 @@ std::unique_ptr<Statement> Parser::ParseStatement()
             return ParseFunctionDeclaration();
 		case Hash("return"):
 			return ParseReturnStmt();
+        case Hash("continue"):
+            Consume(TokenType::KEYWORD, "continue");
+            Consume(TokenType::DELIMITER, ";");
+            return std::make_unique<ContinueStmt>();
+        case Hash("break"):
+            Consume(TokenType::KEYWORD, "break");
+            Consume(TokenType::DELIMITER, ";");
+            return std::make_unique<BreakStmt>();
         case Hash("if"):
 			return ParseIfStmt();
 		case Hash("for"):
@@ -581,7 +630,7 @@ std::unique_ptr<Statement> Parser::ParseStatement()
         break;
 
     case TokenType::IDENTIFIER:
-        if (PeekToken(1)->type == TokenType::IDENTIFIER || 
+        if (PeekToken(1)->type == TokenType::DOLLAR || PeekToken(1)->type == TokenType::IDENTIFIER || 
             PeekTokenAfterIdentifiers()->type == TokenType::IDENTIFIER || 
             IsPrefixUnary(*PeekToken(1)) || IsPrefixUnary(*PeekTokenAfterIdentifiers())) {
             return ParseInstanceDeclStmt();
@@ -682,7 +731,7 @@ std::unique_ptr<IfStmt> Parser::ParseIfStmt()
 
         std::unique_ptr<Statement> elseBranch = nullptr;
 
-        while (CurrentToken()->type == TokenType::KEYWORD && CurrentToken()->value == "else") {
+        while (CurrentToken() && CurrentToken()->type == TokenType::KEYWORD && CurrentToken()->value == "else") {
             Consume(TokenType::KEYWORD, "else");
             if (CurrentToken()->type == TokenType::KEYWORD && CurrentToken()->value == "if") {
                 // `else if`
@@ -803,6 +852,30 @@ std::unique_ptr<ClassDeclStmt> Parser::ParseClassDecl()
     Consume(TokenType::KEYWORD, "class"); // class
     Token* identifier = Consume(TokenType::IDENTIFIER); // имя класса
 
+    std::vector<Token> templateParams;
+    if (CurrentToken()->type == TokenType::DOLLAR) {
+        Consume(TokenType::DOLLAR);
+        Consume(TokenType::OPERATOR, "<");
+        while (CurrentToken()->value != ">") {
+            if (CurrentToken()->type == TokenType::IDENTIFIER) {
+                templateParams.push_back(*Consume(CurrentToken()->type));
+            }
+            else {
+                ReportSyntaxError(CurrentToken(), "Expected type name in template expression");
+                std::exit(EXIT_FAILURE);
+            }
+
+            if (CurrentToken()->value == ",") {
+                Consume(TokenType::DELIMITER, ",");
+            }
+            else if (CurrentToken()->value != ">") {
+                ReportSyntaxError(CurrentToken(), "Expected ',' or '>' in template expression");
+                std::exit(EXIT_FAILURE);
+            }
+        }
+        Consume(TokenType::OPERATOR, ">");
+    }
+
     // Проверяем, есть ли наследование или реализация интерфейсов
     if (CurrentToken()->value == ":") {
         Consume(TokenType::OPERATOR, ":"); // :
@@ -828,7 +901,7 @@ std::unique_ptr<ClassDeclStmt> Parser::ParseClassDecl()
     EnterScope(ScopeType::Class, identifier->value);
     std::unique_ptr<Statement> body = ParseCompoundStatement();
     ExitScope();
-    auto stmt = std::make_unique<ClassDeclStmt>(identifier->value, std::move(parents), std::move(body));
+    auto stmt = std::make_unique<ClassDeclStmt>(identifier->value, std::move(parents), templateParams, std::move(body));
     stmt->modifiers = modifiers;
     return stmt;
 }

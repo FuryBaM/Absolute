@@ -44,12 +44,14 @@ public:
     Token* Consume(TokenType tokenType, const std::string& expectedValue);
 
     void ParseModifiers();
+    void ConsumeTemplateClose();
 
     std::unique_ptr<Expression> ParseExpression();
     std::vector<std::unique_ptr<VarDeclExpr>> ParseParameters();
     std::vector<std::unique_ptr<Expression>> ParseArguments();
     std::unique_ptr<AssignmentExpr> ParseAssignmentExpr(std::unique_ptr<Expression> leftValue);
     std::unique_ptr<Expression> ParseIdentifierExpr();
+    std::unique_ptr<Expression> ParseTemplateExpr(std::unique_ptr<Expression> base);
 	std::unique_ptr<Expression> ParseLiteralExpr();
     std::unique_ptr<NumberLiteralExpr> ParseNumberLiteralExpr();
     std::unique_ptr<StringLiteralExpr> ParseStringLiteralExpr();

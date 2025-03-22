@@ -11,6 +11,7 @@ std::unordered_map<TokenType, std::string> token_spec = {
     {TokenType::STRING, R"("(\\.|[^"\\])*")"},
     {TokenType::CHAR, R"('((\\.)|[^'\\])')"},
     {TokenType::BRACKET, R"([\{\}\[\]\(\)])"},
+    {TokenType::DOLLAR, R"(\$)"},
     {TokenType::WHITESPACE, R"(\s+)"},
 };
 
@@ -43,6 +44,10 @@ std::unordered_set<std::string> prefixUnaryOps = {
 
 std::unordered_set<std::string> postfixUnaryOps = {
         "++", "--"
+};
+
+std::unordered_set<std::string> dataTypes = {
+        "int", "long", "float", "double", "bool", "string", "char", "dynamic", "void"
 };
 
 std::unordered_map<std::string, OperatorCategory> categories = {
@@ -92,6 +97,10 @@ int GetOperatorPrecedence(const std::string& op) {
 
 bool IsModifier(const std::string& value) {
     return modifiers.find(value) != modifiers.end();
+}
+
+bool IsDataType(const std::string& value) {
+    return dataTypes.find(value) != dataTypes.end();
 }
 
 bool IsPrefixUnary(const Token& token) {
