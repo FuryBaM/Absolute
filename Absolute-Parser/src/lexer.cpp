@@ -6,7 +6,7 @@ std::unordered_map<TokenType, std::string> token_spec = {
     {TokenType::KEYWORD, R"(\b(int|long|float|double|char|bool|string|void|dynamic|if|else|switch|case|default|for|while|foreach|in|do|break|continue|new|delete|using|namespace|return|keep|true|false|nullptr|class|struct|enum|group|this|public|private|protected|sealed|internal|virtual|override|const|static|auto|async|await|catch|finally|try|throw|yield|get|set|operator)\b)"},
     {TokenType::IDENTIFIER, R"([_a-zA-Z][_a-zA-Z0-9]*)"},
     {TokenType::COMMENT, R"(\/\*[\s\S]*?\*\/|\/\/.*)"},
-    {TokenType::OPERATOR, R"(\+\+|--|==|!=|<=|>=|&&|\|\||!|~|<<|>>|\+=|-=|\*=|/=|%=|&=|\|=|\^=|[+\-*/=<>&|^:])"},
+    {TokenType::OPERATOR, R"(\?\?|==|!=|<=|>=|&&|\|\||!|~|<<|>>|\+=|-=|\*=|/=|%=|&=|\|=|\^=|\+\+|--|\?|[+\-*/=<>&|^:])"},
     {TokenType::DELIMITER, R"([;,.])"},
     {TokenType::STRING, R"("(\\.|[^"\\])*")"},
     {TokenType::CHAR, R"('((\\.)|[^'\\])')"},
