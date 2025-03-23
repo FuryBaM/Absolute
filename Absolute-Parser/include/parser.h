@@ -1,7 +1,12 @@
 #pragma once
 #include "nodes.h"
 
-class Parser {
+extern "C++" {
+    EXPORT_API std::vector<Token> Tokenize(const std::string& code);
+    EXPORT_API std::unique_ptr<Program> ParseCode(const std::vector<Token>& tokens);
+}
+
+class EXPORT_API Parser {
 public:
     std::vector<Token> tokens;
     std::vector<Token> modifiers;

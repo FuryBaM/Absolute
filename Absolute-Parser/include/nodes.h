@@ -29,6 +29,15 @@ struct Program : ASTNode {
     explicit Program(std::vector<std::unique_ptr<Statement>> statements)
         : statements(std::move(statements)) {
     }
+
+    void print(int indent = 0) override {
+        for (const auto& stmt : statements) {
+            if (stmt == nullptr) {
+                continue;
+            }
+            stmt->print();
+        }
+    }
 };
 
 // 🔹 Базовый класс для выражений, которые можно использовать в Statements

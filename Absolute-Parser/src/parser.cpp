@@ -1,6 +1,15 @@
 #include "pch.h"
 #include "parser.h"
 
+std::vector<Token> Tokenize(const std::string& code) {
+    return lexer(code);  // Использует внутренний лексер
+}
+
+std::unique_ptr<Program> ParseCode(const std::vector<Token>& tokens) {
+    Parser parser(tokens);
+    return parser.Parse();
+}
+
 constexpr unsigned int Hash(const char* str, int h = 0) {
     return !str[h] ? 5381 : (Hash(str, h + 1) * 33) ^ str[h];
 }

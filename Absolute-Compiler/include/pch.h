@@ -10,12 +10,7 @@
 #include <memory>
 
 #ifdef _WIN32
-#define EXPORT_API __declspec(dllexport)  // Экспорт при создании DLL
+#define EXPORT_API __declspec(dllimport)  // Импорт в другом проекте
 #else
 #define EXPORT_API
 #endif
-
-#include "lexer.h"
-#include "scope.h"
-#include "nodes.h"
-

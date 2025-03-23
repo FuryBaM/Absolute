@@ -1,0 +1,74 @@
+int main(int argc = 0, string argv[]) {
+    var.field.method()[0];
+    int size = 8;
+    int board[size][size] = {{5, 6}, {6, 7}};
+    for (int y = 0; y < size; y += 1) {
+        for (int x = 0; x < size; x += 1) {
+            board[x][y] = x + y;
+        }
+    }
+    return 0;
+}
+
+int i = 0;
+while (i < size) {
+    if (element < 0) {
+        element += elements.size();
+    }
+    ++i;
+    break;
+}
+
+do {
+    if (element < 0) {
+        element += elements.size();
+    }
+    ++i;
+    continue;
+} while (i < size);
+
+for (int i = 0; i < size; ++i){
+    if (element < 0) {
+        element += elements.size();
+    }
+}
+
+foreach(int element in elements){
+    if (element < 0) {
+        element += elements.size();
+    }
+}
+
+internal class TestClass$<T, U> : BaseClass, ITestInterface {
+    public int field1;
+    private void run(int life = 0){
+        g_tester.start();
+    }
+    public TestClass() {
+        doSmth();
+    }
+}
+
+group GameSettings {
+    enum Difficulty { Easy, Medium, Hard }
+    enum Mode { SinglePlayer, MultiPlayer }
+
+    group Graphics {
+        enum Resolution { Low, Medium, High }
+        enum Quality { Low, Medium, High, Ultra }
+    }
+
+    group Audio {
+        enum Volume { Mute, Low, Medium, High }
+        enum Effects { Off, On }
+    }
+}
+
+namespace1.namespace2.MyClass instance = new MyClass(7, "test", 'c', new Player("player"));
+static TestClass &instance = new Class();
+const int *ptr = 3 * *(testptr);
+delete target;
+if (!!target) {
+    ++target;
+}
+MyClass$<int, MyClass$<int, string>> x = new MyClass$<int, MyClass$<int, string>>();
