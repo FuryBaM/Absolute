@@ -59,6 +59,7 @@ int GetOperatorPrecedence(const std::string& op);
 bool IsModifier(const std::string& value);
 bool IsDataType(const std::string& value);
 bool IsPrefixUnary(const Token& token);
+bool IsPostfixUnary(const Token& token);
 bool IsValidTokenValue(TokenType tokenType, const std::string& value);
 bool IsLiteral(const TokenType& type);
 bool IsEndOfStatement(const Token& token);

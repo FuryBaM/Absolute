@@ -72,7 +72,8 @@ public:
     std::unique_ptr<ConstructorCallExpr> ParseConstructorCall();
     std::unique_ptr<DestructorCallExpr> ParseDestructorCall();
     std::unique_ptr<InstanceDeclExpr> ParseInstanceDeclExpr();
-    std::unique_ptr<Expression> ParseUnaryExpr();
+    std::unique_ptr<Expression> ParsePrefixUnaryExpr();
+    std::unique_ptr<Expression> ParsePostfixUnaryExpr(std::unique_ptr<Expression> base);
 
     std::unique_ptr<Program> Parse();
     std::unique_ptr<Statement> ParseStatement();

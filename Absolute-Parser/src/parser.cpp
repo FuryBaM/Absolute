@@ -383,7 +383,7 @@ std::unique_ptr<Expression> Parser::ParsePrimaryExpr() {
     }
 
     if (IsPrefixUnary(*token)) {
-        return ParseUnaryExpr();
+        return ParsePrefixUnaryExpr();
     }
 
     // Литералы (числа, строки, символы)
@@ -393,7 +393,13 @@ std::unique_ptr<Expression> Parser::ParsePrimaryExpr() {
 
     // Переменная или массив (x, arr[2])
     if (token->type == TokenType::IDENTIFIER) {
-        return ParseIdentifierExpr();
+        auto expr = ParseIdentifierExpr();
+        if (IsPostfixUnary(*CurrentToken())) {
+            return ParsePostfixUnaryExpr(std::move(expr));
+        }
+        else {
+            return expr;
+        }
     }
 
     if (CurrentToken()->value == "new") {
@@ -558,7 +564,7 @@ std::unique_ptr<InstanceDeclExpr> Parser::ParseInstanceDeclExpr()
     return std::make_unique<InstanceDeclExpr>(std::move(constructType), std::move(identifierName), std::move(initializer));
 }
 
-std::unique_ptr<Expression> Parser::ParseUnaryExpr() {
+std::unique_ptr<Expression> Parser::ParsePrefixUnaryExpr() {
     std::string op;
     std::unique_ptr<Expression> operand;
 
@@ -567,7 +573,7 @@ std::unique_ptr<Expression> Parser::ParseUnaryExpr() {
         op = CurrentToken()->value;
         // Поддерживаем `*`, `&`, `!`, `~`, `+`, `-`
         Consume(TokenType::OPERATOR, op);
-        operand = ParseUnaryExpr();
+        operand = ParsePrefixUnaryExpr();
         return std::make_unique<PrefixUnaryExpr>(op, std::move(operand));
     }
 
@@ -578,6 +584,18 @@ std::unique_ptr<Expression> Parser::ParseUnaryExpr() {
     if (op.empty()) return operand;
 
     return std::make_unique<PrefixUnaryExpr>(std::move(op), std::move(operand));
+}
+
+std::unique_ptr<Expression> Parser::ParsePostfixUnaryExpr(std::unique_ptr<Expression> base)
+{
+    std::string op;
+    if (CurrentToken()->type == TokenType::OPERATOR &&
+        IsPostfixUnary(*CurrentToken())) {
+        op = CurrentToken()->value;
+        Consume(TokenType::OPERATOR, op);
+        return std::make_unique<PostfixUnaryExpr>(op, std::move(base));
+    }
+    return base;
 }
 
 std::unique_ptr<FunctionCallExpr> Parser::ParseFunctionCallExpr(std::unique_ptr<Expression> base)
