@@ -299,6 +299,18 @@ std::unique_ptr<Expression> Parser::ParseLiteralExpr()
     return nullptr;
 }
 
+std::unique_ptr<BooleanLiteralExpr> Parser::ParseBooleanLiteralExpr()
+{
+    Token* booleanToken = CurrentToken();
+    if (booleanToken->value == "true" || booleanToken->value == "false") {
+        Consume(TokenType::KEYWORD);
+        return std::make_unique<BooleanLiteralExpr>(booleanToken->value == "true");
+    }
+    ReportSyntaxError(booleanToken, "Expected number literal");
+    std::exit(EXIT_FAILURE);
+    return nullptr;
+}
+
 std::unique_ptr<NumberLiteralExpr> Parser::ParseNumberLiteralExpr()
 {
     Token* numberToken = CurrentToken();
@@ -384,6 +396,16 @@ std::unique_ptr<Expression> Parser::ParsePrimaryExpr() {
 
     if (IsPrefixUnary(*token)) {
         return ParsePrefixUnaryExpr();
+    }
+
+    if (token->type == TokenType::KEYWORD) {
+        if ((token->value == "true" || token->value == "false")) {
+            return ParseBooleanLiteralExpr();
+        }
+        else if (token->value == "null") {
+            Consume(TokenType::KEYWORD);
+            return std::make_unique<NullExpr>();
+        }
     }
 
     // Литералы (числа, строки, символы)
@@ -1052,5 +1074,3 @@ std::unique_ptr<GroupDeclStmt> Parser::ParseGroupDecl() {
     stmt->modifiers = modifiers;
     return stmt;
 }
-
-

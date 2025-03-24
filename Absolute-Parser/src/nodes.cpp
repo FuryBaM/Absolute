@@ -47,6 +47,14 @@ void TernaryExpr::Accept(ExpressionVisitor& visitor) {
     visitor.Visit(this);
 }
 
+void NullExpr::Accept(ExpressionVisitor& visitor) {
+    visitor.Visit(this);
+}
+
+void BooleanLiteralExpr::Accept(ExpressionVisitor& visitor) {
+    visitor.Visit(this);
+}
+
 void NumberLiteralExpr::Accept(ExpressionVisitor& visitor) {
     visitor.Visit(this);
 }

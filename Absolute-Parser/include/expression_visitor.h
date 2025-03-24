@@ -7,6 +7,8 @@ public:
     virtual void Visit(ArrayAccessExpr* expr) = 0;
     virtual void Visit(BinaryExpr* expr) = 0;
     virtual void Visit(TernaryExpr* expr) = 0;
+    virtual void Visit(NullExpr* expr) = 0;
+    virtual void Visit(BooleanLiteralExpr* expr) = 0;
     virtual void Visit(NumberLiteralExpr* expr) = 0;
     virtual void Visit(StringLiteralExpr* expr) = 0;
     virtual void Visit(CharLiteralExpr* expr) = 0;
@@ -47,6 +49,14 @@ public:
         expr->condition->Accept(*this);
         expr->trueExpr->Accept(*this);
         expr->falseExpr->Accept(*this);
+    }
+
+    void Visit(NullExpr* expr) override {
+        expr->Accept(*this);
+    }
+    
+    void Visit(BooleanLiteralExpr* expr) override {
+        expr->Accept(*this);
     }
 
     void Visit(NumberLiteralExpr* expr) override {

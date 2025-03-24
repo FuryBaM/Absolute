@@ -58,6 +58,7 @@ public:
     std::unique_ptr<Expression> ParseIdentifierExpr();
     std::unique_ptr<Expression> ParseTemplateExpr(std::unique_ptr<Expression> base);
 	std::unique_ptr<Expression> ParseLiteralExpr();
+    std::unique_ptr<BooleanLiteralExpr> ParseBooleanLiteralExpr();
     std::unique_ptr<NumberLiteralExpr> ParseNumberLiteralExpr();
     std::unique_ptr<StringLiteralExpr> ParseStringLiteralExpr();
     std::unique_ptr<CharLiteralExpr> ParseCharLiteralExpr();
