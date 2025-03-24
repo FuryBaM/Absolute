@@ -345,6 +345,10 @@ std::unique_ptr<Expression> Parser::ParseBinaryExpr(int minPrecedence, std::uniq
         if (precedence < minPrecedence)
             break; // Если оператор менее приоритетный, выходим
 
+        if (opToken->value == "?") {
+            return ParseTernaryExpr(std::move(left));
+        }
+
         // Сохраняем значение оператора до его потребления
         std::string op = opToken->value;
         Consume(TokenType::OPERATOR);
@@ -420,6 +424,23 @@ std::unique_ptr<Expression> Parser::ParsePrimaryExpr() {
     ReportSyntaxError(CurrentToken(), "Expected primary expression");
     std::exit(EXIT_FAILURE);
     return nullptr;
+}
+
+std::unique_ptr<Expression> Parser::ParseTernaryExpr(std::unique_ptr<Expression> condition) {
+    Consume(TokenType::OPERATOR, "?"); // Пропускаем "?"
+
+    auto trueExpr = ParseExpression();
+    if (!trueExpr) return nullptr;
+
+    if (!Consume(TokenType::OPERATOR, ":")) {
+        ReportSyntaxError(CurrentToken(), "Expected ':' in ternary expression.");
+        return nullptr;
+    }
+
+    auto falseExpr = ParseExpression();
+    if (!falseExpr) return nullptr;
+
+    return std::make_unique<TernaryExpr>(std::move(condition), std::move(trueExpr), std::move(falseExpr));
 }
 
 std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclExpr()

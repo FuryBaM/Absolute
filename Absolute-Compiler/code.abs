@@ -72,3 +72,4 @@ if (!!target) {
     ++target;
 }
 MyClass$<int, MyClass$<int, string>> x = new MyClass$<int, MyClass$<int, string>>();
+int b = x ? y ? z ? 1 : 2 : 3 : 4;

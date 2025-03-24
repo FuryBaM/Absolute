@@ -43,6 +43,10 @@ void BinaryExpr::Accept(ExpressionVisitor& visitor) {
     visitor.Visit(this);
 }
 
+void TernaryExpr::Accept(ExpressionVisitor& visitor) {
+    visitor.Visit(this);
+}
+
 void NumberLiteralExpr::Accept(ExpressionVisitor& visitor) {
     visitor.Visit(this);
 }

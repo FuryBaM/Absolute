@@ -6,6 +6,7 @@ public:
     virtual void Visit(FunctionCallExpr* expr) = 0;
     virtual void Visit(ArrayAccessExpr* expr) = 0;
     virtual void Visit(BinaryExpr* expr) = 0;
+    virtual void Visit(TernaryExpr* expr) = 0;
     virtual void Visit(NumberLiteralExpr* expr) = 0;
     virtual void Visit(StringLiteralExpr* expr) = 0;
     virtual void Visit(CharLiteralExpr* expr) = 0;
@@ -40,6 +41,12 @@ public:
     void Visit(BinaryExpr* expr) override {
         expr->left->Accept(*this);  // Рекурсивно ищем в левом поддереве
         expr->right->Accept(*this); // Рекурсивно ищем в правом поддереве
+    }
+
+    void Visit(TernaryExpr* expr) override {
+        expr->condition->Accept(*this);
+        expr->trueExpr->Accept(*this);
+        expr->falseExpr->Accept(*this);
     }
 
     void Visit(NumberLiteralExpr* expr) override {
