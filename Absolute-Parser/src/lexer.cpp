@@ -1,14 +1,14 @@
-#include "pch.h"
+#include "parser_pch.h"
 #include "lexer.h"
 
 #include <regex>
 
 std::unordered_map<TokenType, std::string> token_spec = {
     {TokenType::NUMBER, R"(\d+(\.\d+)?)"},
-    {TokenType::KEYWORD, R"(\b(int|long|float|double|char|bool|string|void|dynamic|if|else|switch|case|default|for|while|foreach|in|do|break|continue|new|delete|using|namespace|return|keep|true|false|null|class|struct|enum|group|this|public|private|protected|sealed|internal|virtual|override|const|static|auto|async|await|catch|finally|try|throw|yield|get|set|operator)\b)"},
+    {TokenType::KEYWORD, R"(\b(int8|int16|int32|int64|uint8|uint16|uint32|uint64|float|double|char|bool|string|void|dynamic|auto|if|else|switch|case|default|for|while|foreach|in|do|break|continue|new|delete|using|namespace|return|keep|true|false|null|class|struct|enum|group|this|public|private|protected|sealed|internal|virtual|override|const|static|async|await|catch|finally|try|throw|yield|get|set|operator|as)\b)"},
     {TokenType::IDENTIFIER, R"([_a-zA-Z][_a-zA-Z0-9]*)"},
     {TokenType::COMMENT, R"(\/\*[\s\S]*?\*\/|\/\/.*)"},
-    {TokenType::OPERATOR, R"(\?\?|==|!=|<=|>=|&&|\|\||!|~|<<|>>|\+=|-=|\*=|/=|%=|&=|\|=|\^=|\+\+|--|\?|[+\-*/=<>&|^:])"},
+    {TokenType::OPERATOR, R"(==|!=|<=|>=|&&|\|\||!|~|<<|>>|\+=|-=|\*=|/=|%=|&=|\|=|\^=|\+\+|--|\?|[+\-*/=<>&|^:])"},
     {TokenType::DELIMITER, R"([;,.])"},
     {TokenType::STRING, R"("(\\.|[^"\\])*")"},
     {TokenType::CHAR, R"('((\\.)|[^'\\])')"},
@@ -46,11 +46,11 @@ std::unordered_set<std::string> prefixUnaryOps = {
 };
 
 std::unordered_set<std::string> postfixUnaryOps = {
-        "++", "--"
+        "++", "--", "*", "&"
 };
 
-std::unordered_set<std::string> dataTypes = {
-        "int", "long", "float", "double", "bool", "string", "char", "dynamic", "void"
+std::unordered_set<std::string> primitiveTypes = {
+        "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64", "float", "double", "bool", "string", "char", "dynamic", "void", "auto"
 };
 
 std::unordered_map<std::string, OperatorCategory> categories = {
@@ -102,8 +102,8 @@ bool IsModifier(const std::string& value) {
     return modifiers.find(value) != modifiers.end();
 }
 
-bool IsDataType(const std::string& value) {
-    return dataTypes.find(value) != dataTypes.end();
+bool IsPrimitiveType(const std::string& value) {
+    return primitiveTypes.find(value) != primitiveTypes.end();
 }
 
 bool IsPrefixUnary(const Token& token) {

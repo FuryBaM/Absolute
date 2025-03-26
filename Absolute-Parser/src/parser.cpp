@@ -1,4 +1,4 @@
-#include "pch.h"
+#include "parser_pch.h"
 #include "parser.h"
 
 std::vector<Token> Tokenize(const std::string& code) {
@@ -94,16 +94,16 @@ std::vector<std::unique_ptr<VarDeclExpr>> Parser::ParseParameters()
     std::vector<std::unique_ptr<VarDeclExpr>> parameters;
     while (CurrentToken()->type != TokenType::BRACKET && CurrentToken()->value != ")")
     {
-        Token* type = Consume(TokenType::KEYWORD);
+        std::unique_ptr<PrimitiveTypeExpr> type = ParsePrimitiveType();
         std::unique_ptr<Expression> nameExpr = ParsePrimaryExpr();
 
         if (CurrentToken()->type == TokenType::OPERATOR && CurrentToken()->value == "=") {
             Consume(TokenType::OPERATOR, "=");
             std::unique_ptr<Expression> value = ParseExpression();
-            parameters.push_back(std::make_unique<VarDeclExpr>(type->value, std::move(nameExpr), std::move(value)));
+            parameters.push_back(std::make_unique<VarDeclExpr>(std::move(type), std::move(nameExpr), std::move(value)));
         }
         else {
-            parameters.push_back(std::make_unique<VarDeclExpr>(type->value, std::move(nameExpr), nullptr));
+            parameters.push_back(std::make_unique<VarDeclExpr>(std::move(type), std::move(nameExpr), nullptr));
         }
 
         if (CurrentToken()->type == TokenType::DELIMITER && CurrentToken()->value == ",") {
@@ -213,6 +213,36 @@ std::unique_ptr<AssignmentExpr> Parser::ParseAssignmentExpr(std::unique_ptr<Expr
     return nullptr;
 }
 
+std::unique_ptr<TypeExpr> Parser::ParseType()
+{
+    if (CurrentToken()->type == TokenType::IDENTIFIER) {
+        return std::make_unique<UserTypeExpr>(ParseIdentifierExpr());
+    }
+    else if (CurrentToken()->type == TokenType::KEYWORD) {
+        return ParsePrimitiveType();
+    }
+    return nullptr;
+}
+
+std::unique_ptr<PrimitiveTypeExpr> Parser::ParsePrimitiveType()
+{
+    Token* type = CurrentToken();
+    if (IsPrimitiveType(type->value)) {
+        Consume(TokenType::KEYWORD);
+        return std::make_unique<PrimitiveTypeExpr>(type->value);
+    }
+    ReportSyntaxError(type, "Expected primitive type");
+    std::exit(EXIT_FAILURE);
+    return nullptr;
+}
+
+std::unique_ptr<CastExpr> Parser::ParseCastExpr(std::unique_ptr<Expression> base)
+{
+    Consume(TokenType::KEYWORD, "as");
+    std::unique_ptr<TypeExpr> type = ParseType();
+    return std::make_unique<CastExpr>(std::move(type), std::move(base));
+}
+
 std::unique_ptr<Expression> Parser::ParseIdentifierExpr() {
     Token* identifier = CurrentToken();
     if (!identifier || identifier->type != TokenType::IDENTIFIER) {
@@ -238,6 +268,7 @@ std::unique_ptr<Expression> Parser::ParseIdentifierExpr() {
             expr = ParseMemberAccess(std::move(expr));
         }
         else if (next->value == "$" && PeekToken(1)->value == "<") {
+            expr = std::make_unique<UserTypeExpr>(std::move(expr));
             expr = ParseTemplateExpr(std::move(expr));
         }
         else {
@@ -255,17 +286,7 @@ std::unique_ptr<Expression> Parser::ParseTemplateExpr(std::unique_ptr<Expression
     Consume(TokenType::OPERATOR, "<");
 
     while (CurrentToken()->value != ">") {
-        if (CurrentToken()->type == TokenType::IDENTIFIER) {
-            types.push_back(ParseIdentifierExpr());
-        }
-        else if (IsDataType(CurrentToken()->value)) {
-            types.push_back(std::make_unique<IdentifierExpr>(CurrentToken()->value));
-            Consume(TokenType::KEYWORD);
-        }
-        else {
-            ReportSyntaxError(CurrentToken(), "Expected type name in template expression");
-            std::exit(EXIT_FAILURE);
-        }
+        types.push_back(ParseType());
 
         if (CurrentToken()->value == ",") {
             Consume(TokenType::DELIMITER, ",");
@@ -406,11 +427,18 @@ std::unique_ptr<Expression> Parser::ParsePrimaryExpr() {
             Consume(TokenType::KEYWORD);
             return std::make_unique<NullExpr>();
         }
+        else if (IsPrimitiveType(token->value)) {
+            return ParsePrimitiveType();
+        }
     }
 
     // Ћитералы (числа, строки, символы)
     if (token->type == TokenType::NUMBER || token->type == TokenType::STRING || token->type == TokenType::CHAR) {
-        return ParseLiteralExpr();
+        auto expr = ParseLiteralExpr();
+        if (CurrentToken()->value == "as") {
+            return ParseCastExpr(std::move(expr));
+        }
+        return expr;
     }
 
     // ѕеременна€ или массив (x, arr[2])
@@ -418,6 +446,9 @@ std::unique_ptr<Expression> Parser::ParsePrimaryExpr() {
         auto expr = ParseIdentifierExpr();
         if (IsPostfixUnary(*CurrentToken())) {
             return ParsePostfixUnaryExpr(std::move(expr));
+        }
+        else if (CurrentToken()->value == "as") {
+            return ParseCastExpr(std::move(expr));
         }
         else {
             return expr;
@@ -473,20 +504,20 @@ std::unique_ptr<Expression> Parser::ParseTernaryExpr(std::unique_ptr<Expression>
 
 std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclExpr()
 {
-    Token* typeToken = Consume(TokenType::KEYWORD);
+    std::unique_ptr<PrimitiveTypeExpr> type = ParsePrimitiveType();
 
     // ќбрабатываем `*` и `&` перед именем переменной
     std::unique_ptr<Expression> nameExpr = ParsePrimaryExpr();
 
     // ќбъ€вление переменной без инициализации
     if (IsEndOfStatement(*CurrentToken()) || CurrentToken()->type == TokenType::KEYWORD) {
-        return std::make_unique<VarDeclExpr>(typeToken->value, std::move(nameExpr), nullptr);
+        return std::make_unique<VarDeclExpr>(std::move(type), std::move(nameExpr), nullptr);
     }
     // ќбъ€вление переменной с инициализацией
     else if (CurrentToken()->type == TokenType::OPERATOR) {
         Consume(TokenType::OPERATOR);
         std::unique_ptr<Expression> value = ParseExpression();
-        return std::make_unique<VarDeclExpr>(typeToken->value, std::move(nameExpr), std::move(value));
+        return std::make_unique<VarDeclExpr>(std::move(type), std::move(nameExpr), std::move(value));
     }
     std::exit(EXIT_FAILURE);
     return nullptr;
@@ -576,7 +607,7 @@ std::unique_ptr<DestructorCallExpr> Parser::ParseDestructorCall()
 
 std::unique_ptr<InstanceDeclExpr> Parser::ParseInstanceDeclExpr()
 {
-    std::unique_ptr<Expression> constructType = ParseIdentifierExpr();
+    std::unique_ptr<UserTypeExpr> constructType = std::make_unique<UserTypeExpr>(ParseIdentifierExpr());
     std::unique_ptr<Expression> identifierName = ParsePrimaryExpr();
     std::unique_ptr<Expression> initializer = nullptr;
     if (CurrentToken()->value == "=") {
@@ -644,8 +675,14 @@ std::unique_ptr<Statement> Parser::ParseStatement()
     case TokenType::KEYWORD:
         switch (Hash(token->value.c_str()))
         {
-        case Hash("int"):
-        case Hash("long"):
+        case Hash("int8"):
+        case Hash("int16"):
+        case Hash("int32"):
+        case Hash("int64"):
+        case Hash("uint8"):
+        case Hash("uint16"):
+        case Hash("uint32"):
+        case Hash("uint64"):
         case Hash("float"):
         case Hash("double"):
         case Hash("string"):

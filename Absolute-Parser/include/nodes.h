@@ -40,37 +40,41 @@ struct Program : ASTNode {
     }
 };
 
-// 🔹 Базовый класс для выражений, которые можно использовать в Statements
-struct SingleStatement : Statement {
-    std::unique_ptr<Expression> expr;
-    explicit SingleStatement(std::unique_ptr<Expression> expr)
-        : expr(std::move(expr)) {
-    }
+struct TypeExpr : public Expression {};  // Базовый класс для всех типов
+
+struct PrimitiveTypeExpr : TypeExpr {
+    std::string type;
+
+    PrimitiveTypeExpr(std::string type) : type(type) {}
 
     std::string ToString(int indent = 0) const override {
-        std::string result = std::string(indent, ' ') + "Single statement";
-
-        if (!modifiers.empty()) {
-            result += " [";
-            for (size_t i = 0; i < modifiers.size(); i++) {
-                if (i > 0) result += ", ";
-                result += modifiers[i].value;
-            }
-            result += "]";
-        }
-
-        result += ":\n";
-
-        if (expr) {
-            result += expr->ToString(indent + 1);
-        }
-
+        std::string result = std::string(indent, ' ') + "Primitive type: " + type;
         return result;
     }
 
     void print(int indent = 0) override {
         std::cout << ToString(indent) << "\n";
     }
+
+    void Accept(ExpressionVisitor& visitor) override;
+};
+
+struct UserTypeExpr : public TypeExpr {
+    std::unique_ptr<Expression> typeExpr;  // Может быть сложное выражение (например, шаблон)
+
+    UserTypeExpr(std::unique_ptr<Expression> expr) : typeExpr(std::move(expr)) {}
+
+    std::string ToString(int indent = 0) const override {
+        std::string result = std::string(indent, ' ') + "User type:\n";
+        result += typeExpr->ToString(indent + 1);
+        return result;
+    }
+
+    void print(int indent = 0) override {
+        std::cout << ToString(indent) << "\n";
+    }
+
+    void Accept(ExpressionVisitor& visitor) override;
 };
 
 // 🔹 Бинарное выражение (арифметика, логические операции)
@@ -318,16 +322,16 @@ struct AssignmentExpr : Expression {
 };
 
 struct VarDeclExpr : Expression {
-    std::string type;
+    std::unique_ptr<Expression> type;
     std::unique_ptr<Expression> name;
     std::unique_ptr<Expression> value;
 
-    explicit VarDeclExpr(std::string type, std::unique_ptr<Expression> name, std::unique_ptr<Expression> value)
+    explicit VarDeclExpr(std::unique_ptr<Expression> type, std::unique_ptr<Expression> name, std::unique_ptr<Expression> value)
         : type(std::move(type)), name(std::move(name)), value(std::move(value)){
     }
 
     std::string ToString(int indent = 0) const override {
-        std::string result = std::string(indent, ' ') + "Variable declaration: " + type + "\n";
+        std::string result = std::string(indent, ' ') + "Variable declaration: " + type->ToString(0) + "\n";
         result += std::string(indent + 1, ' ') + "Name:\n" + name->ToString(indent + 2);
 
         if (value) result += "\n" + std::string(indent + 1, ' ') + "Value:\n" + value->ToString(indent + 2);
@@ -387,6 +391,31 @@ struct MemberAccessExpr : Expression {
     std::string ToString(int indent = 0) const override {
         return std::string(indent, ' ') + "Member Access: " + member + "\n" +
             base->ToString(indent + 1);
+    }
+
+    void print(int indent = 0) override {
+        std::cout << ToString(indent) << "\n";
+    }
+
+    void Accept(ExpressionVisitor& visitor) override;
+};
+
+struct CastExpr : Expression {
+    std::unique_ptr<Expression> typeName;
+    std::unique_ptr<Expression> base;
+
+    CastExpr(std::unique_ptr<Expression> typeName,
+        std::unique_ptr<Expression> base) :
+        typeName(std::move(typeName)), base(std::move(base)) {
+    }
+
+    std::string ToString(int indent = 0) const override {
+        std::string result = std::string(indent, ' ') + "Cast expression:\n";
+        result += std::string(indent + 1, ' ') + "Type:\n";
+        result += typeName->ToString(indent + 2) + "\n";
+        result += std::string(indent + 1, ' ') + "Value:\n";
+        result += base->ToString(indent + 2);
+        return result;
     }
 
     void print(int indent = 0) override {
@@ -541,6 +570,39 @@ struct TemplateExpr : Expression {
     }
 
     void Accept(ExpressionVisitor& visitor) override;
+};
+
+// 🔹 Базовый класс для выражений, которые можно использовать в Statements
+struct SingleStatement : Statement {
+    std::unique_ptr<Expression> expr;
+    explicit SingleStatement(std::unique_ptr<Expression> expr)
+        : expr(std::move(expr)) {
+    }
+
+    std::string ToString(int indent = 0) const override {
+        std::string result = std::string(indent, ' ') + "Single statement";
+
+        if (!modifiers.empty()) {
+            result += " [";
+            for (size_t i = 0; i < modifiers.size(); i++) {
+                if (i > 0) result += ", ";
+                result += modifiers[i].value;
+            }
+            result += "]";
+        }
+
+        result += ":\n";
+
+        if (expr) {
+            result += expr->ToString(indent + 1);
+        }
+
+        return result;
+    }
+
+    void print(int indent = 0) override {
+        std::cout << ToString(indent) << "\n";
+    }
 };
 
 // Обертка, чтобы сделать AssignmentExpr полноценным Statement

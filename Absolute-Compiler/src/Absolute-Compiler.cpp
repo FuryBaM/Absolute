@@ -1,6 +1,6 @@
 ﻿#include "pch.h"
+
 #include <iostream>
-#include "parser.h"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -28,6 +28,11 @@ int main() {
         return 1;
     }
 
-    ast->print();
+    //ast->print();
+
+    std::vector<std::unique_ptr<Program>> programs;
+    programs.push_back(std::move(ast));
+    Analyzer analyzer(std::move(programs));
+    analyzer.Analyze();
     return 0;
 }

@@ -2,11 +2,11 @@
   "scopeName": "source.absolute",
   "patterns": [
     {
-      "match": "\\b(int|long|float|double|char|bool|string|void|dynamic)\\b",
+      "match": "\\b(int8|int16|int32|int64|uint8|uint16|uint32|uint64|float|double|char|bool|string|void|dynamic)\\b",
       "name": "storage.type.absolute"
     },
     {
-      "match": "\\b(if|else|switch|case|default|for|while|foreach|in|do|break|continue|new|delete|using|namespace|return|keep|true|false|nullptr|class|struct|enum|this|public|private|protected|sealed|internal|virtual|override|const|static|auto|async|await|catch|finally|try|throw|yield|get|set|operator)\\b",
+      "match": "\\b(if|else|switch|case|default|for|while|foreach|in|do|break|continue|new|delete|using|namespace|return|keep|true|false|null|class|struct|enum|group|this|public|private|protected|sealed|internal|virtual|override|const|static|auto|async|await|catch|finally|try|throw|yield|get|set|operator)\\b",
       "name": "keyword.control.absolute"
     },
     {
@@ -26,7 +26,7 @@
       "name": "comment.block.absolute"
     },
     {
-      "match": "\\+\\+|--|==|!=|<=|>=|&&|\\|\\||!|~|<<|>>|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|[+\\-*/=<>&|^]",
+      "match": "\\+\\+|--|==|!=|<=|>=|&&|\\|\\||!|~|<<|>>|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|\\?|[+\\-*/=<>&|^]",
       "name": "keyword.operator.absolute"
     },
     {
@@ -44,6 +44,10 @@
     {
       "match": "[{}\\[\\]()]",  
       "name": "punctuation.bracket.absolute"
+    },
+    {
+      "match": "\\$",
+      "name": "variable.dollar.absolute"
     }
   ]
 }

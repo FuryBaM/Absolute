@@ -1,4 +1,4 @@
-#include "pch.h"
+#include "parser_pch.h"
 #include "scope.h"
 
 std::vector<Scope> scopeStack;

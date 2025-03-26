@@ -26,17 +26,6 @@ enum class OperatorCategory {
 	Unknown
 };
 
-enum class Type {
-	INTEGER,
-	LONG,
-	FLOAT,
-	DOUBLE,
-	STRING,
-	CHAR,
-	BOOL,
-	VOID
-};
-
 struct Token {
 	TokenType type;
 	std::string value;
@@ -60,7 +49,7 @@ extern std::unordered_map<std::string, int> precedence;
 int GetOperatorPrecedence(const std::string& op);
 
 bool IsModifier(const std::string& value);
-bool IsDataType(const std::string& value);
+bool IsPrimitiveType(const std::string& value);
 bool IsPrefixUnary(const Token& token);
 bool IsPostfixUnary(const Token& token);
 bool IsValidTokenValue(TokenType tokenType, const std::string& value);

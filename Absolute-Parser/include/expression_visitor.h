@@ -2,6 +2,8 @@
 #include "nodes.h"
 class ExpressionVisitor {
 public:
+    virtual void Visit(PrimitiveTypeExpr* expr) = 0;
+    virtual void Visit(UserTypeExpr* expr) = 0;
     virtual void Visit(IdentifierExpr* expr) = 0;
     virtual void Visit(FunctionCallExpr* expr) = 0;
     virtual void Visit(ArrayAccessExpr* expr) = 0;
@@ -16,6 +18,7 @@ public:
     virtual void Visit(AssignmentExpr* expr) = 0;
     virtual void Visit(VarDeclExpr* expr) = 0;
     virtual void Visit(MemberAccessExpr* expr) = 0;
+    virtual void Visit(CastExpr* expr) = 0;
     virtual void Visit(ConstructorCallExpr* expr) = 0;
     virtual void Visit(DestructorCallExpr* expr) = 0;
     virtual void Visit(InstanceDeclExpr* expr) = 0;
@@ -27,6 +30,14 @@ public:
 class BaseIdentifierVisitor : public ExpressionVisitor {
 public:
     IdentifierExpr* identifierExpr = nullptr;
+
+    void Visit(PrimitiveTypeExpr* expr) override {
+        expr->Accept(*this);
+    }
+    
+    void Visit(UserTypeExpr* expr) override {
+        expr->Accept(*this);
+    }
 
     void Visit(IdentifierExpr* expr) override {
         identifierExpr = expr;
@@ -84,6 +95,12 @@ public:
     }
 
     void Visit(MemberAccessExpr* expr) override {
+        if (expr->base) {
+            expr->base->Accept(*this); // Обход базового выражения
+        }
+    }
+
+    void Visit(CastExpr* expr) override {
         if (expr->base) {
             expr->base->Accept(*this); // Обход базового выражения
         }

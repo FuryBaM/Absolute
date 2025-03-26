@@ -23,15 +23,14 @@
     <ClInclude Include="include\lexer.h" />
     <ClInclude Include="include\nodes.h" />
     <ClInclude Include="include\parser.h" />
-    <ClInclude Include="include\pch.h" />
+    <ClInclude Include="include\parser_pch.h" />
     <ClInclude Include="include\scope.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\Absolute.cpp" />
     <ClCompile Include="src\lexer.cpp" />
     <ClCompile Include="src\nodes.cpp" />
     <ClCompile Include="src\parser.cpp" />
-    <ClCompile Include="src\pch.cpp" />
+    <ClCompile Include="src\parser_pch.cpp" />
     <ClCompile Include="src\scope.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
@@ -112,7 +111,7 @@
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
       <PrecompiledHeader>Create</PrecompiledHeader>
-      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile>parser_pch.h</PrecompiledHeaderFile>
       <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
@@ -131,7 +130,7 @@
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
       <PrecompiledHeader>Create</PrecompiledHeader>
-      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile>parser_pch.h</PrecompiledHeaderFile>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <BufferSecurityCheck>false</BufferSecurityCheck>
@@ -160,7 +159,7 @@
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
       <PrecompiledHeader>Create</PrecompiledHeader>
-      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile>parser_pch.h</PrecompiledHeaderFile>
       <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
@@ -179,7 +178,7 @@
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
       <PrecompiledHeader>Create</PrecompiledHeader>
-      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderFile>parser_pch.h</PrecompiledHeaderFile>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <BufferSecurityCheck>false</BufferSecurityCheck>

@@ -2,11 +2,11 @@
 #include "nodes.h"
 
 extern "C++" {
-    EXPORT_API std::vector<Token> Tokenize(const std::string& code);
-    EXPORT_API std::unique_ptr<Program> ParseCode(const std::vector<Token>& tokens);
+    PARSER_API std::vector<Token> Tokenize(const std::string& code);
+    PARSER_API std::unique_ptr<Program> ParseCode(const std::vector<Token>& tokens);
 }
 
-class EXPORT_API Parser {
+class PARSER_API Parser {
 public:
     std::vector<Token> tokens;
     std::vector<Token> modifiers;
@@ -55,6 +55,9 @@ public:
     std::vector<std::unique_ptr<VarDeclExpr>> ParseParameters();
     std::vector<std::unique_ptr<Expression>> ParseArguments();
     std::unique_ptr<AssignmentExpr> ParseAssignmentExpr(std::unique_ptr<Expression> leftValue);
+    std::unique_ptr<TypeExpr> ParseType();
+    std::unique_ptr<PrimitiveTypeExpr> ParsePrimitiveType();
+    std::unique_ptr<CastExpr> ParseCastExpr(std::unique_ptr<Expression> base);
     std::unique_ptr<Expression> ParseIdentifierExpr();
     std::unique_ptr<Expression> ParseTemplateExpr(std::unique_ptr<Expression> base);
 	std::unique_ptr<Expression> ParseLiteralExpr();

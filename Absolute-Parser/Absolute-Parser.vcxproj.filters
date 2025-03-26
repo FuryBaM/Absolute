@@ -27,7 +27,7 @@
     <ClInclude Include="include\parser.h">
       <Filter>Файлы заголовков</Filter>
     </ClInclude>
-    <ClInclude Include="include\pch.h">
+    <ClInclude Include="include\parser_pch.h">
       <Filter>Файлы заголовков</Filter>
     </ClInclude>
     <ClInclude Include="include\scope.h">
@@ -35,9 +35,6 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\Absolute.cpp">
-      <Filter>Исходные файлы</Filter>
-    </ClCompile>
     <ClCompile Include="src\lexer.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
@@ -47,7 +44,7 @@
     <ClCompile Include="src\parser.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
-    <ClCompile Include="src\pch.cpp">
+    <ClCompile Include="src\parser_pch.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
     <ClCompile Include="src\scope.cpp">

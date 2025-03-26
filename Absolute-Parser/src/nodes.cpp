@@ -1,6 +1,14 @@
-#include "pch.h"
+#include "parser_pch.h"
 #include "nodes.h"
 #include "expression_visitor.h"
+
+void PrimitiveTypeExpr::Accept(ExpressionVisitor& visitor) {
+    visitor.Visit(this);
+}
+
+void UserTypeExpr::Accept(ExpressionVisitor& visitor) {
+    visitor.Visit(this);
+}
 
 void IdentifierExpr::Accept(ExpressionVisitor& visitor) {
     visitor.Visit(this);
@@ -80,6 +88,10 @@ void VarDeclExpr::Accept(ExpressionVisitor& visitor) {
 }
 
 void MemberAccessExpr::Accept(ExpressionVisitor& visitor) {
+    visitor.Visit(this);
+}
+
+void CastExpr::Accept(ExpressionVisitor& visitor) {
     visitor.Visit(this);
 }
 
