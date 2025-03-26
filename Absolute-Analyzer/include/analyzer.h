@@ -1,7 +1,9 @@
 #pragma once
+#include "variable.h"
 
 class ANALYZER_API Analyzer {
     std::vector<std::unique_ptr<Program>> programs;
+    std::unordered_map<std::string, PrimitiveTypeEnum> variables;
 
 public:
     explicit Analyzer(std::vector<std::unique_ptr<Program>> programs)
@@ -13,7 +15,11 @@ public:
             AnalyzeProgram(*program.get());
         }
     }
-
+    void PrintVariables() {
+        for (const auto& var : variables) {
+            std::cout << var.first << " " << PrimitiveEnumToString(var.second) << "\n";
+        }
+    }
 private:
     void AnalyzeProgram(const Program& program);
     void AnalyzeStatement(const Statement& stmt);

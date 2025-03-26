@@ -35,6 +35,31 @@ void Analyzer::AnalyzeAssignmentExpr(const AssignmentExpr& expr){
     std::cout << "It is assignment\n";
 }
 
-void Analyzer::AnalyzeVarDeclExpr(const VarDeclExpr& expr){
-    std::cout << "It is var declaration\n";
+void Analyzer::AnalyzeVarDeclExpr(const VarDeclExpr& expr) {
+    Expression* name = expr.name.get();
+    Expression* type = expr.type.get();
+
+    if (auto* identifier = dynamic_cast<const IdentifierExpr*>(name)) {
+        if (auto* varType = dynamic_cast<const PrimitiveTypeExpr*>(type)) {
+            if (variables.find(identifier->name) == variables.end()) { // Проверяем, что переменной **нет**
+                auto primType = PrimitiveStringToEnum(varType->type);
+                if (primType) {
+                    variables.emplace(identifier->name, *primType); // Добавляем **Enum**, а не строку
+                }
+                else {
+                    std::cerr << "Error: unknown type '" << varType->type << "'\n";
+                }
+            }
+            else {
+                std::cerr << "Error: variable '" << identifier->name << "' already exists!\n";
+            }
+        }
+        else {
+            std::cerr << "Error: expected primitive type, but received another.\n";
+        }
+    }
+    else {
+        std::cerr << "Error: expected identifier of primitive type.\n";
+    }
 }
+

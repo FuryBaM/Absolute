@@ -9,4 +9,6 @@
 #endif
 
 #include "parser_pch.h"
+#include "type.h"
+#include "variable.h"
 #include "analyzer.h"

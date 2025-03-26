@@ -19,7 +19,7 @@ std::string readFile(const std::string& filename) {
 }
 
 int main() {
-    std::string code = readFile("code.abs");
+    std::string code = readFile("analyzer\.abs");
     std::vector<Token> tokens = Tokenize(code);
     std::unique_ptr<Program> ast = ParseCode(tokens);
 
@@ -34,5 +34,6 @@ int main() {
     programs.push_back(std::move(ast));
     Analyzer analyzer(std::move(programs));
     analyzer.Analyze();
+    analyzer.PrintVariables();
     return 0;
 }

@@ -14,4 +14,3 @@ void EnterScope(ScopeType type, const std::string& name = "");
 void ExitScope();
 std::string GetCurrentScopeName();
 ScopeType GetCurrentScopeType();
-

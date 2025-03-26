@@ -17,6 +17,4 @@
 #define ANALYZER_API
 #endif
 
-
-#include "parser.h"
-#include "analyzer.h"
+#include "analyzer_pch.h"
