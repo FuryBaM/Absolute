@@ -364,3 +364,5 @@ FodyWeavers.xsd
 
 # Auto recover
 ~AutoRecover.Absolute.vcxproj*
+
+build/

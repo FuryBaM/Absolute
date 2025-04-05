@@ -33,6 +33,9 @@
     <ClCompile Include="src\parser_pch.cpp" />
     <ClCompile Include="src\scope.cpp" />
   </ItemGroup>
+  <ItemGroup>
+    <Text Include="CMakeLists.txt" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
