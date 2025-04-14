@@ -5,22 +5,12 @@ project(Absolute-Parser LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Добавляем файлы проекта
-set(SOURCE_FILES
-    src/lexer.cpp
-    src/nodes.cpp
-    src/parser.cpp
-    src/parser_pch.cpp
-    src/scope.cpp
+file(GLOB HEADER_FILES
+    "include/*.h"
 )
 
-set(HEADER_FILES
-    include/expression_visitor.h
-    include/lexer.h
-    include/nodes.h
-    include/parser.h
-    include/parser_pch.h
-    include/scope.h
+file(GLOB SOURCE_FILES
+    "src/*.cpp"
 )
 
 # Создаём статическую библиотеку

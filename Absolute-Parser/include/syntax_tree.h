@@ -1,0 +1,27 @@
+#include <string>
+#include <iostream>
+#include <memory>
+
+#include "lexer.h"
+#include "nodes.h"
+#include "ast/literals.h"
+#include "ast/identifier.h"
+#include "ast/array.h"
+#include "ast/binary.h"
+#include "ast/assignment.h"
+#include "ast/var_declaration.h"
+#include "ast/function.h"
+#include "ast/cast.h"
+#include "ast/class.h"
+#include "ast/constructor.h"
+#include "ast/destructor.h"
+#include "ast/instance_declaration.h"
+#include "ast/enum.h"
+#include "ast/if_else.h"
+#include "ast/loops.h"
+#include "ast/member.h"
+#include "ast/struct.h"
+#include "ast/template.h"
+#include "ast/ternary.h"
+#include "ast/type.h"
+#include "ast/unary.h"

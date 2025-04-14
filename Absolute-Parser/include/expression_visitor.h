@@ -1,5 +1,5 @@
 #pragma once
-#include "nodes.h"
+#include "syntax_tree.h"
 class ExpressionVisitor {
 public:
     virtual void Visit(PrimitiveTypeExpr* expr) = 0;

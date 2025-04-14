@@ -1,5 +1,5 @@
 #pragma once
-#include "nodes.h"
+#include "syntax_tree.h"
 
 extern "C++" {
     PARSER_API std::vector<Token> Tokenize(const std::string& code);

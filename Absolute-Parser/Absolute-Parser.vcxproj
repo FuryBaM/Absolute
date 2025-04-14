@@ -19,12 +19,34 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="include\ast\array.h" />
+    <ClInclude Include="include\ast\assignment.h" />
+    <ClInclude Include="include\ast\binary.h" />
+    <ClInclude Include="include\ast\cast.h" />
+    <ClInclude Include="include\ast\class.h" />
+    <ClInclude Include="include\ast\constructor.h" />
+    <ClInclude Include="include\ast\destructor.h" />
+    <ClInclude Include="include\ast\enum.h" />
+    <ClInclude Include="include\ast\function.h" />
+    <ClInclude Include="include\ast\identifier.h" />
+    <ClInclude Include="include\ast\if_else.h" />
+    <ClInclude Include="include\ast\instance_declaration.h" />
+    <ClInclude Include="include\ast\literals.h" />
+    <ClInclude Include="include\ast\loops.h" />
+    <ClInclude Include="include\ast\member.h" />
+    <ClInclude Include="include\ast\struct.h" />
+    <ClInclude Include="include\ast\template.h" />
+    <ClInclude Include="include\ast\ternary.h" />
+    <ClInclude Include="include\ast\type.h" />
+    <ClInclude Include="include\ast\unary.h" />
+    <ClInclude Include="include\ast\var_declaration.h" />
     <ClInclude Include="include\expression_visitor.h" />
     <ClInclude Include="include\lexer.h" />
     <ClInclude Include="include\nodes.h" />
     <ClInclude Include="include\parser.h" />
     <ClInclude Include="include\parser_pch.h" />
     <ClInclude Include="include\scope.h" />
+    <ClInclude Include="include\syntax_tree.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\lexer.cpp" />

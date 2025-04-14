@@ -13,6 +13,9 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Файлы заголовков\ast">
+      <UniqueIdentifier>{48621eae-27fe-461a-aef7-d85ddb043a1b}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\expression_visitor.h">
@@ -32,6 +35,72 @@
     </ClInclude>
     <ClInclude Include="include\scope.h">
       <Filter>Файлы заголовков</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\type.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\syntax_tree.h">
+      <Filter>Файлы заголовков</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\enum.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\ternary.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\unary.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\var_declaration.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\array.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\assignment.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\binary.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\cast.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\class.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\constructor.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\destructor.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\function.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\identifier.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\if_else.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\instance_declaration.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\literals.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\loops.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\member.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\struct.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ast\template.h">
+      <Filter>Файлы заголовков\ast</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
