@@ -17,4 +17,10 @@
 #define ANALYZER_API
 #endif
 
-#include "analyzer_pch.h"
+#include "scope.h"
+#include "parser.h"
+#include "expression_visitor.h"
+
+#include "type.h"
+#include "variable.h"
+#include "analyzer.h"

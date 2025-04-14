@@ -1,22 +1,24 @@
 #include "parser_pch.h"
 #include "scope.h"
 
-std::vector<Scope> scopeStack;
+namespace Absolute {
+    std::vector<Scope> Absolute::scopeStack;
 
-void EnterScope(ScopeType type, const std::string& name) {
-    scopeStack.emplace_back(type, name);
-}
-
-void ExitScope() {
-    if (!scopeStack.empty()) {
-        scopeStack.pop_back();
+    void EnterScope(ScopeType type, const std::string& name) {
+        scopeStack.emplace_back(type, name);
     }
-}
 
-std::string GetCurrentScopeName() {
-    return scopeStack.empty() ? "" : scopeStack.back().name;
-}
+    void ExitScope() {
+        if (!scopeStack.empty()) {
+            scopeStack.pop_back();
+        }
+    }
 
-ScopeType GetCurrentScopeType() {
-    return scopeStack.empty() ? ScopeType::Global : scopeStack.back().type;
+    std::string GetCurrentScopeName() {
+        return scopeStack.empty() ? "" : scopeStack.back().name;
+    }
+
+    ScopeType GetCurrentScopeType() {
+        return scopeStack.empty() ? ScopeType::Global : scopeStack.back().type;
+    }
 }

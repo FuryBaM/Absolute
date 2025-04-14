@@ -16,6 +16,9 @@
     <Filter Include="Файлы заголовков\ast">
       <UniqueIdentifier>{48621eae-27fe-461a-aef7-d85ddb043a1b}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Исходные файлы\parser">
+      <UniqueIdentifier>{926d02e6-8757-41dc-bad3-c207103d8627}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\expression_visitor.h">
@@ -110,14 +113,89 @@
     <ClCompile Include="src\nodes.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
-    <ClCompile Include="src\parser.cpp">
-      <Filter>Исходные файлы</Filter>
-    </ClCompile>
     <ClCompile Include="src\parser_pch.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
     <ClCompile Include="src\scope.cpp">
       <Filter>Исходные файлы</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_cast.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_class.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_constructor.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_destructor.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_enum.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_function.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_identifier.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_if_else.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_instance.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_literals.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_loops.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_member.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_modifiers.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_parameters.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_struct.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_template.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_ternary.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_type.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_unary.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_utils.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_var_declaration.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_arguments.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_array.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_assignment.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser_binary.cpp">
+      <Filter>Исходные файлы\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\parser\parser.cpp">
+      <Filter>Исходные файлы\parser</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

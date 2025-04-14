@@ -1,86 +1,88 @@
 ﻿#pragma once
 
-class ExpressionVisitor;
-class BaseIdentifierVisitor;
+namespace Absolute {
+    class ExpressionVisitor;
+    class BaseIdentifierVisitor;
 
-struct ASTNode {
-    virtual ~ASTNode() = default;
+    struct ASTNode {
+        virtual ~ASTNode() = default;
 
-    virtual void print(int indent = 0) {
-        std::cout << ToString(indent) << "\n";
-    }
+        virtual void print(int indent = 0) {
+            std::cout << ToString(indent) << "\n";
+        }
 
-    virtual std::string ToString(int indent = 0) const {
-        return std::string(indent, ' ') + "ASTNode";
-    }
-};
+        virtual std::string ToString(int indent = 0) const {
+            return std::string(indent, ' ') + "ASTNode";
+        }
+    };
 
-struct Expression : ASTNode {
-    virtual void Accept(ExpressionVisitor& visitor) = 0;
-};
+    struct Expression : ASTNode {
+        virtual void Accept(ExpressionVisitor& visitor) = 0;
+    };
 
-struct Statement : ASTNode {
-    std::vector<Token> modifiers;
-};
+    struct Statement : ASTNode {
+        std::vector<Token> modifiers;
+    };
 
-struct Program : ASTNode {
-    std::vector<std::unique_ptr<Statement>> statements;
-    explicit Program(std::vector<std::unique_ptr<Statement>> statements)
-        : statements(std::move(statements)) {
-    }
+    struct Program : ASTNode {
+        std::vector<std::unique_ptr<Statement>> statements;
+        explicit Program(std::vector<std::unique_ptr<Statement>> statements)
+            : statements(std::move(statements)) {
+        }
 
-    void print(int indent = 0) override {
-        for (const auto& stmt : statements) {
-            if (stmt == nullptr) {
-                continue;
+        void print(int indent = 0) override {
+            for (const auto& stmt : statements) {
+                if (stmt == nullptr) {
+                    continue;
+                }
+                stmt->print();
             }
-            stmt->print();
         }
-    }
-};
+    };
 
-struct SingleStatement : Statement {
-    std::unique_ptr<Expression> expr;
-    explicit SingleStatement(std::unique_ptr<Expression> expr)
-        : expr(std::move(expr)) {
-    }
+    struct SingleStatement : Statement {
+        std::unique_ptr<Expression> expr;
+        explicit SingleStatement(std::unique_ptr<Expression> expr)
+            : expr(std::move(expr)) {
+        }
 
-    std::string ToString(int indent = 0) const override {
-        std::string result = std::string(indent, ' ') + "Single statement";
+        std::string ToString(int indent = 0) const override {
+            std::string result = std::string(indent, ' ') + "Single statement";
 
-        if (!modifiers.empty()) {
-            result += " [";
-            for (size_t i = 0; i < modifiers.size(); i++) {
-                if (i > 0) result += ", ";
-                result += modifiers[i].value;
+            if (!modifiers.empty()) {
+                result += " [";
+                for (size_t i = 0; i < modifiers.size(); i++) {
+                    if (i > 0) result += ", ";
+                    result += modifiers[i].value;
+                }
+                result += "]";
             }
-            result += "]";
+
+            result += ":\n";
+
+            if (expr) {
+                result += expr->ToString(indent + 1);
+            }
+
+            return result;
         }
 
-        result += ":\n";
-
-        if (expr) {
-            result += expr->ToString(indent + 1);
+        void print(int indent = 0) override {
+            std::cout << ToString(indent) << "\n";
         }
+    };
 
-        return result;
-    }
-
-    void print(int indent = 0) override {
-        std::cout << ToString(indent) << "\n";
-    }
-};
-
-struct CompoundStmt : Statement {
-    std::vector<std::unique_ptr<Statement>> statements;
-    explicit CompoundStmt(std::vector<std::unique_ptr<Statement>> statements)
-        : statements(std::move(statements)) {
-    }
-    void print(int indent = 0) override {
-        std::cout << std::string(indent, ' ') << "Compound statement: " << "\n";
-        for (const auto& stmt : statements) {
-            if (stmt)
-			stmt->print(indent + 1);
-		}
-    }
-};
+    struct CompoundStmt : Statement {
+        std::vector<std::unique_ptr<Statement>> statements;
+        explicit CompoundStmt(std::vector<std::unique_ptr<Statement>> statements)
+            : statements(std::move(statements)) {
+        }
+        void print(int indent = 0) override {
+            std::cout << std::string(indent, ' ') << "Compound statement: " << "\n";
+            for (const auto& stmt : statements) {
+                if (stmt)
+                    stmt->print(indent + 1);
+            }
+        }
+    };
+}

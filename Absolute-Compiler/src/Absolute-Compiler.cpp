@@ -5,6 +5,8 @@
 #include <fstream>
 #include <sstream>
 
+using namespace Absolute;
+
 std::string readFile(const std::string& filename) {
     std::filesystem::path fullPath = std::filesystem::absolute(filename);
     std::cout << "Opening file: " << fullPath << std::endl;

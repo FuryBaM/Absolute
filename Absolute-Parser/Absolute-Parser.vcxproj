@@ -51,7 +51,32 @@
   <ItemGroup>
     <ClCompile Include="src\lexer.cpp" />
     <ClCompile Include="src\nodes.cpp" />
-    <ClCompile Include="src\parser.cpp" />
+    <ClCompile Include="src\parser\parser.cpp" />
+    <ClCompile Include="src\parser\parser_arguments.cpp" />
+    <ClCompile Include="src\parser\parser_array.cpp" />
+    <ClCompile Include="src\parser\parser_assignment.cpp" />
+    <ClCompile Include="src\parser\parser_binary.cpp" />
+    <ClCompile Include="src\parser\parser_cast.cpp" />
+    <ClCompile Include="src\parser\parser_class.cpp" />
+    <ClCompile Include="src\parser\parser_constructor.cpp" />
+    <ClCompile Include="src\parser\parser_destructor.cpp" />
+    <ClCompile Include="src\parser\parser_enum.cpp" />
+    <ClCompile Include="src\parser\parser_function.cpp" />
+    <ClCompile Include="src\parser\parser_identifier.cpp" />
+    <ClCompile Include="src\parser\parser_if_else.cpp" />
+    <ClCompile Include="src\parser\parser_instance.cpp" />
+    <ClCompile Include="src\parser\parser_literals.cpp" />
+    <ClCompile Include="src\parser\parser_loops.cpp" />
+    <ClCompile Include="src\parser\parser_member.cpp" />
+    <ClCompile Include="src\parser\parser_modifiers.cpp" />
+    <ClCompile Include="src\parser\parser_parameters.cpp" />
+    <ClCompile Include="src\parser\parser_struct.cpp" />
+    <ClCompile Include="src\parser\parser_template.cpp" />
+    <ClCompile Include="src\parser\parser_ternary.cpp" />
+    <ClCompile Include="src\parser\parser_type.cpp" />
+    <ClCompile Include="src\parser\parser_unary.cpp" />
+    <ClCompile Include="src\parser\parser_utils.cpp" />
+    <ClCompile Include="src\parser\parser_var_declaration.cpp" />
     <ClCompile Include="src\parser_pch.cpp" />
     <ClCompile Include="src\scope.cpp" />
   </ItemGroup>
@@ -137,7 +162,7 @@
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
       <PrecompiledHeader>Create</PrecompiledHeader>
       <PrecompiledHeaderFile>parser_pch.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src\parser;$(ProjectDir)src;$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -185,7 +210,7 @@
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
       <PrecompiledHeader>Create</PrecompiledHeader>
       <PrecompiledHeaderFile>parser_pch.h</PrecompiledHeaderFile>
-      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src\parser;$(ProjectDir)src;$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>

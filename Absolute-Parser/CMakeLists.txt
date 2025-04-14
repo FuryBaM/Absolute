@@ -11,6 +11,7 @@ file(GLOB HEADER_FILES
 
 file(GLOB SOURCE_FILES
     "src/*.cpp"
+    "src/parser/*.cpp"
 )
 
 # Создаём статическую библиотеку
