@@ -1,2 +1,29 @@
-int32 x = 5;
+int32 x = 5.3 as int32;
 string str = "text";
+
+class TicTacToe {
+    int32 board[3][3];
+    int32 currentPlayer;
+    int32 winner;
+    int32 movesCount;
+
+    void init() {
+        for (int32 i = 0; i < 3; i++) {
+            for (int32 j = 0; j < 3; j++) {
+                board[i][j] = 0;
+            }
+        }
+        currentPlayer = 1;
+        winner = 0;
+        movesCount = 0;
+    }
+
+    void makeMove(int32 row, int32 col) {
+        if (board[row][col] == 0 && winner == 0) {
+            board[row][col] = currentPlayer;
+            movesCount += 1;
+            checkWinner();
+            currentPlayer = (currentPlayer == 1) ? 2 : 1;
+        }
+    }
+}

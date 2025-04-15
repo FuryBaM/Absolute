@@ -30,7 +30,7 @@ int main() {
         return 1;
     }
 
-    //ast->print();
+    ast->print();
 
     std::vector<std::unique_ptr<Program>> programs;
     programs.push_back(std::move(ast));

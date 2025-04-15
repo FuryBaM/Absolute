@@ -48,7 +48,7 @@ namespace Absolute{
         return left;
     }
 
-    std::unique_ptr<Expression> Parser::ParsePrimaryExpr() {
+    std::unique_ptr<Expression> Parser::ParseBaseExpr() {
         Token* token = CurrentToken();
         if (!token) {
             ReportSyntaxError(token, "Null token");
@@ -73,27 +73,12 @@ namespace Absolute{
             }
         }
 
-        // Литералы (числа, строки, символы)
-        if (token->type == TokenType::NUMBER || token->type == TokenType::STRING || token->type == TokenType::CHAR) {
-            auto expr = ParseLiteralExpr();
-            if (CurrentToken()->value == "as") {
-                return ParseCastExpr(std::move(expr));
-            }
-            return expr;
+        if (IsLiteral(token->type)) {
+			return ParseLiteralExpr();
         }
 
-        // Переменная или массив (x, arr[2])
         if (token->type == TokenType::IDENTIFIER) {
-            auto expr = ParseIdentifierExpr();
-            if (IsPostfixUnary(*CurrentToken())) {
-                return ParsePostfixUnaryExpr(std::move(expr));
-            }
-            else if (CurrentToken()->value == "as") {
-                return ParseCastExpr(std::move(expr));
-            }
-            else {
-                return expr;
-            }
+            return ParseIdentifierExpr();
         }
 
         if (CurrentToken()->value == "new") {
@@ -123,7 +108,30 @@ namespace Absolute{
 
         ReportSyntaxError(CurrentToken(), "Expected primary expression");
         std::exit(EXIT_FAILURE);
-        return nullptr;
+    }
+
+    std::unique_ptr<Expression> Parser::ParseSuffixExpr(std::unique_ptr<Expression> base) {
+        while (true) {
+            Token* token = CurrentToken();
+
+            if (!token) break;
+
+            if (IsPostfixUnary(*token)) {
+                base = ParsePostfixUnaryExpr(std::move(base));
+            }
+            else if (token->value == "as") {
+                base = ParseCastExpr(std::move(base));
+            }
+            else {
+                break;
+            }
+        }
+        return base;
+    }
+
+    std::unique_ptr<Expression> Parser::ParsePrimaryExpr() {
+        auto base = ParseBaseExpr();
+        return ParseSuffixExpr(std::move(base));
     }
 
     std::unique_ptr<Statement> Parser::ParseStatement()
