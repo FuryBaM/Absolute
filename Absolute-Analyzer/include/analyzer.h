@@ -2,9 +2,14 @@
 #include "variable.h"
 
 namespace Absolute {
+    class ANALYZER_API SymbolTable {
+    public:
+        std::unordered_map<std::string, std::unique_ptr<Type>> variables;
+    };
+
     class ANALYZER_API Analyzer {
         std::vector<std::unique_ptr<Program>> programs;
-        std::unordered_map<std::string, PrimitiveTypeEnum> variables;
+        SymbolTable table;
 
     public:
         explicit Analyzer(std::vector<std::unique_ptr<Program>> programs)
@@ -17,8 +22,16 @@ namespace Absolute {
             }
         }
         void PrintVariables() {
-            for (const auto& var : variables) {
-                std::cout << var.first << " " << PrimitiveEnumToString(var.second) << "\n";
+            for (const auto& [name, varType] : table.variables) {
+                if (auto primitive = dynamic_cast<const PrimitiveType*>(varType.get())){
+                    std::cout << name << " " << PrimitiveEnumToString(primitive->type) << "\n";
+                }
+                else if (auto user = dynamic_cast<const UserType*>(varType.get())) {
+                    std::cout << name << " " << user->name << "\n";
+                }
+                else {
+                    std::cout << name << " unknown type\n";
+                }
             }
         }
     private:

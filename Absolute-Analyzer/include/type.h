@@ -78,9 +78,11 @@ namespace Absolute {
 
     // Примитивный тип (int, float и т. д.)
     struct PrimitiveType : Type {
+    public:
         PrimitiveTypeEnum type;
 
-        explicit PrimitiveType(PrimitiveTypeEnum type) : type(type) {}
+        PrimitiveType(PrimitiveTypeEnum type) : type(type) {}
+		PrimitiveType(const PrimitiveType& other) : type(other.type) {}
     };
 
     // Поля класса
@@ -107,6 +109,7 @@ namespace Absolute {
 
     // Пользовательский тип (класс, структура)
     struct UserType : Type {
+    public:
         std::string name;
         AccessModifier access;  // Уровень доступа (private, public и т.д.)
         Scope scope;            // Область, в которой объявлен
