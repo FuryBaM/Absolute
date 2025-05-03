@@ -2,7 +2,6 @@
 
 namespace Absolute {
     class ExpressionVisitor;
-    class BaseIdentifierVisitor;
 
     struct ASTNode {
         virtual ~ASTNode() = default;

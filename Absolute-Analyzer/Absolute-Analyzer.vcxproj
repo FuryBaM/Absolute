@@ -19,6 +19,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="declaration_visitor.cpp" />
     <ClCompile Include="src\analyzer.cpp" />
     <ClCompile Include="src\analyzer_pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
@@ -30,6 +31,7 @@
     <ClCompile Include="src\variable.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="declaration_visitor.h" />
     <ClInclude Include="include\analyzer.h" />
     <ClInclude Include="include\analyzer_pch.h" />
     <ClInclude Include="include\type.h" />
