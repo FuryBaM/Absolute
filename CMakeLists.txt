@@ -45,6 +45,18 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/builtin-errors.abs"
     )
     set_tests_properties(absolute.builtin-errors PROPERTIES WILL_FAIL TRUE)
+    foreach(module_error IN ITEMS missing-import unknown-namespace)
+        add_test(
+            NAME "absolute.${module_error}"
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/${module_error}.abs"
+        )
+        set_tests_properties("absolute.${module_error}" PROPERTIES WILL_FAIL TRUE)
+    endforeach()
+    add_test(
+        NAME absolute.project
+        COMMAND Absolute-Compiler build
+            "${PROJECT_SOURCE_DIR}/tests/projects/multi-file/MultiFile.absproj"
+    )
     if(ABSOLUTE_ENABLE_LLVM)
         add_test(
             NAME absolute.emit-llvm
@@ -71,6 +83,25 @@ if(BUILD_TESTING)
             set_tests_properties(absolute.run-builtins PROPERTIES
                 FIXTURES_REQUIRED absolute-builtins-ir
                 PASS_REGULAR_EXPRESSION "before=40 after=42"
+            )
+        endif()
+        add_test(
+            NAME absolute.emit-project
+            COMMAND Absolute-Compiler build
+                "${PROJECT_SOURCE_DIR}/tests/projects/multi-file/MultiFile.absproj"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/multi-file-project.ll"
+        )
+        set_tests_properties(absolute.emit-project PROPERTIES
+            FIXTURES_SETUP absolute-project-ir
+        )
+        if(ABSOLUTE_LLI_EXECUTABLE)
+            add_test(
+                NAME absolute.run-project
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/multi-file-project.ll"
+            )
+            set_tests_properties(absolute.run-project PROPERTIES
+                FIXTURES_REQUIRED absolute-project-ir
+                PASS_REGULAR_EXPRESSION "project=42"
             )
         endif()
     endif()
