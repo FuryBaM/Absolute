@@ -39,7 +39,7 @@ foreach(int32 element in elements){
     }
 }
 
-internal class TestClass$<T, U> : BaseClass, ITestinterface {
+internal class TestClass<T, U> : BaseClass, ITestinterface {
     public int32 field1;
     private void run(int32 life = 0){
         g_tester.start();
@@ -71,6 +71,6 @@ delete target;
 if (!!target) {
     ++target;
 }
-MyClass$<int32, MyClass$<int32, string>> x = new MyClass$<int32, MyClass$<int32, string>>();
+MyClass<int32, MyClass<int32, string>> x = new MyClass<int32, MyClass<int32, string>>();
 int32 b = x ? true ? null ? 1 : 2 : 3 : 4;
 int32 val = 3.14 as int32;
