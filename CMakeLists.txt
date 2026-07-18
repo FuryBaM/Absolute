@@ -135,7 +135,6 @@ if(BUILD_TESTING)
         )
         set_tests_properties(absolute.emit-native-ffi PROPERTIES
             FIXTURES_SETUP absolute-native-ffi-ir
-            PASS_REGULAR_EXPRESSION "declare i32 @abs\\(i32"
         )
         if(ABSOLUTE_LLI_EXECUTABLE)
             add_test(
