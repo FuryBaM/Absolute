@@ -2,6 +2,56 @@
 #include "parser.h"
 
 namespace Absolute {
+    bool Parser::IsTemplateArgumentList(size_t start, size_t* close) const
+    {
+        if (start >= tokens.size() || tokens[start].value != "<") return false;
+
+        size_t depth = 1;
+        bool expectType = true;
+
+        for (size_t index = start + 1; index < tokens.size(); ++index) {
+            const Token& token = tokens[index];
+
+            if (token.value == "<") {
+                if (expectType) return false;
+                ++depth;
+                expectType = true;
+                continue;
+            }
+
+            if (token.value == ">" || token.value == ">>") {
+                if (expectType) return false;
+
+                const size_t closes = token.value == ">>" ? 2 : 1;
+                if (closes >= depth) {
+                    if (close) *close = index;
+                    return true;
+                }
+                depth -= closes;
+                continue;
+            }
+
+            if (token.value == ",") {
+                if (expectType) return false;
+                expectType = true;
+                continue;
+            }
+
+            if (token.value == ".") {
+                if (expectType) return false;
+                expectType = true;
+                continue;
+            }
+
+            const bool isTypeName = token.type == TokenType::IDENTIFIER ||
+                (token.type == TokenType::KEYWORD && IsPrimitiveType(token.value));
+            if (!isTypeName || !expectType) return false;
+            expectType = false;
+        }
+
+        return false;
+    }
+
     Token* Parser::RequireCurrent(const std::string& expectation)
     {
         Token* token = CurrentToken();
