@@ -5,7 +5,7 @@ namespace Absolute {
     std::unique_ptr<ConstructorCallExpr> Parser::ParseConstructorCall()
     {
         Consume(TokenType::KEYWORD, "new");
-        std::unique_ptr<Expression> identifier = ParseIdentifierExpr();
+        std::unique_ptr<Expression> identifier = ParseIdentifierExpr(true);
         return std::make_unique<ConstructorCallExpr>(std::move(identifier));
     }
 
