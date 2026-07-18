@@ -22,7 +22,7 @@ llvm_map_components_to_libnames(ABSOLUTE_LLVM_LIBS
 )
 
 target_link_libraries(Absolute-CodeGen
-    PUBLIC Absolute-Parser
+    PUBLIC Absolute-Parser Absolute-Analyzer
     PRIVATE ${ABSOLUTE_LLVM_LIBS}
 )
 
