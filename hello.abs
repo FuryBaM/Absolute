@@ -1,0 +1,4 @@
+int32 main() {
+    println("Hello from Absolute!");
+    return 0;
+}

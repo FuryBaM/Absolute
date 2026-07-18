@@ -105,6 +105,11 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/async-errors.abs"
     )
     set_tests_properties(absolute.async-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.array-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-errors.abs"
+    )
+    set_tests_properties(absolute.array-errors PROPERTIES WILL_FAIL TRUE)
     if(ABSOLUTE_ENABLE_LLVM)
         add_test(
             NAME absolute.emit-llvm
@@ -121,8 +126,24 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.emit-builtins PROPERTIES
             FIXTURES_SETUP absolute-builtins-ir
         )
+        add_test(
+            NAME absolute.emit-arrays
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/arrays.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/arrays.ll"
+        )
+        set_tests_properties(absolute.emit-arrays PROPERTIES
+            FIXTURES_SETUP absolute-arrays-ir
+        )
+        add_test(
+            NAME absolute.emit-array-out-of-bounds
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-out-of-bounds.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/array-out-of-bounds.ll"
+        )
+        set_tests_properties(absolute.emit-array-out-of-bounds PROPERTIES
+            FIXTURES_SETUP absolute-array-out-of-bounds-ir
+        )
 
-        find_program(ABSOLUTE_LLI_EXECUTABLE NAMES lli)
+        find_program(ABSOLUTE_LLI_EXECUTABLE NAMES lli lli-18)
         if(ABSOLUTE_LLI_EXECUTABLE)
             add_test(
                 NAME absolute.run-builtins
@@ -131,6 +152,22 @@ if(BUILD_TESTING)
             set_tests_properties(absolute.run-builtins PROPERTIES
                 FIXTURES_REQUIRED absolute-builtins-ir
                 PASS_REGULAR_EXPRESSION "before=40 after=42"
+            )
+            add_test(
+                NAME absolute.run-arrays
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/arrays.ll"
+            )
+            set_tests_properties(absolute.run-arrays PROPERTIES
+                FIXTURES_REQUIRED absolute-arrays-ir
+                PASS_REGULAR_EXPRESSION "arrays=90"
+            )
+            add_test(
+                NAME absolute.run-array-out-of-bounds
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/array-out-of-bounds.ll"
+            )
+            set_tests_properties(absolute.run-array-out-of-bounds PROPERTIES
+                FIXTURES_REQUIRED absolute-array-out-of-bounds-ir
+                WILL_FAIL TRUE
             )
         endif()
         add_test(

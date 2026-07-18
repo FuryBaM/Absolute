@@ -1,0 +1,37 @@
+int32 main() {
+    int32 size = 30000;
+    int32 values[size];
+    int32 state = 123456789;
+    int32 index = 0;
+    while (index < size) {
+        state = state * 1664525 + 1013904223;
+        values[index] = state;
+        index += 1;
+    }
+
+    index = 1;
+    while (index < size) {
+        int32 key = values[index];
+        int32 position = index - 1;
+        while (position >= 0) {
+            if (values[position] <= key) {
+                break;
+            }
+            values[position + 1] = values[position];
+            position -= 1;
+        }
+        values[position + 1] = key;
+        index += 1;
+    }
+
+    int64 checksum = 0;
+    index = 0;
+    while (index < size) {
+        checksum += values[index];
+        index += 1;
+    }
+    checksum += (values[0] as int64) * 31;
+    checksum += (values[size - 1] as int64) * 17;
+    println(checksum);
+    return 0;
+}

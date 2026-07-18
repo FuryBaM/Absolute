@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
@@ -93,6 +94,33 @@ namespace Absolute {
             return IsTaskTypeName(name) ? name.substr(5, name.size() - 6) : std::string{};
         }
 
+        std::optional<std::vector<size_t>> InferArrayShape(const ArrayExpr& array) {
+            std::vector<size_t> childShape;
+            bool hasChildShape = false;
+            for (const auto& value : array.values) {
+                std::vector<size_t> currentShape;
+                if (const auto* nested = dynamic_cast<const ArrayExpr*>(value.get())) {
+                    const auto nestedShape = InferArrayShape(*nested);
+                    if (!nestedShape) return std::nullopt;
+                    currentShape = *nestedShape;
+                }
+                if (!hasChildShape) {
+                    childShape = std::move(currentShape);
+                    hasChildShape = true;
+                }
+                else if (childShape != currentShape) return std::nullopt;
+            }
+            childShape.insert(childShape.begin(), array.values.size());
+            return childShape;
+        }
+
+        void FlattenArrayValues(ArrayExpr& array, std::vector<Expression*>& output) {
+            for (const auto& value : array.values) {
+                if (auto* nested = dynamic_cast<ArrayExpr*>(value.get())) FlattenArrayValues(*nested, output);
+                else output.push_back(value.get());
+            }
+        }
+
         class FunctionCallProbe final : public BaseIdentifierVisitor {
         public:
             FunctionCallExpr* call = nullptr;
@@ -113,6 +141,9 @@ namespace Absolute {
             std::string typeName;
             llvm::AllocaInst* managedOwner = nullptr;
             bool keep = false;
+            bool isArray = false;
+            llvm::Type* arrayElementType = nullptr;
+            std::vector<llvm::Value*> arrayDimensions;
         };
 
         struct LoopTarget {
@@ -287,6 +318,50 @@ namespace Absolute {
             const std::string name = IdentifierName(expression);
             if (name.empty()) Fail("expected assignable identifier");
             return RequireVariable(name);
+        }
+
+        void EmitOrExit(llvm::Value* condition, const std::string& name) {
+            llvm::Function* function = CurrentFunction();
+            if (!function) Fail("runtime check outside a function");
+            llvm::BasicBlock* success = llvm::BasicBlock::Create(context, name + ".success", function);
+            llvm::BasicBlock* failure = llvm::BasicBlock::Create(context, name + ".failure", function);
+            builder.CreateCondBr(condition, success, failure);
+            builder.SetInsertPoint(failure);
+            const std::string message = name == "array.size"
+                ? "Array size must be greater than zero"
+                : "Array index out of bounds";
+            builder.CreateCall(Puts(), {builder.CreateGlobalStringPtr(message, name + ".message")});
+            builder.CreateCall(ExitFailure(), {builder.getInt32(1)});
+            builder.CreateUnreachable();
+            builder.SetInsertPoint(success);
+        }
+
+        llvm::Value* ArrayElementAddress(ArrayAccessExpr& expression) {
+            Variable& variable = AddressOf(expression.base.get());
+            if (!variable.isArray) Fail("object is not an array");
+            if (expression.indexes.size() != variable.arrayDimensions.size())
+                Fail("array access must provide all dimensions");
+
+            llvm::Value* offset = builder.getInt64(0);
+            for (size_t dimension = 0; dimension < expression.indexes.size(); ++dimension) {
+                if (!expression.indexes[dimension]) Fail("array access requires an index");
+                const bool outerAddressMode = addressMode;
+                addressMode = false;
+                llvm::Value* index = Evaluate(expression.indexes[dimension].get());
+                addressMode = outerAddressMode;
+                index = Coerce(index, builder.getInt64Ty());
+                llvm::Value* nonNegative = builder.CreateICmpSGE(
+                    index, builder.getInt64(0), "array.index.nonnegative");
+                llvm::Value* belowSize = builder.CreateICmpSLT(
+                    index, variable.arrayDimensions[dimension], "array.index.below.size");
+                EmitOrExit(builder.CreateAnd(nonNegative, belowSize, "array.index.valid"), "array.bounds");
+                if (dimension == 0) offset = index;
+                else {
+                    offset = builder.CreateMul(offset, variable.arrayDimensions[dimension], "array.row.offset");
+                    offset = builder.CreateAdd(offset, index, "array.linear.offset");
+                }
+            }
+            return builder.CreateGEP(variable.arrayElementType, variable.address, offset, "array.element.address");
         }
 
         llvm::AllocaInst* CreateEntryAlloca(llvm::Function& function, llvm::Type* type, const std::string& name) {
@@ -589,6 +664,18 @@ namespace Absolute {
             return module->getOrInsertFunction("abort", type);
         }
 
+        llvm::FunctionCallee Puts() {
+            llvm::FunctionType* type = llvm::FunctionType::get(
+                builder.getInt32Ty(), {builder.getPtrTy()}, false);
+            return module->getOrInsertFunction("puts", type);
+        }
+
+        llvm::FunctionCallee ExitFailure() {
+            llvm::FunctionType* type = llvm::FunctionType::get(
+                builder.getVoidTy(), {builder.getInt32Ty()}, false);
+            return module->getOrInsertFunction("exit", type);
+        }
+
         std::string SemanticType(Expression* expression) const {
             if (!analyzer || !expression) return {};
             const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
@@ -806,7 +893,7 @@ namespace Absolute {
                 llvm::AllocaInst* address = CreateEntryAlloca(*function, argument.getType(), name);
                 builder.CreateStore(&argument, address);
                 if (!scopes.back().emplace(name,
-                    Variable{address, argument.getType(), typeName, nullptr, false}).second) {
+                    Variable{address, argument.getType(), typeName, nullptr, false, false, nullptr, {}}).second) {
                     Fail("duplicate parameter '" + name + "'");
                 }
             }
@@ -947,6 +1034,7 @@ namespace Absolute {
             impl->addressValue = variable.address;
             return;
         }
+        if (variable.isArray) impl->Fail("array '" + expr->name + "' requires an index");
         impl->value = impl->builder.CreateLoad(variable.type, variable.address, expr->name + ".value");
         impl->valueCreatesManagedOwner = false;
     }
@@ -978,8 +1066,14 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(ArrayAccessExpr* expr) {
-        (void)expr;
-        impl->Fail("array access is not implemented yet");
+        llvm::Value* address = impl->ArrayElementAddress(*expr);
+        if (impl->addressMode) {
+            impl->addressValue = address;
+            return;
+        }
+        llvm::Type* elementType = impl->TypeFromName(impl->SemanticType(expr));
+        impl->value = impl->builder.CreateLoad(elementType, address, "array.element");
+        impl->valueCreatesManagedOwner = false;
     }
 
     void CodeGenerator::Visit(BinaryExpr* expr) {
@@ -1108,7 +1202,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(ArrayExpr* expr) {
         (void)expr;
-        impl->Fail("array literals are not implemented yet");
+        impl->Fail("array literal requires an array variable initializer");
     }
 
     void CodeGenerator::Visit(AssignmentExpr* expr) {
@@ -1150,6 +1244,72 @@ namespace Absolute {
         const std::string name = IdentifierName(expr->name.get());
         if (name.empty()) impl->Fail("variable declaration requires an identifier");
         const std::string typeName = impl->ResolveTypeName(expr->type.get());
+        if (auto* arrayDeclarator = dynamic_cast<ArrayAccessExpr*>(expr->name.get())) {
+            if (arrayDeclarator->indexes.empty()) impl->Fail("array declaration requires a dimension");
+            llvm::Type* elementType = impl->TypeFromName(typeName);
+            std::vector<llvm::Value*> dimensions;
+            dimensions.reserve(arrayDeclarator->indexes.size());
+
+            auto* literal = dynamic_cast<ArrayExpr*>(expr->value.get());
+            const auto inferredShape = literal ? InferArrayShape(*literal)
+                : std::optional<std::vector<size_t>>{};
+            for (size_t dimension = 0; dimension < arrayDeclarator->indexes.size(); ++dimension) {
+                llvm::Value* size = nullptr;
+                if (arrayDeclarator->indexes[dimension]) {
+                    size = impl->Coerce(
+                        impl->Evaluate(arrayDeclarator->indexes[dimension].get()),
+                        impl->builder.getInt64Ty());
+                }
+                else if (inferredShape && dimension < inferredShape->size()) {
+                    size = impl->builder.getInt64((*inferredShape)[dimension]);
+                }
+                else impl->Fail("array dimension requires a size or an initializer");
+                impl->EmitOrExit(
+                    impl->builder.CreateICmpSGT(size, impl->builder.getInt64(0), "array.size.positive"),
+                    "array.size");
+                dimensions.push_back(size);
+            }
+
+            llvm::Value* elementCount = impl->builder.getInt64(1);
+            for (llvm::Value* dimension : dimensions)
+                elementCount = impl->builder.CreateMul(elementCount, dimension, "array.element.count");
+            llvm::AllocaInst* address = impl->builder.CreateAlloca(elementType, elementCount, name);
+            llvm::Value* byteCount = impl->builder.CreateMul(
+                elementCount,
+                impl->builder.getInt64(impl->SizeOfTypeName(typeName)),
+                "array.byte.count");
+            impl->builder.CreateMemSet(
+                address, impl->builder.getInt8(0), byteCount, llvm::MaybeAlign(1));
+
+            Impl::Variable variable;
+            variable.address = address;
+            variable.type = elementType;
+            variable.typeName = typeName;
+            for (size_t dimension = 0; dimension < arrayDeclarator->indexes.size(); ++dimension)
+                variable.typeName += "[]";
+            variable.keep = impl->declarationKeep;
+            variable.isArray = true;
+            variable.arrayElementType = elementType;
+            variable.arrayDimensions = dimensions;
+            if (!impl->scopes.back().emplace(name, std::move(variable)).second)
+                impl->Fail("duplicate variable '" + name + "'");
+
+            if (literal) {
+                std::vector<Expression*> values;
+                FlattenArrayValues(*literal, values);
+                for (size_t index = 0; index < values.size(); ++index) {
+                    llvm::Value* initial = impl->Coerce(impl->Evaluate(values[index]), elementType);
+                    llvm::Value* destination = impl->builder.CreateGEP(
+                        elementType, address, impl->builder.getInt64(index), "array.initializer.element");
+                    impl->builder.CreateStore(initial, destination);
+                }
+            }
+            else if (expr->value) impl->Fail("array variable requires an array literal initializer");
+
+            impl->value = address;
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
         llvm::Type* type = impl->TypeFromName(typeName);
         if (type->isVoidTy()) impl->Fail("variable '" + name + "' cannot have type void");
 
@@ -1158,7 +1318,8 @@ namespace Absolute {
         if (IsManagedPointerTypeName(typeName))
             ownerAddress = impl->CreateEntryAlloca(*function, impl->builder.getInt1Ty(), name + ".owner");
         if (!impl->scopes.back().emplace(name,
-            Impl::Variable{address, type, typeName, ownerAddress, impl->declarationKeep}).second) {
+            Impl::Variable{address, type, typeName, ownerAddress, impl->declarationKeep,
+                false, nullptr, {}}).second) {
             impl->Fail("duplicate variable '" + name + "'");
         }
 

@@ -234,10 +234,37 @@ the result is ready. This first concurrency milestone supports primitive and
 pointer-shaped ABI values; cancellation, channels, async I/O, methods, and
 compile-time data-race checking are planned separately.
 
-The first backend milestone supports primitive values, functions, local
-variables, calls, casts, arithmetic/comparison operators, assignments,
-`return`, `if`, `for`, `while`, `do-while`, `break`, and `continue`. Classes,
-user-defined instances, arrays, and `foreach` report explicit codegen errors.
+## Arrays
+
+Local arrays support fixed or runtime dimensions, rectangular literals,
+inferred literal sizes, multidimensional row-major indexing, and element
+assignment:
+
+```absolute
+int32 values[4] = {10, 20, 30, 40};
+values[2] += 12;
+
+int32 matrix[2][3] = {{1, 2, 3}, {4, 5, 6}};
+matrix[1][0] = values[2];
+
+int32 inferred[] = {7, 8, 9};
+int32 length = 16;
+int32 buffer[length];
+```
+
+Array storage is zero-initialized. Dimensions must be positive, every access
+must provide the complete index list, and generated code checks each index at
+runtime. An invalid size or out-of-bounds index prints a diagnostic and exits
+with a nonzero status. Literal shapes are checked statically for rank,
+rectangularity, and exact fixed dimensions.
+
+Array parameters, array returns, global arrays, slices, and `foreach` codegen
+are not implemented yet.
+
+The backend also supports primitive values, functions, local variables, calls,
+casts, arithmetic/comparison operators, assignments, `return`, `if`, `for`,
+`while`, `do-while`, `break`, and `continue`. Classes, user-defined instances,
+and `foreach` still report explicit codegen errors.
 
 For a Release build, replace `Debug` with `Release`.
 

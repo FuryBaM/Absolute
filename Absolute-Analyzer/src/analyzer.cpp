@@ -45,6 +45,45 @@ namespace Absolute {
             return type.size() > 6 && type.starts_with("task<") && type.ends_with(">");
         }
 
+        size_t ArrayRank(std::string type) {
+            size_t rank = 0;
+            while (type.ends_with("[]")) {
+                type.resize(type.size() - 2);
+                ++rank;
+            }
+            return rank;
+        }
+
+        std::string ArrayElementType(std::string type, size_t dimensions = 1) {
+            while (dimensions-- > 0 && type.ends_with("[]")) type.resize(type.size() - 2);
+            return type;
+        }
+
+        std::string ArrayType(std::string elementType, size_t rank) {
+            while (rank-- > 0) elementType += "[]";
+            return elementType;
+        }
+
+        std::optional<std::vector<size_t>> InferArrayShape(const ArrayExpr& array) {
+            std::vector<size_t> childShape;
+            bool hasChildShape = false;
+            for (const auto& value : array.values) {
+                std::vector<size_t> currentShape;
+                if (const auto* nested = dynamic_cast<const ArrayExpr*>(value.get())) {
+                    const auto nestedShape = InferArrayShape(*nested);
+                    if (!nestedShape) return std::nullopt;
+                    currentShape = *nestedShape;
+                }
+                if (!hasChildShape) {
+                    childShape = std::move(currentShape);
+                    hasChildShape = true;
+                }
+                else if (childShape != currentShape) return std::nullopt;
+            }
+            childShape.insert(childShape.begin(), array.values.size());
+            return childShape;
+        }
+
         std::string TaskValueType(const std::string& type) {
             return IsTaskType(type) ? type.substr(5, type.size() - 6) : "error";
         }
@@ -430,6 +469,8 @@ namespace Absolute {
     bool Analyzer::IsAssignable(const std::string& target, const std::string& source) const {
         if (target == "error" || source == "error" || target == "dynamic" || source == "dynamic") return true;
         if (target == source) return true;
+        if (target.ends_with("[]") && source.ends_with("[]"))
+            return IsAssignable(ArrayElementType(target), ArrayElementType(source));
         if (IsPointerType(target) && source == "null") return true;
         if (IsNumeric(target) && IsNumeric(source)) return true;
         return source == "null" && !PrimitiveStringToEnum(target).has_value();
@@ -822,17 +863,26 @@ namespace Absolute {
 
     void Analyzer::Visit(ArrayAccessExpr* expr) {
         Result base = Evaluate(expr->base.get());
+        const size_t rank = ArrayRank(base.type);
         for (const auto& index : expr->indexes) {
-            if (!index) continue;
+            if (!index) {
+                Report("array access requires an index");
+                continue;
+            }
             const Result indexResult = Evaluate(index.get());
             if (!IsInteger(indexResult.type) && indexResult.type != "error")
                 Report("array index must be an integer, got '" + indexResult.type + "'");
         }
-        if (!base.type.ends_with("[]")) {
+        if (rank == 0) {
             Report("object of type '" + base.type + "' is not an array");
             Save(expr, {base.symbol, "error", false});
         }
-        else Save(expr, {base.symbol, base.type.substr(0, base.type.size() - 2), base.isLValue});
+        else if (expr->indexes.size() != rank) {
+            Report("array access provides " + std::to_string(expr->indexes.size()) +
+                " index(es), but the array has " + std::to_string(rank) + " dimension(s)");
+            Save(expr, {base.symbol, "error", false});
+        }
+        else Save(expr, {base.symbol, ArrayElementType(base.type, rank), base.isLValue});
     }
 
     void Analyzer::Visit(BinaryExpr* expr) {
@@ -938,13 +988,29 @@ namespace Absolute {
             const Result resolved = Evaluate(size.get());
             if (!IsInteger(resolved.type)) Report("array size must be an integer");
         }
+        const bool hasExpectedArrayType = expectedType.ends_with("[]");
+        const std::string expectedElementType = hasExpectedArrayType
+            ? ArrayElementType(expectedType) : std::string{};
         std::string elementType;
         for (const auto& value : expr->values) {
-            const Result resolved = Evaluate(value.get());
-            elementType = elementType.empty() ? resolved.type : CommonType(elementType, resolved.type);
+            const Result resolved = hasExpectedArrayType
+                ? EvaluateExpected(value.get(), expectedElementType)
+                : Evaluate(value.get());
+            if (hasExpectedArrayType && !IsAssignable(expectedElementType, resolved.type))
+                Report("array element has type '" + resolved.type + "', expected '" + expectedElementType + "'");
+            const std::string common = elementType.empty()
+                ? resolved.type : CommonType(elementType, resolved.type);
+            if (!elementType.empty() && common == "error" &&
+                elementType != "error" && resolved.type != "error")
+                Report("array literal mixes incompatible element types '" + elementType +
+                    "' and '" + resolved.type + "'");
+            elementType = common;
         }
-        if (elementType.empty()) elementType = "dynamic";
-        Save(expr, {InvalidSymbolId, elementType + "[]", false});
+        if (hasExpectedArrayType) Save(expr, {InvalidSymbolId, expectedType, false});
+        else {
+            if (elementType.empty()) elementType = "dynamic";
+            Save(expr, {InvalidSymbolId, elementType + "[]", false});
+        }
     }
 
     void Analyzer::Visit(AssignmentExpr* expr) {
@@ -990,6 +1056,9 @@ namespace Absolute {
         const std::string name = ExtractIdentifier(expr->name.get());
         const std::string declarationName = currentType.empty() && functionDepth == 0 ? Qualify(name) : name;
         std::string type = ResolveType(expr->type.get());
+        auto* arrayDeclarator = dynamic_cast<ArrayAccessExpr*>(expr->name.get());
+        const size_t arrayRank = arrayDeclarator ? arrayDeclarator->indexes.size() : 0;
+        if (arrayRank > 0) type = ArrayType(std::move(type), arrayRank);
         if (phase == Phase::CollectDeclarations) {
             if (currentType.empty()) {
                 if (!table.Declare(SymbolKind::Variable, declarationName, type))
@@ -1000,6 +1069,53 @@ namespace Absolute {
             return;
         }
         if (!IsKnownType(type)) Report("unknown type '" + type + "' of variable '" + name + "'");
+        std::optional<std::vector<size_t>> initializerShape;
+        if (arrayDeclarator) {
+            if (arrayDeclarator->indexes.empty()) Report("array variable '" + name + "' requires a dimension");
+            for (const auto& size : arrayDeclarator->indexes) {
+                if (!size) continue;
+                const Result resolved = Evaluate(size.get());
+                if (!IsInteger(resolved.type) && resolved.type != "error")
+                    Report("array size must be an integer, got '" + resolved.type + "'");
+                if (const auto* literal = dynamic_cast<const NumberLiteralExpr*>(size.get())) {
+                    try {
+                        if (std::stoll(literal->value) <= 0) Report("array size must be greater than zero");
+                    }
+                    catch (const std::exception&) {
+                        Report("array size is outside the supported integer range");
+                    }
+                }
+            }
+            if (const auto* literal = dynamic_cast<const ArrayExpr*>(expr->value.get())) {
+                initializerShape = InferArrayShape(*literal);
+                if (!initializerShape) Report("array initializer must be rectangular");
+                else if (initializerShape->size() != arrayRank)
+                    Report("array initializer has " + std::to_string(initializerShape->size()) +
+                        " dimension(s), expected " + std::to_string(arrayRank));
+            }
+            for (size_t dimension = 0; dimension < arrayDeclarator->indexes.size(); ++dimension) {
+                const auto& size = arrayDeclarator->indexes[dimension];
+                if (!size) {
+                    if (!initializerShape || dimension >= initializerShape->size())
+                        Report("array dimension " + std::to_string(dimension + 1) +
+                            " requires a size or an initializer");
+                    continue;
+                }
+                if (initializerShape && dimension < initializerShape->size()) {
+                    if (const auto* literal = dynamic_cast<const NumberLiteralExpr*>(size.get())) {
+                        try {
+                            if (static_cast<size_t>(std::stoull(literal->value)) != (*initializerShape)[dimension])
+                                Report("array initializer size does not match dimension " +
+                                    std::to_string(dimension + 1));
+                        }
+                        catch (const std::exception&) {
+                        }
+                    }
+                }
+            }
+            if (expr->value && !dynamic_cast<ArrayExpr*>(expr->value.get()))
+                Report("array variable '" + name + "' requires an array literal initializer");
+        }
         Result value;
         if (expr->value) value = EvaluateExpected(expr->value.get(), type == "auto" ? std::string{} : type);
         if (type == "auto") {
@@ -1029,7 +1145,7 @@ namespace Absolute {
         }
         else if (Symbol* symbol = table.Get(id)) symbol->type = type;
         ValueFlowState flow;
-        flow.initialization = expr->value
+        flow.initialization = (expr->value || arrayRank > 0)
             ? InitializationState::Initialized : InitializationState::Uninitialized;
         flow.pointerValidity = IsPointerType(type)
             ? (expr->value ? value.pointerValidity : PointerValidity::Unknown)
