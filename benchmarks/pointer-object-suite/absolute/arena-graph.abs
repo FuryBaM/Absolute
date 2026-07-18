@@ -1,0 +1,51 @@
+int32 arenaOrder[1048576];
+int32 arenaNext[1048576];
+int64 arenaValues[1048576];
+
+int64 arenaGraph() {
+    int32 size = 1048576;
+    int32 mask = size - 1;
+
+    int32 index = 0;
+    while (index < size) {
+        arenaOrder[index] = index;
+        arenaValues[index] = index * 17 + 3;
+        index += 1;
+    }
+
+    uint32 state = 123456789;
+    index = size - 1;
+    while (index > 0) {
+        state = state * 1103515245 + 12345;
+        int32 selected = (state & 2147483647) % (index + 1);
+        int32 temporary = arenaOrder[index];
+        arenaOrder[index] = arenaOrder[selected];
+        arenaOrder[selected] = temporary;
+        index -= 1;
+    }
+
+    index = 0;
+    while (index < size) {
+        int32 following = (index + 1) & mask;
+        arenaNext[arenaOrder[index]] = arenaOrder[following];
+        index += 1;
+    }
+
+    raw int32* nextPointer = &arenaNext[0];
+    raw int64* valuePointer = &arenaValues[0];
+    int32 current = arenaOrder[0];
+    int64 checksum = 0;
+    int32 iteration = 0;
+    while (iteration < 5000000) {
+        current = *(nextPointer + current);
+        int64 value = *(valuePointer + current);
+        checksum = (checksum + value + iteration) & 2147483647;
+        iteration += 1;
+    }
+    return checksum;
+}
+
+int32 main() {
+    println(arenaGraph());
+    return 0;
+}
