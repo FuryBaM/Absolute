@@ -231,8 +231,20 @@ namespace Absolute{
         {
             Token* next = PeekToken(1);
             Token* afterIdentifiers = PeekTokenAfterIdentifiers();
-            if ((next && (next->type == TokenType::DOLLAR || next->type == TokenType::IDENTIFIER || IsPrefixUnary(*next))) ||
-                (afterIdentifiers && (afterIdentifiers->type == TokenType::IDENTIFIER || IsPrefixUnary(*afterIdentifiers)))) {
+            bool templateType = false;
+            if (afterIdentifiers && afterIdentifiers->value == "<") {
+                const size_t templateStart = static_cast<size_t>(afterIdentifiers - tokens.data());
+                size_t templateClose = 0;
+                if (IsTemplateArgumentList(templateStart, &templateClose)) {
+                    Token* afterTemplate = templateClose + 1 < tokens.size() ? &tokens[templateClose + 1] : nullptr;
+                    templateType = afterTemplate &&
+                        (afterTemplate->type == TokenType::IDENTIFIER || IsPrefixUnary(*afterTemplate));
+                }
+            }
+
+            if ((next && (next->type == TokenType::IDENTIFIER || IsPrefixUnary(*next))) ||
+                (afterIdentifiers && (afterIdentifiers->type == TokenType::IDENTIFIER || IsPrefixUnary(*afterIdentifiers))) ||
+                templateType) {
                 return ParseInstanceDeclStmt();
             }
             return ParseIdentifier(); // Обрабатываем идентификатор
