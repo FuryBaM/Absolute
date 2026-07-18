@@ -1,0 +1,14 @@
+int32 add(int32 left, int32 right) {
+    return left + right;
+}
+
+int32 main() {
+    int32 value = add(20, 21);
+    if (value == 41) {
+        value += 1;
+    }
+    while (value < 44) {
+        value++;
+    }
+    return value;
+}
