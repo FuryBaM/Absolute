@@ -22,6 +22,7 @@ namespace Absolute {
 
         void Visit(PrimitiveTypeExpr* expr) override;
         void Visit(UserTypeExpr* expr) override;
+        void Visit(PointerTypeExpr* expr) override;
         void Visit(IdentifierExpr* expr) override;
         void Visit(FunctionCallExpr* expr) override;
         void Visit(ArrayAccessExpr* expr) override;

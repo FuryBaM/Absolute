@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(ABSOLUTE_ENABLE_LLVM "Build the LLVM IR backend" ON)
 
 # Добавляем подпроекты
+add_subdirectory(Absolute-Runtime)
 add_subdirectory(Absolute-Parser)
 add_subdirectory(Absolute-Analyzer)
 if(ABSOLUTE_ENABLE_LLVM)
@@ -56,6 +57,10 @@ if(BUILD_TESTING)
         NAME absolute.project
         COMMAND Absolute-Compiler build
             "${PROJECT_SOURCE_DIR}/tests/projects/multi-file/MultiFile.absproj"
+    )
+    add_test(
+        NAME absolute.pointers-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointers.abs"
     )
     if(ABSOLUTE_ENABLE_LLVM)
         add_test(
@@ -174,6 +179,19 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-native PROPERTIES
             FIXTURES_REQUIRED absolute-native-executable
             PASS_REGULAR_EXPRESSION "native=42"
+        )
+        add_test(
+            NAME absolute.build-pointers
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointers.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/pointers-app"
+        )
+        set_tests_properties(absolute.build-pointers PROPERTIES
+            FIXTURES_SETUP absolute-pointers-executable
+        )
+        add_test(NAME absolute.run-pointers COMMAND "${CMAKE_BINARY_DIR}/pointers-app")
+        set_tests_properties(absolute.run-pointers PROPERTIES
+            FIXTURES_REQUIRED absolute-pointers-executable
+            PASS_REGULAR_EXPRESSION "pointers=ok"
         )
     endif()
 endif()

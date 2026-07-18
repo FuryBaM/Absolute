@@ -20,7 +20,25 @@ namespace Absolute {
 
         bool IsConditionType(const std::string& type) {
             return type == "bool" || type == "dynamic" || type == "error" ||
-                type.starts_with("int") || type.starts_with("uint");
+                type.starts_with("int") || type.starts_with("uint") || type.ends_with("*");
+        }
+
+        bool IsRawPointerType(const std::string& type) {
+            return type.starts_with("raw ") && type.ends_with("*");
+        }
+
+        bool IsManagedPointerType(const std::string& type) {
+            return !IsRawPointerType(type) && type.ends_with("*");
+        }
+
+        bool IsPointerType(const std::string& type) {
+            return IsRawPointerType(type) || IsManagedPointerType(type);
+        }
+
+        std::string PointerPointee(std::string type) {
+            if (IsRawPointerType(type)) type.erase(0, 4);
+            if (!type.empty() && type.back() == '*') type.pop_back();
+            return type;
         }
 
         class CallTargetProbe final : public BaseIdentifierVisitor {
@@ -222,6 +240,7 @@ namespace Absolute {
     }
 
     bool Analyzer::IsKnownType(const std::string& name) const {
+        if (IsPointerType(name)) return IsKnownType(PointerPointee(name));
         return PrimitiveStringToEnum(name).has_value() || types.contains(name) || name == "null" ||
             (name.size() > 2 && name.ends_with("[]") && IsKnownType(name.substr(0, name.size() - 2)));
     }
@@ -238,6 +257,7 @@ namespace Absolute {
     bool Analyzer::IsAssignable(const std::string& target, const std::string& source) const {
         if (target == "error" || source == "error" || target == "dynamic" || source == "dynamic") return true;
         if (target == source) return true;
+        if (IsPointerType(target) && source == "null") return true;
         if (IsNumeric(target) && IsNumeric(source)) return true;
         return source == "null" && !PrimitiveStringToEnum(target).has_value();
     }
@@ -376,6 +396,10 @@ namespace Absolute {
     }
 
     std::string Analyzer::ResolveTypeReference(const std::string& name) const {
+        if (IsPointerType(name)) {
+            const std::string prefix = IsRawPointerType(name) ? "raw " : "";
+            return prefix + ResolveTypeReference(PointerPointee(name)) + "*";
+        }
         if (PrimitiveStringToEnum(name).has_value() || name == "null" || name == "error") return name;
         const Symbol* symbol = table.Get(LookupSymbol(name));
         return symbol && symbol->kind == SymbolKind::Type ? symbol->name : name;
@@ -389,6 +413,12 @@ namespace Absolute {
     void Analyzer::Visit(UserTypeExpr* expr) {
         const std::string type = ResolveType(expr->typeExpr.get());
         Save(expr, {InvalidSymbolId, type, false});
+    }
+
+    void Analyzer::Visit(PointerTypeExpr* expr) {
+        const std::string pointee = ResolveType(expr->pointee.get());
+        if (pointee == "void" && !expr->raw) Report("managed pointers cannot point to void");
+        Save(expr, {InvalidSymbolId, (expr->raw ? "raw " : "") + pointee + "*", false});
     }
 
     void Analyzer::Visit(IdentifierExpr* expr) {
@@ -704,16 +734,25 @@ namespace Absolute {
     }
 
     void Analyzer::Visit(ConstructorCallExpr* expr) {
-        ++constructorContextDepth;
-        const Result constructed = Evaluate(expr->constructName.get());
-        --constructorContextDepth;
-        Save(expr, {InvalidSymbolId, constructed.type, false});
+        const std::string constructedType = ResolveType(expr->constructName.get());
+        if (!IsKnownType(constructedType) || constructedType == "void" || constructedType == "auto" ||
+            constructedType == "dynamic")
+            Report("cannot allocate type '" + constructedType + "'");
+        if (expr->arguments.size() > 1 && PrimitiveStringToEnum(constructedType).has_value())
+            Report("primitive allocation accepts at most one initializer");
+        for (const auto& argument : expr->arguments) {
+            const Result value = Evaluate(argument.get());
+            if (PrimitiveStringToEnum(constructedType).has_value() && !IsAssignable(constructedType, value.type))
+                Report("allocation initializer has type '" + value.type + "', expected '" + constructedType + "'");
+        }
+        Save(expr, {InvalidSymbolId, (expr->raw ? "raw " : "") + constructedType + "*", false});
     }
 
     void Analyzer::Visit(DestructorCallExpr* expr) {
         const Result target = Evaluate(expr->target.get());
-        if (!types.contains(target.type) && target.type != "error")
-            Report("destructor requires an object instance, got '" + target.type + "'");
+        if (!IsPointerType(target.type) && target.type != "error")
+            Report("delete requires a pointer, got '" + target.type + "'");
+        if (!target.isLValue) Report("delete target must be an assignable pointer variable");
         Save(expr, {InvalidSymbolId, "void", false});
     }
 
@@ -749,6 +788,19 @@ namespace Absolute {
 
     void Analyzer::Visit(PrefixUnaryExpr* expr) {
         const Result operand = Evaluate(expr->operand.get());
+        if (expr->op == "&") {
+            if (!operand.isLValue) Report("operator '&' requires an assignable value");
+            Save(expr, {InvalidSymbolId, "raw " + operand.type + "*", false});
+            return;
+        }
+        if (expr->op == "*") {
+            if (!IsPointerType(operand.type)) {
+                Report("operator '*' requires a pointer");
+                Save(expr, {InvalidSymbolId, "error", false});
+            }
+            else Save(expr, {InvalidSymbolId, PointerPointee(operand.type), true});
+            return;
+        }
         if ((expr->op == "++" || expr->op == "--") && (!operand.isLValue || !IsNumeric(operand.type)))
             Report("operator '" + expr->op + "' requires an assignable numeric operand");
         else if (expr->op == "!" && !IsConditionType(operand.type)) Report("operator '!' requires a boolean-compatible operand");

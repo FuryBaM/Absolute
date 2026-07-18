@@ -228,6 +228,8 @@ namespace Absolute{
                 return ParseNamespace();
             case Hash("extern"):
                 return ParseExternalFunctionDeclaration();
+            case Hash("raw"):
+                return ParseVarDeclaration();
             default:
                 break;
             }
@@ -274,7 +276,11 @@ namespace Absolute{
 		    break;
 
         case TokenType::OPERATOR:
-            return std::make_unique<SingleStatement>(ParsePrimaryExpr());
+        {
+            auto expression = ParseExpression();
+            Consume(TokenType::DELIMITER, ";");
+            return std::make_unique<SingleStatement>(std::move(expression));
+        }
 
         default:
             break;

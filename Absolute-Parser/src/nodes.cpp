@@ -12,6 +12,10 @@ namespace Absolute {
         visitor.Visit(this);
     }
 
+    void PointerTypeExpr::Accept(ExpressionVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
     void IdentifierExpr::Accept(ExpressionVisitor& visitor) {
         visitor.Visit(this);
     }

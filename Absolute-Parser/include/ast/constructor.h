@@ -3,14 +3,20 @@
 namespace Absolute {
     struct ConstructorCallExpr : Expression {
         std::unique_ptr<Expression> constructName;
+        std::vector<std::unique_ptr<Expression>> arguments;
+        bool raw = false;
 
-        ConstructorCallExpr(std::unique_ptr<Expression> constructName)
-            : constructName(std::move(constructName)) {
+        ConstructorCallExpr(std::unique_ptr<Expression> constructName,
+            std::vector<std::unique_ptr<Expression>> arguments = {}, bool raw = false)
+            : constructName(std::move(constructName)), arguments(std::move(arguments)), raw(raw) {
         }
 
         std::string ToString(int indent = 0) const override {
             std::string result = std::string(indent, ' ') + "Constructor call:\n";
+            if (raw) result += std::string(indent + 1, ' ') + "Raw allocation\n";
             result += constructName->ToString(indent + 1);
+            for (const auto& argument : arguments)
+                if (argument) result += "\n" + argument->ToString(indent + 1);
             return result;
         }
 

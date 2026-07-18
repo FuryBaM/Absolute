@@ -13,7 +13,7 @@ namespace Absolute{
         std::vector<std::unique_ptr<VarDeclExpr>> parameters;
         while (!(RequireCurrent("a parameter or ')'")->type == TokenType::BRACKET && CurrentToken()->value == ")"))
         {
-            std::unique_ptr<PrimitiveTypeExpr> type = ParsePrimitiveType();
+            std::unique_ptr<TypeExpr> type = ParseType();
             std::unique_ptr<Expression> nameExpr = ParsePrimaryExpr();
 
             Token* current = RequireCurrent("'=', ',' or ')'");

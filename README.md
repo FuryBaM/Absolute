@@ -132,6 +132,42 @@ or linked manually. Current FFI types map primitive scalars directly; `string`
 is passed as a C `char*`. Ownership stays with the caller, and native exceptions
 must not cross the `extern "C"` boundary.
 
+## Pointers and lifetime
+
+`T*` is a managed pointer. A value created with `new` owns a generation-checked
+runtime slot; copies are non-owning subscribers. Destroying the owner explicitly
+or leaving its scope invalidates every subscriber instead of leaving a dangling
+address:
+
+```absolute
+int32* owner = new int32(42);
+int32* subscriber = owner;
+println(*subscriber);
+delete owner;
+assert(!subscriber);
+```
+
+Managed owners use scope-based RAII. `keep` disables automatic destruction, but
+an explicit `delete` still works:
+
+```absolute
+keep int32* value = new int32(42);
+delete value;
+```
+
+Use `raw T*` only for C interop or C++-style address operations. Raw pointers do
+not participate in generation checks or automatic lifetime management:
+
+```absolute
+int32 value = 41;
+raw int32* address = &value;
+*address = 42;
+```
+
+The native runtime library is linked automatically by `--build-exe`. Objects
+created by `--emit-object` have to be linked with `Absolute-Runtime` manually
+when managed pointers are used.
+
 The first backend milestone supports primitive values, functions, local
 variables, calls, casts, arithmetic/comparison operators, assignments,
 `return`, `if`, `for`, `while`, `do-while`, `break`, and `continue`. Classes,

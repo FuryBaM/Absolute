@@ -25,6 +25,7 @@
 #endif
 
 #include <algorithm>
+#include <cstdint>
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
@@ -44,6 +45,12 @@ namespace Absolute {
             void Visit(UserTypeExpr* expr) override {
                 (void)expr;
             }
+
+            void Visit(PointerTypeExpr* expr) override {
+                name.clear();
+                if (expr->pointee) expr->pointee->Accept(*this);
+                if (!name.empty()) name = (expr->raw ? "raw " : "") + name + "*";
+            }
         };
 
         class StringLiteralProbe final : public BaseIdentifierVisitor {
@@ -59,6 +66,24 @@ namespace Absolute {
             expression->Accept(visitor);
             return visitor.identifierExpr ? visitor.identifierExpr->name : std::string{};
         }
+
+        bool IsRawPointerTypeName(const std::string& name) {
+            return name.starts_with("raw ") && name.ends_with("*");
+        }
+
+        bool IsManagedPointerTypeName(const std::string& name) {
+            return !IsRawPointerTypeName(name) && name.ends_with("*");
+        }
+
+        bool IsPointerTypeName(const std::string& name) {
+            return IsRawPointerTypeName(name) || IsManagedPointerTypeName(name);
+        }
+
+        std::string PointerPointeeName(std::string name) {
+            if (IsRawPointerTypeName(name)) name.erase(0, 4);
+            if (!name.empty() && name.back() == '*') name.pop_back();
+            return name;
+        }
     }
 
     struct CodeGenerator::Impl {
@@ -70,6 +95,15 @@ namespace Absolute {
         struct Variable {
             llvm::AllocaInst* address = nullptr;
             llvm::Type* type = nullptr;
+            std::string typeName;
+            llvm::AllocaInst* managedOwner = nullptr;
+            bool keep = false;
+        };
+
+        struct LoopTarget {
+            llvm::BasicBlock* continueBlock = nullptr;
+            llvm::BasicBlock* breakBlock = nullptr;
+            size_t scopeCount = 0;
         };
 
         struct PrintableValue {
@@ -85,9 +119,14 @@ namespace Absolute {
         llvm::Value* value = nullptr;
         Phase phase = Phase::DeclareFunctions;
         std::vector<std::unordered_map<std::string, Variable>> scopes;
-        std::vector<std::pair<llvm::BasicBlock*, llvm::BasicBlock*>> loops;
+        std::vector<LoopTarget> loops;
         std::string currentNamespace;
         std::unordered_map<std::string, std::string> functionLinkNames;
+        bool valueCreatesManagedOwner = false;
+        std::string currentValueType;
+        bool addressMode = false;
+        llvm::Value* addressValue = nullptr;
+        bool declarationKeep = false;
 
         explicit Impl(CodeGenerator& visitor, const Analyzer* analyzer)
             : visitor(visitor), analyzer(analyzer), builder(context) {
@@ -98,6 +137,8 @@ namespace Absolute {
         }
 
         llvm::Type* TypeFromName(const std::string& name) {
+            if (IsManagedPointerTypeName(name)) return builder.getInt64Ty();
+            if (IsRawPointerTypeName(name)) return builder.getPtrTy();
             if (name == "int8" || name == "uint8" || name == "char") return builder.getInt8Ty();
             if (name == "int16" || name == "uint16") return builder.getInt16Ty();
             if (name == "int32" || name == "uint32") return builder.getInt32Ty();
@@ -118,20 +159,70 @@ namespace Absolute {
             return TypeFromName(typeVisitor.name);
         }
 
+        std::string ResolveTypeName(Expression* expression) {
+            if (!expression) Fail("missing type expression");
+            PrimitiveTypeNameVisitor typeVisitor;
+            expression->Accept(typeVisitor);
+            if (typeVisitor.name.empty()) Fail("user-defined types are not implemented yet");
+            return typeVisitor.name;
+        }
+
         llvm::Value* Evaluate(Expression* expression) {
             if (!expression) Fail("missing expression");
             value = nullptr;
+            valueCreatesManagedOwner = false;
             expression->Accept(visitor);
             if (!value) Fail("expression does not produce a value");
+            currentValueType = SemanticType(expression);
             return value;
+        }
+
+        llvm::Value* EvaluateAddress(Expression* expression) {
+            if (!expression) Fail("missing assignable expression");
+            const bool oldMode = addressMode;
+            llvm::Value* oldAddress = addressValue;
+            addressMode = true;
+            addressValue = nullptr;
+            expression->Accept(visitor);
+            llvm::Value* result = addressValue;
+            addressMode = oldMode;
+            addressValue = oldAddress;
+            if (!result) Fail("expression is not assignable");
+            return result;
         }
 
         void PushScope() {
             scopes.emplace_back();
         }
 
-        void PopScope() {
-            if (!scopes.empty()) scopes.pop_back();
+        llvm::FunctionCallee ManagedDestroyIf() {
+            llvm::FunctionType* type = llvm::FunctionType::get(
+                builder.getVoidTy(), {builder.getInt64Ty(), builder.getInt1Ty()}, false);
+            return module->getOrInsertFunction("absolute_managed_destroy_if", type);
+        }
+
+        void EmitScopeCleanup(size_t index) {
+            if (index >= scopes.size() || !builder.GetInsertBlock() || builder.GetInsertBlock()->getTerminator()) return;
+            for (auto& [name, variable] : scopes[index]) {
+                (void)name;
+                if (!variable.managedOwner || variable.keep) continue;
+                llvm::Value* handle = builder.CreateLoad(variable.type, variable.address, "cleanup.handle");
+                llvm::Value* owner = builder.CreateLoad(builder.getInt1Ty(), variable.managedOwner, "cleanup.owner");
+                builder.CreateCall(ManagedDestroyIf(), {handle, owner});
+                builder.CreateStore(builder.getInt64(0), variable.address);
+                builder.CreateStore(builder.getFalse(), variable.managedOwner);
+            }
+        }
+
+        void EmitCleanupsFrom(size_t firstScope) {
+            for (size_t index = scopes.size(); index > firstScope; --index)
+                EmitScopeCleanup(index - 1);
+        }
+
+        void PopScope(bool cleanup = false) {
+            if (scopes.empty()) return;
+            if (cleanup) EmitScopeCleanup(scopes.size() - 1);
+            scopes.pop_back();
         }
 
         Variable* FindVariable(const std::string& name) {
@@ -164,6 +255,9 @@ namespace Absolute {
             llvm::Type* sourceType = source->getType();
             if (sourceType == target) return source;
 
+            if (target->isIntegerTy(64) && llvm::isa<llvm::ConstantPointerNull>(source))
+                return builder.getInt64(0);
+
             if (sourceType->isIntegerTy() && target->isIntegerTy()) {
                 return builder.CreateIntCast(source, target, true, "int.cast");
             }
@@ -194,6 +288,8 @@ namespace Absolute {
 
         llvm::Value* AsCondition(llvm::Value* condition) {
             llvm::Type* type = condition->getType();
+            if (IsManagedPointerTypeName(currentValueType) && type->isIntegerTy(64))
+                return builder.CreateCall(ManagedValid(), {condition}, "managed.valid");
             if (type->isIntegerTy(1)) return condition;
             if (type->isIntegerTy()) {
                 return builder.CreateICmpNE(condition, llvm::ConstantInt::get(type, 0), "condition");
@@ -296,6 +392,46 @@ namespace Absolute {
             llvm::FunctionType* type = llvm::FunctionType::get(
                 builder.getPtrTy(), {builder.getInt64Ty()}, false);
             return module->getOrInsertFunction("malloc", type);
+        }
+
+        llvm::FunctionCallee Free() {
+            llvm::FunctionType* type = llvm::FunctionType::get(
+                builder.getVoidTy(), {builder.getPtrTy()}, false);
+            return module->getOrInsertFunction("free", type);
+        }
+
+        llvm::FunctionCallee ManagedCreate() {
+            llvm::FunctionType* type = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getInt64Ty()}, false);
+            return module->getOrInsertFunction("absolute_managed_create", type);
+        }
+
+        llvm::FunctionCallee ManagedGet(bool requireValid = false) {
+            llvm::FunctionType* type = llvm::FunctionType::get(
+                builder.getPtrTy(), {builder.getInt64Ty()}, false);
+            return module->getOrInsertFunction(
+                requireValid ? "absolute_managed_require" : "absolute_managed_get", type);
+        }
+
+        llvm::FunctionCallee ManagedValid() {
+            llvm::FunctionType* type = llvm::FunctionType::get(
+                builder.getInt1Ty(), {builder.getInt64Ty()}, false);
+            return module->getOrInsertFunction("absolute_managed_valid", type);
+        }
+
+        llvm::FunctionCallee ManagedDestroy() {
+            llvm::FunctionType* type = llvm::FunctionType::get(
+                builder.getVoidTy(), {builder.getInt64Ty()}, false);
+            return module->getOrInsertFunction("absolute_managed_destroy", type);
+        }
+
+        std::uint64_t SizeOfTypeName(const std::string& name) {
+            if (name == "int8" || name == "uint8" || name == "char" || name == "bool") return 1;
+            if (name == "int16" || name == "uint16") return 2;
+            if (name == "int32" || name == "uint32" || name == "float") return 4;
+            if (name == "int64" || name == "uint64" || name == "double" || name == "string" ||
+                IsPointerTypeName(name)) return 8;
+            Fail("cannot determine allocation size of '" + name + "'");
         }
 
         llvm::FunctionCallee Abort() {
@@ -514,9 +650,11 @@ namespace Absolute {
             for (llvm::Argument& argument : function->args()) {
                 const auto& parameter = statement.parameters[index++];
                 const std::string name = IdentifierName(parameter->name.get());
+                const std::string typeName = ResolveTypeName(parameter->type.get());
                 llvm::AllocaInst* address = CreateEntryAlloca(*function, argument.getType(), name);
                 builder.CreateStore(&argument, address);
-                if (!scopes.back().emplace(name, Variable{address, argument.getType()}).second) {
+                if (!scopes.back().emplace(name,
+                    Variable{address, argument.getType(), typeName, nullptr, false}).second) {
                     Fail("duplicate parameter '" + name + "'");
                 }
             }
@@ -545,6 +683,11 @@ namespace Absolute {
             currentNamespace.clear();
             functionLinkNames.clear();
             value = nullptr;
+            currentValueType.clear();
+            valueCreatesManagedOwner = false;
+            addressMode = false;
+            addressValue = nullptr;
+            declarationKeep = false;
 
             phase = Phase::DeclareFunctions;
             for (const auto& statement : program.statements) {
@@ -639,9 +782,19 @@ namespace Absolute {
         impl->Fail("user-defined values are not implemented yet");
     }
 
+    void CodeGenerator::Visit(PointerTypeExpr* expr) {
+        (void)expr;
+        impl->Fail("a pointer type cannot be emitted as a runtime expression");
+    }
+
     void CodeGenerator::Visit(IdentifierExpr* expr) {
         Impl::Variable& variable = impl->RequireVariable(expr->name);
+        if (impl->addressMode) {
+            impl->addressValue = variable.address;
+            return;
+        }
         impl->value = impl->builder.CreateLoad(variable.type, variable.address, expr->name + ".value");
+        impl->valueCreatesManagedOwner = false;
     }
 
     void CodeGenerator::Visit(FunctionCallExpr* expr) {
@@ -744,17 +897,34 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(AssignmentExpr* expr) {
-        Impl::Variable& variable = impl->AddressOf(expr->target.get());
+        llvm::Value* targetAddress = impl->EvaluateAddress(expr->target.get());
+        const std::string targetTypeName = impl->SemanticType(expr->target.get());
+        llvm::Type* targetType = impl->TypeFromName(targetTypeName);
         llvm::Value* assigned = impl->Evaluate(expr->value.get());
+        const bool createsOwner = impl->valueCreatesManagedOwner;
 
         if (expr->op != "=") {
-            llvm::Value* current = impl->builder.CreateLoad(variable.type, variable.address, "assignment.current");
+            llvm::Value* current = impl->builder.CreateLoad(targetType, targetAddress, "assignment.current");
             assigned = impl->ApplyBinary(expr->op.substr(0, expr->op.size() - 1), current, assigned);
         }
 
-        assigned = impl->Coerce(assigned, variable.type);
-        impl->builder.CreateStore(assigned, variable.address);
+        if (IsManagedPointerTypeName(targetTypeName)) {
+            const std::string name = IdentifierName(expr->target.get());
+            if (!name.empty()) {
+                Impl::Variable& variable = impl->RequireVariable(name);
+                if (variable.managedOwner && !variable.keep) {
+                    llvm::Value* oldHandle = impl->builder.CreateLoad(variable.type, variable.address, "assignment.old.handle");
+                    llvm::Value* oldOwner = impl->builder.CreateLoad(
+                        impl->builder.getInt1Ty(), variable.managedOwner, "assignment.old.owner");
+                    impl->builder.CreateCall(impl->ManagedDestroyIf(), {oldHandle, oldOwner});
+                    impl->builder.CreateStore(impl->builder.getInt1(createsOwner), variable.managedOwner);
+                }
+            }
+        }
+        assigned = impl->Coerce(assigned, targetType);
+        impl->builder.CreateStore(assigned, targetAddress);
         impl->value = assigned;
+        impl->valueCreatesManagedOwner = false;
     }
 
     void CodeGenerator::Visit(VarDeclExpr* expr) {
@@ -764,18 +934,26 @@ namespace Absolute {
 
         const std::string name = IdentifierName(expr->name.get());
         if (name.empty()) impl->Fail("variable declaration requires an identifier");
-        llvm::Type* type = impl->ResolveType(expr->type.get());
+        const std::string typeName = impl->ResolveTypeName(expr->type.get());
+        llvm::Type* type = impl->TypeFromName(typeName);
         if (type->isVoidTy()) impl->Fail("variable '" + name + "' cannot have type void");
 
         llvm::AllocaInst* address = impl->CreateEntryAlloca(*function, type, name);
-        if (!impl->scopes.back().emplace(name, Impl::Variable{address, type}).second) {
+        llvm::AllocaInst* ownerAddress = nullptr;
+        if (IsManagedPointerTypeName(typeName))
+            ownerAddress = impl->CreateEntryAlloca(*function, impl->builder.getInt1Ty(), name + ".owner");
+        if (!impl->scopes.back().emplace(name,
+            Impl::Variable{address, type, typeName, ownerAddress, impl->declarationKeep}).second) {
             impl->Fail("duplicate variable '" + name + "'");
         }
 
         llvm::Value* initial = expr->value ? impl->Evaluate(expr->value.get()) : llvm::Constant::getNullValue(type);
+        const bool createsOwner = impl->valueCreatesManagedOwner;
         initial = impl->Coerce(initial, type);
         impl->builder.CreateStore(initial, address);
+        if (ownerAddress) impl->builder.CreateStore(impl->builder.getInt1(createsOwner), ownerAddress);
         impl->value = initial;
+        impl->valueCreatesManagedOwner = false;
     }
 
     void CodeGenerator::Visit(MemberAccessExpr* expr) {
@@ -789,13 +967,58 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(ConstructorCallExpr* expr) {
-        (void)expr;
-        impl->Fail("constructors are not implemented yet");
+        const std::string pointeeType = impl->SemanticType(expr).empty()
+            ? impl->ResolveTypeName(expr->constructName.get())
+            : PointerPointeeName(impl->SemanticType(expr));
+        llvm::Type* pointee = impl->TypeFromName(pointeeType);
+        llvm::Value* pointer = nullptr;
+        llvm::Value* result = nullptr;
+        if (expr->raw) {
+            pointer = impl->builder.CreateCall(
+                impl->Malloc(), {impl->builder.getInt64(impl->SizeOfTypeName(pointeeType))}, "raw.allocation");
+            result = pointer;
+        }
+        else {
+            llvm::Value* handle = impl->builder.CreateCall(
+                impl->ManagedCreate(), {impl->builder.getInt64(impl->SizeOfTypeName(pointeeType))}, "managed.handle");
+            pointer = impl->builder.CreateCall(impl->ManagedGet(true), {handle}, "managed.allocation");
+            result = handle;
+        }
+
+        llvm::Value* initial = expr->arguments.empty()
+            ? llvm::Constant::getNullValue(pointee)
+            : impl->Evaluate(expr->arguments.front().get());
+        initial = impl->Coerce(initial, pointee);
+        impl->builder.CreateStore(initial, pointer);
+        impl->value = result;
+        impl->valueCreatesManagedOwner = !expr->raw;
     }
 
     void CodeGenerator::Visit(DestructorCallExpr* expr) {
-        (void)expr;
-        impl->Fail("destructors are not implemented yet");
+        const std::string typeName = impl->SemanticType(expr->target.get());
+        llvm::Value* targetAddress = impl->EvaluateAddress(expr->target.get());
+        llvm::Type* type = impl->TypeFromName(typeName);
+        llvm::Value* pointer = impl->builder.CreateLoad(type, targetAddress, "delete.target");
+        if (IsManagedPointerTypeName(typeName)) {
+            const std::string name = IdentifierName(expr->target.get());
+            llvm::Value* owner = impl->builder.getFalse();
+            if (!name.empty()) {
+                Impl::Variable& variable = impl->RequireVariable(name);
+                if (variable.managedOwner) {
+                    owner = impl->builder.CreateLoad(
+                        impl->builder.getInt1Ty(), variable.managedOwner, "delete.owner");
+                    impl->builder.CreateStore(impl->builder.getFalse(), variable.managedOwner);
+                }
+            }
+            impl->builder.CreateCall(impl->ManagedDestroyIf(), {pointer, owner});
+            impl->builder.CreateStore(impl->builder.getInt64(0), targetAddress);
+        }
+        else {
+            impl->builder.CreateCall(impl->Free(), {pointer});
+            impl->builder.CreateStore(llvm::ConstantPointerNull::get(impl->builder.getPtrTy()), targetAddress);
+        }
+        impl->value = nullptr;
+        impl->valueCreatesManagedOwner = false;
     }
 
     void CodeGenerator::Visit(InstanceDeclExpr* expr) {
@@ -804,6 +1027,30 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(PrefixUnaryExpr* expr) {
+        if (expr->op == "&") {
+            impl->value = impl->EvaluateAddress(expr->operand.get());
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
+        if (expr->op == "*") {
+            const std::string pointerType = impl->SemanticType(expr->operand.get());
+            const std::string pointeeName = PointerPointeeName(pointerType);
+            const bool outerAddressMode = impl->addressMode;
+            impl->addressMode = false;
+            llvm::Value* pointer = impl->Evaluate(expr->operand.get());
+            impl->addressMode = outerAddressMode;
+            llvm::Value* pointeeAddress = IsManagedPointerTypeName(pointerType)
+                ? impl->builder.CreateCall(impl->ManagedGet(true), {pointer}, "managed.pointee")
+                : pointer;
+            if (outerAddressMode) {
+                impl->addressValue = pointeeAddress;
+                return;
+            }
+            impl->value = impl->builder.CreateLoad(
+                impl->TypeFromName(pointeeName), pointeeAddress, "pointer.value");
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
         if (expr->op == "++" || expr->op == "--") {
             Impl::Variable& variable = impl->AddressOf(expr->operand.get());
             llvm::Value* current = impl->builder.CreateLoad(variable.type, variable.address, "prefix.current");
@@ -852,7 +1099,7 @@ namespace Absolute {
             if (!statement || impl->builder.GetInsertBlock()->getTerminator()) break;
             statement->Accept(*this);
         }
-        impl->PopScope();
+        impl->PopScope(true);
     }
 
     void CodeGenerator::Visit(FunctionCallStmt* stmt) {
@@ -869,10 +1116,13 @@ namespace Absolute {
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("return outside a function");
         if (function->getReturnType()->isVoidTy()) {
+            impl->EmitCleanupsFrom(0);
             impl->builder.CreateRetVoid();
             return;
         }
-        impl->builder.CreateRet(impl->Coerce(impl->Evaluate(stmt->expr.get()), function->getReturnType()));
+        llvm::Value* result = impl->Coerce(impl->Evaluate(stmt->expr.get()), function->getReturnType());
+        impl->EmitCleanupsFrom(0);
+        impl->builder.CreateRet(result);
     }
 
     void CodeGenerator::Visit(AssignmentStmt* stmt) {
@@ -880,7 +1130,12 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(VarDeclStmt* stmt) {
-        if (impl->phase == Impl::Phase::EmitBodies && stmt->expr) stmt->expr->Accept(*this);
+        if (impl->phase != Impl::Phase::EmitBodies || !stmt->expr) return;
+        const bool oldKeep = impl->declarationKeep;
+        impl->declarationKeep = std::any_of(stmt->modifiers.begin(), stmt->modifiers.end(),
+            [](const Token& modifier) { return modifier.value == "keep"; });
+        stmt->expr->Accept(*this);
+        impl->declarationKeep = oldKeep;
     }
 
     void CodeGenerator::Visit(StructDeclStmt* stmt) {
@@ -953,7 +1208,7 @@ namespace Absolute {
         llvm::Value* condition = stmt->condition ? impl->AsCondition(impl->Evaluate(stmt->condition.get())) : impl->builder.getTrue();
         impl->builder.CreateCondBr(condition, bodyBlock, endBlock);
 
-        impl->loops.emplace_back(updateBlock, endBlock);
+        impl->loops.push_back({updateBlock, endBlock, impl->scopes.size()});
         impl->builder.SetInsertPoint(bodyBlock);
         if (stmt->body) stmt->body->Accept(*this);
         impl->BranchIfNeeded(updateBlock);
@@ -964,7 +1219,7 @@ namespace Absolute {
         impl->loops.pop_back();
 
         impl->builder.SetInsertPoint(endBlock);
-        impl->PopScope();
+        impl->PopScope(true);
     }
 
     void CodeGenerator::Visit(WhileStmt* stmt) {
@@ -980,7 +1235,7 @@ namespace Absolute {
         impl->builder.SetInsertPoint(conditionBlock);
         impl->builder.CreateCondBr(impl->AsCondition(impl->Evaluate(stmt->condition.get())), bodyBlock, endBlock);
 
-        impl->loops.emplace_back(conditionBlock, endBlock);
+        impl->loops.push_back({conditionBlock, endBlock, impl->scopes.size()});
         impl->builder.SetInsertPoint(bodyBlock);
         if (stmt->body) stmt->body->Accept(*this);
         impl->BranchIfNeeded(conditionBlock);
@@ -999,7 +1254,7 @@ namespace Absolute {
         llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(impl->context, "do.end", function);
         impl->builder.CreateBr(bodyBlock);
 
-        impl->loops.emplace_back(conditionBlock, endBlock);
+        impl->loops.push_back({conditionBlock, endBlock, impl->scopes.size()});
         impl->builder.SetInsertPoint(bodyBlock);
         if (stmt->body) stmt->body->Accept(*this);
         impl->BranchIfNeeded(conditionBlock);
@@ -1019,14 +1274,16 @@ namespace Absolute {
         (void)stmt;
         if (impl->phase != Impl::Phase::EmitBodies) return;
         if (impl->loops.empty()) impl->Fail("continue outside a loop");
-        impl->builder.CreateBr(impl->loops.back().first);
+        impl->EmitCleanupsFrom(impl->loops.back().scopeCount);
+        impl->builder.CreateBr(impl->loops.back().continueBlock);
     }
 
     void CodeGenerator::Visit(BreakStmt* stmt) {
         (void)stmt;
         if (impl->phase != Impl::Phase::EmitBodies) return;
         if (impl->loops.empty()) impl->Fail("break outside a loop");
-        impl->builder.CreateBr(impl->loops.back().second);
+        impl->EmitCleanupsFrom(impl->loops.back().scopeCount);
+        impl->builder.CreateBr(impl->loops.back().breakBlock);
     }
 
     void CodeGenerator::Visit(ImportStmt* stmt) {

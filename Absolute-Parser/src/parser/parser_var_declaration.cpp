@@ -4,7 +4,7 @@
 namespace Absolute {
     std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclExpr()
     {
-        std::unique_ptr<PrimitiveTypeExpr> type = ParsePrimitiveType();
+        std::unique_ptr<TypeExpr> type = ParseType();
 
         // Обрабатываем `*` и `&` перед именем переменной
         std::unique_ptr<Expression> nameExpr = ParsePrimaryExpr();

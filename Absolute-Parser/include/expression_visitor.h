@@ -7,6 +7,7 @@ namespace Absolute {
 
         virtual void Visit(PrimitiveTypeExpr* expr) = 0;
         virtual void Visit(UserTypeExpr* expr) = 0;
+        virtual void Visit(PointerTypeExpr* expr) = 0;
         virtual void Visit(IdentifierExpr* expr) = 0;
         virtual void Visit(FunctionCallExpr* expr) = 0;
         virtual void Visit(ArrayAccessExpr* expr) = 0;
@@ -40,6 +41,10 @@ namespace Absolute {
 
         void Visit(UserTypeExpr* expr) override {
             if (expr->typeExpr) expr->typeExpr->Accept(*this);
+        }
+
+        void Visit(PointerTypeExpr* expr) override {
+            if (expr->pointee) expr->pointee->Accept(*this);
         }
 
         void Visit(IdentifierExpr* expr) override {

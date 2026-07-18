@@ -325,6 +325,9 @@ namespace {
         std::ostringstream arguments;
 #ifdef _WIN32
         arguments << "/nologo\n" << QuoteResponseArgument(object) << '\n';
+#ifdef ABSOLUTE_RUNTIME_LIBRARY
+        arguments << QuoteResponseArgument(ABSOLUTE_RUNTIME_LIBRARY) << '\n';
+#endif
         for (const fs::path& library : compilation.nativeLibraries)
             arguments << QuoteResponseArgument(library) << '\n';
         arguments << "/Fe:" << QuoteResponseArgument(executable) << "\n/link\n";
@@ -332,6 +335,9 @@ namespace {
             arguments << "/LIBPATH:" << QuoteResponseArgument(path) << '\n';
 #else
         arguments << QuoteResponseArgument(object) << '\n';
+#ifdef ABSOLUTE_RUNTIME_LIBRARY
+        arguments << QuoteResponseArgument(ABSOLUTE_RUNTIME_LIBRARY) << '\n';
+#endif
         for (const fs::path& library : compilation.nativeLibraries)
             arguments << QuoteResponseArgument(library) << '\n';
         for (const fs::path& path : compilation.nativeSearchPaths)
