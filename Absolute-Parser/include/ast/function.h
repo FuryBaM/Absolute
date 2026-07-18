@@ -59,6 +59,8 @@ namespace Absolute {
             std::cout << ":\n";
             if (value) value->print(indent + 1);
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 
     struct FunctionDeclStmt : Statement {
@@ -97,6 +99,8 @@ namespace Absolute {
             }
             if (body) body->print(indent + 1);
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 
     struct ReturnStmt : Statement {
@@ -106,5 +110,7 @@ namespace Absolute {
             std::cout << std::string(indent, ' ') << "Return statement: " << "\n";
             if (expr) expr->print(indent + 1);
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 }
