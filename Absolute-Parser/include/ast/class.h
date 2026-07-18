@@ -44,5 +44,7 @@ namespace Absolute {
             std::cout << "\n";
             body->print(indent + 1);
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 }
