@@ -11,19 +11,18 @@ namespace Absolute {
         Token* identifier = Consume(TokenType::IDENTIFIER); // имя класса
 
         std::vector<Token> templateParams;
-        if (CurrentToken()->type == TokenType::DOLLAR) {
-            Consume(TokenType::DOLLAR);
+        if (CurrentToken() && CurrentToken()->value == "<") {
             Consume(TokenType::OPERATOR, "<");
-            while (CurrentToken()->value != ">") {
+            while (RequireCurrent("a template parameter or '>'")->value != ">") {
                 if (CurrentToken()->type == TokenType::IDENTIFIER) {
-                    templateParams.push_back(*Consume(CurrentToken()->type));
+                    templateParams.push_back(*Consume(TokenType::IDENTIFIER));
                 }
                 else {
                     ReportSyntaxError(CurrentToken(), "Expected type name in template expression");
                     std::exit(EXIT_FAILURE);
                 }
 
-                if (CurrentToken()->value == ",") {
+                if (RequireCurrent("',' or '>'")->value == ",") {
                     Consume(TokenType::DELIMITER, ",");
                 }
                 else if (CurrentToken()->value != ">") {
@@ -35,7 +34,7 @@ namespace Absolute {
         }
 
         // Проверяем, есть ли наследование или реализация интерфейсов
-        if (CurrentToken()->value == ":") {
+        if (CurrentToken() && CurrentToken()->value == ":") {
             Consume(TokenType::OPERATOR, ":"); // :
 
             while (true) {
@@ -43,14 +42,14 @@ namespace Absolute {
                 parents.push_back(parent->value);
 
                 Token* nextToken = CurrentToken();
-                if (nextToken->value == ",") {
+                if (nextToken && nextToken->value == ",") {
                     Consume(TokenType::DELIMITER, ",");
                 }
-                else if (nextToken->value == "{") {
+                else if (nextToken && nextToken->value == "{") {
                     break; // Всё ок, начинаем тело класса
                 }
                 else {
-                    ReportSyntaxError(CurrentToken(), "Expected ',' or '{' after parent class, but found '" + nextToken->value + "'");
+                    ReportSyntaxError(CurrentToken(), "Expected ',' or '{' after parent class");
                     std::exit(EXIT_FAILURE);
                 }
             }
