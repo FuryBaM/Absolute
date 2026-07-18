@@ -83,6 +83,7 @@ int main(int argc, char* argv[]) {
         analyzer.Analyze();
 
         if (commandLine.emitLlvm) {
+#ifdef ABSOLUTE_HAS_LLVM
             CodeGenerator generator;
             const std::string ir = generator.Generate(*ast, commandLine.source.filename().string());
             if (commandLine.output.empty()) {
@@ -92,6 +93,10 @@ int main(int argc, char* argv[]) {
                 WriteFile(commandLine.output, ir);
             }
             return 0;
+#else
+            throw std::runtime_error(
+                "LLVM backend is unavailable in this build; configure with ABSOLUTE_ENABLE_LLVM=ON");
+#endif
         }
 
         ast->print();
