@@ -1,0 +1,3 @@
+Box<int32> boxed = new Box<int32>();
+int32 comparison = left < middle > right;
+factory<int32>();
