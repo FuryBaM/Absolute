@@ -1,4 +1,5 @@
 #include "codegen.h"
+#include "analyzer.h"
 
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
@@ -31,6 +32,13 @@ namespace Absolute {
             }
         };
 
+        class StringLiteralProbe final : public BaseIdentifierVisitor {
+        public:
+            const StringLiteralExpr* literal = nullptr;
+
+            void Visit(StringLiteralExpr* expr) override { literal = expr; }
+        };
+
         std::string IdentifierName(Expression* expression) {
             if (!expression) return {};
             BaseIdentifierVisitor visitor;
@@ -50,7 +58,13 @@ namespace Absolute {
             llvm::Type* type = nullptr;
         };
 
+        struct PrintableValue {
+            std::string specifier;
+            llvm::Value* value = nullptr;
+        };
+
         CodeGenerator& visitor;
+        const Analyzer* analyzer = nullptr;
         llvm::LLVMContext context;
         std::unique_ptr<llvm::Module> module;
         llvm::IRBuilder<> builder;
@@ -59,8 +73,8 @@ namespace Absolute {
         std::vector<std::unordered_map<std::string, Variable>> scopes;
         std::vector<std::pair<llvm::BasicBlock*, llvm::BasicBlock*>> loops;
 
-        explicit Impl(CodeGenerator& visitor)
-            : visitor(visitor), builder(context) {
+        explicit Impl(CodeGenerator& visitor, const Analyzer* analyzer)
+            : visitor(visitor), analyzer(analyzer), builder(context) {
         }
 
         [[noreturn]] void Fail(const std::string& message) const {
@@ -228,6 +242,202 @@ namespace Absolute {
             return block ? block->getParent() : nullptr;
         }
 
+        bool IsBuiltinFunction(const std::string& name) const {
+            return name == "print" || name == "println" || name == "format" ||
+                name == "toString" || name == "assert";
+        }
+
+        llvm::FunctionCallee Printf() {
+            llvm::FunctionType* type = llvm::FunctionType::get(
+                builder.getInt32Ty(), {builder.getPtrTy()}, true);
+            return module->getOrInsertFunction("printf", type);
+        }
+
+        llvm::FunctionCallee Snprintf() {
+            llvm::FunctionType* type = llvm::FunctionType::get(
+                builder.getInt32Ty(), {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy()}, true);
+            return module->getOrInsertFunction("snprintf", type);
+        }
+
+        llvm::FunctionCallee Malloc() {
+            llvm::FunctionType* type = llvm::FunctionType::get(
+                builder.getPtrTy(), {builder.getInt64Ty()}, false);
+            return module->getOrInsertFunction("malloc", type);
+        }
+
+        llvm::FunctionCallee Abort() {
+            llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), {}, false);
+            return module->getOrInsertFunction("abort", type);
+        }
+
+        std::string SemanticType(Expression* expression) const {
+            if (!analyzer || !expression) return {};
+            const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
+            return info ? info->type : std::string{};
+        }
+
+        PrintableValue PreparePrintable(llvm::Value* source, Expression* expression) {
+            if (!source) Fail("cannot print an empty value");
+            llvm::Type* type = source->getType();
+            const std::string semanticType = SemanticType(expression);
+            if (semanticType == "bool" || type->isIntegerTy(1)) {
+                llvm::Value* trueText = builder.CreateGlobalStringPtr("true", "bool.true");
+                llvm::Value* falseText = builder.CreateGlobalStringPtr("false", "bool.false");
+                return {"%s", builder.CreateSelect(source, trueText, falseText, "bool.text")};
+            }
+            if (semanticType == "char") {
+                return {"%c", builder.CreateZExt(source, builder.getInt32Ty(), "char.promoted")};
+            }
+            if (type->isIntegerTy()) {
+                const bool unsignedInteger = semanticType.starts_with("uint");
+                if (type->getIntegerBitWidth() < 32) {
+                    source = unsignedInteger
+                        ? builder.CreateZExt(source, builder.getInt32Ty(), "integer.promoted")
+                        : builder.CreateSExt(source, builder.getInt32Ty(), "integer.promoted");
+                }
+                if (type->getIntegerBitWidth() > 32)
+                    return {unsignedInteger ? "%llu" : "%lld", source};
+                return {unsignedInteger ? "%u" : "%d", source};
+            }
+            if (type->isFloatTy()) {
+                return {"%g", builder.CreateFPExt(source, builder.getDoubleTy(), "float.promoted")};
+            }
+            if (type->isDoubleTy()) return {"%g", source};
+            if (type->isPointerTy()) {
+                llvm::Value* nullText = builder.CreateGlobalStringPtr("<null>", "null.text");
+                llvm::Value* safeText = builder.CreateSelect(
+                    builder.CreateIsNull(source, "string.is.null"), nullText, source, "safe.string");
+                return {"%s", safeText};
+            }
+            Fail("unsupported printable LLVM type");
+        }
+
+        llvm::CallInst* EmitPrintf(const std::string& format, const std::vector<PrintableValue>& values) {
+            std::vector<llvm::Value*> arguments;
+            arguments.reserve(values.size() + 1);
+            arguments.push_back(builder.CreateGlobalStringPtr(format, "print.format"));
+            for (const PrintableValue& printable : values) arguments.push_back(printable.value);
+            return builder.CreateCall(Printf(), arguments, "print.result");
+        }
+
+        std::string BuildFormat(const std::string& source, const std::vector<PrintableValue>& values) {
+            std::string result;
+            size_t valueIndex = 0;
+            for (size_t index = 0; index < source.size(); ++index) {
+                const char current = source[index];
+                if (current == '%') {
+                    result += "%%";
+                }
+                else if (current == '{') {
+                    if (index + 1 < source.size() && source[index + 1] == '{') {
+                        result += '{';
+                        ++index;
+                    }
+                    else if (index + 1 < source.size() && source[index + 1] == '}') {
+                        if (valueIndex >= values.size()) Fail("format has too few values");
+                        result += values[valueIndex++].specifier;
+                        ++index;
+                    }
+                    else Fail("format contains an unmatched '{'");
+                }
+                else if (current == '}') {
+                    if (index + 1 < source.size() && source[index + 1] == '}') {
+                        result += '}';
+                        ++index;
+                    }
+                    else Fail("format contains an unmatched '}'");
+                }
+                else result += current;
+            }
+            if (valueIndex != values.size()) Fail("format has too many values");
+            return result;
+        }
+
+        llvm::Value* EmitFormat(const std::string& format, const std::vector<PrintableValue>& values) {
+            llvm::Value* formatValue = builder.CreateGlobalStringPtr(format, "format.template");
+            std::vector<llvm::Value*> sizeArguments = {
+                llvm::ConstantPointerNull::get(builder.getPtrTy()),
+                builder.getInt64(0),
+                formatValue
+            };
+            for (const PrintableValue& printable : values) sizeArguments.push_back(printable.value);
+            llvm::Value* length = builder.CreateCall(Snprintf(), sizeArguments, "format.length");
+            llvm::Value* allocationSize = builder.CreateAdd(
+                builder.CreateSExt(length, builder.getInt64Ty(), "format.length64"),
+                builder.getInt64(1), "format.allocation.size");
+            llvm::Value* buffer = builder.CreateCall(Malloc(), {allocationSize}, "format.buffer");
+
+            std::vector<llvm::Value*> writeArguments = {buffer, allocationSize, formatValue};
+            for (const PrintableValue& printable : values) writeArguments.push_back(printable.value);
+            builder.CreateCall(Snprintf(), writeArguments, "format.write");
+            return buffer;
+        }
+
+        void EmitBuiltin(FunctionCallExpr& expression, const std::string& name) {
+            if (name == "print" || name == "println") {
+                std::vector<PrintableValue> values;
+                std::string format;
+                for (const auto& argument : expression.arguments) {
+                    PrintableValue printable = PreparePrintable(Evaluate(argument.get()), argument.get());
+                    format += printable.specifier;
+                    values.push_back(std::move(printable));
+                }
+                if (name == "println") format += '\n';
+                EmitPrintf(format, values);
+                value = nullptr;
+                return;
+            }
+
+            if (name == "toString") {
+                if (expression.arguments.size() != 1) Fail("toString expects exactly one argument");
+                PrintableValue printable = PreparePrintable(
+                    Evaluate(expression.arguments.front().get()), expression.arguments.front().get());
+                value = EmitFormat(printable.specifier, {printable});
+                return;
+            }
+
+            if (name == "format") {
+                if (expression.arguments.empty()) Fail("format expects a string literal template");
+                StringLiteralProbe probe;
+                expression.arguments.front()->Accept(probe);
+                if (!probe.literal) Fail("format template must be a string literal");
+                std::vector<PrintableValue> values;
+                for (size_t index = 1; index < expression.arguments.size(); ++index)
+                    values.push_back(PreparePrintable(
+                        Evaluate(expression.arguments[index].get()), expression.arguments[index].get()));
+                value = EmitFormat(BuildFormat(probe.literal->value, values), values);
+                return;
+            }
+
+            if (name == "assert") {
+                if (expression.arguments.empty() || expression.arguments.size() > 2)
+                    Fail("assert expects a condition and an optional message");
+                llvm::Function* function = CurrentFunction();
+                if (!function) Fail("assert outside a function");
+                llvm::Value* condition = AsCondition(Evaluate(expression.arguments.front().get()));
+                llvm::BasicBlock* success = llvm::BasicBlock::Create(context, "assert.success", function);
+                llvm::BasicBlock* failure = llvm::BasicBlock::Create(context, "assert.failure", function);
+                builder.CreateCondBr(condition, success, failure);
+                builder.SetInsertPoint(failure);
+                std::vector<PrintableValue> values;
+                std::string format = "Assertion failed";
+                if (expression.arguments.size() == 2) {
+                    format += ": %s";
+                    values.push_back(PreparePrintable(
+                        Evaluate(expression.arguments[1].get()), expression.arguments[1].get()));
+                }
+                format += '\n';
+                EmitPrintf(format, values);
+                builder.CreateCall(Abort());
+                builder.CreateUnreachable();
+                builder.SetInsertPoint(success);
+                value = nullptr;
+                return;
+            }
+
+            Fail("unknown builtin function '" + name + "'");
+        }
+
         llvm::Function* DeclareFunction(FunctionDeclStmt& statement) {
             if (!statement.name || !statement.returnType) Fail("invalid function declaration");
             if (llvm::Function* existing = module->getFunction(statement.name->value)) return existing;
@@ -318,7 +528,8 @@ namespace Absolute {
         }
     };
 
-    CodeGenerator::CodeGenerator() : impl(std::make_unique<Impl>(*this)) {
+    CodeGenerator::CodeGenerator(const Analyzer* analyzer)
+        : impl(std::make_unique<Impl>(*this, analyzer)) {
     }
 
     CodeGenerator::~CodeGenerator() = default;
@@ -344,6 +555,10 @@ namespace Absolute {
 
     void CodeGenerator::Visit(FunctionCallExpr* expr) {
         const std::string name = IdentifierName(expr->base.get());
+        if (impl->IsBuiltinFunction(name)) {
+            impl->EmitBuiltin(*expr, name);
+            return;
+        }
         llvm::Function* function = impl->module->getFunction(name);
         if (!function) impl->Fail("unknown function '" + name + "'");
         if (function->arg_size() != expr->arguments.size()) {
