@@ -39,6 +39,7 @@ namespace Absolute {
         std::vector<std::string> parameterTypes;
         size_t scopeDepth = 0;
         bool managedOwner = false;
+        bool asyncFunction = false;
     };
 
     enum class InitializationState {
@@ -58,6 +59,14 @@ namespace Absolute {
         Unknown
     };
 
+    enum class TaskState {
+        NotTask,
+        Pending,
+        Awaited,
+        MaybePending,
+        Unknown
+    };
+
     struct ANALYZER_API ExpressionInfo {
         SymbolId symbol = InvalidSymbolId;
         std::string type;
@@ -67,6 +76,9 @@ namespace Absolute {
         InitializationState initialization = InitializationState::Initialized;
         PointerValidity pointerValidity = PointerValidity::NotPointer;
         SymbolId pointerOwner = InvalidSymbolId;
+        TaskState taskState = TaskState::NotTask;
+        bool createsTask = false;
+        bool asyncCall = false;
     };
 
     struct ANALYZER_API Diagnostic {
@@ -126,6 +138,9 @@ namespace Absolute {
             InitializationState initialization = InitializationState::Initialized;
             PointerValidity pointerValidity = PointerValidity::NotPointer;
             SymbolId pointerOwner = InvalidSymbolId;
+            TaskState taskState = TaskState::NotTask;
+            bool createsTask = false;
+            bool asyncCall = false;
         };
 
         enum class KeepState {
@@ -145,6 +160,7 @@ namespace Absolute {
             InitializationState initialization = InitializationState::Initialized;
             PointerValidity pointerValidity = PointerValidity::NotPointer;
             SymbolId pointerOwner = InvalidSymbolId;
+            TaskState taskState = TaskState::NotTask;
         };
 
         using ValueFlowMap = std::unordered_map<SymbolId, ValueFlowState>;
@@ -184,6 +200,8 @@ namespace Absolute {
         std::vector<std::vector<ValueFlowMap>> loopBreakValueStates;
         AccessMode accessMode = AccessMode::Read;
         bool flowTerminated = false;
+        int spawnContextDepth = 0;
+        bool currentFunctionAsync = false;
 
     public:
         explicit Analyzer(std::vector<Program*> programs)
@@ -278,5 +296,6 @@ namespace Absolute {
         void PopValueFlowScope();
         void MergeValueFlowPaths(const ValueFlowMap& base, const std::vector<ValueFlowMap>& paths);
         void RegisterFlowSymbol(SymbolId id, ValueFlowState state);
+        void CheckTaskScopesFrom(size_t firstScope, const std::string& exitKind);
     };
 }

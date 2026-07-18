@@ -7,10 +7,9 @@ namespace Absolute {
         std::unique_ptr<Expression> operand;
     
         Token* current = RequireCurrent("an expression after unary operator");
-        if  (current->type == TokenType::OPERATOR && IsPrefixUnary(*current)){
+        if (IsPrefixUnary(*current)) {
             op = current->value;
-            // Поддерживаем `*`, `&`, `!`, `~`, `+`, `-`
-            Consume(TokenType::OPERATOR, op);
+            Consume(current->type, op);
             operand = ParsePrefixUnaryExpr();
             return std::make_unique<PrefixUnaryExpr>(op, std::move(operand));
         }

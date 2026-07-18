@@ -84,6 +84,21 @@ namespace Absolute {
             if (!name.empty() && name.back() == '*') name.pop_back();
             return name;
         }
+
+        bool IsTaskTypeName(const std::string& name) {
+            return name.size() > 6 && name.starts_with("task<") && name.ends_with(">");
+        }
+
+        std::string TaskValueTypeName(const std::string& name) {
+            return IsTaskTypeName(name) ? name.substr(5, name.size() - 6) : std::string{};
+        }
+
+        class FunctionCallProbe final : public BaseIdentifierVisitor {
+        public:
+            FunctionCallExpr* call = nullptr;
+
+            void Visit(FunctionCallExpr* expr) override { call = expr; }
+        };
     }
 
     struct CodeGenerator::Impl {
@@ -128,6 +143,7 @@ namespace Absolute {
         llvm::Value* addressValue = nullptr;
         bool declarationKeep = false;
         std::string currentReturnTypeName;
+        std::uint64_t taskThunkCounter = 0;
 
         explicit Impl(CodeGenerator& visitor, const Analyzer* analyzer)
             : visitor(visitor), analyzer(analyzer), builder(context) {
@@ -138,6 +154,7 @@ namespace Absolute {
         }
 
         llvm::Type* TypeFromName(const std::string& name) {
+            if (IsTaskTypeName(name)) return builder.getPtrTy();
             if (IsManagedPointerTypeName(name)) return builder.getInt64Ty();
             if (IsRawPointerTypeName(name)) return builder.getPtrTy();
             if (name == "int8" || name == "uint8" || name == "char") return builder.getInt8Ty();
@@ -153,15 +170,15 @@ namespace Absolute {
         }
 
         llvm::Type* ResolveType(Expression* expression) {
-            if (!expression) Fail("missing type expression");
-            PrimitiveTypeNameVisitor typeVisitor;
-            expression->Accept(typeVisitor);
-            if (typeVisitor.name.empty()) Fail("user-defined types are not implemented yet");
-            return TypeFromName(typeVisitor.name);
+            return TypeFromName(ResolveTypeName(expression));
         }
 
         std::string ResolveTypeName(Expression* expression) {
             if (!expression) Fail("missing type expression");
+            if (analyzer) {
+                if (const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
+                    info && !info->type.empty() && info->type != "error") return info->type;
+            }
             PrimitiveTypeNameVisitor typeVisitor;
             expression->Accept(typeVisitor);
             if (typeVisitor.name.empty()) Fail("user-defined types are not implemented yet");
@@ -202,10 +219,36 @@ namespace Absolute {
             return module->getOrInsertFunction("absolute_managed_destroy_if", type);
         }
 
+        llvm::FunctionCallee TaskSpawn() {
+            llvm::FunctionType* entryType = llvm::FunctionType::get(
+                builder.getVoidTy(), {builder.getPtrTy()}, false);
+            llvm::FunctionType* type = llvm::FunctionType::get(
+                builder.getPtrTy(), {entryType->getPointerTo(), builder.getPtrTy()}, false);
+            return module->getOrInsertFunction("absolute_task_spawn", type);
+        }
+
+        llvm::FunctionCallee TaskAwait() {
+            llvm::FunctionType* type = llvm::FunctionType::get(
+                builder.getPtrTy(), {builder.getPtrTy()}, false);
+            return module->getOrInsertFunction("absolute_task_await", type);
+        }
+
+        llvm::FunctionCallee TaskDestroy() {
+            llvm::FunctionType* type = llvm::FunctionType::get(
+                builder.getVoidTy(), {builder.getPtrTy()}, false);
+            return module->getOrInsertFunction("absolute_task_destroy", type);
+        }
+
         void EmitScopeCleanup(size_t index) {
             if (index >= scopes.size() || !builder.GetInsertBlock() || builder.GetInsertBlock()->getTerminator()) return;
             for (auto& [name, variable] : scopes[index]) {
                 (void)name;
+                if (IsTaskTypeName(variable.typeName)) {
+                    llvm::Value* handle = builder.CreateLoad(variable.type, variable.address, "cleanup.task");
+                    builder.CreateCall(TaskDestroy(), {handle});
+                    builder.CreateStore(llvm::ConstantPointerNull::get(builder.getPtrTy()), variable.address);
+                    continue;
+                }
                 if (!variable.managedOwner || variable.keep) continue;
                 llvm::Value* handle = builder.CreateLoad(variable.type, variable.address, "cleanup.handle");
                 llvm::Value* owner = builder.CreateLoad(builder.getInt1Ty(), variable.managedOwner, "cleanup.owner");
@@ -399,6 +442,112 @@ namespace Absolute {
             llvm::FunctionType* type = llvm::FunctionType::get(
                 builder.getVoidTy(), {builder.getPtrTy()}, false);
             return module->getOrInsertFunction("free", type);
+        }
+
+        llvm::Value* EncodeTaskSlot(llvm::IRBuilder<>& targetBuilder, llvm::Value* source) {
+            llvm::Type* type = source->getType();
+            if (type->isPointerTy())
+                return targetBuilder.CreatePtrToInt(source, targetBuilder.getInt64Ty(), "task.slot.ptr");
+            if (type->isIntegerTy())
+                return targetBuilder.CreateIntCast(source, targetBuilder.getInt64Ty(), false, "task.slot.int");
+            if (type->isFloatTy()) {
+                llvm::Value* bits = targetBuilder.CreateBitCast(source, targetBuilder.getInt32Ty(), "task.slot.float");
+                return targetBuilder.CreateZExt(bits, targetBuilder.getInt64Ty(), "task.slot.float64");
+            }
+            if (type->isDoubleTy())
+                return targetBuilder.CreateBitCast(source, targetBuilder.getInt64Ty(), "task.slot.double");
+            Fail("async tasks only support primitive and pointer values");
+        }
+
+        llvm::Value* DecodeTaskSlot(
+            llvm::IRBuilder<>& targetBuilder, llvm::Value* slot, llvm::Type* target) {
+            if (target->isPointerTy())
+                return targetBuilder.CreateIntToPtr(slot, target, "task.value.ptr");
+            if (target->isIntegerTy())
+                return targetBuilder.CreateIntCast(slot, target, false, "task.value.int");
+            if (target->isFloatTy()) {
+                llvm::Value* bits = targetBuilder.CreateTrunc(slot, targetBuilder.getInt32Ty(), "task.value.float32");
+                return targetBuilder.CreateBitCast(bits, target, "task.value.float");
+            }
+            if (target->isDoubleTy())
+                return targetBuilder.CreateBitCast(slot, target, "task.value.double");
+            Fail("async tasks only support primitive and pointer values");
+        }
+
+        llvm::Value* EmitSpawn(FunctionCallExpr& call) {
+            const std::string name = ResolvedName(&call);
+            llvm::Function* target = module->getFunction(name);
+            if (!target) Fail("unknown async function '" + name + "'");
+            if (target->arg_size() != call.arguments.size())
+                Fail("invalid async argument count for '" + name + "'");
+
+            const std::uint64_t slotCount = static_cast<std::uint64_t>(call.arguments.size()) + 1;
+            llvm::Value* contextPointer = builder.CreateCall(
+                Malloc(), {builder.getInt64(slotCount * 8)}, "task.context");
+
+            size_t argumentIndex = 0;
+            for (const auto& argument : call.arguments) {
+                llvm::Value* argumentValue = Evaluate(argument.get());
+                argumentValue = Coerce(argumentValue,
+                    target->getFunctionType()->getParamType(static_cast<unsigned>(argumentIndex)));
+                llvm::Value* slot = builder.CreateGEP(
+                    builder.getInt64Ty(), contextPointer,
+                    builder.getInt64(static_cast<std::uint64_t>(argumentIndex + 1)), "task.argument.slot");
+                builder.CreateStore(EncodeTaskSlot(builder, argumentValue), slot);
+                ++argumentIndex;
+            }
+
+            llvm::FunctionType* thunkType = llvm::FunctionType::get(
+                builder.getVoidTy(), {builder.getPtrTy()}, false);
+            llvm::Function* thunk = llvm::Function::Create(
+                thunkType, llvm::Function::InternalLinkage,
+                "absolute.task.thunk." + std::to_string(taskThunkCounter++), *module);
+            llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", thunk);
+            llvm::IRBuilder<> thunkBuilder(entry);
+            llvm::Value* thunkContext = thunk->getArg(0);
+
+            std::vector<llvm::Value*> thunkArguments;
+            thunkArguments.reserve(call.arguments.size());
+            for (size_t index = 0; index < call.arguments.size(); ++index) {
+                llvm::Value* slot = thunkBuilder.CreateGEP(
+                    thunkBuilder.getInt64Ty(), thunkContext,
+                    thunkBuilder.getInt64(static_cast<std::uint64_t>(index + 1)), "task.argument.slot");
+                llvm::Value* encoded = thunkBuilder.CreateLoad(
+                    thunkBuilder.getInt64Ty(), slot, "task.argument");
+                thunkArguments.push_back(DecodeTaskSlot(
+                    thunkBuilder, encoded, target->getFunctionType()->getParamType(static_cast<unsigned>(index))));
+            }
+            llvm::CallInst* result = thunkBuilder.CreateCall(target, thunkArguments,
+                target->getReturnType()->isVoidTy() ? "" : "task.result");
+            if (!target->getReturnType()->isVoidTy()) {
+                llvm::Value* resultSlot = thunkBuilder.CreateGEP(
+                    thunkBuilder.getInt64Ty(), thunkContext, thunkBuilder.getInt64(0), "task.result.slot");
+                thunkBuilder.CreateStore(EncodeTaskSlot(thunkBuilder, result), resultSlot);
+            }
+            thunkBuilder.CreateRetVoid();
+
+            return builder.CreateCall(TaskSpawn(), {thunk, contextPointer}, "task.handle");
+        }
+
+        llvm::Value* EmitAwait(PrefixUnaryExpr& expression) {
+            llvm::Value* handle = Evaluate(expression.operand.get());
+            llvm::Value* contextPointer = builder.CreateCall(TaskAwait(), {handle}, "task.completed.context");
+            const std::string taskName = IdentifierName(expression.operand.get());
+            if (!taskName.empty()) {
+                Variable& task = RequireVariable(taskName);
+                builder.CreateStore(llvm::ConstantPointerNull::get(builder.getPtrTy()), task.address);
+            }
+
+            const std::string resultTypeName = SemanticType(&expression);
+            if (resultTypeName == "void") {
+                builder.CreateCall(Free(), {contextPointer});
+                return nullptr;
+            }
+            llvm::Value* encoded = builder.CreateLoad(
+                builder.getInt64Ty(), contextPointer, "task.result.encoded");
+            llvm::Value* result = DecodeTaskSlot(builder, encoded, TypeFromName(resultTypeName));
+            builder.CreateCall(Free(), {contextPointer});
+            return result;
         }
 
         llvm::FunctionCallee ManagedCreate() {
@@ -692,6 +841,7 @@ namespace Absolute {
             addressMode = false;
             addressValue = nullptr;
             declarationKeep = false;
+            taskThunkCounter = 0;
 
             phase = Phase::DeclareFunctions;
             for (const auto& statement : program.statements) {
@@ -1095,6 +1245,19 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(PrefixUnaryExpr* expr) {
+        if (expr->op == "spawn") {
+            FunctionCallProbe probe;
+            if (expr->operand) expr->operand->Accept(probe);
+            if (!probe.call) impl->Fail("spawn requires a direct async function call");
+            impl->value = impl->EmitSpawn(*probe.call);
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
+        if (expr->op == "await") {
+            impl->value = impl->EmitAwait(*expr);
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
         if (expr->op == "&") {
             impl->value = impl->EvaluateAddress(expr->operand.get());
             impl->valueCreatesManagedOwner = false;

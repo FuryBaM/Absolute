@@ -41,6 +41,19 @@ namespace Absolute {
             return type;
         }
 
+        bool IsTaskType(const std::string& type) {
+            return type.size() > 6 && type.starts_with("task<") && type.ends_with(">");
+        }
+
+        std::string TaskValueType(const std::string& type) {
+            return IsTaskType(type) ? type.substr(5, type.size() - 6) : "error";
+        }
+
+        bool HasModifier(const Statement& statement, const std::string& name) {
+            return std::any_of(statement.modifiers.begin(), statement.modifiers.end(),
+                [&](const Token& modifier) { return modifier.value == name; });
+        }
+
         class CallTargetProbe final : public BaseIdentifierVisitor {
         public:
             bool isMember = false;
@@ -184,6 +197,8 @@ namespace Absolute {
         loopBreakValueStates.clear();
         accessMode = AccessMode::Read;
         flowTerminated = false;
+        spawnContextDepth = 0;
+        currentFunctionAsync = false;
         loopDepth = functionDepth = typeContextDepth = constructorContextDepth = 0;
 
         phase = Phase::CollectDeclarations;
@@ -270,8 +285,27 @@ namespace Absolute {
 
     void Analyzer::PopValueFlowScope() {
         if (valueFlowScopes.empty()) return;
+        if (!flowTerminated) CheckTaskScopesFrom(valueFlowScopes.size() - 1, "leaving its scope");
         for (SymbolId id : valueFlowScopes.back()) valueFlow.erase(id);
         valueFlowScopes.pop_back();
+    }
+
+    void Analyzer::CheckTaskScopesFrom(size_t firstScope, const std::string& exitKind) {
+        for (size_t scope = firstScope; scope < valueFlowScopes.size(); ++scope) {
+            for (SymbolId id : valueFlowScopes[scope]) {
+                const auto found = valueFlow.find(id);
+                if (found == valueFlow.end()) continue;
+                const Symbol* symbol = table.Get(id);
+                const std::string name = symbol ? symbol->name : std::string("<unknown>");
+                if (found->second.taskState == TaskState::Pending)
+                    Report("task '" + name + "' must be awaited before " + exitKind,
+                        "E_TASK_NOT_AWAITED", id);
+                else if (found->second.taskState == TaskState::MaybePending)
+                    Report("task '" + name +
+                        "' is not awaited on every control-flow path before " + exitKind,
+                        "E_TASK_MAY_NOT_BE_AWAITED", id);
+            }
+        }
     }
 
     void Analyzer::RegisterFlowSymbol(SymbolId id, ValueFlowState state) {
@@ -332,6 +366,13 @@ namespace Absolute {
                         state.pointerOwner = next.pointerOwner;
                     else if (!nextIsNull) state.pointerOwner = InvalidSymbolId;
                 }
+                if (state.taskState != next.taskState) {
+                    const bool pending = state.taskState == TaskState::Pending ||
+                        state.taskState == TaskState::MaybePending ||
+                        next.taskState == TaskState::Pending ||
+                        next.taskState == TaskState::MaybePending;
+                    state.taskState = pending ? TaskState::MaybePending : TaskState::Unknown;
+                }
             }
             merged = state;
         }
@@ -366,11 +407,13 @@ namespace Absolute {
         if (expression) expressionInfo[expression] = {
             result.symbol, result.type, result.isLValue,
             result.createsManagedOwner, result.referencesManagedOwner,
-            result.initialization, result.pointerValidity, result.pointerOwner};
+            result.initialization, result.pointerValidity, result.pointerOwner,
+            result.taskState, result.createsTask, result.asyncCall};
     }
 
     bool Analyzer::IsKnownType(const std::string& name) const {
         if (IsPointerType(name)) return IsKnownType(PointerPointee(name));
+        if (IsTaskType(name)) return IsKnownType(TaskValueType(name));
         return PrimitiveStringToEnum(name).has_value() || types.contains(name) || name == "null" ||
             (name.size() > 2 && name.ends_with("[]") && IsKnownType(name.substr(0, name.size() - 2)));
     }
@@ -418,6 +461,8 @@ namespace Absolute {
         const auto declared = table.Declare(SymbolKind::Function, name,
             returnType, ResolveParameterTypes(statement.parameters));
         if (!declared) Report("object '" + name + "' is already declared in this scope");
+        else if (Symbol* symbol = table.Get(*declared))
+            symbol->asyncFunction = HasModifier(statement, "async");
     }
 
     void Analyzer::ResolveFunction(FunctionDeclStmt& statement, SymbolKind kind) {
@@ -428,13 +473,20 @@ namespace Absolute {
 
         if (statement.IsExternal() && kind == SymbolKind::Method)
             Report("extern functions cannot be class or struct members");
+        if (statement.IsExternal() && HasModifier(statement, "async"))
+            Report("extern functions cannot be async", "E_ASYNC_EXTERN");
+        if (kind == SymbolKind::Method && HasModifier(statement, "async"))
+            Report("async methods are not implemented yet; use a namespace function",
+                "E_ASYNC_METHOD_UNSUPPORTED");
         if (statement.IsExternal() && (returnType == "auto" || returnType == "dynamic" ||
             IsManagedPointerType(returnType)))
             Report("extern function '" + statement.name->value +
                 "' requires a concrete C-compatible return type; use raw T* for pointers");
 
         const std::string oldReturn = currentReturnType;
+        const bool oldAsync = currentFunctionAsync;
         currentReturnType = returnType;
+        currentFunctionAsync = HasModifier(statement, "async");
         ++functionDepth;
         table.EnterScope();
         keepLifetimes.clear();
@@ -461,10 +513,11 @@ namespace Absolute {
             else if (const auto declared = table.Declare(SymbolKind::Parameter, name, type))
                 parameterId = *declared;
             else Report("parameter '" + name + "' is already declared");
-            RegisterFlowSymbol(parameterId, {
+        RegisterFlowSymbol(parameterId, {
                 InitializationState::Initialized,
                 IsPointerType(type) ? PointerValidity::Unknown : PointerValidity::NotPointer,
-                InvalidSymbolId});
+                InvalidSymbolId,
+                IsTaskType(type) ? TaskState::Unknown : TaskState::NotTask});
             if (parameter->value) {
                 const Result value = Evaluate(parameter->value.get());
                 if (!IsAssignable(type, value.type))
@@ -482,6 +535,7 @@ namespace Absolute {
         table.ExitScope();
         --functionDepth;
         currentReturnType = oldReturn;
+        currentFunctionAsync = oldAsync;
         (void)kind;
     }
 
@@ -611,7 +665,8 @@ namespace Absolute {
         }
         Save(expr, {id, symbol->type, value, false,
             value && IsManagedPointerType(symbol->type) && symbol->managedOwner,
-            flow.initialization, flow.pointerValidity, flow.pointerOwner});
+            flow.initialization, flow.pointerValidity, flow.pointerOwner,
+            flow.taskState});
     }
 
     void Analyzer::Visit(FunctionCallExpr* expr) {
@@ -705,6 +760,7 @@ namespace Absolute {
         std::vector<std::string> parameters;
         SymbolId symbolId = InvalidSymbolId;
         std::string returnType = "error";
+        bool asyncCall = false;
 
         const SymbolId qualifiedId = LookupSymbol(qualifiedCallName);
         const Symbol* qualifiedSymbol = table.Get(qualifiedId);
@@ -714,6 +770,7 @@ namespace Absolute {
             parameters = qualifiedSymbol->parameterTypes;
             symbolId = qualifiedId;
             returnType = qualifiedSymbol->type;
+            asyncCall = qualifiedSymbol->asyncFunction;
         }
         else if (probe.isMember) {
             const Result target = Evaluate(expr->base.get());
@@ -721,6 +778,7 @@ namespace Absolute {
             parameters = callableParameters;
             symbolId = target.symbol;
             returnType = target.type;
+            if (const Symbol* symbol = table.Get(symbolId)) asyncCall = symbol->asyncFunction;
         }
         else {
             const std::string name = callName;
@@ -730,6 +788,7 @@ namespace Absolute {
                 targetCallable = true;
                 parameters = symbol->parameterTypes;
                 returnType = symbol->type;
+                asyncCall = symbol->asyncFunction;
             }
             else {
                 Report("unknown function '" + name + "'");
@@ -753,10 +812,12 @@ namespace Absolute {
                 Report("argument " + std::to_string(i + 1) + " may pass an invalid pointer",
                     "E_MAYBE_INVALID_POINTER_ARGUMENT", argument.symbol);
         }
+        if (asyncCall && spawnContextDepth == 0)
+            Report("async function must be started with spawn", "E_ASYNC_CALL_REQUIRES_SPAWN", symbolId);
         Save(expr, {symbolId, returnType, false, IsManagedPointerType(returnType), false,
             InitializationState::Initialized,
             IsPointerType(returnType) ? PointerValidity::Unknown : PointerValidity::NotPointer,
-            InvalidSymbolId});
+            InvalidSymbolId, TaskState::NotTask, false, asyncCall});
     }
 
     void Analyzer::Visit(ArrayAccessExpr* expr) {
@@ -895,6 +956,8 @@ namespace Absolute {
         if (!target.isLValue) Report("assignment target is not assignable");
         if (!IsAssignable(target.type, value.type))
             Report("cannot assign '" + value.type + "' to '" + target.type + "'");
+        if (IsTaskType(target.type))
+            Report("tasks cannot be reassigned or copied", "E_TASK_ASSIGNMENT", target.symbol);
         if (IsManagedPointerType(target.type)) {
             if (Symbol* symbol = table.Get(target.symbol)) symbol->managedOwner = value.createsManagedOwner;
         }
@@ -911,13 +974,16 @@ namespace Absolute {
             flow->second.pointerOwner = IsManagedPointerType(target.type)
                 ? (value.createsManagedOwner ? target.symbol : value.pointerOwner)
                 : InvalidSymbolId;
+            flow->second.taskState = IsTaskType(target.type)
+                ? value.taskState : TaskState::NotTask;
         }
         Save(expr, {target.symbol, target.type, false, false, false,
             InitializationState::Initialized,
             IsPointerType(target.type) ? value.pointerValidity : PointerValidity::NotPointer,
             IsManagedPointerType(target.type)
                 ? (value.createsManagedOwner ? target.symbol : value.pointerOwner)
-                : InvalidSymbolId});
+                : InvalidSymbolId,
+            IsTaskType(target.type) ? value.taskState : TaskState::NotTask});
     }
 
     void Analyzer::Visit(VarDeclExpr* expr) {
@@ -942,6 +1008,12 @@ namespace Absolute {
         }
         else if (expr->value && !IsAssignable(type, value.type))
             Report("initializer of '" + name + "' has type '" + value.type + "', expected '" + type + "'");
+        if (IsTaskType(type) && expr->value && !value.createsTask)
+            Report("task variable '" + name + "' requires a spawn initializer",
+                "E_TASK_SPAWN_REQUIRED");
+        if (IsTaskType(type) && !expr->value)
+            Report("task variable '" + name + "' requires a spawn initializer",
+                "E_TASK_SPAWN_REQUIRED");
 
         const bool fieldDeclaration = !currentType.empty() && functionDepth == 0;
         const bool globalDeclaration = currentType.empty() && table.ScopeDepth() == 0;
@@ -965,9 +1037,12 @@ namespace Absolute {
         flow.pointerOwner = IsManagedPointerType(type) && expr->value
             ? (value.createsManagedOwner ? id : value.pointerOwner)
             : InvalidSymbolId;
+        flow.taskState = IsTaskType(type) && expr->value
+            ? value.taskState : TaskState::NotTask;
         if (functionDepth > 0) RegisterFlowSymbol(id, flow);
         Save(expr, {id, type, true, false, false,
-            flow.initialization, flow.pointerValidity, flow.pointerOwner});
+            flow.initialization, flow.pointerValidity, flow.pointerOwner,
+            flow.taskState, value.createsTask, false});
     }
 
     void Analyzer::Visit(MemberAccessExpr* expr) {
@@ -1107,6 +1182,42 @@ namespace Absolute {
     }
 
     void Analyzer::Visit(PrefixUnaryExpr* expr) {
+        if (expr->op == "spawn") {
+            ++spawnContextDepth;
+            const Result operand = Evaluate(expr->operand.get());
+            --spawnContextDepth;
+            if (!operand.asyncCall)
+                Report("spawn requires a call to an async function", "E_SPAWN_REQUIRES_ASYNC_CALL",
+                    operand.symbol);
+            Save(expr, {InvalidSymbolId, "task<" + operand.type + ">", false,
+                false, false, InitializationState::Initialized,
+                PointerValidity::NotPointer, InvalidSymbolId,
+                TaskState::Pending, true, false});
+            return;
+        }
+        if (expr->op == "await") {
+            const Result operand = Evaluate(expr->operand.get());
+            if (!currentFunctionAsync)
+                Report("await is only allowed inside an async function", "E_AWAIT_OUTSIDE_ASYNC");
+            if (!IsTaskType(operand.type)) {
+                Report("await requires task<T>, got '" + operand.type + "'", "E_AWAIT_REQUIRES_TASK",
+                    operand.symbol);
+                Save(expr, {InvalidSymbolId, "error", false});
+                return;
+            }
+            if (operand.taskState == TaskState::Awaited)
+                Report("task is awaited more than once", "E_TASK_DOUBLE_AWAIT", operand.symbol);
+            else if (operand.taskState == TaskState::MaybePending)
+                Report("task may already have been awaited on another control-flow path",
+                    "E_TASK_MAYBE_DOUBLE_AWAIT", operand.symbol);
+            if (auto flow = valueFlow.find(operand.symbol); flow != valueFlow.end())
+                flow->second.taskState = TaskState::Awaited;
+            Save(expr, {operand.symbol, TaskValueType(operand.type), false,
+                false, false, InitializationState::Initialized,
+                PointerValidity::NotPointer, InvalidSymbolId,
+                TaskState::NotTask, false, false});
+            return;
+        }
         const AccessMode previousAccess = accessMode;
         if (expr->op == "&") accessMode = AccessMode::Address;
         const Result operand = Evaluate(expr->operand.get());
@@ -1154,6 +1265,17 @@ namespace Absolute {
 
     void Analyzer::Visit(TemplateExpr* expr) {
         const bool typeContext = typeContextDepth > 0;
+        const std::string templateName = ExtractIdentifier(expr->base.get());
+        if (typeContext && templateName == "task") {
+            if (expr->types.size() != 1) {
+                Report("task requires exactly one result type", "E_TASK_TYPE_ARITY");
+                Save(expr, {InvalidSymbolId, "error", false});
+                return;
+            }
+            const std::string valueType = ResolveType(expr->types.front().get());
+            Save(expr, {InvalidSymbolId, "task<" + valueType + ">", false});
+            return;
+        }
         std::string base;
         if (typeContext) base = ResolveType(expr->base.get());
         else {
@@ -1213,6 +1335,7 @@ namespace Absolute {
             !value.createsManagedOwner && !value.referencesManagedOwner)
             Report("a managed pointer return must transfer an owner; subscribers cannot escape their owner");
         CheckKeepScopesFrom(0, "return");
+        CheckTaskScopesFrom(0, "return");
         flowTerminated = true;
     }
 
@@ -1319,7 +1442,8 @@ namespace Absolute {
             if (const auto declared = table.Declare(SymbolKind::Parameter, name, type))
                 RegisterFlowSymbol(*declared, {InitializationState::Initialized,
                     IsPointerType(type) ? PointerValidity::Unknown : PointerValidity::NotPointer,
-                    InvalidSymbolId});
+                    InvalidSymbolId,
+                    IsTaskType(type) ? TaskState::Unknown : TaskState::NotTask});
             else Report("parameter '" + name + "' is already declared");
         }
         AcceptIfPresent(stmt->body, *this);
@@ -1529,6 +1653,7 @@ namespace Absolute {
         if (loopDepth == 0) Report("continue statement is outside a loop");
         else {
             CheckKeepScopesFrom(loopKeepDepths.back(), "continue");
+            CheckTaskScopesFrom(loopKeepDepths.back(), "continue");
             loopBreakValueStates.back().push_back(valueFlow);
             flowTerminated = true;
         }
@@ -1540,6 +1665,7 @@ namespace Absolute {
         if (loopDepth == 0) Report("break statement is outside a loop");
         else {
             CheckKeepScopesFrom(loopKeepDepths.back(), "break");
+            CheckTaskScopesFrom(loopKeepDepths.back(), "break");
             loopBreakStates.back().push_back(keepLifetimes);
             loopBreakValueStates.back().push_back(valueFlow);
             flowTerminated = true;

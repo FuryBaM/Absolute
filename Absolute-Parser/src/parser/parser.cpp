@@ -188,6 +188,13 @@ namespace Absolute{
             case Hash("new"):
             case Hash("delete"):
                 return std::make_unique<SingleStatement>(ParsePrimaryExpr());
+            case Hash("await"):
+            case Hash("spawn"):
+            {
+                auto expression = ParseExpression();
+                Consume(TokenType::DELIMITER, ";");
+                return std::make_unique<SingleStatement>(std::move(expression));
+            }
             case Hash("void"):
                 return ParseFunctionDeclaration();
 		    case Hash("return"):
@@ -233,6 +240,8 @@ namespace Absolute{
 
         case TokenType::IDENTIFIER:
         {
+            if (token->value == "task" && PeekToken() && PeekToken()->value == "<")
+                return ParseVarDeclaration();
             Token* next = PeekToken(1);
             Token* afterIdentifiers = PeekTokenAfterIdentifiers();
             const auto isDeclaratorPrefix = [](const Token* candidate) {

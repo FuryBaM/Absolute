@@ -96,6 +96,15 @@ if(BUILD_TESTING)
         )
         set_tests_properties("absolute.${flow_error}" PROPERTIES WILL_FAIL TRUE)
     endforeach()
+    add_test(
+        NAME absolute.async-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/async-basic.abs"
+    )
+    add_test(
+        NAME absolute.async-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/async-errors.abs"
+    )
+    set_tests_properties(absolute.async-errors PROPERTIES WILL_FAIL TRUE)
     if(ABSOLUTE_ENABLE_LLVM)
         add_test(
             NAME absolute.emit-llvm
@@ -265,6 +274,19 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-flow-analysis PROPERTIES
             FIXTURES_REQUIRED absolute-flow-analysis-executable
             PASS_REGULAR_EXPRESSION "flow-analysis=ok"
+        )
+        add_test(
+            NAME absolute.build-async
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/async-basic.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/async-app"
+        )
+        set_tests_properties(absolute.build-async PROPERTIES
+            FIXTURES_SETUP absolute-async-executable
+        )
+        add_test(NAME absolute.run-async COMMAND "${CMAKE_BINARY_DIR}/async-app")
+        set_tests_properties(absolute.run-async PROPERTIES
+            FIXTURES_REQUIRED absolute-async-executable
+            PASS_REGULAR_EXPRESSION "async=42"
         )
     endif()
 endif()

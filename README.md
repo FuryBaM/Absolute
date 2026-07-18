@@ -202,6 +202,38 @@ The native runtime library is linked automatically by `--build-exe`. Objects
 created by `--emit-object` have to be linked with `Absolute-Runtime` manually
 when managed pointers are used.
 
+## Async tasks and parallel execution
+
+An `async` function can be scheduled on the runtime worker pool with `spawn`.
+The returned `task<T>` is a one-shot handle whose result is consumed by
+`await`:
+
+```absolute
+async int32 calculate(int32 value) {
+    return value * 2;
+}
+
+async int32 main() {
+    task<int32> first = spawn calculate(20);
+    task<int32> second = spawn calculate(1);
+    int32 result = await first + await second;
+    return result;
+}
+```
+
+`await` is only valid inside an `async` function. Every local task must be
+awaited on every control-flow path before its scope is left, including through
+`return`, `break`, and `continue`; a task cannot be copied, reassigned, or
+awaited twice. The analyzer exposes `TaskState` in `ExpressionInfo` and emits
+stable `E_TASK_*` diagnostics for IDE integrations.
+
+The LLVM backend packs primitive arguments into an owned task context and emits
+a private thunk for each spawn site. `Absolute-Runtime` executes these thunks
+on a shared native thread pool, and `await` suspends the calling OS thread until
+the result is ready. This first concurrency milestone supports primitive and
+pointer-shaped ABI values; cancellation, channels, async I/O, methods, and
+compile-time data-race checking are planned separately.
+
 The first backend milestone supports primitive values, functions, local
 variables, calls, casts, arithmetic/comparison operators, assignments,
 `return`, `if`, `for`, `while`, `do-while`, `break`, and `continue`. Classes,
