@@ -2,6 +2,16 @@
 #include "parser.h"
 
 namespace Absolute {
+    Token* Parser::RequireCurrent(const std::string& expectation)
+    {
+        Token* token = CurrentToken();
+        if (!token) {
+            ReportSyntaxError(nullptr, "Unexpected end of file; expected " + expectation);
+            throw std::runtime_error("Unexpected end of file");
+        }
+        return token;
+    }
+
     void Parser::ReportSyntaxError(const Token* token, const std::string& message)
     {
         std::cerr << "Syntax Error: " << message;
