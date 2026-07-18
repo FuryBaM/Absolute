@@ -32,6 +32,45 @@ namespace Absolute {
                 BaseIdentifierVisitor::Visit(expr);
             }
         };
+
+        class StringLiteralProbe final : public BaseIdentifierVisitor {
+        public:
+            const StringLiteralExpr* literal = nullptr;
+
+            void Visit(StringLiteralExpr* expr) override { literal = expr; }
+        };
+
+        bool IsBuiltinFunction(const std::string& name) {
+            return name == "print" || name == "println" || name == "format" ||
+                name == "toString" || name == "assert";
+        }
+
+        bool IsPrintableType(const std::string& type) {
+            return type == "bool" || type == "string" || type == "char" || type == "null" ||
+                type == "dynamic" || type == "error" || type == "float" || type == "double" ||
+                type.starts_with("int") || type.starts_with("uint");
+        }
+
+        std::optional<size_t> CountFormatPlaceholders(const std::string& format) {
+            size_t count = 0;
+            for (size_t index = 0; index < format.size(); ++index) {
+                if (format[index] == '{') {
+                    if (index + 1 < format.size() && format[index + 1] == '{') {
+                        ++index;
+                    }
+                    else if (index + 1 < format.size() && format[index + 1] == '}') {
+                        ++count;
+                        ++index;
+                    }
+                    else return std::nullopt;
+                }
+                else if (format[index] == '}') {
+                    if (index + 1 < format.size() && format[index + 1] == '}') ++index;
+                    else return std::nullopt;
+                }
+            }
+            return count;
+        }
     }
 
     SymbolTable::SymbolTable() { Reset(); }
@@ -96,6 +135,11 @@ namespace Absolute {
         loopDepth = functionDepth = typeContextDepth = constructorContextDepth = 0;
 
         phase = Phase::CollectDeclarations;
+        table.Declare(SymbolKind::Function, "print", "void", {"..."});
+        table.Declare(SymbolKind::Function, "println", "void", {"..."});
+        table.Declare(SymbolKind::Function, "format", "string", {"string", "..."});
+        table.Declare(SymbolKind::Function, "toString", "string", {"dynamic"});
+        table.Declare(SymbolKind::Function, "assert", "void", {"bool", "string?"});
         for (Program* program : programs) if (program) AnalyzeProgram(*program);
         phase = Phase::ResolveBodies;
         for (Program* program : programs) if (program) AnalyzeProgram(*program);
@@ -312,6 +356,68 @@ namespace Absolute {
 
         CallTargetProbe probe;
         if (expr->base) expr->base->Accept(probe);
+        const std::string callName = probe.identifierExpr ? probe.identifierExpr->name : std::string{};
+
+        if (!probe.isMember && IsBuiltinFunction(callName)) {
+            std::vector<Result> arguments;
+            arguments.reserve(expr->arguments.size());
+            for (const auto& argument : expr->arguments) arguments.push_back(Evaluate(argument.get()));
+
+            if (callName == "print" || callName == "println") {
+                for (size_t index = 0; index < arguments.size(); ++index) {
+                    if (!IsPrintableType(arguments[index].type))
+                        Report(callName + " argument " + std::to_string(index + 1) +
+                            " has unsupported type '" + arguments[index].type + "'");
+                }
+                Save(expr, {table.Lookup(callName), "void", false});
+                return;
+            }
+
+            if (callName == "toString") {
+                if (arguments.size() != 1) Report("toString expects exactly one argument");
+                else if (!IsPrintableType(arguments.front().type))
+                    Report("toString cannot convert type '" + arguments.front().type + "'");
+                Save(expr, {table.Lookup(callName), "string", false});
+                return;
+            }
+
+            if (callName == "assert") {
+                if (arguments.empty() || arguments.size() > 2)
+                    Report("assert expects a condition and an optional message");
+                else if (!IsConditionType(arguments.front().type))
+                    Report("assert condition must be boolean-compatible");
+                if (arguments.size() == 2 && arguments[1].type != "string" && arguments[1].type != "error")
+                    Report("assert message must be a string");
+                Save(expr, {table.Lookup(callName), "void", false});
+                return;
+            }
+
+            if (arguments.empty()) {
+                Report("format expects a string literal template");
+            }
+            else {
+                if (arguments.front().type != "string" && arguments.front().type != "error")
+                    Report("format template must be a string");
+                StringLiteralProbe literalProbe;
+                expr->arguments.front()->Accept(literalProbe);
+                if (!literalProbe.literal) Report("format template must be a string literal");
+                else {
+                    const std::optional<size_t> placeholders = CountFormatPlaceholders(literalProbe.literal->value);
+                    if (!placeholders) Report("format template contains an unmatched brace");
+                    else if (*placeholders != arguments.size() - 1)
+                        Report("format template expects " + std::to_string(*placeholders) +
+                            " value(s), got " + std::to_string(arguments.size() - 1));
+                }
+                for (size_t index = 1; index < arguments.size(); ++index) {
+                    if (!IsPrintableType(arguments[index].type))
+                        Report("format value " + std::to_string(index) + " has unsupported type '" +
+                            arguments[index].type + "'");
+                }
+            }
+            Save(expr, {table.Lookup(callName), "string", false});
+            return;
+        }
+
         bool targetCallable = false;
         std::vector<std::string> parameters;
         SymbolId symbolId = InvalidSymbolId;
@@ -325,7 +431,7 @@ namespace Absolute {
             returnType = target.type;
         }
         else {
-            const std::string name = probe.identifierExpr ? probe.identifierExpr->name : std::string{};
+            const std::string name = callName;
             symbolId = table.Lookup(name);
             const Symbol* symbol = table.Get(symbolId);
             if (symbol && (symbol->kind == SymbolKind::Function || symbol->kind == SymbolKind::Method)) {
