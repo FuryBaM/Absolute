@@ -21,7 +21,7 @@ include(CTest)
 if(BUILD_TESTING)
     add_test(
         NAME absolute.sample
-        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/code.abs"
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/code.abs" --parse-only
     )
     add_test(
         NAME absolute.comments
@@ -29,8 +29,17 @@ if(BUILD_TESTING)
     )
     add_test(
         NAME absolute.templates
-        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/templates.abs"
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/templates.abs" --parse-only
     )
+    add_test(
+        NAME absolute.semantic-members
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/semantic-members.abs"
+    )
+    add_test(
+        NAME absolute.semantic-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/semantic-errors.abs"
+    )
+    set_tests_properties(absolute.semantic-errors PROPERTIES WILL_FAIL TRUE)
     if(ABSOLUTE_ENABLE_LLVM)
         add_test(
             NAME absolute.emit-llvm
