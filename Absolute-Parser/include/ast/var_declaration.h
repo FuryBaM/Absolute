@@ -51,5 +51,7 @@ namespace Absolute {
             // Выводим само выражение
             if (expr) expr->print(indent + 1);
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 }
