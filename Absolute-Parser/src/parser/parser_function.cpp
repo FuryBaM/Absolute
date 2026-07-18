@@ -12,6 +12,9 @@ namespace Absolute {
         ++index;
         while (index < tokens.size() && tokens[index].type == TokenType::OPERATOR && tokens[index].value == "*")
             ++index;
+        while (index + 1 < tokens.size() && tokens[index].type == TokenType::BRACKET &&
+            tokens[index].value == "[" && tokens[index + 1].type == TokenType::BRACKET &&
+            tokens[index + 1].value == "]") index += 2;
         return index + 1 < tokens.size() && tokens[index].type == TokenType::IDENTIFIER &&
             tokens[index + 1].type == TokenType::BRACKET && tokens[index + 1].value == "(";
     }

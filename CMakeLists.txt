@@ -110,6 +110,15 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-errors.abs"
     )
     set_tests_properties(absolute.array-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.array-advanced-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-advanced.abs"
+    )
+    add_test(
+        NAME absolute.array-advanced-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-advanced-errors.abs"
+    )
+    set_tests_properties(absolute.array-advanced-errors PROPERTIES WILL_FAIL TRUE)
     if(ABSOLUTE_ENABLE_LLVM)
         add_test(
             NAME absolute.emit-llvm
@@ -135,12 +144,37 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-arrays-ir
         )
         add_test(
+            NAME absolute.emit-array-constant-access
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-constant-access.abs"
+                --emit-llvm
+        )
+        set_tests_properties(absolute.emit-array-constant-access PROPERTIES
+            PASS_REGULAR_EXPRESSION "getelementptr inbounds"
+            FAIL_REGULAR_EXPRESSION "array.bounds"
+        )
+        add_test(
             NAME absolute.emit-array-out-of-bounds
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-out-of-bounds.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/array-out-of-bounds.ll"
         )
         set_tests_properties(absolute.emit-array-out-of-bounds PROPERTIES
             FIXTURES_SETUP absolute-array-out-of-bounds-ir
+        )
+        add_test(
+            NAME absolute.emit-array-advanced
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-advanced.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/array-advanced.ll"
+        )
+        set_tests_properties(absolute.emit-array-advanced PROPERTIES
+            FIXTURES_SETUP absolute-array-advanced-ir
+        )
+        add_test(
+            NAME absolute.emit-slice-out-of-bounds
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/slice-out-of-bounds.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/slice-out-of-bounds.ll"
+        )
+        set_tests_properties(absolute.emit-slice-out-of-bounds PROPERTIES
+            FIXTURES_SETUP absolute-slice-out-of-bounds-ir
         )
 
         find_program(ABSOLUTE_LLI_EXECUTABLE NAMES lli lli-18)
@@ -167,6 +201,22 @@ if(BUILD_TESTING)
             )
             set_tests_properties(absolute.run-array-out-of-bounds PROPERTIES
                 FIXTURES_REQUIRED absolute-array-out-of-bounds-ir
+                WILL_FAIL TRUE
+            )
+            add_test(
+                NAME absolute.run-array-advanced
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/array-advanced.ll"
+            )
+            set_tests_properties(absolute.run-array-advanced PROPERTIES
+                FIXTURES_REQUIRED absolute-array-advanced-ir
+                PASS_REGULAR_EXPRESSION "advanced-arrays=227"
+            )
+            add_test(
+                NAME absolute.run-slice-out-of-bounds
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/slice-out-of-bounds.ll"
+            )
+            set_tests_properties(absolute.run-slice-out-of-bounds PROPERTIES
+                FIXTURES_REQUIRED absolute-slice-out-of-bounds-ir
                 WILL_FAIL TRUE
             )
         endif()

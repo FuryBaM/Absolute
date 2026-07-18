@@ -64,6 +64,35 @@ takes about 1.32x as long), while Absolute remains faster than the managed and
 scripting implementations in this process-level test. Three algorithms are a
 useful backend check, not a general-purpose language ranking.
 
+## Run the benchmark
+
+From PowerShell or Command Prompt, launch:
+
+```bat
+benchmarks\array-suite\run.bat
+```
+
+The batch file finds the Visual Studio x64 linker, builds an LLVM-enabled
+Release version of Absolute in WSL, compiles every language implementation,
+validates every checksum, and writes a timestamped CSV file to `results\`.
+Generated compilers and executables are cached in `.benchmark-build\`, so the
+next run is incremental.
+
+Optional positional arguments are measured samples, warm-up samples, and
+whether to include Python (`1` or `0`):
+
+```bat
+rem Quick run: 3 samples, 1 warm-up, skip Python
+benchmarks\array-suite\run.bat 3 1 0
+
+rem Recorded methodology: 15 samples, 2 warm-ups, include Python
+benchmarks\array-suite\run.bat 15 2 1
+```
+
+The full Python run takes several minutes. Set
+`ABSOLUTE_BENCHMARK_NO_PAUSE=1` before launching when the final `pause` is not
+desired, for example in CI or another script.
+
 ## Sources
 
 - Absolute programs: [`absolute/`](absolute/)
@@ -72,3 +101,4 @@ useful backend check, not a general-purpose language ranking.
 - Java: [`Benchmark.java`](Benchmark.java)
 - JavaScript: [`benchmark.js`](benchmark.js)
 - Python: [`benchmark.py`](benchmark.py)
+- Runner: [`run.bat`](run.bat)

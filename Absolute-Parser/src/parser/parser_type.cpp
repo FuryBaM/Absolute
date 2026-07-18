@@ -18,7 +18,15 @@ namespace Absolute{
             base = ParsePrimitiveType();
         }
         if (!base) return nullptr;
-        return ParsePointerSuffix(std::move(base), raw);
+        base = ParsePointerSuffix(std::move(base), raw);
+        while (CurrentToken() && CurrentToken()->type == TokenType::BRACKET &&
+            CurrentToken()->value == "[" && PeekToken() &&
+            PeekToken()->type == TokenType::BRACKET && PeekToken()->value == "]") {
+            Consume(TokenType::BRACKET, "[");
+            Consume(TokenType::BRACKET, "]");
+            base = std::make_unique<ArrayTypeExpr>(std::move(base));
+        }
+        return base;
     }
 
     std::unique_ptr<TypeExpr> Parser::ParsePointerSuffix(std::unique_ptr<TypeExpr> base, bool raw)

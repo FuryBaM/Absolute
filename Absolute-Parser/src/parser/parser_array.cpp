@@ -42,8 +42,29 @@ namespace Absolute {
 
         while (CurrentToken() && CurrentToken()->value == "[") {
             Consume(TokenType::BRACKET, "[");
-            if (RequireCurrent("an array index or ']'")->value != "]") {
-                indexes.push_back(ParseExpression());
+            std::unique_ptr<Expression> index;
+            if (RequireCurrent("an array index, ':' or ']'")->value != "]" &&
+                CurrentToken()->value != ":") {
+                index = ParseExpression();
+            }
+            if (CurrentToken() && CurrentToken()->type == TokenType::OPERATOR &&
+                CurrentToken()->value == ":") {
+                if (!indexes.empty()) {
+                    ReportSyntaxError(CurrentToken(), "Slices are supported only for one-dimensional arrays");
+                    throw std::runtime_error("Invalid multidimensional slice");
+                }
+                Consume(TokenType::OPERATOR, ":");
+                std::unique_ptr<Expression> end;
+                if (RequireCurrent("a slice end or ']'")->value != "]") end = ParseExpression();
+                Consume(TokenType::BRACKET, "]");
+                auto slice = std::make_unique<SliceExpr>(
+                    std::move(base), std::move(index), std::move(end));
+                if (CurrentToken() && CurrentToken()->value == "[")
+                    return ParseArrayAccess(std::move(slice));
+                return slice;
+            }
+            if (index) {
+                indexes.push_back(std::move(index));
             }
             else {
                 indexes.push_back(nullptr);

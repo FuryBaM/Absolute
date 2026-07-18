@@ -22,6 +22,7 @@ llvm_map_components_to_libnames(ABSOLUTE_LLVM_LIBS
     Target
     CodeGen
     MC
+    Passes
     nativecodegen
 )
 

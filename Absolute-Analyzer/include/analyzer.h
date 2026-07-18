@@ -221,9 +221,11 @@ namespace Absolute {
         void Visit(PrimitiveTypeExpr* expr) override;
         void Visit(UserTypeExpr* expr) override;
         void Visit(PointerTypeExpr* expr) override;
+        void Visit(ArrayTypeExpr* expr) override;
         void Visit(IdentifierExpr* expr) override;
         void Visit(FunctionCallExpr* expr) override;
         void Visit(ArrayAccessExpr* expr) override;
+        void Visit(SliceExpr* expr) override;
         void Visit(BinaryExpr* expr) override;
         void Visit(TernaryExpr* expr) override;
         void Visit(NullExpr* expr) override;
@@ -271,6 +273,7 @@ namespace Absolute {
         Result Evaluate(Expression* expression);
         Result EvaluateExpected(Expression* expression, const std::string& type);
         std::string ResolveType(Expression* expression);
+        std::string ResolveDeclaredType(VarDeclExpr& expression);
         void Save(Expression* expression, Result value);
         bool IsKnownType(const std::string& name) const;
         bool IsNumeric(const std::string& name) const;

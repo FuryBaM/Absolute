@@ -16,6 +16,10 @@ namespace Absolute {
         visitor.Visit(this);
     }
 
+    void ArrayTypeExpr::Accept(ExpressionVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
     void IdentifierExpr::Accept(ExpressionVisitor& visitor) {
         visitor.Visit(this);
     }
@@ -25,6 +29,10 @@ namespace Absolute {
     }
 
     void ArrayAccessExpr::Accept(ExpressionVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void SliceExpr::Accept(ExpressionVisitor& visitor) {
         visitor.Visit(this);
     }
 

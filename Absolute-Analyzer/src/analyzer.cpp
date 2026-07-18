@@ -441,6 +441,15 @@ namespace Absolute {
         return resolved.type.empty() ? "error" : resolved.type;
     }
 
+    std::string Analyzer::ResolveDeclaredType(VarDeclExpr& expression) {
+        std::string type = ResolveType(expression.type.get());
+        if (const auto* declarator = dynamic_cast<const ArrayAccessExpr*>(expression.name.get());
+            declarator && !declarator->indexes.empty()) {
+            type = ArrayType(std::move(type), declarator->indexes.size());
+        }
+        return type;
+    }
+
     void Analyzer::Save(Expression* expression, Result value) {
         result = std::move(value);
         if (expression) expressionInfo[expression] = {
@@ -491,7 +500,7 @@ namespace Absolute {
         std::vector<std::string> resolved;
         resolved.reserve(parameters.size());
         for (const auto& parameter : parameters)
-            resolved.push_back(parameter ? ResolveType(parameter->type.get()) : "error");
+            resolved.push_back(parameter ? ResolveDeclaredType(*parameter) : "error");
         return resolved;
     }
 
@@ -523,6 +532,9 @@ namespace Absolute {
             IsManagedPointerType(returnType)))
             Report("extern function '" + statement.name->value +
                 "' requires a concrete C-compatible return type; use raw T* for pointers");
+        if (statement.IsExternal() && returnType.ends_with("[]"))
+            Report("extern function '" + statement.name->value +
+                "' cannot return an Absolute array descriptor");
 
         const std::string oldReturn = currentReturnType;
         const bool oldAsync = currentFunctionAsync;
@@ -544,11 +556,13 @@ namespace Absolute {
         for (const auto& parameter : statement.parameters) {
             if (!parameter) continue;
             const std::string name = ExtractIdentifier(parameter->name.get());
-            std::string type = ResolveType(parameter->type.get());
+            std::string type = ResolveDeclaredType(*parameter);
             if (statement.IsExternal() && (type == "auto" || type == "dynamic" || type == "void"))
                 Report("extern parameter '" + name + "' requires a concrete C-compatible type");
             if (statement.IsExternal() && IsManagedPointerType(type))
                 Report("extern parameter '" + name + "' must use raw T* instead of a managed pointer");
+            if (statement.IsExternal() && type.ends_with("[]"))
+                Report("extern parameter '" + name + "' cannot use an Absolute array descriptor");
             SymbolId parameterId = InvalidSymbolId;
             if (name.empty()) Report("function parameter requires an identifier");
             else if (const auto declared = table.Declare(SymbolKind::Parameter, name, type))
@@ -652,6 +666,8 @@ namespace Absolute {
     }
 
     std::string Analyzer::ResolveTypeReference(const std::string& name) const {
+        if (name.ends_with("[]"))
+            return ResolveTypeReference(name.substr(0, name.size() - 2)) + "[]";
         if (IsPointerType(name)) {
             const std::string prefix = IsRawPointerType(name) ? "raw " : "";
             return prefix + ResolveTypeReference(PointerPointee(name)) + "*";
@@ -675,6 +691,12 @@ namespace Absolute {
         const std::string pointee = ResolveType(expr->pointee.get());
         if (pointee == "void" && !expr->raw) Report("managed pointers cannot point to void");
         Save(expr, {InvalidSymbolId, (expr->raw ? "raw " : "") + pointee + "*", false});
+    }
+
+    void Analyzer::Visit(ArrayTypeExpr* expr) {
+        const std::string element = ResolveType(expr->element.get());
+        if (element == "void") Report("array element type cannot be void");
+        Save(expr, {InvalidSymbolId, element + "[]", false});
     }
 
     void Analyzer::Visit(IdentifierExpr* expr) {
@@ -864,6 +886,11 @@ namespace Absolute {
     void Analyzer::Visit(ArrayAccessExpr* expr) {
         Result base = Evaluate(expr->base.get());
         const size_t rank = ArrayRank(base.type);
+        const bool fullSlice = rank == 1 && expr->indexes.size() == 1 && !expr->indexes.front();
+        if (fullSlice) {
+            Save(expr, {base.symbol, base.type, false});
+            return;
+        }
         for (const auto& index : expr->indexes) {
             if (!index) {
                 Report("array access requires an index");
@@ -883,6 +910,19 @@ namespace Absolute {
             Save(expr, {base.symbol, "error", false});
         }
         else Save(expr, {base.symbol, ArrayElementType(base.type, rank), base.isLValue});
+    }
+
+    void Analyzer::Visit(SliceExpr* expr) {
+        const Result base = Evaluate(expr->base.get());
+        if (ArrayRank(base.type) != 1 && base.type != "error")
+            Report("slices are supported only for one-dimensional arrays");
+        for (Expression* bound : {expr->begin.get(), expr->end.get()}) {
+            if (!bound) continue;
+            const Result resolved = Evaluate(bound);
+            if (!IsInteger(resolved.type) && resolved.type != "error")
+                Report("slice bounds must be integers");
+        }
+        Save(expr, {base.symbol, ArrayRank(base.type) == 1 ? base.type : "error", false});
     }
 
     void Analyzer::Visit(BinaryExpr* expr) {
@@ -1020,6 +1060,8 @@ namespace Absolute {
         accessMode = previousAccess;
         const Result value = EvaluateExpected(expr->value.get(), target.type);
         if (!target.isLValue) Report("assignment target is not assignable");
+        if (ArrayRank(target.type) > 0)
+            Report("array variables cannot be reassigned; assign an element or declare a new array view");
         if (!IsAssignable(target.type, value.type))
             Report("cannot assign '" + value.type + "' to '" + target.type + "'");
         if (IsTaskType(target.type))
@@ -1077,6 +1119,9 @@ namespace Absolute {
                 const Result resolved = Evaluate(size.get());
                 if (!IsInteger(resolved.type) && resolved.type != "error")
                     Report("array size must be an integer, got '" + resolved.type + "'");
+                if (currentType.empty() && functionDepth == 0 &&
+                    !dynamic_cast<const NumberLiteralExpr*>(size.get()))
+                    Report("global array dimensions must be constant integer literals");
                 if (const auto* literal = dynamic_cast<const NumberLiteralExpr*>(size.get())) {
                     try {
                         if (std::stoll(literal->value) <= 0) Report("array size must be greater than zero");
@@ -1554,7 +1599,7 @@ namespace Absolute {
         PushValueFlowScope();
         for (const auto& parameter : stmt->parameters) {
             const std::string name = parameter ? ExtractIdentifier(parameter->name.get()) : std::string{};
-            const std::string type = parameter ? ResolveType(parameter->type.get()) : "error";
+            const std::string type = parameter ? ResolveDeclaredType(*parameter) : "error";
             if (const auto declared = table.Declare(SymbolKind::Parameter, name, type))
                 RegisterFlowSymbol(*declared, {InitializationState::Initialized,
                     IsPointerType(type) ? PointerValidity::Unknown : PointerValidity::NotPointer,
@@ -1727,9 +1772,16 @@ namespace Absolute {
         PushValueFlowScope();
         const Result iterable = Evaluate(stmt->iterable.get());
         if (!iterable.type.ends_with("[]") && iterable.type != "error") Report("for-each source must be an array");
+        else if (ArrayRank(iterable.type) != 1 && iterable.type != "error")
+            Report("for-each currently requires a one-dimensional array or slice");
         AcceptIfPresent(stmt->var, *this);
         if (stmt->var) {
             if (const ExpressionInfo* variable = GetExpressionInfo(*stmt->var)) {
+                const std::string elementType = ArrayRank(iterable.type) == 1
+                    ? ArrayElementType(iterable.type) : "error";
+                if (!IsAssignable(variable->type, elementType))
+                    Report("for-each variable has type '" + variable->type +
+                        "', expected '" + elementType + "'");
                 if (auto flow = valueFlow.find(variable->symbol); flow != valueFlow.end())
                     flow->second.initialization = InitializationState::Initialized;
             }

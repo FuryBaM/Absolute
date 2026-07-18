@@ -1,0 +1,6 @@
+int32 main() {
+    int32 values[3] = {10, 20, 30};
+    int32[] invalid = values[1:4];
+    println(invalid[0]);
+    return 0;
+}

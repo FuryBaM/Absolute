@@ -8,9 +8,11 @@ namespace Absolute {
         virtual void Visit(PrimitiveTypeExpr* expr) = 0;
         virtual void Visit(UserTypeExpr* expr) = 0;
         virtual void Visit(PointerTypeExpr* expr) = 0;
+        virtual void Visit(ArrayTypeExpr* expr) = 0;
         virtual void Visit(IdentifierExpr* expr) = 0;
         virtual void Visit(FunctionCallExpr* expr) = 0;
         virtual void Visit(ArrayAccessExpr* expr) = 0;
+        virtual void Visit(SliceExpr* expr) = 0;
         virtual void Visit(BinaryExpr* expr) = 0;
         virtual void Visit(TernaryExpr* expr) = 0;
         virtual void Visit(NullExpr* expr) = 0;
@@ -47,6 +49,10 @@ namespace Absolute {
             if (expr->pointee) expr->pointee->Accept(*this);
         }
 
+        void Visit(ArrayTypeExpr* expr) override {
+            if (expr->element) expr->element->Accept(*this);
+        }
+
         void Visit(IdentifierExpr* expr) override {
             identifierExpr = expr;
         }
@@ -57,6 +63,10 @@ namespace Absolute {
 
         void Visit(ArrayAccessExpr* expr) override {
             expr->base->Accept(*this);
+        }
+
+        void Visit(SliceExpr* expr) override {
+            if (expr->base) expr->base->Accept(*this);
         }
 
         void Visit(BinaryExpr* expr) override {

@@ -1,0 +1,13 @@
+int32 main() {
+    int32 values[2] = {1, 2};
+    foreach (bool value in values[]) {
+    }
+
+    int32 matrix[2][2] = {{1, 2}, {3, 4}};
+    foreach (int32 value in matrix) {
+    }
+
+    int32 other[2] = {3, 4};
+    values = other;
+    return 0;
+}

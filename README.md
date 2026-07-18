@@ -258,13 +258,54 @@ runtime. An invalid size or out-of-bounds index prints a diagnostic and exits
 with a nonzero status. Literal shapes are checked statically for rank,
 rectangularity, and exact fixed dimensions.
 
-Array parameters, array returns, global arrays, slices, and `foreach` codegen
-are not implemented yet.
+Code generation removes checks that are already true at compile time and emits
+`inbounds` addressing after every successful check. Native object and executable
+generation runs LLVM's `O3` pipeline for the host CPU, allowing loop and scalar
+evolution passes to remove further redundant checks while preserving the
+runtime failure path for indexes that cannot be proven safe.
+
+Arrays can be passed to functions as compact data-and-dimensions descriptors.
+The canonical parameter and return syntax is `T[]` (the older `T name[]`
+parameter spelling remains accepted):
+
+```absolute
+int32 sum(int32[] values) {
+    int32 result = 0;
+    foreach (int32 value in values) {
+        result += value;
+    }
+    return result;
+}
+
+int32[] tail(int32[] values) {
+    return values[1:];
+}
+```
+
+One-dimensional slices are half-open: `values[from:to]` includes `from` and
+excludes `to`. Either bound can be omitted, and `values[]` creates a view of the
+complete array. Slices do not copy their elements, so writes through a slice
+modify its source and the source must remain alive while the slice is used.
+Slice bounds are checked at runtime. `foreach` currently iterates
+one-dimensional arrays by value.
+
+Global arrays use the same sized or inferred literal declarations as local
+storage:
+
+```absolute
+int32 primes[4] = {2, 3, 5, 7};
+int32[] flags = {1, 0, 1};
+```
+
+Their dimensions and initializer values must be compile-time primitive
+constants. Returning an array makes a heap-backed copy, including when the
+source is a local array or a slice; automatic reclamation of these returned
+buffers is not implemented yet.
 
 The backend also supports primitive values, functions, local variables, calls,
 casts, arithmetic/comparison operators, assignments, `return`, `if`, `for`,
-`while`, `do-while`, `break`, and `continue`. Classes, user-defined instances,
-and `foreach` still report explicit codegen errors.
+`while`, `do-while`, `foreach`, `break`, and `continue`. Classes and
+user-defined instances still report explicit codegen errors.
 
 For a Release build, replace `Debug` with `Release`.
 
