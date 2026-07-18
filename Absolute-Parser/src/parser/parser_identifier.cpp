@@ -14,7 +14,7 @@ namespace Absolute {
                 return ParseConstructor();
             }
             else {
-                std::unique_ptr<Expression> expr = ParseIdentifierExpr();
+                std::unique_ptr<Expression> expr = ParsePrimaryExpr();
                 Token* current = CurrentToken();
                 if (current && GetOperatorCategory(current->value) == OperatorCategory::Assignment) {
                     expr = ParseAssignmentExpr(std::move(expr));
