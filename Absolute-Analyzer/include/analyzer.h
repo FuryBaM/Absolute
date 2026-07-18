@@ -1,5 +1,9 @@
 #pragma once
 
+#ifndef ANALYZER_API
+#define ANALYZER_API
+#endif
+
 #include "statement_visitor.h"
 #include "type.h"
 
