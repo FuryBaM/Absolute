@@ -121,4 +121,60 @@ if(BUILD_TESTING)
         )
         set_tests_properties("absolute.${invalid_case}" PROPERTIES WILL_FAIL TRUE)
     endforeach()
+    add_test(
+        NAME absolute.invalid-extern-abi
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/invalid-extern-abi.abs" --parse-only
+    )
+    set_tests_properties(absolute.invalid-extern-abi PROPERTIES WILL_FAIL TRUE)
+
+    if(ABSOLUTE_ENABLE_LLVM)
+        add_test(
+            NAME absolute.emit-native-ffi
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/native-ffi.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/native-ffi.ll"
+        )
+        set_tests_properties(absolute.emit-native-ffi PROPERTIES
+            FIXTURES_SETUP absolute-native-ffi-ir
+            PASS_REGULAR_EXPRESSION "declare i32 @abs\\(i32"
+        )
+        if(ABSOLUTE_LLI_EXECUTABLE)
+            add_test(
+                NAME absolute.run-native-ffi
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/native-ffi.ll"
+            )
+            set_tests_properties(absolute.run-native-ffi PROPERTIES
+                FIXTURES_REQUIRED absolute-native-ffi-ir
+                PASS_REGULAR_EXPRESSION "ffi=42"
+            )
+        endif()
+
+        add_library(absolute-native-test STATIC tests/native/native_math.cpp)
+        file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/NativeFfi.absproj" CONTENT
+"{
+  \"name\": \"NativeFfi\",
+  \"entry\": \"${PROJECT_SOURCE_DIR}/tests/projects/native-ffi/src/main.abs\",
+  \"sources\": [\"${PROJECT_SOURCE_DIR}/tests/projects/native-ffi/src\"],
+  \"nativeLibraries\": [\"$<TARGET_FILE:absolute-native-test>\"],
+  \"nativeSearchPaths\": []
+}
+")
+        add_test(
+            NAME absolute.emit-object
+            COMMAND Absolute-Compiler build "${CMAKE_BINARY_DIR}/NativeFfi.absproj"
+                --emit-object -o "${CMAKE_BINARY_DIR}/native-ffi-object.o"
+        )
+        add_test(
+            NAME absolute.build-native
+            COMMAND Absolute-Compiler build "${CMAKE_BINARY_DIR}/NativeFfi.absproj"
+                --build-exe -o "${CMAKE_BINARY_DIR}/native-ffi-app"
+        )
+        set_tests_properties(absolute.build-native PROPERTIES
+            FIXTURES_SETUP absolute-native-executable
+        )
+        add_test(NAME absolute.run-native COMMAND "${CMAKE_BINARY_DIR}/native-ffi-app")
+        set_tests_properties(absolute.run-native PROPERTIES
+            FIXTURES_REQUIRED absolute-native-executable
+            PASS_REGULAR_EXPRESSION "native=42"
+        )
+    endif()
 endif()

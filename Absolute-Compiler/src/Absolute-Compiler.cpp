@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <regex>
@@ -24,6 +25,8 @@ namespace {
         std::string projectName;
         fs::path projectDirectory;
         bool emitLlvm = false;
+        bool emitObject = false;
+        bool buildExecutable = false;
         bool parseOnly = false;
         fs::path output;
     };
@@ -33,18 +36,22 @@ namespace {
         fs::path root;
         fs::path entry;
         std::vector<fs::path> sourceDirectories;
+        std::vector<fs::path> nativeLibraries;
+        std::vector<fs::path> nativeSearchPaths;
     };
 
     struct Compilation {
         std::unique_ptr<Program> program;
         std::string moduleName;
+        std::vector<fs::path> nativeLibraries;
+        std::vector<fs::path> nativeSearchPaths;
     };
 
     void PrintUsage() {
         std::cerr
             << "Usage:\n"
-            << "  absolutec <source.abs> [--parse-only | --emit-llvm] [-o output.ll]\n"
-            << "  absolutec build <project.absproj> [--parse-only | --emit-llvm] [-o output.ll]\n"
+            << "  absolutec <source.abs> [--parse-only | --emit-llvm | --emit-object | --build-exe] [-o output]\n"
+            << "  absolutec build <project.absproj> [--parse-only | --emit-llvm | --emit-object | --build-exe] [-o output]\n"
             << "  absolutec new <name> [--directory path]\n";
     }
 
@@ -52,6 +59,8 @@ namespace {
         for (int index = firstOption; index < argc; ++index) {
             const std::string argument = argv[index];
             if (argument == "--emit-llvm") result.emitLlvm = true;
+            else if (argument == "--emit-object") result.emitObject = true;
+            else if (argument == "--build-exe") result.buildExecutable = true;
             else if (argument == "--parse-only") result.parseOnly = true;
             else if (argument == "-o") {
                 if (++index >= argc) throw std::invalid_argument("-o requires an output path");
@@ -59,10 +68,12 @@ namespace {
             }
             else throw std::invalid_argument("unknown argument: " + argument);
         }
-        if (!result.output.empty() && !result.emitLlvm)
-            throw std::invalid_argument("-o currently requires --emit-llvm");
-        if (result.parseOnly && result.emitLlvm)
-            throw std::invalid_argument("--parse-only cannot be combined with --emit-llvm");
+        const int outputModes = static_cast<int>(result.emitLlvm) + static_cast<int>(result.emitObject) +
+            static_cast<int>(result.buildExecutable);
+        if (outputModes > 1 || (result.parseOnly && outputModes != 0))
+            throw std::invalid_argument("choose only one of --parse-only, --emit-llvm, --emit-object or --build-exe");
+        if (!result.output.empty() && outputModes == 0)
+            throw std::invalid_argument("-o requires --emit-llvm, --emit-object or --build-exe");
     }
 
     CommandLine ParseCommandLine(int argc, char* argv[]) {
@@ -147,6 +158,15 @@ namespace {
         for (const std::string& directory : JsonStringArray(document, "sources"))
             result.sourceDirectories.push_back(result.root / directory);
         if (result.sourceDirectories.empty()) result.sourceDirectories.push_back(result.entry.parent_path());
+        for (const std::string& path : JsonStringArray(document, "nativeSearchPaths"))
+            result.nativeSearchPaths.push_back(fs::path(path).is_absolute() ? fs::path(path) : result.root / path);
+        for (const std::string& path : JsonStringArray(document, "nativeLibraries")) {
+            fs::path library(path);
+            const fs::path relativeToProject = result.root / library;
+            if (!library.is_absolute() && (library.has_parent_path() || fs::exists(relativeToProject)))
+                library = relativeToProject;
+            result.nativeLibraries.push_back(std::move(library));
+        }
         return result;
     }
 
@@ -158,12 +178,15 @@ namespace {
         if (fs::exists(root) && !fs::is_empty(root))
             throw std::runtime_error("Project directory is not empty: " + root.string());
         fs::create_directories(root / "src");
+        fs::create_directories(root / "native");
 
         const std::string project =
             "{\n"
             "  \"name\": \"" + commandLine.projectName + "\",\n"
             "  \"entry\": \"src/main.abs\",\n"
-            "  \"sources\": [\"src\"]\n"
+            "  \"sources\": [\"src\"],\n"
+            "  \"nativeLibraries\": [],\n"
+            "  \"nativeSearchPaths\": [\"native\"]\n"
             "}\n";
         const std::string source =
             "int32 main() {\n"
@@ -232,10 +255,14 @@ namespace {
         std::vector<std::unique_ptr<Program>> programs;
         std::unordered_set<std::string> loaded;
         std::string moduleName;
+        std::vector<fs::path> nativeLibraries;
+        std::vector<fs::path> nativeSearchPaths;
 
         if (input.extension() == ".absproj") {
             const ProjectConfig project = LoadProjectConfig(input);
             moduleName = project.name;
+            nativeLibraries = project.nativeLibraries;
+            nativeSearchPaths = project.nativeSearchPaths;
             LoadSource(project.entry, programs, loaded);
             std::vector<fs::path> sources;
             for (const fs::path& directory : project.sourceDirectories) {
@@ -257,8 +284,75 @@ namespace {
         for (auto& program : programs) {
             for (auto& statement : program->statements) statements.push_back(std::move(statement));
         }
-        return {std::make_unique<Program>(std::move(statements)), std::move(moduleName)};
+        return {std::make_unique<Program>(std::move(statements)), std::move(moduleName),
+            std::move(nativeLibraries), std::move(nativeSearchPaths)};
     }
+
+#ifdef ABSOLUTE_HAS_LLVM
+    std::string QuoteResponseArgument(const fs::path& path) {
+        const std::string value = path.string();
+        if (value.find_first_of("\"\r\n") != std::string::npos)
+            throw std::runtime_error("Native path contains an unsupported character: " + value);
+        return "\"" + value + "\"";
+    }
+
+    std::string QuoteShellArgument(const std::string& value) {
+#ifdef _WIN32
+        if (value.find('"') != std::string::npos)
+            throw std::runtime_error("Command path contains an unsupported quote");
+        return "\"" + value + "\"";
+#else
+        std::string quoted = "'";
+        for (char character : value) quoted += character == '\'' ? "'\\''" : std::string(1, character);
+        return quoted + "'";
+#endif
+    }
+
+    void BuildExecutable(CodeGenerator& generator, Program& program, const Compilation& compilation,
+        const fs::path& requestedOutput) {
+        fs::path executable = fs::absolute(requestedOutput);
+        if (!executable.parent_path().empty()) fs::create_directories(executable.parent_path());
+        fs::path object = executable;
+#ifdef _WIN32
+        object.replace_extension(".obj");
+#else
+        object.replace_extension(".o");
+#endif
+        generator.GenerateObject(program, compilation.moduleName, object.string());
+
+        fs::path response = executable;
+        response += ".absolute-link.rsp";
+        std::ostringstream arguments;
+#ifdef _WIN32
+        arguments << "/nologo\n" << QuoteResponseArgument(object) << '\n';
+        for (const fs::path& library : compilation.nativeLibraries)
+            arguments << QuoteResponseArgument(library) << '\n';
+        arguments << "/Fe:" << QuoteResponseArgument(executable) << "\n/link\n";
+        for (const fs::path& path : compilation.nativeSearchPaths)
+            arguments << "/LIBPATH:" << QuoteResponseArgument(path) << '\n';
+#else
+        arguments << QuoteResponseArgument(object) << '\n';
+        for (const fs::path& library : compilation.nativeLibraries)
+            arguments << QuoteResponseArgument(library) << '\n';
+        for (const fs::path& path : compilation.nativeSearchPaths)
+            arguments << "-L" << QuoteResponseArgument(path) << '\n';
+        arguments << "-o\n" << QuoteResponseArgument(executable) << '\n';
+#endif
+        WriteFile(response, arguments.str());
+
+#ifndef ABSOLUTE_HOST_CXX_COMPILER
+#define ABSOLUTE_HOST_CXX_COMPILER "c++"
+#endif
+        const std::string command = QuoteShellArgument(ABSOLUTE_HOST_CXX_COMPILER) +
+            " @" + QuoteShellArgument(response.string());
+        const int status = std::system(command.c_str());
+        std::error_code ignored;
+        fs::remove(response, ignored);
+        if (status != 0) throw std::runtime_error("Native linker failed with exit code " + std::to_string(status));
+        std::cout << "Built " << executable.string() << '\n';
+        std::cout << "Object " << object.string() << '\n';
+    }
+#endif
 }
 
 int main(int argc, char* argv[]) {
@@ -276,12 +370,36 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        if (commandLine.emitLlvm) {
+        if (commandLine.emitLlvm || commandLine.emitObject || commandLine.buildExecutable) {
 #ifdef ABSOLUTE_HAS_LLVM
             CodeGenerator generator(&analyzer);
-            const std::string ir = generator.Generate(*compilation.program, compilation.moduleName);
-            if (commandLine.output.empty()) std::cout << ir;
-            else WriteFile(commandLine.output, ir);
+            if (commandLine.emitLlvm) {
+                const std::string ir = generator.Generate(*compilation.program, compilation.moduleName);
+                if (commandLine.output.empty()) std::cout << ir;
+                else WriteFile(commandLine.output, ir);
+            }
+            else if (commandLine.emitObject) {
+                fs::path output = commandLine.output;
+                if (output.empty()) {
+                    output = compilation.moduleName;
+#ifdef _WIN32
+                    output.replace_extension(".obj");
+#else
+                    output.replace_extension(".o");
+#endif
+                }
+                generator.GenerateObject(*compilation.program, compilation.moduleName, output.string());
+            }
+            else {
+                fs::path output = commandLine.output;
+                if (output.empty()) {
+                    output = compilation.moduleName;
+#ifdef _WIN32
+                    output.replace_extension(".exe");
+#endif
+                }
+                BuildExecutable(generator, *compilation.program, compilation, output);
+            }
             return 0;
 #else
             throw std::runtime_error(

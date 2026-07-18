@@ -275,6 +275,9 @@ namespace Absolute {
         if (!IsKnownType(returnType))
             Report("unknown return type '" + statement.returnType->value + "' of function '" + statement.name->value + "'");
 
+        if (statement.IsExternal() && kind == SymbolKind::Method)
+            Report("extern functions cannot be class or struct members");
+
         const std::string oldReturn = currentReturnType;
         currentReturnType = returnType;
         ++functionDepth;
@@ -283,6 +286,8 @@ namespace Absolute {
             if (!parameter) continue;
             const std::string name = ExtractIdentifier(parameter->name.get());
             std::string type = ResolveType(parameter->type.get());
+            if (statement.IsExternal() && (type == "auto" || type == "dynamic" || type == "void"))
+                Report("extern parameter '" + name + "' requires a concrete C-compatible type");
             if (name.empty()) Report("function parameter requires an identifier");
             else if (!table.Declare(SymbolKind::Parameter, name, type))
                 Report("parameter '" + name + "' is already declared");
@@ -292,7 +297,7 @@ namespace Absolute {
                     Report("default value of parameter '" + name + "' has type '" + value.type + "', expected '" + type + "'");
             }
         }
-        AcceptIfPresent(statement.body, *this);
+        if (!statement.IsExternal()) AcceptIfPresent(statement.body, *this);
         table.ExitScope();
         --functionDepth;
         currentReturnType = oldReturn;

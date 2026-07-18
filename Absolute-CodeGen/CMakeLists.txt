@@ -19,6 +19,10 @@ llvm_map_components_to_libnames(ABSOLUTE_LLVM_LIBS
     Core
     Support
     Analysis
+    Target
+    CodeGen
+    MC
+    nativecodegen
 )
 
 target_link_libraries(Absolute-CodeGen

@@ -226,6 +226,8 @@ namespace Absolute{
                 return ParseImport();
             case Hash("namespace"):
                 return ParseNamespace();
+            case Hash("extern"):
+                return ParseExternalFunctionDeclaration();
             default:
                 break;
             }

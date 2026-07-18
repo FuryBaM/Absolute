@@ -18,6 +18,7 @@ namespace Absolute {
         CodeGenerator& operator=(const CodeGenerator&) = delete;
 
         std::string Generate(Program& program, const std::string& moduleName);
+        void GenerateObject(Program& program, const std::string& moduleName, const std::string& outputPath);
 
         void Visit(PrimitiveTypeExpr* expr) override;
         void Visit(UserTypeExpr* expr) override;

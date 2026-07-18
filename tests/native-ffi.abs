@@ -1,0 +1,8 @@
+extern "C" int32 abs(int32 value);
+
+int32 main() {
+    int32 value = abs(-42);
+    println(format("ffi={}", value));
+    assert(value == 42, "extern C call failed");
+    return 0;
+}

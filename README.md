@@ -43,7 +43,9 @@ module:
 {
   "name": "Demo",
   "entry": "src/main.abs",
-  "sources": ["src"]
+  "sources": ["src"],
+  "nativeLibraries": ["native/MyLibrary.lib"],
+  "nativeSearchPaths": ["native"]
 }
 ```
 
@@ -87,6 +89,48 @@ assert(value == 42, "unexpected value");
 placeholders (`{{` and `}}` produce literal braces) and currently requires a
 literal template. They lower to libc calls in LLVM IR, which makes the emitted
 module directly runnable with `lli`.
+
+## C and C++ interop
+
+Absolute can call functions that use the stable C ABI. Declare the native
+function without a body:
+
+```absolute
+extern "C" int32 native_add(int32 left, int32 right);
+```
+
+C code can define that symbol directly. C++ code must expose a small C wrapper
+to disable C++ name mangling:
+
+```cpp
+extern "C" __declspec(dllexport) int native_add(int left, int right) {
+    return left + right;
+}
+```
+
+On non-Windows platforms omit `__declspec(dllexport)`. Direct C++ ABI imports
+(overloads, classes and exceptions) are intentionally not supported yet because
+their binary names and rules differ between MSVC and Clang/GCC.
+
+Generate a native object without linking it:
+
+```bash
+absolutec build Demo.absproj --emit-object -o Demo.obj
+```
+
+Or let Absolute emit the object and call the C++ compiler driver to link the
+project's `nativeLibraries`. On a Visual Studio build this uses the configured
+`cl.exe`, including the MSVC runtime libraries:
+
+```bash
+absolutec build Demo.absproj --build-exe -o Demo.exe
+Demo.exe
+```
+
+The generated `.obj` is retained next to the executable so it can be inspected
+or linked manually. Current FFI types map primitive scalars directly; `string`
+is passed as a C `char*`. Ownership stays with the caller, and native exceptions
+must not cross the `extern "C"` boundary.
 
 The first backend milestone supports primitive values, functions, local
 variables, calls, casts, arithmetic/comparison operators, assignments,

@@ -1,0 +1,1 @@
+extern "C++" int32 native_add(int32 left, int32 right);

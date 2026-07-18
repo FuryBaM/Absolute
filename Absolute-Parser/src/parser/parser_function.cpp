@@ -23,6 +23,11 @@ namespace Absolute {
 
         std::vector<std::unique_ptr<VarDeclExpr>> parameters = ParseParameters();
 
+        if (CurrentToken() && IsEndOfStatement(*CurrentToken())) {
+            ReportSyntaxError(CurrentToken(), "A function body is required; use extern \"C\" for a native declaration");
+            throw std::runtime_error("Function declaration without a body");
+        }
+
         // Парсим тело функции
         std::unique_ptr<Statement> body = ParseStatement();
 
@@ -34,6 +39,40 @@ namespace Absolute {
         );
         stmt->modifiers = modifiers;
         return stmt;
+    }
+
+    std::unique_ptr<FunctionDeclStmt> Parser::ParseExternalFunctionDeclaration()
+    {
+        std::vector<Token> modifiers = this->modifiers;
+        Consume(TokenType::KEYWORD, "extern");
+        Token* abiToken = Consume(TokenType::STRING);
+        if (!abiToken || abiToken->value != "\"C\"") {
+            ReportSyntaxError(abiToken, "Only extern \"C\" is supported");
+            throw std::runtime_error("Unsupported external ABI");
+        }
+
+        Token* returnType = Consume(TokenType::KEYWORD);
+        if (!returnType || !IsPrimitiveType(returnType->value) || returnType->value == "auto" ||
+            returnType->value == "dynamic") {
+            ReportSyntaxError(returnType, "An extern function requires a concrete primitive return type");
+            throw std::runtime_error("Invalid extern return type");
+        }
+        Token* identifier = Consume(TokenType::IDENTIFIER);
+        auto parameters = ParseParameters();
+        for (const auto& parameter : parameters) {
+            if (parameter && parameter->value) {
+                ReportSyntaxError(identifier, "Extern function parameters cannot have default values");
+                throw std::runtime_error("Invalid extern parameter");
+            }
+        }
+        Consume(TokenType::DELIMITER, ";");
+
+        auto statement = std::make_unique<FunctionDeclStmt>(
+            std::make_unique<Token>(*returnType), std::make_unique<Token>(*identifier),
+            std::move(parameters), nullptr);
+        statement->externalAbi = "C";
+        statement->modifiers = std::move(modifiers);
+        return statement;
     }
 
     std::unique_ptr<ReturnStmt> Parser::ParseReturnStmt()

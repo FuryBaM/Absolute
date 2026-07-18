@@ -68,6 +68,7 @@ namespace Absolute {
         std::unique_ptr<Token> name;
         std::vector<std::unique_ptr<VarDeclExpr>> parameters;
         std::unique_ptr<Statement> body;
+        std::string externalAbi;
 
         FunctionDeclStmt(std::unique_ptr<Token> returnType, std::unique_ptr<Token> name,
             std::vector<std::unique_ptr<VarDeclExpr>> params,
@@ -78,8 +79,12 @@ namespace Absolute {
             body(std::move(body)) {
         }
 
+        bool IsExternal() const { return !externalAbi.empty(); }
+
         void print(int indent = 0) override {
-            std::cout << std::string(indent, ' ') << "Function declaration: " << returnType->value << " " << name->value;
+            std::cout << std::string(indent, ' ') << "Function declaration: ";
+            if (IsExternal()) std::cout << "extern \"" << externalAbi << "\" ";
+            std::cout << returnType->value << " " << name->value;
             // Выводим модификаторы, если есть
             if (!modifiers.empty()) {
                 std::cout << " [";

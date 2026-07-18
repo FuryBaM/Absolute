@@ -29,7 +29,10 @@ target_include_directories(Absolute-Compiler PRIVATE include)
 target_link_libraries(Absolute-Compiler PRIVATE Absolute-Parser Absolute-Analyzer)
 if(TARGET Absolute-CodeGen)
     target_link_libraries(Absolute-Compiler PRIVATE Absolute-CodeGen)
-    target_compile_definitions(Absolute-Compiler PRIVATE ABSOLUTE_HAS_LLVM=1)
+    target_compile_definitions(Absolute-Compiler PRIVATE
+        ABSOLUTE_HAS_LLVM=1
+        ABSOLUTE_HOST_CXX_COMPILER="${CMAKE_CXX_COMPILER}"
+    )
 endif()
 
 if(MSVC)

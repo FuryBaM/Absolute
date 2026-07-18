@@ -90,6 +90,7 @@ namespace Absolute {
         std::unique_ptr<CompoundStmt> ParseCompoundStatement();
         std::unique_ptr<VarDeclStmt> ParseVarDeclaration();
         std::unique_ptr<FunctionDeclStmt> ParseFunctionDeclaration();
+        std::unique_ptr<FunctionDeclStmt> ParseExternalFunctionDeclaration();
         std::unique_ptr<ReturnStmt> ParseReturnStmt();
         std::unique_ptr<IfStmt> ParseIfStmt();
         std::unique_ptr<ForStmt> ParseForStmt();

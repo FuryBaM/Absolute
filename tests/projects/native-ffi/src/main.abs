@@ -1,0 +1,8 @@
+extern "C" int32 native_add(int32 left, int32 right);
+
+int32 main() {
+    int32 value = native_add(20, 22);
+    println(format("native={}", value));
+    assert(value == 42, "native library call failed");
+    return 0;
+}

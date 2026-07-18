@@ -9,9 +9,19 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Verifier.h>
+#include <llvm/Config/llvm-config.h>
+#include <llvm/IR/LegacyPassManager.h>
+#include <llvm/MC/TargetRegistry.h>
+#include <llvm/Support/CodeGen.h>
+#include <llvm/Support/FileSystem.h>
+#include <llvm/Support/Host.h>
+#include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Target/TargetMachine.h>
+#include <llvm/Target/TargetOptions.h>
 
 #include <algorithm>
+#include <mutex>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
@@ -73,6 +83,7 @@ namespace Absolute {
         std::vector<std::unordered_map<std::string, Variable>> scopes;
         std::vector<std::pair<llvm::BasicBlock*, llvm::BasicBlock*>> loops;
         std::string currentNamespace;
+        std::unordered_map<std::string, std::string> functionLinkNames;
 
         explicit Impl(CodeGenerator& visitor, const Analyzer* analyzer)
             : visitor(visitor), analyzer(analyzer), builder(context) {
@@ -249,12 +260,15 @@ namespace Absolute {
         }
 
         std::string ResolvedName(Expression* expression) const {
+            std::string name;
             if (analyzer && expression) {
                 if (const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression)) {
-                    if (const Symbol* symbol = analyzer->GetSymbol(info->symbol)) return symbol->name;
+                    if (const Symbol* symbol = analyzer->GetSymbol(info->symbol)) name = symbol->name;
                 }
             }
-            return IdentifierName(expression);
+            if (name.empty()) name = IdentifierName(expression);
+            const auto linked = functionLinkNames.find(name);
+            return linked == functionLinkNames.end() ? name : linked->second;
         }
 
         bool IsBuiltinFunction(const std::string& name) const {
@@ -455,8 +469,9 @@ namespace Absolute {
 
         llvm::Function* DeclareFunction(FunctionDeclStmt& statement) {
             if (!statement.name || !statement.returnType) Fail("invalid function declaration");
-            const std::string functionName = Qualify(statement.name->value);
-            if (llvm::Function* existing = module->getFunction(functionName)) return existing;
+            const std::string sourceName = Qualify(statement.name->value);
+            const std::string functionName = statement.IsExternal() ? statement.name->value : sourceName;
+            functionLinkNames[sourceName] = functionName;
 
             std::vector<llvm::Type*> parameterTypes;
             parameterTypes.reserve(statement.parameters.size());
@@ -466,8 +481,14 @@ namespace Absolute {
 
             llvm::FunctionType* functionType = llvm::FunctionType::get(
                 TypeFromName(statement.returnType->value), parameterTypes, false);
+            if (llvm::Function* existing = module->getFunction(functionName)) {
+                if (existing->getFunctionType() != functionType)
+                    Fail("conflicting declarations for external symbol '" + functionName + "'");
+                return existing;
+            }
             llvm::Function* function = llvm::Function::Create(
                 functionType, llvm::Function::ExternalLinkage, functionName, *module);
+            function->setCallingConv(llvm::CallingConv::C);
 
             size_t index = 0;
             for (llvm::Argument& argument : function->args()) {
@@ -513,11 +534,12 @@ namespace Absolute {
             builder.ClearInsertionPoint();
         }
 
-        std::string Generate(Program& program, const std::string& moduleName) {
+        llvm::Module& BuildModule(Program& program, const std::string& moduleName) {
             module = std::make_unique<llvm::Module>(moduleName, context);
             scopes.clear();
             loops.clear();
             currentNamespace.clear();
+            functionLinkNames.clear();
             value = nullptr;
 
             phase = Phase::DeclareFunctions;
@@ -537,11 +559,54 @@ namespace Absolute {
                 Fail("module verification failed: " + verifierMessage);
             }
 
+            return *module;
+        }
+
+        std::string Generate(Program& program, const std::string& moduleName) {
+            BuildModule(program, moduleName);
+
             std::string output;
             llvm::raw_string_ostream stream(output);
             module->print(stream, nullptr);
             stream.flush();
             return output;
+        }
+
+        void GenerateObject(Program& program, const std::string& moduleName, const std::string& outputPath) {
+            static std::once_flag initializeTarget;
+            std::call_once(initializeTarget, [] {
+                if (llvm::InitializeNativeTarget())
+                    throw std::runtime_error("LLVM codegen: failed to initialize the native target");
+                if (llvm::InitializeNativeTargetAsmPrinter())
+                    throw std::runtime_error("LLVM codegen: failed to initialize the native assembly printer");
+            });
+
+            llvm::Module& generatedModule = BuildModule(program, moduleName);
+            const std::string triple = llvm::sys::getDefaultTargetTriple();
+            std::string targetError;
+            const llvm::Target* target = llvm::TargetRegistry::lookupTarget(triple, targetError);
+            if (!target) Fail("cannot select target '" + triple + "': " + targetError);
+
+            llvm::TargetOptions options;
+            std::unique_ptr<llvm::TargetMachine> targetMachine(
+                target->createTargetMachine(triple, "generic", "", options, llvm::Reloc::PIC_));
+            if (!targetMachine) Fail("cannot create target machine for '" + triple + "'");
+            generatedModule.setTargetTriple(triple);
+            generatedModule.setDataLayout(targetMachine->createDataLayout());
+
+            std::error_code error;
+            llvm::raw_fd_ostream output(outputPath, error, llvm::sys::fs::OF_None);
+            if (error) Fail("cannot create object file '" + outputPath + "': " + error.message());
+            llvm::legacy::PassManager passes;
+#if LLVM_VERSION_MAJOR >= 18
+            constexpr llvm::CodeGenFileType fileType = llvm::CodeGenFileType::ObjectFile;
+#else
+            constexpr llvm::CodeGenFileType fileType = llvm::CGFT_ObjectFile;
+#endif
+            if (targetMachine->addPassesToEmitFile(passes, output, nullptr, fileType))
+                Fail("target cannot emit an object file");
+            passes.run(generatedModule);
+            output.flush();
         }
     };
 
@@ -553,6 +618,11 @@ namespace Absolute {
 
     std::string CodeGenerator::Generate(Program& program, const std::string& moduleName) {
         return impl->Generate(program, moduleName);
+    }
+
+    void CodeGenerator::GenerateObject(
+        Program& program, const std::string& moduleName, const std::string& outputPath) {
+        impl->GenerateObject(program, moduleName, outputPath);
     }
 
     void CodeGenerator::Visit(PrimitiveTypeExpr* expr) {
@@ -787,7 +857,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(FunctionDeclStmt* stmt) {
         if (impl->phase == Impl::Phase::DeclareFunctions) impl->DeclareFunction(*stmt);
-        else impl->EmitFunction(*stmt);
+        else if (!stmt->IsExternal()) impl->EmitFunction(*stmt);
     }
 
     void CodeGenerator::Visit(ReturnStmt* stmt) {
