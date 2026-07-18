@@ -40,6 +40,11 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/semantic-errors.abs"
     )
     set_tests_properties(absolute.semantic-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.builtin-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/builtin-errors.abs"
+    )
+    set_tests_properties(absolute.builtin-errors PROPERTIES WILL_FAIL TRUE)
     if(ABSOLUTE_ENABLE_LLVM)
         add_test(
             NAME absolute.emit-llvm
@@ -48,6 +53,26 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.emit-llvm PROPERTIES
             PASS_REGULAR_EXPRESSION "define i32 @main"
         )
+        add_test(
+            NAME absolute.emit-builtins
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/runtime-builtins.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/runtime-builtins.ll"
+        )
+        set_tests_properties(absolute.emit-builtins PROPERTIES
+            FIXTURES_SETUP absolute-builtins-ir
+        )
+
+        find_program(ABSOLUTE_LLI_EXECUTABLE NAMES lli)
+        if(ABSOLUTE_LLI_EXECUTABLE)
+            add_test(
+                NAME absolute.run-builtins
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/runtime-builtins.ll"
+            )
+            set_tests_properties(absolute.run-builtins PROPERTIES
+                FIXTURES_REQUIRED absolute-builtins-ir
+                PASS_REGULAR_EXPRESSION "before=40 after=42"
+            )
+        endif()
     endif()
     add_test(
         NAME absolute.invalid-character
