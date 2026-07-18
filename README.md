@@ -27,6 +27,42 @@ build command.
 ./build/Debug/absolutec code.abs --parse-only
 ```
 
+Create and build a project:
+
+```bash
+absolutec new Demo
+absolutec build Demo/Demo.absproj
+absolutec build Demo/Demo.absproj --emit-llvm -o Demo.ll
+lli Demo.ll
+```
+
+An `.absproj` file describes the entry source and directories compiled into one
+module:
+
+```json
+{
+  "name": "Demo",
+  "entry": "src/main.abs",
+  "sources": ["src"]
+}
+```
+
+Projects support recursive file imports and namespace imports:
+
+```absolute
+import "../shared/math.abs";
+import Demo.Math;
+
+namespace Demo.Math {
+    int32 add(int32 left, int32 right) { return left + right; }
+}
+```
+
+Every `.abs` file under `sources` is compiled automatically. A quoted import can
+bring in an additional file relative to the importing source. Namespace imports
+allow short references such as `add(20, 22)`; fully-qualified calls such as
+`Demo.Math.add(20, 22)` also work.
+
 Emit verified textual LLVM IR:
 
 ```bash
