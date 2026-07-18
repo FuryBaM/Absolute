@@ -4,10 +4,11 @@
 namespace Absolute{
     std::unique_ptr<TypeExpr> Parser::ParseType()
     {
-        if (CurrentToken()->type == TokenType::IDENTIFIER) {
+        Token* current = RequireCurrent("a type");
+        if (current->type == TokenType::IDENTIFIER) {
             return std::make_unique<UserTypeExpr>(ParseIdentifierExpr());
         }
-        else if (CurrentToken()->type == TokenType::KEYWORD) {
+        else if (current->type == TokenType::KEYWORD) {
             return ParsePrimitiveType();
         }
         return nullptr;
