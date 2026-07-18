@@ -1,0 +1,10 @@
+import "../shared/value.abs";
+import Demo.Math;
+import Demo.Values;
+
+int32 main() {
+    int32 result = add(Demo.Values.base(), 2);
+    println(format("project={}", result));
+    assert(result == 42, "cross-file namespace resolution failed");
+    return 0;
+}
