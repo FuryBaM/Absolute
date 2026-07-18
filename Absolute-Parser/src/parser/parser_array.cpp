@@ -7,7 +7,7 @@ namespace Absolute {
 
         Consume(TokenType::BRACKET, "{");  // `{`
 
-        while (CurrentToken()->value != "}") {
+        while (RequireCurrent("an array value or '}'")->value != "}") {
             if (CurrentToken()->value == "{") {
                 values.push_back(ParseArrayValues());  // Рекурсивный вызов для вложенного массива
             }
@@ -16,7 +16,7 @@ namespace Absolute {
             }
 
             // Проверяем `,` между значениями
-            if (CurrentToken()->value == ",") {
+            if (RequireCurrent("',' or '}'")->value == ",") {
                 Consume(TokenType::DELIMITER);  // `,`
             }
             else if (CurrentToken()->value == "}") {
@@ -34,15 +34,15 @@ namespace Absolute {
     }
 
     std::unique_ptr<Expression> Parser::ParseArrayAccess(std::unique_ptr<Expression> base) {
-        if (CurrentToken()->value != "[") {
+        if (!CurrentToken() || CurrentToken()->value != "[") {
             return base; // Нет скобок — возвращаем обычное выражение
         }
 
         std::vector<std::unique_ptr<Expression>> indexes;
 
-        while (CurrentToken()->value == "[") {
+        while (CurrentToken() && CurrentToken()->value == "[") {
             Consume(TokenType::BRACKET, "[");
-            if (CurrentToken()->value != "]") {
+            if (RequireCurrent("an array index or ']'")->value != "]") {
                 indexes.push_back(ParseExpression());
             }
             else {
