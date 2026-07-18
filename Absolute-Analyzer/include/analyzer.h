@@ -13,6 +13,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace Absolute {
@@ -26,7 +27,8 @@ namespace Absolute {
         Type,
         Field,
         Method,
-        Constructor
+        Constructor,
+        Namespace
     };
 
     struct ANALYZER_API Symbol {
@@ -99,6 +101,8 @@ namespace Absolute {
         std::vector<Program*> programs;
         SymbolTable table;
         std::unordered_map<std::string, TypeDefinition> types;
+        std::unordered_set<std::string> namespaces;
+        std::unordered_set<std::string> importedNamespaces;
         std::unordered_map<const Expression*, ExpressionInfo> expressionInfo;
         std::vector<Diagnostic> diagnostics;
         Phase phase = Phase::CollectDeclarations;
@@ -108,6 +112,7 @@ namespace Absolute {
         int functionDepth = 0;
         std::string currentType;
         std::string currentReturnType;
+        std::string currentNamespace;
         bool callable = false;
         std::vector<std::string> callableParameters;
         int constructorContextDepth = 0;
@@ -170,6 +175,8 @@ namespace Absolute {
         void Visit(ForEachStmt* stmt) override;
         void Visit(ContinueStmt* stmt) override;
         void Visit(BreakStmt* stmt) override;
+        void Visit(ImportStmt* stmt) override;
+        void Visit(NamespaceDeclStmt* stmt) override;
 
     private:
         void AnalyzeProgram(Program& program);
@@ -189,5 +196,9 @@ namespace Absolute {
         void DeclareMember(const std::string& owner, std::string name, MemberSignature signature);
         const MemberSignature* FindMember(const std::string& owner, const std::string& name) const;
         std::string ExtractIdentifier(Expression* expression) const;
+        std::string ExtractQualifiedName(Expression* expression) const;
+        std::string Qualify(const std::string& name) const;
+        SymbolId LookupSymbol(const std::string& name) const;
+        std::string ResolveTypeReference(const std::string& name) const;
     };
 }
