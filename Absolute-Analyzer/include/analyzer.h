@@ -51,6 +51,8 @@ namespace Absolute {
 
     struct ANALYZER_API Diagnostic {
         std::string message;
+        std::string code;
+        SymbolId symbol = InvalidSymbolId;
     };
 
     class ANALYZER_API SymbolTable {
@@ -103,6 +105,19 @@ namespace Absolute {
             bool referencesManagedOwner = false;
         };
 
+        enum class KeepState {
+            Live,
+            Deleted,
+            MaybeDeleted
+        };
+
+        struct KeepLifetime {
+            std::string name;
+            KeepState state = KeepState::Live;
+        };
+
+        using KeepLifetimeMap = std::unordered_map<SymbolId, KeepLifetime>;
+
         std::vector<Program*> programs;
         SymbolTable table;
         std::unordered_map<std::string, TypeDefinition> types;
@@ -122,6 +137,11 @@ namespace Absolute {
         bool callable = false;
         std::vector<std::string> callableParameters;
         int constructorContextDepth = 0;
+        KeepLifetimeMap keepLifetimes;
+        std::vector<std::vector<SymbolId>> keepScopes;
+        std::vector<size_t> loopKeepDepths;
+        std::vector<std::vector<KeepLifetimeMap>> loopBreakStates;
+        bool flowTerminated = false;
 
     public:
         explicit Analyzer(std::vector<Program*> programs)
@@ -187,7 +207,7 @@ namespace Absolute {
 
     private:
         void AnalyzeProgram(Program& program);
-        void Report(std::string message);
+        void Report(std::string message, std::string code = {}, SymbolId symbol = InvalidSymbolId);
         Result Evaluate(Expression* expression);
         Result EvaluateExpected(Expression* expression, const std::string& type);
         std::string ResolveType(Expression* expression);
@@ -208,5 +228,9 @@ namespace Absolute {
         std::string Qualify(const std::string& name) const;
         SymbolId LookupSymbol(const std::string& name) const;
         std::string ResolveTypeReference(const std::string& name) const;
+        void PushKeepScope();
+        void PopKeepScope();
+        void CheckKeepScopesFrom(size_t firstScope, const std::string& exitKind);
+        void MergeKeepPaths(const KeepLifetimeMap& base, const std::vector<KeepLifetimeMap>& paths);
     };
 }

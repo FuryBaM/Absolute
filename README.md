@@ -173,6 +173,13 @@ model: `T*` creates a tracked owner, `keep T*` creates a tracked owner without
 scope RAII, and `raw T*` creates an unsafe native allocation. The same contextual
 typing applies to assignments, function arguments, and return expressions.
 
+`keep` is checked by the semantic lifetime analysis. A keep owner must come from
+an owning allocation and must be passed to `delete` on every path before its
+scope is left, including `return`, `break`, and `continue`. Missing cleanup,
+overwriting a live keep owner, and double deletion produce stable diagnostic
+codes (`E_KEEP_DELETE_REQUIRED`, `E_KEEP_OVERWRITE`, and
+`E_KEEP_DOUBLE_DELETE`) through the analyzer API for IDE integrations.
+
 Pointer types are supported in function parameters and return values. Returning
 a managed pointer transfers ownership to the caller, so a function may return a
 fresh allocation or one of its local owners. Returning a subscriber is rejected

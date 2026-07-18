@@ -71,6 +71,20 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-subscriber-return.abs"
     )
     set_tests_properties(absolute.pointer-subscriber-return PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.keep-lifetime-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/keep-lifetime.abs"
+    )
+    add_test(
+        NAME absolute.keep-missing-delete
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/keep-missing-delete.abs"
+    )
+    set_tests_properties(absolute.keep-missing-delete PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.keep-invalid-operations
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/keep-invalid-operations.abs"
+    )
+    set_tests_properties(absolute.keep-invalid-operations PROPERTIES WILL_FAIL TRUE)
     if(ABSOLUTE_ENABLE_LLVM)
         add_test(
             NAME absolute.emit-llvm
@@ -214,6 +228,19 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-pointer-functions PROPERTIES
             FIXTURES_REQUIRED absolute-pointer-functions-executable
             PASS_REGULAR_EXPRESSION "pointer-functions=ok"
+        )
+        add_test(
+            NAME absolute.build-keep-lifetime
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/keep-lifetime.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/keep-lifetime-app"
+        )
+        set_tests_properties(absolute.build-keep-lifetime PROPERTIES
+            FIXTURES_SETUP absolute-keep-lifetime-executable
+        )
+        add_test(NAME absolute.run-keep-lifetime COMMAND "${CMAKE_BINARY_DIR}/keep-lifetime-app")
+        set_tests_properties(absolute.run-keep-lifetime PROPERTIES
+            FIXTURES_REQUIRED absolute-keep-lifetime-executable
+            PASS_REGULAR_EXPRESSION "keep-lifetime=ok"
         )
     endif()
 endif()

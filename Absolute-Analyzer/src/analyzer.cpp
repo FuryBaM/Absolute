@@ -175,6 +175,11 @@ namespace Absolute {
         currentReturnType.clear();
         expectedType.clear();
         currentNamespace.clear();
+        keepLifetimes.clear();
+        keepScopes.clear();
+        loopKeepDepths.clear();
+        loopBreakStates.clear();
+        flowTerminated = false;
         loopDepth = functionDepth = typeContextDepth = constructorContextDepth = 0;
 
         phase = Phase::CollectDeclarations;
@@ -217,7 +222,45 @@ namespace Absolute {
 
     void Analyzer::AnalyzeProgram(Program& program) { AcceptAll(program.statements, *this); }
 
-    void Analyzer::Report(std::string message) { diagnostics.push_back({std::move(message)}); }
+    void Analyzer::Report(std::string message, std::string code, SymbolId symbol) {
+        diagnostics.push_back({std::move(message), std::move(code), symbol});
+    }
+
+    void Analyzer::PushKeepScope() { keepScopes.emplace_back(); }
+
+    void Analyzer::CheckKeepScopesFrom(size_t firstScope, const std::string& exitKind) {
+        for (size_t scope = firstScope; scope < keepScopes.size(); ++scope) {
+            for (SymbolId id : keepScopes[scope]) {
+                const auto found = keepLifetimes.find(id);
+                if (found == keepLifetimes.end() || found->second.state == KeepState::Deleted) continue;
+                const std::string qualifier = found->second.state == KeepState::MaybeDeleted
+                    ? " is not deleted on every control-flow path"
+                    : " must be explicitly deleted";
+                Report("keep owner '" + found->second.name + "'" + qualifier + " before " + exitKind,
+                    "E_KEEP_DELETE_REQUIRED", id);
+            }
+        }
+    }
+
+    void Analyzer::PopKeepScope() {
+        if (keepScopes.empty()) return;
+        if (!flowTerminated) CheckKeepScopesFrom(keepScopes.size() - 1, "leaving its scope");
+        for (SymbolId id : keepScopes.back()) keepLifetimes.erase(id);
+        keepScopes.pop_back();
+    }
+
+    void Analyzer::MergeKeepPaths(const KeepLifetimeMap& base, const std::vector<KeepLifetimeMap>& paths) {
+        keepLifetimes = base;
+        if (paths.empty()) return;
+        for (auto& [id, lifetime] : keepLifetimes) {
+            KeepState merged = paths.front().contains(id) ? paths.front().at(id).state : lifetime.state;
+            for (size_t index = 1; index < paths.size(); ++index) {
+                const KeepState state = paths[index].contains(id) ? paths[index].at(id).state : lifetime.state;
+                if (state != merged) merged = KeepState::MaybeDeleted;
+            }
+            lifetime.state = merged;
+        }
+    }
 
     Analyzer::Result Analyzer::Evaluate(Expression* expression) {
         callable = false;
@@ -318,6 +361,12 @@ namespace Absolute {
         currentReturnType = returnType;
         ++functionDepth;
         table.EnterScope();
+        keepLifetimes.clear();
+        keepScopes.clear();
+        loopKeepDepths.clear();
+        loopBreakStates.clear();
+        flowTerminated = false;
+        PushKeepScope();
         for (const auto& parameter : statement.parameters) {
             if (!parameter) continue;
             const std::string name = ExtractIdentifier(parameter->name.get());
@@ -336,6 +385,8 @@ namespace Absolute {
             }
         }
         if (!statement.IsExternal()) AcceptIfPresent(statement.body, *this);
+        PopKeepScope();
+        keepLifetimes.clear();
         table.ExitScope();
         --functionDepth;
         currentReturnType = oldReturn;
@@ -700,6 +751,12 @@ namespace Absolute {
         if (IsManagedPointerType(target.type)) {
             if (Symbol* symbol = table.Get(target.symbol)) symbol->managedOwner = value.createsManagedOwner;
         }
+        if (const auto keep = keepLifetimes.find(target.symbol); keep != keepLifetimes.end()) {
+            if (keep->second.state != KeepState::Deleted)
+                Report("keep owner '" + keep->second.name + "' is overwritten before delete",
+                    "E_KEEP_OVERWRITE", target.symbol);
+            keep->second.state = value.createsManagedOwner ? KeepState::Live : KeepState::Deleted;
+        }
         Save(expr, {target.symbol, target.type, false});
     }
 
@@ -806,6 +863,12 @@ namespace Absolute {
         if (!IsPointerType(target.type) && target.type != "error")
             Report("delete requires a pointer, got '" + target.type + "'");
         if (!target.isLValue) Report("delete target must be an assignable pointer variable");
+        if (const auto keep = keepLifetimes.find(target.symbol); keep != keepLifetimes.end()) {
+            if (keep->second.state == KeepState::Deleted)
+                Report("keep owner '" + keep->second.name + "' is deleted more than once",
+                    "E_KEEP_DOUBLE_DELETE", target.symbol);
+            keep->second.state = KeepState::Deleted;
+        }
         Save(expr, {InvalidSymbolId, "void", false});
     }
 
@@ -886,7 +949,12 @@ namespace Absolute {
     void Analyzer::Visit(CompoundStmt* stmt) {
         if (phase == Phase::CollectDeclarations && currentType.empty()) return;
         table.EnterScope();
-        AcceptAll(stmt->statements, *this);
+        if (phase == Phase::ResolveBodies) PushKeepScope();
+        for (const auto& statement : stmt->statements) {
+            AcceptIfPresent(statement, *this);
+            if (phase == Phase::ResolveBodies && flowTerminated) break;
+        }
+        if (phase == Phase::ResolveBodies) PopKeepScope();
         table.ExitScope();
     }
 
@@ -914,10 +982,37 @@ namespace Absolute {
             value.type != "null" &&
             !value.createsManagedOwner && !value.referencesManagedOwner)
             Report("a managed pointer return must transfer an owner; subscribers cannot escape their owner");
+        CheckKeepScopesFrom(0, "return");
+        flowTerminated = true;
     }
 
     void Analyzer::Visit(AssignmentStmt* stmt) { if (phase == Phase::ResolveBodies) AcceptIfPresent(stmt->expr, *this); }
-    void Analyzer::Visit(VarDeclStmt* stmt) { AcceptIfPresent(stmt->expr, *this); }
+    void Analyzer::Visit(VarDeclStmt* stmt) {
+        AcceptIfPresent(stmt->expr, *this);
+        if (phase != Phase::ResolveBodies || functionDepth == 0 || !stmt->expr) return;
+        const bool keep = std::any_of(stmt->modifiers.begin(), stmt->modifiers.end(),
+            [](const Token& modifier) { return modifier.value == "keep"; });
+        if (!keep) return;
+
+        const ExpressionInfo* declaration = GetExpressionInfo(*stmt->expr);
+        const ExpressionInfo* initializer = stmt->expr->value
+            ? GetExpressionInfo(*stmt->expr->value) : nullptr;
+        const SymbolId id = declaration ? declaration->symbol : InvalidSymbolId;
+        const Symbol* symbol = table.Get(id);
+        const std::string name = symbol ? symbol->name : ExtractIdentifier(stmt->expr->name.get());
+        if (!declaration || !IsManagedPointerType(declaration->type)) {
+            Report("keep modifier requires a managed pointer owner", "E_KEEP_TYPE", id);
+            return;
+        }
+        if (!initializer || !initializer->createsManagedOwner) {
+            Report("keep owner '" + name + "' requires an owning initializer such as new T(...)",
+                "E_KEEP_OWNER_REQUIRED", id);
+            return;
+        }
+        if (keepScopes.empty()) PushKeepScope();
+        keepLifetimes[id] = {name, KeepState::Live};
+        keepScopes.back().push_back(id);
+    }
 
     void Analyzer::Visit(StructDeclStmt* stmt) {
         const std::string typeName = Qualify(stmt->name);
@@ -977,12 +1072,20 @@ namespace Absolute {
             Report("constructor '" + stmt->name->value + "' must match type '" + currentType + "'");
         ++functionDepth;
         table.EnterScope();
+        keepLifetimes.clear();
+        keepScopes.clear();
+        loopKeepDepths.clear();
+        loopBreakStates.clear();
+        flowTerminated = false;
+        PushKeepScope();
         for (const auto& parameter : stmt->parameters) {
             const std::string name = parameter ? ExtractIdentifier(parameter->name.get()) : std::string{};
             const std::string type = parameter ? ResolveType(parameter->type.get()) : "error";
             if (!table.Declare(SymbolKind::Parameter, name, type)) Report("parameter '" + name + "' is already declared");
         }
         AcceptIfPresent(stmt->body, *this);
+        PopKeepScope();
+        keepLifetimes.clear();
         table.ExitScope();
         --functionDepth;
     }
@@ -999,26 +1102,54 @@ namespace Absolute {
 
     void Analyzer::Visit(IfStmt* stmt) {
         if (phase == Phase::CollectDeclarations) return;
+        const KeepLifetimeMap base = keepLifetimes;
+        std::vector<KeepLifetimeMap> continuingPaths;
         for (auto& branch : stmt->branches) {
+            keepLifetimes = base;
+            flowTerminated = false;
             const Result condition = Evaluate(branch.condition.get());
             if (!IsConditionType(condition.type)) Report("if condition must be boolean-compatible");
             AcceptIfPresent(branch.body, *this);
+            if (!flowTerminated) continuingPaths.push_back(keepLifetimes);
         }
-        AcceptIfPresent(stmt->elseBranch, *this);
+        if (stmt->elseBranch) {
+            keepLifetimes = base;
+            flowTerminated = false;
+            AcceptIfPresent(stmt->elseBranch, *this);
+            if (!flowTerminated) continuingPaths.push_back(keepLifetimes);
+        }
+        else continuingPaths.push_back(base);
+        MergeKeepPaths(base, continuingPaths);
+        flowTerminated = continuingPaths.empty();
     }
 
     void Analyzer::Visit(ForStmt* stmt) {
         if (phase == Phase::CollectDeclarations) return;
         table.EnterScope();
+        PushKeepScope();
         AcceptAll(stmt->init, *this);
         if (stmt->condition) {
             const Result condition = Evaluate(stmt->condition.get());
             if (!IsConditionType(condition.type)) Report("for condition must be boolean-compatible");
         }
+        const KeepLifetimeMap beforeLoop = keepLifetimes;
+        loopKeepDepths.push_back(keepScopes.size());
+        loopBreakStates.emplace_back();
         ++loopDepth;
+        flowTerminated = false;
         AcceptIfPresent(stmt->body, *this);
-        AcceptAll(stmt->update, *this);
+        if (!flowTerminated) AcceptAll(stmt->update, *this);
+        const bool bodyContinues = !flowTerminated;
+        const KeepLifetimeMap afterBody = keepLifetimes;
         --loopDepth;
+        std::vector<KeepLifetimeMap> exits{beforeLoop};
+        if (bodyContinues) exits.push_back(afterBody);
+        exits.insert(exits.end(), loopBreakStates.back().begin(), loopBreakStates.back().end());
+        loopBreakStates.pop_back();
+        loopKeepDepths.pop_back();
+        MergeKeepPaths(beforeLoop, exits);
+        flowTerminated = false;
+        PopKeepScope();
         table.ExitScope();
     }
 
@@ -1026,40 +1157,93 @@ namespace Absolute {
         if (phase == Phase::CollectDeclarations) return;
         const Result condition = Evaluate(stmt->condition.get());
         if (!IsConditionType(condition.type)) Report("while condition must be boolean-compatible");
+        const KeepLifetimeMap beforeLoop = keepLifetimes;
+        loopKeepDepths.push_back(keepScopes.size());
+        loopBreakStates.emplace_back();
         ++loopDepth;
+        flowTerminated = false;
         AcceptIfPresent(stmt->body, *this);
+        const bool bodyContinues = !flowTerminated;
+        const KeepLifetimeMap afterBody = keepLifetimes;
         --loopDepth;
+        std::vector<KeepLifetimeMap> exits{beforeLoop};
+        if (bodyContinues) exits.push_back(afterBody);
+        exits.insert(exits.end(), loopBreakStates.back().begin(), loopBreakStates.back().end());
+        loopBreakStates.pop_back();
+        loopKeepDepths.pop_back();
+        MergeKeepPaths(beforeLoop, exits);
+        flowTerminated = false;
     }
 
     void Analyzer::Visit(DoWhileStmt* stmt) {
         if (phase == Phase::CollectDeclarations) return;
+        const KeepLifetimeMap beforeLoop = keepLifetimes;
+        loopKeepDepths.push_back(keepScopes.size());
+        loopBreakStates.emplace_back();
         ++loopDepth;
+        flowTerminated = false;
         AcceptIfPresent(stmt->body, *this);
+        const bool bodyContinues = !flowTerminated;
+        const KeepLifetimeMap afterBody = keepLifetimes;
         --loopDepth;
         const Result condition = Evaluate(stmt->condition.get());
         if (!IsConditionType(condition.type)) Report("do-while condition must be boolean-compatible");
+        std::vector<KeepLifetimeMap> exits;
+        if (bodyContinues) exits.push_back(afterBody);
+        exits.insert(exits.end(), loopBreakStates.back().begin(), loopBreakStates.back().end());
+        if (exits.empty()) exits.push_back(beforeLoop);
+        loopBreakStates.pop_back();
+        loopKeepDepths.pop_back();
+        MergeKeepPaths(beforeLoop, exits);
+        flowTerminated = false;
     }
 
     void Analyzer::Visit(ForEachStmt* stmt) {
         if (phase == Phase::CollectDeclarations) return;
         table.EnterScope();
+        PushKeepScope();
         const Result iterable = Evaluate(stmt->iterable.get());
         if (!iterable.type.ends_with("[]") && iterable.type != "error") Report("for-each source must be an array");
         AcceptIfPresent(stmt->var, *this);
+        const KeepLifetimeMap beforeLoop = keepLifetimes;
+        loopKeepDepths.push_back(keepScopes.size());
+        loopBreakStates.emplace_back();
         ++loopDepth;
+        flowTerminated = false;
         AcceptIfPresent(stmt->body, *this);
+        const bool bodyContinues = !flowTerminated;
+        const KeepLifetimeMap afterBody = keepLifetimes;
         --loopDepth;
+        std::vector<KeepLifetimeMap> exits{beforeLoop};
+        if (bodyContinues) exits.push_back(afterBody);
+        exits.insert(exits.end(), loopBreakStates.back().begin(), loopBreakStates.back().end());
+        loopBreakStates.pop_back();
+        loopKeepDepths.pop_back();
+        MergeKeepPaths(beforeLoop, exits);
+        flowTerminated = false;
+        PopKeepScope();
         table.ExitScope();
     }
 
     void Analyzer::Visit(ContinueStmt* stmt) {
         (void)stmt;
-        if (phase == Phase::ResolveBodies && loopDepth == 0) Report("continue statement is outside a loop");
+        if (phase != Phase::ResolveBodies) return;
+        if (loopDepth == 0) Report("continue statement is outside a loop");
+        else {
+            CheckKeepScopesFrom(loopKeepDepths.back(), "continue");
+            flowTerminated = true;
+        }
     }
 
     void Analyzer::Visit(BreakStmt* stmt) {
         (void)stmt;
-        if (phase == Phase::ResolveBodies && loopDepth == 0) Report("break statement is outside a loop");
+        if (phase != Phase::ResolveBodies) return;
+        if (loopDepth == 0) Report("break statement is outside a loop");
+        else {
+            CheckKeepScopesFrom(loopKeepDepths.back(), "break");
+            loopBreakStates.back().push_back(keepLifetimes);
+            flowTerminated = true;
+        }
     }
 
     void Analyzer::Visit(ImportStmt* stmt) {
