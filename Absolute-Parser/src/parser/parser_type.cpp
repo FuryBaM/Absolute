@@ -6,7 +6,7 @@ namespace Absolute{
     {
         Token* current = RequireCurrent("a type");
         if (current->type == TokenType::IDENTIFIER) {
-            return std::make_unique<UserTypeExpr>(ParseIdentifierExpr());
+            return std::make_unique<UserTypeExpr>(ParseIdentifierExpr(true));
         }
         else if (current->type == TokenType::KEYWORD) {
             return ParsePrimitiveType();
