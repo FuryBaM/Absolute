@@ -26,3 +26,4 @@
 #include "ast/ternary.h"
 #include "ast/type.h"
 #include "ast/unary.h"
+#include "ast/module.h"
