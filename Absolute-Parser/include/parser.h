@@ -45,6 +45,7 @@ namespace Absolute {
         }
 
         void ReportSyntaxError(const Token* token, const std::string& message);
+        Token* RequireCurrent(const std::string& expectation);
 
         Token* Consume(TokenType tokenType);
         Token* Consume(TokenType tokenType, const std::string& expectedValue);
