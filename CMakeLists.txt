@@ -23,6 +23,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/comments.abs"
     )
     add_test(
+        NAME absolute.templates
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/templates.abs"
+    )
+    add_test(
         NAME absolute.invalid-character
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/invalid-character.abs"
     )
@@ -31,7 +35,7 @@ if(BUILD_TESTING)
     add_test(NAME absolute.requires-source COMMAND Absolute-Compiler)
     set_tests_properties(absolute.requires-source PROPERTIES WILL_FAIL TRUE)
 
-    foreach(invalid_case IN ITEMS incomplete-template incomplete-array unterminated-block)
+    foreach(invalid_case IN ITEMS incomplete-template incomplete-array unterminated-block legacy-template-marker)
         add_test(
             NAME "absolute.${invalid_case}"
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/${invalid_case}.abs"
