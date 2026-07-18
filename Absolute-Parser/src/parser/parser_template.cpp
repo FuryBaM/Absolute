@@ -5,7 +5,6 @@ namespace Absolute{
     std::unique_ptr<Expression> Parser::ParseTemplateExpr(std::unique_ptr<Expression> base)
     {
         std::vector<std::unique_ptr<Expression>> types;
-        Consume(TokenType::DOLLAR); // $
         Consume(TokenType::OPERATOR, "<");
 
         while (RequireCurrent("a template argument or '>'")->value != ">") {
