@@ -17,6 +17,8 @@ namespace Absolute {
                 }
             }
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 
     struct GroupDeclStmt : Statement {
@@ -44,5 +46,7 @@ namespace Absolute {
                 }
             }
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 }
