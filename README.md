@@ -13,6 +13,10 @@ cmake --build build
 
 LLVM development libraries and an LLVM CMake package are required. If CMake
 cannot locate them automatically, pass `-DLLVM_DIR="$(llvm-config --cmakedir)"`.
+The frontend can still be built without LLVM using
+`-DABSOLUTE_ENABLE_LLVM=OFF`. The prebuilt Windows LLVM installer does not ship
+the C++ CMake development package, so Windows builds need a full LLVM development
+build and its `LLVM_DIR`; CI keeps validating the Windows frontend separately.
 
 On multi-config generators such as Visual Studio, pass `--config Debug` to the
 build command.
