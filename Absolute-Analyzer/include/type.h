@@ -76,6 +76,8 @@ namespace Absolute {
     // Абстрактный базовый класс для типов
     struct Type {
         virtual ~Type() = default;
+
+        virtual std::string GetName() const = 0;
     };
 
     // Примитивный тип (int, float и т. д.)
@@ -85,6 +87,10 @@ namespace Absolute {
 
         PrimitiveType(PrimitiveTypeEnum type) : type(type) {}
 		PrimitiveType(const PrimitiveType& other) : type(other.type) {}
+
+        std::string GetName() const override {
+            return PrimitiveEnumToString(type);
+        }
     };
 
     // Поля класса
@@ -121,5 +127,9 @@ namespace Absolute {
 
         UserType(AccessModifier access, Scope scope, std::string name)
             : name(std::move(name)), access(access), scope(std::move(scope)) {}
+
+        std::string GetName() const override {
+            return name;
+        }
     };
 }
