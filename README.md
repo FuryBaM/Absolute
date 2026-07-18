@@ -38,6 +38,20 @@ variable, function, type, field, and method use before LLVM IR generation.
 Semantic diagnostics return a failure status, so invalid objects cannot reach
 the backend.
 
+The runtime built-ins can be used without declarations:
+
+```absolute
+print("before=", value, " ");
+println(format("after={}", value));
+string text = toString(value);
+assert(value == 42, "unexpected value");
+```
+
+`print` and `println` accept any number of scalar values. `format` uses `{}`
+placeholders (`{{` and `}}` produce literal braces) and currently requires a
+literal template. They lower to libc calls in LLVM IR, which makes the emitted
+module directly runnable with `lli`.
+
 The first backend milestone supports primitive values, functions, local
 variables, calls, casts, arithmetic/comparison operators, assignments,
 `return`, `if`, `for`, `while`, `do-while`, `break`, and `continue`. Classes,
