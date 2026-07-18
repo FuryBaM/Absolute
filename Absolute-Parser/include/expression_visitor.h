@@ -53,8 +53,8 @@ namespace Absolute {
         }
 
         void Visit(BinaryExpr* expr) override {
-            expr->left->Accept(*this);  // Ðåêóðñèâíî èùåì â ëåâîì ïîääåðåâå
-            expr->right->Accept(*this); // Ðåêóðñèâíî èùåì â ïðàâîì ïîääåðåâå
+            expr->left->Accept(*this);  // Рекурсивно ищем в левом поддереве
+            expr->right->Accept(*this); // Рекурсивно ищем в правом поддереве
         }
 
         void Visit(TernaryExpr* expr) override {
@@ -99,13 +99,13 @@ namespace Absolute {
 
         void Visit(MemberAccessExpr* expr) override {
             if (expr->base) {
-                expr->base->Accept(*this); // Îáõîä áàçîâîãî âûðàæåíèÿ
+                expr->base->Accept(*this); // Обход базового выражения
             }
         }
 
         void Visit(CastExpr* expr) override {
             if (expr->base) {
-                expr->base->Accept(*this); // Îáõîä áàçîâîãî âûðàæåíèÿ
+                expr->base->Accept(*this); // Обход базового выражения
             }
         }
 
