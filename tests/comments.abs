@@ -1,0 +1,5 @@
+// A trailing comment must not become a lexer error.
+bool ready = true;
+/* Multiline
+   comment */
+int32 value = -1;
