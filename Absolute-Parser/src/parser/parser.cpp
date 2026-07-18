@@ -222,6 +222,10 @@ namespace Absolute{
 			    return ParseEnumDecl();
             case Hash("group"):
                 return ParseGroupDecl();
+            case Hash("import"):
+                return ParseImport();
+            case Hash("namespace"):
+                return ParseNamespace();
             default:
                 break;
             }
