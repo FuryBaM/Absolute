@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Добавляем подпроекты
 add_subdirectory(Absolute-Parser)
 add_subdirectory(Absolute-Analyzer)
+add_subdirectory(Absolute-CodeGen)
 add_subdirectory(Absolute-Compiler)
 
 # Keep generated artifacts out of the source tree.
@@ -25,6 +26,13 @@ if(BUILD_TESTING)
     add_test(
         NAME absolute.templates
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/templates.abs"
+    )
+    add_test(
+        NAME absolute.emit-llvm
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/llvm-basic.abs" --emit-llvm
+    )
+    set_tests_properties(absolute.emit-llvm PROPERTIES
+        PASS_REGULAR_EXPRESSION "define i32 @main"
     )
     add_test(
         NAME absolute.invalid-character
