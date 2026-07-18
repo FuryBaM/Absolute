@@ -5,11 +5,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Конфигурации
-set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "Configs" FORCE)
-
 # Пути к исходникам
 set(SOURCE_FILES
+    declaration_visitor.cpp
     src/analyzer.cpp
     src/analyzer_pch.cpp
     src/type.cpp
@@ -17,6 +15,7 @@ set(SOURCE_FILES
 )
 
 set(HEADER_FILES
+    declaration_visitor.h
     include/analyzer.h
     include/analyzer_pch.h
     include/type.h
@@ -31,19 +30,22 @@ target_precompile_headers(Absolute-Analyzer PRIVATE include/analyzer_pch.h)
 
 # Пути к заголовочным файлам
 target_include_directories(${PROJECT_NAME} PUBLIC include)
-target_include_directories(Absolute-Analyzer PRIVATE include Absolute-Parser/include)
+target_include_directories(Absolute-Analyzer PRIVATE include)
 
 # Линковка с Absolute-Parser
 target_link_libraries(Absolute-Analyzer PRIVATE Absolute-Parser)
 
 target_compile_definitions(Absolute-Analyzer PRIVATE _CONSOLE)
-target_compile_options(Absolute-Analyzer PRIVATE /W3 /permissive- /std:c++latest /sdl)
-	
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_definitions(Absolute-Analyzer PRIVATE _DEBUG)
+if(MSVC)
+    target_compile_options(Absolute-Analyzer PRIVATE /W3 /permissive- /sdl)
 else()
-    target_compile_definitions(Absolute-Analyzer PRIVATE NDEBUG)
+    target_compile_options(Absolute-Analyzer PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+	
+target_compile_definitions(Absolute-Analyzer PRIVATE
+    $<$<CONFIG:Debug>:_DEBUG>
+    $<$<CONFIG:Release>:NDEBUG>
+)
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
