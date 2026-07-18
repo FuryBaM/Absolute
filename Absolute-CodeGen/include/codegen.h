@@ -7,9 +7,11 @@
 #include <string>
 
 namespace Absolute {
+    class Analyzer;
+
     class CodeGenerator final : public ExpressionVisitor, public StatementVisitor {
     public:
-        CodeGenerator();
+        explicit CodeGenerator(const Analyzer* analyzer = nullptr);
         ~CodeGenerator() override;
 
         CodeGenerator(const CodeGenerator&) = delete;
