@@ -2,13 +2,12 @@
 #include "expression_visitor.h"
 
 namespace Absolute {
-	class DeclarationVisitor : public ExpressionVisitor {
+	class DeclarationVisitor : public BaseIdentifierVisitor {
 	public:
 		void Visit(VarDeclExpr* expr) override {
-			expr->type->Accept(*this);
-			expr->name = expr->name;
-			expr->value->Accept(*this);
+			if (expr->type) expr->type->Accept(*this);
+			if (expr->name) expr->name->Accept(*this);
+			if (expr->value) expr->value->Accept(*this);
 		}
 	};
 }
-
