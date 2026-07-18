@@ -1,4 +1,5 @@
-﻿#pragma once
+﻿#ifndef ABSOLUTE_PARSER_NODES_H
+#define ABSOLUTE_PARSER_NODES_H
 
 namespace Absolute {
     class ExpressionVisitor;
@@ -85,3 +86,5 @@ namespace Absolute {
         }
     };
 }
+
+#endif // ABSOLUTE_PARSER_NODES_H
