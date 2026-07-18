@@ -1,14 +1,41 @@
-cmake_minimum_required(VERSION 3.16)
-project(Absolute)
+cmake_minimum_required(VERSION 3.20)
+project(Absolute LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Добавляем подпроекты
 add_subdirectory(Absolute-Parser)
 add_subdirectory(Absolute-Analyzer)
 add_subdirectory(Absolute-Compiler)
 
-# Указание общего места для установки, если требуется
-set(CMAKE_INSTALL_PREFIX ${PROJECT_SOURCE_DIR}/install)
+# Keep generated artifacts out of the source tree.
 
-# Можно добавить настройку для компиляции и установку зависимости
-target_link_libraries(Absolute-Analyzer PRIVATE Absolute-Parser)
-target_link_libraries(Absolute-Compiler PRIVATE Absolute-Parser Absolute-Analyzer)
+include(CTest)
+if(BUILD_TESTING)
+    add_test(
+        NAME absolute.sample
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/code.abs"
+    )
+    add_test(
+        NAME absolute.comments
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/comments.abs"
+    )
+    add_test(
+        NAME absolute.invalid-character
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/invalid-character.abs"
+    )
+    set_tests_properties(absolute.invalid-character PROPERTIES WILL_FAIL TRUE)
+
+    add_test(NAME absolute.requires-source COMMAND Absolute-Compiler)
+    set_tests_properties(absolute.requires-source PROPERTIES WILL_FAIL TRUE)
+
+    foreach(invalid_case IN ITEMS incomplete-template incomplete-array unterminated-block)
+        add_test(
+            NAME "absolute.${invalid_case}"
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/${invalid_case}.abs"
+        )
+        set_tests_properties("absolute.${invalid_case}" PROPERTIES WILL_FAIL TRUE)
+    endforeach()
+endif()
