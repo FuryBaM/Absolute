@@ -15,7 +15,8 @@ namespace Absolute {
             }
             else {
                 std::unique_ptr<Expression> expr = ParseIdentifierExpr();
-                if (GetOperatorCategory(CurrentToken()->value) == OperatorCategory::Assignment) {
+                Token* current = CurrentToken();
+                if (current && GetOperatorCategory(current->value) == OperatorCategory::Assignment) {
                     expr = ParseAssignmentExpr(std::move(expr));
                 }
                 Consume(TokenType::DELIMITER, ";");
@@ -53,7 +54,7 @@ namespace Absolute {
             else if (next->value == ".") {
                 expr = ParseMemberAccess(std::move(expr));
             }
-            else if (next->value == "$" && PeekToken(1)->value == "<") {
+            else if (next->value == "$" && PeekToken(1) && PeekToken(1)->value == "<") {
                 expr = std::make_unique<UserTypeExpr>(std::move(expr));
                 expr = ParseTemplateExpr(std::move(expr));
             }
