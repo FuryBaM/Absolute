@@ -30,7 +30,7 @@ namespace Absolute {
         return nullptr;
     }
 
-    std::unique_ptr<Expression> Parser::ParseIdentifierExpr() {
+    std::unique_ptr<Expression> Parser::ParseIdentifierExpr(bool allowTemplate) {
         Token* identifier = CurrentToken();
         if (!identifier || identifier->type != TokenType::IDENTIFIER) {
             ReportSyntaxError(identifier, "Expected identifier");
@@ -54,7 +54,15 @@ namespace Absolute {
             else if (next->value == ".") {
                 expr = ParseMemberAccess(std::move(expr));
             }
-            else if (next->value == "$" && PeekToken(1) && PeekToken(1)->value == "<") {
+            else if (next->value == "<") {
+                size_t close = 0;
+                if (!IsTemplateArgumentList(pos, &close)) break;
+
+                Token* afterTemplate = close + 1 < tokens.size() ? &tokens[close + 1] : nullptr;
+                const bool followedByPostfix = afterTemplate &&
+                    (afterTemplate->value == "(" || afterTemplate->value == "." || afterTemplate->value == "[");
+                if (!allowTemplate && !followedByPostfix) break;
+
                 expr = std::make_unique<UserTypeExpr>(std::move(expr));
                 expr = ParseTemplateExpr(std::move(expr));
             }
