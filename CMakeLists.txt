@@ -62,6 +62,15 @@ if(BUILD_TESTING)
         NAME absolute.pointers-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointers.abs"
     )
+    add_test(
+        NAME absolute.pointer-functions-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-functions.abs"
+    )
+    add_test(
+        NAME absolute.pointer-subscriber-return
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-subscriber-return.abs"
+    )
+    set_tests_properties(absolute.pointer-subscriber-return PROPERTIES WILL_FAIL TRUE)
     if(ABSOLUTE_ENABLE_LLVM)
         add_test(
             NAME absolute.emit-llvm
@@ -192,6 +201,19 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-pointers PROPERTIES
             FIXTURES_REQUIRED absolute-pointers-executable
             PASS_REGULAR_EXPRESSION "pointers=ok"
+        )
+        add_test(
+            NAME absolute.build-pointer-functions
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-functions.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/pointer-functions-app"
+        )
+        set_tests_properties(absolute.build-pointer-functions PROPERTIES
+            FIXTURES_SETUP absolute-pointer-functions-executable
+        )
+        add_test(NAME absolute.run-pointer-functions COMMAND "${CMAKE_BINARY_DIR}/pointer-functions-app")
+        set_tests_properties(absolute.run-pointer-functions PROPERTIES
+            FIXTURES_REQUIRED absolute-pointer-functions-executable
+            PASS_REGULAR_EXPRESSION "pointer-functions=ok"
         )
     endif()
 endif()

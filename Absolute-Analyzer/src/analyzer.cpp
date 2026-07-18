@@ -236,7 +236,9 @@ namespace Absolute {
 
     void Analyzer::Save(Expression* expression, Result value) {
         result = std::move(value);
-        if (expression) expressionInfo[expression] = {result.symbol, result.type, result.isLValue};
+        if (expression) expressionInfo[expression] = {
+            result.symbol, result.type, result.isLValue,
+            result.createsManagedOwner, result.referencesManagedOwner};
     }
 
     bool Analyzer::IsKnownType(const std::string& name) const {
@@ -284,19 +286,24 @@ namespace Absolute {
     void Analyzer::DeclareGlobalFunction(FunctionDeclStmt& statement) {
         if (!statement.name || !statement.returnType) return;
         const std::string name = Qualify(statement.name->value);
+        const std::string returnType = ResolveType(statement.returnType.get());
         const auto declared = table.Declare(SymbolKind::Function, name,
-            statement.returnType->value, ResolveParameterTypes(statement.parameters));
+            returnType, ResolveParameterTypes(statement.parameters));
         if (!declared) Report("object '" + name + "' is already declared in this scope");
     }
 
     void Analyzer::ResolveFunction(FunctionDeclStmt& statement, SymbolKind kind) {
         if (!statement.name || !statement.returnType) return;
-        const std::string returnType = ResolveTypeReference(statement.returnType->value);
+        const std::string returnType = ResolveType(statement.returnType.get());
         if (!IsKnownType(returnType))
-            Report("unknown return type '" + statement.returnType->value + "' of function '" + statement.name->value + "'");
+            Report("unknown return type '" + returnType + "' of function '" + statement.name->value + "'");
 
         if (statement.IsExternal() && kind == SymbolKind::Method)
             Report("extern functions cannot be class or struct members");
+        if (statement.IsExternal() && (returnType == "auto" || returnType == "dynamic" ||
+            IsManagedPointerType(returnType)))
+            Report("extern function '" + statement.name->value +
+                "' requires a concrete C-compatible return type; use raw T* for pointers");
 
         const std::string oldReturn = currentReturnType;
         currentReturnType = returnType;
@@ -308,6 +315,8 @@ namespace Absolute {
             std::string type = ResolveType(parameter->type.get());
             if (statement.IsExternal() && (type == "auto" || type == "dynamic" || type == "void"))
                 Report("extern parameter '" + name + "' requires a concrete C-compatible type");
+            if (statement.IsExternal() && IsManagedPointerType(type))
+                Report("extern parameter '" + name + "' must use raw T* instead of a managed pointer");
             if (name.empty()) Report("function parameter requires an identifier");
             else if (!table.Declare(SymbolKind::Parameter, name, type))
                 Report("parameter '" + name + "' is already declared");
@@ -438,7 +447,8 @@ namespace Absolute {
         const bool value = symbol->kind == SymbolKind::Variable || symbol->kind == SymbolKind::Parameter ||
             symbol->kind == SymbolKind::Field;
         if (!value) Report("object '" + expr->name + "' is not a value");
-        Save(expr, {id, symbol->type, value});
+        Save(expr, {id, symbol->type, value, false,
+            value && IsManagedPointerType(symbol->type) && symbol->managedOwner});
     }
 
     void Analyzer::Visit(FunctionCallExpr* expr) {
@@ -571,7 +581,7 @@ namespace Absolute {
                 Report("argument " + std::to_string(i + 1) + " has type '" + argument.type +
                     "', expected '" + parameters[i] + "'");
         }
-        Save(expr, {symbolId, returnType, false});
+        Save(expr, {symbolId, returnType, false, IsManagedPointerType(returnType), false});
     }
 
     void Analyzer::Visit(ArrayAccessExpr* expr) {
@@ -593,11 +603,34 @@ namespace Absolute {
         const Result left = Evaluate(expr->left.get());
         const Result right = Evaluate(expr->right.get());
         const std::string& op = expr->op;
-        if (op == "&&" || op == "||") {
+        const bool leftPointer = IsPointerType(left.type);
+        const bool rightPointer = IsPointerType(right.type);
+        if ((leftPointer || rightPointer) && (op == "+" || op == "-")) {
+            if (IsManagedPointerType(left.type) || IsManagedPointerType(right.type)) {
+                Report("managed pointers do not support arithmetic; use raw T* when address arithmetic is required");
+                Save(expr, {InvalidSymbolId, "error", false});
+            }
+            else if (op == "+" && IsRawPointerType(left.type) && IsInteger(right.type))
+                Save(expr, {InvalidSymbolId, left.type, false});
+            else if (op == "+" && IsInteger(left.type) && IsRawPointerType(right.type))
+                Save(expr, {InvalidSymbolId, right.type, false});
+            else if (op == "-" && IsRawPointerType(left.type) && IsInteger(right.type))
+                Save(expr, {InvalidSymbolId, left.type, false});
+            else if (op == "-" && IsRawPointerType(left.type) && left.type == right.type)
+                Save(expr, {InvalidSymbolId, "int64", false});
+            else {
+                Report("invalid pointer arithmetic between '" + left.type + "' and '" + right.type + "'");
+                Save(expr, {InvalidSymbolId, "error", false});
+            }
+        }
+        else if (op == "&&" || op == "||") {
             if (!IsConditionType(left.type) || !IsConditionType(right.type)) Report("logical operands must be boolean-compatible");
             Save(expr, {InvalidSymbolId, "bool", false});
         }
         else if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
+            if (op != "==" && op != "!=" &&
+                (IsManagedPointerType(left.type) || IsManagedPointerType(right.type)))
+                Report("managed pointers only support equality and null comparisons");
             if (!IsAssignable(left.type, right.type) && !IsAssignable(right.type, left.type))
                 Report("cannot compare '" + left.type + "' with '" + right.type + "'");
             Save(expr, {InvalidSymbolId, "bool", false});
@@ -653,6 +686,9 @@ namespace Absolute {
         if (!target.isLValue) Report("assignment target is not assignable");
         if (!IsAssignable(target.type, value.type))
             Report("cannot assign '" + value.type + "' to '" + target.type + "'");
+        if (IsManagedPointerType(target.type)) {
+            if (Symbol* symbol = table.Get(target.symbol)) symbol->managedOwner = value.createsManagedOwner;
+        }
         Save(expr, {target.symbol, target.type, false});
     }
 
@@ -687,6 +723,9 @@ namespace Absolute {
             const auto declared = table.Declare(SymbolKind::Variable, name, type);
             if (!declared) Report("object '" + name + "' is already declared in this scope");
             else id = *declared;
+        }
+        if (IsManagedPointerType(type)) {
+            if (Symbol* symbol = table.Get(id)) symbol->managedOwner = value.createsManagedOwner;
         }
         else if (Symbol* symbol = table.Get(id)) symbol->type = type;
         Save(expr, {id, type, true});
@@ -745,7 +784,8 @@ namespace Absolute {
             if (PrimitiveStringToEnum(constructedType).has_value() && !IsAssignable(constructedType, value.type))
                 Report("allocation initializer has type '" + value.type + "', expected '" + constructedType + "'");
         }
-        Save(expr, {InvalidSymbolId, (expr->raw ? "raw " : "") + constructedType + "*", false});
+        Save(expr, {InvalidSymbolId, (expr->raw ? "raw " : "") + constructedType + "*", false,
+            !expr->raw, false});
     }
 
     void Analyzer::Visit(DestructorCallExpr* expr) {
@@ -846,7 +886,7 @@ namespace Absolute {
             if (currentType.empty()) DeclareGlobalFunction(*stmt);
             else if (stmt->name && stmt->returnType)
                 DeclareMember(currentType, stmt->name->value,
-                    {SymbolKind::Method, stmt->returnType->value, ResolveParameterTypes(stmt->parameters)});
+                    {SymbolKind::Method, ResolveType(stmt->returnType.get()), ResolveParameterTypes(stmt->parameters)});
         }
         else ResolveFunction(*stmt, currentType.empty() ? SymbolKind::Function : SymbolKind::Method);
     }
@@ -857,6 +897,10 @@ namespace Absolute {
         const Result value = Evaluate(stmt->expr.get());
         if (!IsAssignable(currentReturnType, value.type))
             Report("return type '" + value.type + "' does not match '" + currentReturnType + "'");
+        if (IsManagedPointerType(currentReturnType) && value.type != "error" &&
+            value.type != "null" &&
+            !value.createsManagedOwner && !value.referencesManagedOwner)
+            Report("a managed pointer return must transfer an owner; subscribers cannot escape their owner");
     }
 
     void Analyzer::Visit(AssignmentStmt* stmt) { if (phase == Phase::ResolveBodies) AcceptIfPresent(stmt->expr, *this); }

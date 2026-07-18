@@ -127,6 +127,7 @@ namespace Absolute {
         bool addressMode = false;
         llvm::Value* addressValue = nullptr;
         bool declarationKeep = false;
+        std::string currentReturnTypeName;
 
         explicit Impl(CodeGenerator& visitor, const Analyzer* analyzer)
             : visitor(visitor), analyzer(analyzer), builder(context) {
@@ -620,7 +621,7 @@ namespace Absolute {
             }
 
             llvm::FunctionType* functionType = llvm::FunctionType::get(
-                TypeFromName(statement.returnType->value), parameterTypes, false);
+                ResolveType(statement.returnType.get()), parameterTypes, false);
             if (llvm::Function* existing = module->getFunction(functionName)) {
                 if (existing->getFunctionType() != functionType)
                     Fail("conflicting declarations for external symbol '" + functionName + "'");
@@ -645,6 +646,8 @@ namespace Absolute {
             llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
             builder.SetInsertPoint(entry);
             PushScope();
+            const std::string oldReturnTypeName = currentReturnTypeName;
+            currentReturnTypeName = ResolveTypeName(statement.returnType.get());
 
             size_t index = 0;
             for (llvm::Argument& argument : function->args()) {
@@ -673,6 +676,7 @@ namespace Absolute {
             }
 
             PopScope();
+            currentReturnTypeName = oldReturnTypeName;
             builder.ClearInsertionPoint();
         }
 
@@ -820,6 +824,7 @@ namespace Absolute {
         llvm::CallInst* call = impl->builder.CreateCall(function, arguments,
             function->getReturnType()->isVoidTy() ? "" : name + ".result");
         impl->value = function->getReturnType()->isVoidTy() ? nullptr : call;
+        impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
     }
 
     void CodeGenerator::Visit(ArrayAccessExpr* expr) {
@@ -828,8 +833,68 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(BinaryExpr* expr) {
+        const std::string leftType = impl->SemanticType(expr->left.get());
+        const std::string rightType = impl->SemanticType(expr->right.get());
         llvm::Value* left = impl->Evaluate(expr->left.get());
         llvm::Value* right = impl->Evaluate(expr->right.get());
+
+        const bool leftRaw = IsRawPointerTypeName(leftType);
+        const bool rightRaw = IsRawPointerTypeName(rightType);
+        const bool leftManaged = IsManagedPointerTypeName(leftType);
+        const bool rightManaged = IsManagedPointerTypeName(rightType);
+        const bool equality = expr->op == "==" || expr->op == "!=";
+
+        if ((leftRaw || rightRaw) && (expr->op == "+" || expr->op == "-")) {
+            if (leftRaw && rightRaw && expr->op == "-") {
+                llvm::Value* leftAddress = impl->builder.CreatePtrToInt(left, impl->builder.getInt64Ty());
+                llvm::Value* rightAddress = impl->builder.CreatePtrToInt(right, impl->builder.getInt64Ty());
+                llvm::Value* bytes = impl->builder.CreateSub(leftAddress, rightAddress, "pointer.byte.diff");
+                impl->value = impl->builder.CreateSDiv(bytes,
+                    impl->builder.getInt64(impl->SizeOfTypeName(PointerPointeeName(leftType))),
+                    "pointer.diff");
+                impl->valueCreatesManagedOwner = false;
+                return;
+            }
+            const bool pointerOnLeft = leftRaw;
+            llvm::Value* pointer = pointerOnLeft ? left : right;
+            llvm::Value* index = pointerOnLeft ? right : left;
+            index = impl->Coerce(index, impl->builder.getInt64Ty());
+            if (expr->op == "-" && pointerOnLeft)
+                index = impl->builder.CreateNeg(index, "pointer.negative.offset");
+            const std::string pointerType = pointerOnLeft ? leftType : rightType;
+            impl->value = impl->builder.CreateGEP(
+                impl->TypeFromName(PointerPointeeName(pointerType)), pointer, index, "pointer.offset");
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
+
+        if (equality && ((leftManaged && rightType == "null") || (rightManaged && leftType == "null"))) {
+            llvm::Value* handle = leftManaged ? left : right;
+            llvm::Value* valid = impl->builder.CreateCall(impl->ManagedValid(), {handle}, "managed.valid");
+            impl->value = expr->op == "==" ? impl->builder.CreateNot(valid, "managed.is.null") : valid;
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
+
+        if ((leftRaw || rightRaw) &&
+            (equality || expr->op == "<" || expr->op == "<=" || expr->op == ">" || expr->op == ">=")) {
+            if (expr->op == "==") impl->value = impl->builder.CreateICmpEQ(left, right, "pointer.equal");
+            else if (expr->op == "!=") impl->value = impl->builder.CreateICmpNE(left, right, "pointer.not.equal");
+            else if (expr->op == "<") impl->value = impl->builder.CreateICmpULT(left, right, "pointer.less");
+            else if (expr->op == "<=") impl->value = impl->builder.CreateICmpULE(left, right, "pointer.less.equal");
+            else if (expr->op == ">") impl->value = impl->builder.CreateICmpUGT(left, right, "pointer.greater");
+            else impl->value = impl->builder.CreateICmpUGE(left, right, "pointer.greater.equal");
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
+
+        if (leftManaged && rightManaged && equality) {
+            impl->value = expr->op == "=="
+                ? impl->builder.CreateICmpEQ(left, right, "managed.equal")
+                : impl->builder.CreateICmpNE(left, right, "managed.not.equal");
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
         impl->value = impl->ApplyBinary(expr->op, left, right);
     }
 
@@ -1121,6 +1186,14 @@ namespace Absolute {
             return;
         }
         llvm::Value* result = impl->Coerce(impl->Evaluate(stmt->expr.get()), function->getReturnType());
+        if (IsManagedPointerTypeName(impl->currentReturnTypeName)) {
+            const std::string returnedName = IdentifierName(stmt->expr.get());
+            if (!returnedName.empty()) {
+                Impl::Variable& returned = impl->RequireVariable(returnedName);
+                if (returned.managedOwner)
+                    impl->builder.CreateStore(impl->builder.getFalse(), returned.managedOwner);
+            }
+        }
         impl->EmitCleanupsFrom(0);
         impl->builder.CreateRet(result);
     }

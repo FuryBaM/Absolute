@@ -1,0 +1,9 @@
+int32* invalidEscape(int32* subscriber) {
+    return subscriber;
+}
+
+int32 main() {
+    int32* owner = new int32(42);
+    int32* escaped = invalidEscape(owner);
+    return *escaped;
+}

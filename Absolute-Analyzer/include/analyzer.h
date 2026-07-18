@@ -38,12 +38,15 @@ namespace Absolute {
         std::string type;
         std::vector<std::string> parameterTypes;
         size_t scopeDepth = 0;
+        bool managedOwner = false;
     };
 
     struct ANALYZER_API ExpressionInfo {
         SymbolId symbol = InvalidSymbolId;
         std::string type;
         bool isLValue = false;
+        bool createsManagedOwner = false;
+        bool referencesManagedOwner = false;
     };
 
     struct ANALYZER_API Diagnostic {
@@ -96,6 +99,8 @@ namespace Absolute {
             SymbolId symbol = InvalidSymbolId;
             std::string type;
             bool isLValue = false;
+            bool createsManagedOwner = false;
+            bool referencesManagedOwner = false;
         };
 
         std::vector<Program*> programs;

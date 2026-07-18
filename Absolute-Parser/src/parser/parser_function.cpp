@@ -2,6 +2,20 @@
 #include "parser.h"
 
 namespace Absolute {
+    bool Parser::LooksLikeFunctionDeclaration() const
+    {
+        size_t index = pos;
+        if (index < tokens.size() && tokens[index].type == TokenType::KEYWORD && tokens[index].value == "raw")
+            ++index;
+        if (index >= tokens.size() || tokens[index].type != TokenType::KEYWORD ||
+            !IsPrimitiveType(tokens[index].value)) return false;
+        ++index;
+        while (index < tokens.size() && tokens[index].type == TokenType::OPERATOR && tokens[index].value == "*")
+            ++index;
+        return index + 1 < tokens.size() && tokens[index].type == TokenType::IDENTIFIER &&
+            tokens[index + 1].type == TokenType::BRACKET && tokens[index + 1].value == "(";
+    }
+
     std::unique_ptr<FunctionCallExpr> Parser::ParseFunctionCallExpr(std::unique_ptr<Expression> base)
     {
         Token* bracket = CurrentToken();
@@ -18,7 +32,7 @@ namespace Absolute {
     std::unique_ptr<FunctionDeclStmt> Parser::ParseFunctionDeclaration()
     {
         std::vector<Token> modifiers = this->modifiers;
-        Token* ret = Consume(TokenType::KEYWORD);
+        std::unique_ptr<TypeExpr> returnType = ParseType();
         Token* identifier = Consume(TokenType::IDENTIFIER);
 
         std::vector<std::unique_ptr<VarDeclExpr>> parameters = ParseParameters();
@@ -32,7 +46,7 @@ namespace Absolute {
         std::unique_ptr<Statement> body = ParseStatement();
 
         auto stmt = std::make_unique<FunctionDeclStmt>(
-            std::make_unique<Token>(*ret),   // Создаём `unique_ptr` на копию токена
+            std::move(returnType),
             std::make_unique<Token>(*identifier),
             std::move(parameters),
             std::move(body)
@@ -51,12 +65,7 @@ namespace Absolute {
             throw std::runtime_error("Unsupported external ABI");
         }
 
-        Token* returnType = Consume(TokenType::KEYWORD);
-        if (!returnType || !IsPrimitiveType(returnType->value) || returnType->value == "auto" ||
-            returnType->value == "dynamic") {
-            ReportSyntaxError(returnType, "An extern function requires a concrete primitive return type");
-            throw std::runtime_error("Invalid extern return type");
-        }
+        std::unique_ptr<TypeExpr> returnType = ParseType();
         Token* identifier = Consume(TokenType::IDENTIFIER);
         auto parameters = ParseParameters();
         for (const auto& parameter : parameters) {
@@ -68,7 +77,7 @@ namespace Absolute {
         Consume(TokenType::DELIMITER, ";");
 
         auto statement = std::make_unique<FunctionDeclStmt>(
-            std::make_unique<Token>(*returnType), std::make_unique<Token>(*identifier),
+            std::move(returnType), std::make_unique<Token>(*identifier),
             std::move(parameters), nullptr);
         statement->externalAbi = "C";
         statement->modifiers = std::move(modifiers);

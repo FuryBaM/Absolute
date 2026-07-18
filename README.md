@@ -164,6 +164,16 @@ raw int32* address = &value;
 *address = 42;
 ```
 
+Pointer types are supported in function parameters and return values. Returning
+a managed pointer transfers ownership to the caller, so a function may return a
+fresh allocation or one of its local owners. Returning a subscriber is rejected
+because its lifetime still belongs to another owner. Native `extern "C"`
+signatures must use `raw T*`.
+
+Raw pointers support `+`/`-` integer offsets, pointer differences, ordering, and
+null comparisons. Managed pointers deliberately reject address arithmetic; they
+support equality and null checks using slot generation validity.
+
 The native runtime library is linked automatically by `--build-exe`. Objects
 created by `--emit-object` have to be linked with `Absolute-Runtime` manually
 when managed pointers are used.

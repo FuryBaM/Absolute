@@ -151,13 +151,9 @@ namespace Absolute{
         Token* token = CurrentToken();
         if (!token) return nullptr;
 
+        if (LooksLikeFunctionDeclaration()) return ParseFunctionDeclaration();
+
         if (token->type == TokenType::KEYWORD && IsPrimitiveType(token->value)) {
-            Token* name = PeekToken();
-            Token* afterName = PeekToken(2);
-            if (name && name->type == TokenType::IDENTIFIER &&
-                afterName && afterName->type == TokenType::BRACKET && afterName->value == "(") {
-                return ParseFunctionDeclaration();
-            }
             return ParseVarDeclaration();
         }
 

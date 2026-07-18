@@ -64,13 +64,13 @@ namespace Absolute {
     };
 
     struct FunctionDeclStmt : Statement {
-        std::unique_ptr<Token> returnType;
+        std::unique_ptr<TypeExpr> returnType;
         std::unique_ptr<Token> name;
         std::vector<std::unique_ptr<VarDeclExpr>> parameters;
         std::unique_ptr<Statement> body;
         std::string externalAbi;
 
-        FunctionDeclStmt(std::unique_ptr<Token> returnType, std::unique_ptr<Token> name,
+        FunctionDeclStmt(std::unique_ptr<TypeExpr> returnType, std::unique_ptr<Token> name,
             std::vector<std::unique_ptr<VarDeclExpr>> params,
             std::unique_ptr<Statement> body)
             : returnType(std::move(returnType)),
@@ -84,7 +84,8 @@ namespace Absolute {
         void print(int indent = 0) override {
             std::cout << std::string(indent, ' ') << "Function declaration: ";
             if (IsExternal()) std::cout << "extern \"" << externalAbi << "\" ";
-            std::cout << returnType->value << " " << name->value;
+            std::cout << "\n" << returnType->ToString(indent + 1) << "\n"
+                << std::string(indent + 1, ' ') << "Name: " << name->value;
             // Выводим модификаторы, если есть
             if (!modifiers.empty()) {
                 std::cout << " [";

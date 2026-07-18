@@ -51,6 +51,7 @@ namespace Absolute {
         Token* Consume(TokenType tokenType, const std::string& expectedValue);
 
         void ParseModifiers();
+        bool LooksLikeFunctionDeclaration() const;
         void ConsumeTemplateClose();
         bool IsTemplateArgumentList(size_t start, size_t* close = nullptr) const;
 
