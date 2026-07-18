@@ -196,4 +196,12 @@ namespace Absolute {
     void BreakStmt::Accept(StatementVisitor& visitor) {
         visitor.Visit(this);
     }
+
+    void ImportStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void NamespaceDeclStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
 }
