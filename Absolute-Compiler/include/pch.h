@@ -10,7 +10,7 @@
 #include <memory>
 
 #ifdef _WIN32
-#define PARSER_API  // Импорт в другом проекте
+#define PARSER_API  // Г€Г¬ГЇГ®Г°ГІ Гў Г¤Г°ГіГЈГ®Г¬ ГЇГ°Г®ГҐГЄГІГҐ
 #define ANALYZER_API
 #else
 #define PARSER_API
@@ -24,3 +24,4 @@
 #include "type.h"
 #include "variable.h"
 #include "analyzer.h"
+#include "codegen.h"
