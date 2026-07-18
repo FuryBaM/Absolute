@@ -54,5 +54,7 @@ namespace Absolute {
 
             if (body) body->print(indent + 1);
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 }
