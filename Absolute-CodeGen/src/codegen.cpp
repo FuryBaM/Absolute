@@ -72,6 +72,7 @@ namespace Absolute {
         Phase phase = Phase::DeclareFunctions;
         std::vector<std::unordered_map<std::string, Variable>> scopes;
         std::vector<std::pair<llvm::BasicBlock*, llvm::BasicBlock*>> loops;
+        std::string currentNamespace;
 
         explicit Impl(CodeGenerator& visitor, const Analyzer* analyzer)
             : visitor(visitor), analyzer(analyzer), builder(context) {
@@ -240,6 +241,20 @@ namespace Absolute {
         llvm::Function* CurrentFunction() {
             llvm::BasicBlock* block = builder.GetInsertBlock();
             return block ? block->getParent() : nullptr;
+        }
+
+        std::string Qualify(const std::string& name) const {
+            if (name.empty() || currentNamespace.empty() || name.find('.') != std::string::npos) return name;
+            return currentNamespace + "." + name;
+        }
+
+        std::string ResolvedName(Expression* expression) const {
+            if (analyzer && expression) {
+                if (const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression)) {
+                    if (const Symbol* symbol = analyzer->GetSymbol(info->symbol)) return symbol->name;
+                }
+            }
+            return IdentifierName(expression);
         }
 
         bool IsBuiltinFunction(const std::string& name) const {
@@ -440,7 +455,8 @@ namespace Absolute {
 
         llvm::Function* DeclareFunction(FunctionDeclStmt& statement) {
             if (!statement.name || !statement.returnType) Fail("invalid function declaration");
-            if (llvm::Function* existing = module->getFunction(statement.name->value)) return existing;
+            const std::string functionName = Qualify(statement.name->value);
+            if (llvm::Function* existing = module->getFunction(functionName)) return existing;
 
             std::vector<llvm::Type*> parameterTypes;
             parameterTypes.reserve(statement.parameters.size());
@@ -451,7 +467,7 @@ namespace Absolute {
             llvm::FunctionType* functionType = llvm::FunctionType::get(
                 TypeFromName(statement.returnType->value), parameterTypes, false);
             llvm::Function* function = llvm::Function::Create(
-                functionType, llvm::Function::ExternalLinkage, statement.name->value, *module);
+                functionType, llvm::Function::ExternalLinkage, functionName, *module);
 
             size_t index = 0;
             for (llvm::Argument& argument : function->args()) {
@@ -501,6 +517,7 @@ namespace Absolute {
             module = std::make_unique<llvm::Module>(moduleName, context);
             scopes.clear();
             loops.clear();
+            currentNamespace.clear();
             value = nullptr;
 
             phase = Phase::DeclareFunctions;
@@ -554,7 +571,7 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(FunctionCallExpr* expr) {
-        const std::string name = IdentifierName(expr->base.get());
+        const std::string name = impl->ResolvedName(expr);
         if (impl->IsBuiltinFunction(name)) {
             impl->EmitBuiltin(*expr, name);
             return;
@@ -936,5 +953,20 @@ namespace Absolute {
         if (impl->phase != Impl::Phase::EmitBodies) return;
         if (impl->loops.empty()) impl->Fail("break outside a loop");
         impl->builder.CreateBr(impl->loops.back().second);
+    }
+
+    void CodeGenerator::Visit(ImportStmt* stmt) {
+        (void)stmt;
+    }
+
+    void CodeGenerator::Visit(NamespaceDeclStmt* stmt) {
+        const std::string oldNamespace = impl->currentNamespace;
+        impl->currentNamespace = impl->Qualify(stmt->name);
+        if (stmt->body) {
+            for (const auto& statement : stmt->body->statements) {
+                if (statement) statement->Accept(*this);
+            }
+        }
+        impl->currentNamespace = oldNamespace;
     }
 }
