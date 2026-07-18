@@ -41,12 +41,32 @@ namespace Absolute {
         bool managedOwner = false;
     };
 
+    enum class InitializationState {
+        Initialized,
+        Uninitialized,
+        MaybeUninitialized
+    };
+
+    enum class PointerValidity {
+        NotPointer,
+        Null,
+        Live,
+        Deleted,
+        Expired,
+        MaybeNull,
+        MaybeInvalid,
+        Unknown
+    };
+
     struct ANALYZER_API ExpressionInfo {
         SymbolId symbol = InvalidSymbolId;
         std::string type;
         bool isLValue = false;
         bool createsManagedOwner = false;
         bool referencesManagedOwner = false;
+        InitializationState initialization = InitializationState::Initialized;
+        PointerValidity pointerValidity = PointerValidity::NotPointer;
+        SymbolId pointerOwner = InvalidSymbolId;
     };
 
     struct ANALYZER_API Diagnostic {
@@ -103,6 +123,9 @@ namespace Absolute {
             bool isLValue = false;
             bool createsManagedOwner = false;
             bool referencesManagedOwner = false;
+            InitializationState initialization = InitializationState::Initialized;
+            PointerValidity pointerValidity = PointerValidity::NotPointer;
+            SymbolId pointerOwner = InvalidSymbolId;
         };
 
         enum class KeepState {
@@ -117,6 +140,21 @@ namespace Absolute {
         };
 
         using KeepLifetimeMap = std::unordered_map<SymbolId, KeepLifetime>;
+
+        struct ValueFlowState {
+            InitializationState initialization = InitializationState::Initialized;
+            PointerValidity pointerValidity = PointerValidity::NotPointer;
+            SymbolId pointerOwner = InvalidSymbolId;
+        };
+
+        using ValueFlowMap = std::unordered_map<SymbolId, ValueFlowState>;
+
+        enum class AccessMode {
+            Read,
+            Write,
+            Address,
+            Delete
+        };
 
         std::vector<Program*> programs;
         SymbolTable table;
@@ -141,6 +179,10 @@ namespace Absolute {
         std::vector<std::vector<SymbolId>> keepScopes;
         std::vector<size_t> loopKeepDepths;
         std::vector<std::vector<KeepLifetimeMap>> loopBreakStates;
+        ValueFlowMap valueFlow;
+        std::vector<std::vector<SymbolId>> valueFlowScopes;
+        std::vector<std::vector<ValueFlowMap>> loopBreakValueStates;
+        AccessMode accessMode = AccessMode::Read;
         bool flowTerminated = false;
 
     public:
@@ -232,5 +274,9 @@ namespace Absolute {
         void PopKeepScope();
         void CheckKeepScopesFrom(size_t firstScope, const std::string& exitKind);
         void MergeKeepPaths(const KeepLifetimeMap& base, const std::vector<KeepLifetimeMap>& paths);
+        void PushValueFlowScope();
+        void PopValueFlowScope();
+        void MergeValueFlowPaths(const ValueFlowMap& base, const std::vector<ValueFlowMap>& paths);
+        void RegisterFlowSymbol(SymbolId id, ValueFlowState state);
     };
 }

@@ -180,6 +180,14 @@ overwriting a live keep owner, and double deletion produce stable diagnostic
 codes (`E_KEEP_DELETE_REQUIRED`, `E_KEEP_OVERWRITE`, and
 `E_KEEP_DOUBLE_DELETE`) through the analyzer API for IDE integrations.
 
+The analyzer also performs control-flow dataflow for definite assignment and
+pointer validity. Branch and loop states are merged by `SymbolId`; managed
+subscribers retain their owner identity and become `Expired` when that owner is
+deleted. It reports reads before initialization, missing returns, null/deleted/
+expired dereferences, deleting subscribers, and operations on pointers that are
+only valid on some paths. `ExpressionInfo` exposes `InitializationState`,
+`PointerValidity`, and `pointerOwner` for IDE hover and diagnostics.
+
 Pointer types are supported in function parameters and return values. Returning
 a managed pointer transfers ownership to the caller, so a function may return a
 fresh allocation or one of its local owners. Returning a subscriber is rejected

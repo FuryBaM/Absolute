@@ -1,0 +1,22 @@
+int32 readUninitialized() {
+    int32 value;
+    return value;
+}
+
+int32 readMaybeUninitialized(bool initialize) {
+    int32 value;
+    if (initialize) {
+        value = 42;
+    }
+    return value;
+}
+
+int32 missingReturn(bool finish) {
+    if (finish) {
+        return 1;
+    }
+}
+
+int32 main() {
+    return readUninitialized() + readMaybeUninitialized(false) + missingReturn(false);
+}

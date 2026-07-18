@@ -85,6 +85,17 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/keep-invalid-operations.abs"
     )
     set_tests_properties(absolute.keep-invalid-operations PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.flow-analysis-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/flow-analysis.abs"
+    )
+    foreach(flow_error IN ITEMS uninitialized-errors pointer-flow-errors)
+        add_test(
+            NAME "absolute.${flow_error}"
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/${flow_error}.abs"
+        )
+        set_tests_properties("absolute.${flow_error}" PROPERTIES WILL_FAIL TRUE)
+    endforeach()
     if(ABSOLUTE_ENABLE_LLVM)
         add_test(
             NAME absolute.emit-llvm
@@ -241,6 +252,19 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-keep-lifetime PROPERTIES
             FIXTURES_REQUIRED absolute-keep-lifetime-executable
             PASS_REGULAR_EXPRESSION "keep-lifetime=ok"
+        )
+        add_test(
+            NAME absolute.build-flow-analysis
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/flow-analysis.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/flow-analysis-app"
+        )
+        set_tests_properties(absolute.build-flow-analysis PROPERTIES
+            FIXTURES_SETUP absolute-flow-analysis-executable
+        )
+        add_test(NAME absolute.run-flow-analysis COMMAND "${CMAKE_BINARY_DIR}/flow-analysis-app")
+        set_tests_properties(absolute.run-flow-analysis PROPERTIES
+            FIXTURES_REQUIRED absolute-flow-analysis-executable
+            PASS_REGULAR_EXPRESSION "flow-analysis=ok"
         )
     endif()
 endif()

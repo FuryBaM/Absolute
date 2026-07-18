@@ -179,6 +179,10 @@ namespace Absolute {
         keepScopes.clear();
         loopKeepDepths.clear();
         loopBreakStates.clear();
+        valueFlow.clear();
+        valueFlowScopes.clear();
+        loopBreakValueStates.clear();
+        accessMode = AccessMode::Read;
         flowTerminated = false;
         loopDepth = functionDepth = typeContextDepth = constructorContextDepth = 0;
 
@@ -262,6 +266,77 @@ namespace Absolute {
         }
     }
 
+    void Analyzer::PushValueFlowScope() { valueFlowScopes.emplace_back(); }
+
+    void Analyzer::PopValueFlowScope() {
+        if (valueFlowScopes.empty()) return;
+        for (SymbolId id : valueFlowScopes.back()) valueFlow.erase(id);
+        valueFlowScopes.pop_back();
+    }
+
+    void Analyzer::RegisterFlowSymbol(SymbolId id, ValueFlowState state) {
+        if (id == InvalidSymbolId) return;
+        if (valueFlowScopes.empty()) PushValueFlowScope();
+        valueFlow[id] = state;
+        valueFlowScopes.back().push_back(id);
+    }
+
+    void Analyzer::MergeValueFlowPaths(const ValueFlowMap& base, const std::vector<ValueFlowMap>& paths) {
+        valueFlow = base;
+        if (paths.empty()) return;
+        for (auto& [id, merged] : valueFlow) {
+            const auto stateAt = [&](const ValueFlowMap& path) -> ValueFlowState {
+                const auto found = path.find(id);
+                return found == path.end() ? merged : found->second;
+            };
+            ValueFlowState state = stateAt(paths.front());
+            for (size_t index = 1; index < paths.size(); ++index) {
+                const ValueFlowState next = stateAt(paths[index]);
+                if (state.initialization != next.initialization)
+                    state.initialization = InitializationState::MaybeUninitialized;
+
+                const PointerValidity previousPointer = state.pointerValidity;
+                if (previousPointer != next.pointerValidity) {
+                    const bool stateInvalid = state.pointerValidity == PointerValidity::Null ||
+                        state.pointerValidity == PointerValidity::Deleted ||
+                        state.pointerValidity == PointerValidity::Expired ||
+                        state.pointerValidity == PointerValidity::MaybeInvalid;
+                    const bool nextInvalid = next.pointerValidity == PointerValidity::Null ||
+                        next.pointerValidity == PointerValidity::Deleted ||
+                        next.pointerValidity == PointerValidity::Expired ||
+                        next.pointerValidity == PointerValidity::MaybeInvalid;
+                    const bool dangerousState = state.pointerValidity == PointerValidity::Deleted ||
+                        state.pointerValidity == PointerValidity::Expired ||
+                        state.pointerValidity == PointerValidity::MaybeInvalid;
+                    const bool dangerousNext = next.pointerValidity == PointerValidity::Deleted ||
+                        next.pointerValidity == PointerValidity::Expired ||
+                        next.pointerValidity == PointerValidity::MaybeInvalid;
+                    const bool nullablePair =
+                        (state.pointerValidity == PointerValidity::Null ||
+                            state.pointerValidity == PointerValidity::Live ||
+                            state.pointerValidity == PointerValidity::MaybeNull) &&
+                        (next.pointerValidity == PointerValidity::Null ||
+                            next.pointerValidity == PointerValidity::Live ||
+                            next.pointerValidity == PointerValidity::MaybeNull);
+                    if (dangerousState || dangerousNext) state.pointerValidity = PointerValidity::MaybeInvalid;
+                    else if (nullablePair) state.pointerValidity = PointerValidity::MaybeNull;
+                    else state.pointerValidity = (stateInvalid || nextInvalid)
+                        ? PointerValidity::MaybeInvalid : PointerValidity::Unknown;
+                }
+                if (state.pointerOwner != next.pointerOwner) {
+                    const bool previousWasNull = previousPointer == PointerValidity::Null ||
+                        previousPointer == PointerValidity::MaybeNull;
+                    const bool nextIsNull = next.pointerValidity == PointerValidity::Null ||
+                        next.pointerValidity == PointerValidity::MaybeNull;
+                    if (previousWasNull && state.pointerOwner == InvalidSymbolId)
+                        state.pointerOwner = next.pointerOwner;
+                    else if (!nextIsNull) state.pointerOwner = InvalidSymbolId;
+                }
+            }
+            merged = state;
+        }
+    }
+
     Analyzer::Result Analyzer::Evaluate(Expression* expression) {
         callable = false;
         callableParameters.clear();
@@ -290,7 +365,8 @@ namespace Absolute {
         result = std::move(value);
         if (expression) expressionInfo[expression] = {
             result.symbol, result.type, result.isLValue,
-            result.createsManagedOwner, result.referencesManagedOwner};
+            result.createsManagedOwner, result.referencesManagedOwner,
+            result.initialization, result.pointerValidity, result.pointerOwner};
     }
 
     bool Analyzer::IsKnownType(const std::string& name) const {
@@ -365,8 +441,13 @@ namespace Absolute {
         keepScopes.clear();
         loopKeepDepths.clear();
         loopBreakStates.clear();
+        valueFlow.clear();
+        valueFlowScopes.clear();
+        loopBreakValueStates.clear();
+        accessMode = AccessMode::Read;
         flowTerminated = false;
         PushKeepScope();
+        PushValueFlowScope();
         for (const auto& parameter : statement.parameters) {
             if (!parameter) continue;
             const std::string name = ExtractIdentifier(parameter->name.get());
@@ -375,9 +456,15 @@ namespace Absolute {
                 Report("extern parameter '" + name + "' requires a concrete C-compatible type");
             if (statement.IsExternal() && IsManagedPointerType(type))
                 Report("extern parameter '" + name + "' must use raw T* instead of a managed pointer");
+            SymbolId parameterId = InvalidSymbolId;
             if (name.empty()) Report("function parameter requires an identifier");
-            else if (!table.Declare(SymbolKind::Parameter, name, type))
-                Report("parameter '" + name + "' is already declared");
+            else if (const auto declared = table.Declare(SymbolKind::Parameter, name, type))
+                parameterId = *declared;
+            else Report("parameter '" + name + "' is already declared");
+            RegisterFlowSymbol(parameterId, {
+                InitializationState::Initialized,
+                IsPointerType(type) ? PointerValidity::Unknown : PointerValidity::NotPointer,
+                InvalidSymbolId});
             if (parameter->value) {
                 const Result value = Evaluate(parameter->value.get());
                 if (!IsAssignable(type, value.type))
@@ -385,8 +472,13 @@ namespace Absolute {
             }
         }
         if (!statement.IsExternal()) AcceptIfPresent(statement.body, *this);
+        if (!statement.IsExternal() && returnType != "void" && !flowTerminated)
+            Report("function '" + statement.name->value + "' does not return a value on every control-flow path",
+                "E_MISSING_RETURN", table.Lookup(Qualify(statement.name->value)));
+        PopValueFlowScope();
         PopKeepScope();
         keepLifetimes.clear();
+        valueFlow.clear();
         table.ExitScope();
         --functionDepth;
         currentReturnType = oldReturn;
@@ -507,8 +599,19 @@ namespace Absolute {
         const bool value = symbol->kind == SymbolKind::Variable || symbol->kind == SymbolKind::Parameter ||
             symbol->kind == SymbolKind::Field;
         if (!value) Report("object '" + expr->name + "' is not a value");
+        ValueFlowState flow;
+        if (const auto found = valueFlow.find(id); found != valueFlow.end()) flow = found->second;
+        if (value && accessMode == AccessMode::Read) {
+            if (flow.initialization == InitializationState::Uninitialized)
+                Report("object '" + expr->name + "' is read before initialization",
+                    "E_UNINITIALIZED_READ", id);
+            else if (flow.initialization == InitializationState::MaybeUninitialized)
+                Report("object '" + expr->name + "' is not initialized on every control-flow path",
+                    "E_MAYBE_UNINITIALIZED_READ", id);
+        }
         Save(expr, {id, symbol->type, value, false,
-            value && IsManagedPointerType(symbol->type) && symbol->managedOwner});
+            value && IsManagedPointerType(symbol->type) && symbol->managedOwner,
+            flow.initialization, flow.pointerValidity, flow.pointerOwner});
     }
 
     void Analyzer::Visit(FunctionCallExpr* expr) {
@@ -642,8 +745,18 @@ namespace Absolute {
             if (i < parameters.size() && !IsAssignable(parameters[i], argument.type))
                 Report("argument " + std::to_string(i + 1) + " has type '" + argument.type +
                     "', expected '" + parameters[i] + "'");
+            if (argument.pointerValidity == PointerValidity::Deleted ||
+                argument.pointerValidity == PointerValidity::Expired)
+                Report("argument " + std::to_string(i + 1) + " passes an invalid pointer",
+                    "E_INVALID_POINTER_ARGUMENT", argument.symbol);
+            else if (argument.pointerValidity == PointerValidity::MaybeInvalid)
+                Report("argument " + std::to_string(i + 1) + " may pass an invalid pointer",
+                    "E_MAYBE_INVALID_POINTER_ARGUMENT", argument.symbol);
         }
-        Save(expr, {symbolId, returnType, false, IsManagedPointerType(returnType), false});
+        Save(expr, {symbolId, returnType, false, IsManagedPointerType(returnType), false,
+            InitializationState::Initialized,
+            IsPointerType(returnType) ? PointerValidity::Unknown : PointerValidity::NotPointer,
+            InvalidSymbolId});
     }
 
     void Analyzer::Visit(ArrayAccessExpr* expr) {
@@ -673,11 +786,14 @@ namespace Absolute {
                 Save(expr, {InvalidSymbolId, "error", false});
             }
             else if (op == "+" && IsRawPointerType(left.type) && IsInteger(right.type))
-                Save(expr, {InvalidSymbolId, left.type, false});
+                Save(expr, {InvalidSymbolId, left.type, false, false, false,
+                    left.initialization, left.pointerValidity, left.pointerOwner});
             else if (op == "+" && IsInteger(left.type) && IsRawPointerType(right.type))
-                Save(expr, {InvalidSymbolId, right.type, false});
+                Save(expr, {InvalidSymbolId, right.type, false, false, false,
+                    right.initialization, right.pointerValidity, right.pointerOwner});
             else if (op == "-" && IsRawPointerType(left.type) && IsInteger(right.type))
-                Save(expr, {InvalidSymbolId, left.type, false});
+                Save(expr, {InvalidSymbolId, left.type, false, false, false,
+                    left.initialization, left.pointerValidity, left.pointerOwner});
             else if (op == "-" && IsRawPointerType(left.type) && left.type == right.type)
                 Save(expr, {InvalidSymbolId, "int64", false});
             else {
@@ -711,15 +827,43 @@ namespace Absolute {
     void Analyzer::Visit(TernaryExpr* expr) {
         const Result condition = Evaluate(expr->condition.get());
         if (!IsConditionType(condition.type)) Report("ternary condition must be boolean-compatible");
+        const ValueFlowMap baseValues = valueFlow;
         const Result trueResult = Evaluate(expr->trueExpr.get());
+        const ValueFlowMap trueValues = valueFlow;
+        valueFlow = baseValues;
         const Result falseResult = Evaluate(expr->falseExpr.get());
-        const std::string type = CommonType(trueResult.type, falseResult.type);
+        const ValueFlowMap falseValues = valueFlow;
+        MergeValueFlowPaths(baseValues, {trueValues, falseValues});
+        std::string type = CommonType(trueResult.type, falseResult.type);
+        if (type == "error" && IsPointerType(trueResult.type) && falseResult.type == "null") type = trueResult.type;
+        if (type == "error" && IsPointerType(falseResult.type) && trueResult.type == "null") type = falseResult.type;
         if (type == "error" && trueResult.type != "error" && falseResult.type != "error")
             Report("ternary branches have incompatible types '" + trueResult.type + "' and '" + falseResult.type + "'");
-        Save(expr, {InvalidSymbolId, type, false});
+        PointerValidity pointerValidity = PointerValidity::NotPointer;
+        if (IsPointerType(type)) {
+            if (trueResult.pointerValidity == falseResult.pointerValidity)
+                pointerValidity = trueResult.pointerValidity;
+            else if ((trueResult.pointerValidity == PointerValidity::Null &&
+                falseResult.pointerValidity == PointerValidity::Live) ||
+                (falseResult.pointerValidity == PointerValidity::Null &&
+                    trueResult.pointerValidity == PointerValidity::Live))
+                pointerValidity = PointerValidity::MaybeNull;
+            else pointerValidity = PointerValidity::MaybeInvalid;
+        }
+        SymbolId pointerOwner = trueResult.pointerOwner == falseResult.pointerOwner
+            ? trueResult.pointerOwner : InvalidSymbolId;
+        if (trueResult.pointerValidity == PointerValidity::Null) pointerOwner = falseResult.pointerOwner;
+        if (falseResult.pointerValidity == PointerValidity::Null) pointerOwner = trueResult.pointerOwner;
+        Save(expr, {InvalidSymbolId, type, false,
+            trueResult.createsManagedOwner && falseResult.createsManagedOwner,
+            trueResult.referencesManagedOwner && falseResult.referencesManagedOwner,
+            InitializationState::Initialized, pointerValidity, pointerOwner});
     }
 
-    void Analyzer::Visit(NullExpr* expr) { Save(expr, {InvalidSymbolId, "null", false}); }
+    void Analyzer::Visit(NullExpr* expr) {
+        Save(expr, {InvalidSymbolId, "null", false, false, false,
+            InitializationState::Initialized, PointerValidity::Null, InvalidSymbolId});
+    }
     void Analyzer::Visit(BooleanLiteralExpr* expr) { Save(expr, {InvalidSymbolId, "bool", false}); }
     void Analyzer::Visit(NumberLiteralExpr* expr) {
         Save(expr, {InvalidSymbolId, expr->value.find('.') == std::string::npos ? "int32" : "double", false});
@@ -743,7 +887,10 @@ namespace Absolute {
     }
 
     void Analyzer::Visit(AssignmentExpr* expr) {
+        const AccessMode previousAccess = accessMode;
+        accessMode = expr->op == "=" ? AccessMode::Write : AccessMode::Read;
         const Result target = Evaluate(expr->target.get());
+        accessMode = previousAccess;
         const Result value = EvaluateExpected(expr->value.get(), target.type);
         if (!target.isLValue) Report("assignment target is not assignable");
         if (!IsAssignable(target.type, value.type))
@@ -757,7 +904,20 @@ namespace Absolute {
                     "E_KEEP_OVERWRITE", target.symbol);
             keep->second.state = value.createsManagedOwner ? KeepState::Live : KeepState::Deleted;
         }
-        Save(expr, {target.symbol, target.type, false});
+        if (auto flow = valueFlow.find(target.symbol); flow != valueFlow.end()) {
+            flow->second.initialization = InitializationState::Initialized;
+            flow->second.pointerValidity = IsPointerType(target.type)
+                ? value.pointerValidity : PointerValidity::NotPointer;
+            flow->second.pointerOwner = IsManagedPointerType(target.type)
+                ? (value.createsManagedOwner ? target.symbol : value.pointerOwner)
+                : InvalidSymbolId;
+        }
+        Save(expr, {target.symbol, target.type, false, false, false,
+            InitializationState::Initialized,
+            IsPointerType(target.type) ? value.pointerValidity : PointerValidity::NotPointer,
+            IsManagedPointerType(target.type)
+                ? (value.createsManagedOwner ? target.symbol : value.pointerOwner)
+                : InvalidSymbolId});
     }
 
     void Analyzer::Visit(VarDeclExpr* expr) {
@@ -796,7 +956,18 @@ namespace Absolute {
             if (Symbol* symbol = table.Get(id)) symbol->managedOwner = value.createsManagedOwner;
         }
         else if (Symbol* symbol = table.Get(id)) symbol->type = type;
-        Save(expr, {id, type, true});
+        ValueFlowState flow;
+        flow.initialization = expr->value
+            ? InitializationState::Initialized : InitializationState::Uninitialized;
+        flow.pointerValidity = IsPointerType(type)
+            ? (expr->value ? value.pointerValidity : PointerValidity::Unknown)
+            : PointerValidity::NotPointer;
+        flow.pointerOwner = IsManagedPointerType(type) && expr->value
+            ? (value.createsManagedOwner ? id : value.pointerOwner)
+            : InvalidSymbolId;
+        if (functionDepth > 0) RegisterFlowSymbol(id, flow);
+        Save(expr, {id, type, true, false, false,
+            flow.initialization, flow.pointerValidity, flow.pointerOwner});
     }
 
     void Analyzer::Visit(MemberAccessExpr* expr) {
@@ -855,19 +1026,52 @@ namespace Absolute {
                 Report("allocation initializer has type '" + value.type + "', expected '" + constructedType + "'");
         }
         Save(expr, {InvalidSymbolId, (rawAllocation ? "raw " : "") + constructedType + "*", false,
-            !rawAllocation, false});
+            !rawAllocation, false, InitializationState::Initialized,
+            PointerValidity::Live, InvalidSymbolId});
     }
 
     void Analyzer::Visit(DestructorCallExpr* expr) {
+        const AccessMode previousAccess = accessMode;
+        accessMode = AccessMode::Delete;
         const Result target = Evaluate(expr->target.get());
+        accessMode = previousAccess;
         if (!IsPointerType(target.type) && target.type != "error")
             Report("delete requires a pointer, got '" + target.type + "'");
         if (!target.isLValue) Report("delete target must be an assignable pointer variable");
-        if (const auto keep = keepLifetimes.find(target.symbol); keep != keepLifetimes.end()) {
+        const auto keep = keepLifetimes.find(target.symbol);
+        if (target.initialization == InitializationState::Uninitialized)
+            Report("pointer is deleted before initialization", "E_DELETE_UNINITIALIZED", target.symbol);
+        else if (target.initialization == InitializationState::MaybeUninitialized)
+            Report("pointer may be uninitialized when deleted", "E_DELETE_MAYBE_UNINITIALIZED", target.symbol);
+        if (target.pointerValidity == PointerValidity::Deleted && keep == keepLifetimes.end())
+            Report("pointer is deleted more than once", "E_DOUBLE_DELETE", target.symbol);
+        else if (target.pointerValidity == PointerValidity::Expired)
+            Report("expired managed subscriber cannot be deleted", "E_DELETE_EXPIRED", target.symbol);
+        else if (target.pointerValidity == PointerValidity::MaybeInvalid)
+            Report("pointer may already be invalid when deleted", "E_DELETE_MAYBE_INVALID", target.symbol);
+
+        if (IsManagedPointerType(target.type) && target.pointerValidity != PointerValidity::Null &&
+            target.pointerOwner != target.symbol)
+            Report("managed subscriber cannot be deleted; delete its owner instead",
+                "E_DELETE_SUBSCRIBER", target.symbol);
+
+        if (keep != keepLifetimes.end()) {
             if (keep->second.state == KeepState::Deleted)
                 Report("keep owner '" + keep->second.name + "' is deleted more than once",
                     "E_KEEP_DOUBLE_DELETE", target.symbol);
             keep->second.state = KeepState::Deleted;
+        }
+        if (auto flow = valueFlow.find(target.symbol); flow != valueFlow.end()) {
+            if (IsManagedPointerType(target.type) && target.pointerOwner == target.symbol) {
+                for (auto& [id, alias] : valueFlow) {
+                    if (id != target.symbol && alias.pointerOwner == target.symbol &&
+                        alias.pointerValidity != PointerValidity::Null)
+                        alias.pointerValidity = PointerValidity::Expired;
+                }
+            }
+            flow->second.initialization = InitializationState::Initialized;
+            flow->second.pointerValidity = target.pointerValidity == PointerValidity::Null
+                ? PointerValidity::Null : PointerValidity::Deleted;
         }
         Save(expr, {InvalidSymbolId, "void", false});
     }
@@ -903,10 +1107,14 @@ namespace Absolute {
     }
 
     void Analyzer::Visit(PrefixUnaryExpr* expr) {
+        const AccessMode previousAccess = accessMode;
+        if (expr->op == "&") accessMode = AccessMode::Address;
         const Result operand = Evaluate(expr->operand.get());
+        accessMode = previousAccess;
         if (expr->op == "&") {
             if (!operand.isLValue) Report("operator '&' requires an assignable value");
-            Save(expr, {InvalidSymbolId, "raw " + operand.type + "*", false});
+            Save(expr, {InvalidSymbolId, "raw " + operand.type + "*", false, false, false,
+                InitializationState::Initialized, PointerValidity::Live, InvalidSymbolId});
             return;
         }
         if (expr->op == "*") {
@@ -914,7 +1122,19 @@ namespace Absolute {
                 Report("operator '*' requires a pointer");
                 Save(expr, {InvalidSymbolId, "error", false});
             }
-            else Save(expr, {InvalidSymbolId, PointerPointee(operand.type), true});
+            else {
+                if (operand.pointerValidity == PointerValidity::Null)
+                    Report("null pointer is dereferenced", "E_NULL_DEREFERENCE", operand.symbol);
+                else if (operand.pointerValidity == PointerValidity::MaybeNull)
+                    Report("pointer may be null when dereferenced", "E_MAYBE_NULL_DEREFERENCE", operand.symbol);
+                else if (operand.pointerValidity == PointerValidity::Deleted)
+                    Report("deleted pointer is dereferenced", "E_USE_AFTER_DELETE", operand.symbol);
+                else if (operand.pointerValidity == PointerValidity::Expired)
+                    Report("expired managed subscriber is dereferenced", "E_EXPIRED_DEREFERENCE", operand.symbol);
+                else if (operand.pointerValidity == PointerValidity::MaybeInvalid)
+                    Report("pointer may be invalid when dereferenced", "E_MAYBE_INVALID_DEREFERENCE", operand.symbol);
+                Save(expr, {InvalidSymbolId, PointerPointee(operand.type), true});
+            }
             return;
         }
         if ((expr->op == "++" || expr->op == "--") && (!operand.isLValue || !IsNumeric(operand.type)))
@@ -949,12 +1169,18 @@ namespace Absolute {
     void Analyzer::Visit(CompoundStmt* stmt) {
         if (phase == Phase::CollectDeclarations && currentType.empty()) return;
         table.EnterScope();
-        if (phase == Phase::ResolveBodies) PushKeepScope();
+        if (phase == Phase::ResolveBodies) {
+            PushKeepScope();
+            PushValueFlowScope();
+        }
         for (const auto& statement : stmt->statements) {
             AcceptIfPresent(statement, *this);
             if (phase == Phase::ResolveBodies && flowTerminated) break;
         }
-        if (phase == Phase::ResolveBodies) PopKeepScope();
+        if (phase == Phase::ResolveBodies) {
+            PopValueFlowScope();
+            PopKeepScope();
+        }
         table.ExitScope();
     }
 
@@ -978,6 +1204,10 @@ namespace Absolute {
         const Result value = EvaluateExpected(stmt->expr.get(), currentReturnType);
         if (!IsAssignable(currentReturnType, value.type))
             Report("return type '" + value.type + "' does not match '" + currentReturnType + "'");
+        if (value.pointerValidity == PointerValidity::Deleted || value.pointerValidity == PointerValidity::Expired)
+            Report("return expression contains an invalid pointer", "E_RETURN_INVALID_POINTER", value.symbol);
+        else if (value.pointerValidity == PointerValidity::MaybeInvalid)
+            Report("return expression may contain an invalid pointer", "E_RETURN_MAYBE_INVALID_POINTER", value.symbol);
         if (IsManagedPointerType(currentReturnType) && value.type != "error" &&
             value.type != "null" &&
             !value.createsManagedOwner && !value.referencesManagedOwner)
@@ -1076,16 +1306,27 @@ namespace Absolute {
         keepScopes.clear();
         loopKeepDepths.clear();
         loopBreakStates.clear();
+        valueFlow.clear();
+        valueFlowScopes.clear();
+        loopBreakValueStates.clear();
+        accessMode = AccessMode::Read;
         flowTerminated = false;
         PushKeepScope();
+        PushValueFlowScope();
         for (const auto& parameter : stmt->parameters) {
             const std::string name = parameter ? ExtractIdentifier(parameter->name.get()) : std::string{};
             const std::string type = parameter ? ResolveType(parameter->type.get()) : "error";
-            if (!table.Declare(SymbolKind::Parameter, name, type)) Report("parameter '" + name + "' is already declared");
+            if (const auto declared = table.Declare(SymbolKind::Parameter, name, type))
+                RegisterFlowSymbol(*declared, {InitializationState::Initialized,
+                    IsPointerType(type) ? PointerValidity::Unknown : PointerValidity::NotPointer,
+                    InvalidSymbolId});
+            else Report("parameter '" + name + "' is already declared");
         }
         AcceptIfPresent(stmt->body, *this);
+        PopValueFlowScope();
         PopKeepScope();
         keepLifetimes.clear();
+        valueFlow.clear();
         table.ExitScope();
         --functionDepth;
     }
@@ -1103,23 +1344,37 @@ namespace Absolute {
     void Analyzer::Visit(IfStmt* stmt) {
         if (phase == Phase::CollectDeclarations) return;
         const KeepLifetimeMap base = keepLifetimes;
+        const ValueFlowMap baseValues = valueFlow;
         std::vector<KeepLifetimeMap> continuingPaths;
+        std::vector<ValueFlowMap> continuingValuePaths;
         for (auto& branch : stmt->branches) {
             keepLifetimes = base;
+            valueFlow = baseValues;
             flowTerminated = false;
             const Result condition = Evaluate(branch.condition.get());
             if (!IsConditionType(condition.type)) Report("if condition must be boolean-compatible");
             AcceptIfPresent(branch.body, *this);
-            if (!flowTerminated) continuingPaths.push_back(keepLifetimes);
+            if (!flowTerminated) {
+                continuingPaths.push_back(keepLifetimes);
+                continuingValuePaths.push_back(valueFlow);
+            }
         }
         if (stmt->elseBranch) {
             keepLifetimes = base;
+            valueFlow = baseValues;
             flowTerminated = false;
             AcceptIfPresent(stmt->elseBranch, *this);
-            if (!flowTerminated) continuingPaths.push_back(keepLifetimes);
+            if (!flowTerminated) {
+                continuingPaths.push_back(keepLifetimes);
+                continuingValuePaths.push_back(valueFlow);
+            }
         }
-        else continuingPaths.push_back(base);
+        else {
+            continuingPaths.push_back(base);
+            continuingValuePaths.push_back(baseValues);
+        }
         MergeKeepPaths(base, continuingPaths);
+        MergeValueFlowPaths(baseValues, continuingValuePaths);
         flowTerminated = continuingPaths.empty();
     }
 
@@ -1127,28 +1382,38 @@ namespace Absolute {
         if (phase == Phase::CollectDeclarations) return;
         table.EnterScope();
         PushKeepScope();
+        PushValueFlowScope();
         AcceptAll(stmt->init, *this);
         if (stmt->condition) {
             const Result condition = Evaluate(stmt->condition.get());
             if (!IsConditionType(condition.type)) Report("for condition must be boolean-compatible");
         }
         const KeepLifetimeMap beforeLoop = keepLifetimes;
+        const ValueFlowMap beforeLoopValues = valueFlow;
         loopKeepDepths.push_back(keepScopes.size());
         loopBreakStates.emplace_back();
+        loopBreakValueStates.emplace_back();
         ++loopDepth;
         flowTerminated = false;
         AcceptIfPresent(stmt->body, *this);
         if (!flowTerminated) AcceptAll(stmt->update, *this);
         const bool bodyContinues = !flowTerminated;
         const KeepLifetimeMap afterBody = keepLifetimes;
+        const ValueFlowMap afterBodyValues = valueFlow;
         --loopDepth;
         std::vector<KeepLifetimeMap> exits{beforeLoop};
         if (bodyContinues) exits.push_back(afterBody);
         exits.insert(exits.end(), loopBreakStates.back().begin(), loopBreakStates.back().end());
+        std::vector<ValueFlowMap> valueExits{beforeLoopValues};
+        if (bodyContinues) valueExits.push_back(afterBodyValues);
+        valueExits.insert(valueExits.end(), loopBreakValueStates.back().begin(), loopBreakValueStates.back().end());
         loopBreakStates.pop_back();
+        loopBreakValueStates.pop_back();
         loopKeepDepths.pop_back();
         MergeKeepPaths(beforeLoop, exits);
+        MergeValueFlowPaths(beforeLoopValues, valueExits);
         flowTerminated = false;
+        PopValueFlowScope();
         PopKeepScope();
         table.ExitScope();
     }
@@ -1158,43 +1423,60 @@ namespace Absolute {
         const Result condition = Evaluate(stmt->condition.get());
         if (!IsConditionType(condition.type)) Report("while condition must be boolean-compatible");
         const KeepLifetimeMap beforeLoop = keepLifetimes;
+        const ValueFlowMap beforeLoopValues = valueFlow;
         loopKeepDepths.push_back(keepScopes.size());
         loopBreakStates.emplace_back();
+        loopBreakValueStates.emplace_back();
         ++loopDepth;
         flowTerminated = false;
         AcceptIfPresent(stmt->body, *this);
         const bool bodyContinues = !flowTerminated;
         const KeepLifetimeMap afterBody = keepLifetimes;
+        const ValueFlowMap afterBodyValues = valueFlow;
         --loopDepth;
         std::vector<KeepLifetimeMap> exits{beforeLoop};
         if (bodyContinues) exits.push_back(afterBody);
         exits.insert(exits.end(), loopBreakStates.back().begin(), loopBreakStates.back().end());
+        std::vector<ValueFlowMap> valueExits{beforeLoopValues};
+        if (bodyContinues) valueExits.push_back(afterBodyValues);
+        valueExits.insert(valueExits.end(), loopBreakValueStates.back().begin(), loopBreakValueStates.back().end());
         loopBreakStates.pop_back();
+        loopBreakValueStates.pop_back();
         loopKeepDepths.pop_back();
         MergeKeepPaths(beforeLoop, exits);
+        MergeValueFlowPaths(beforeLoopValues, valueExits);
         flowTerminated = false;
     }
 
     void Analyzer::Visit(DoWhileStmt* stmt) {
         if (phase == Phase::CollectDeclarations) return;
         const KeepLifetimeMap beforeLoop = keepLifetimes;
+        const ValueFlowMap beforeLoopValues = valueFlow;
         loopKeepDepths.push_back(keepScopes.size());
         loopBreakStates.emplace_back();
+        loopBreakValueStates.emplace_back();
         ++loopDepth;
         flowTerminated = false;
         AcceptIfPresent(stmt->body, *this);
         const bool bodyContinues = !flowTerminated;
         const KeepLifetimeMap afterBody = keepLifetimes;
+        const ValueFlowMap afterBodyValues = valueFlow;
         --loopDepth;
         const Result condition = Evaluate(stmt->condition.get());
         if (!IsConditionType(condition.type)) Report("do-while condition must be boolean-compatible");
         std::vector<KeepLifetimeMap> exits;
         if (bodyContinues) exits.push_back(afterBody);
         exits.insert(exits.end(), loopBreakStates.back().begin(), loopBreakStates.back().end());
+        std::vector<ValueFlowMap> valueExits;
+        if (bodyContinues) valueExits.push_back(afterBodyValues);
+        valueExits.insert(valueExits.end(), loopBreakValueStates.back().begin(), loopBreakValueStates.back().end());
         if (exits.empty()) exits.push_back(beforeLoop);
+        if (valueExits.empty()) valueExits.push_back(beforeLoopValues);
         loopBreakStates.pop_back();
+        loopBreakValueStates.pop_back();
         loopKeepDepths.pop_back();
         MergeKeepPaths(beforeLoop, exits);
+        MergeValueFlowPaths(beforeLoopValues, valueExits);
         flowTerminated = false;
     }
 
@@ -1202,25 +1484,41 @@ namespace Absolute {
         if (phase == Phase::CollectDeclarations) return;
         table.EnterScope();
         PushKeepScope();
+        PushValueFlowScope();
         const Result iterable = Evaluate(stmt->iterable.get());
         if (!iterable.type.ends_with("[]") && iterable.type != "error") Report("for-each source must be an array");
         AcceptIfPresent(stmt->var, *this);
+        if (stmt->var) {
+            if (const ExpressionInfo* variable = GetExpressionInfo(*stmt->var)) {
+                if (auto flow = valueFlow.find(variable->symbol); flow != valueFlow.end())
+                    flow->second.initialization = InitializationState::Initialized;
+            }
+        }
         const KeepLifetimeMap beforeLoop = keepLifetimes;
+        const ValueFlowMap beforeLoopValues = valueFlow;
         loopKeepDepths.push_back(keepScopes.size());
         loopBreakStates.emplace_back();
+        loopBreakValueStates.emplace_back();
         ++loopDepth;
         flowTerminated = false;
         AcceptIfPresent(stmt->body, *this);
         const bool bodyContinues = !flowTerminated;
         const KeepLifetimeMap afterBody = keepLifetimes;
+        const ValueFlowMap afterBodyValues = valueFlow;
         --loopDepth;
         std::vector<KeepLifetimeMap> exits{beforeLoop};
         if (bodyContinues) exits.push_back(afterBody);
         exits.insert(exits.end(), loopBreakStates.back().begin(), loopBreakStates.back().end());
+        std::vector<ValueFlowMap> valueExits{beforeLoopValues};
+        if (bodyContinues) valueExits.push_back(afterBodyValues);
+        valueExits.insert(valueExits.end(), loopBreakValueStates.back().begin(), loopBreakValueStates.back().end());
         loopBreakStates.pop_back();
+        loopBreakValueStates.pop_back();
         loopKeepDepths.pop_back();
         MergeKeepPaths(beforeLoop, exits);
+        MergeValueFlowPaths(beforeLoopValues, valueExits);
         flowTerminated = false;
+        PopValueFlowScope();
         PopKeepScope();
         table.ExitScope();
     }
@@ -1231,6 +1529,7 @@ namespace Absolute {
         if (loopDepth == 0) Report("continue statement is outside a loop");
         else {
             CheckKeepScopesFrom(loopKeepDepths.back(), "continue");
+            loopBreakValueStates.back().push_back(valueFlow);
             flowTerminated = true;
         }
     }
@@ -1242,6 +1541,7 @@ namespace Absolute {
         else {
             CheckKeepScopesFrom(loopKeepDepths.back(), "break");
             loopBreakStates.back().push_back(keepLifetimes);
+            loopBreakValueStates.back().push_back(valueFlow);
             flowTerminated = true;
         }
     }
