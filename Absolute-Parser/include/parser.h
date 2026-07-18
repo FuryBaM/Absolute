@@ -52,6 +52,7 @@ namespace Absolute {
 
         void ParseModifiers();
         void ConsumeTemplateClose();
+        bool IsTemplateArgumentList(size_t start, size_t* close = nullptr) const;
 
         std::unique_ptr<Expression> ParseExpression();
         std::vector<std::unique_ptr<VarDeclExpr>> ParseParameters();
@@ -60,7 +61,7 @@ namespace Absolute {
         std::unique_ptr<TypeExpr> ParseType();
         std::unique_ptr<PrimitiveTypeExpr> ParsePrimitiveType();
         std::unique_ptr<CastExpr> ParseCastExpr(std::unique_ptr<Expression> base);
-        std::unique_ptr<Expression> ParseIdentifierExpr();
+        std::unique_ptr<Expression> ParseIdentifierExpr(bool allowTemplate = false);
         std::unique_ptr<Expression> ParseTemplateExpr(std::unique_ptr<Expression> base);
         std::unique_ptr<Expression> ParseLiteralExpr();
         std::unique_ptr<BooleanLiteralExpr> ParseBooleanLiteralExpr();
