@@ -1,7 +1,7 @@
 # Absolute
 
 Absolute is an experimental C++20 compiler frontend. The repository currently
-contains a lexer, parser/AST, an early semantic analyzer, an LLVM IR backend,
+contains a lexer, parser/AST, a two-pass semantic analyzer, an LLVM IR backend,
 and the `absolutec` command-line driver.
 
 ## Build
@@ -24,7 +24,7 @@ build command.
 ## Run
 
 ```bash
-./build/Debug/absolutec code.abs
+./build/Debug/absolutec code.abs --parse-only
 ```
 
 Emit verified textual LLVM IR:
@@ -32,6 +32,11 @@ Emit verified textual LLVM IR:
 ```bash
 ./build/Debug/absolutec tests/llvm-basic.abs --emit-llvm -o output.ll
 ```
+
+Without `--parse-only`, the compiler resolves declarations and checks every
+variable, function, type, field, and method use before LLVM IR generation.
+Semantic diagnostics return a failure status, so invalid objects cannot reach
+the backend.
 
 The first backend milestone supports primitive values, functions, local
 variables, calls, casts, arithmetic/comparison operators, assignments,
