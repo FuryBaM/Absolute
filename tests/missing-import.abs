@@ -1,0 +1,5 @@
+import "does-not-exist.abs";
+
+int32 main() {
+    return 0;
+}
