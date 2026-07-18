@@ -122,6 +122,7 @@ namespace Absolute {
         struct TypeDefinition {
             std::unordered_map<std::string, MemberSignature> members;
             std::optional<MemberSignature> constructor;
+            std::vector<std::string> parents;
         };
 
         enum class Phase {
@@ -279,6 +280,7 @@ namespace Absolute {
         bool IsNumeric(const std::string& name) const;
         bool IsInteger(const std::string& name) const;
         bool IsAssignable(const std::string& target, const std::string& source) const;
+        bool IsDerivedFrom(const std::string& type, const std::string& base) const;
         std::string CommonType(const std::string& left, const std::string& right) const;
         std::vector<std::string> ResolveParameterTypes(const std::vector<std::unique_ptr<VarDeclExpr>>& parameters);
         void DeclareGlobalFunction(FunctionDeclStmt& statement);
@@ -286,6 +288,7 @@ namespace Absolute {
         void DeclareType(const std::string& name);
         void DeclareMember(const std::string& owner, std::string name, MemberSignature signature);
         const MemberSignature* FindMember(const std::string& owner, const std::string& name) const;
+        std::unordered_map<std::string, MemberSignature> VisibleMembers(const std::string& owner) const;
         std::string ExtractIdentifier(Expression* expression) const;
         std::string ExtractQualifiedName(Expression* expression) const;
         std::string Qualify(const std::string& name) const;

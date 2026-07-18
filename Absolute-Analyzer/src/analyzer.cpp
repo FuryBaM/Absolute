@@ -481,8 +481,20 @@ namespace Absolute {
         if (target.ends_with("[]") && source.ends_with("[]"))
             return IsAssignable(ArrayElementType(target), ArrayElementType(source));
         if (IsPointerType(target) && source == "null") return true;
+        if (IsPointerType(target) && IsPointerType(source) &&
+            IsRawPointerType(target) == IsRawPointerType(source))
+            return IsDerivedFrom(PointerPointee(source), PointerPointee(target));
         if (IsNumeric(target) && IsNumeric(source)) return true;
         return source == "null" && !PrimitiveStringToEnum(target).has_value();
+    }
+
+    bool Analyzer::IsDerivedFrom(const std::string& type, const std::string& base) const {
+        if (type == base) return true;
+        const auto found = types.find(type);
+        if (found == types.end()) return false;
+        for (const std::string& parent : found->second.parents)
+            if (parent == base || IsDerivedFrom(parent, base)) return true;
+        return false;
     }
 
     std::string Analyzer::CommonType(const std::string& left, const std::string& right) const {
@@ -613,10 +625,27 @@ namespace Absolute {
 
     const Analyzer::MemberSignature* Analyzer::FindMember(
         const std::string& owner, const std::string& name) const {
-        const auto type = types.find(owner);
+        const std::string objectType = IsPointerType(owner) ? PointerPointee(owner) : owner;
+        const auto type = types.find(objectType);
         if (type == types.end()) return nullptr;
         const auto member = type->second.members.find(name);
-        return member == type->second.members.end() ? nullptr : &member->second;
+        if (member != type->second.members.end()) return &member->second;
+        for (const std::string& parent : type->second.parents)
+            if (const MemberSignature* inherited = FindMember(parent, name)) return inherited;
+        return nullptr;
+    }
+
+    std::unordered_map<std::string, Analyzer::MemberSignature> Analyzer::VisibleMembers(
+        const std::string& owner) const {
+        std::unordered_map<std::string, MemberSignature> result;
+        const auto found = types.find(owner);
+        if (found == types.end()) return result;
+        for (const std::string& parent : found->second.parents) {
+            auto inherited = VisibleMembers(parent);
+            result.insert(inherited.begin(), inherited.end());
+        }
+        for (const auto& [name, member] : found->second.members) result[name] = member;
+        return result;
     }
 
     std::string Analyzer::ExtractIdentifier(Expression* expression) const {
@@ -1254,12 +1283,26 @@ namespace Absolute {
         if (!IsKnownType(constructedType) || constructedType == "void" || constructedType == "auto" ||
             constructedType == "dynamic")
             Report("cannot allocate type '" + constructedType + "'");
-        if (expr->arguments.size() > 1 && PrimitiveStringToEnum(constructedType).has_value())
+        const bool primitive = PrimitiveStringToEnum(constructedType).has_value();
+        if (expr->arguments.size() > 1 && primitive)
             Report("primitive allocation accepts at most one initializer");
-        for (const auto& argument : expr->arguments) {
-            const Result value = EvaluateExpected(argument.get(), constructedType);
-            if (PrimitiveStringToEnum(constructedType).has_value() && !IsAssignable(constructedType, value.type))
-                Report("allocation initializer has type '" + value.type + "', expected '" + constructedType + "'");
+        std::vector<std::string> parameters;
+        if (!primitive) {
+            const auto found = types.find(constructedType);
+            if (found != types.end() && found->second.constructor)
+                parameters = found->second.constructor->parameterTypes;
+            if (expr->arguments.size() != parameters.size())
+                Report("constructor of '" + constructedType + "' expects " +
+                    std::to_string(parameters.size()) + " argument(s), got " +
+                    std::to_string(expr->arguments.size()));
+        }
+        for (size_t index = 0; index < expr->arguments.size(); ++index) {
+            const std::string expected = primitive ? constructedType :
+                (index < parameters.size() ? parameters[index] : std::string{});
+            const Result value = EvaluateExpected(expr->arguments[index].get(), expected);
+            if (!expected.empty() && !IsAssignable(expected, value.type))
+                Report("constructor argument " + std::to_string(index + 1) + " has type '" +
+                    value.type + "', expected '" + expected + "'");
         }
         Save(expr, {InvalidSymbolId, (rawAllocation ? "raw " : "") + constructedType + "*", false,
             !rawAllocation, false, InitializationState::Initialized,
@@ -1451,6 +1494,7 @@ namespace Absolute {
 
     void Analyzer::Visit(CompoundStmt* stmt) {
         if (phase == Phase::CollectDeclarations && currentType.empty()) return;
+        const bool typeBody = !currentType.empty() && functionDepth == 0;
         table.EnterScope();
         if (phase == Phase::ResolveBodies) {
             PushKeepScope();
@@ -1458,7 +1502,10 @@ namespace Absolute {
         }
         for (const auto& statement : stmt->statements) {
             AcceptIfPresent(statement, *this);
-            if (phase == Phase::ResolveBodies && flowTerminated) break;
+            if (phase == Phase::ResolveBodies && flowTerminated) {
+                if (!typeBody) break;
+                flowTerminated = false;
+            }
         }
         if (phase == Phase::ResolveBodies) {
             PopValueFlowScope();
@@ -1552,6 +1599,10 @@ namespace Absolute {
         const std::string typeName = Qualify(stmt->name);
         if (phase == Phase::CollectDeclarations) {
             DeclareType(stmt->name);
+            auto& definition = types[typeName];
+            definition.parents.clear();
+            for (const std::string& parent : stmt->parents)
+                definition.parents.push_back(ResolveTypeReference(parent));
             const std::string old = currentType;
             currentType = typeName;
             AcceptIfPresent(stmt->body, *this);
@@ -1564,7 +1615,7 @@ namespace Absolute {
         const std::string old = currentType;
         currentType = typeName;
         table.EnterScope();
-        for (const auto& [name, member] : types[typeName].members)
+        for (const auto& [name, member] : VisibleMembers(typeName))
             table.Declare(member.kind, name, member.type, member.parameterTypes);
         AcceptIfPresent(stmt->body, *this);
         table.ExitScope();

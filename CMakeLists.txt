@@ -115,6 +115,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-advanced.abs"
     )
     add_test(
+        NAME absolute.classes-codegen-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/classes-codegen.abs"
+    )
+    add_test(
         NAME absolute.array-advanced-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-advanced-errors.abs"
     )
@@ -169,6 +173,14 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-array-advanced-ir
         )
         add_test(
+            NAME absolute.emit-classes-codegen
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/classes-codegen.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/classes-codegen.ll"
+        )
+        set_tests_properties(absolute.emit-classes-codegen PROPERTIES
+            FIXTURES_SETUP absolute-classes-codegen-ir
+        )
+        add_test(
             NAME absolute.emit-slice-out-of-bounds
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/slice-out-of-bounds.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/slice-out-of-bounds.ll"
@@ -210,6 +222,14 @@ if(BUILD_TESTING)
             set_tests_properties(absolute.run-array-advanced PROPERTIES
                 FIXTURES_REQUIRED absolute-array-advanced-ir
                 PASS_REGULAR_EXPRESSION "advanced-arrays=227"
+            )
+            add_test(
+                NAME absolute.run-classes-codegen
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/classes-codegen.ll"
+            )
+            set_tests_properties(absolute.run-classes-codegen PROPERTIES
+                FIXTURES_REQUIRED absolute-classes-codegen-ir
+                PASS_REGULAR_EXPRESSION "classes=42"
             )
             add_test(
                 NAME absolute.run-slice-out-of-bounds

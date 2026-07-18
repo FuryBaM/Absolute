@@ -1,0 +1,90 @@
+class Node {
+    public virtual int64 evaluate(int32 round) {
+        return 0;
+    }
+
+    public virtual void destroy() {
+    }
+}
+
+class Leaf : Node {
+    public int64 value;
+
+    public Leaf(uint32 seed) {
+        value = seed & 2147483647;
+    }
+
+    public override int64 evaluate(int32 round) {
+        return (value + round) & 2147483647;
+    }
+}
+
+class BinaryNode : Node {
+    public raw Node* left;
+    public raw Node* right;
+    public int64 bias;
+
+    public override void destroy() {
+        left.destroy();
+        right.destroy();
+        delete left;
+        delete right;
+    }
+}
+
+class AddNode : BinaryNode {
+    public AddNode(raw Node* leftNode, raw Node* rightNode, uint32 seed) {
+        left = leftNode;
+        right = rightNode;
+        bias = (seed >> 8) & 1023;
+    }
+
+    public override int64 evaluate(int32 round) {
+        return (left.evaluate(round) * 3 + right.evaluate(round) * 5 + bias + round) & 2147483647;
+    }
+}
+
+class XorNode : BinaryNode {
+    public XorNode(raw Node* leftNode, raw Node* rightNode, uint32 seed) {
+        left = leftNode;
+        right = rightNode;
+        bias = (seed >> 8) & 1023;
+    }
+
+    public override int64 evaluate(int32 round) {
+        return (left.evaluate(round) ^ (right.evaluate(round) * 9 + bias + round)) & 2147483647;
+    }
+}
+
+raw Node* buildTree(int32 depth, uint32 seed) {
+    if (depth == 0) {
+        return new raw Leaf(seed);
+    }
+
+    uint32 leftSeed = seed * 1664525 + 1013904223;
+    uint32 rightSeed = leftSeed * 22695477 + 1;
+    raw Node* leftNode = buildTree(depth - 1, leftSeed);
+    raw Node* rightNode = buildTree(depth - 1, rightSeed);
+    if (((seed ^ depth) & 1) == 0) {
+        return new raw AddNode(leftNode, rightNode, seed);
+    }
+    return new raw XorNode(leftNode, rightNode, seed);
+}
+
+int64 objectTree() {
+    raw Node* root = buildTree(16, 123456789);
+    int64 checksum = 0;
+    int32 round = 0;
+    while (round < 200) {
+        checksum = (checksum + root.evaluate(round)) & 2147483647;
+        round += 1;
+    }
+    root.destroy();
+    delete root;
+    return checksum;
+}
+
+int32 main() {
+    println(objectTree());
+    return 0;
+}

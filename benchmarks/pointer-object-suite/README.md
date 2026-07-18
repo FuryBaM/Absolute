@@ -7,7 +7,7 @@ This suite measures four pointer-heavy workloads in Release mode:
 - `arena-graph`: builds a shuffled cycle of 1,048,576 nodes in primitive arenas and follows five million links. Absolute and C++ use raw pointer arithmetic for the arena loads.
 - `object-tree`: builds 131,071 linked objects in a `Node -> BinaryNode -> AddNode/XorNode` hierarchy and repeatedly traverses it through virtual/dynamic calls.
 
-Absolute currently has parser and analyzer support for classes, but its LLVM backend does not yet emit class storage, member access, constructors, or methods. Consequently `object-tree/Absolute` is recorded as `N/A` instead of silently substituting an array implementation. The other three workloads include Absolute.
+The Absolute version uses the same five-class hierarchy, raw `Node*` links, constructors, inherited fields, recursive cleanup, and virtual calls through a generated vtable. It does not substitute arrays for objects.
 
 ## Run on Windows
 

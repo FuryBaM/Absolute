@@ -141,7 +141,7 @@ if (-not (Test-Path -LiteralPath $absoluteCompiler)) {
 $absoluteCompilerWsl = Convert-ToWslPath $absoluteCompiler
 
 $algorithms = @('managed-deref', 'heap-nodes', 'arena-graph', 'object-tree')
-$absoluteAlgorithms = @('managed-deref', 'heap-nodes', 'arena-graph')
+$absoluteAlgorithms = @('managed-deref', 'heap-nodes', 'arena-graph', 'object-tree')
 $expected = @{
     'managed-deref' = '2007139840'
     'heap-nodes' = '765920640'
@@ -164,7 +164,7 @@ $optimizedByAlgorithm = @{
     'managed-deref' = @('Absolute', 'C++', 'C#', 'Java', 'JavaScript')
     'heap-nodes' = @('Absolute', 'C++', 'C#', 'Java', 'JavaScript')
     'arena-graph' = @('Absolute', 'C++', 'C#', 'Java', 'JavaScript')
-    'object-tree' = @('C++', 'C#', 'Java', 'JavaScript')
+    'object-tree' = @('Absolute', 'C++', 'C#', 'Java', 'JavaScript')
 }
 
 Write-Host '[Compile Absolute pointer runtime for Windows]'
@@ -254,7 +254,7 @@ function Get-Median([double[]]$values) {
 
 function Get-Representation([string]$algorithm, [string]$language) {
     if ($algorithm -eq 'object-tree') {
-        if ($language -eq 'Absolute') { return 'unsupported class backend' }
+        if ($language -eq 'Absolute') { return 'raw class hierarchy with vtable dispatch' }
         return 'Node/BinaryNode/Leaf/AddNode/XorNode objects'
     }
     if ($algorithm -eq 'arena-graph') {
@@ -364,7 +364,6 @@ foreach ($algorithm in $algorithms) {
 Write-Host ''
 $rows | Format-Table Algorithm, Language, Samples, MedianSeconds, MillionUnitsPerSecond, RelativeToFastest, Status -AutoSize
 Write-Host ''
-Write-Host 'Note: Absolute object-tree is N/A because class/member LLVM codegen is not implemented yet.'
 
 $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $resultPath = Join-Path $resultsRoot "pointer-object-benchmark-$timestamp.csv"

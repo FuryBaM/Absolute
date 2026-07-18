@@ -1,0 +1,38 @@
+class Counter {
+    public int32 value;
+
+    public int32 read() {
+        return value;
+    }
+}
+
+class Node {
+    public virtual int64 evaluate(int64 input) {
+        return input;
+    }
+}
+
+class AddNode : Node {
+    public int64 bias;
+
+    public AddNode(int64 initialBias) {
+        bias = initialBias;
+    }
+
+    public override int64 evaluate(int64 input) {
+        return input + bias;
+    }
+}
+
+int32 main() {
+    Counter counter;
+    counter.value = 40;
+    assert(counter.read() == 40, "value class member access");
+
+    raw Node* node = new raw AddNode(2);
+    int64 result = node.evaluate(40);
+    assert(result == 42, "virtual dispatch through base pointer");
+    delete node;
+    println(format("classes={}", result));
+    return 0;
+}

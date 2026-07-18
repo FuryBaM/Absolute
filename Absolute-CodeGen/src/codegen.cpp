@@ -99,6 +99,11 @@ namespace Absolute {
             return name.size() > 6 && name.starts_with("task<") && name.ends_with(">");
         }
 
+        bool HasModifier(const Statement& statement, const std::string& name) {
+            return std::any_of(statement.modifiers.begin(), statement.modifiers.end(),
+                [&](const Token& modifier) { return modifier.value == name; });
+        }
+
         size_t ArrayRankName(std::string type) {
             size_t rank = 0;
             while (type.ends_with("[]")) {
@@ -176,6 +181,40 @@ namespace Absolute {
             std::vector<llvm::Value*> dimensions;
         };
 
+        struct ClassField {
+            std::string name;
+            std::string typeName;
+            unsigned index = 0;
+        };
+
+        struct ClassMethod {
+            FunctionDeclStmt* statement = nullptr;
+            std::string owner;
+            std::string linkName;
+            std::optional<unsigned> virtualSlot;
+        };
+
+        struct ClassInfo {
+            std::string name;
+            std::string nameSpace;
+            ClassDeclStmt* statement = nullptr;
+            std::vector<std::string> parents;
+            std::vector<VarDeclExpr*> ownPrimitiveFields;
+            std::vector<InstanceDeclExpr*> ownObjectFields;
+            std::vector<FunctionDeclStmt*> ownMethods;
+            ConstructorDeclStmt* constructor = nullptr;
+            std::vector<ClassField> fields;
+            std::unordered_map<std::string, ClassField> fieldByName;
+            std::unordered_map<std::string, ClassMethod> methods;
+            std::unordered_map<std::string, ClassMethod> declaredMethods;
+            std::vector<std::string> virtualNames;
+            llvm::StructType* llvmType = nullptr;
+            llvm::GlobalVariable* vtable = nullptr;
+            bool finalizing = false;
+            bool finalized = false;
+            bool emitted = false;
+        };
+
         struct LoopTarget {
             llvm::BasicBlock* continueBlock = nullptr;
             llvm::BasicBlock* breakBlock = nullptr;
@@ -197,6 +236,8 @@ namespace Absolute {
         std::vector<std::unordered_map<std::string, Variable>> scopes;
         std::unordered_map<std::string, Variable> globals;
         std::unordered_map<std::string, llvm::StructType*> arrayDescriptorTypes;
+        std::unordered_map<std::string, ClassInfo> classes;
+        std::vector<std::string> classOrder;
         std::vector<LoopTarget> loops;
         std::string currentNamespace;
         std::unordered_map<std::string, std::string> functionLinkNames;
@@ -206,6 +247,8 @@ namespace Absolute {
         llvm::Value* addressValue = nullptr;
         bool declarationKeep = false;
         std::string currentReturnTypeName;
+        std::string currentClassName;
+        llvm::Value* currentThis = nullptr;
         std::uint64_t taskThunkCounter = 0;
 
         explicit Impl(CodeGenerator& visitor, const Analyzer* analyzer)
@@ -230,6 +273,10 @@ namespace Absolute {
             if (name == "double") return builder.getDoubleTy();
             if (name == "string") return builder.getPtrTy();
             if (name == "void") return builder.getVoidTy();
+            if (classes.contains(name)) {
+                FinalizeClass(name);
+                return classes.at(name).llvmType;
+            }
             Fail("unsupported type '" + name + "'");
         }
 
@@ -258,7 +305,7 @@ namespace Absolute {
             }
             PrimitiveTypeNameVisitor typeVisitor;
             expression->Accept(typeVisitor);
-            if (typeVisitor.name.empty()) Fail("user-defined types are not implemented yet");
+            if (typeVisitor.name.empty()) Fail("cannot resolve type expression");
             return typeVisitor.name;
         }
 
@@ -271,6 +318,241 @@ namespace Absolute {
             if (const auto* declarator = dynamic_cast<const ArrayAccessExpr*>(expression.name.get()))
                 for (size_t index = 0; index < declarator->indexes.size(); ++index) type += "[]";
             return type;
+        }
+
+        std::string QualifiedClassName(const std::string& name, const std::string& nameSpace) const {
+            if (name.empty() || name.find('.') != std::string::npos || nameSpace.empty()) return name;
+            return nameSpace + "." + name;
+        }
+
+        void CollectClass(ClassDeclStmt& statement, const std::string& nameSpace) {
+            const std::string name = QualifiedClassName(statement.name, nameSpace);
+            if (classes.contains(name)) Fail("duplicate class '" + name + "'");
+            ClassInfo info;
+            info.name = name;
+            info.nameSpace = nameSpace;
+            info.statement = &statement;
+            info.llvmType = llvm::StructType::create(context, "absolute.class." + name);
+            for (const std::string& parent : statement.parents)
+                info.parents.push_back(QualifiedClassName(parent, nameSpace));
+
+            auto* body = dynamic_cast<CompoundStmt*>(statement.body.get());
+            if (!body) Fail("class '" + name + "' requires a compound body");
+            for (const auto& member : body->statements) {
+                if (auto* declaration = dynamic_cast<VarDeclStmt*>(member.get())) {
+                    if (declaration->expr) info.ownPrimitiveFields.push_back(declaration->expr.get());
+                }
+                else if (auto* single = dynamic_cast<SingleStatement*>(member.get())) {
+                    if (auto* instance = dynamic_cast<InstanceDeclExpr*>(single->expr.get()))
+                        info.ownObjectFields.push_back(instance);
+                }
+                else if (auto* method = dynamic_cast<FunctionDeclStmt*>(member.get()))
+                    info.ownMethods.push_back(method);
+                else if (auto* constructor = dynamic_cast<ConstructorDeclStmt*>(member.get())) {
+                    if (info.constructor) Fail("class '" + name + "' has multiple constructors");
+                    info.constructor = constructor;
+                }
+            }
+            classes.emplace(name, std::move(info));
+            classOrder.push_back(name);
+        }
+
+        void CollectClassDeclarations(const std::vector<std::unique_ptr<Statement>>& statements,
+            const std::string& nameSpace = {}) {
+            for (const auto& statement : statements) {
+                if (auto* classDeclaration = dynamic_cast<ClassDeclStmt*>(statement.get()))
+                    CollectClass(*classDeclaration, nameSpace);
+                else if (auto* nameSpaceDeclaration = dynamic_cast<NamespaceDeclStmt*>(statement.get())) {
+                    const std::string nested = nameSpace.empty()
+                        ? nameSpaceDeclaration->name : nameSpace + "." + nameSpaceDeclaration->name;
+                    if (nameSpaceDeclaration->body)
+                        CollectClassDeclarations(nameSpaceDeclaration->body->statements, nested);
+                }
+            }
+        }
+
+        bool SameMethodSignature(FunctionDeclStmt& left, FunctionDeclStmt& right) {
+            if (ResolveTypeName(left.returnType.get()) != ResolveTypeName(right.returnType.get()) ||
+                left.parameters.size() != right.parameters.size()) return false;
+            for (size_t index = 0; index < left.parameters.size(); ++index)
+                if (DeclaredTypeName(*left.parameters[index]) != DeclaredTypeName(*right.parameters[index]))
+                    return false;
+            return true;
+        }
+
+        void FinalizeClass(const std::string& name) {
+            auto found = classes.find(name);
+            if (found == classes.end()) Fail("unknown class '" + name + "'");
+            ClassInfo& info = found->second;
+            if (info.finalized) return;
+            if (info.finalizing) Fail("cyclic class inheritance involving '" + name + "'");
+            info.finalizing = true;
+            if (info.parents.size() > 1)
+                Fail("multiple inheritance codegen is not implemented for class '" + name + "'");
+
+            if (!info.parents.empty()) {
+                std::string parentName = info.parents.front();
+                if (!classes.contains(parentName) && classes.contains(info.statement->parents.front()))
+                    parentName = info.statement->parents.front();
+                if (!classes.contains(parentName)) Fail("unknown parent class '" + parentName + "'");
+                info.parents.front() = parentName;
+                FinalizeClass(parentName);
+                const ClassInfo& parent = classes.at(parentName);
+                info.fields = parent.fields;
+                info.fieldByName = parent.fieldByName;
+                info.methods = parent.methods;
+                info.virtualNames = parent.virtualNames;
+            }
+
+            const auto addField = [&](const std::string& fieldName, const std::string& typeName) {
+                if (info.fieldByName.contains(fieldName))
+                    Fail("field '" + name + "." + fieldName + "' hides an inherited field");
+                ClassField field{fieldName, typeName, static_cast<unsigned>(info.fields.size() + 1)};
+                info.fields.push_back(field);
+                info.fieldByName.emplace(fieldName, std::move(field));
+            };
+            for (VarDeclExpr* field : info.ownPrimitiveFields)
+                addField(IdentifierName(field->name.get()), DeclaredTypeName(*field));
+            for (InstanceDeclExpr* field : info.ownObjectFields)
+                addField(IdentifierName(field->identifierName.get()), ResolveTypeName(field->constructType.get()));
+
+            for (FunctionDeclStmt* statement : info.ownMethods) {
+                if (!statement || !statement->name) continue;
+                const std::string methodName = statement->name->value;
+                const auto inherited = info.methods.find(methodName);
+                std::optional<unsigned> slot;
+                if (inherited != info.methods.end() && inherited->second.virtualSlot) {
+                    if (!SameMethodSignature(*inherited->second.statement, *statement))
+                        Fail("override signature mismatch for '" + name + "." + methodName + "'");
+                    slot = inherited->second.virtualSlot;
+                }
+                else if (HasModifier(*statement, "override"))
+                    Fail("method '" + name + "." + methodName + "' overrides no virtual method");
+                else if (HasModifier(*statement, "virtual")) {
+                    slot = static_cast<unsigned>(info.virtualNames.size());
+                    info.virtualNames.push_back(methodName);
+                }
+                ClassMethod method{statement, name, name + "." + methodName, slot};
+                info.methods[methodName] = method;
+                info.declaredMethods[methodName] = std::move(method);
+            }
+
+            std::vector<llvm::Type*> layout{builder.getPtrTy()};
+            for (const ClassField& field : info.fields) layout.push_back(TypeFromName(field.typeName));
+            info.llvmType->setBody(layout, false);
+            info.finalizing = false;
+            info.finalized = true;
+        }
+
+        llvm::FunctionType* MethodFunctionType(FunctionDeclStmt& statement) {
+            std::vector<llvm::Type*> parameters{builder.getPtrTy()};
+            for (const auto& parameter : statement.parameters)
+                parameters.push_back(TypeFromName(DeclaredTypeName(*parameter)));
+            return llvm::FunctionType::get(ResolveType(statement.returnType.get()), parameters, false);
+        }
+
+        llvm::Function* DeclareMethodFunction(const ClassMethod& method) {
+            llvm::FunctionType* type = MethodFunctionType(*method.statement);
+            llvm::Function* function = module->getFunction(method.linkName);
+            if (!function)
+                function = llvm::Function::Create(type, llvm::Function::ExternalLinkage, method.linkName, *module);
+            if (function->getFunctionType() != type)
+                Fail("conflicting method declaration '" + method.linkName + "'");
+            function->setCallingConv(llvm::CallingConv::C);
+            function->getArg(0)->setName("this");
+            for (size_t index = 0; index < method.statement->parameters.size(); ++index)
+                function->getArg(static_cast<unsigned>(index + 1))->setName(
+                    IdentifierName(method.statement->parameters[index]->name.get()));
+            return function;
+        }
+
+        llvm::Function* DeclareConstructorFunction(ClassInfo& info) {
+            if (!info.constructor) return nullptr;
+            std::vector<llvm::Type*> parameters{builder.getPtrTy()};
+            for (const auto& parameter : info.constructor->parameters)
+                parameters.push_back(TypeFromName(DeclaredTypeName(*parameter)));
+            llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
+            const std::string name = info.name + ".__ctor";
+            llvm::Function* function = module->getFunction(name);
+            if (!function)
+                function = llvm::Function::Create(type, llvm::Function::ExternalLinkage, name, *module);
+            function->setCallingConv(llvm::CallingConv::C);
+            function->getArg(0)->setName("this");
+            for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
+                function->getArg(static_cast<unsigned>(index + 1))->setName(
+                    IdentifierName(info.constructor->parameters[index]->name.get()));
+            return function;
+        }
+
+        void DeclareClasses() {
+            for (const std::string& name : classOrder) FinalizeClass(name);
+            for (const std::string& name : classOrder) {
+                ClassInfo& info = classes.at(name);
+                for (const auto& [methodName, method] : info.declaredMethods) {
+                    (void)methodName;
+                    DeclareMethodFunction(method);
+                }
+                DeclareConstructorFunction(info);
+            }
+            for (const std::string& name : classOrder) {
+                ClassInfo& info = classes.at(name);
+                std::vector<llvm::Constant*> entries;
+                for (const std::string& methodName : info.virtualNames) {
+                    const auto method = info.methods.find(methodName);
+                    if (method == info.methods.end()) Fail("missing virtual method '" + methodName + "'");
+                    entries.push_back(DeclareMethodFunction(method->second));
+                }
+                if (entries.empty()) entries.push_back(llvm::ConstantPointerNull::get(builder.getPtrTy()));
+                llvm::ArrayType* tableType = llvm::ArrayType::get(builder.getPtrTy(), entries.size());
+                info.vtable = new llvm::GlobalVariable(*module, tableType, true,
+                    llvm::GlobalValue::PrivateLinkage, llvm::ConstantArray::get(tableType, entries),
+                    "absolute.vtable." + name);
+            }
+        }
+
+        std::string ClassNameFromType(std::string typeName) const {
+            if (IsPointerTypeName(typeName)) typeName = PointerPointeeName(typeName);
+            return typeName;
+        }
+
+        ClassInfo& RequireClassForType(const std::string& typeName) {
+            const std::string name = ClassNameFromType(typeName);
+            auto found = classes.find(name);
+            if (found == classes.end()) Fail("type '" + typeName + "' is not a class");
+            return found->second;
+        }
+
+        llvm::Value* ObjectPointer(Expression* expression, const std::string& typeName) {
+            if (IsPointerTypeName(typeName)) {
+                const bool oldAddressMode = addressMode;
+                addressMode = false;
+                llvm::Value* pointer = Evaluate(expression);
+                addressMode = oldAddressMode;
+                return IsManagedPointerTypeName(typeName)
+                    ? builder.CreateCall(ManagedGet(true), {pointer}, "object.pointer") : pointer;
+            }
+            return EvaluateAddress(expression);
+        }
+
+        llvm::Value* FieldAddress(llvm::Value* object, ClassInfo& info, const ClassField& field) {
+            return builder.CreateStructGEP(info.llvmType, object, field.index, field.name + ".address");
+        }
+
+        llvm::Value* ImplicitFieldAddress(const std::string& fieldName) {
+            if (currentClassName.empty() || !currentThis) return nullptr;
+            ClassInfo& info = classes.at(currentClassName);
+            const auto field = info.fieldByName.find(fieldName);
+            return field == info.fieldByName.end() ? nullptr : FieldAddress(currentThis, info, field->second);
+        }
+
+        llvm::Value* ObjectSize(ClassInfo& info) {
+            return llvm::ConstantExpr::getSizeOf(info.llvmType);
+        }
+
+        void InitializeObject(llvm::Value* object, ClassInfo& info) {
+            builder.CreateMemSet(object, builder.getInt8(0), ObjectSize(info), llvm::MaybeAlign(8));
+            llvm::Value* vtableAddress = builder.CreateStructGEP(info.llvmType, object, 0, "vtable.address");
+            builder.CreateStore(info.vtable, vtableAddress);
         }
 
         llvm::Value* Evaluate(Expression* expression) {
@@ -754,6 +1036,10 @@ namespace Absolute {
             if (name == "int32" || name == "uint32" || name == "float") return 4;
             if (name == "int64" || name == "uint64" || name == "double" || name == "string" ||
                 IsPointerTypeName(name)) return 8;
+            if (classes.contains(name)) {
+                FinalizeClass(name);
+                return module->getDataLayout().getTypeAllocSize(classes.at(name).llvmType).getFixedValue();
+            }
             Fail("cannot determine allocation size of '" + name + "'");
         }
 
@@ -1102,11 +1388,103 @@ namespace Absolute {
             builder.ClearInsertionPoint();
         }
 
+        void BindCallableParameter(llvm::Argument& argument, VarDeclExpr& parameter) {
+            const std::string name = IdentifierName(parameter.name.get());
+            const std::string typeName = DeclaredTypeName(parameter);
+            if (ArrayRankName(typeName) > 0) {
+                ArrayView view = ArrayViewFromValue(&argument, typeName);
+                if (!scopes.back().emplace(name,
+                    Variable{view.address, view.elementType, typeName, nullptr, false,
+                        true, view.elementType, view.dimensions}).second)
+                    Fail("duplicate parameter '" + name + "'");
+                return;
+            }
+            llvm::AllocaInst* address = CreateEntryAlloca(*argument.getParent(), argument.getType(), name);
+            builder.CreateStore(&argument, address);
+            if (!scopes.back().emplace(name,
+                Variable{address, argument.getType(), typeName, nullptr, false, false, nullptr, {}}).second)
+                Fail("duplicate parameter '" + name + "'");
+        }
+
+        void FinishClassCallable(llvm::Function& function) {
+            if (!builder.GetInsertBlock()->getTerminator()) {
+                if (function.getReturnType()->isVoidTy()) builder.CreateRetVoid();
+                else builder.CreateRet(llvm::Constant::getNullValue(function.getReturnType()));
+            }
+            std::string verifierMessage;
+            llvm::raw_string_ostream verifierStream(verifierMessage);
+            if (llvm::verifyFunction(function, &verifierStream)) {
+                verifierStream.flush();
+                Fail("invalid class function '" + function.getName().str() + "': " + verifierMessage);
+            }
+        }
+
+        void EmitMethod(ClassInfo& info, const ClassMethod& method) {
+            llvm::Function* function = DeclareMethodFunction(method);
+            if (!function->empty()) return;
+            llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+            builder.SetInsertPoint(entry);
+            PushScope();
+            const std::string oldClass = currentClassName;
+            llvm::Value* oldThis = currentThis;
+            const std::string oldReturn = currentReturnTypeName;
+            currentClassName = info.name;
+            currentThis = function->getArg(0);
+            currentReturnTypeName = ResolveTypeName(method.statement->returnType.get());
+            for (size_t index = 0; index < method.statement->parameters.size(); ++index)
+                BindCallableParameter(*function->getArg(static_cast<unsigned>(index + 1)),
+                    *method.statement->parameters[index]);
+            if (method.statement->body) method.statement->body->Accept(visitor);
+            FinishClassCallable(*function);
+            PopScope();
+            currentClassName = oldClass;
+            currentThis = oldThis;
+            currentReturnTypeName = oldReturn;
+            builder.ClearInsertionPoint();
+        }
+
+        void EmitConstructor(ClassInfo& info) {
+            if (!info.constructor) return;
+            llvm::Function* function = DeclareConstructorFunction(info);
+            if (!function->empty()) return;
+            llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+            builder.SetInsertPoint(entry);
+            PushScope();
+            const std::string oldClass = currentClassName;
+            llvm::Value* oldThis = currentThis;
+            const std::string oldReturn = currentReturnTypeName;
+            currentClassName = info.name;
+            currentThis = function->getArg(0);
+            currentReturnTypeName = "void";
+            for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
+                BindCallableParameter(*function->getArg(static_cast<unsigned>(index + 1)),
+                    *info.constructor->parameters[index]);
+            if (info.constructor->body) info.constructor->body->Accept(visitor);
+            FinishClassCallable(*function);
+            PopScope();
+            currentClassName = oldClass;
+            currentThis = oldThis;
+            currentReturnTypeName = oldReturn;
+            builder.ClearInsertionPoint();
+        }
+
+        void EmitClassBodies(ClassInfo& info) {
+            if (info.emitted) return;
+            for (const auto& [methodName, method] : info.declaredMethods) {
+                (void)methodName;
+                EmitMethod(info, method);
+            }
+            EmitConstructor(info);
+            info.emitted = true;
+        }
+
         llvm::Module& BuildModule(Program& program, const std::string& moduleName) {
             module = std::make_unique<llvm::Module>(moduleName, context);
             scopes.clear();
             globals.clear();
             arrayDescriptorTypes.clear();
+            classes.clear();
+            classOrder.clear();
             loops.clear();
             currentNamespace.clear();
             functionLinkNames.clear();
@@ -1117,6 +1495,11 @@ namespace Absolute {
             addressValue = nullptr;
             declarationKeep = false;
             taskThunkCounter = 0;
+            currentClassName.clear();
+            currentThis = nullptr;
+
+            CollectClassDeclarations(program.statements);
+            DeclareClasses();
 
             phase = Phase::DeclareFunctions;
             for (const auto& statement : program.statements) {
@@ -1239,22 +1622,76 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(IdentifierExpr* expr) {
-        Impl::Variable& variable = impl->RequireVariable(expr->name);
-        if (impl->addressMode) {
-            impl->addressValue = variable.address;
-            return;
-        }
-        if (variable.isArray) {
-            impl->value = impl->BuildArrayDescriptor({variable.address, variable.arrayElementType,
-                variable.typeName, variable.arrayDimensions});
+        Impl::Variable* variable = impl->FindVariable(expr->name);
+        if (!variable) {
+            llvm::Value* fieldAddress = impl->ImplicitFieldAddress(expr->name);
+            if (!fieldAddress) impl->Fail("unknown variable or field '" + expr->name + "'");
+            if (impl->addressMode) {
+                impl->addressValue = fieldAddress;
+                return;
+            }
+            llvm::Type* fieldType = impl->TypeFromName(impl->SemanticType(expr));
+            impl->value = impl->builder.CreateLoad(fieldType, fieldAddress, expr->name + ".value");
             impl->valueCreatesManagedOwner = false;
             return;
         }
-        impl->value = impl->builder.CreateLoad(variable.type, variable.address, expr->name + ".value");
+        if (impl->addressMode) {
+            impl->addressValue = variable->address;
+            return;
+        }
+        if (variable->isArray) {
+            impl->value = impl->BuildArrayDescriptor({variable->address, variable->arrayElementType,
+                variable->typeName, variable->arrayDimensions});
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
+        impl->value = impl->builder.CreateLoad(variable->type, variable->address, expr->name + ".value");
         impl->valueCreatesManagedOwner = false;
     }
 
     void CodeGenerator::Visit(FunctionCallExpr* expr) {
+        if (auto* member = dynamic_cast<MemberAccessExpr*>(expr->base.get())) {
+            const std::string baseType = impl->SemanticType(member->base.get());
+            const std::string className = impl->ClassNameFromType(baseType);
+            auto classIterator = impl->classes.find(className);
+            if (classIterator != impl->classes.end()) {
+                Impl::ClassInfo& info = classIterator->second;
+                const auto method = info.methods.find(member->member);
+                if (method == info.methods.end())
+                    impl->Fail("class '" + info.name + "' has no method '" + member->member + "'");
+                llvm::Value* object = impl->ObjectPointer(member->base.get(), baseType);
+                llvm::FunctionType* methodType = impl->MethodFunctionType(*method->second.statement);
+                std::vector<llvm::Value*> arguments{object};
+                for (size_t index = 0; index < expr->arguments.size(); ++index) {
+                    if (index + 1 >= methodType->getNumParams())
+                        impl->Fail("too many arguments for method '" + member->member + "'");
+                    arguments.push_back(impl->Coerce(impl->Evaluate(expr->arguments[index].get()),
+                        methodType->getParamType(static_cast<unsigned>(index + 1))));
+                }
+                if (arguments.size() != methodType->getNumParams())
+                    impl->Fail("invalid argument count for method '" + member->member + "'");
+
+                llvm::Value* callee = nullptr;
+                if (method->second.virtualSlot) {
+                    llvm::Value* vtableAddress = impl->builder.CreateStructGEP(
+                        info.llvmType, object, 0, "vtable.address");
+                    llvm::Value* vtable = impl->builder.CreateLoad(
+                        impl->builder.getPtrTy(), vtableAddress, "vtable");
+                    llvm::Value* slot = impl->builder.CreateGEP(impl->builder.getPtrTy(), vtable,
+                        impl->builder.getInt64(*method->second.virtualSlot), "virtual.slot");
+                    callee = impl->builder.CreateLoad(impl->builder.getPtrTy(), slot, "virtual.method");
+                }
+                else {
+                    callee = impl->module->getFunction(method->second.linkName);
+                    if (!callee) impl->Fail("missing method function '" + method->second.linkName + "'");
+                }
+                llvm::CallInst* call = impl->builder.CreateCall(methodType, callee, arguments,
+                    methodType->getReturnType()->isVoidTy() ? "" : member->member + ".result");
+                impl->value = methodType->getReturnType()->isVoidTy() ? nullptr : call;
+                impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
+                return;
+            }
+        }
         const std::string name = impl->ResolvedName(expr);
         if (impl->IsBuiltinFunction(name)) {
             impl->EmitBuiltin(*expr, name);
@@ -1599,8 +2036,20 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(MemberAccessExpr* expr) {
-        (void)expr;
-        impl->Fail("member access is not implemented yet");
+        const std::string baseType = impl->SemanticType(expr->base.get());
+        Impl::ClassInfo& info = impl->RequireClassForType(baseType);
+        const auto field = info.fieldByName.find(expr->member);
+        if (field == info.fieldByName.end())
+            impl->Fail("class '" + info.name + "' has no field '" + expr->member + "'");
+        llvm::Value* object = impl->ObjectPointer(expr->base.get(), baseType);
+        llvm::Value* fieldAddress = impl->FieldAddress(object, info, field->second);
+        if (impl->addressMode) {
+            impl->addressValue = fieldAddress;
+            return;
+        }
+        impl->value = impl->builder.CreateLoad(
+            impl->TypeFromName(field->second.typeName), fieldAddress, expr->member + ".value");
+        impl->valueCreatesManagedOwner = false;
     }
 
     void CodeGenerator::Visit(CastExpr* expr) {
@@ -1618,16 +2067,44 @@ namespace Absolute {
         llvm::Type* pointee = impl->TypeFromName(pointeeType);
         llvm::Value* pointer = nullptr;
         llvm::Value* result = nullptr;
+        const bool classAllocation = impl->classes.contains(pointeeType);
+        llvm::Value* allocationSize = classAllocation
+            ? impl->ObjectSize(impl->classes.at(pointeeType))
+            : impl->builder.getInt64(impl->SizeOfTypeName(pointeeType));
         if (rawAllocation) {
             pointer = impl->builder.CreateCall(
-                impl->Malloc(), {impl->builder.getInt64(impl->SizeOfTypeName(pointeeType))}, "raw.allocation");
+                impl->Malloc(), {allocationSize}, "raw.allocation");
             result = pointer;
         }
         else {
             llvm::Value* handle = impl->builder.CreateCall(
-                impl->ManagedCreate(), {impl->builder.getInt64(impl->SizeOfTypeName(pointeeType))}, "managed.handle");
+                impl->ManagedCreate(), {allocationSize}, "managed.handle");
             pointer = impl->builder.CreateCall(impl->ManagedGet(true), {handle}, "managed.allocation");
             result = handle;
+        }
+
+        if (classAllocation) {
+            Impl::ClassInfo& info = impl->classes.at(pointeeType);
+            impl->InitializeObject(pointer, info);
+            if (info.constructor) {
+                llvm::Function* constructor = impl->module->getFunction(info.name + ".__ctor");
+                if (!constructor) impl->Fail("missing constructor for '" + info.name + "'");
+                std::vector<llvm::Value*> arguments{pointer};
+                for (size_t index = 0; index < expr->arguments.size(); ++index) {
+                    if (index + 1 >= constructor->arg_size())
+                        impl->Fail("too many constructor arguments for '" + info.name + "'");
+                    arguments.push_back(impl->Coerce(impl->Evaluate(expr->arguments[index].get()),
+                        constructor->getFunctionType()->getParamType(static_cast<unsigned>(index + 1))));
+                }
+                if (arguments.size() != constructor->arg_size())
+                    impl->Fail("invalid constructor argument count for '" + info.name + "'");
+                impl->builder.CreateCall(constructor, arguments);
+            }
+            else if (!expr->arguments.empty())
+                impl->Fail("class '" + info.name + "' has no constructor");
+            impl->value = result;
+            impl->valueCreatesManagedOwner = !rawAllocation;
+            return;
         }
 
         llvm::Value* initial = expr->arguments.empty()
@@ -1667,8 +2144,26 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(InstanceDeclExpr* expr) {
-        (void)expr;
-        impl->Fail("user-defined instances are not implemented yet");
+        llvm::Function* function = impl->CurrentFunction();
+        if (!function || impl->scopes.empty()) impl->Fail("object declaration outside a function");
+        const std::string name = IdentifierName(expr->identifierName.get());
+        const std::string typeName = impl->SemanticType(expr);
+        Impl::ClassInfo& info = impl->RequireClassForType(typeName);
+        llvm::AllocaInst* address = impl->CreateEntryAlloca(*function, info.llvmType, name);
+        impl->InitializeObject(address, info);
+        if (expr->value) {
+            llvm::Value* initial = impl->Coerce(impl->Evaluate(expr->value.get()), info.llvmType);
+            impl->builder.CreateStore(initial, address);
+        }
+        else if (info.constructor && info.constructor->parameters.empty()) {
+            llvm::Function* constructor = impl->module->getFunction(info.name + ".__ctor");
+            impl->builder.CreateCall(constructor, {address});
+        }
+        if (!impl->scopes.back().emplace(name,
+            Impl::Variable{address, info.llvmType, typeName, nullptr, false, false, nullptr, {}}).second)
+            impl->Fail("duplicate object '" + name + "'");
+        impl->value = impl->builder.CreateLoad(info.llvmType, address, name + ".value");
+        impl->valueCreatesManagedOwner = false;
     }
 
     void CodeGenerator::Visit(PrefixUnaryExpr* expr) {
@@ -1835,13 +2330,15 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(ClassDeclStmt* stmt) {
-        (void)stmt;
-        if (impl->phase == Impl::Phase::EmitBodies) impl->Fail("class codegen is not implemented yet");
+        if (impl->phase != Impl::Phase::EmitBodies) return;
+        const std::string name = impl->Qualify(stmt->name);
+        auto found = impl->classes.find(name);
+        if (found == impl->classes.end()) impl->Fail("unregistered class '" + name + "'");
+        impl->EmitClassBodies(found->second);
     }
 
     void CodeGenerator::Visit(ConstructorDeclStmt* stmt) {
         (void)stmt;
-        if (impl->phase == Impl::Phase::EmitBodies) impl->Fail("constructor codegen is not implemented yet");
     }
 
     void CodeGenerator::Visit(EnumDeclStmt* stmt) {

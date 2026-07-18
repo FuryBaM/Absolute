@@ -304,8 +304,12 @@ buffers is not implemented yet.
 
 The backend also supports primitive values, functions, local variables, calls,
 casts, arithmetic/comparison operators, assignments, `return`, `if`, `for`,
-`while`, `do-while`, `foreach`, `break`, and `continue`. Classes and
-user-defined instances still report explicit codegen errors.
+`while`, `do-while`, `foreach`, `break`, and `continue`. User-defined classes
+support fields, local value instances, constructors, raw or managed allocation,
+single inheritance, instance methods, and `virtual`/`override` dispatch. Multiple
+inheritance, automatic destructor calls, interfaces, and static class members are
+not emitted yet. Base-constructor chaining is also not automatic. Raw object
+graphs that own child nodes must release them explicitly before `delete`.
 
 For a Release build, replace `Debug` with `Release`.
 

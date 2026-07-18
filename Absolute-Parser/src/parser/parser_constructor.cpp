@@ -14,8 +14,23 @@ namespace Absolute {
         std::unique_ptr<Expression> type;
         if (CurrentToken() && CurrentToken()->type == TokenType::KEYWORD && IsPrimitiveType(CurrentToken()->value))
             type = ParsePrimitiveType();
-        else
-            type = ParseIdentifierExpr(true);
+        else {
+            Token* identifier = Consume(TokenType::IDENTIFIER);
+            type = std::make_unique<IdentifierExpr>(identifier->value);
+            while (CurrentToken()) {
+                if (CurrentToken()->value == "<") {
+                    size_t close = 0;
+                    if (!IsTemplateArgumentList(pos, &close)) break;
+                    type = std::make_unique<UserTypeExpr>(std::move(type));
+                    type = ParseTemplateExpr(std::move(type));
+                }
+                else if (CurrentToken()->type == TokenType::DELIMITER &&
+                    CurrentToken()->value == ".") {
+                    type = ParseMemberAccess(std::move(type));
+                }
+                else break;
+            }
+        }
 
         std::vector<std::unique_ptr<Expression>> arguments;
         if (CurrentToken() && CurrentToken()->type == TokenType::BRACKET && CurrentToken()->value == "(")
