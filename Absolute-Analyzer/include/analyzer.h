@@ -28,16 +28,16 @@ namespace Absolute {
     };
 
     class ANALYZER_API Analyzer : public ExpressionVisitor, public StatementVisitor {
-        std::vector<std::unique_ptr<Program>> programs;
+        std::vector<Program*> programs;
         SymbolTable table;
 
     public:
-        explicit Analyzer(std::vector<std::unique_ptr<Program>> programs)
+        explicit Analyzer(std::vector<Program*> programs)
             : programs(std::move(programs)) {
         }
 
         void Analyze() {
-            for (auto& program : programs) {
+            for (Program* program : programs) {
                 if (program) AnalyzeProgram(*program);
             }
         }
