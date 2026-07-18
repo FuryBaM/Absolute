@@ -1,0 +1,5 @@
+namespace Demo.Values {
+    int32 base() {
+        return 40;
+    }
+}
