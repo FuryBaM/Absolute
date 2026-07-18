@@ -24,4 +24,7 @@
 #include "type.h"
 #include "variable.h"
 #include "analyzer.h"
+
+#ifdef ABSOLUTE_HAS_LLVM
 #include "codegen.h"
+#endif
