@@ -6,7 +6,7 @@ namespace Absolute{
         return !str[h] ? 5381 : (Hash(str, h + 1) * 33) ^ str[h];
     }
     std::vector<Token> Tokenize(const std::string& code) {
-        return lexer(code);  // Èñïîëüçóåò âíóòðåííèé ëåêñåð
+        return lexer(code);  // Использует внутренний лексер
     }
 
     std::unique_ptr<Program> ParseCode(const std::vector<Token>& tokens) {
@@ -40,7 +40,7 @@ namespace Absolute{
         }
         std::unique_ptr<Expression> left = nullptr;
 
-        // Ïàðñèì ïåðâè÷íîå âûðàæåíèå
+        // Парсим первичное выражение
         left = ParsePrimaryExpr();
         if (!left) return nullptr;
 
@@ -49,7 +49,7 @@ namespace Absolute{
             left = ParseAssignmentExpr(std::move(left));
         }
 
-        // Ïðîâåðÿåì, èäåò ëè äàëüøå áèíàðíûé îïåðàòîð
+        // Проверяем, идет ли дальше бинарный оператор
         Token* next = CurrentToken();
         if (next && next->type == TokenType::OPERATOR) {
             return ParseBinaryExpr(0, std::move(left));
@@ -99,14 +99,14 @@ namespace Absolute{
             return ParseDestructorCall();
         }
 
-        // Âëîæåííîå âûðàæåíèå â ñêîáêàõ: (a + b)
+        // Вложенное выражение в скобках: (a + b)
         if (token->type == TokenType::BRACKET && token->value == "(") {
-            Consume(TokenType::BRACKET, "("); // Ïðîïóñêàåì "("
+            Consume(TokenType::BRACKET, "("); // Пропускаем "("
             auto expr = ParseExpression();
             if (!expr)
                 return nullptr;
 
-            // Ïðîâåðÿåì çàêðûâàþùóþ ñêîáêó
+            // Проверяем закрывающую скобку
             Consume(TokenType::BRACKET, ")");
 
             return expr;
@@ -235,7 +235,7 @@ namespace Absolute{
                 (afterIdentifiers && (afterIdentifiers->type == TokenType::IDENTIFIER || IsPrefixUnary(*afterIdentifiers)))) {
                 return ParseInstanceDeclStmt();
             }
-            return ParseIdentifier(); // Îáðàáàòûâàåì èäåíòèôèêàòîð
+            return ParseIdentifier(); // Обрабатываем идентификатор
         }
 
 	    case TokenType::BRACKET:
