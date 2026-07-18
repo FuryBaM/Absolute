@@ -5,10 +5,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+option(ABSOLUTE_ENABLE_LLVM "Build the LLVM IR backend" ON)
+
 # Добавляем подпроекты
 add_subdirectory(Absolute-Parser)
 add_subdirectory(Absolute-Analyzer)
-add_subdirectory(Absolute-CodeGen)
+if(ABSOLUTE_ENABLE_LLVM)
+    add_subdirectory(Absolute-CodeGen)
+endif()
 add_subdirectory(Absolute-Compiler)
 
 # Keep generated artifacts out of the source tree.
@@ -27,13 +31,15 @@ if(BUILD_TESTING)
         NAME absolute.templates
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/templates.abs"
     )
-    add_test(
-        NAME absolute.emit-llvm
-        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/llvm-basic.abs" --emit-llvm
-    )
-    set_tests_properties(absolute.emit-llvm PROPERTIES
-        PASS_REGULAR_EXPRESSION "define i32 @main"
-    )
+    if(ABSOLUTE_ENABLE_LLVM)
+        add_test(
+            NAME absolute.emit-llvm
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/llvm-basic.abs" --emit-llvm
+        )
+        set_tests_properties(absolute.emit-llvm PROPERTIES
+            PASS_REGULAR_EXPRESSION "define i32 @main"
+        )
+    endif()
     add_test(
         NAME absolute.invalid-character
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/invalid-character.abs"
