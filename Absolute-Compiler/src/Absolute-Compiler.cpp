@@ -94,7 +94,7 @@ int main(int argc, char* argv[]) {
 
         if (commandLine.emitLlvm) {
 #ifdef ABSOLUTE_HAS_LLVM
-            CodeGenerator generator;
+            CodeGenerator generator(&analyzer);
             const std::string ir = generator.Generate(*ast, commandLine.source.filename().string());
             if (commandLine.output.empty()) {
                 std::cout << ir;
