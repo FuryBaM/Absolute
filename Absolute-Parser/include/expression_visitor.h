@@ -3,6 +3,8 @@
 namespace Absolute {
     class ExpressionVisitor {
     public:
+        virtual ~ExpressionVisitor() = default;
+
         virtual void Visit(PrimitiveTypeExpr* expr) = 0;
         virtual void Visit(UserTypeExpr* expr) = 0;
         virtual void Visit(IdentifierExpr* expr) = 0;
