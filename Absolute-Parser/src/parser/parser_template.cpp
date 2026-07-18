@@ -8,10 +8,15 @@ namespace Absolute{
         Consume(TokenType::DOLLAR); // $
         Consume(TokenType::OPERATOR, "<");
 
-        while (CurrentToken()->value != ">") {
-            types.push_back(ParseType());
+        while (RequireCurrent("a template argument or '>'")->value != ">") {
+            auto type = ParseType();
+            if (!type) {
+                ReportSyntaxError(CurrentToken(), "Expected a template type argument");
+                throw std::runtime_error("Invalid template argument");
+            }
+            types.push_back(std::move(type));
 
-            if (CurrentToken()->value == ",") {
+            if (RequireCurrent("',' or '>'")->value == ",") {
                 Consume(TokenType::DELIMITER, ",");
             }
             else {
