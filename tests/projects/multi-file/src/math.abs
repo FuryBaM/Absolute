@@ -1,0 +1,5 @@
+namespace Demo.Math {
+    int32 add(int32 left, int32 right) {
+        return left + right;
+    }
+}
