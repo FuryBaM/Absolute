@@ -5,7 +5,7 @@
 #include "scope.h"
 
 namespace Absolute {
-    // Модификаторы доступа
+    // ГЊГ®Г¤ГЁГґГЁГЄГ ГІГ®Г°Г» Г¤Г®Г±ГІГіГЇГ 
     enum class AccessModifier {
         PUBLIC,
         PRIVATE,
@@ -13,11 +13,11 @@ namespace Absolute {
         INTERNAL
     };
 
-    // Перечисление примитивных типов
+    // ГЏГҐГ°ГҐГ·ГЁГ±Г«ГҐГ­ГЁГҐ ГЇГ°ГЁГ¬ГЁГІГЁГўГ­Г»Гµ ГІГЁГЇГ®Гў
     enum class PrimitiveTypeEnum {
         INT8, INT16, INT32, INT64,
         UINT8, UINT16, UINT32, UINT64,
-        FLOAT, DOUBLE, STRING, CHAR, VOID, DYNAMIC, AUTO
+        FLOAT, DOUBLE, BOOL, STRING, CHAR, VOID, DYNAMIC, AUTO
     };
 
 
@@ -32,6 +32,7 @@ namespace Absolute {
         {"uint64", PrimitiveTypeEnum::UINT64},
         {"float", PrimitiveTypeEnum::FLOAT},
         {"double", PrimitiveTypeEnum::DOUBLE},
+        {"bool", PrimitiveTypeEnum::BOOL},
         {"string", PrimitiveTypeEnum::STRING},
         {"char", PrimitiveTypeEnum::CHAR},
         {"void", PrimitiveTypeEnum::VOID},
@@ -50,6 +51,7 @@ namespace Absolute {
         {PrimitiveTypeEnum::UINT64, "uint64"},
         {PrimitiveTypeEnum::FLOAT, "float"},
         {PrimitiveTypeEnum::DOUBLE, "double"},
+        {PrimitiveTypeEnum::BOOL, "bool"},
         {PrimitiveTypeEnum::STRING, "string"},
         {PrimitiveTypeEnum::CHAR, "char"},
         {PrimitiveTypeEnum::VOID, "void"},
@@ -57,26 +59,26 @@ namespace Absolute {
         {PrimitiveTypeEnum::AUTO, "auto"}
     };
 
-    // Функция для получения Enum из строки
+    // Г”ГіГ­ГЄГ¶ГЁГї Г¤Г«Гї ГЇГ®Г«ГіГ·ГҐГ­ГЁГї Enum ГЁГ§ Г±ГІГ°Г®ГЄГЁ
     inline std::optional<PrimitiveTypeEnum> PrimitiveStringToEnum(const std::string& str) {
         auto it = StringToPrimitiveType.find(str);
         if (it != StringToPrimitiveType.end()) {
             return it->second;
         }
-        return std::nullopt; // Если строка не найдена, вернём пустой результат
+        return std::nullopt; // Г…Г±Г«ГЁ Г±ГІГ°Г®ГЄГ  Г­ГҐ Г­Г Г©Г¤ГҐГ­Г , ГўГҐГ°Г­ВёГ¬ ГЇГіГ±ГІГ®Г© Г°ГҐГ§ГіГ«ГјГІГ ГІ
     }
 
-    // Функция для получения строки
+    // Г”ГіГ­ГЄГ¶ГЁГї Г¤Г«Гї ГЇГ®Г«ГіГ·ГҐГ­ГЁГї Г±ГІГ°Г®ГЄГЁ
     inline std::string PrimitiveEnumToString(PrimitiveTypeEnum type) {
         return PrimitiveTypeToString.at(type);
     }
 
-    // Абстрактный базовый класс для типов
+    // ГЂГЎГ±ГІГ°Г ГЄГІГ­Г»Г© ГЎГ Г§Г®ГўГ»Г© ГЄГ«Г Г±Г± Г¤Г«Гї ГІГЁГЇГ®Гў
     struct Type {
         virtual ~Type() = default;
     };
 
-    // Примитивный тип (int, float и т. д.)
+    // ГЏГ°ГЁГ¬ГЁГІГЁГўГ­Г»Г© ГІГЁГЇ (int, float ГЁ ГІ. Г¤.)
     struct PrimitiveType : Type {
     public:
         PrimitiveTypeEnum type;
@@ -85,7 +87,7 @@ namespace Absolute {
 		PrimitiveType(const PrimitiveType& other) : type(other.type) {}
     };
 
-    // Поля класса
+    // ГЏГ®Г«Гї ГЄГ«Г Г±Г±Г 
     struct ClassField {
         AccessModifier access;
         Type* type;
@@ -95,7 +97,7 @@ namespace Absolute {
         }
     };
 
-    // Методы класса
+    // ГЊГҐГІГ®Г¤Г» ГЄГ«Г Г±Г±Г 
     struct ClassMethod {
         AccessModifier access;
         std::string name;
@@ -107,19 +109,17 @@ namespace Absolute {
         }
     };
 
-    // Пользовательский тип (класс, структура)
+    // ГЏГ®Г«ГјГ§Г®ГўГ ГІГҐГ«ГјГ±ГЄГЁГ© ГІГЁГЇ (ГЄГ«Г Г±Г±, Г±ГІГ°ГіГЄГІГіГ°Г )
     struct UserType : Type {
     public:
         std::string name;
-        AccessModifier access;  // Уровень доступа (private, public и т.д.)
-        Scope scope;            // Область, в которой объявлен
+        AccessModifier access;  // Г“Г°Г®ГўГҐГ­Гј Г¤Г®Г±ГІГіГЇГ  (private, public ГЁ ГІ.Г¤.)
+        Scope scope;            // ГЋГЎГ«Г Г±ГІГј, Гў ГЄГ®ГІГ®Г°Г®Г© Г®ГЎГєГїГўГ«ГҐГ­
 
         std::unordered_map<std::string, ClassField> fields;
         std::unordered_map<std::string, ClassMethod> methods;
 
         UserType(AccessModifier access, Scope scope, std::string name)
-            : access(access), scope(scope) {
-            name = std::move(name);
-        }
+            : name(std::move(name)), access(access), scope(std::move(scope)) {}
     };
 }
