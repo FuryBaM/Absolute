@@ -1,6 +1,7 @@
 #include "parser_pch.h"
 #include "nodes.h"
 #include "expression_visitor.h"
+#include "statement_visitor.h"
 
 namespace Absolute {
     void PrimitiveTypeExpr::Accept(ExpressionVisitor& visitor) {
@@ -27,9 +28,9 @@ namespace Absolute {
         if (!base) return nullptr;
 
         BaseIdentifierVisitor visitor;
-        base->Accept(visitor); // Запускаем визитор
+        base->Accept(visitor); // Г‡Г ГЇГіГ±ГЄГ ГҐГ¬ ГўГЁГ§ГЁГІГ®Г°
 
-        return visitor.identifierExpr; // Возвращаем найденный IdentifierExpr
+        return visitor.identifierExpr; // Г‚Г®Г§ГўГ°Г Г№Г ГҐГ¬ Г­Г Г©Г¤ГҐГ­Г­Г»Г© IdentifierExpr
     }
 
     IdentifierExpr* ArrayAccessExpr::GetIdentifier() {
@@ -117,6 +118,82 @@ namespace Absolute {
     }
 
     void TemplateExpr::Accept(ExpressionVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void SingleStatement::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void CompoundStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void FunctionCallStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void FunctionDeclStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void ReturnStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void AssignmentStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void VarDeclStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void StructDeclStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void ClassDeclStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void ConstructorDeclStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void EnumDeclStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void GroupDeclStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void IfStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void ForStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void WhileStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void DoWhileStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void ForEachStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void ContinueStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void BreakStmt::Accept(StatementVisitor& visitor) {
         visitor.Visit(this);
     }
 }
