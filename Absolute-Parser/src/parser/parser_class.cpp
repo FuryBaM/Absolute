@@ -55,7 +55,6 @@ namespace Absolute {
                 }
             }
         }
-        scopeStack.push_back(ScopeType::Class);
         EnterScope(ScopeType::Class, identifier->value);
         std::unique_ptr<Statement> body = ParseCompoundStatement();
         ExitScope();
