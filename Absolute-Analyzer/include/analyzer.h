@@ -117,6 +117,7 @@ namespace Absolute {
         int functionDepth = 0;
         std::string currentType;
         std::string currentReturnType;
+        std::string expectedType;
         std::string currentNamespace;
         bool callable = false;
         std::vector<std::string> callableParameters;
@@ -188,6 +189,7 @@ namespace Absolute {
         void AnalyzeProgram(Program& program);
         void Report(std::string message);
         Result Evaluate(Expression* expression);
+        Result EvaluateExpected(Expression* expression, const std::string& type);
         std::string ResolveType(Expression* expression);
         void Save(Expression* expression, Result value);
         bool IsKnownType(const std::string& name) const;

@@ -162,7 +162,16 @@ not participate in generation checks or automatic lifetime management:
 int32 value = 41;
 raw int32* address = &value;
 *address = 42;
+
+int32* tracked = new int32(42);
+keep int32* kept = new int32(7);
+raw int32* unsafe = new int32(11);
 ```
+
+`new T(...)` has one spelling. The expected pointer type chooses the allocation
+model: `T*` creates a tracked owner, `keep T*` creates a tracked owner without
+scope RAII, and `raw T*` creates an unsafe native allocation. The same contextual
+typing applies to assignments, function arguments, and return expressions.
 
 Pointer types are supported in function parameters and return values. Returning
 a managed pointer transfers ownership to the caller, so a function may return a

@@ -19,7 +19,7 @@ int32 main() {
     *address = 9;
     assert(local == 9, "raw address write failed");
 
-    raw int32* rawHeap = new raw int32(11);
+    raw int32* rawHeap = new int32(11);
     assert(*rawHeap == 11, "raw allocation mismatch");
     delete rawHeap;
 

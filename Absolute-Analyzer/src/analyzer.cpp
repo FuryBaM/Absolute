@@ -173,6 +173,7 @@ namespace Absolute {
         diagnostics.clear();
         currentType.clear();
         currentReturnType.clear();
+        expectedType.clear();
         currentNamespace.clear();
         loopDepth = functionDepth = typeContextDepth = constructorContextDepth = 0;
 
@@ -225,6 +226,14 @@ namespace Absolute {
         if (expression) expression->Accept(*this);
         else result.type = "void";
         return result;
+    }
+
+    Analyzer::Result Analyzer::EvaluateExpected(Expression* expression, const std::string& type) {
+        const std::string previous = expectedType;
+        expectedType = type;
+        const Result resolved = Evaluate(expression);
+        expectedType = previous;
+        return resolved;
     }
 
     std::string Analyzer::ResolveType(Expression* expression) {
@@ -463,7 +472,8 @@ namespace Absolute {
                 Report("constructor of '" + typeName + "' expects " + std::to_string(expected.size()) +
                     " argument(s), got " + std::to_string(expr->arguments.size()));
             for (size_t i = 0; i < expr->arguments.size(); ++i) {
-                const Result argument = Evaluate(expr->arguments[i].get());
+                const Result argument = EvaluateExpected(expr->arguments[i].get(),
+                    i < expected.size() ? expected[i] : std::string{});
                 if (i < expected.size() && !IsAssignable(expected[i], argument.type))
                     Report("constructor argument " + std::to_string(i + 1) + " has type '" + argument.type +
                         "', expected '" + expected[i] + "'");
@@ -576,7 +586,8 @@ namespace Absolute {
             Report("function expects " + std::to_string(parameters.size()) + " argument(s), got " +
                 std::to_string(expr->arguments.size()));
         for (size_t i = 0; i < expr->arguments.size(); ++i) {
-            const Result argument = Evaluate(expr->arguments[i].get());
+            const Result argument = EvaluateExpected(expr->arguments[i].get(),
+                i < parameters.size() ? parameters[i] : std::string{});
             if (i < parameters.size() && !IsAssignable(parameters[i], argument.type))
                 Report("argument " + std::to_string(i + 1) + " has type '" + argument.type +
                     "', expected '" + parameters[i] + "'");
@@ -682,7 +693,7 @@ namespace Absolute {
 
     void Analyzer::Visit(AssignmentExpr* expr) {
         const Result target = Evaluate(expr->target.get());
-        const Result value = Evaluate(expr->value.get());
+        const Result value = EvaluateExpected(expr->value.get(), target.type);
         if (!target.isLValue) Report("assignment target is not assignable");
         if (!IsAssignable(target.type, value.type))
             Report("cannot assign '" + value.type + "' to '" + target.type + "'");
@@ -707,7 +718,7 @@ namespace Absolute {
         }
         if (!IsKnownType(type)) Report("unknown type '" + type + "' of variable '" + name + "'");
         Result value;
-        if (expr->value) value = Evaluate(expr->value.get());
+        if (expr->value) value = EvaluateExpected(expr->value.get(), type == "auto" ? std::string{} : type);
         if (type == "auto") {
             if (!expr->value) Report("auto variable '" + name + "' requires an initializer");
             else type = value.type;
@@ -774,18 +785,20 @@ namespace Absolute {
 
     void Analyzer::Visit(ConstructorCallExpr* expr) {
         const std::string constructedType = ResolveType(expr->constructName.get());
+        const bool rawAllocation = expr->raw ||
+            (IsRawPointerType(expectedType) && PointerPointee(expectedType) == constructedType);
         if (!IsKnownType(constructedType) || constructedType == "void" || constructedType == "auto" ||
             constructedType == "dynamic")
             Report("cannot allocate type '" + constructedType + "'");
         if (expr->arguments.size() > 1 && PrimitiveStringToEnum(constructedType).has_value())
             Report("primitive allocation accepts at most one initializer");
         for (const auto& argument : expr->arguments) {
-            const Result value = Evaluate(argument.get());
+            const Result value = EvaluateExpected(argument.get(), constructedType);
             if (PrimitiveStringToEnum(constructedType).has_value() && !IsAssignable(constructedType, value.type))
                 Report("allocation initializer has type '" + value.type + "', expected '" + constructedType + "'");
         }
-        Save(expr, {InvalidSymbolId, (expr->raw ? "raw " : "") + constructedType + "*", false,
-            !expr->raw, false});
+        Save(expr, {InvalidSymbolId, (rawAllocation ? "raw " : "") + constructedType + "*", false,
+            !rawAllocation, false});
     }
 
     void Analyzer::Visit(DestructorCallExpr* expr) {
@@ -894,7 +907,7 @@ namespace Absolute {
     void Analyzer::Visit(ReturnStmt* stmt) {
         if (phase == Phase::CollectDeclarations) return;
         if (functionDepth == 0) Report("return statement is outside a function");
-        const Result value = Evaluate(stmt->expr.get());
+        const Result value = EvaluateExpected(stmt->expr.get(), currentReturnType);
         if (!IsAssignable(currentReturnType, value.type))
             Report("return type '" + value.type + "' does not match '" + currentReturnType + "'");
         if (IsManagedPointerType(currentReturnType) && value.type != "error" &&

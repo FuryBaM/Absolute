@@ -15,6 +15,10 @@ raw int32* rawIdentity(raw int32* value) {
     return value;
 }
 
+raw int32* makeRaw(int32 initial) {
+    return new int32(initial);
+}
+
 int32 main() {
     int32* first = makeValue(40);
     int32* second = transferValue(42);
@@ -27,12 +31,15 @@ int32 main() {
     delete second;
     assert(subscriber == null, "stale managed subscriber compares equal to null");
 
-    raw int32* rawValue = new raw int32(7);
+    raw int32* rawValue = new int32(7);
+    raw int32* returnedRaw = makeRaw(9);
+    assert(*returnedRaw == 9, "raw return type selects raw allocation");
     raw int32* same = rawIdentity(rawValue + 0);
     assert(same == rawValue, "raw pointer offset");
     assert(same - rawValue == 0, "raw pointer difference");
     assert(rawValue != null, "raw pointer null comparison");
     delete rawValue;
+    delete returnedRaw;
     assert(rawValue == null, "deleted raw pointer is null");
 
     delete first;

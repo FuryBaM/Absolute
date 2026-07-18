@@ -1032,13 +1032,16 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(ConstructorCallExpr* expr) {
-        const std::string pointeeType = impl->SemanticType(expr).empty()
+        const std::string allocationType = impl->SemanticType(expr);
+        const std::string pointeeType = allocationType.empty()
             ? impl->ResolveTypeName(expr->constructName.get())
-            : PointerPointeeName(impl->SemanticType(expr));
+            : PointerPointeeName(allocationType);
+        const bool rawAllocation = IsRawPointerTypeName(allocationType) ||
+            (allocationType.empty() && expr->raw);
         llvm::Type* pointee = impl->TypeFromName(pointeeType);
         llvm::Value* pointer = nullptr;
         llvm::Value* result = nullptr;
-        if (expr->raw) {
+        if (rawAllocation) {
             pointer = impl->builder.CreateCall(
                 impl->Malloc(), {impl->builder.getInt64(impl->SizeOfTypeName(pointeeType))}, "raw.allocation");
             result = pointer;
@@ -1056,7 +1059,7 @@ namespace Absolute {
         initial = impl->Coerce(initial, pointee);
         impl->builder.CreateStore(initial, pointer);
         impl->value = result;
-        impl->valueCreatesManagedOwner = !expr->raw;
+        impl->valueCreatesManagedOwner = !rawAllocation;
     }
 
     void CodeGenerator::Visit(DestructorCallExpr* expr) {
