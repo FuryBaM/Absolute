@@ -3,6 +3,7 @@
 
 namespace Absolute {
     class ExpressionVisitor;
+    class StatementVisitor;
 
     struct ASTNode {
         virtual ~ASTNode() = default;
@@ -22,6 +23,8 @@ namespace Absolute {
 
     struct Statement : ASTNode {
         std::vector<Token> modifiers;
+
+        virtual void Accept(StatementVisitor& visitor) = 0;
     };
 
     struct Program : ASTNode {
@@ -70,6 +73,8 @@ namespace Absolute {
         void print(int indent = 0) override {
             std::cout << ToString(indent) << "\n";
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 
     struct CompoundStmt : Statement {
@@ -84,6 +89,9 @@ namespace Absolute {
                     stmt->print(indent + 1);
             }
         }
+
+
+        void Accept(StatementVisitor& visitor) override;
     };
 }
 
