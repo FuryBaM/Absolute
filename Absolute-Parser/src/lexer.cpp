@@ -16,7 +16,6 @@ namespace Absolute {
         {TokenType::STRING, R"("(\\.|[^"\\])*")"},
         {TokenType::CHAR, R"('((\\.)|[^'\\])')"},
         {TokenType::BRACKET, R"([\{\}\[\]\(\)])"},
-        {TokenType::DOLLAR, R"(\$)"},
         {TokenType::WHITESPACE, R"(\s+)"},
     };
 
@@ -91,7 +90,6 @@ namespace Absolute {
         case TokenType::CHAR: return "CHAR";
         case TokenType::COMMENT: return "COMMENT";
         case TokenType::BRACKET: return "BRACKET";
-        case TokenType::DOLLAR: return "DOLLAR";
         case TokenType::WHITESPACE: return "WHITESPACE";
         default: return "UNKNOWN";
         }
@@ -159,7 +157,6 @@ namespace Absolute {
             TokenType::OPERATOR,
             TokenType::DELIMITER,
             TokenType::BRACKET,
-            TokenType::DOLLAR,
             TokenType::IDENTIFIER,
             TokenType::WHITESPACE,
         };
