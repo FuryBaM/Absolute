@@ -62,6 +62,8 @@ namespace Absolute {
         void Visit(ForEachStmt* stmt) override;
         void Visit(ContinueStmt* stmt) override;
         void Visit(BreakStmt* stmt) override;
+        void Visit(ImportStmt* stmt) override;
+        void Visit(NamespaceDeclStmt* stmt) override;
 
     private:
         struct Impl;
