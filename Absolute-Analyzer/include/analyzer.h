@@ -18,7 +18,7 @@ namespace Absolute {
 
         void Analyze() {
             for (const auto& program : programs) {
-                AnalyzeProgram(*program.get());
+                if (program) AnalyzeProgram(*program);
             }
         }
         void PrintVariables() {
