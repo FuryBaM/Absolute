@@ -5,7 +5,7 @@
 #include "scope.h"
 
 namespace Absolute {
-    // Ìîäèôèêàòîðû äîñòóïà
+    // Модификаторы доступа
     enum class AccessModifier {
         PUBLIC,
         PRIVATE,
@@ -13,7 +13,7 @@ namespace Absolute {
         INTERNAL
     };
 
-    // Ïåðå÷èñëåíèå ïðèìèòèâíûõ òèïîâ
+    // Перечисление примитивных типов
     enum class PrimitiveTypeEnum {
         INT8, INT16, INT32, INT64,
         UINT8, UINT16, UINT32, UINT64,
@@ -59,26 +59,26 @@ namespace Absolute {
         {PrimitiveTypeEnum::AUTO, "auto"}
     };
 
-    // Ôóíêöèÿ äëÿ ïîëó÷åíèÿ Enum èç ñòðîêè
+    // Функция для получения Enum из строки
     inline std::optional<PrimitiveTypeEnum> PrimitiveStringToEnum(const std::string& str) {
         auto it = StringToPrimitiveType.find(str);
         if (it != StringToPrimitiveType.end()) {
             return it->second;
         }
-        return std::nullopt; // Åñëè ñòðîêà íå íàéäåíà, âåðí¸ì ïóñòîé ðåçóëüòàò
+        return std::nullopt; // Если строка не найдена, вернём пустой результат
     }
 
-    // Ôóíêöèÿ äëÿ ïîëó÷åíèÿ ñòðîêè
+    // Функция для получения строки
     inline std::string PrimitiveEnumToString(PrimitiveTypeEnum type) {
         return PrimitiveTypeToString.at(type);
     }
 
-    // Àáñòðàêòíûé áàçîâûé êëàññ äëÿ òèïîâ
+    // Абстрактный базовый класс для типов
     struct Type {
         virtual ~Type() = default;
     };
 
-    // Ïðèìèòèâíûé òèï (int, float è ò. ä.)
+    // Примитивный тип (int, float и т. д.)
     struct PrimitiveType : Type {
     public:
         PrimitiveTypeEnum type;
@@ -87,7 +87,7 @@ namespace Absolute {
 		PrimitiveType(const PrimitiveType& other) : type(other.type) {}
     };
 
-    // Ïîëÿ êëàññà
+    // Поля класса
     struct ClassField {
         AccessModifier access;
         Type* type;
@@ -97,7 +97,7 @@ namespace Absolute {
         }
     };
 
-    // Ìåòîäû êëàññà
+    // Методы класса
     struct ClassMethod {
         AccessModifier access;
         std::string name;
@@ -109,12 +109,12 @@ namespace Absolute {
         }
     };
 
-    // Ïîëüçîâàòåëüñêèé òèï (êëàññ, ñòðóêòóðà)
+    // Пользовательский тип (класс, структура)
     struct UserType : Type {
     public:
         std::string name;
-        AccessModifier access;  // Óðîâåíü äîñòóïà (private, public è ò.ä.)
-        Scope scope;            // Îáëàñòü, â êîòîðîé îáúÿâëåí
+        AccessModifier access;  // Уровень доступа (private, public и т.д.)
+        Scope scope;            // Область, в которой объявлен
 
         std::unordered_map<std::string, ClassField> fields;
         std::unordered_map<std::string, ClassMethod> methods;
