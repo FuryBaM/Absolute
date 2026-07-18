@@ -11,11 +11,12 @@ namespace {
     struct CommandLine {
         std::filesystem::path source;
         bool emitLlvm = false;
+        bool parseOnly = false;
         std::filesystem::path output;
     };
 
     void PrintUsage() {
-        std::cerr << "Usage: absolutec <source.abs> [--emit-llvm] [-o output.ll]\n";
+        std::cerr << "Usage: absolutec <source.abs> [--parse-only | --emit-llvm] [-o output.ll]\n";
     }
 
     CommandLine ParseCommandLine(int argc, char* argv[]) {
@@ -32,6 +33,9 @@ namespace {
             if (argument == "--emit-llvm") {
                 result.emitLlvm = true;
             }
+            else if (argument == "--parse-only") {
+                result.parseOnly = true;
+            }
             else if (argument == "-o") {
                 if (++index >= argc) {
                     throw std::invalid_argument("-o requires an output path");
@@ -45,6 +49,9 @@ namespace {
 
         if (!result.output.empty() && !result.emitLlvm) {
             throw std::invalid_argument("-o currently requires --emit-llvm");
+        }
+        if (result.parseOnly && result.emitLlvm) {
+            throw std::invalid_argument("--parse-only cannot be combined with --emit-llvm");
         }
         return result;
     }
@@ -80,7 +87,10 @@ int main(int argc, char* argv[]) {
         }
 
         Analyzer analyzer({ast.get()});
-        analyzer.Analyze();
+        if (!commandLine.parseOnly && !analyzer.Analyze()) {
+            analyzer.PrintDiagnostics();
+            return 1;
+        }
 
         if (commandLine.emitLlvm) {
 #ifdef ABSOLUTE_HAS_LLVM
@@ -100,7 +110,7 @@ int main(int argc, char* argv[]) {
         }
 
         ast->print();
-        analyzer.PrintVariables();
+        if (!commandLine.parseOnly) analyzer.PrintVariables();
         return 0;
     }
     catch (const std::invalid_argument& error) {
