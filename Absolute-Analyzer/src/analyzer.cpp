@@ -44,10 +44,10 @@ namespace Absolute {
         if (name) name->Accept(identifierVisitor);
         if (const auto* identifier = identifierVisitor.identifierExpr) {
             if (auto* varType = dynamic_cast<const PrimitiveTypeExpr*>(type)) {
-                if (table.variables.find(identifier->name) == table.variables.end()) { // Ïðîâåðÿåì, ÷òî ïåðåìåííîé **íåò**
+                if (table.variables.find(identifier->name) == table.variables.end()) { // Проверяем, что переменной **нет**
                     auto primTypeEnum = PrimitiveStringToEnum(varType->type);
                     if (primTypeEnum) {
-                        table.variables.emplace(identifier->name, std::make_unique<PrimitiveType>(*primTypeEnum)); // Äîáàâëÿåì **Enum**, à íå ñòðîêó
+                        table.variables.emplace(identifier->name, std::make_unique<PrimitiveType>(*primTypeEnum)); // Добавляем **Enum**, а не строку
                     }
                     else {
                         std::cerr << "Error: unknown type '" << varType->type << "'\n";
