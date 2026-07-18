@@ -231,6 +231,10 @@ namespace Absolute{
         {
             Token* next = PeekToken(1);
             Token* afterIdentifiers = PeekTokenAfterIdentifiers();
+            const auto isDeclaratorPrefix = [](const Token* candidate) {
+                return candidate && candidate->type == TokenType::OPERATOR &&
+                    (candidate->value == "*" || candidate->value == "&");
+            };
             bool templateType = false;
             if (afterIdentifiers && afterIdentifiers->value == "<") {
                 const size_t templateStart = static_cast<size_t>(afterIdentifiers - tokens.data());
@@ -238,12 +242,12 @@ namespace Absolute{
                 if (IsTemplateArgumentList(templateStart, &templateClose)) {
                     Token* afterTemplate = templateClose + 1 < tokens.size() ? &tokens[templateClose + 1] : nullptr;
                     templateType = afterTemplate &&
-                        (afterTemplate->type == TokenType::IDENTIFIER || IsPrefixUnary(*afterTemplate));
+                        (afterTemplate->type == TokenType::IDENTIFIER || isDeclaratorPrefix(afterTemplate));
                 }
             }
 
-            if ((next && (next->type == TokenType::IDENTIFIER || IsPrefixUnary(*next))) ||
-                (afterIdentifiers && (afterIdentifiers->type == TokenType::IDENTIFIER || IsPrefixUnary(*afterIdentifiers))) ||
+            if ((next && (next->type == TokenType::IDENTIFIER || isDeclaratorPrefix(next))) ||
+                (afterIdentifiers && (afterIdentifiers->type == TokenType::IDENTIFIER || isDeclaratorPrefix(afterIdentifiers))) ||
                 templateType) {
                 return ParseInstanceDeclStmt();
             }
