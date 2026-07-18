@@ -40,6 +40,27 @@ namespace Absolute {
             void Visit(StringLiteralExpr* expr) override { literal = expr; }
         };
 
+        class QualifiedNameVisitor final : public BaseIdentifierVisitor {
+        public:
+            std::string name;
+
+            void Visit(IdentifierExpr* expr) override { name = expr->name; }
+
+            void Visit(MemberAccessExpr* expr) override {
+                if (expr->base) expr->base->Accept(*this);
+                if (!name.empty()) name += ".";
+                name += expr->member;
+            }
+
+            void Visit(UserTypeExpr* expr) override {
+                if (expr->typeExpr) expr->typeExpr->Accept(*this);
+            }
+
+            void Visit(TemplateExpr* expr) override {
+                if (expr->base) expr->base->Accept(*this);
+            }
+        };
+
         bool IsBuiltinFunction(const std::string& name) {
             return name == "print" || name == "println" || name == "format" ||
                 name == "toString" || name == "assert";
@@ -128,10 +149,13 @@ namespace Absolute {
     bool Analyzer::Analyze() {
         table.Reset();
         types.clear();
+        namespaces.clear();
+        importedNamespaces.clear();
         expressionInfo.clear();
         diagnostics.clear();
         currentType.clear();
         currentReturnType.clear();
+        currentNamespace.clear();
         loopDepth = functionDepth = typeContextDepth = constructorContextDepth = 0;
 
         phase = Phase::CollectDeclarations;
@@ -239,18 +263,20 @@ namespace Absolute {
 
     void Analyzer::DeclareGlobalFunction(FunctionDeclStmt& statement) {
         if (!statement.name || !statement.returnType) return;
-        const auto declared = table.Declare(SymbolKind::Function, statement.name->value,
+        const std::string name = Qualify(statement.name->value);
+        const auto declared = table.Declare(SymbolKind::Function, name,
             statement.returnType->value, ResolveParameterTypes(statement.parameters));
-        if (!declared) Report("object '" + statement.name->value + "' is already declared in this scope");
+        if (!declared) Report("object '" + name + "' is already declared in this scope");
     }
 
     void Analyzer::ResolveFunction(FunctionDeclStmt& statement, SymbolKind kind) {
         if (!statement.name || !statement.returnType) return;
-        if (!IsKnownType(statement.returnType->value))
+        const std::string returnType = ResolveTypeReference(statement.returnType->value);
+        if (!IsKnownType(returnType))
             Report("unknown return type '" + statement.returnType->value + "' of function '" + statement.name->value + "'");
 
         const std::string oldReturn = currentReturnType;
-        currentReturnType = statement.returnType->value;
+        currentReturnType = returnType;
         ++functionDepth;
         table.EnterScope();
         for (const auto& parameter : statement.parameters) {
@@ -274,13 +300,14 @@ namespace Absolute {
     }
 
     void Analyzer::DeclareType(const std::string& name) {
-        if (types.contains(name)) {
-            Report("type '" + name + "' is already declared");
+        const std::string qualifiedName = Qualify(name);
+        if (types.contains(qualifiedName)) {
+            Report("type '" + qualifiedName + "' is already declared");
             return;
         }
-        types.emplace(name, TypeDefinition{});
-        if (!table.Declare(SymbolKind::Type, name, name))
-            Report("object '" + name + "' is already declared in this scope");
+        types.emplace(qualifiedName, TypeDefinition{});
+        if (!table.Declare(SymbolKind::Type, qualifiedName, qualifiedName))
+            Report("object '" + qualifiedName + "' is already declared in this scope");
     }
 
     void Analyzer::DeclareMember(const std::string& owner, std::string name, MemberSignature signature) {
@@ -304,6 +331,51 @@ namespace Absolute {
         return visitor.identifierExpr ? visitor.identifierExpr->name : std::string{};
     }
 
+    std::string Analyzer::ExtractQualifiedName(Expression* expression) const {
+        if (!expression) return {};
+        QualifiedNameVisitor visitor;
+        expression->Accept(visitor);
+        return visitor.name;
+    }
+
+    std::string Analyzer::Qualify(const std::string& name) const {
+        if (name.empty() || currentNamespace.empty() || name.find('.') != std::string::npos) return name;
+        return currentNamespace + "." + name;
+    }
+
+    SymbolId Analyzer::LookupSymbol(const std::string& name) const {
+        if (name.empty()) return InvalidSymbolId;
+        if (const SymbolId direct = table.Lookup(name); direct != InvalidSymbolId) return direct;
+
+        if (name.find('.') != std::string::npos) {
+            if (!currentNamespace.empty()) {
+                if (const SymbolId nested = table.Lookup(currentNamespace + "." + name);
+                    nested != InvalidSymbolId) return nested;
+            }
+            return InvalidSymbolId;
+        }
+
+        std::string scope = currentNamespace;
+        while (!scope.empty()) {
+            if (const SymbolId scoped = table.Lookup(scope + "." + name); scoped != InvalidSymbolId)
+                return scoped;
+            const size_t separator = scope.rfind('.');
+            if (separator == std::string::npos) break;
+            scope.resize(separator);
+        }
+        for (const std::string& imported : importedNamespaces) {
+            if (const SymbolId importedSymbol = table.Lookup(imported + "." + name);
+                importedSymbol != InvalidSymbolId) return importedSymbol;
+        }
+        return InvalidSymbolId;
+    }
+
+    std::string Analyzer::ResolveTypeReference(const std::string& name) const {
+        if (PrimitiveStringToEnum(name).has_value() || name == "null" || name == "error") return name;
+        const Symbol* symbol = table.Get(LookupSymbol(name));
+        return symbol && symbol->kind == SymbolKind::Type ? symbol->name : name;
+    }
+
     void Analyzer::Visit(PrimitiveTypeExpr* expr) {
         if (typeContextDepth == 0) Report("type '" + expr->type + "' cannot be used as a value");
         Save(expr, {InvalidSymbolId, expr->type, false});
@@ -316,11 +388,12 @@ namespace Absolute {
 
     void Analyzer::Visit(IdentifierExpr* expr) {
         if (typeContextDepth > 0) {
-            if (phase == Phase::ResolveBodies && !IsKnownType(expr->name)) Report("unknown type '" + expr->name + "'");
-            Save(expr, {InvalidSymbolId, expr->name, false});
+            const std::string type = ResolveTypeReference(expr->name);
+            if (phase == Phase::ResolveBodies && !IsKnownType(type)) Report("unknown type '" + expr->name + "'");
+            Save(expr, {InvalidSymbolId, type, false});
             return;
         }
-        const SymbolId id = table.Lookup(expr->name);
+        const SymbolId id = LookupSymbol(expr->name);
         const Symbol* symbol = table.Get(id);
         if (!symbol) {
             Report("unknown object '" + expr->name + "'");
@@ -357,6 +430,7 @@ namespace Absolute {
         CallTargetProbe probe;
         if (expr->base) expr->base->Accept(probe);
         const std::string callName = probe.identifierExpr ? probe.identifierExpr->name : std::string{};
+        const std::string qualifiedCallName = ExtractQualifiedName(expr->base.get());
 
         if (!probe.isMember && IsBuiltinFunction(callName)) {
             std::vector<Result> arguments;
@@ -423,7 +497,16 @@ namespace Absolute {
         SymbolId symbolId = InvalidSymbolId;
         std::string returnType = "error";
 
-        if (probe.isMember) {
+        const SymbolId qualifiedId = LookupSymbol(qualifiedCallName);
+        const Symbol* qualifiedSymbol = table.Get(qualifiedId);
+        if (qualifiedSymbol && (qualifiedSymbol->kind == SymbolKind::Function ||
+            qualifiedSymbol->kind == SymbolKind::Method)) {
+            targetCallable = true;
+            parameters = qualifiedSymbol->parameterTypes;
+            symbolId = qualifiedId;
+            returnType = qualifiedSymbol->type;
+        }
+        else if (probe.isMember) {
             const Result target = Evaluate(expr->base.get());
             targetCallable = callable;
             parameters = callableParameters;
@@ -432,7 +515,7 @@ namespace Absolute {
         }
         else {
             const std::string name = callName;
-            symbolId = table.Lookup(name);
+            symbolId = LookupSymbol(name);
             const Symbol* symbol = table.Get(symbolId);
             if (symbol && (symbol->kind == SymbolKind::Function || symbol->kind == SymbolKind::Method)) {
                 targetCallable = true;
@@ -540,11 +623,12 @@ namespace Absolute {
 
     void Analyzer::Visit(VarDeclExpr* expr) {
         const std::string name = ExtractIdentifier(expr->name.get());
+        const std::string declarationName = currentType.empty() && functionDepth == 0 ? Qualify(name) : name;
         std::string type = ResolveType(expr->type.get());
         if (phase == Phase::CollectDeclarations) {
             if (currentType.empty()) {
-                if (!table.Declare(SymbolKind::Variable, name, type))
-                    Report("object '" + name + "' is already declared in this scope");
+                if (!table.Declare(SymbolKind::Variable, declarationName, type))
+                    Report("object '" + declarationName + "' is already declared in this scope");
             }
             else DeclareMember(currentType, name, {SymbolKind::Field, type, {}});
             Save(expr, {InvalidSymbolId, type, false});
@@ -562,7 +646,8 @@ namespace Absolute {
 
         const bool fieldDeclaration = !currentType.empty() && functionDepth == 0;
         const bool globalDeclaration = currentType.empty() && table.ScopeDepth() == 0;
-        SymbolId id = fieldDeclaration ? table.Lookup(name) : table.LookupCurrent(name);
+        SymbolId id = fieldDeclaration ? table.Lookup(name) :
+            (globalDeclaration ? table.Lookup(declarationName) : table.LookupCurrent(name));
         if (!fieldDeclaration && !globalDeclaration) {
             const auto declared = table.Declare(SymbolKind::Variable, name, type);
             if (!declared) Report("object '" + name + "' is already declared in this scope");
@@ -573,6 +658,26 @@ namespace Absolute {
     }
 
     void Analyzer::Visit(MemberAccessExpr* expr) {
+        const std::string qualifiedName = ExtractQualifiedName(expr);
+        if (typeContextDepth > 0) {
+            const std::string type = ResolveTypeReference(qualifiedName);
+            if (phase == Phase::ResolveBodies && !IsKnownType(type)) Report("unknown type '" + qualifiedName + "'");
+            Save(expr, {InvalidSymbolId, type, false});
+            return;
+        }
+
+        const SymbolId qualifiedId = LookupSymbol(qualifiedName);
+        if (const Symbol* symbol = table.Get(qualifiedId)) {
+            const bool isValue = symbol->kind == SymbolKind::Variable || symbol->kind == SymbolKind::Parameter ||
+                symbol->kind == SymbolKind::Field;
+            if (!isValue && symbol->kind != SymbolKind::Function && symbol->kind != SymbolKind::Method)
+                Report("object '" + qualifiedName + "' is not a value");
+            callable = symbol->kind == SymbolKind::Function || symbol->kind == SymbolKind::Method;
+            callableParameters = symbol->parameterTypes;
+            Save(expr, {qualifiedId, symbol->type, isValue});
+            return;
+        }
+
         const Result base = Evaluate(expr->base.get());
         const MemberSignature* member = FindMember(base.type, expr->member);
         if (!member) {
@@ -609,11 +714,12 @@ namespace Absolute {
 
     void Analyzer::Visit(InstanceDeclExpr* expr) {
         const std::string name = ExtractIdentifier(expr->identifierName.get());
+        const std::string declarationName = currentType.empty() && functionDepth == 0 ? Qualify(name) : name;
         const std::string type = ResolveType(expr->constructType.get());
         if (phase == Phase::CollectDeclarations) {
             if (currentType.empty()) {
-                if (!table.Declare(SymbolKind::Variable, name, type))
-                    Report("object '" + name + "' is already declared in this scope");
+                if (!table.Declare(SymbolKind::Variable, declarationName, type))
+                    Report("object '" + declarationName + "' is already declared in this scope");
             }
             else DeclareMember(currentType, name, {SymbolKind::Field, type, {}});
             Save(expr, {InvalidSymbolId, type, false});
@@ -626,7 +732,8 @@ namespace Absolute {
             Report("initializer of '" + name + "' has type '" + value.type + "', expected '" + type + "'");
         const bool existingDeclaration = (!currentType.empty() && functionDepth == 0) ||
             (currentType.empty() && table.ScopeDepth() == 0);
-        SymbolId id = (!currentType.empty() && functionDepth == 0) ? table.Lookup(name) : table.LookupCurrent(name);
+        SymbolId id = (!currentType.empty() && functionDepth == 0) ? table.Lookup(name) :
+            (existingDeclaration ? table.Lookup(declarationName) : table.LookupCurrent(name));
         if (!existingDeclaration) {
             const auto declared = table.Declare(SymbolKind::Variable, name, type);
             if (!declared) Report("object '" + name + "' is already declared in this scope");
@@ -699,18 +806,19 @@ namespace Absolute {
     void Analyzer::Visit(VarDeclStmt* stmt) { AcceptIfPresent(stmt->expr, *this); }
 
     void Analyzer::Visit(StructDeclStmt* stmt) {
+        const std::string typeName = Qualify(stmt->name);
         if (phase == Phase::CollectDeclarations) {
             DeclareType(stmt->name);
             const std::string old = currentType;
-            currentType = stmt->name;
+            currentType = typeName;
             AcceptAll(stmt->members, *this);
             currentType = old;
             return;
         }
         const std::string old = currentType;
-        currentType = stmt->name;
+        currentType = typeName;
         table.EnterScope();
-        for (const auto& [name, member] : types[stmt->name].members)
+        for (const auto& [name, member] : types[typeName].members)
             table.Declare(member.kind, name, member.type, member.parameterTypes);
         AcceptAll(stmt->members, *this);
         table.ExitScope();
@@ -718,20 +826,22 @@ namespace Absolute {
     }
 
     void Analyzer::Visit(ClassDeclStmt* stmt) {
+        const std::string typeName = Qualify(stmt->name);
         if (phase == Phase::CollectDeclarations) {
             DeclareType(stmt->name);
             const std::string old = currentType;
-            currentType = stmt->name;
+            currentType = typeName;
             AcceptIfPresent(stmt->body, *this);
             currentType = old;
             return;
         }
         for (const std::string& parent : stmt->parents)
-            if (!types.contains(parent)) Report("unknown parent type '" + parent + "' of class '" + stmt->name + "'");
+            if (!types.contains(ResolveTypeReference(parent)))
+                Report("unknown parent type '" + parent + "' of class '" + typeName + "'");
         const std::string old = currentType;
-        currentType = stmt->name;
+        currentType = typeName;
         table.EnterScope();
-        for (const auto& [name, member] : types[stmt->name].members)
+        for (const auto& [name, member] : types[typeName].members)
             table.Declare(member.kind, name, member.type, member.parameterTypes);
         AcceptIfPresent(stmt->body, *this);
         table.ExitScope();
@@ -749,7 +859,7 @@ namespace Absolute {
                 ResolveParameterTypes(stmt->parameters)};
             return;
         }
-        if (stmt->name && stmt->name->value != currentType)
+        if (stmt->name && Qualify(stmt->name->value) != currentType)
             Report("constructor '" + stmt->name->value + "' must match type '" + currentType + "'");
         ++functionDepth;
         table.EnterScope();
@@ -836,5 +946,24 @@ namespace Absolute {
     void Analyzer::Visit(BreakStmt* stmt) {
         (void)stmt;
         if (phase == Phase::ResolveBodies && loopDepth == 0) Report("break statement is outside a loop");
+    }
+
+    void Analyzer::Visit(ImportStmt* stmt) {
+        if (stmt->isFile) return;
+        importedNamespaces.insert(stmt->target);
+        if (phase == Phase::ResolveBodies && !namespaces.contains(stmt->target))
+            Report("unknown imported namespace '" + stmt->target + "'");
+    }
+
+    void Analyzer::Visit(NamespaceDeclStmt* stmt) {
+        const std::string oldNamespace = currentNamespace;
+        const std::string namespaceName = Qualify(stmt->name);
+        if (phase == Phase::CollectDeclarations && namespaces.insert(namespaceName).second) {
+            if (!table.Declare(SymbolKind::Namespace, namespaceName, namespaceName))
+                Report("object '" + namespaceName + "' is already declared in this scope");
+        }
+        currentNamespace = namespaceName;
+        if (stmt->body) AcceptAll(stmt->body->statements, *this);
+        currentNamespace = oldNamespace;
     }
 }
