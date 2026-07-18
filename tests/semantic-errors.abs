@@ -1,0 +1,13 @@
+int32 add(int32 value) {
+    return value;
+}
+
+int32 main() {
+    int32 value = missing;
+    int32 value = 1;
+    unknown();
+    add(true, 2);
+    value.member;
+    break;
+    return "wrong";
+}
