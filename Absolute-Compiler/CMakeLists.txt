@@ -26,7 +26,11 @@ target_precompile_headers(Absolute-Compiler PRIVATE include/pch.h)
 target_include_directories(Absolute-Compiler PRIVATE include)
 
 # Линкуем библиотеки
-target_link_libraries(Absolute-Compiler PRIVATE Absolute-Parser Absolute-Analyzer Absolute-CodeGen)
+target_link_libraries(Absolute-Compiler PRIVATE Absolute-Parser Absolute-Analyzer)
+if(TARGET Absolute-CodeGen)
+    target_link_libraries(Absolute-Compiler PRIVATE Absolute-CodeGen)
+    target_compile_definitions(Absolute-Compiler PRIVATE ABSOLUTE_HAS_LLVM=1)
+endif()
 
 if(MSVC)
     target_compile_options(Absolute-Compiler PRIVATE
