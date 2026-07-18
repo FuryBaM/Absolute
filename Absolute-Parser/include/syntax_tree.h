@@ -1,6 +1,7 @@
 #include <string>
 #include <iostream>
 #include <memory>
+#include <vector>
 
 #include "lexer.h"
 #include "nodes.h"
