@@ -6,9 +6,9 @@ namespace Absolute {
         std::string op;
         std::unique_ptr<Expression> operand;
     
-        if  (CurrentToken()->type == TokenType::OPERATOR &&
-            IsPrefixUnary(*CurrentToken())){
-            op = CurrentToken()->value;
+        Token* current = RequireCurrent("an expression after unary operator");
+        if  (current->type == TokenType::OPERATOR && IsPrefixUnary(*current)){
+            op = current->value;
             // Поддерживаем `*`, `&`, `!`, `~`, `+`, `-`
             Consume(TokenType::OPERATOR, op);
             operand = ParsePrefixUnaryExpr();
@@ -27,9 +27,9 @@ namespace Absolute {
     std::unique_ptr<Expression> Parser::ParsePostfixUnaryExpr(std::unique_ptr<Expression> base)
     {
         std::string op;
-        if (CurrentToken()->type == TokenType::OPERATOR &&
-            IsPostfixUnary(*CurrentToken())) {
-            op = CurrentToken()->value;
+        Token* current = CurrentToken();
+        if (current && current->type == TokenType::OPERATOR && IsPostfixUnary(*current)) {
+            op = current->value;
             Consume(TokenType::OPERATOR, op);
             return std::make_unique<PostfixUnaryExpr>(op, std::move(base));
         }
