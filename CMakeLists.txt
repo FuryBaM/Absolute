@@ -515,14 +515,6 @@ if(BUILD_TESTING)
                 FIXTURES_REQUIRED absolute-chess-example-ir
             )
             add_test(
-                NAME absolute.run-classes-codegen
-                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/classes-codegen.ll"
-            )
-            set_tests_properties(absolute.run-classes-codegen PROPERTIES
-                FIXTURES_REQUIRED absolute-classes-codegen-ir
-                PASS_REGULAR_EXPRESSION "classes=42"
-            )
-            add_test(
                 NAME absolute.run-slice-out-of-bounds
                 COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/slice-out-of-bounds.ll"
             )
@@ -646,6 +638,19 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-pointer-functions PROPERTIES
             FIXTURES_REQUIRED absolute-pointer-functions-executable
             PASS_REGULAR_EXPRESSION "pointer-functions=ok"
+        )
+        add_test(
+            NAME absolute.build-classes-codegen
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/classes-codegen.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/classes-codegen-app"
+        )
+        set_tests_properties(absolute.build-classes-codegen PROPERTIES
+            FIXTURES_SETUP absolute-classes-codegen-executable
+        )
+        add_test(NAME absolute.run-classes-codegen COMMAND "${CMAKE_BINARY_DIR}/classes-codegen-app")
+        set_tests_properties(absolute.run-classes-codegen PROPERTIES
+            FIXTURES_REQUIRED absolute-classes-codegen-executable
+            PASS_REGULAR_EXPRESSION "classes=42"
         )
         add_test(
             NAME absolute.build-structs-codegen

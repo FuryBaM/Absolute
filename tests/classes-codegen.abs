@@ -24,6 +24,11 @@ class AddNode : Node {
     }
 }
 
+int64 managedClassScope() {
+    AddNode* node = new AddNode(2);
+    return node.evaluate(40);
+}
+
 int32 main() {
     Counter counter;
     counter.value = 40;
@@ -33,6 +38,16 @@ int32 main() {
     int64 result = node.evaluate(40);
     assert(result == 42, "virtual dispatch through base pointer");
     delete node;
+
+    Node* managedNode = new AddNode(3);
+    Node* subscriber = managedNode;
+    int64 managedResult = managedNode.evaluate(39);
+    assert(managedResult == 42, "virtual dispatch through managed base pointer");
+    assert(subscriber.evaluate(39) == 42, "managed class subscriber access");
+    delete managedNode;
+    assert(!subscriber, "managed class subscriber must expire with its owner");
+
+    assert(managedClassScope() == 42, "managed class owner must clean up at scope exit");
     println(format("classes={}", result));
     return 0;
 }

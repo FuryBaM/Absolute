@@ -551,6 +551,17 @@ inheritance, automatic destructor calls, interfaces, and static class members ar
 not emitted yet. Base-constructor chaining is also not automatic. Raw object
 graphs that own child nodes must release them explicitly before `delete`.
 
+Both pointer modes preserve class methods and virtual dispatch:
+
+```absolute
+raw Node* unsafe = new raw AddNode(2); // explicit delete is required
+Node* tracked = new AddNode(2);        // released automatically at scope exit
+
+assert(unsafe.evaluate(40) == 42);
+assert(tracked.evaluate(40) == 42);
+delete unsafe;
+```
+
 For a Release build, replace `Debug` with `Release`.
 
 ## Test
