@@ -260,6 +260,12 @@ namespace Absolute{
                 }
             }
 
+            if ((next && next->type == TokenType::OPERATOR && next->value == "*") ||
+                (afterIdentifiers && afterIdentifiers->type == TokenType::OPERATOR &&
+                    afterIdentifiers->value == "*")) {
+                return ParseVarDeclaration();
+            }
+
             if ((next && (next->type == TokenType::IDENTIFIER || isDeclaratorPrefix(next))) ||
                 (afterIdentifiers && (afterIdentifiers->type == TokenType::IDENTIFIER || isDeclaratorPrefix(afterIdentifiers))) ||
                 templateType) {

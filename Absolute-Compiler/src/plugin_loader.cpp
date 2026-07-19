@@ -18,6 +18,14 @@ namespace Absolute {
     namespace {
         using InitFunction = const AbsoluteSyntaxPluginV1* (*)();
 
+        void* FindSymbol(void* handle, const char* name) {
+#ifdef _WIN32
+            return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(handle), name));
+#else
+            return dlsym(handle, name);
+#endif
+        }
+
         void CloseLibrary(void* handle) {
             if (!handle) return;
 #ifdef _WIN32
@@ -50,8 +58,7 @@ namespace Absolute {
             throw std::runtime_error("Cannot load syntax plugin '" + canonical.string() +
                 "' (Windows error " + std::to_string(error) + ")");
         }
-        initialize = reinterpret_cast<InitFunction>(
-            GetProcAddress(static_cast<HMODULE>(handle), "absolute_syntax_plugin_init_v1"));
+        initialize = reinterpret_cast<InitFunction>(FindSymbol(handle, "absolute_syntax_plugin_init_v1"));
 #else
         handle = dlopen(canonical.c_str(), RTLD_NOW | RTLD_LOCAL);
         if (!handle) {
@@ -60,7 +67,7 @@ namespace Absolute {
             throw std::runtime_error("Cannot load syntax plugin '" + canonical.string() +
                 "': " + (detail ? detail : "unknown loader error"));
         }
-        initialize = reinterpret_cast<InitFunction>(dlsym(handle, "absolute_syntax_plugin_init_v1"));
+        initialize = reinterpret_cast<InitFunction>(FindSymbol(handle, "absolute_syntax_plugin_init_v1"));
 #endif
         if (!initialize) {
             CloseLibrary(handle);
@@ -71,7 +78,15 @@ namespace Absolute {
 
         try {
             const AbsoluteSyntaxPluginV1* descriptor = initialize();
+            const auto prelude = reinterpret_cast<AbsoluteSyntaxPluginPreludeV1>(
+                FindSymbol(handle, "absolute_syntax_plugin_prelude_v1"));
+            const char* preludeSource = prelude ? prelude() : nullptr;
+            const auto binaryOperators = reinterpret_cast<AbsoluteSyntaxPluginBinaryOperatorsV1>(
+                FindSymbol(handle, "absolute_syntax_plugin_binary_operators_v1"));
+            const AbsoluteBinaryOperatorTableV1* operatorTable = binaryOperators ? binaryOperators() : nullptr;
             RegisterSyntaxPlugin(descriptor);
+            if (prelude) RegisterSyntaxPluginPrelude(descriptor->name, preludeSource);
+            if (binaryOperators) RegisterPluginBinaryOperators(descriptor->name, operatorTable);
             handles.push_back(handle);
             std::cout << "Loaded syntax plugin " << descriptor->name << " from " << canonical.string() << '\n';
         }

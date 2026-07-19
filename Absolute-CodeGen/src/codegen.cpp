@@ -1,4 +1,5 @@
 #include "codegen.h"
+#include "syntax_plugins.h"
 #include "analyzer.h"
 
 #include <llvm/IR/BasicBlock.h>
@@ -1790,6 +1791,19 @@ namespace Absolute {
         llvm::Value* left = impl->Evaluate(expr->left.get());
         llvm::Value* right = impl->Evaluate(expr->right.get());
 
+        if (const PluginBinaryOperator* pluginOperator =
+                FindPluginBinaryOperator(leftType, expr->op, rightType)) {
+            llvm::Function* function = impl->module->getFunction(pluginOperator->functionName);
+            if (!function || function->arg_size() != 2)
+                impl->Fail("missing plugin operator function '" + pluginOperator->functionName + "'");
+            left = impl->Coerce(left, function->getFunctionType()->getParamType(0));
+            right = impl->Coerce(right, function->getFunctionType()->getParamType(1));
+            impl->value = impl->builder.CreateCall(function, {left, right}, "plugin.operator");
+            impl->valueCreatesManagedOwner = IsManagedPointerTypeName(pluginOperator->resultType);
+            impl->valueManagedPointee = nullptr;
+            return;
+        }
+
         const bool leftRaw = IsRawPointerTypeName(leftType);
         const bool rightRaw = IsRawPointerTypeName(rightType);
         const bool leftManaged = IsManagedPointerTypeName(leftType);
@@ -2331,9 +2345,9 @@ namespace Absolute {
         else result = impl->Coerce(impl->Evaluate(stmt->expr.get()), function->getReturnType());
         SymbolId transferredOwner = InvalidSymbolId;
         if (IsManagedPointerTypeName(impl->currentReturnTypeName)) {
-            const std::string returnedName = IdentifierName(stmt->expr.get());
-            if (!returnedName.empty()) {
-                Impl::Variable& returned = impl->RequireVariable(returnedName);
+            const auto* returnedIdentifier = dynamic_cast<IdentifierExpr*>(stmt->expr.get());
+            if (returnedIdentifier) {
+                Impl::Variable& returned = impl->RequireVariable(returnedIdentifier->name);
                 if (returned.managedOwner) transferredOwner = returned.symbol;
             }
         }

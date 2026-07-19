@@ -18,6 +18,15 @@ namespace Absolute {
 
         std::vector<RegisteredRule> rules;
         std::unordered_map<std::string, size_t> rulesByKeyword;
+        std::vector<std::string> preludes;
+        std::vector<PluginBinaryOperator> binaryOperators;
+
+        std::string OperatorKey(const std::string& leftType, const std::string& operatorText,
+            const std::string& rightType) {
+            return leftType + "\n" + operatorText + "\n" + rightType;
+        }
+
+        std::unordered_map<std::string, size_t> binaryOperatorsBySignature;
 
         bool IsIdentifier(const std::string& value) {
             if (value.empty()) return false;
@@ -93,10 +102,55 @@ namespace Absolute {
     void ResetSyntaxPlugins() {
         rulesByKeyword.clear();
         rules.clear();
+        preludes.clear();
+        binaryOperatorsBySignature.clear();
+        binaryOperators.clear();
+    }
+
+    void RegisterSyntaxPluginPrelude(const std::string& pluginName, const char* source) {
+        if (!source)
+            throw std::runtime_error("Syntax plugin '" + pluginName + "' returned a null prelude");
+        if (source[0] != '\0') preludes.emplace_back(source);
+    }
+
+    void RegisterPluginBinaryOperators(
+        const std::string& pluginName, const AbsoluteBinaryOperatorTableV1* operators) {
+        if (!operators) return;
+        if (operators->rule_count != 0 && !operators->rules)
+            throw std::runtime_error("Syntax plugin '" + pluginName + "' returned no operator table");
+        std::unordered_set<std::string> newSignatures;
+        for (size_t index = 0; index < operators->rule_count; ++index) {
+            const AbsoluteBinaryOperatorRuleV1& rule = operators->rules[index];
+            if (!rule.left_type || !rule.operator_text || !rule.right_type ||
+                !rule.function_name || !rule.result_type)
+                throw std::runtime_error("Syntax plugin '" + pluginName + "' returned an incomplete operator rule");
+            const std::string key = OperatorKey(rule.left_type, rule.operator_text, rule.right_type);
+            if (binaryOperatorsBySignature.contains(key) || !newSignatures.insert(key).second)
+                throw std::runtime_error("Binary operator for '" + std::string(rule.left_type) + " " +
+                    rule.operator_text + " " + rule.right_type + "' is already registered");
+        }
+        for (size_t index = 0; index < operators->rule_count; ++index) {
+            const AbsoluteBinaryOperatorRuleV1& rule = operators->rules[index];
+            const size_t ruleIndex = binaryOperators.size();
+            binaryOperators.push_back({pluginName, rule.left_type, rule.operator_text,
+                rule.right_type, rule.function_name, rule.result_type});
+            binaryOperatorsBySignature.emplace(
+                OperatorKey(rule.left_type, rule.operator_text, rule.right_type), ruleIndex);
+        }
     }
 
     bool IsSyntaxPluginKeyword(const std::string& value) {
         return rulesByKeyword.contains(value);
+    }
+
+    std::vector<std::string> SyntaxPluginPreludes() {
+        return preludes;
+    }
+
+    const PluginBinaryOperator* FindPluginBinaryOperator(
+        const std::string& leftType, const std::string& operatorText, const std::string& rightType) {
+        const auto found = binaryOperatorsBySignature.find(OperatorKey(leftType, operatorText, rightType));
+        return found == binaryOperatorsBySignature.end() ? nullptr : &binaryOperators[found->second];
     }
 
     std::vector<Token> ExpandSyntaxPlugins(std::vector<Token> tokens) {
@@ -154,4 +208,3 @@ namespace Absolute {
         return tokens;
     }
 }
-

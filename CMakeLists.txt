@@ -18,6 +18,7 @@ endif()
 add_subdirectory(Absolute-Compiler)
 if(ABSOLUTE_BUILD_EXAMPLE_PLUGINS)
     add_subdirectory(plugins/unless)
+    add_subdirectory(plugins/math)
 endif()
 
 # Keep generated artifacts out of the source tree.
@@ -46,6 +47,21 @@ if(BUILD_TESTING)
                 -DWORK_DIR=${CMAKE_BINARY_DIR}/syntax-plugin-project
                 -P "${PROJECT_SOURCE_DIR}/tests/run-syntax-plugin-project.cmake"
         )
+    endif()
+    if(TARGET Absolute-Math-Plugin)
+        add_test(
+            NAME absolute.math-plugin
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/math-plugin.abs"
+                --plugin "$<TARGET_FILE:Absolute-Math-Plugin>"
+        )
+        set_tests_properties(absolute.math-plugin PROPERTIES
+            PASS_REGULAR_EXPRESSION "Loaded syntax plugin absolute.math"
+        )
+        add_test(
+            NAME absolute.math-plugin-required
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/math-plugin.abs"
+        )
+        set_tests_properties(absolute.math-plugin-required PROPERTIES WILL_FAIL TRUE)
     endif()
     add_test(
         NAME absolute.sample
@@ -174,6 +190,25 @@ if(BUILD_TESTING)
             )
             set_tests_properties(absolute.emit-syntax-plugin PROPERTIES
                 FIXTURES_SETUP absolute-syntax-plugin-ir
+            )
+        endif()
+        if(TARGET Absolute-Math-Plugin)
+            add_test(
+                NAME absolute.build-math-plugin
+                COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/math-plugin.abs"
+                    --plugin "$<TARGET_FILE:Absolute-Math-Plugin>"
+                    --build-exe -o "${CMAKE_BINARY_DIR}/absolute-math-plugin${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.build-math-plugin PROPERTIES
+                FIXTURES_SETUP absolute-math-plugin-executable
+            )
+            add_test(
+                NAME absolute.run-math-plugin
+                COMMAND "${CMAKE_BINARY_DIR}/absolute-math-plugin${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.run-math-plugin PROPERTIES
+                FIXTURES_REQUIRED absolute-math-plugin-executable
+                PASS_REGULAR_EXPRESSION "math-plugin=ok"
             )
         endif()
         add_test(

@@ -1,5 +1,6 @@
 #include "analyzer_pch.h"
 #include "analyzer.h"
+#include "syntax_plugins.h"
 
 #include <algorithm>
 #include <cctype>
@@ -962,6 +963,25 @@ namespace Absolute {
         const Result left = Evaluate(expr->left.get());
         const Result right = Evaluate(expr->right.get());
         const std::string& op = expr->op;
+        if (const PluginBinaryOperator* pluginOperator =
+                FindPluginBinaryOperator(left.type, op, right.type)) {
+            const SymbolId functionId = LookupSymbol(pluginOperator->functionName);
+            const Symbol* function = table.Get(functionId);
+            const std::vector<std::string> expectedParameters{left.type, right.type};
+            if (!function || function->kind != SymbolKind::Function ||
+                function->parameterTypes != expectedParameters || function->type != pluginOperator->resultType) {
+                Report("plugin operator '" + left.type + " " + op + " " + right.type +
+                    "' requires function '" + pluginOperator->functionName + "(" + left.type + ", " +
+                    right.type + ") -> " + pluginOperator->resultType + "'", "E_PLUGIN_OPERATOR_SIGNATURE");
+                Save(expr, {InvalidSymbolId, "error", false});
+                return;
+            }
+            const bool managedResult = IsManagedPointerType(pluginOperator->resultType);
+            Save(expr, {functionId, pluginOperator->resultType, false, managedResult, false,
+                InitializationState::Initialized,
+                managedResult ? PointerValidity::Live : PointerValidity::NotPointer});
+            return;
+        }
         const bool leftPointer = IsPointerType(left.type);
         const bool rightPointer = IsPointerType(right.type);
         if ((leftPointer || rightPointer) && (op == "+" || op == "-")) {

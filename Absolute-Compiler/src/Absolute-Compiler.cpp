@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "plugin_loader.h"
+#include "syntax_plugins.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -269,16 +270,27 @@ namespace {
         std::string moduleName;
         std::vector<fs::path> nativeLibraries;
         std::vector<fs::path> nativeSearchPaths;
+        std::unique_ptr<ProjectConfig> project;
 
         if (input.extension() == ".absproj") {
-            const ProjectConfig project = LoadProjectConfig(input);
-            for (const fs::path& plugin : project.plugins) plugins.Load(plugin);
-            moduleName = project.name;
-            nativeLibraries = project.nativeLibraries;
-            nativeSearchPaths = project.nativeSearchPaths;
-            LoadSource(project.entry, programs, loaded);
+            project = std::make_unique<ProjectConfig>(LoadProjectConfig(input));
+            for (const fs::path& plugin : project->plugins) plugins.Load(plugin);
+            moduleName = project->name;
+            nativeLibraries = project->nativeLibraries;
+            nativeSearchPaths = project->nativeSearchPaths;
+        }
+        else {
+            moduleName = input.filename().string();
+        }
+
+        std::vector<std::unique_ptr<Program>> preludePrograms;
+        for (const std::string& prelude : SyntaxPluginPreludes())
+            preludePrograms.push_back(ParseCode(Tokenize(prelude)));
+
+        if (project) {
+            LoadSource(project->entry, programs, loaded);
             std::vector<fs::path> sources;
-            for (const fs::path& directory : project.sourceDirectories) {
+            for (const fs::path& directory : project->sourceDirectories) {
                 if (!fs::exists(directory))
                     throw std::runtime_error("Project source directory does not exist: " + directory.string());
                 for (const fs::directory_entry& entry : fs::recursive_directory_iterator(directory)) {
@@ -289,11 +301,13 @@ namespace {
             for (const fs::path& source : sources) LoadSource(source, programs, loaded);
         }
         else {
-            moduleName = input.filename().string();
             LoadSource(input, programs, loaded);
         }
 
         std::vector<std::unique_ptr<Statement>> statements;
+        for (auto& program : preludePrograms) {
+            for (auto& statement : program->statements) statements.push_back(std::move(statement));
+        }
         for (auto& program : programs) {
             for (auto& statement : program->statements) statements.push_back(std::move(statement));
         }

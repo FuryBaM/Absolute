@@ -111,6 +111,16 @@ error strings must remain valid until that adapter is invoked again; the host
 copies them before the next invocation. No C++ AST objects or allocator-owned
 memory cross the DLL boundary.
 
+A plugin may additionally export `absolute_syntax_plugin_prelude_v1`. The
+returned Absolute source is parsed as a module before project sources. This is
+useful for libraries that add declarations and implementations without an
+artificial marker keyword. The included `absolute.math` plugin uses this hook to
+provide `Math.abs`, `Math.sqrt`, `Math.sin`, `Math.cos`, `vec2`, `vec3`, `mat3`,
+`mat4`, `Math.projection`, and `Math.lookAt`. Vector and matrix
+type aliases are available without `Math.`, including plugin-defined `+`, `-`,
+scalar multiplication, and matrix multiplication.
+See `plugins/math/README.md` for the complete API and matrix conventions.
+
 Plugins cannot replace core keywords, duplicate another plugin's keyword, or
 load with a different ABI version. Recursive expansion is bounded and produces
 a compiler error. Plugins are native code and should only be loaded from trusted

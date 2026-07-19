@@ -67,8 +67,26 @@ typedef struct AbsoluteSyntaxPluginV1 {
 } AbsoluteSyntaxPluginV1;
 
 typedef const AbsoluteSyntaxPluginV1* (*AbsoluteSyntaxPluginInitV1)(void);
+typedef const char* (*AbsoluteSyntaxPluginPreludeV1)(void);
+
+typedef struct AbsoluteBinaryOperatorRuleV1 {
+    const char* left_type;
+    const char* operator_text;
+    const char* right_type;
+    const char* function_name;
+    const char* result_type;
+} AbsoluteBinaryOperatorRuleV1;
+
+typedef struct AbsoluteBinaryOperatorTableV1 {
+    size_t rule_count;
+    const AbsoluteBinaryOperatorRuleV1* rules;
+} AbsoluteBinaryOperatorTableV1;
+
+typedef const AbsoluteBinaryOperatorTableV1* (*AbsoluteSyntaxPluginBinaryOperatorsV1)(void);
 
 /* Plugins define and export: absolute_syntax_plugin_init_v1. */
+/* They may also export: absolute_syntax_plugin_prelude_v1. */
+/* They may also export: absolute_syntax_plugin_binary_operators_v1. */
 
 #ifdef __cplusplus
 }
