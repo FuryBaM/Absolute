@@ -671,13 +671,15 @@ namespace Absolute {
         (void)kind;
     }
 
-    void Analyzer::DeclareType(const std::string& name) {
+    void Analyzer::DeclareType(const std::string& name, TypeKind kind) {
         const std::string qualifiedName = Qualify(name);
         if (types.contains(qualifiedName)) {
             Report("type '" + qualifiedName + "' is already declared");
             return;
         }
-        types.emplace(qualifiedName, TypeDefinition{});
+        TypeDefinition definition;
+        definition.kind = kind;
+        types.emplace(qualifiedName, std::move(definition));
         if (!table.Declare(SymbolKind::Type, qualifiedName, qualifiedName))
             Report("object '" + qualifiedName + "' is already declared in this scope");
     }
@@ -751,6 +753,49 @@ namespace Absolute {
             }
         }
         return result;
+    }
+
+    std::optional<Analyzer::MemberSignature> Analyzer::FindConcreteMethod(
+        const std::string& owner, const std::string& name,
+        const std::vector<std::string>& parameterTypes) const {
+        const auto found = types.find(owner);
+        if (found == types.end() || found->second.kind != TypeKind::Class) return std::nullopt;
+        if (const auto members = found->second.members.find(name); members != found->second.members.end()) {
+            for (const MemberSignature& member : members->second)
+                if (member.kind == SymbolKind::Method && member.parameterTypes == parameterTypes)
+                    return member;
+        }
+        for (const std::string& parent : found->second.parents) {
+            const auto parentType = types.find(parent);
+            if (parentType != types.end() && parentType->second.kind == TypeKind::Class)
+                if (auto method = FindConcreteMethod(parent, name, parameterTypes)) return method;
+        }
+        return std::nullopt;
+    }
+
+    void Analyzer::ValidateInterfaceImplementation(const std::string& className) {
+        const auto found = types.find(className);
+        if (found == types.end()) return;
+        for (const std::string& parent : found->second.parents) {
+            const auto contract = types.find(parent);
+            if (contract == types.end() || contract->second.kind != TypeKind::Interface) continue;
+            for (const auto& [methodName, overloads] : VisibleMembers(parent)) {
+                for (const MemberSignature& requirement : overloads) {
+                    if (requirement.kind != SymbolKind::Method) continue;
+                    const auto implementation = FindConcreteMethod(
+                        className, methodName, requirement.parameterTypes);
+                    if (!implementation) {
+                        Report("class '" + className + "' does not implement interface method '" +
+                            parent + "." + methodName + "'");
+                    }
+                    else if (implementation->type != requirement.type) {
+                        Report("class method '" + className + "." + methodName +
+                            "' returns '" + implementation->type + "', but interface '" + parent +
+                            "' requires '" + requirement.type + "'");
+                    }
+                }
+            }
+        }
     }
 
     std::string Analyzer::ExtractIdentifier(Expression* expression) const {
@@ -1540,6 +1585,9 @@ namespace Absolute {
             constructedType == "dynamic")
             Report("cannot allocate type '" + constructedType + "'");
         const bool primitive = PrimitiveStringToEnum(constructedType).has_value();
+        if (const auto found = types.find(constructedType);
+            found != types.end() && found->second.kind == TypeKind::Interface)
+            Report("cannot instantiate interface '" + constructedType + "'");
         if (expr->arguments.size() > 1 && primitive)
             Report("primitive allocation accepts at most one initializer");
         std::vector<std::string> parameters;
@@ -1628,6 +1676,8 @@ namespace Absolute {
             return;
         }
         if (!types.contains(type)) Report("unknown object type '" + type + "'");
+        else if (types[type].kind == TypeKind::Interface)
+            Report("interface '" + type + "' must be used through raw or managed pointer");
         Result value;
         if (expr->value) value = Evaluate(expr->value.get());
         if (expr->value && !IsAssignable(type, value.type))
@@ -1784,6 +1834,26 @@ namespace Absolute {
                 DeclareMember(currentType, stmt->name->value,
                     {SymbolKind::Method, ResolveType(stmt->returnType.get()), ResolveParameterTypes(stmt->parameters)});
         }
+        else if (!currentType.empty() && types[currentType].kind == TypeKind::Interface) {
+            const std::string returnType = ResolveType(stmt->returnType.get());
+            if (!IsKnownType(returnType))
+                Report("unknown return type '" + returnType + "' of interface method '" +
+                    currentType + "." + stmt->name->value + "'");
+            for (const auto& parameter : stmt->parameters) {
+                const std::string parameterType = ResolveDeclaredType(*parameter);
+                if (!IsKnownType(parameterType))
+                    Report("unknown parameter type '" + parameterType + "' of interface method '" +
+                        currentType + "." + stmt->name->value + "'");
+                if (parameter->value)
+                    Report("interface methods cannot declare default parameter values");
+            }
+            if (stmt->body) Report("interface methods cannot have a body");
+            if (HasModifier(*stmt, "static") || HasModifier(*stmt, "extension") ||
+                HasModifier(*stmt, "async") || HasModifier(*stmt, "override") ||
+                HasModifier(*stmt, "sealed"))
+                Report("interface method '" + currentType + "." + stmt->name->value +
+                    "' has an unsupported modifier");
+        }
         else ResolveFunction(*stmt, currentType.empty() ? SymbolKind::Function : SymbolKind::Method);
     }
 
@@ -1826,7 +1896,7 @@ namespace Absolute {
     void Analyzer::Visit(StructDeclStmt* stmt) {
         const std::string typeName = Qualify(stmt->name);
         if (phase == Phase::CollectDeclarations) {
-            DeclareType(stmt->name);
+            DeclareType(stmt->name, TypeKind::Struct);
             const std::string old = currentType;
             currentType = typeName;
             AcceptAll(stmt->members, *this);
@@ -1847,7 +1917,7 @@ namespace Absolute {
     void Analyzer::Visit(ClassDeclStmt* stmt) {
         const std::string typeName = Qualify(stmt->name);
         if (phase == Phase::CollectDeclarations) {
-            DeclareType(stmt->name);
+            DeclareType(stmt->name, TypeKind::Class);
             auto& definition = types[typeName];
             definition.parents.clear();
             for (const std::string& parent : stmt->parents)
@@ -1858,9 +1928,17 @@ namespace Absolute {
             currentType = old;
             return;
         }
-        for (const std::string& parent : stmt->parents)
-            if (!types.contains(ResolveTypeReference(parent)))
+        size_t classParentCount = 0;
+        for (const std::string& parent : stmt->parents) {
+            const std::string resolvedParent = ResolveTypeReference(parent);
+            if (!types.contains(resolvedParent))
                 Report("unknown parent type '" + parent + "' of class '" + typeName + "'");
+            else if (types[resolvedParent].kind == TypeKind::Class) ++classParentCount;
+            else if (types[resolvedParent].kind != TypeKind::Interface)
+                Report("class '" + typeName + "' cannot inherit non-class type '" + resolvedParent + "'");
+        }
+        if (classParentCount > 1)
+            Report("class '" + typeName + "' cannot inherit more than one class");
         const std::string old = currentType;
         currentType = typeName;
         table.EnterScope();
@@ -1868,6 +1946,41 @@ namespace Absolute {
             for (const MemberSignature& member : overloads)
                 table.Declare(member.kind, name, member.type, member.parameterTypes);
         AcceptIfPresent(stmt->body, *this);
+        ValidateInterfaceImplementation(typeName);
+        table.ExitScope();
+        currentType = old;
+    }
+
+    void Analyzer::Visit(InterfaceDeclStmt* stmt) {
+        const std::string typeName = Qualify(stmt->name);
+        if (phase == Phase::CollectDeclarations) {
+            DeclareType(stmt->name, TypeKind::Interface);
+            auto& definition = types[typeName];
+            definition.parents.clear();
+            for (const std::string& parent : stmt->parents)
+                definition.parents.push_back(ResolveTypeReference(parent));
+            const std::string old = currentType;
+            currentType = typeName;
+            for (const auto& method : stmt->methods) AcceptIfPresent(method, *this);
+            currentType = old;
+            return;
+        }
+
+        for (const std::string& parent : stmt->parents) {
+            const std::string resolvedParent = ResolveTypeReference(parent);
+            const auto found = types.find(resolvedParent);
+            if (found == types.end())
+                Report("unknown parent interface '" + parent + "' of interface '" + typeName + "'");
+            else if (found->second.kind != TypeKind::Interface)
+                Report("interface '" + typeName + "' can only inherit another interface");
+        }
+        const std::string old = currentType;
+        currentType = typeName;
+        table.EnterScope();
+        for (const auto& [name, overloads] : VisibleMembers(typeName))
+            for (const MemberSignature& member : overloads)
+                table.Declare(member.kind, name, member.type, member.parameterTypes);
+        for (const auto& method : stmt->methods) AcceptIfPresent(method, *this);
         table.ExitScope();
         currentType = old;
     }

@@ -99,6 +99,7 @@ namespace Absolute {
         std::unique_ptr<DoWhileStmt> ParseDoWhileStmt();
         std::unique_ptr<ForEachStmt> ParseForEachStmt();
         std::unique_ptr<ClassDeclStmt> ParseClassDecl();
+        std::unique_ptr<InterfaceDeclStmt> ParseInterfaceDecl();
         std::unique_ptr<ConstructorDeclStmt> ParseConstructor();
         std::unique_ptr<SingleStatement> ParseInstanceDeclStmt();
         std::unique_ptr<StructDeclStmt> ParseStructDecl();

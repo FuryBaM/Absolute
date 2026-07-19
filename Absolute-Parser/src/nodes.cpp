@@ -169,6 +169,10 @@ namespace Absolute {
         visitor.Visit(this);
     }
 
+    void InterfaceDeclStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
     void ConstructorDeclStmt::Accept(StatementVisitor& visitor) {
         visitor.Visit(this);
     }

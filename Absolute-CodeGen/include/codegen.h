@@ -56,6 +56,7 @@ namespace Absolute {
         void Visit(VarDeclStmt* stmt) override;
         void Visit(StructDeclStmt* stmt) override;
         void Visit(ClassDeclStmt* stmt) override;
+        void Visit(InterfaceDeclStmt* stmt) override;
         void Visit(ConstructorDeclStmt* stmt) override;
         void Visit(EnumDeclStmt* stmt) override;
         void Visit(GroupDeclStmt* stmt) override;

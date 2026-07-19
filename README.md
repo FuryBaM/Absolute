@@ -442,6 +442,49 @@ A struct cannot contain itself by value because that would have infinite size;
 use `raw T*` or `T*` for recursive links. Structs do not have inheritance or
 virtual dispatch and therefore carry no class vtable field.
 
+## Interfaces
+
+Interfaces declare method contracts without storage or method bodies. An
+interface may inherit other interfaces, and a class may inherit one base class
+plus any number of interfaces:
+
+```absolute
+interface IEvaluable {
+    int64 evaluate(int64 input);
+}
+
+interface INamed {
+    int64 id();
+}
+
+class AddNode : BaseNode, IEvaluable, INamed {
+    int64 evaluate(int64 input) {
+        return input + 2;
+    }
+
+    int64 id() {
+        return 42;
+    }
+}
+```
+
+Interfaces are reference-only types. Both raw and managed pointers preserve
+dynamic dispatch without an extra wrapper allocation:
+
+```absolute
+raw IEvaluable* unsafe = new raw AddNode();
+IEvaluable* tracked = new AddNode();
+
+assert(unsafe.evaluate(40) == 42);
+assert(tracked.evaluate(40) == 42);
+delete unsafe;
+```
+
+The analyzer verifies every required overload and its return type. Instantiating
+an interface, declaring it as an inline value, omitting a method, or implementing
+an incompatible signature is rejected. Interface fields, default method bodies,
+properties, and static interface members are not implemented yet.
+
 ## Async tasks and parallel execution
 
 An `async` function can be scheduled on the runtime worker pool with `spawn`.

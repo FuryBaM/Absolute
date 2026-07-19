@@ -253,6 +253,15 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/classes-codegen.abs"
     )
     add_test(
+        NAME absolute.interfaces-codegen-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interfaces-codegen.abs"
+    )
+    add_test(
+        NAME absolute.interface-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-errors.abs"
+    )
+    set_tests_properties(absolute.interface-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.structs-codegen-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/structs-codegen.abs"
     )
@@ -417,6 +426,14 @@ if(BUILD_TESTING)
         )
         set_tests_properties(absolute.emit-classes-codegen PROPERTIES
             FIXTURES_SETUP absolute-classes-codegen-ir
+        )
+        add_test(
+            NAME absolute.emit-interfaces-codegen
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interfaces-codegen.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/interfaces-codegen.ll"
+        )
+        set_tests_properties(absolute.emit-interfaces-codegen PROPERTIES
+            FIXTURES_SETUP absolute-interfaces-codegen-ir
         )
         add_test(
             NAME absolute.emit-structs-codegen
@@ -651,6 +668,19 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-classes-codegen PROPERTIES
             FIXTURES_REQUIRED absolute-classes-codegen-executable
             PASS_REGULAR_EXPRESSION "classes=42"
+        )
+        add_test(
+            NAME absolute.build-interfaces-codegen
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interfaces-codegen.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/interfaces-codegen-app"
+        )
+        set_tests_properties(absolute.build-interfaces-codegen PROPERTIES
+            FIXTURES_SETUP absolute-interfaces-codegen-executable
+        )
+        add_test(NAME absolute.run-interfaces-codegen COMMAND "${CMAKE_BINARY_DIR}/interfaces-codegen-app")
+        set_tests_properties(absolute.run-interfaces-codegen PROPERTIES
+            FIXTURES_REQUIRED absolute-interfaces-codegen-executable
+            PASS_REGULAR_EXPRESSION "interfaces=ok"
         )
         add_test(
             NAME absolute.build-structs-codegen

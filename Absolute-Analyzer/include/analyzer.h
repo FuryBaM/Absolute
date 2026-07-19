@@ -124,10 +124,18 @@ namespace Absolute {
             SymbolId symbol = InvalidSymbolId;
         };
 
+        enum class TypeKind {
+            Other,
+            Struct,
+            Class,
+            Interface
+        };
+
         struct TypeDefinition {
             std::unordered_map<std::string, std::vector<MemberSignature>> members;
             std::optional<MemberSignature> constructor;
             std::vector<std::string> parents;
+            TypeKind kind = TypeKind::Other;
         };
 
         enum class Phase {
@@ -266,6 +274,7 @@ namespace Absolute {
         void Visit(VarDeclStmt* stmt) override;
         void Visit(StructDeclStmt* stmt) override;
         void Visit(ClassDeclStmt* stmt) override;
+        void Visit(InterfaceDeclStmt* stmt) override;
         void Visit(ConstructorDeclStmt* stmt) override;
         void Visit(EnumDeclStmt* stmt) override;
         void Visit(GroupDeclStmt* stmt) override;
@@ -297,11 +306,15 @@ namespace Absolute {
         std::vector<std::string> ResolveParameterTypes(const std::vector<std::unique_ptr<VarDeclExpr>>& parameters);
         void DeclareGlobalFunction(FunctionDeclStmt& statement);
         void ResolveFunction(FunctionDeclStmt& statement, SymbolKind kind);
-        void DeclareType(const std::string& name);
+        void DeclareType(const std::string& name, TypeKind kind = TypeKind::Other);
         void DeclareMember(const std::string& owner, std::string name, MemberSignature signature);
         std::vector<MemberSignature> FindMembers(const std::string& owner, const std::string& name) const;
         std::unordered_map<std::string, std::vector<MemberSignature>> VisibleMembers(
             const std::string& owner) const;
+        std::optional<MemberSignature> FindConcreteMethod(
+            const std::string& owner, const std::string& name,
+            const std::vector<std::string>& parameterTypes) const;
+        void ValidateInterfaceImplementation(const std::string& className);
         std::vector<SymbolId> FindFunctionCandidates(const std::string& name) const;
         std::vector<SymbolId> FindExtensionCandidates(const std::string& name) const;
         SymbolId SelectOverload(const std::vector<SymbolId>& candidates,

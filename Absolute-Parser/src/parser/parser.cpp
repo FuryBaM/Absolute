@@ -227,6 +227,8 @@ namespace Absolute{
 			    return ParseClassDecl();
 		    case Hash("struct"):
 			    return ParseStructDecl();
+		    case Hash("interface"):
+			    return ParseInterfaceDecl();
 		    case Hash("enum"):
 			    return ParseEnumDecl();
             case Hash("group"):

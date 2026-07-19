@@ -16,6 +16,7 @@ namespace Absolute {
         virtual void Visit(VarDeclStmt* stmt) = 0;
         virtual void Visit(StructDeclStmt* stmt) = 0;
         virtual void Visit(ClassDeclStmt* stmt) = 0;
+        virtual void Visit(InterfaceDeclStmt* stmt) = 0;
         virtual void Visit(ConstructorDeclStmt* stmt) = 0;
         virtual void Visit(EnumDeclStmt* stmt) = 0;
         virtual void Visit(GroupDeclStmt* stmt) = 0;

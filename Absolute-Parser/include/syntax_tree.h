@@ -15,6 +15,7 @@
 #include "ast/function.h"
 #include "ast/cast.h"
 #include "ast/class.h"
+#include "ast/interface.h"
 #include "ast/constructor.h"
 #include "ast/destructor.h"
 #include "ast/instance_declaration.h"

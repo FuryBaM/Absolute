@@ -258,6 +258,16 @@ namespace Absolute {
             bool emitted = false;
         };
 
+        struct InterfaceInfo {
+            std::string name;
+            std::string nameSpace;
+            InterfaceDeclStmt* statement = nullptr;
+            std::vector<std::string> parents;
+            std::unordered_map<std::string, ClassMethod> methods;
+            bool finalizing = false;
+            bool finalized = false;
+        };
+
         struct LoopTarget {
             llvm::BasicBlock* continueBlock = nullptr;
             llvm::BasicBlock* breakBlock = nullptr;
@@ -283,6 +293,9 @@ namespace Absolute {
         std::vector<std::string> classOrder;
         std::unordered_map<std::string, StructInfo> structs;
         std::vector<std::string> structOrder;
+        std::unordered_map<std::string, InterfaceInfo> interfaces;
+        std::vector<std::string> interfaceOrder;
+        unsigned interfaceSlotCount = 0;
         std::vector<LoopTarget> loops;
         std::string currentNamespace;
         std::unordered_map<std::string, std::string> functionLinkNames;
@@ -376,7 +389,7 @@ namespace Absolute {
 
         void CollectClass(ClassDeclStmt& statement, const std::string& nameSpace) {
             const std::string name = QualifiedClassName(statement.name, nameSpace);
-            if (classes.contains(name) || structs.contains(name))
+            if (classes.contains(name) || structs.contains(name) || interfaces.contains(name))
                 Fail("duplicate type '" + name + "'");
             ClassInfo info;
             info.name = name;
@@ -409,7 +422,7 @@ namespace Absolute {
 
         void CollectStruct(StructDeclStmt& statement, const std::string& nameSpace) {
             const std::string name = QualifiedClassName(statement.name, nameSpace);
-            if (structs.contains(name) || classes.contains(name))
+            if (structs.contains(name) || classes.contains(name) || interfaces.contains(name))
                 Fail("duplicate type '" + name + "'");
             StructInfo info;
             info.name = name;
@@ -435,6 +448,20 @@ namespace Absolute {
             structOrder.push_back(name);
         }
 
+        void CollectInterface(InterfaceDeclStmt& statement, const std::string& nameSpace) {
+            const std::string name = QualifiedClassName(statement.name, nameSpace);
+            if (interfaces.contains(name) || classes.contains(name) || structs.contains(name))
+                Fail("duplicate type '" + name + "'");
+            InterfaceInfo info;
+            info.name = name;
+            info.nameSpace = nameSpace;
+            info.statement = &statement;
+            for (const std::string& parent : statement.parents)
+                info.parents.push_back(QualifiedClassName(parent, nameSpace));
+            interfaces.emplace(name, std::move(info));
+            interfaceOrder.push_back(name);
+        }
+
         void CollectClassDeclarations(const std::vector<std::unique_ptr<Statement>>& statements,
             const std::string& nameSpace = {}) {
             for (const auto& statement : statements) {
@@ -442,6 +469,8 @@ namespace Absolute {
                     CollectClass(*classDeclaration, nameSpace);
                 else if (auto* structDeclaration = dynamic_cast<StructDeclStmt*>(statement.get()))
                     CollectStruct(*structDeclaration, nameSpace);
+                else if (auto* interfaceDeclaration = dynamic_cast<InterfaceDeclStmt*>(statement.get()))
+                    CollectInterface(*interfaceDeclaration, nameSpace);
                 else if (auto* nameSpaceDeclaration = dynamic_cast<NamespaceDeclStmt*>(statement.get())) {
                     const std::string nested = nameSpace.empty()
                         ? nameSpaceDeclaration->name : nameSpace + "." + nameSpaceDeclaration->name;
@@ -449,6 +478,54 @@ namespace Absolute {
                         CollectClassDeclarations(nameSpaceDeclaration->body->statements, nested);
                 }
             }
+        }
+
+        void FinalizeInterface(const std::string& name) {
+            auto found = interfaces.find(name);
+            if (found == interfaces.end()) Fail("unknown interface '" + name + "'");
+            InterfaceInfo& info = found->second;
+            if (info.finalized) return;
+            if (info.finalizing) Fail("cyclic interface inheritance involving '" + name + "'");
+            info.finalizing = true;
+
+            for (std::string& parent : info.parents) {
+                if (!interfaces.contains(parent)) {
+                    const size_t separator = parent.rfind('.');
+                    const std::string shortName = separator == std::string::npos
+                        ? parent : parent.substr(separator + 1);
+                    if (interfaces.contains(shortName)) parent = shortName;
+                }
+                if (!interfaces.contains(parent))
+                    Fail("unknown parent interface '" + parent + "' of '" + name + "'");
+                FinalizeInterface(parent);
+                for (const auto& [methodKey, method] : interfaces.at(parent).methods)
+                    info.methods.emplace(methodKey, method);
+            }
+
+            for (const auto& methodStatement : info.statement->methods) {
+                FunctionDeclStmt* statement = methodStatement.get();
+                if (!statement || !statement->name) continue;
+                std::vector<std::string> parameterTypes;
+                for (const auto& parameter : statement->parameters)
+                    parameterTypes.push_back(DeclaredTypeName(*parameter));
+                const std::string methodKey = CallableKey(statement->name->value, parameterTypes);
+                std::optional<unsigned> slot;
+                if (const auto inherited = info.methods.find(methodKey); inherited != info.methods.end()) {
+                    if (!SameMethodSignature(*inherited->second.statement, *statement))
+                        Fail("interface method signature mismatch for '" + name + "." +
+                            statement->name->value + "'");
+                    slot = inherited->second.virtualSlot;
+                }
+                else slot = interfaceSlotCount++;
+                info.methods[methodKey] = ClassMethod{
+                    statement, name, {}, slot};
+            }
+            info.finalizing = false;
+            info.finalized = true;
+        }
+
+        void FinalizeInterfaces() {
+            for (const std::string& name : interfaceOrder) FinalizeInterface(name);
         }
 
         void FinalizeStruct(const std::string& name) {
@@ -510,21 +587,41 @@ namespace Absolute {
             if (info.finalized) return;
             if (info.finalizing) Fail("cyclic class inheritance involving '" + name + "'");
             info.finalizing = true;
-            if (info.parents.size() > 1)
-                Fail("multiple inheritance codegen is not implemented for class '" + name + "'");
 
-            if (!info.parents.empty()) {
-                std::string parentName = info.parents.front();
-                if (!classes.contains(parentName) && classes.contains(info.statement->parents.front()))
-                    parentName = info.statement->parents.front();
-                if (!classes.contains(parentName)) Fail("unknown parent class '" + parentName + "'");
-                info.parents.front() = parentName;
-                FinalizeClass(parentName);
-                const ClassInfo& parent = classes.at(parentName);
+            std::string baseClass;
+            std::vector<std::string> implementedInterfaces;
+            for (size_t index = 0; index < info.parents.size(); ++index) {
+                std::string parentName = info.parents[index];
+                if (!classes.contains(parentName) && !interfaces.contains(parentName) &&
+                    index < info.statement->parents.size()) {
+                    const std::string& shortName = info.statement->parents[index];
+                    if (classes.contains(shortName) || interfaces.contains(shortName)) parentName = shortName;
+                }
+                if (classes.contains(parentName)) {
+                    if (!baseClass.empty())
+                        Fail("class '" + name + "' cannot inherit more than one class");
+                    baseClass = parentName;
+                }
+                else if (interfaces.contains(parentName)) implementedInterfaces.push_back(parentName);
+                else Fail("unknown parent type '" + parentName + "' of class '" + name + "'");
+                info.parents[index] = parentName;
+            }
+
+            if (!baseClass.empty()) {
+                FinalizeClass(baseClass);
+                const ClassInfo& parent = classes.at(baseClass);
                 info.fields = parent.fields;
                 info.fieldByName = parent.fieldByName;
                 info.methods = parent.methods;
                 info.virtualNames = parent.virtualNames;
+            }
+            else info.virtualNames.resize(interfaceSlotCount);
+
+            std::unordered_map<std::string, std::vector<ClassMethod>> interfaceRequirements;
+            for (const std::string& interfaceName : implementedInterfaces) {
+                FinalizeInterface(interfaceName);
+                for (const auto& [methodKey, method] : interfaces.at(interfaceName).methods)
+                    interfaceRequirements[methodKey].push_back(method);
             }
 
             const auto addField = [&](const std::string& fieldName, const std::string& typeName) {
@@ -554,7 +651,7 @@ namespace Absolute {
                         Fail("override signature mismatch for '" + name + "." + methodName + "'");
                     slot = inherited->second.virtualSlot;
                 }
-                else if (HasModifier(*statement, "override"))
+                else if (HasModifier(*statement, "override") && !interfaceRequirements.contains(methodKey))
                     Fail("method '" + name + "." + methodName + "' overrides no virtual method");
                 else if (HasModifier(*statement, "virtual")) {
                     slot = static_cast<unsigned>(info.virtualNames.size());
@@ -563,6 +660,23 @@ namespace Absolute {
                 ClassMethod method{statement, name, CallableKey(name + "." + methodName, parameterTypes), slot};
                 info.methods[methodKey] = method;
                 info.declaredMethods[methodKey] = std::move(method);
+            }
+
+            for (const auto& [methodKey, requirements] : interfaceRequirements) {
+                auto implementation = info.methods.find(methodKey);
+                if (implementation == info.methods.end())
+                    Fail("class '" + name + "' does not implement interface method '" + methodKey + "'");
+                for (const ClassMethod& requirement : requirements) {
+                    if (!SameMethodSignature(*requirement.statement, *implementation->second.statement))
+                        Fail("class method '" + name + "." + methodKey +
+                            "' does not match its interface contract");
+                    if (!requirement.virtualSlot) Fail("interface method is missing a dispatch slot");
+                    const unsigned slot = *requirement.virtualSlot;
+                    if (info.virtualNames.size() <= slot) info.virtualNames.resize(slot + 1);
+                    info.virtualNames[slot] = methodKey;
+                    if (!implementation->second.virtualSlot)
+                        implementation->second.virtualSlot = slot;
+                }
             }
 
             std::vector<llvm::Type*> layout{builder.getPtrTy()};
@@ -646,6 +760,10 @@ namespace Absolute {
                 ClassInfo& info = classes.at(name);
                 std::vector<llvm::Constant*> entries;
                 for (const std::string& methodName : info.virtualNames) {
+                    if (methodName.empty()) {
+                        entries.push_back(llvm::ConstantPointerNull::get(builder.getPtrTy()));
+                        continue;
+                    }
                     const auto method = info.methods.find(methodName);
                     if (method == info.methods.end()) Fail("missing virtual method '" + methodName + "'");
                     entries.push_back(DeclareMethodFunction(method->second));
@@ -1771,6 +1889,9 @@ namespace Absolute {
             classOrder.clear();
             structs.clear();
             structOrder.clear();
+            interfaces.clear();
+            interfaceOrder.clear();
+            interfaceSlotCount = 0;
             loops.clear();
             currentNamespace.clear();
             functionLinkNames.clear();
@@ -1785,6 +1906,7 @@ namespace Absolute {
             currentThis = nullptr;
 
             CollectClassDeclarations(program.statements);
+            FinalizeInterfaces();
             DeclareStructs();
             DeclareClasses();
 
@@ -1996,6 +2118,42 @@ namespace Absolute {
                 }
                 llvm::CallInst* call = impl->builder.CreateCall(methodType, callee, arguments,
                     methodType->getReturnType()->isVoidTy() ? "" : member->member + ".result");
+                impl->value = methodType->getReturnType()->isVoidTy() ? nullptr : call;
+                impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
+                return;
+            }
+            auto interfaceIterator = impl->interfaces.find(className);
+            if (interfaceIterator != impl->interfaces.end() &&
+                (!selected || selected->kind == SymbolKind::Method)) {
+                Impl::InterfaceInfo& info = interfaceIterator->second;
+                const std::string methodKey = CallableKey(member->member,
+                    selected ? selected->parameterTypes : std::vector<std::string>{});
+                const auto method = info.methods.find(methodKey);
+                if (method == info.methods.end())
+                    impl->Fail("interface '" + info.name + "' has no method '" + member->member + "'");
+                if (!method->second.virtualSlot)
+                    impl->Fail("interface method '" + info.name + "." + member->member +
+                        "' has no dispatch slot");
+                llvm::Value* object = impl->ObjectPointer(member->base.get(), baseType);
+                llvm::FunctionType* methodType = impl->MethodFunctionType(*method->second.statement);
+                std::vector<llvm::Value*> arguments{object};
+                for (size_t index = 0; index < expr->arguments.size(); ++index) {
+                    if (index + 1 >= methodType->getNumParams())
+                        impl->Fail("too many arguments for interface method '" + member->member + "'");
+                    arguments.push_back(impl->Coerce(impl->Evaluate(expr->arguments[index].get()),
+                        methodType->getParamType(static_cast<unsigned>(index + 1))));
+                }
+                if (arguments.size() != methodType->getNumParams())
+                    impl->Fail("invalid argument count for interface method '" + member->member + "'");
+                llvm::Value* vtable = impl->builder.CreateLoad(
+                    impl->builder.getPtrTy(), object, "interface.vtable");
+                llvm::Value* slot = impl->builder.CreateGEP(
+                    impl->builder.getPtrTy(), vtable,
+                    impl->builder.getInt64(*method->second.virtualSlot), "interface.slot");
+                llvm::Value* callee = impl->builder.CreateLoad(
+                    impl->builder.getPtrTy(), slot, "interface.method");
+                llvm::CallInst* call = impl->builder.CreateCall(methodType, callee, arguments,
+                    methodType->getReturnType()->isVoidTy() ? "" : member->member + ".interface.result");
                 impl->value = methodType->getReturnType()->isVoidTy() ? nullptr : call;
                 impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
                 return;
@@ -2792,6 +2950,10 @@ namespace Absolute {
         auto found = impl->classes.find(name);
         if (found == impl->classes.end()) impl->Fail("unregistered class '" + name + "'");
         impl->EmitClassBodies(found->second);
+    }
+
+    void CodeGenerator::Visit(InterfaceDeclStmt* stmt) {
+        (void)stmt;
     }
 
     void CodeGenerator::Visit(ConstructorDeclStmt* stmt) {

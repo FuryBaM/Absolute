@@ -244,6 +244,7 @@ namespace {
         void Visit(VarDeclStmt*) override {}
         void Visit(StructDeclStmt*) override {}
         void Visit(ClassDeclStmt*) override {}
+        void Visit(InterfaceDeclStmt*) override {}
         void Visit(ConstructorDeclStmt*) override {}
         void Visit(EnumDeclStmt*) override {}
         void Visit(GroupDeclStmt*) override {}
