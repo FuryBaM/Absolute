@@ -27,3 +27,4 @@
 #include "ast/ternary.h"
 #include "ast/unary.h"
 #include "ast/module.h"
+#include "ast/plugin.h"

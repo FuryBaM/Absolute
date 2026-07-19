@@ -10,6 +10,7 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Verifier.h>
+#include <llvm/AsmParser/Parser.h>
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/MC/TargetRegistry.h>
@@ -19,6 +20,8 @@
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Support/SourceMgr.h>
+#include <llvm/Linker/Linker.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
 #if LLVM_VERSION_MAJOR >= 18
@@ -1544,8 +1547,11 @@ namespace Absolute {
             info.emitted = true;
         }
 
-        llvm::Module& BuildModule(Program& program, const std::string& moduleName) {
+        llvm::Module& BuildModule(Program& program, const std::string& moduleName,
+            const std::string& targetTriple = {}, const std::string& dataLayout = {}) {
             module = std::make_unique<llvm::Module>(moduleName, context);
+            if (!targetTriple.empty()) module->setTargetTriple(targetTriple);
+            if (!dataLayout.empty()) module->setDataLayout(dataLayout);
             scopes.clear();
             globals.clear();
             arrayDescriptorTypes.clear();
@@ -1588,7 +1594,7 @@ namespace Absolute {
         }
 
         std::string Generate(Program& program, const std::string& moduleName) {
-            BuildModule(program, moduleName);
+            BuildModule(program, moduleName, llvm::sys::getDefaultTargetTriple());
 
             std::string output;
             llvm::raw_string_ostream stream(output);
@@ -1606,7 +1612,6 @@ namespace Absolute {
                     throw std::runtime_error("LLVM codegen: failed to initialize the native assembly printer");
             });
 
-            llvm::Module& generatedModule = BuildModule(program, moduleName);
             const std::string triple = llvm::sys::getDefaultTargetTriple();
             std::string targetError;
             const llvm::Target* target = llvm::TargetRegistry::lookupTarget(triple, targetError);
@@ -1618,8 +1623,8 @@ namespace Absolute {
                 triple, cpu.empty() ? "generic" : cpu, "", options, llvm::Reloc::PIC_,
                 std::nullopt, llvm::CodeGenOptLevel::Aggressive));
             if (!targetMachine) Fail("cannot create target machine for '" + triple + "'");
-            generatedModule.setTargetTriple(triple);
-            generatedModule.setDataLayout(targetMachine->createDataLayout());
+            const std::string dataLayout = targetMachine->createDataLayout().getStringRepresentation();
+            llvm::Module& generatedModule = BuildModule(program, moduleName, triple, dataLayout);
 
             llvm::LoopAnalysisManager loopAnalyses;
             llvm::FunctionAnalysisManager functionAnalyses;
@@ -2648,5 +2653,50 @@ namespace Absolute {
             }
         }
         impl->currentNamespace = oldNamespace;
+    }
+
+    void CodeGenerator::Visit(OpaquePluginStmt* stmt) {
+        if (impl->phase != Impl::Phase::EmitBodies || !stmt || !stmt->node.vtable ||
+            !stmt->node.vtable->emit_llvm) return;
+        const std::string moduleName = impl->module->getName().str();
+        const std::string triple = impl->module->getTargetTriple();
+        const std::string dataLayout = impl->module->getDataLayoutStr();
+        AbsoluteOpaqueLlvmContextV1 context{
+            ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION,
+            moduleName.c_str(),
+            triple.c_str(),
+            dataLayout.c_str()
+        };
+        const char* fragmentText = nullptr;
+        const char* errorMessage = nullptr;
+        int32_t emitted = 0;
+        try {
+            emitted = stmt->node.vtable->emit_llvm(
+                stmt->node.payload, &context, &fragmentText, &errorMessage);
+        }
+        catch (const std::exception& error) {
+            impl->Fail("opaque plugin '" + stmt->pluginName + "' emitter threw: " + error.what());
+        }
+        catch (...) {
+            impl->Fail("opaque plugin '" + stmt->pluginName + "' emitter threw an unknown exception");
+        }
+        if (!emitted || !fragmentText)
+            impl->Fail("opaque plugin '" + stmt->pluginName + "' failed to emit LLVM IR: " +
+                (errorMessage ? errorMessage : "emitter returned no module"));
+
+        llvm::SMDiagnostic diagnostic;
+        std::unique_ptr<llvm::Module> fragment = llvm::parseAssemblyString(
+            fragmentText, diagnostic, impl->context);
+        if (!fragment) {
+            std::string detail;
+            llvm::raw_string_ostream stream(detail);
+            diagnostic.print(stmt->pluginName.c_str(), stream);
+            stream.flush();
+            impl->Fail("opaque plugin '" + stmt->pluginName + "' returned invalid LLVM IR: " + detail);
+        }
+        if (fragment->getTargetTriple().empty()) fragment->setTargetTriple(triple);
+        if (fragment->getDataLayoutStr().empty() && !dataLayout.empty()) fragment->setDataLayout(dataLayout);
+        if (llvm::Linker::linkModules(*impl->module, std::move(fragment)))
+            impl->Fail("opaque plugin '" + stmt->pluginName + "' LLVM module could not be linked");
     }
 }

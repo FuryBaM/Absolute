@@ -84,9 +84,13 @@ namespace Absolute {
             const auto binaryOperators = reinterpret_cast<AbsoluteSyntaxPluginBinaryOperatorsV1>(
                 FindSymbol(handle, "absolute_syntax_plugin_binary_operators_v1"));
             const AbsoluteBinaryOperatorTableV1* operatorTable = binaryOperators ? binaryOperators() : nullptr;
+            const auto opaqueRules = reinterpret_cast<AbsoluteSyntaxPluginOpaqueRulesV1>(
+                FindSymbol(handle, "absolute_syntax_plugin_opaque_rules_v1"));
+            const AbsoluteOpaqueSyntaxTableV1* opaqueTable = opaqueRules ? opaqueRules() : nullptr;
             RegisterSyntaxPlugin(descriptor);
             if (prelude) RegisterSyntaxPluginPrelude(descriptor->name, preludeSource);
             if (binaryOperators) RegisterPluginBinaryOperators(descriptor->name, operatorTable);
+            if (opaqueRules) RegisterOpaqueSyntaxRules(descriptor->name, opaqueTable);
             handles.push_back(handle);
             std::cout << "Loaded syntax plugin " << descriptor->name << " from " << canonical.string() << '\n';
         }

@@ -160,6 +160,28 @@ sources. Syntax plugins deliberately lower into the core language; operations
 that require native behavior can pair the syntax adapter with an `extern "C"`
 library while keeping analyzer and code generation unchanged.
 
+For syntax that cannot lower to ordinary Absolute source, a plugin may export
+`absolute_syntax_plugin_opaque_rules_v1`. An opaque rule receives a versioned
+`AbsoluteParserCursorV1` with `peek`, `consume`, and `remaining`, then returns a
+plugin-owned `AbsoluteOpaqueAstNodeV1`. Its vtable controls destruction, debug
+printing, semantic validation, and LLVM emission.
+
+LLVM C++ objects do not cross the DLL boundary. The opaque emitter returns a
+complete textual LLVM IR module; the compiler parses it in the destination LLVM
+context, applies the target triple/data layout, verifies it, and links it into
+the main module. The included `absolute.shader` example therefore parses this
+block itself—there is no generated Absolute source:
+
+```absolute
+shader Vertex {
+    input position;
+    output clipPosition;
+}
+```
+
+See `plugins/shader/README.md` and `tests/shader-plugin.abs` for the complete
+opaque-AST example.
+
 Emit verified textual LLVM IR:
 
 ```bash

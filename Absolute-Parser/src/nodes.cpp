@@ -216,4 +216,8 @@ namespace Absolute {
     void NamespaceDeclStmt::Accept(StatementVisitor& visitor) {
         visitor.Visit(this);
     }
+
+    void OpaquePluginStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
 }

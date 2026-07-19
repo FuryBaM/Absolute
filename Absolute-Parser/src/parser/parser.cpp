@@ -152,6 +152,11 @@ namespace Absolute{
         Token* token = CurrentToken();
         if (!token) return nullptr;
 
+        if (auto opaque = TryParseOpaquePluginStatement(tokens, pos)) {
+            opaque->modifiers = modifiers;
+            return opaque;
+        }
+
         if (LooksLikeFunctionDeclaration()) return ParseFunctionDeclaration();
 
         if (token->type == TokenType::KEYWORD && IsPrimitiveType(token->value)) {

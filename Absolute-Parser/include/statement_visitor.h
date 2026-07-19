@@ -28,5 +28,6 @@ namespace Absolute {
         virtual void Visit(BreakStmt* stmt) = 0;
         virtual void Visit(ImportStmt* stmt) = 0;
         virtual void Visit(NamespaceDeclStmt* stmt) = 0;
+        virtual void Visit(OpaquePluginStmt* stmt) = 0;
     };
 }

@@ -2156,4 +2156,33 @@ namespace Absolute {
         if (stmt->body) AcceptAll(stmt->body->statements, *this);
         currentNamespace = oldNamespace;
     }
+
+    void Analyzer::Visit(OpaquePluginStmt* stmt) {
+        if (phase != Phase::ResolveBodies || !stmt || !stmt->node.vtable ||
+            !stmt->node.vtable->validate) return;
+        AbsoluteOpaqueValidationContextV1 context{
+            ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION,
+            static_cast<uint32_t>(functionDepth),
+            currentNamespace.c_str()
+        };
+        const char* errorMessage = nullptr;
+        int32_t valid = 0;
+        try {
+            valid = stmt->node.vtable->validate(stmt->node.payload, &context, &errorMessage);
+        }
+        catch (const std::exception& error) {
+            Report("opaque plugin '" + stmt->pluginName + "' validator threw: " + error.what(),
+                "E_OPAQUE_PLUGIN_VALIDATE");
+            return;
+        }
+        catch (...) {
+            Report("opaque plugin '" + stmt->pluginName + "' validator threw an unknown exception",
+                "E_OPAQUE_PLUGIN_VALIDATE");
+            return;
+        }
+        if (!valid)
+            Report("opaque plugin '" + stmt->pluginName + "' rejected '" + stmt->keyword +
+                "': " + (errorMessage ? errorMessage : "validation failed"),
+                "E_OPAQUE_PLUGIN_VALIDATE");
+    }
 }

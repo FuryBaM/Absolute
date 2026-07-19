@@ -23,6 +23,8 @@ llvm_map_components_to_libnames(ABSOLUTE_LLVM_LIBS
     CodeGen
     MC
     Passes
+    AsmParser
+    Linker
     nativecodegen
 )
 

@@ -243,6 +243,7 @@ namespace {
         void Visit(ForEachStmt*) override {}
         void Visit(ContinueStmt*) override {}
         void Visit(BreakStmt*) override {}
+        void Visit(OpaquePluginStmt*) override {}
     };
 
     void LoadSource(const fs::path& sourcePath,

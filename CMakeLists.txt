@@ -19,6 +19,7 @@ add_subdirectory(Absolute-Compiler)
 if(ABSOLUTE_BUILD_EXAMPLE_PLUGINS)
     add_subdirectory(plugins/unless)
     add_subdirectory(plugins/math)
+    add_subdirectory(plugins/shader)
 endif()
 
 # Keep generated artifacts out of the source tree.
@@ -62,6 +63,27 @@ if(BUILD_TESTING)
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/math-plugin.abs"
         )
         set_tests_properties(absolute.math-plugin-required PROPERTIES WILL_FAIL TRUE)
+    endif()
+    if(TARGET Absolute-Shader-Plugin)
+        add_test(
+            NAME absolute.shader-plugin
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/shader-plugin.abs"
+                --plugin "$<TARGET_FILE:Absolute-Shader-Plugin>"
+        )
+        set_tests_properties(absolute.shader-plugin PROPERTIES
+            PASS_REGULAR_EXPRESSION "Opaque plugin statement.*shader Vertex"
+        )
+        add_test(
+            NAME absolute.shader-plugin-required
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/shader-plugin.abs"
+        )
+        set_tests_properties(absolute.shader-plugin-required PROPERTIES WILL_FAIL TRUE)
+        add_test(
+            NAME absolute.shader-plugin-errors
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/shader-plugin-errors.abs"
+                --plugin "$<TARGET_FILE:Absolute-Shader-Plugin>"
+        )
+        set_tests_properties(absolute.shader-plugin-errors PROPERTIES WILL_FAIL TRUE)
     endif()
     add_test(
         NAME absolute.sample
@@ -218,6 +240,43 @@ if(BUILD_TESTING)
             set_tests_properties(absolute.run-math-plugin PROPERTIES
                 FIXTURES_REQUIRED absolute-math-plugin-executable
                 PASS_REGULAR_EXPRESSION "math-plugin=ok"
+            )
+        endif()
+        if(TARGET Absolute-Shader-Plugin)
+            add_test(
+                NAME absolute.emit-shader-plugin
+                COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/shader-plugin.abs"
+                    --plugin "$<TARGET_FILE:Absolute-Shader-Plugin>"
+                    --emit-llvm -o "${CMAKE_BINARY_DIR}/shader-plugin.ll"
+            )
+            set_tests_properties(absolute.emit-shader-plugin PROPERTIES
+                FIXTURES_SETUP absolute-shader-plugin-ir
+            )
+            add_test(
+                NAME absolute.check-shader-plugin-ir
+                COMMAND "${CMAKE_COMMAND}"
+                    -DIR_FILE=${CMAKE_BINARY_DIR}/shader-plugin.ll
+                    -P "${PROJECT_SOURCE_DIR}/tests/check-shader-plugin-ir.cmake"
+            )
+            set_tests_properties(absolute.check-shader-plugin-ir PROPERTIES
+                FIXTURES_REQUIRED absolute-shader-plugin-ir
+            )
+            add_test(
+                NAME absolute.build-shader-plugin
+                COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/shader-plugin.abs"
+                    --plugin "$<TARGET_FILE:Absolute-Shader-Plugin>"
+                    --build-exe -o "${CMAKE_BINARY_DIR}/shader-plugin${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.build-shader-plugin PROPERTIES
+                FIXTURES_SETUP absolute-shader-plugin-executable
+            )
+            add_test(
+                NAME absolute.run-shader-plugin
+                COMMAND "${CMAKE_BINARY_DIR}/shader-plugin${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.run-shader-plugin PROPERTIES
+                FIXTURES_REQUIRED absolute-shader-plugin-executable
+                PASS_REGULAR_EXPRESSION "shader-plugin=ok"
             )
         endif()
         add_test(

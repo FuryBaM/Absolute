@@ -1,9 +1,11 @@
 #include "parser_pch.h"
 #include "syntax_plugins.h"
+#include "ast/plugin.h"
 
 #include <algorithm>
 #include <cctype>
 #include <stdexcept>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -18,6 +20,14 @@ namespace Absolute {
 
         std::vector<RegisteredRule> rules;
         std::unordered_map<std::string, size_t> rulesByKeyword;
+        struct RegisteredOpaqueRule {
+            std::string pluginName;
+            std::string keyword;
+            AbsoluteOpaqueParseV1 parse = nullptr;
+            void* userData = nullptr;
+        };
+        std::vector<RegisteredOpaqueRule> opaqueRules;
+        std::unordered_map<std::string, size_t> opaqueRulesByKeyword;
         std::vector<std::string> preludes;
         std::vector<PluginBinaryOperator> binaryOperators;
 
@@ -62,6 +72,37 @@ namespace Absolute {
                 token.line += trigger.line - 1;
             }
         }
+
+        struct ParserCursorContext {
+            std::vector<AbsoluteSyntaxTokenV1> views;
+            size_t index = 0;
+        };
+
+        size_t CursorRemaining(void* context) {
+            const auto& cursor = *static_cast<ParserCursorContext*>(context);
+            return cursor.index < cursor.views.size() ? cursor.views.size() - cursor.index : 0;
+        }
+
+        const AbsoluteSyntaxTokenV1* CursorPeek(void* context, size_t offset) {
+            const auto& cursor = *static_cast<ParserCursorContext*>(context);
+            const size_t index = cursor.index + offset;
+            return index < cursor.views.size() ? &cursor.views[index] : nullptr;
+        }
+
+        int32_t CursorConsume(void* context, uint32_t expectedKind, const char* expectedText) {
+            auto& cursor = *static_cast<ParserCursorContext*>(context);
+            if (cursor.index >= cursor.views.size()) return 0;
+            const AbsoluteSyntaxTokenV1& token = cursor.views[cursor.index];
+            if (expectedKind != UINT32_MAX && token.kind != expectedKind) return 0;
+            if (expectedText && std::string_view(token.text, token.text_length) != expectedText) return 0;
+            ++cursor.index;
+            return 1;
+        }
+
+        void DestroyOpaqueNode(AbsoluteOpaqueAstNodeV1& node) {
+            if (node.payload && node.vtable && node.vtable->destroy) node.vtable->destroy(node.payload);
+            node = {};
+        }
     }
 
     void RegisterSyntaxPlugin(const AbsoluteSyntaxPluginV1* plugin) {
@@ -87,7 +128,8 @@ namespace Absolute {
                 throw std::runtime_error("Syntax plugin rule '" + keyword + "' has no adapter");
             if (IsValidTokenValue(TokenType::KEYWORD, keyword))
                 throw std::runtime_error("Syntax plugin cannot replace core keyword '" + keyword + "'");
-            if (rulesByKeyword.contains(keyword) || !newKeywords.insert(keyword).second)
+            if (rulesByKeyword.contains(keyword) || opaqueRulesByKeyword.contains(keyword) ||
+                !newKeywords.insert(keyword).second)
                 throw std::runtime_error("Syntax keyword '" + keyword + "' is already registered");
         }
 
@@ -102,6 +144,8 @@ namespace Absolute {
     void ResetSyntaxPlugins() {
         rulesByKeyword.clear();
         rules.clear();
+        opaqueRulesByKeyword.clear();
+        opaqueRules.clear();
         preludes.clear();
         binaryOperatorsBySignature.clear();
         binaryOperators.clear();
@@ -139,8 +183,36 @@ namespace Absolute {
         }
     }
 
+    void RegisterOpaqueSyntaxRules(
+        const std::string& pluginName, const AbsoluteOpaqueSyntaxTableV1* table) {
+        if (!table) return;
+        if (table->rule_count != 0 && !table->rules)
+            throw std::runtime_error("Syntax plugin '" + pluginName + "' returned no opaque rule table");
+        std::unordered_set<std::string> newKeywords;
+        for (size_t index = 0; index < table->rule_count; ++index) {
+            const AbsoluteOpaqueSyntaxRuleV1& rule = table->rules[index];
+            const std::string keyword = rule.keyword ? rule.keyword : "";
+            if (!IsIdentifier(keyword))
+                throw std::runtime_error("Syntax plugin '" + pluginName +
+                    "' registered invalid opaque keyword '" + keyword + "'");
+            if (!rule.parse)
+                throw std::runtime_error("Opaque syntax rule '" + keyword + "' has no parser callback");
+            if (IsValidTokenValue(TokenType::KEYWORD, keyword))
+                throw std::runtime_error("Syntax plugin cannot replace core keyword '" + keyword + "'");
+            if (rulesByKeyword.contains(keyword) || opaqueRulesByKeyword.contains(keyword) ||
+                !newKeywords.insert(keyword).second)
+                throw std::runtime_error("Syntax keyword '" + keyword + "' is already registered");
+        }
+        for (size_t index = 0; index < table->rule_count; ++index) {
+            const AbsoluteOpaqueSyntaxRuleV1& rule = table->rules[index];
+            const size_t ruleIndex = opaqueRules.size();
+            opaqueRules.push_back({pluginName, rule.keyword, rule.parse, rule.user_data});
+            opaqueRulesByKeyword.emplace(rule.keyword, ruleIndex);
+        }
+    }
+
     bool IsSyntaxPluginKeyword(const std::string& value) {
-        return rulesByKeyword.contains(value);
+        return rulesByKeyword.contains(value) || opaqueRulesByKeyword.contains(value);
     }
 
     std::vector<std::string> SyntaxPluginPreludes() {
@@ -151,6 +223,55 @@ namespace Absolute {
         const std::string& leftType, const std::string& operatorText, const std::string& rightType) {
         const auto found = binaryOperatorsBySignature.find(OperatorKey(leftType, operatorText, rightType));
         return found == binaryOperatorsBySignature.end() ? nullptr : &binaryOperators[found->second];
+    }
+
+    std::unique_ptr<Statement> TryParseOpaquePluginStatement(
+        const std::vector<Token>& tokens, size_t& position) {
+        if (position >= tokens.size()) return nullptr;
+        const auto found = opaqueRulesByKeyword.find(tokens[position].value);
+        if (found == opaqueRulesByKeyword.end()) return nullptr;
+        const RegisteredOpaqueRule& rule = opaqueRules[found->second];
+        const Token trigger = tokens[position];
+        ParserCursorContext context{MakeTokenViews(tokens, position), 0};
+        AbsoluteParserCursorV1 cursor{
+            ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION, &context,
+            &CursorRemaining, &CursorPeek, &CursorConsume
+        };
+        AbsoluteOpaqueParseResultV1 result{};
+        int32_t succeeded = 0;
+        try {
+            succeeded = rule.parse(rule.userData, &cursor, &result);
+        }
+        catch (const std::exception& error) {
+            DestroyOpaqueNode(result.node);
+            throw std::runtime_error("Opaque syntax plugin '" + rule.pluginName + "' threw at " +
+                Location(trigger) + ": " + error.what());
+        }
+        catch (...) {
+            DestroyOpaqueNode(result.node);
+            throw std::runtime_error("Opaque syntax plugin '" + rule.pluginName +
+                "' threw an unknown exception at " + Location(trigger));
+        }
+        if (!succeeded) {
+            const std::string detail = result.error_message ? result.error_message : "parser rejected input";
+            DestroyOpaqueNode(result.node);
+            throw std::runtime_error("Opaque syntax plugin '" + rule.pluginName + "' failed at " +
+                Location(trigger) + ": " + detail);
+        }
+        if (context.index == 0 || context.index > context.views.size()) {
+            DestroyOpaqueNode(result.node);
+            throw std::runtime_error("Opaque syntax plugin '" + rule.pluginName +
+                "' consumed an invalid token count at " + Location(trigger));
+        }
+        if (!result.node.payload || !result.node.vtable ||
+            result.node.vtable->abi_version != ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION ||
+            !result.node.vtable->destroy || !result.node.vtable->emit_llvm) {
+            DestroyOpaqueNode(result.node);
+            throw std::runtime_error("Opaque syntax plugin '" + rule.pluginName +
+                "' returned an invalid AST node at " + Location(trigger));
+        }
+        position += context.index;
+        return std::make_unique<OpaquePluginStmt>(rule.pluginName, rule.keyword, result.node);
     }
 
     std::vector<Token> ExpandSyntaxPlugins(std::vector<Token> tokens) {

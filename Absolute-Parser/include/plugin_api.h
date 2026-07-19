@@ -84,9 +84,86 @@ typedef struct AbsoluteBinaryOperatorTableV1 {
 
 typedef const AbsoluteBinaryOperatorTableV1* (*AbsoluteSyntaxPluginBinaryOperatorsV1)(void);
 
+/* Opaque syntax rules keep their AST payload inside the plugin. The host only
+   owns the payload through this versioned C vtable. */
+typedef struct AbsoluteParserCursorV1 AbsoluteParserCursorV1;
+
+typedef size_t (*AbsoluteParserRemainingV1)(void* context);
+typedef const AbsoluteSyntaxTokenV1* (*AbsoluteParserPeekV1)(void* context, size_t offset);
+typedef int32_t (*AbsoluteParserConsumeV1)(
+    void* context, uint32_t expected_kind, const char* expected_text);
+
+struct AbsoluteParserCursorV1 {
+    uint32_t abi_version;
+    void* context;
+    AbsoluteParserRemainingV1 remaining;
+    AbsoluteParserPeekV1 peek;
+    /* UINT32_MAX accepts any token kind; a null expected_text accepts any text. */
+    AbsoluteParserConsumeV1 consume;
+};
+
+typedef struct AbsoluteOpaqueValidationContextV1 {
+    uint32_t abi_version;
+    uint32_t function_depth;
+    const char* namespace_name;
+} AbsoluteOpaqueValidationContextV1;
+
+typedef struct AbsoluteOpaqueLlvmContextV1 {
+    uint32_t abi_version;
+    const char* module_name;
+    const char* target_triple;
+    const char* data_layout;
+} AbsoluteOpaqueLlvmContextV1;
+
+typedef int32_t (*AbsoluteOpaqueValidateV1)(
+    void* payload, const AbsoluteOpaqueValidationContextV1* context, const char** error_message);
+/* module_ir must contain one complete LLVM IR module. Callback-owned strings
+   must remain valid until this callback is invoked again for the same node. */
+typedef int32_t (*AbsoluteOpaqueEmitLlvmV1)(
+    void* payload, const AbsoluteOpaqueLlvmContextV1* context,
+    const char** module_ir, const char** error_message);
+typedef const char* (*AbsoluteOpaqueDebugStringV1)(void* payload);
+typedef void (*AbsoluteOpaqueDestroyV1)(void* payload);
+
+typedef struct AbsoluteOpaqueAstVTableV1 {
+    uint32_t abi_version;
+    AbsoluteOpaqueDestroyV1 destroy;
+    AbsoluteOpaqueDebugStringV1 debug_string;
+    AbsoluteOpaqueValidateV1 validate;
+    AbsoluteOpaqueEmitLlvmV1 emit_llvm;
+} AbsoluteOpaqueAstVTableV1;
+
+typedef struct AbsoluteOpaqueAstNodeV1 {
+    /* The host calls vtable->destroy exactly once while the plugin is loaded. */
+    void* payload;
+    const AbsoluteOpaqueAstVTableV1* vtable;
+} AbsoluteOpaqueAstNodeV1;
+
+typedef struct AbsoluteOpaqueParseResultV1 {
+    AbsoluteOpaqueAstNodeV1 node;
+    const char* error_message;
+} AbsoluteOpaqueParseResultV1;
+
+typedef int32_t (*AbsoluteOpaqueParseV1)(
+    void* user_data, AbsoluteParserCursorV1* parser, AbsoluteOpaqueParseResultV1* result);
+
+typedef struct AbsoluteOpaqueSyntaxRuleV1 {
+    const char* keyword;
+    AbsoluteOpaqueParseV1 parse;
+    void* user_data;
+} AbsoluteOpaqueSyntaxRuleV1;
+
+typedef struct AbsoluteOpaqueSyntaxTableV1 {
+    size_t rule_count;
+    const AbsoluteOpaqueSyntaxRuleV1* rules;
+} AbsoluteOpaqueSyntaxTableV1;
+
+typedef const AbsoluteOpaqueSyntaxTableV1* (*AbsoluteSyntaxPluginOpaqueRulesV1)(void);
+
 /* Plugins define and export: absolute_syntax_plugin_init_v1. */
 /* They may also export: absolute_syntax_plugin_prelude_v1. */
 /* They may also export: absolute_syntax_plugin_binary_operators_v1. */
+/* They may also export: absolute_syntax_plugin_opaque_rules_v1. */
 
 #ifdef __cplusplus
 }
