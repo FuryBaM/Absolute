@@ -253,6 +253,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/classes-codegen.abs"
     )
     add_test(
+        NAME absolute.structs-codegen-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/structs-codegen.abs"
+    )
+    add_test(
         NAME absolute.array-advanced-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-advanced-errors.abs"
     )
@@ -413,6 +417,14 @@ if(BUILD_TESTING)
         )
         set_tests_properties(absolute.emit-classes-codegen PROPERTIES
             FIXTURES_SETUP absolute-classes-codegen-ir
+        )
+        add_test(
+            NAME absolute.emit-structs-codegen
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/structs-codegen.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/structs-codegen.ll"
+        )
+        set_tests_properties(absolute.emit-structs-codegen PROPERTIES
+            FIXTURES_SETUP absolute-structs-codegen-ir
         )
         add_test(
             NAME absolute.emit-managed-fast-path
@@ -634,6 +646,19 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-pointer-functions PROPERTIES
             FIXTURES_REQUIRED absolute-pointer-functions-executable
             PASS_REGULAR_EXPRESSION "pointer-functions=ok"
+        )
+        add_test(
+            NAME absolute.build-structs-codegen
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/structs-codegen.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/structs-codegen-app"
+        )
+        set_tests_properties(absolute.build-structs-codegen PROPERTIES
+            FIXTURES_SETUP absolute-structs-codegen-executable
+        )
+        add_test(NAME absolute.run-structs-codegen COMMAND "${CMAKE_BINARY_DIR}/structs-codegen-app")
+        set_tests_properties(absolute.run-structs-codegen PROPERTIES
+            FIXTURES_REQUIRED absolute-structs-codegen-executable
+            PASS_REGULAR_EXPRESSION "structs=ok"
         )
         add_test(
             NAME absolute.build-managed-fast-path

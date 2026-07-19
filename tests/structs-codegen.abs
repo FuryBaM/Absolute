@@ -1,0 +1,53 @@
+struct Pair {
+    int32 x;
+    int32 y;
+
+    Pair(int32 initialX, int32 initialY) {
+        x = initialX;
+        y = initialY;
+    }
+
+    int32 sum() {
+        return x + y;
+    }
+}
+
+struct Packet {
+    int32[] values;
+    raw Pair* link;
+}
+
+Pair makePair(int32 x, int32 y) {
+    Pair result;
+    result.x = x;
+    result.y = y;
+    return result;
+}
+
+int32 sumPair(Pair value) {
+    return value.x + value.y;
+}
+
+int32 main() {
+    Pair value = makePair(20, 22);
+    Pair copy = value;
+    copy.x = 40;
+    assert(value.x == 20, "struct assignment must copy by value");
+    assert(sumPair(value) == 42, "struct parameter and return value");
+
+    raw Pair* rawValue = new raw Pair(19, 23);
+    assert(rawValue.sum() == 42, "raw struct pointer member access");
+
+    Pair* managedValue = new Pair(18, 24);
+    assert(managedValue.x + managedValue.y == 42, "managed struct pointer member access");
+
+    Packet packet;
+    packet.values = {40, 41, 42};
+    packet.link = rawValue;
+    assert(packet.values[2] == 42, "array descriptor stored in struct field");
+    assert(packet.link.y == 23, "raw pointer stored in struct field");
+
+    delete rawValue;
+    println("structs=ok");
+    return 0;
+}

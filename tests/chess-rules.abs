@@ -2,14 +2,12 @@ import "projects/multi-file/src/chess.abs";
 
 int32 main() {
     char[] board = Demo.Chess.initialBoard();
+    raw Demo.Chess.GameState* game = Demo.Chess.createGame();
     int32 e2 = Demo.Chess.squareFromInput('e', '2');
     int32 e4 = Demo.Chess.squareFromInput('e', '4');
-    bool pawnPseudo = Demo.Chess.pseudoLegal(board, 52, 36, true, -1,
-        false, false, false, false, false, false);
-    bool pawnLegal = Demo.Chess.legalMove(board, 52, 36, true, -1,
-        false, false, false, false, false, false);
-    bool knightLegal = Demo.Chess.legalMove(board, 62, 45, true, -1,
-        false, false, false, false, false, false);
+    bool pawnPseudo = Demo.Chess.pseudoLegal(game, board, 52, 36);
+    bool pawnLegal = Demo.Chess.legalMove(game, board, 52, 36);
+    bool knightLegal = Demo.Chess.legalMove(game, board, 62, 45);
     println(format("e2={} e4={} pawn-pseudo={} pawn-legal={} knight-legal={}",
         e2, e4, pawnPseudo, pawnLegal, knightLegal));
     assert(e2 == 52 && e4 == 36, "algebraic square conversion");
@@ -26,9 +24,8 @@ int32 main() {
     special[60] = 'K';
     special[63] = 'R';
     special[4] = 'k';
-    assert(Demo.Chess.legalMove(special[], 60, 62, true, -1,
-        false, false, false, false, false, false), "white kingside castling");
-    Demo.Chess.applyMove(special[], 60, 62, -1);
+    assert(Demo.Chess.legalMove(game, special[], 60, 62), "white kingside castling");
+    Demo.Chess.applyBoardMove(special[], 60, 62, -1);
     assert(special[62] == 'K' && special[61] == 'R', "castling moves the rook");
 
     square = 0;
@@ -40,14 +37,15 @@ int32 main() {
     special[4] = 'k';
     special[28] = 'P';
     special[27] = 'p';
-    assert(Demo.Chess.legalMove(special[], 28, 19, true, 19,
-        false, false, false, false, false, false), "white en passant");
-    Demo.Chess.applyMove(special[], 28, 19, 19);
+    game.enPassant = 19;
+    assert(Demo.Chess.legalMove(game, special[], 28, 19), "white en passant");
+    Demo.Chess.applyBoardMove(special[], 28, 19, 19);
     assert(special[19] == 'P' && special[27] == '.', "en passant removes the pawn");
 
     special[8] = 'P';
-    Demo.Chess.applyMove(special[], 8, 0, -1);
+    Demo.Chess.applyBoardMove(special[], 8, 0, -1);
     assert(special[0] == 'Q', "automatic queen promotion");
     println("chess-special-rules=ok");
+    delete game;
     return 0;
 }

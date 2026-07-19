@@ -1321,8 +1321,11 @@ namespace Absolute {
         accessMode = previousAccess;
         const Result value = EvaluateExpected(expr->value.get(), target.type);
         if (!target.isLValue) Report("assignment target is not assignable");
-        if (ArrayRank(target.type) > 0)
+        if (ArrayRank(target.type) > 0 &&
+            dynamic_cast<MemberAccessExpr*>(expr->target.get()) == nullptr)
             Report("array variables cannot be reassigned; assign an element or declare a new array view");
+        if (ArrayRank(target.type) > 0 && expr->op != "=")
+            Report("array fields only support direct '=' assignment");
         if (!IsAssignable(target.type, value.type))
             Report("cannot assign '" + value.type + "' to '" + target.type + "'");
         if (IsTaskType(target.type))

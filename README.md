@@ -397,6 +397,51 @@ The native runtime library is linked automatically by `--build-exe`. Objects
 created by `--emit-object` have to be linked with `Absolute-Runtime` manually
 when managed pointers are used.
 
+## Structs
+
+`struct` declares an inline value type. Assigning it, passing it to a function,
+or returning it copies the complete value. Fields may contain primitives, other
+structs, pointers, and array descriptors; instance constructors and methods use
+the same syntax as class members:
+
+```absolute
+struct Point {
+    float x;
+    float y;
+
+    Point(float initialX, float initialY) {
+        x = initialX;
+        y = initialY;
+    }
+
+    float lengthSquared() {
+        return x * x + y * y;
+    }
+}
+
+Point makePoint() {
+    Point result;
+    result.x = 3.0;
+    result.y = 4.0;
+    return result;
+}
+```
+
+Struct pointers use the normal ownership model. `new raw Point(...)` returns a
+native address that must be deleted explicitly; `new Point(...)` returns a
+managed owner that is automatically released at scope exit:
+
+```absolute
+raw Point* unsafe = new raw Point(3.0, 4.0);
+Point* tracked = new Point(6.0, 8.0);
+println(unsafe.lengthSquared());
+delete unsafe;
+```
+
+A struct cannot contain itself by value because that would have infinite size;
+use `raw T*` or `T*` for recursive links. Structs do not have inheritance or
+virtual dispatch and therefore carry no class vtable field.
+
 ## Async tasks and parallel execution
 
 An `async` function can be scheduled on the runtime worker pool with `spawn`.

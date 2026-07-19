@@ -241,6 +241,23 @@ namespace Absolute {
             bool emitted = false;
         };
 
+        struct StructInfo {
+            std::string name;
+            std::string nameSpace;
+            StructDeclStmt* statement = nullptr;
+            std::vector<VarDeclExpr*> ownPrimitiveFields;
+            std::vector<InstanceDeclExpr*> ownObjectFields;
+            std::vector<FunctionDeclStmt*> ownMethods;
+            ConstructorDeclStmt* constructor = nullptr;
+            std::vector<ClassField> fields;
+            std::unordered_map<std::string, ClassField> fieldByName;
+            std::unordered_map<std::string, ClassMethod> methods;
+            llvm::StructType* llvmType = nullptr;
+            bool finalizing = false;
+            bool finalized = false;
+            bool emitted = false;
+        };
+
         struct LoopTarget {
             llvm::BasicBlock* continueBlock = nullptr;
             llvm::BasicBlock* breakBlock = nullptr;
@@ -264,6 +281,8 @@ namespace Absolute {
         std::unordered_map<std::string, llvm::StructType*> arrayDescriptorTypes;
         std::unordered_map<std::string, ClassInfo> classes;
         std::vector<std::string> classOrder;
+        std::unordered_map<std::string, StructInfo> structs;
+        std::vector<std::string> structOrder;
         std::vector<LoopTarget> loops;
         std::string currentNamespace;
         std::unordered_map<std::string, std::string> functionLinkNames;
@@ -302,6 +321,10 @@ namespace Absolute {
             if (classes.contains(name)) {
                 FinalizeClass(name);
                 return classes.at(name).llvmType;
+            }
+            if (structs.contains(name)) {
+                FinalizeStruct(name);
+                return structs.at(name).llvmType;
             }
             Fail("unsupported type '" + name + "'");
         }
@@ -353,7 +376,8 @@ namespace Absolute {
 
         void CollectClass(ClassDeclStmt& statement, const std::string& nameSpace) {
             const std::string name = QualifiedClassName(statement.name, nameSpace);
-            if (classes.contains(name)) Fail("duplicate class '" + name + "'");
+            if (classes.contains(name) || structs.contains(name))
+                Fail("duplicate type '" + name + "'");
             ClassInfo info;
             info.name = name;
             info.nameSpace = nameSpace;
@@ -383,11 +407,41 @@ namespace Absolute {
             classOrder.push_back(name);
         }
 
+        void CollectStruct(StructDeclStmt& statement, const std::string& nameSpace) {
+            const std::string name = QualifiedClassName(statement.name, nameSpace);
+            if (structs.contains(name) || classes.contains(name))
+                Fail("duplicate type '" + name + "'");
+            StructInfo info;
+            info.name = name;
+            info.nameSpace = nameSpace;
+            info.statement = &statement;
+            info.llvmType = llvm::StructType::create(context, "absolute.struct." + name);
+            for (const auto& member : statement.members) {
+                if (auto* declaration = dynamic_cast<VarDeclStmt*>(member.get())) {
+                    if (declaration->expr) info.ownPrimitiveFields.push_back(declaration->expr.get());
+                }
+                else if (auto* single = dynamic_cast<SingleStatement*>(member.get())) {
+                    if (auto* instance = dynamic_cast<InstanceDeclExpr*>(single->expr.get()))
+                        info.ownObjectFields.push_back(instance);
+                }
+                else if (auto* method = dynamic_cast<FunctionDeclStmt*>(member.get()))
+                    info.ownMethods.push_back(method);
+                else if (auto* constructor = dynamic_cast<ConstructorDeclStmt*>(member.get())) {
+                    if (info.constructor) Fail("struct '" + name + "' has multiple constructors");
+                    info.constructor = constructor;
+                }
+            }
+            structs.emplace(name, std::move(info));
+            structOrder.push_back(name);
+        }
+
         void CollectClassDeclarations(const std::vector<std::unique_ptr<Statement>>& statements,
             const std::string& nameSpace = {}) {
             for (const auto& statement : statements) {
                 if (auto* classDeclaration = dynamic_cast<ClassDeclStmt*>(statement.get()))
                     CollectClass(*classDeclaration, nameSpace);
+                else if (auto* structDeclaration = dynamic_cast<StructDeclStmt*>(statement.get()))
+                    CollectStruct(*structDeclaration, nameSpace);
                 else if (auto* nameSpaceDeclaration = dynamic_cast<NamespaceDeclStmt*>(statement.get())) {
                     const std::string nested = nameSpace.empty()
                         ? nameSpaceDeclaration->name : nameSpace + "." + nameSpaceDeclaration->name;
@@ -395,6 +449,49 @@ namespace Absolute {
                         CollectClassDeclarations(nameSpaceDeclaration->body->statements, nested);
                 }
             }
+        }
+
+        void FinalizeStruct(const std::string& name) {
+            auto found = structs.find(name);
+            if (found == structs.end()) Fail("unknown struct '" + name + "'");
+            StructInfo& info = found->second;
+            if (info.finalized) return;
+            if (info.finalizing)
+                Fail("struct '" + name + "' contains itself by value; use a pointer field");
+            info.finalizing = true;
+
+            const auto addField = [&](const std::string& fieldName, const std::string& typeName) {
+                if (info.fieldByName.contains(fieldName))
+                    Fail("duplicate field '" + name + "." + fieldName + "'");
+                ClassField field{fieldName, typeName, static_cast<unsigned>(info.fields.size())};
+                info.fields.push_back(field);
+                info.fieldByName.emplace(fieldName, std::move(field));
+            };
+            for (VarDeclExpr* field : info.ownPrimitiveFields)
+                addField(IdentifierName(field->name.get()), DeclaredTypeName(*field));
+            for (InstanceDeclExpr* field : info.ownObjectFields)
+                addField(IdentifierName(field->identifierName.get()), ResolveTypeName(field->constructType.get()));
+
+            for (FunctionDeclStmt* statement : info.ownMethods) {
+                if (!statement || !statement->name) continue;
+                std::vector<std::string> parameterTypes;
+                parameterTypes.reserve(statement->parameters.size());
+                for (const auto& parameter : statement->parameters)
+                    parameterTypes.push_back(DeclaredTypeName(*parameter));
+                const std::string methodName = statement->name->value;
+                const std::string methodKey = CallableKey(methodName, parameterTypes);
+                if (info.methods.contains(methodKey))
+                    Fail("duplicate method '" + name + "." + methodName + "'");
+                info.methods.emplace(methodKey, ClassMethod{
+                    statement, name, CallableKey(name + "." + methodName, parameterTypes), std::nullopt});
+            }
+
+            std::vector<llvm::Type*> layout;
+            layout.reserve(info.fields.size());
+            for (const ClassField& field : info.fields) layout.push_back(TypeFromName(field.typeName));
+            info.llvmType->setBody(layout, false);
+            info.finalizing = false;
+            info.finalized = true;
         }
 
         bool SameMethodSignature(FunctionDeclStmt& left, FunctionDeclStmt& right) {
@@ -515,6 +612,26 @@ namespace Absolute {
             return function;
         }
 
+        llvm::Function* DeclareConstructorFunction(StructInfo& info) {
+            if (!info.constructor) return nullptr;
+            std::vector<llvm::Type*> parameters{builder.getPtrTy()};
+            for (const auto& parameter : info.constructor->parameters)
+                parameters.push_back(TypeFromName(DeclaredTypeName(*parameter)));
+            llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
+            const std::string name = info.name + ".__ctor";
+            llvm::Function* function = module->getFunction(name);
+            if (!function)
+                function = llvm::Function::Create(type, llvm::Function::ExternalLinkage, name, *module);
+            if (function->getFunctionType() != type)
+                Fail("conflicting constructor declaration '" + name + "'");
+            function->setCallingConv(llvm::CallingConv::C);
+            function->getArg(0)->setName("this");
+            for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
+                function->getArg(static_cast<unsigned>(index + 1))->setName(
+                    IdentifierName(info.constructor->parameters[index]->name.get()));
+            return function;
+        }
+
         void DeclareClasses() {
             for (const std::string& name : classOrder) FinalizeClass(name);
             for (const std::string& name : classOrder) {
@@ -538,6 +655,18 @@ namespace Absolute {
                 info.vtable = new llvm::GlobalVariable(*module, tableType, true,
                     llvm::GlobalValue::PrivateLinkage, llvm::ConstantArray::get(tableType, entries),
                     "absolute.vtable." + name);
+            }
+        }
+
+        void DeclareStructs() {
+            for (const std::string& name : structOrder) FinalizeStruct(name);
+            for (const std::string& name : structOrder) {
+                StructInfo& info = structs.at(name);
+                for (const auto& [methodName, method] : info.methods) {
+                    (void)methodName;
+                    DeclareMethodFunction(method);
+                }
+                DeclareConstructorFunction(info);
             }
         }
 
@@ -569,14 +698,30 @@ namespace Absolute {
             return builder.CreateStructGEP(info.llvmType, object, field.index, field.name + ".address");
         }
 
+        llvm::Value* FieldAddress(llvm::Value* object, StructInfo& info, const ClassField& field) {
+            return builder.CreateStructGEP(info.llvmType, object, field.index, field.name + ".address");
+        }
+
         llvm::Value* ImplicitFieldAddress(const std::string& fieldName) {
             if (currentClassName.empty() || !currentThis) return nullptr;
-            ClassInfo& info = classes.at(currentClassName);
-            const auto field = info.fieldByName.find(fieldName);
-            return field == info.fieldByName.end() ? nullptr : FieldAddress(currentThis, info, field->second);
+            if (auto found = classes.find(currentClassName); found != classes.end()) {
+                const auto field = found->second.fieldByName.find(fieldName);
+                return field == found->second.fieldByName.end()
+                    ? nullptr : FieldAddress(currentThis, found->second, field->second);
+            }
+            if (auto found = structs.find(currentClassName); found != structs.end()) {
+                const auto field = found->second.fieldByName.find(fieldName);
+                return field == found->second.fieldByName.end()
+                    ? nullptr : FieldAddress(currentThis, found->second, field->second);
+            }
+            return nullptr;
         }
 
         llvm::Value* ObjectSize(ClassInfo& info) {
+            return llvm::ConstantExpr::getSizeOf(info.llvmType);
+        }
+
+        llvm::Value* ObjectSize(StructInfo& info) {
             return llvm::ConstantExpr::getSizeOf(info.llvmType);
         }
 
@@ -584,6 +729,10 @@ namespace Absolute {
             builder.CreateMemSet(object, builder.getInt8(0), ObjectSize(info), llvm::MaybeAlign(8));
             llvm::Value* vtableAddress = builder.CreateStructGEP(info.llvmType, object, 0, "vtable.address");
             builder.CreateStore(info.vtable, vtableAddress);
+        }
+
+        void InitializeObject(llvm::Value* object, StructInfo& info) {
+            builder.CreateMemSet(object, builder.getInt8(0), ObjectSize(info), llvm::MaybeAlign(8));
         }
 
         llvm::Value* Evaluate(Expression* expression) {
@@ -1099,6 +1248,10 @@ namespace Absolute {
                 FinalizeClass(name);
                 return module->getDataLayout().getTypeAllocSize(classes.at(name).llvmType).getFixedValue();
             }
+            if (structs.contains(name)) {
+                FinalizeStruct(name);
+                return module->getDataLayout().getTypeAllocSize(structs.at(name).llvmType).getFixedValue();
+            }
             Fail("cannot determine allocation size of '" + name + "'");
         }
 
@@ -1547,6 +1700,65 @@ namespace Absolute {
             info.emitted = true;
         }
 
+        void EmitStructMethod(StructInfo& info, const ClassMethod& method) {
+            llvm::Function* function = DeclareMethodFunction(method);
+            if (!function->empty()) return;
+            llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+            builder.SetInsertPoint(entry);
+            PushScope();
+            const std::string oldClass = currentClassName;
+            llvm::Value* oldThis = currentThis;
+            const std::string oldReturn = currentReturnTypeName;
+            currentClassName = info.name;
+            currentThis = function->getArg(0);
+            currentReturnTypeName = ResolveTypeName(method.statement->returnType.get());
+            for (size_t index = 0; index < method.statement->parameters.size(); ++index)
+                BindCallableParameter(*function->getArg(static_cast<unsigned>(index + 1)),
+                    *method.statement->parameters[index]);
+            if (method.statement->body) method.statement->body->Accept(visitor);
+            FinishClassCallable(*function);
+            PopScope();
+            currentClassName = oldClass;
+            currentThis = oldThis;
+            currentReturnTypeName = oldReturn;
+            builder.ClearInsertionPoint();
+        }
+
+        void EmitStructConstructor(StructInfo& info) {
+            if (!info.constructor) return;
+            llvm::Function* function = DeclareConstructorFunction(info);
+            if (!function->empty()) return;
+            llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+            builder.SetInsertPoint(entry);
+            PushScope();
+            const std::string oldClass = currentClassName;
+            llvm::Value* oldThis = currentThis;
+            const std::string oldReturn = currentReturnTypeName;
+            currentClassName = info.name;
+            currentThis = function->getArg(0);
+            currentReturnTypeName = "void";
+            for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
+                BindCallableParameter(*function->getArg(static_cast<unsigned>(index + 1)),
+                    *info.constructor->parameters[index]);
+            if (info.constructor->body) info.constructor->body->Accept(visitor);
+            FinishClassCallable(*function);
+            PopScope();
+            currentClassName = oldClass;
+            currentThis = oldThis;
+            currentReturnTypeName = oldReturn;
+            builder.ClearInsertionPoint();
+        }
+
+        void EmitStructBodies(StructInfo& info) {
+            if (info.emitted) return;
+            for (const auto& [methodName, method] : info.methods) {
+                (void)methodName;
+                EmitStructMethod(info, method);
+            }
+            EmitStructConstructor(info);
+            info.emitted = true;
+        }
+
         llvm::Module& BuildModule(Program& program, const std::string& moduleName,
             const std::string& targetTriple = {}, const std::string& dataLayout = {}) {
             module = std::make_unique<llvm::Module>(moduleName, context);
@@ -1557,6 +1769,8 @@ namespace Absolute {
             arrayDescriptorTypes.clear();
             classes.clear();
             classOrder.clear();
+            structs.clear();
+            structOrder.clear();
             loops.clear();
             currentNamespace.clear();
             functionLinkNames.clear();
@@ -1571,6 +1785,7 @@ namespace Absolute {
             currentThis = nullptr;
 
             CollectClassDeclarations(program.statements);
+            DeclareStructs();
             DeclareClasses();
 
             phase = Phase::DeclareFunctions;
@@ -1779,6 +1994,33 @@ namespace Absolute {
                     callee = impl->module->getFunction(method->second.linkName);
                     if (!callee) impl->Fail("missing method function '" + method->second.linkName + "'");
                 }
+                llvm::CallInst* call = impl->builder.CreateCall(methodType, callee, arguments,
+                    methodType->getReturnType()->isVoidTy() ? "" : member->member + ".result");
+                impl->value = methodType->getReturnType()->isVoidTy() ? nullptr : call;
+                impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
+                return;
+            }
+            auto structIterator = impl->structs.find(className);
+            if (structIterator != impl->structs.end() && (!selected || selected->kind == SymbolKind::Method)) {
+                Impl::StructInfo& info = structIterator->second;
+                const std::string methodKey = CallableKey(member->member,
+                    selected ? selected->parameterTypes : std::vector<std::string>{});
+                const auto method = info.methods.find(methodKey);
+                if (method == info.methods.end())
+                    impl->Fail("struct '" + info.name + "' has no method '" + member->member + "'");
+                llvm::Value* object = impl->ObjectPointer(member->base.get(), baseType);
+                llvm::FunctionType* methodType = impl->MethodFunctionType(*method->second.statement);
+                std::vector<llvm::Value*> arguments{object};
+                for (size_t index = 0; index < expr->arguments.size(); ++index) {
+                    if (index + 1 >= methodType->getNumParams())
+                        impl->Fail("too many arguments for method '" + member->member + "'");
+                    arguments.push_back(impl->Coerce(impl->Evaluate(expr->arguments[index].get()),
+                        methodType->getParamType(static_cast<unsigned>(index + 1))));
+                }
+                if (arguments.size() != methodType->getNumParams())
+                    impl->Fail("invalid argument count for method '" + member->member + "'");
+                llvm::Function* callee = impl->module->getFunction(method->second.linkName);
+                if (!callee) impl->Fail("missing method function '" + method->second.linkName + "'");
                 llvm::CallInst* call = impl->builder.CreateCall(methodType, callee, arguments,
                     methodType->getReturnType()->isVoidTy() ? "" : member->member + ".result");
                 impl->value = methodType->getReturnType()->isVoidTy() ? nullptr : call;
@@ -2036,8 +2278,11 @@ namespace Absolute {
 
     void CodeGenerator::Visit(AssignmentExpr* expr) {
         const std::string targetTypeName = impl->SemanticType(expr->target.get());
-        if (ArrayRankName(targetTypeName) > 0)
-            impl->Fail("whole-array assignment is not implemented; initialize a new array view instead");
+        if (ArrayRankName(targetTypeName) > 0 &&
+            dynamic_cast<MemberAccessExpr*>(expr->target.get()) == nullptr)
+            impl->Fail("array variables cannot be reassigned; only array descriptor fields are assignable");
+        if (ArrayRankName(targetTypeName) > 0 && expr->op != "=")
+            impl->Fail("array fields only support direct '=' assignment");
         llvm::Value* targetAddress = impl->EvaluateAddress(expr->target.get());
         llvm::Type* targetType = impl->TypeFromName(targetTypeName);
         llvm::Value* assigned = impl->Evaluate(expr->value.get());
@@ -2192,18 +2437,32 @@ namespace Absolute {
 
     void CodeGenerator::Visit(MemberAccessExpr* expr) {
         const std::string baseType = impl->SemanticType(expr->base.get());
-        Impl::ClassInfo& info = impl->RequireClassForType(baseType);
-        const auto field = info.fieldByName.find(expr->member);
-        if (field == info.fieldByName.end())
-            impl->Fail("class '" + info.name + "' has no field '" + expr->member + "'");
-        llvm::Value* object = impl->ObjectPointer(expr->base.get(), baseType);
-        llvm::Value* fieldAddress = impl->FieldAddress(object, info, field->second);
+        const std::string aggregateName = impl->ClassNameFromType(baseType);
+        llvm::Value* fieldAddress = nullptr;
+        std::string fieldTypeName;
+        if (auto found = impl->classes.find(aggregateName); found != impl->classes.end()) {
+            const auto field = found->second.fieldByName.find(expr->member);
+            if (field == found->second.fieldByName.end())
+                impl->Fail("class '" + found->second.name + "' has no field '" + expr->member + "'");
+            llvm::Value* object = impl->ObjectPointer(expr->base.get(), baseType);
+            fieldAddress = impl->FieldAddress(object, found->second, field->second);
+            fieldTypeName = field->second.typeName;
+        }
+        else if (auto found = impl->structs.find(aggregateName); found != impl->structs.end()) {
+            const auto field = found->second.fieldByName.find(expr->member);
+            if (field == found->second.fieldByName.end())
+                impl->Fail("struct '" + found->second.name + "' has no field '" + expr->member + "'");
+            llvm::Value* object = impl->ObjectPointer(expr->base.get(), baseType);
+            fieldAddress = impl->FieldAddress(object, found->second, field->second);
+            fieldTypeName = field->second.typeName;
+        }
+        else impl->Fail("type '" + baseType + "' does not support member access");
         if (impl->addressMode) {
             impl->addressValue = fieldAddress;
             return;
         }
         impl->value = impl->builder.CreateLoad(
-            impl->TypeFromName(field->second.typeName), fieldAddress, expr->member + ".value");
+            impl->TypeFromName(fieldTypeName), fieldAddress, expr->member + ".value");
         impl->valueCreatesManagedOwner = false;
     }
 
@@ -2223,9 +2482,11 @@ namespace Absolute {
         llvm::Value* pointer = nullptr;
         llvm::Value* result = nullptr;
         const bool classAllocation = impl->classes.contains(pointeeType);
+        const bool structAllocation = impl->structs.contains(pointeeType);
         llvm::Value* allocationSize = classAllocation
             ? impl->ObjectSize(impl->classes.at(pointeeType))
-            : impl->builder.getInt64(impl->SizeOfTypeName(pointeeType));
+            : (structAllocation ? impl->ObjectSize(impl->structs.at(pointeeType))
+                : impl->builder.getInt64(impl->SizeOfTypeName(pointeeType)));
         if (rawAllocation) {
             pointer = impl->builder.CreateCall(
                 impl->Malloc(), {allocationSize}, "raw.allocation");
@@ -2257,6 +2518,31 @@ namespace Absolute {
             }
             else if (!expr->arguments.empty())
                 impl->Fail("class '" + info.name + "' has no constructor");
+            impl->value = result;
+            impl->valueCreatesManagedOwner = !rawAllocation;
+            impl->valueManagedPointee = rawAllocation ? nullptr : pointer;
+            return;
+        }
+
+        if (structAllocation) {
+            Impl::StructInfo& info = impl->structs.at(pointeeType);
+            impl->InitializeObject(pointer, info);
+            if (info.constructor) {
+                llvm::Function* constructor = impl->module->getFunction(info.name + ".__ctor");
+                if (!constructor) impl->Fail("missing constructor for '" + info.name + "'");
+                std::vector<llvm::Value*> arguments{pointer};
+                for (size_t index = 0; index < expr->arguments.size(); ++index) {
+                    if (index + 1 >= constructor->arg_size())
+                        impl->Fail("too many constructor arguments for '" + info.name + "'");
+                    arguments.push_back(impl->Coerce(impl->Evaluate(expr->arguments[index].get()),
+                        constructor->getFunctionType()->getParamType(static_cast<unsigned>(index + 1))));
+                }
+                if (arguments.size() != constructor->arg_size())
+                    impl->Fail("invalid constructor argument count for '" + info.name + "'");
+                impl->builder.CreateCall(constructor, arguments);
+            }
+            else if (!expr->arguments.empty())
+                impl->Fail("struct '" + info.name + "' has no constructor");
             impl->value = result;
             impl->valueCreatesManagedOwner = !rawAllocation;
             impl->valueManagedPointee = rawAllocation ? nullptr : pointer;
@@ -2302,22 +2588,39 @@ namespace Absolute {
         if (!function || impl->scopes.empty()) impl->Fail("object declaration outside a function");
         const std::string name = IdentifierName(expr->identifierName.get());
         const std::string typeName = impl->SemanticType(expr);
-        Impl::ClassInfo& info = impl->RequireClassForType(typeName);
-        llvm::AllocaInst* address = impl->CreateEntryAlloca(*function, info.llvmType, name);
-        impl->InitializeObject(address, info);
+        llvm::StructType* llvmType = nullptr;
+        ConstructorDeclStmt* constructorStatement = nullptr;
+        std::string constructorName;
+        if (auto found = impl->classes.find(typeName); found != impl->classes.end()) {
+            llvmType = found->second.llvmType;
+            constructorStatement = found->second.constructor;
+            constructorName = found->second.name + ".__ctor";
+        }
+        else if (auto found = impl->structs.find(typeName); found != impl->structs.end()) {
+            llvmType = found->second.llvmType;
+            constructorStatement = found->second.constructor;
+            constructorName = found->second.name + ".__ctor";
+        }
+        else impl->Fail("type '" + typeName + "' is not a class or struct");
+
+        llvm::AllocaInst* address = impl->CreateEntryAlloca(*function, llvmType, name);
+        if (auto found = impl->classes.find(typeName); found != impl->classes.end())
+            impl->InitializeObject(address, found->second);
+        else impl->InitializeObject(address, impl->structs.at(typeName));
         if (expr->value) {
-            llvm::Value* initial = impl->Coerce(impl->Evaluate(expr->value.get()), info.llvmType);
+            llvm::Value* initial = impl->Coerce(impl->Evaluate(expr->value.get()), llvmType);
             impl->builder.CreateStore(initial, address);
         }
-        else if (info.constructor && info.constructor->parameters.empty()) {
-            llvm::Function* constructor = impl->module->getFunction(info.name + ".__ctor");
+        else if (constructorStatement && constructorStatement->parameters.empty()) {
+            llvm::Function* constructor = impl->module->getFunction(constructorName);
+            if (!constructor) impl->Fail("missing constructor for '" + typeName + "'");
             impl->builder.CreateCall(constructor, {address});
         }
         if (!impl->scopes.back().emplace(name,
-            Impl::Variable{address, info.llvmType, typeName, false, false, nullptr, {},
+            Impl::Variable{address, llvmType, typeName, false, false, nullptr, {},
                 nullptr, impl->SemanticSymbol(expr)}).second)
             impl->Fail("duplicate object '" + name + "'");
-        impl->value = impl->builder.CreateLoad(info.llvmType, address, name + ".value");
+        impl->value = impl->builder.CreateLoad(llvmType, address, name + ".value");
         impl->valueCreatesManagedOwner = false;
     }
 
@@ -2476,8 +2779,11 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(StructDeclStmt* stmt) {
-        (void)stmt;
-        if (impl->phase == Impl::Phase::EmitBodies) impl->Fail("struct codegen is not implemented yet");
+        if (impl->phase != Impl::Phase::EmitBodies) return;
+        const std::string name = impl->Qualify(stmt->name);
+        auto found = impl->structs.find(name);
+        if (found == impl->structs.end()) impl->Fail("unregistered struct '" + name + "'");
+        impl->EmitStructBodies(found->second);
     }
 
     void CodeGenerator::Visit(ClassDeclStmt* stmt) {
