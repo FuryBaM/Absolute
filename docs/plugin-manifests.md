@@ -10,6 +10,7 @@ capabilities that other plugins consume.
   "version": "1.2.0",
   "abi": 1,
   "library": "absolute-shader-opengl.dll",
+  "nativeLibraries": ["absolute-shader-runtime.lib", "opengl32.lib"],
   "dependencies": {
     "absolute.shader": ">=1.0.0 <2.0.0",
     "absolute.math": "^1.1.0"
@@ -22,6 +23,11 @@ capabilities that other plugins consume.
 `library` is relative to the manifest unless it is absolute. The library's
 `AbsoluteSyntaxPluginV1::name` must match the manifest `name`, and `abi` must
 match `ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION`.
+
+`nativeLibraries` are automatically passed to the native linker when Absolute
+builds an executable. Relative files are resolved beside the manifest; bare
+system library names such as `user32.lib` or `pthread` are passed through. This
+lets one plugin package contain a compiler adapter and a separate runtime.
 
 Dependencies may use the compact name-to-range object shown above. The resolver
 looks for `<name>.absplugin` and then `<name-with-dots-replaced-by-dashes>.absplugin`
@@ -74,4 +80,3 @@ rejected.
 Direct library loading is the compatibility mode and has no trustworthy version
 metadata. If that plugin later participates in a versioned dependency graph,
 load its manifest instead of its DLL/SO directly.
-

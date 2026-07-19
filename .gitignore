@@ -371,4 +371,5 @@ build/
 benchmarks/array-suite/.benchmark-build/
 benchmarks/array-suite/results/
 benchmarks/pointer-object-suite/.benchmark-build/
+examples/desktop/.desktop-build/
 benchmarks/pointer-object-suite/results/

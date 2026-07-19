@@ -16,6 +16,7 @@ namespace Absolute {
 
         void AddSearchPath(const std::filesystem::path& path);
         void Load(const std::filesystem::path& path);
+        const std::vector<std::filesystem::path>& NativeLibraries() const { return nativeLibraries; }
 
     private:
         struct LoadedPlugin {
@@ -40,5 +41,6 @@ namespace Absolute {
         std::unordered_map<std::string, LoadedPlugin> loadedPlugins;
         std::unordered_map<std::string, ManifestState> manifestStates;
         std::unordered_map<std::string, std::string> capabilityProviders;
+        std::vector<std::filesystem::path> nativeLibraries;
     };
 }

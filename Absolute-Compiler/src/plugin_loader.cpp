@@ -45,6 +45,7 @@ namespace Absolute {
             std::vector<Dependency> dependencies;
             std::vector<std::string> provides;
             std::vector<std::string> requiresCapabilities;
+            std::vector<std::filesystem::path> nativeLibraries;
         };
 
         std::string ReadText(const std::filesystem::path& path) {
@@ -246,6 +247,8 @@ namespace Absolute {
             result.library = *library;
             result.provides = StringArrayProperty(document, "provides");
             result.requiresCapabilities = StringArrayProperty(document, "requires");
+            for (const std::string& nativeLibrary : StringArrayProperty(document, "nativeLibraries"))
+                result.nativeLibraries.emplace_back(nativeLibrary);
 
             const auto dependencyArray = PropertyValue(document, "dependencies", '[', ']');
             const auto dependencyObject = PropertyValue(document, "dependencies", '{', '}');
@@ -397,6 +400,15 @@ namespace Absolute {
             const std::filesystem::path library = manifest.library.is_absolute()
                 ? manifest.library : canonical.parent_path() / manifest.library;
             LoadDynamicLibrary(library, manifest.name, manifest.version, canonical, manifest.provides);
+            std::vector<std::filesystem::path> resolvedNativeLibraries;
+            for (const std::filesystem::path& nativeLibrary : manifest.nativeLibraries) {
+                const std::filesystem::path relative = canonical.parent_path() / nativeLibrary;
+                if (!nativeLibrary.is_absolute() && (nativeLibrary.has_parent_path() || std::filesystem::exists(relative)))
+                    resolvedNativeLibraries.push_back(relative);
+                else resolvedNativeLibraries.push_back(nativeLibrary);
+            }
+            nativeLibraries.insert(nativeLibraries.begin(),
+                resolvedNativeLibraries.begin(), resolvedNativeLibraries.end());
             manifestStates[key] = ManifestState::Loaded;
             manifestStack.pop_back();
         }

@@ -317,6 +317,11 @@ namespace {
             LoadSource(input, programs, loaded);
         }
 
+        for (const fs::path& library : plugins.NativeLibraries()) {
+            if (std::find(nativeLibraries.begin(), nativeLibraries.end(), library) == nativeLibraries.end())
+                nativeLibraries.push_back(library);
+        }
+
         std::vector<std::unique_ptr<Statement>> statements;
         for (auto& program : preludePrograms) {
             for (auto& statement : program->statements) statements.push_back(std::move(statement));

@@ -20,6 +20,7 @@ if(ABSOLUTE_BUILD_EXAMPLE_PLUGINS)
     add_subdirectory(plugins/unless)
     add_subdirectory(plugins/math)
     add_subdirectory(plugins/shader)
+    add_subdirectory(plugins/desktop)
 endif()
 
 # Keep generated artifacts out of the source tree.
@@ -96,6 +97,35 @@ if(BUILD_TESTING)
                 -DWORK_DIR=${CMAKE_BINARY_DIR}/plugin-dependencies
                 -P "${PROJECT_SOURCE_DIR}/tests/run-plugin-dependencies.cmake"
         )
+    endif()
+    if(TARGET Absolute-Desktop-Plugin)
+        set(ABSOLUTE_DESKTOP_MANIFEST
+            "$<TARGET_FILE_DIR:Absolute-Desktop-Plugin>/absolute-desktop.absplugin")
+        add_test(
+            NAME absolute.desktop-plugin
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/desktop-plugin.abs"
+                --plugin "${ABSOLUTE_DESKTOP_MANIFEST}"
+        )
+        set_tests_properties(absolute.desktop-plugin PROPERTIES
+            PASS_REGULAR_EXPRESSION "Loaded syntax plugin absolute.desktop v1.0.0"
+        )
+        if(ABSOLUTE_ENABLE_LLVM)
+            add_test(
+                NAME absolute.build-desktop-plugin
+                COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/desktop-plugin.abs"
+                    --plugin "${ABSOLUTE_DESKTOP_MANIFEST}"
+                    --build-exe -o "${CMAKE_BINARY_DIR}/desktop-plugin${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.build-desktop-plugin PROPERTIES
+                FIXTURES_SETUP absolute-desktop-plugin-executable
+            )
+            add_test(NAME absolute.run-desktop-plugin
+                COMMAND "${CMAKE_BINARY_DIR}/desktop-plugin${CMAKE_EXECUTABLE_SUFFIX}")
+            set_tests_properties(absolute.run-desktop-plugin PROPERTIES
+                FIXTURES_REQUIRED absolute-desktop-plugin-executable
+                PASS_REGULAR_EXPRESSION "desktop-plugin=4227327"
+            )
+        endif()
     endif()
     add_test(
         NAME absolute.sample

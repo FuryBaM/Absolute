@@ -207,6 +207,27 @@ Use `--plugin-path directory` for command-line search paths, or add
 capability `provides`/`requires`, and the full manifest format are documented in
 `docs/plugin-manifests.md`.
 
+### Desktop windows and graphics
+
+The `absolute.desktop` plugin provides a native Win32 or X11 window, event loop,
+keyboard/mouse input, timing, and a 32-bit software framebuffer. It is enough to
+build desktop tools, 2D games, renderers, and the platform layer for a future GPU
+backend without adding Win32 code to the compiler core.
+
+```absolute
+auto window = new Desktop.Window("Absolute", 800, 450, true);
+while (window.poll()) {
+    window.clear(Desktop.rgb(18, 22, 32));
+    window.fillRect(100, 100, 200, 80, Desktop.rgb(70, 150, 255));
+    window.present();
+}
+window.close();
+```
+
+See `plugins/desktop/README.md` and `examples/desktop/window.abs` for build and
+run commands. The generated `.absplugin` manifest automatically links its native
+runtime and Win32 libraries.
+
 Emit verified textual LLVM IR:
 
 ```bash
