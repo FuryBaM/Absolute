@@ -1,0 +1,468 @@
+extern "C" int32 getchar();
+
+namespace Demo.Chess {
+    const int32 A1 = 56; const int32 B1 = 57; const int32 C1 = 58; const int32 D1 = 59;
+    const int32 E1 = 60; const int32 F1 = 61; const int32 G1 = 62; const int32 H1 = 63;
+    const int32 A8 = 0;  const int32 B8 = 1;  const int32 C8 = 2;  const int32 D8 = 3;
+    const int32 E8 = 4;  const int32 F8 = 5;  const int32 G8 = 6;  const int32 H8 = 7;
+
+    struct GameState {
+        char[] board;
+        bool whiteTurn;
+        int32 enPassant;
+        bool whiteKingMoved;
+        bool blackKingMoved;
+        bool whiteQueenRookMoved;
+        bool whiteKingRookMoved;
+        bool blackQueenRookMoved;
+        bool blackKingRookMoved;
+    }
+
+    int32 absInt(int32 value) {
+        return value < 0 ? -value : value;
+    }
+
+    int32 rowOf(int32 square) {
+        return square / 8;
+    }
+
+    int32 fileOf(int32 square) {
+        return square % 8;
+    }
+
+    bool isWhitePiece(char piece) {
+        return piece == 'P' || piece == 'N' || piece == 'B' || piece == 'R' ||
+            piece == 'Q' || piece == 'K';
+    }
+
+    bool isBlackPiece(char piece) {
+        return piece == 'p' || piece == 'n' || piece == 'b' || piece == 'r' ||
+            piece == 'q' || piece == 'k';
+    }
+
+    bool belongsTo(char piece, bool white) {
+        return white ? isWhitePiece(piece) : isBlackPiece(piece);
+    }
+
+    bool sameSide(char left, char right) {
+        return (isWhitePiece(left) && isWhitePiece(right)) ||
+            (isBlackPiece(left) && isBlackPiece(right));
+    }
+
+    char[] initialBoard() {
+        return {
+            'r', 'n', 'b', 'q', 'k', 'b', 'n', 'r',
+            'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p',
+            '.', '.', '.', '.', '.', '.', '.', '.',
+            '.', '.', '.', '.', '.', '.', '.', '.',
+            '.', '.', '.', '.', '.', '.', '.', '.',
+            '.', '.', '.', '.', '.', '.', '.', '.',
+            'P', 'P', 'P', 'P', 'P', 'P', 'P', 'P',
+            'R', 'N', 'B', 'Q', 'K', 'B', 'N', 'R'
+        };
+    }
+
+    GameState* createGame() {
+        GameState* game = new GameState();
+        game.board = initialBoard();
+        game.whiteTurn = true;
+        game.enPassant = -1;
+        game.whiteKingMoved = false;
+        game.blackKingMoved = false;
+        game.whiteQueenRookMoved = false;
+        game.whiteKingRookMoved = false;
+        game.blackQueenRookMoved = false;
+        game.blackKingRookMoved = false;
+        return game;
+    }
+
+    void printBoard(char[] board) {
+        println("");
+        println("    a b c d e f g h");
+        println("  +-----------------+");
+        int32 row = 0;
+        while (row < 8) {
+            print(8 - row);
+            print(" | ");
+            int32 file = 0;
+            while (file < 8) {
+                print(board[row * 8 + file]);
+                print(" ");
+                file += 1;
+            }
+            print("| ");
+            println(8 - row);
+            row += 1;
+        }
+        println("  +-----------------+");
+        println("    a b c d e f g h");
+    }
+
+    bool pathClear(char[] board, int32 from, int32 to) {
+        int32 fromRow = rowOf(from);
+        int32 fromFile = fileOf(from);
+        int32 toRow = rowOf(to);
+        int32 toFile = fileOf(to);
+        int32 rowStep = toRow == fromRow ? 0 : (toRow > fromRow ? 1 : -1);
+        int32 fileStep = toFile == fromFile ? 0 : (toFile > fromFile ? 1 : -1);
+        int32 row = fromRow + rowStep;
+        int32 file = fromFile + fileStep;
+        while (row != toRow || file != toFile) {
+            if (board[row * 8 + file] != '.') {
+                return false;
+            }
+            row += rowStep;
+            file += fileStep;
+        }
+        return true;
+    }
+
+    bool pieceAttacks(char[] board, int32 from, int32 to) {
+        char piece = board[from];
+        int32 rowDistance = absInt(rowOf(to) - rowOf(from));
+        int32 fileDistance = absInt(fileOf(to) - fileOf(from));
+
+        if (piece == 'P') {
+            return rowOf(to) == rowOf(from) - 1 && fileDistance == 1;
+        }
+        if (piece == 'p') {
+            return rowOf(to) == rowOf(from) + 1 && fileDistance == 1;
+        }
+        if (piece == 'N' || piece == 'n') {
+            return (rowDistance == 2 && fileDistance == 1) ||
+                (rowDistance == 1 && fileDistance == 2);
+        }
+        if (piece == 'K' || piece == 'k') {
+            return rowDistance <= 1 && fileDistance <= 1 &&
+                rowDistance + fileDistance > 0;
+        }
+
+        bool diagonal = rowDistance == fileDistance && rowDistance > 0;
+        bool straight = (rowDistance == 0 && fileDistance > 0) ||
+            (fileDistance == 0 && rowDistance > 0);
+
+        if ((piece == 'B' || piece == 'b') && diagonal) {
+            return pathClear(board, from, to);
+        }
+        if ((piece == 'R' || piece == 'r') && straight) {
+            return pathClear(board, from, to);
+        }
+        if ((piece == 'Q' || piece == 'q') && (diagonal || straight)) {
+            return pathClear(board, from, to);
+        }
+        return false;
+    }
+
+    bool isSquareAttacked(char[] board, int32 square, bool byWhite) {
+        int32 from = 0;
+        while (from < 64) {
+            if (belongsTo(board[from], byWhite) && pieceAttacks(board, from, square)) {
+                return true;
+            }
+            from += 1;
+        }
+        return false;
+    }
+
+    int32 findKing(char[] board, bool white) {
+        char king = white ? 'K' : 'k';
+        int32 square = 0;
+        while (square < 64) {
+            if (board[square] == king) {
+                return square;
+            }
+            square += 1;
+        }
+        return -1;
+    }
+
+    bool isInCheck(char[] board, bool white) {
+        int32 king = findKing(board, white);
+        return king < 0 || isSquareAttacked(board, king, !white);
+    }
+
+    void applyBoardMove(char[] board, int32 from, int32 to, int32 enPassant) {
+        char piece = board[from];
+
+        if ((piece == 'P' || piece == 'p') && to == enPassant && board[to] == '.' &&
+            fileOf(from) != fileOf(to)) {
+            int32 capturedPawn = piece == 'P' ? to + 8 : to - 8;
+            board[capturedPawn] = '.';
+        }
+
+        if ((piece == 'K' || piece == 'k') && absInt(to - from) == 2) {
+            if (to > from) {
+                board[from + 1] = board[from + 3];
+                board[from + 3] = '.';
+            }
+            else {
+                board[from - 1] = board[from - 4];
+                board[from - 4] = '.';
+            }
+        }
+
+        board[to] = piece;
+        board[from] = '.';
+
+        if (piece == 'P' && rowOf(to) == 0) {
+            board[to] = 'Q';
+        }
+        else if (piece == 'p' && rowOf(to) == 7) {
+            board[to] = 'q';
+        }
+    }
+
+    void updateRights(GameState* game, int32 from, int32 to, char moved, char captured) {
+        if (moved == 'K') { game.whiteKingMoved = true; }
+        if (moved == 'k') { game.blackKingMoved = true; }
+        if (moved == 'R' && from == A1) { game.whiteQueenRookMoved = true; }
+        if (moved == 'R' && from == H1) { game.whiteKingRookMoved = true; }
+        if (moved == 'r' && from == A8) { game.blackQueenRookMoved = true; }
+        if (moved == 'r' && from == H8) { game.blackKingRookMoved = true; }
+
+        if (captured == 'R' && to == A1) { game.whiteQueenRookMoved = true; }
+        if (captured == 'R' && to == H1) { game.whiteKingRookMoved = true; }
+        if (captured == 'r' && to == A8) { game.blackQueenRookMoved = true; }
+        if (captured == 'r' && to == H8) { game.blackKingRookMoved = true; }
+    }
+
+    void applyMove(GameState* game, int32 from, int32 to) {
+        char moved = game.board[from];
+        char captured = game.board[to];
+        int32 oldEnPassant = game.enPassant;
+
+        updateRights(game, from, to, moved, captured);
+        applyBoardMove(game.board, from, to, oldEnPassant);
+
+        if ((moved == 'P' || moved == 'p') && absInt(to - from) == 16) {
+            game.enPassant = (from + to) / 2;
+        }
+        else {
+            game.enPassant = -1;
+        }
+
+        game.whiteTurn = !game.whiteTurn;
+    }
+
+    bool pseudoLegal(GameState* game, int32 from, int32 to) {
+        if (from < 0 || from >= 64 || to < 0 || to >= 64 || from == to) {
+            return false;
+        }
+
+        char piece = game.board[from];
+        char target = game.board[to];
+        bool whiteTurn = game.whiteTurn;
+
+        if (!belongsTo(piece, whiteTurn) || sameSide(piece, target) ||
+            target == 'K' || target == 'k') {
+            return false;
+        }
+
+        int32 fromRow = rowOf(from);
+        int32 fromFile = fileOf(from);
+        int32 toRow = rowOf(to);
+        int32 toFile = fileOf(to);
+        int32 rowDistance = absInt(toRow - fromRow);
+        int32 fileDistance = absInt(toFile - fromFile);
+
+        if (piece == 'P' || piece == 'p') {
+            int32 direction = piece == 'P' ? -1 : 1;
+            int32 startRow = piece == 'P' ? 6 : 1;
+
+            if (fromFile == toFile && target == '.') {
+                if (toRow == fromRow + direction) {
+                    return true;
+                }
+                if (fromRow == startRow && toRow == fromRow + direction * 2 &&
+                    game.board[(fromRow + direction) * 8 + fromFile] == '.') {
+                    return true;
+                }
+            }
+
+            if (fileDistance == 1 && toRow == fromRow + direction) {
+                if (target != '.') {
+                    return true;
+                }
+                if (to == game.enPassant) {
+                    char adjacent = game.board[fromRow * 8 + toFile];
+                    return piece == 'P' ? adjacent == 'p' : adjacent == 'P';
+                }
+            }
+            return false;
+        }
+
+        if (piece == 'N' || piece == 'n') {
+            return (rowDistance == 2 && fileDistance == 1) ||
+                (rowDistance == 1 && fileDistance == 2);
+        }
+        if (piece == 'B' || piece == 'b') {
+            return rowDistance == fileDistance && pathClear(game.board, from, to);
+        }
+        if (piece == 'R' || piece == 'r') {
+            return (rowDistance == 0 || fileDistance == 0) && pathClear(game.board, from, to);
+        }
+        if (piece == 'Q' || piece == 'q') {
+            bool aligned = rowDistance == fileDistance || rowDistance == 0 || fileDistance == 0;
+            return aligned && pathClear(game.board, from, to);
+        }
+
+        if ((piece == 'K' || piece == 'k') && rowDistance <= 1 && fileDistance <= 1) {
+            return true;
+        }
+
+        // white castling
+        if (piece == 'K' && from == E1 && !game.whiteKingMoved && !isInCheck(game.board, true)) {
+            if (to == G1 && !game.whiteKingRookMoved && game.board[H1] == 'R' &&
+                game.board[F1] == '.' && game.board[G1] == '.' &&
+                !isSquareAttacked(game.board, F1, false) &&
+                !isSquareAttacked(game.board, G1, false)) {
+                return true;
+            }
+            if (to == C1 && !game.whiteQueenRookMoved && game.board[A1] == 'R' &&
+                game.board[D1] == '.' && game.board[C1] == '.' && game.board[B1] == '.' &&
+                !isSquareAttacked(game.board, D1, false) &&
+                !isSquareAttacked(game.board, C1, false)) {
+                return true;
+            }
+        }
+
+        // black castling
+        if (piece == 'k' && from == E8 && !game.blackKingMoved && !isInCheck(game.board, false)) {
+            if (to == G8 && !game.blackKingRookMoved && game.board[H8] == 'r' &&
+                game.board[F8] == '.' && game.board[G8] == '.' &&
+                !isSquareAttacked(game.board, F8, true) &&
+                !isSquareAttacked(game.board, G8, true)) {
+                return true;
+            }
+            if (to == C8 && !game.blackQueenRookMoved && game.board[A8] == 'r' &&
+                game.board[D8] == '.' && game.board[C8] == '.' && game.board[B8] == '.' &&
+                !isSquareAttacked(game.board, D8, true) &&
+                !isSquareAttacked(game.board, C8, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool legalMove(GameState* game, int32 from, int32 to) {
+        if (!pseudoLegal(game, from, to)) {
+            return false;
+        }
+
+        char simulation[64];
+        int32 square = 0;
+        while (square < 64) {
+            simulation[square] = game.board[square];
+            square += 1;
+        }
+
+        applyBoardMove(simulation[], from, to, game.enPassant);
+        return !isInCheck(simulation[], game.whiteTurn);
+    }
+
+    bool hasLegalMove(GameState* game) {
+        int32 from = 0;
+        while (from < 64) {
+            if (belongsTo(game.board[from], game.whiteTurn)) {
+                int32 to = 0;
+                while (to < 64) {
+                    if (legalMove(game, from, to)) {
+                        return true;
+                    }
+                    to += 1;
+                }
+            }
+            from += 1;
+        }
+        return false;
+    }
+
+    int32 readNonWhitespace() {
+        int32 value = getchar();
+        while (value == ' ' || value == '\t' || value == '\r' || value == '\n') {
+            value = getchar();
+        }
+        return value;
+    }
+
+    void discardLine() {
+        int32 value = getchar();
+        while (value >= 0 && value != '\n') {
+            value = getchar();
+        }
+    }
+
+    int32 squareFromInput(int32 file, int32 rank) {
+        if (file < 'a' || file > 'h' || rank < '1' || rank > '8') {
+            return -1;
+        }
+        return (8 - (rank - '0')) * 8 + (file - 'a');
+    }
+
+    int32 play() {
+        GameState* game = createGame();
+
+        println("=== Absolute Chess ===");
+        println("Enter moves as e2e4. Enter q to quit.");
+        println("Castling and en passant are supported; pawns promote to queens.");
+
+        while (true) {
+            printBoard(game.board);
+
+            if (isInCheck(game.board, game.whiteTurn)) {
+                println("CHECK!");
+            }
+
+            if (game.whiteTurn) {
+                print("White move: ");
+            }
+            else {
+                print("Black move: ");
+            }
+
+            int32 first = readNonWhitespace();
+            if (first < 0 || first == 'q' || first == 'Q') {
+                if (first >= 0) {
+                    discardLine();
+                }
+                println("Game ended by player.");
+                break;
+            }
+
+            int32 second = getchar();
+            int32 third = getchar();
+            int32 fourth = getchar();
+            discardLine();
+
+            int32 from = squareFromInput(first, second);
+            int32 to = squareFromInput(third, fourth);
+
+            if (!legalMove(game, from, to)) {
+                println("Illegal move. Try again.");
+                continue;
+            }
+
+            applyMove(game, from, to);
+
+            if (!hasLegalMove(game)) {
+                printBoard(game.board);
+                if (isInCheck(game.board, game.whiteTurn)) {
+                    if (game.whiteTurn) {
+                        println("CHECKMATE. Black wins.");
+                    }
+                    else {
+                        println("CHECKMATE. White wins.");
+                    }
+                }
+                else {
+                    println("STALEMATE. Draw.");
+                }
+                break;
+            }
+        }
+
+        delete game;
+        return 0;
+    }
+}

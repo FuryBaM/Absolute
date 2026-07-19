@@ -228,6 +228,18 @@ See `plugins/desktop/README.md` and `examples/desktop/window.abs` for build and
 run commands. The generated `.absplugin` manifest automatically links its native
 runtime and Win32 libraries.
 
+### Playable chess example
+
+`examples/chess` contains a complete interactive console game implemented in
+Absolute. It validates piece movement, check, checkmate, stalemate, castling,
+en passant, and queen promotion. Run it on Windows with:
+
+```bat
+examples\chess\run.bat
+```
+
+Moves use coordinate notation such as `e2e4`; enter `q` to quit.
+
 ### VS Code extension
 
 `absolute-extension` provides plugin-aware completion, hover information,

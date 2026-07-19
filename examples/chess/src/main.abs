@@ -1,0 +1,5 @@
+import Demo.Chess;
+
+int32 main() {
+    return Demo.Chess.play();
+}

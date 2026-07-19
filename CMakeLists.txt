@@ -245,6 +245,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-advanced.abs"
     )
     add_test(
+        NAME absolute.chess-rules-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/chess-rules.abs"
+    )
+    add_test(
         NAME absolute.classes-codegen-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/classes-codegen.abs"
     )
@@ -386,6 +390,23 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-array-advanced-ir
         )
         add_test(
+            NAME absolute.emit-chess-rules
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/chess-rules.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/chess-rules.ll"
+        )
+        set_tests_properties(absolute.emit-chess-rules PROPERTIES
+            FIXTURES_SETUP absolute-chess-rules-ir
+        )
+        add_test(
+            NAME absolute.emit-chess-example
+            COMMAND Absolute-Compiler build
+                "${PROJECT_SOURCE_DIR}/examples/chess/Chess.absproj"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/chess-example.ll"
+        )
+        set_tests_properties(absolute.emit-chess-example PROPERTIES
+            FIXTURES_SETUP absolute-chess-example-ir
+        )
+        add_test(
             NAME absolute.emit-classes-codegen
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/classes-codegen.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/classes-codegen.ll"
@@ -461,6 +482,25 @@ if(BUILD_TESTING)
             set_tests_properties(absolute.run-array-advanced PROPERTIES
                 FIXTURES_REQUIRED absolute-array-advanced-ir
                 PASS_REGULAR_EXPRESSION "advanced-arrays=227"
+            )
+            add_test(
+                NAME absolute.run-chess-rules
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/chess-rules.ll"
+            )
+            set_tests_properties(absolute.run-chess-rules PROPERTIES
+                FIXTURES_REQUIRED absolute-chess-rules-ir
+                PASS_REGULAR_EXPRESSION "pawn-pseudo=true pawn-legal=true knight-legal=true"
+            )
+            add_test(
+                NAME absolute.run-chess-checkmate
+                COMMAND "${CMAKE_COMMAND}"
+                    -DLLI=${ABSOLUTE_LLI_EXECUTABLE}
+                    -DIR_FILE=${CMAKE_BINARY_DIR}/chess-example.ll
+                    -DINPUT_FILE=${PROJECT_SOURCE_DIR}/tests/chess-mate-input.txt
+                    -P "${PROJECT_SOURCE_DIR}/tests/run-chess-checkmate.cmake"
+            )
+            set_tests_properties(absolute.run-chess-checkmate PROPERTIES
+                FIXTURES_REQUIRED absolute-chess-example-ir
             )
             add_test(
                 NAME absolute.run-classes-codegen
