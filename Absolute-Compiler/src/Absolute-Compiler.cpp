@@ -32,6 +32,7 @@ namespace {
         bool parseOnly = false;
         fs::path output;
         std::vector<fs::path> plugins;
+        std::vector<fs::path> pluginSearchPaths;
     };
 
     struct ProjectConfig {
@@ -42,6 +43,7 @@ namespace {
         std::vector<fs::path> nativeLibraries;
         std::vector<fs::path> nativeSearchPaths;
         std::vector<fs::path> plugins;
+        std::vector<fs::path> pluginSearchPaths;
     };
 
     struct Compilation {
@@ -54,8 +56,8 @@ namespace {
     void PrintUsage() {
         std::cerr
             << "Usage:\n"
-            << "  absolutec <source.abs> [--plugin path] [--parse-only | --emit-llvm | --emit-object | --build-exe] [-o output]\n"
-            << "  absolutec build <project.absproj> [--plugin path] [--parse-only | --emit-llvm | --emit-object | --build-exe] [-o output]\n"
+            << "  absolutec <source.abs> [--plugin path] [--plugin-path directory] [--parse-only | --emit-llvm | --emit-object | --build-exe] [-o output]\n"
+            << "  absolutec build <project.absproj> [--plugin path] [--plugin-path directory] [--parse-only | --emit-llvm | --emit-object | --build-exe] [-o output]\n"
             << "  absolutec new <name> [--directory path]\n";
     }
 
@@ -69,6 +71,10 @@ namespace {
             else if (argument == "--plugin") {
                 if (++index >= argc) throw std::invalid_argument("--plugin requires a library path");
                 result.plugins.emplace_back(argv[index]);
+            }
+            else if (argument == "--plugin-path") {
+                if (++index >= argc) throw std::invalid_argument("--plugin-path requires a directory");
+                result.pluginSearchPaths.emplace_back(argv[index]);
             }
             else if (argument == "-o") {
                 if (++index >= argc) throw std::invalid_argument("-o requires an output path");
@@ -179,6 +185,10 @@ namespace {
             const fs::path plugin(path);
             result.plugins.push_back(plugin.is_absolute() ? plugin : result.root / plugin);
         }
+        for (const std::string& path : JsonStringArray(document, "pluginSearchPaths")) {
+            const fs::path directory(path);
+            result.pluginSearchPaths.push_back(directory.is_absolute() ? directory : result.root / directory);
+        }
         return result;
     }
 
@@ -198,6 +208,7 @@ namespace {
             "  \"entry\": \"src/main.abs\",\n"
             "  \"sources\": [\"src\"],\n"
             "  \"plugins\": [],\n"
+            "  \"pluginSearchPaths\": [],\n"
             "  \"nativeLibraries\": [],\n"
             "  \"nativeSearchPaths\": [\"native\"]\n"
             "}\n";
@@ -275,6 +286,7 @@ namespace {
 
         if (input.extension() == ".absproj") {
             project = std::make_unique<ProjectConfig>(LoadProjectConfig(input));
+            for (const fs::path& path : project->pluginSearchPaths) plugins.AddSearchPath(path);
             for (const fs::path& plugin : project->plugins) plugins.Load(plugin);
             moduleName = project->name;
             nativeLibraries = project->nativeLibraries;
@@ -398,6 +410,7 @@ int main(int argc, char* argv[]) {
         }
 
         PluginManager plugins;
+        for (const fs::path& path : commandLine.pluginSearchPaths) plugins.AddSearchPath(path);
         for (const fs::path& plugin : commandLine.plugins) plugins.Load(plugin);
         Compilation compilation = LoadCompilation(commandLine.input, plugins);
         Analyzer analyzer({compilation.program.get()});

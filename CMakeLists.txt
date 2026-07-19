@@ -85,6 +85,18 @@ if(BUILD_TESTING)
         )
         set_tests_properties(absolute.shader-plugin-errors PROPERTIES WILL_FAIL TRUE)
     endif()
+    if(TARGET Absolute-Math-Plugin AND TARGET Absolute-Shader-Plugin)
+        add_test(
+            NAME absolute.plugin-dependencies
+            COMMAND "${CMAKE_COMMAND}"
+                -DCOMPILER=$<TARGET_FILE:Absolute-Compiler>
+                -DMATH_PLUGIN=$<TARGET_FILE:Absolute-Math-Plugin>
+                -DSHADER_PLUGIN=$<TARGET_FILE:Absolute-Shader-Plugin>
+                -DSOURCE=${PROJECT_SOURCE_DIR}/tests/shader-plugin.abs
+                -DWORK_DIR=${CMAKE_BINARY_DIR}/plugin-dependencies
+                -P "${PROJECT_SOURCE_DIR}/tests/run-plugin-dependencies.cmake"
+        )
+    endif()
     add_test(
         NAME absolute.sample
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/code.abs" --parse-only

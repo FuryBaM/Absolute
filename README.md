@@ -182,6 +182,31 @@ shader Vertex {
 See `plugins/shader/README.md` and `tests/shader-plugin.abs` for the complete
 opaque-AST example.
 
+### Plugin dependencies
+
+Use a versioned `.absplugin` manifest instead of a direct DLL/SO path when a
+plugin depends on other plugins:
+
+```json
+{
+  "name": "absolute.shader.opengl",
+  "version": "1.2.0",
+  "abi": 1,
+  "library": "absolute-shader-opengl.dll",
+  "dependencies": {
+    "absolute.shader": ">=1.0.0 <2.0.0",
+    "absolute.math": "^1.1.0"
+  }
+}
+```
+
+The compiler resolves dependencies recursively, checks semantic versions and
+ABI, reports cycles and conflicts, and loads dependencies in topological order.
+Use `--plugin-path directory` for command-line search paths, or add
+`"pluginSearchPaths": ["plugins"]` to an `.absproj`. Explicit dependency paths,
+capability `provides`/`requires`, and the full manifest format are documented in
+`docs/plugin-manifests.md`.
+
 Emit verified textual LLVM IR:
 
 ```bash
