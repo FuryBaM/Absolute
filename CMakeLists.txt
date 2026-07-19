@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(ABSOLUTE_ENABLE_LLVM "Build the LLVM IR backend" ON)
+option(ABSOLUTE_BUILD_EXAMPLE_PLUGINS "Build example syntax plugins" ON)
 
 # Добавляем подпроекты
 add_subdirectory(Absolute-Runtime)
@@ -15,11 +16,37 @@ if(ABSOLUTE_ENABLE_LLVM)
     add_subdirectory(Absolute-CodeGen)
 endif()
 add_subdirectory(Absolute-Compiler)
+if(ABSOLUTE_BUILD_EXAMPLE_PLUGINS)
+    add_subdirectory(plugins/unless)
+endif()
 
 # Keep generated artifacts out of the source tree.
 
 include(CTest)
 if(BUILD_TESTING)
+    if(TARGET Absolute-Unless-Plugin)
+        add_test(
+            NAME absolute.syntax-plugin
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/syntax-plugin.abs"
+                --plugin "$<TARGET_FILE:Absolute-Unless-Plugin>"
+        )
+        set_tests_properties(absolute.syntax-plugin PROPERTIES
+            PASS_REGULAR_EXPRESSION "Loaded syntax plugin absolute.unless"
+        )
+        add_test(
+            NAME absolute.syntax-plugin-required
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/syntax-plugin.abs"
+        )
+        set_tests_properties(absolute.syntax-plugin-required PROPERTIES WILL_FAIL TRUE)
+        add_test(
+            NAME absolute.syntax-plugin-project
+            COMMAND "${CMAKE_COMMAND}"
+                -DCOMPILER=$<TARGET_FILE:Absolute-Compiler>
+                -DPLUGIN=$<TARGET_FILE:Absolute-Unless-Plugin>
+                -DWORK_DIR=${CMAKE_BINARY_DIR}/syntax-plugin-project
+                -P "${PROJECT_SOURCE_DIR}/tests/run-syntax-plugin-project.cmake"
+        )
+    endif()
     add_test(
         NAME absolute.sample
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/code.abs" --parse-only
@@ -138,6 +165,17 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.array-advanced-errors PROPERTIES WILL_FAIL TRUE)
     if(ABSOLUTE_ENABLE_LLVM)
+        if(TARGET Absolute-Unless-Plugin)
+            add_test(
+                NAME absolute.emit-syntax-plugin
+                COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/syntax-plugin.abs"
+                    --plugin "$<TARGET_FILE:Absolute-Unless-Plugin>"
+                    --emit-llvm -o "${CMAKE_BINARY_DIR}/syntax-plugin.ll"
+            )
+            set_tests_properties(absolute.emit-syntax-plugin PROPERTIES
+                FIXTURES_SETUP absolute-syntax-plugin-ir
+            )
+        endif()
         add_test(
             NAME absolute.emit-llvm
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/llvm-basic.abs" --emit-llvm
@@ -222,6 +260,15 @@ if(BUILD_TESTING)
 
         find_program(ABSOLUTE_LLI_EXECUTABLE NAMES lli lli-18)
         if(ABSOLUTE_LLI_EXECUTABLE)
+            if(TARGET Absolute-Unless-Plugin)
+                add_test(
+                    NAME absolute.run-syntax-plugin
+                    COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/syntax-plugin.ll"
+                )
+                set_tests_properties(absolute.run-syntax-plugin PROPERTIES
+                    FIXTURES_REQUIRED absolute-syntax-plugin-ir
+                )
+            endif()
             add_test(
                 NAME absolute.run-builtins
                 COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/runtime-builtins.ll"

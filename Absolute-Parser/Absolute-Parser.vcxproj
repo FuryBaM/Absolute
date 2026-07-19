@@ -45,7 +45,9 @@
     <ClInclude Include="include\nodes.h" />
     <ClInclude Include="include\parser.h" />
     <ClInclude Include="include\parser_pch.h" />
+    <ClInclude Include="include\plugin_api.h" />
     <ClInclude Include="include\scope.h" />
+    <ClInclude Include="include\syntax_plugins.h" />
     <ClInclude Include="include\syntax_tree.h" />
   </ItemGroup>
   <ItemGroup>
@@ -85,6 +87,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="src\scope.cpp" />
+    <ClCompile Include="src\syntax_plugins.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="CMakeLists.txt" />

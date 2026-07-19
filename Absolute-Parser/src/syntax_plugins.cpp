@@ -1,0 +1,157 @@
+#include "parser_pch.h"
+#include "syntax_plugins.h"
+
+#include <algorithm>
+#include <cctype>
+#include <stdexcept>
+#include <unordered_map>
+#include <unordered_set>
+
+namespace Absolute {
+    namespace {
+        struct RegisteredRule {
+            std::string pluginName;
+            std::string keyword;
+            AbsoluteSyntaxExpandV1 expand = nullptr;
+            void* userData = nullptr;
+        };
+
+        std::vector<RegisteredRule> rules;
+        std::unordered_map<std::string, size_t> rulesByKeyword;
+
+        bool IsIdentifier(const std::string& value) {
+            if (value.empty()) return false;
+            const auto first = static_cast<unsigned char>(value.front());
+            if (value.front() != '_' && !std::isalpha(first)) return false;
+            return std::all_of(value.begin() + 1, value.end(), [](char character) {
+                const auto byte = static_cast<unsigned char>(character);
+                return character == '_' || std::isalnum(byte);
+            });
+        }
+
+        std::string Location(const Token& token) {
+            return "line " + std::to_string(token.line) + ", column " + std::to_string(token.column);
+        }
+
+        std::vector<AbsoluteSyntaxTokenV1> MakeTokenViews(
+            const std::vector<Token>& tokens, size_t start) {
+            std::vector<AbsoluteSyntaxTokenV1> result;
+            result.reserve(tokens.size() - start);
+            for (size_t index = start; index < tokens.size(); ++index) {
+                const Token& token = tokens[index];
+                result.push_back({
+                    static_cast<uint32_t>(token.type), token.value.c_str(), token.value.size(),
+                    static_cast<uint32_t>(token.line), static_cast<uint32_t>(token.column)
+                });
+            }
+            return result;
+        }
+
+        void RebaseLocations(std::vector<Token>& replacement, const Token& trigger) {
+            for (Token& token : replacement) {
+                if (token.line == 1) token.column += trigger.column - 1;
+                token.line += trigger.line - 1;
+            }
+        }
+    }
+
+    void RegisterSyntaxPlugin(const AbsoluteSyntaxPluginV1* plugin) {
+        if (!plugin) throw std::runtime_error("Syntax plugin returned a null descriptor");
+        if (plugin->abi_version != ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION) {
+            throw std::runtime_error(
+                "Unsupported syntax plugin ABI " + std::to_string(plugin->abi_version) +
+                "; compiler expects " + std::to_string(ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION));
+        }
+        if (!plugin->name || std::string(plugin->name).empty())
+            throw std::runtime_error("Syntax plugin requires a non-empty name");
+        if (plugin->rule_count != 0 && !plugin->rules)
+            throw std::runtime_error("Syntax plugin '" + std::string(plugin->name) + "' has no rule table");
+
+        std::unordered_set<std::string> newKeywords;
+        for (size_t index = 0; index < plugin->rule_count; ++index) {
+            const AbsoluteSyntaxRuleV1& rule = plugin->rules[index];
+            const std::string keyword = rule.keyword ? rule.keyword : "";
+            if (!IsIdentifier(keyword))
+                throw std::runtime_error("Syntax plugin '" + std::string(plugin->name) +
+                    "' registered invalid keyword '" + keyword + "'");
+            if (!rule.expand)
+                throw std::runtime_error("Syntax plugin rule '" + keyword + "' has no adapter");
+            if (IsValidTokenValue(TokenType::KEYWORD, keyword))
+                throw std::runtime_error("Syntax plugin cannot replace core keyword '" + keyword + "'");
+            if (rulesByKeyword.contains(keyword) || !newKeywords.insert(keyword).second)
+                throw std::runtime_error("Syntax keyword '" + keyword + "' is already registered");
+        }
+
+        for (size_t index = 0; index < plugin->rule_count; ++index) {
+            const AbsoluteSyntaxRuleV1& rule = plugin->rules[index];
+            const size_t ruleIndex = rules.size();
+            rules.push_back({plugin->name, rule.keyword, rule.expand, rule.user_data});
+            rulesByKeyword.emplace(rule.keyword, ruleIndex);
+        }
+    }
+
+    void ResetSyntaxPlugins() {
+        rulesByKeyword.clear();
+        rules.clear();
+    }
+
+    bool IsSyntaxPluginKeyword(const std::string& value) {
+        return rulesByKeyword.contains(value);
+    }
+
+    std::vector<Token> ExpandSyntaxPlugins(std::vector<Token> tokens) {
+        constexpr size_t maximumExpansions = 10000;
+        size_t expansionCount = 0;
+        size_t index = 0;
+
+        while (index < tokens.size()) {
+            const auto found = rulesByKeyword.find(tokens[index].value);
+            if (found == rulesByKeyword.end()) {
+                ++index;
+                continue;
+            }
+            if (++expansionCount > maximumExpansions)
+                throw std::runtime_error("Syntax plugin expansion limit exceeded; possible recursive adapter");
+
+            const RegisteredRule& rule = rules[found->second];
+            const Token trigger = tokens[index];
+            std::vector<AbsoluteSyntaxTokenV1> views = MakeTokenViews(tokens, index);
+            AbsoluteSyntaxExpansionV1 expansion{};
+            int32_t succeeded = 0;
+            try {
+                succeeded = rule.expand(rule.userData, views.data(), views.size(), &expansion);
+            }
+            catch (const std::exception& error) {
+                throw std::runtime_error("Syntax plugin '" + rule.pluginName + "' threw at " +
+                    Location(trigger) + ": " + error.what());
+            }
+            catch (...) {
+                throw std::runtime_error("Syntax plugin '" + rule.pluginName +
+                    "' threw an unknown exception at " + Location(trigger));
+            }
+
+            if (!succeeded) {
+                const std::string detail = expansion.error_message ? expansion.error_message : "adapter rejected input";
+                throw std::runtime_error("Syntax plugin '" + rule.pluginName + "' failed at " +
+                    Location(trigger) + ": " + detail);
+            }
+            if (expansion.consumed_tokens == 0 || expansion.consumed_tokens > views.size()) {
+                throw std::runtime_error("Syntax plugin '" + rule.pluginName +
+                    "' returned an invalid consumed token count at " + Location(trigger));
+            }
+
+            std::vector<Token> replacement;
+            if (expansion.replacement_source && expansion.replacement_source[0] != '\0') {
+                replacement = lexer(expansion.replacement_source);
+                RebaseLocations(replacement, trigger);
+            }
+            const auto first = tokens.begin() + static_cast<std::ptrdiff_t>(index);
+            const auto last = first + static_cast<std::ptrdiff_t>(expansion.consumed_tokens);
+            tokens.erase(first, last);
+            tokens.insert(tokens.begin() + static_cast<std::ptrdiff_t>(index),
+                std::make_move_iterator(replacement.begin()), std::make_move_iterator(replacement.end()));
+        }
+        return tokens;
+    }
+}
+

@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "plugin_loader.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -29,6 +30,7 @@ namespace {
         bool buildExecutable = false;
         bool parseOnly = false;
         fs::path output;
+        std::vector<fs::path> plugins;
     };
 
     struct ProjectConfig {
@@ -38,6 +40,7 @@ namespace {
         std::vector<fs::path> sourceDirectories;
         std::vector<fs::path> nativeLibraries;
         std::vector<fs::path> nativeSearchPaths;
+        std::vector<fs::path> plugins;
     };
 
     struct Compilation {
@@ -50,8 +53,8 @@ namespace {
     void PrintUsage() {
         std::cerr
             << "Usage:\n"
-            << "  absolutec <source.abs> [--parse-only | --emit-llvm | --emit-object | --build-exe] [-o output]\n"
-            << "  absolutec build <project.absproj> [--parse-only | --emit-llvm | --emit-object | --build-exe] [-o output]\n"
+            << "  absolutec <source.abs> [--plugin path] [--parse-only | --emit-llvm | --emit-object | --build-exe] [-o output]\n"
+            << "  absolutec build <project.absproj> [--plugin path] [--parse-only | --emit-llvm | --emit-object | --build-exe] [-o output]\n"
             << "  absolutec new <name> [--directory path]\n";
     }
 
@@ -62,6 +65,10 @@ namespace {
             else if (argument == "--emit-object") result.emitObject = true;
             else if (argument == "--build-exe") result.buildExecutable = true;
             else if (argument == "--parse-only") result.parseOnly = true;
+            else if (argument == "--plugin") {
+                if (++index >= argc) throw std::invalid_argument("--plugin requires a library path");
+                result.plugins.emplace_back(argv[index]);
+            }
             else if (argument == "-o") {
                 if (++index >= argc) throw std::invalid_argument("-o requires an output path");
                 result.output = argv[index];
@@ -167,6 +174,10 @@ namespace {
                 library = relativeToProject;
             result.nativeLibraries.push_back(std::move(library));
         }
+        for (const std::string& path : JsonStringArray(document, "plugins")) {
+            const fs::path plugin(path);
+            result.plugins.push_back(plugin.is_absolute() ? plugin : result.root / plugin);
+        }
         return result;
     }
 
@@ -185,6 +196,7 @@ namespace {
             "  \"name\": \"" + commandLine.projectName + "\",\n"
             "  \"entry\": \"src/main.abs\",\n"
             "  \"sources\": [\"src\"],\n"
+            "  \"plugins\": [],\n"
             "  \"nativeLibraries\": [],\n"
             "  \"nativeSearchPaths\": [\"native\"]\n"
             "}\n";
@@ -251,7 +263,7 @@ namespace {
             LoadSource(canonical.parent_path() / fs::path(imported), programs, loaded);
     }
 
-    Compilation LoadCompilation(const fs::path& input) {
+    Compilation LoadCompilation(const fs::path& input, PluginManager& plugins) {
         std::vector<std::unique_ptr<Program>> programs;
         std::unordered_set<std::string> loaded;
         std::string moduleName;
@@ -260,6 +272,7 @@ namespace {
 
         if (input.extension() == ".absproj") {
             const ProjectConfig project = LoadProjectConfig(input);
+            for (const fs::path& plugin : project.plugins) plugins.Load(plugin);
             moduleName = project.name;
             nativeLibraries = project.nativeLibraries;
             nativeSearchPaths = project.nativeSearchPaths;
@@ -369,7 +382,9 @@ int main(int argc, char* argv[]) {
             return 0;
         }
 
-        Compilation compilation = LoadCompilation(commandLine.input);
+        PluginManager plugins;
+        for (const fs::path& plugin : commandLine.plugins) plugins.Load(plugin);
+        Compilation compilation = LoadCompilation(commandLine.input, plugins);
         Analyzer analyzer({compilation.program.get()});
         if (!commandLine.parseOnly && !analyzer.Analyze()) {
             analyzer.PrintDiagnostics();

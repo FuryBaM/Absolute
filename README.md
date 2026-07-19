@@ -44,6 +44,7 @@ module:
   "name": "Demo",
   "entry": "src/main.abs",
   "sources": ["src"],
+  "plugins": ["plugins/absolute-unless.dll"],
   "nativeLibraries": ["native/MyLibrary.lib"],
   "nativeSearchPaths": ["native"]
 }
@@ -64,6 +65,58 @@ Every `.abs` file under `sources` is compiled automatically. A quoted import can
 bring in an additional file relative to the importing source. Namespace imports
 allow short references such as `add(20, 22)`; fully-qualified calls such as
 `Demo.Math.add(20, 22)` also work.
+
+## Syntax plugins
+
+New keywords and syntax that can be expressed using existing Absolute constructs
+can live in native plugins instead of the lexer, parser, analyzer, or LLVM
+backend. A plugin registers one or more trigger keywords through the versioned C
+ABI in `Absolute-Parser/include/plugin_api.h`. Its adapter receives the token
+stream beginning at that keyword, consumes its syntax, and returns ordinary
+Absolute source. The compiler tokenizes that result again before building the
+AST, so plugins compose and all normal semantic checks still apply.
+
+The included `absolute.unless` example adds this syntax without changing the
+core grammar:
+
+```absolute
+unless (ready) {
+    initialize();
+}
+```
+
+It lowers to `if (!(ready)) { initialize(); }`. Build and load it with:
+
+```bash
+cmake --build build --config Release --target Absolute-Unless-Plugin
+absolutec program.abs --plugin path/to/absolute-unless.dll
+```
+
+On Linux the library uses the `.so` extension. `--plugin` may be repeated. A
+project can instead list paths relative to its `.absproj` file:
+
+```json
+{
+  "name": "PluginDemo",
+  "entry": "src/main.abs",
+  "sources": ["src"],
+  "plugins": ["plugins/absolute-unless.dll"]
+}
+```
+
+To create another adapter, copy `plugins/unless`, implement an
+`AbsoluteSyntaxExpandV1` callback, declare its `AbsoluteSyntaxRuleV1` entries,
+and export `absolute_syntax_plugin_init_v1`. Callback-owned replacement and
+error strings must remain valid until that adapter is invoked again; the host
+copies them before the next invocation. No C++ AST objects or allocator-owned
+memory cross the DLL boundary.
+
+Plugins cannot replace core keywords, duplicate another plugin's keyword, or
+load with a different ABI version. Recursive expansion is bounded and produces
+a compiler error. Plugins are native code and should only be loaded from trusted
+sources. Syntax plugins deliberately lower into the core language; operations
+that require native behavior can pair the syntax adapter with an `extern "C"`
+library while keeping analyzer and code generation unchanged.
 
 Emit verified textual LLVM IR:
 

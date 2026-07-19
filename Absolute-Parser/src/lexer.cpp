@@ -1,5 +1,6 @@
 #include "parser_pch.h"
 #include "lexer.h"
+#include "syntax_plugins.h"
 
 #include <regex>
 #include <cctype>
@@ -203,7 +204,10 @@ namespace Absolute {
                 std::regex regex_pattern(Absolute::token_spec.at(name));
                 if (std::regex_match(value, regex_pattern)) {
                     if (name != TokenType::COMMENT && name != TokenType::WHITESPACE) {
-                        tokens.emplace_back(name, value, line, column);
+                        const TokenType actualType = name == TokenType::IDENTIFIER && IsSyntaxPluginKeyword(value)
+                            ? TokenType::KEYWORD
+                            : name;
+                        tokens.emplace_back(actualType, value, line, column);
                     }
 
                     // Обновляем `line` и `column` после обработки токена

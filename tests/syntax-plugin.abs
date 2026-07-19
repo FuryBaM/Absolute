@@ -1,0 +1,11 @@
+int32 main() {
+    int32 result = 0;
+    unless (false) {
+        unless (true) {
+            result = 1;
+        }
+        result = 42;
+    }
+    assert(result == 42, "unless plugin failed");
+    return 0;
+}

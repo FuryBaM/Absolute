@@ -16,6 +16,7 @@ endif()
 # Добавляем исполняемый файл
 add_executable(Absolute-Compiler 
     src/Absolute-Compiler.cpp
+    src/plugin_loader.cpp
     src/pch.cpp
 )
 
@@ -27,6 +28,7 @@ target_include_directories(Absolute-Compiler PRIVATE include)
 
 # Линкуем библиотеки
 target_link_libraries(Absolute-Compiler PRIVATE Absolute-Parser Absolute-Analyzer)
+target_link_libraries(Absolute-Compiler PRIVATE ${CMAKE_DL_LIBS})
 if(TARGET Absolute-CodeGen)
     target_link_libraries(Absolute-Compiler PRIVATE Absolute-CodeGen)
     target_compile_definitions(Absolute-Compiler PRIVATE
