@@ -1,0 +1,49 @@
+int32 choose(int32 value) {
+    return value + 10;
+}
+
+double choose(double value) {
+    return value + 0.5;
+}
+
+extension int32 squared(int32 value) {
+    return value * value;
+}
+
+extension double squared(double value) {
+    return value * value;
+}
+
+namespace NumberExtensions {
+    extension int32 incremented(int32 value) {
+        return value + 1;
+    }
+}
+
+import NumberExtensions;
+
+class Calculator {
+    public int32 add(int32 left, int32 right) {
+        return left + right;
+    }
+
+    public double add(double left, double right) {
+        return left + right;
+    }
+}
+
+int32 main() {
+    int32 integer = 3;
+    double decimal = 2.5;
+    assert(choose(integer) == 13, "int overload");
+    assert(choose(decimal) > 2.99, "double overload");
+    assert(integer.squared() == 9, "int extension overload");
+    assert(decimal.squared() > 6.24, "double extension overload");
+    assert(integer.incremented() == 4, "imported extension");
+
+    Calculator calculator;
+    assert(calculator.add(integer, 2) == 5, "method int overload");
+    assert(calculator.add(decimal, 0.5) > 2.99, "method double overload");
+    println("overloads-extensions=ok");
+    return 0;
+}

@@ -18,6 +18,9 @@ Available managed types and operations:
 - `Math.projection`: right-handed perspective projection
 - `Math.lookAt`: right-handed view matrix
 
+`vec2` and `vec3` also expose the overloaded extension method `length()`, and
+`Math.abs` is overloaded for `int32` and `double`.
+
 The plugin registers `vec2`, `vec3`, `mat3`, and `mat4` as syntax aliases, so
 they are written without the `Math.` namespace. Binary operators are provided
 through the generic plugin operator registry:
@@ -39,6 +42,7 @@ Example:
 auto eye = new vec3(0.0, 0.0, 1.0);
 auto center = new vec3(0.0, 0.0, 0.0);
 auto up = new vec3(0.0, 1.0, 0.0);
+println(eye.length());
 auto view = new mat4();
 Math.lookAt(view, eye, center, up);
 

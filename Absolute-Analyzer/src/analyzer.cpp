@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
 #include <sstream>
 #include <unordered_set>
 
@@ -185,11 +186,23 @@ namespace Absolute {
         SymbolKind kind, std::string name, std::string type,
         std::vector<std::string> parameterTypes) {
         if (scopes.empty()) scopes.emplace_back();
-        if (scopes.back().contains(name)) return std::nullopt;
+        if (const auto found = scopes.back().find(name); found != scopes.back().end()) {
+            const Symbol* existing = Get(found->second);
+            const bool callable = kind == SymbolKind::Function || kind == SymbolKind::Method;
+            const bool existingCallable = existing &&
+                (existing->kind == SymbolKind::Function || existing->kind == SymbolKind::Method);
+            if (!callable || !existingCallable) return std::nullopt;
+            for (const Symbol& symbol : symbols) {
+                if (symbol.scopeDepth == ScopeDepth() && symbol.name == name &&
+                    (symbol.kind == SymbolKind::Function || symbol.kind == SymbolKind::Method) &&
+                    symbol.parameterTypes == parameterTypes)
+                    return std::nullopt;
+            }
+        }
         const SymbolId id = static_cast<SymbolId>(symbols.size());
         symbols.push_back({id, kind, std::move(name), std::move(type),
             std::move(parameterTypes), ScopeDepth()});
-        scopes.back().emplace(symbols.back().name, id);
+        scopes.back().try_emplace(symbols.back().name, id);
         return id;
     }
 
@@ -220,6 +233,8 @@ namespace Absolute {
     bool Analyzer::Analyze() {
         table.Reset();
         types.clear();
+        functionOverloads.clear();
+        extensionMethods.clear();
         namespaces.clear();
         importedNamespaces.clear();
         expressionInfo.clear();
@@ -271,6 +286,22 @@ namespace Absolute {
 
     const SymbolTable& Analyzer::Symbols() const { return table; }
     const Symbol* Analyzer::GetSymbol(SymbolId id) const { return table.Get(id); }
+
+    const Symbol* Analyzer::FindFunctionSymbol(
+        const std::string& name, const std::vector<std::string>& parameterTypes) const {
+        const auto found = functionOverloads.find(name);
+        if (found == functionOverloads.end()) return nullptr;
+        for (const SymbolId id : found->second) {
+            const Symbol* symbol = table.Get(id);
+            if (symbol && symbol->parameterTypes == parameterTypes) return symbol;
+        }
+        return nullptr;
+    }
+
+    size_t Analyzer::FunctionOverloadCount(const std::string& name) const {
+        const auto found = functionOverloads.find(name);
+        return found == functionOverloads.end() ? 0 : found->second.size();
+    }
 
     const ExpressionInfo* Analyzer::GetExpressionInfo(const Expression& expression) const {
         const auto found = expressionInfo.find(&expression);
@@ -522,11 +553,25 @@ namespace Absolute {
         if (!statement.name || !statement.returnType) return;
         const std::string name = Qualify(statement.name->value);
         const std::string returnType = ResolveType(statement.returnType.get());
+        if (name == "main" && functionOverloads.contains(name))
+            Report("entry function 'main' cannot be overloaded", "E_MAIN_OVERLOAD");
+        if (statement.IsExternal() && functionOverloads.contains(name) &&
+            std::any_of(functionOverloads[name].begin(), functionOverloads[name].end(), [&](SymbolId id) {
+                const Symbol* existing = table.Get(id);
+                return existing && existing->externalFunction;
+            }))
+            Report("extern function '" + name + "' cannot be overloaded", "E_EXTERN_OVERLOAD");
         const auto declared = table.Declare(SymbolKind::Function, name,
             returnType, ResolveParameterTypes(statement.parameters));
-        if (!declared) Report("object '" + name + "' is already declared in this scope");
-        else if (Symbol* symbol = table.Get(*declared))
+        if (!declared) Report("function '" + name + "' already has an overload with this signature");
+        else if (Symbol* symbol = table.Get(*declared)) {
             symbol->asyncFunction = HasModifier(statement, "async");
+            symbol->extensionFunction = HasModifier(statement, "extension");
+            symbol->externalFunction = statement.IsExternal();
+            functionOverloads[name].push_back(*declared);
+            if (symbol->extensionFunction)
+                extensionMethods[statement.name->value].push_back(*declared);
+        }
     }
 
     void Analyzer::ResolveFunction(FunctionDeclStmt& statement, SymbolKind kind) {
@@ -537,6 +582,21 @@ namespace Absolute {
 
         if (statement.IsExternal() && kind == SymbolKind::Method)
             Report("extern functions cannot be class or struct members");
+        if (HasModifier(statement, "extension") && kind != SymbolKind::Function)
+            Report("extension methods must be namespace or global functions", "E_EXTENSION_MEMBER");
+        if (HasModifier(statement, "extension") && statement.parameters.empty())
+            Report("extension method '" + statement.name->value + "' requires a receiver parameter",
+                "E_EXTENSION_RECEIVER");
+        if (HasModifier(statement, "extension") && statement.IsExternal())
+            Report("extern functions cannot be extension methods", "E_EXTENSION_EXTERN");
+        if (HasModifier(statement, "extension") && HasModifier(statement, "async"))
+            Report("async extension methods are not implemented", "E_EXTENSION_ASYNC");
+        if (HasModifier(statement, "extension") && !statement.parameters.empty()) {
+            const std::string receiverType = ResolveDeclaredType(*statement.parameters.front());
+            if (receiverType == "void" || receiverType == "auto" || receiverType == "dynamic" ||
+                receiverType == "error")
+                Report("extension method receiver requires a concrete type", "E_EXTENSION_RECEIVER_TYPE");
+        }
         if (statement.IsExternal() && HasModifier(statement, "async"))
             Report("extern functions cannot be async", "E_ASYNC_EXTERN");
         if (kind == SymbolKind::Method && HasModifier(statement, "async"))
@@ -624,32 +684,72 @@ namespace Absolute {
 
     void Analyzer::DeclareMember(const std::string& owner, std::string name, MemberSignature signature) {
         auto& members = types[owner].members;
-        if (members.contains(name)) Report("member '" + owner + "." + name + "' is already declared");
-        else members.emplace(std::move(name), std::move(signature));
+        auto& overloads = members[name];
+        const bool method = signature.kind == SymbolKind::Method;
+        const bool collision = std::any_of(overloads.begin(), overloads.end(), [&](const MemberSignature& existing) {
+            return !method || existing.kind != SymbolKind::Method ||
+                existing.parameterTypes == signature.parameterTypes;
+        });
+        if (collision) {
+            Report("member '" + owner + "." + name + "' already has this signature");
+            return;
+        }
+        const auto declared = table.Declare(signature.kind, owner + "." + name,
+            signature.type, signature.parameterTypes);
+        if (!declared) {
+            Report("member '" + owner + "." + name + "' already has this signature");
+            return;
+        }
+        signature.symbol = *declared;
+        overloads.push_back(std::move(signature));
     }
 
-    const Analyzer::MemberSignature* Analyzer::FindMember(
+    std::vector<Analyzer::MemberSignature> Analyzer::FindMembers(
         const std::string& owner, const std::string& name) const {
         const std::string objectType = IsPointerType(owner) ? PointerPointee(owner) : owner;
         const auto type = types.find(objectType);
-        if (type == types.end()) return nullptr;
-        const auto member = type->second.members.find(name);
-        if (member != type->second.members.end()) return &member->second;
-        for (const std::string& parent : type->second.parents)
-            if (const MemberSignature* inherited = FindMember(parent, name)) return inherited;
-        return nullptr;
+        if (type == types.end()) return {};
+        std::vector<MemberSignature> result;
+        for (const std::string& parent : type->second.parents) {
+            auto inherited = FindMembers(parent, name);
+            result.insert(result.end(), inherited.begin(), inherited.end());
+        }
+        if (const auto member = type->second.members.find(name); member != type->second.members.end()) {
+            for (const MemberSignature& declared : member->second) {
+                if (declared.kind == SymbolKind::Method) {
+                    result.erase(std::remove_if(result.begin(), result.end(), [&](const MemberSignature& inherited) {
+                        return inherited.kind == SymbolKind::Method &&
+                            inherited.parameterTypes == declared.parameterTypes;
+                    }), result.end());
+                }
+                result.push_back(declared);
+            }
+        }
+        return result;
     }
 
-    std::unordered_map<std::string, Analyzer::MemberSignature> Analyzer::VisibleMembers(
+    std::unordered_map<std::string, std::vector<Analyzer::MemberSignature>> Analyzer::VisibleMembers(
         const std::string& owner) const {
-        std::unordered_map<std::string, MemberSignature> result;
+        std::unordered_map<std::string, std::vector<MemberSignature>> result;
         const auto found = types.find(owner);
         if (found == types.end()) return result;
         for (const std::string& parent : found->second.parents) {
             auto inherited = VisibleMembers(parent);
-            result.insert(inherited.begin(), inherited.end());
+            for (auto& [name, signatures] : inherited)
+                result[name].insert(result[name].end(), signatures.begin(), signatures.end());
         }
-        for (const auto& [name, member] : found->second.members) result[name] = member;
+        for (const auto& [name, signatures] : found->second.members) {
+            for (const MemberSignature& declared : signatures) {
+                if (declared.kind == SymbolKind::Method) {
+                    auto& visible = result[name];
+                    visible.erase(std::remove_if(visible.begin(), visible.end(), [&](const MemberSignature& inherited) {
+                        return inherited.kind == SymbolKind::Method &&
+                            inherited.parameterTypes == declared.parameterTypes;
+                    }), visible.end());
+                }
+                result[name].push_back(declared);
+            }
+        }
         return result;
     }
 
@@ -697,6 +797,109 @@ namespace Absolute {
                 importedSymbol != InvalidSymbolId) return importedSymbol;
         }
         return InvalidSymbolId;
+    }
+
+    std::vector<SymbolId> Analyzer::FindFunctionCandidates(const std::string& name) const {
+        if (name.empty()) return {};
+        const auto lookup = [&](const std::string& candidate) -> std::vector<SymbolId> {
+            const auto found = functionOverloads.find(candidate);
+            return found == functionOverloads.end() ? std::vector<SymbolId>{} : found->second;
+        };
+        if (auto direct = lookup(name); !direct.empty()) return direct;
+        if (name.find('.') != std::string::npos) {
+            if (!currentNamespace.empty())
+                if (auto nested = lookup(currentNamespace + "." + name); !nested.empty()) return nested;
+            return {};
+        }
+        std::string scope = currentNamespace;
+        while (!scope.empty()) {
+            if (auto scoped = lookup(scope + "." + name); !scoped.empty()) return scoped;
+            const size_t separator = scope.rfind('.');
+            if (separator == std::string::npos) break;
+            scope.resize(separator);
+        }
+        for (const std::string& imported : importedNamespaces)
+            if (auto importedCandidates = lookup(imported + "." + name); !importedCandidates.empty())
+                return importedCandidates;
+        return {};
+    }
+
+    std::vector<SymbolId> Analyzer::FindExtensionCandidates(const std::string& name) const {
+        const auto found = extensionMethods.find(name);
+        if (found == extensionMethods.end()) return {};
+        std::vector<SymbolId> result;
+        for (const SymbolId id : found->second) {
+            const Symbol* symbol = table.Get(id);
+            if (!symbol) continue;
+            const size_t separator = symbol->name.rfind('.');
+            if (separator == std::string::npos) {
+                result.push_back(id);
+                continue;
+            }
+            const std::string ownerNamespace = symbol->name.substr(0, separator);
+            if (currentNamespace == ownerNamespace ||
+                currentNamespace.starts_with(ownerNamespace + ".") ||
+                importedNamespaces.contains(ownerNamespace))
+                result.push_back(id);
+        }
+        return result;
+    }
+
+    int Analyzer::ConversionCost(const std::string& target, const std::string& source) const {
+        if (target == source) return 0;
+        if (!IsAssignable(target, source)) return -1;
+        if (target == "dynamic") return 4;
+        if (source == "null") return 3;
+        if (IsNumeric(target) && IsNumeric(source)) {
+            const bool targetFloating = target == "float" || target == "double";
+            const bool sourceFloating = source == "float" || source == "double";
+            return targetFloating == sourceFloating ? 1 : 2;
+        }
+        return 1;
+    }
+
+    SymbolId Analyzer::SelectOverload(const std::vector<SymbolId>& candidates,
+        const std::vector<Result>& arguments, const std::string& displayName) {
+        SymbolId best = InvalidSymbolId;
+        int bestCost = std::numeric_limits<int>::max();
+        bool ambiguous = false;
+        for (const SymbolId id : candidates) {
+            const Symbol* candidate = table.Get(id);
+            if (!candidate || candidate->parameterTypes.size() != arguments.size()) continue;
+            int cost = 0;
+            bool applicable = true;
+            for (size_t index = 0; index < arguments.size(); ++index) {
+                const int conversion = ConversionCost(candidate->parameterTypes[index], arguments[index].type);
+                if (conversion < 0) {
+                    applicable = false;
+                    break;
+                }
+                cost += conversion;
+            }
+            if (!applicable) continue;
+            if (cost < bestCost) {
+                best = id;
+                bestCost = cost;
+                ambiguous = false;
+            }
+            else if (cost == bestCost) ambiguous = true;
+        }
+        if (best == InvalidSymbolId) {
+            std::string typesText;
+            for (size_t index = 0; index < arguments.size(); ++index) {
+                if (index) typesText += ", ";
+                typesText += arguments[index].type;
+            }
+            Report("no overload of '" + displayName + "' accepts (" + typesText + ")",
+                "E_NO_MATCHING_OVERLOAD");
+            return InvalidSymbolId;
+        }
+        if (ambiguous) {
+            Report("call to overloaded function '" + displayName + "' is ambiguous",
+                "E_AMBIGUOUS_OVERLOAD");
+            return InvalidSymbolId;
+        }
+        return best;
     }
 
     std::string Analyzer::ResolveTypeReference(const std::string& name) const {
@@ -853,54 +1056,53 @@ namespace Absolute {
             return;
         }
 
-        bool targetCallable = false;
-        std::vector<std::string> parameters;
+        std::vector<Result> arguments;
+        arguments.reserve(expr->arguments.size());
         SymbolId symbolId = InvalidSymbolId;
-        std::string returnType = "error";
-        bool asyncCall = false;
+        Result receiver;
+        bool hasReceiver = false;
 
-        const SymbolId qualifiedId = LookupSymbol(qualifiedCallName);
-        const Symbol* qualifiedSymbol = table.Get(qualifiedId);
-        if (qualifiedSymbol && (qualifiedSymbol->kind == SymbolKind::Function ||
-            qualifiedSymbol->kind == SymbolKind::Method)) {
-            targetCallable = true;
-            parameters = qualifiedSymbol->parameterTypes;
-            symbolId = qualifiedId;
-            returnType = qualifiedSymbol->type;
-            asyncCall = qualifiedSymbol->asyncFunction;
+        const std::vector<SymbolId> qualifiedCandidates = FindFunctionCandidates(qualifiedCallName);
+        if (!qualifiedCandidates.empty()) {
+            for (const auto& argument : expr->arguments) arguments.push_back(Evaluate(argument.get()));
+            symbolId = SelectOverload(qualifiedCandidates, arguments, qualifiedCallName);
         }
-        else if (probe.isMember) {
-            const Result target = Evaluate(expr->base.get());
-            targetCallable = callable;
-            parameters = callableParameters;
-            symbolId = target.symbol;
-            returnType = target.type;
-            if (const Symbol* symbol = table.Get(symbolId)) asyncCall = symbol->asyncFunction;
-        }
-        else {
-            const std::string name = callName;
-            symbolId = LookupSymbol(name);
-            const Symbol* symbol = table.Get(symbolId);
-            if (symbol && (symbol->kind == SymbolKind::Function || symbol->kind == SymbolKind::Method)) {
-                targetCallable = true;
-                parameters = symbol->parameterTypes;
-                returnType = symbol->type;
-                asyncCall = symbol->asyncFunction;
+        else if (auto* memberCall = dynamic_cast<MemberAccessExpr*>(expr->base.get())) {
+            receiver = Evaluate(memberCall->base.get());
+            hasReceiver = true;
+            for (const auto& argument : expr->arguments) arguments.push_back(Evaluate(argument.get()));
+
+            const auto members = FindMembers(receiver.type, memberCall->member);
+            std::vector<SymbolId> methodCandidates;
+            for (const MemberSignature& member : members)
+                if (member.kind == SymbolKind::Method) methodCandidates.push_back(member.symbol);
+            if (!methodCandidates.empty()) {
+                symbolId = SelectOverload(methodCandidates, arguments, memberCall->member);
+            }
+            else if (const auto extensions = FindExtensionCandidates(memberCall->member);
+                !extensions.empty()) {
+                std::vector<Result> extensionArguments;
+                extensionArguments.reserve(arguments.size() + 1);
+                extensionArguments.push_back(receiver);
+                extensionArguments.insert(extensionArguments.end(), arguments.begin(), arguments.end());
+                symbolId = SelectOverload(extensions, extensionArguments, memberCall->member);
             }
             else {
-                Report("unknown function '" + name + "'");
-                returnType = "error";
+                Report("type '" + receiver.type + "' has no method '" + memberCall->member + "'");
             }
         }
-        if (targetCallable && expr->arguments.size() != parameters.size())
-            Report("function expects " + std::to_string(parameters.size()) + " argument(s), got " +
-                std::to_string(expr->arguments.size()));
-        for (size_t i = 0; i < expr->arguments.size(); ++i) {
-            const Result argument = EvaluateExpected(expr->arguments[i].get(),
-                i < parameters.size() ? parameters[i] : std::string{});
-            if (i < parameters.size() && !IsAssignable(parameters[i], argument.type))
-                Report("argument " + std::to_string(i + 1) + " has type '" + argument.type +
-                    "', expected '" + parameters[i] + "'");
+        else {
+            for (const auto& argument : expr->arguments) arguments.push_back(Evaluate(argument.get()));
+            const std::vector<SymbolId> candidates = FindFunctionCandidates(callName);
+            if (candidates.empty()) Report("unknown function '" + callName + "'");
+            else symbolId = SelectOverload(candidates, arguments, callName);
+        }
+
+        const Symbol* selected = table.Get(symbolId);
+        const std::string returnType = selected ? selected->type : "error";
+        const bool asyncCall = selected && selected->asyncFunction;
+        for (size_t i = 0; i < arguments.size(); ++i) {
+            const Result& argument = arguments[i];
             if (argument.pointerValidity == PointerValidity::Deleted ||
                 argument.pointerValidity == PointerValidity::Expired)
                 Report("argument " + std::to_string(i + 1) + " passes an invalid pointer",
@@ -909,6 +1111,10 @@ namespace Absolute {
                 Report("argument " + std::to_string(i + 1) + " may pass an invalid pointer",
                     "E_MAYBE_INVALID_POINTER_ARGUMENT", argument.symbol);
         }
+        if (hasReceiver && (receiver.pointerValidity == PointerValidity::Deleted ||
+            receiver.pointerValidity == PointerValidity::Expired))
+            Report("extension or method receiver is an invalid pointer",
+                "E_INVALID_POINTER_ARGUMENT", receiver.symbol);
         if (asyncCall && spawnContextDepth == 0)
             Report("async function must be started with spawn", "E_ASYNC_CALL_REQUIRES_SPAWN", symbolId);
         Save(expr, {symbolId, returnType, false, IsManagedPointerType(returnType), false,
@@ -965,9 +1171,9 @@ namespace Absolute {
         const std::string& op = expr->op;
         if (const PluginBinaryOperator* pluginOperator =
                 FindPluginBinaryOperator(left.type, op, right.type)) {
-            const SymbolId functionId = LookupSymbol(pluginOperator->functionName);
-            const Symbol* function = table.Get(functionId);
             const std::vector<std::string> expectedParameters{left.type, right.type};
+            const Symbol* function = FindFunctionSymbol(pluginOperator->functionName, expectedParameters);
+            const SymbolId functionId = function ? function->id : InvalidSymbolId;
             if (!function || function->kind != SymbolKind::Function ||
                 function->parameterTypes != expectedParameters || function->type != pluginOperator->resultType) {
                 Report("plugin operator '" + left.type + " " + op + " " + right.type +
@@ -1301,15 +1507,18 @@ namespace Absolute {
         }
 
         const Result base = Evaluate(expr->base.get());
-        const MemberSignature* member = FindMember(base.type, expr->member);
-        if (!member) {
+        const auto members = FindMembers(base.type, expr->member);
+        const auto field = std::find_if(members.begin(), members.end(), [](const MemberSignature& member) {
+            return member.kind == SymbolKind::Field;
+        });
+        if (field == members.end()) {
             Report("type '" + base.type + "' has no member '" + expr->member + "'");
             Save(expr, {InvalidSymbolId, "error", false});
             return;
         }
-        callable = member->kind == SymbolKind::Method;
-        callableParameters = member->parameterTypes;
-        Save(expr, {InvalidSymbolId, member->type, member->kind == SymbolKind::Field});
+        callable = false;
+        callableParameters.clear();
+        Save(expr, {field->symbol, field->type, true});
     }
 
     void Analyzer::Visit(CastExpr* expr) {
@@ -1624,8 +1833,9 @@ namespace Absolute {
         const std::string old = currentType;
         currentType = typeName;
         table.EnterScope();
-        for (const auto& [name, member] : types[typeName].members)
-            table.Declare(member.kind, name, member.type, member.parameterTypes);
+        for (const auto& [name, overloads] : types[typeName].members)
+            for (const MemberSignature& member : overloads)
+                table.Declare(member.kind, name, member.type, member.parameterTypes);
         AcceptAll(stmt->members, *this);
         table.ExitScope();
         currentType = old;
@@ -1651,8 +1861,9 @@ namespace Absolute {
         const std::string old = currentType;
         currentType = typeName;
         table.EnterScope();
-        for (const auto& [name, member] : VisibleMembers(typeName))
-            table.Declare(member.kind, name, member.type, member.parameterTypes);
+        for (const auto& [name, overloads] : VisibleMembers(typeName))
+            for (const MemberSignature& member : overloads)
+                table.Declare(member.kind, name, member.type, member.parameterTypes);
         AcceptIfPresent(stmt->body, *this);
         table.ExitScope();
         currentType = old;

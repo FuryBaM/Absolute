@@ -26,6 +26,11 @@ namespace {
 
     constexpr const char* prelude = R"ABSOLUTE(
 namespace Math {
+    int32 abs(int32 value) {
+        if (value < 0) { return -value; }
+        return value;
+    }
+
     double abs(double value) {
         if (value < 0.0) { return -value; }
         return value;
@@ -291,6 +296,14 @@ namespace Math {
         output.m20 = -forward.x; output.m21 = -forward.y; output.m22 = -forward.z; output.m23 = vec3Dot(forward, eye);
         output.m30 = 0.0; output.m31 = 0.0; output.m32 = 0.0; output.m33 = 1.0;
     }
+}
+
+extension double length(Math.__vec2* value) {
+    return Math.vec2Length(value);
+}
+
+extension double length(Math.__vec3* value) {
+    return Math.vec3Length(value);
 }
 )ABSOLUTE";
 

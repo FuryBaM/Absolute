@@ -28,6 +28,7 @@
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <limits>
 #include <mutex>
@@ -94,6 +95,26 @@ namespace Absolute {
             if (IsRawPointerTypeName(name)) name.erase(0, 4);
             if (!name.empty() && name.back() == '*') name.pop_back();
             return name;
+        }
+
+        std::string EncodeLinkComponent(const std::string& value) {
+            constexpr char digits[] = "0123456789ABCDEF";
+            std::string result;
+            for (const unsigned char character : value) {
+                if (std::isalnum(character) || character == '_') result.push_back(static_cast<char>(character));
+                else {
+                    result.push_back('_');
+                    result.push_back(digits[character >> 4]);
+                    result.push_back(digits[character & 15]);
+                }
+            }
+            return result;
+        }
+
+        std::string CallableKey(const std::string& name, const std::vector<std::string>& parameterTypes) {
+            std::string result = name;
+            for (const std::string& type : parameterTypes) result += "$" + EncodeLinkComponent(type);
+            return result;
         }
 
         bool IsTaskTypeName(const std::string& name) {
@@ -421,7 +442,12 @@ namespace Absolute {
             for (FunctionDeclStmt* statement : info.ownMethods) {
                 if (!statement || !statement->name) continue;
                 const std::string methodName = statement->name->value;
-                const auto inherited = info.methods.find(methodName);
+                std::vector<std::string> parameterTypes;
+                parameterTypes.reserve(statement->parameters.size());
+                for (const auto& parameter : statement->parameters)
+                    parameterTypes.push_back(DeclaredTypeName(*parameter));
+                const std::string methodKey = CallableKey(methodName, parameterTypes);
+                const auto inherited = info.methods.find(methodKey);
                 std::optional<unsigned> slot;
                 if (inherited != info.methods.end() && inherited->second.virtualSlot) {
                     if (!SameMethodSignature(*inherited->second.statement, *statement))
@@ -432,11 +458,11 @@ namespace Absolute {
                     Fail("method '" + name + "." + methodName + "' overrides no virtual method");
                 else if (HasModifier(*statement, "virtual")) {
                     slot = static_cast<unsigned>(info.virtualNames.size());
-                    info.virtualNames.push_back(methodName);
+                    info.virtualNames.push_back(methodKey);
                 }
-                ClassMethod method{statement, name, name + "." + methodName, slot};
-                info.methods[methodName] = method;
-                info.declaredMethods[methodName] = std::move(method);
+                ClassMethod method{statement, name, CallableKey(name + "." + methodName, parameterTypes), slot};
+                info.methods[methodKey] = method;
+                info.declaredMethods[methodKey] = std::move(method);
             }
 
             std::vector<llvm::Type*> layout{builder.getPtrTy()};
@@ -880,11 +906,19 @@ namespace Absolute {
             return currentNamespace + "." + name;
         }
 
+        std::string FunctionLinkName(const Symbol& symbol) const {
+            if (symbol.externalFunction || symbol.name == "main" || !analyzer ||
+                analyzer->FunctionOverloadCount(symbol.name) <= 1)
+                return symbol.externalFunction ? symbol.name.substr(symbol.name.rfind('.') + 1) : symbol.name;
+            return CallableKey(symbol.name, symbol.parameterTypes);
+        }
+
         std::string ResolvedName(Expression* expression) const {
             std::string name;
             if (analyzer && expression) {
                 if (const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression)) {
-                    if (const Symbol* symbol = analyzer->GetSymbol(info->symbol)) name = symbol->name;
+                    if (const Symbol* symbol = analyzer->GetSymbol(info->symbol))
+                        return FunctionLinkName(*symbol);
                 }
             }
             if (name.empty()) name = IdentifierName(expression);
@@ -1332,14 +1366,22 @@ namespace Absolute {
         llvm::Function* DeclareFunction(FunctionDeclStmt& statement) {
             if (!statement.name || !statement.returnType) Fail("invalid function declaration");
             const std::string sourceName = Qualify(statement.name->value);
-            const std::string functionName = statement.IsExternal() ? statement.name->value : sourceName;
-            functionLinkNames[sourceName] = functionName;
 
             std::vector<llvm::Type*> parameterTypes;
+            std::vector<std::string> parameterTypeNames;
             parameterTypes.reserve(statement.parameters.size());
+            parameterTypeNames.reserve(statement.parameters.size());
             for (const auto& parameter : statement.parameters) {
-                parameterTypes.push_back(TypeFromName(DeclaredTypeName(*parameter)));
+                parameterTypeNames.push_back(DeclaredTypeName(*parameter));
+                parameterTypes.push_back(TypeFromName(parameterTypeNames.back()));
             }
+
+            const Symbol* symbol = analyzer
+                ? analyzer->FindFunctionSymbol(sourceName, parameterTypeNames) : nullptr;
+            const std::string functionName = statement.IsExternal() ? statement.name->value :
+                (symbol ? FunctionLinkName(*symbol) : sourceName);
+            if (!symbol || (analyzer && analyzer->FunctionOverloadCount(sourceName) <= 1))
+                functionLinkNames[sourceName] = functionName;
 
             llvm::FunctionType* functionType = llvm::FunctionType::get(
                 ResolveType(statement.returnType.get()), parameterTypes, false);
@@ -1674,13 +1716,36 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(FunctionCallExpr* expr) {
+        const ExpressionInfo* callInfo = impl->analyzer ? impl->analyzer->GetExpressionInfo(*expr) : nullptr;
+        const Symbol* selected = callInfo ? impl->analyzer->GetSymbol(callInfo->symbol) : nullptr;
         if (auto* member = dynamic_cast<MemberAccessExpr*>(expr->base.get())) {
+            if (selected && selected->extensionFunction) {
+                const std::string name = impl->ResolvedName(expr);
+                llvm::Function* function = impl->module->getFunction(name);
+                if (!function) impl->Fail("unknown extension method '" + name + "'");
+                if (function->arg_size() != expr->arguments.size() + 1)
+                    impl->Fail("invalid argument count for extension method '" + member->member + "'");
+                std::vector<llvm::Value*> arguments;
+                arguments.reserve(expr->arguments.size() + 1);
+                arguments.push_back(impl->Coerce(impl->Evaluate(member->base.get()),
+                    function->getFunctionType()->getParamType(0)));
+                for (size_t index = 0; index < expr->arguments.size(); ++index)
+                    arguments.push_back(impl->Coerce(impl->Evaluate(expr->arguments[index].get()),
+                        function->getFunctionType()->getParamType(static_cast<unsigned>(index + 1))));
+                llvm::CallInst* call = impl->builder.CreateCall(function, arguments,
+                    function->getReturnType()->isVoidTy() ? "" : member->member + ".extension.result");
+                impl->value = function->getReturnType()->isVoidTy() ? nullptr : call;
+                impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
+                return;
+            }
             const std::string baseType = impl->SemanticType(member->base.get());
             const std::string className = impl->ClassNameFromType(baseType);
             auto classIterator = impl->classes.find(className);
-            if (classIterator != impl->classes.end()) {
+            if (classIterator != impl->classes.end() && (!selected || selected->kind == SymbolKind::Method)) {
                 Impl::ClassInfo& info = classIterator->second;
-                const auto method = info.methods.find(member->member);
+                const std::string methodKey = CallableKey(member->member,
+                    selected ? selected->parameterTypes : std::vector<std::string>{});
+                const auto method = info.methods.find(methodKey);
                 if (method == info.methods.end())
                     impl->Fail("class '" + info.name + "' has no method '" + member->member + "'");
                 llvm::Value* object = impl->ObjectPointer(member->base.get(), baseType);
@@ -1793,7 +1858,7 @@ namespace Absolute {
 
         if (const PluginBinaryOperator* pluginOperator =
                 FindPluginBinaryOperator(leftType, expr->op, rightType)) {
-            llvm::Function* function = impl->module->getFunction(pluginOperator->functionName);
+            llvm::Function* function = impl->module->getFunction(impl->ResolvedName(expr));
             if (!function || function->arg_size() != 2)
                 impl->Fail("missing plugin operator function '" + pluginOperator->functionName + "'");
             left = impl->Coerce(left, function->getFunctionType()->getParamType(0));

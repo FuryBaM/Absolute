@@ -1,5 +1,6 @@
 int32 main() {
     assert(Math.abs(-3.5) > 3.49, "abs");
+    assert(Math.abs(-3) == 3, "abs overload");
     assert(Math.sqrt(81.0) > 8.999, "sqrt");
     assert(Math.sin(1.5707963267948966) > 0.999, "sin");
     assert(Math.abs(Math.cos(3.141592653589793) + 1.0) < 0.001, "cos");
@@ -8,6 +9,7 @@ int32 main() {
     auto vector2Offset = new vec2(1.0, 2.0);
     auto vector2Sum = vector2 + vector2Offset;
     assert(Math.abs(Math.vec2Length(vector2) - 5.0) < 0.0001, "vec2 length");
+    assert(Math.abs(vector2.length() - 5.0) < 0.0001, "vec2 length extension");
     assert(Math.abs(Math.vec2Dot(vector2Sum, vector2Offset) - 16.0) < 0.0001, "vec2 dot");
 
     auto eye = new vec3(0.0, 0.0, 1.0);
@@ -18,6 +20,7 @@ int32 main() {
     auto scaled = 2.0 * right;
     vec3* typedVector = right - up;
     assert(Math.abs(Math.vec3Length(right) - 1.0) < 0.0001, "vec3 length");
+    assert(Math.abs(right.length() - 1.0) < 0.0001, "vec3 length extension");
     assert(Math.abs(Math.vec3Dot(vector3Sum, up) - 1.0) < 0.0001, "vec3 add");
     assert(Math.abs(scaled.x - 2.0) < 0.0001, "vec3 scale");
     assert(Math.abs(typedVector.y + 1.0) < 0.0001, "explicit vec3 type");

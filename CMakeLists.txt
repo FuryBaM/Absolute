@@ -68,6 +68,15 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/code.abs" --parse-only
     )
     add_test(
+        NAME absolute.overloads-extensions
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/overloads-extensions.abs"
+    )
+    add_test(
+        NAME absolute.overloads-extensions-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/overloads-extensions-errors.abs"
+    )
+    set_tests_properties(absolute.overloads-extensions-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.comments
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/comments.abs"
     )
@@ -211,6 +220,22 @@ if(BUILD_TESTING)
                 PASS_REGULAR_EXPRESSION "math-plugin=ok"
             )
         endif()
+        add_test(
+            NAME absolute.build-overloads-extensions
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/overloads-extensions.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/overloads-extensions${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-overloads-extensions PROPERTIES
+            FIXTURES_SETUP absolute-overloads-extensions-executable
+        )
+        add_test(
+            NAME absolute.run-overloads-extensions
+            COMMAND "${CMAKE_BINARY_DIR}/overloads-extensions${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-overloads-extensions PROPERTIES
+            FIXTURES_REQUIRED absolute-overloads-extensions-executable
+            PASS_REGULAR_EXPRESSION "overloads-extensions=ok"
+        )
         add_test(
             NAME absolute.emit-llvm
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/llvm-basic.abs" --emit-llvm

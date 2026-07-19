@@ -41,6 +41,8 @@ namespace Absolute {
         bool managedOwner = false;
         bool managedBorrower = false;
         bool asyncFunction = false;
+        bool extensionFunction = false;
+        bool externalFunction = false;
     };
 
     enum class InitializationState {
@@ -119,10 +121,11 @@ namespace Absolute {
             SymbolKind kind = SymbolKind::Field;
             std::string type;
             std::vector<std::string> parameterTypes;
+            SymbolId symbol = InvalidSymbolId;
         };
 
         struct TypeDefinition {
-            std::unordered_map<std::string, MemberSignature> members;
+            std::unordered_map<std::string, std::vector<MemberSignature>> members;
             std::optional<MemberSignature> constructor;
             std::vector<std::string> parents;
         };
@@ -179,6 +182,8 @@ namespace Absolute {
         std::vector<Program*> programs;
         SymbolTable table;
         std::unordered_map<std::string, TypeDefinition> types;
+        std::unordered_map<std::string, std::vector<SymbolId>> functionOverloads;
+        std::unordered_map<std::string, std::vector<SymbolId>> extensionMethods;
         std::unordered_set<std::string> namespaces;
         std::unordered_set<std::string> importedNamespaces;
         std::unordered_map<const Expression*, ExpressionInfo> expressionInfo;
@@ -219,6 +224,9 @@ namespace Absolute {
 
         const SymbolTable& Symbols() const;
         const Symbol* GetSymbol(SymbolId id) const;
+        const Symbol* FindFunctionSymbol(
+            const std::string& name, const std::vector<std::string>& parameterTypes) const;
+        size_t FunctionOverloadCount(const std::string& name) const;
         const ExpressionInfo* GetExpressionInfo(const Expression& expression) const;
         const std::vector<Diagnostic>& Diagnostics() const;
 
@@ -290,8 +298,14 @@ namespace Absolute {
         void ResolveFunction(FunctionDeclStmt& statement, SymbolKind kind);
         void DeclareType(const std::string& name);
         void DeclareMember(const std::string& owner, std::string name, MemberSignature signature);
-        const MemberSignature* FindMember(const std::string& owner, const std::string& name) const;
-        std::unordered_map<std::string, MemberSignature> VisibleMembers(const std::string& owner) const;
+        std::vector<MemberSignature> FindMembers(const std::string& owner, const std::string& name) const;
+        std::unordered_map<std::string, std::vector<MemberSignature>> VisibleMembers(
+            const std::string& owner) const;
+        std::vector<SymbolId> FindFunctionCandidates(const std::string& name) const;
+        std::vector<SymbolId> FindExtensionCandidates(const std::string& name) const;
+        SymbolId SelectOverload(const std::vector<SymbolId>& candidates,
+            const std::vector<Result>& arguments, const std::string& displayName);
+        int ConversionCost(const std::string& target, const std::string& source) const;
         std::string ExtractIdentifier(Expression* expression) const;
         std::string ExtractQualifiedName(Expression* expression) const;
         std::string Qualify(const std::string& name) const;

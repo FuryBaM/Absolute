@@ -66,6 +66,38 @@ bring in an additional file relative to the importing source. Namespace imports
 allow short references such as `add(20, 22)`; fully-qualified calls such as
 `Demo.Math.add(20, 22)` also work.
 
+## Overloads and extension methods
+
+Functions and class methods may share a name when their parameter type lists
+are different. Calls prefer exact type matches, then compatible conversions; a
+tie is reported as an ambiguous overload instead of choosing silently.
+
+```absolute
+int32 clamp(int32 value, int32 minimum, int32 maximum) { /* ... */ }
+double clamp(double value, double minimum, double maximum) { /* ... */ }
+
+class Calculator {
+    public int32 add(int32 left, int32 right) { return left + right; }
+    public double add(double left, double right) { return left + right; }
+}
+```
+
+An extension method is a global or namespace function marked `extension`. Its
+first parameter is the receiver and is omitted at the call site:
+
+```absolute
+extension int32 squared(int32 value) {
+    return value * value;
+}
+
+int32 value = 7;
+println(value.squared());
+```
+
+Global extensions are immediately visible. Namespace extensions become visible
+after `import NamespaceName;`. Real instance methods take precedence over
+extensions with the same name.
+
 ## Syntax plugins
 
 New keywords and syntax that can be expressed using existing Absolute constructs
