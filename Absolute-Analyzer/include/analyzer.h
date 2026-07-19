@@ -39,6 +39,7 @@ namespace Absolute {
         std::vector<std::string> parameterTypes;
         size_t scopeDepth = 0;
         bool managedOwner = false;
+        bool managedBorrower = false;
         bool asyncFunction = false;
     };
 
@@ -79,6 +80,7 @@ namespace Absolute {
         TaskState taskState = TaskState::NotTask;
         bool createsTask = false;
         bool asyncCall = false;
+        bool createsRawOwner = false;
     };
 
     struct ANALYZER_API Diagnostic {
@@ -142,6 +144,7 @@ namespace Absolute {
             TaskState taskState = TaskState::NotTask;
             bool createsTask = false;
             bool asyncCall = false;
+            bool createsRawOwner = false;
         };
 
         enum class KeepState {

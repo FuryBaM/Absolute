@@ -1,13 +1,13 @@
 int32 doubleDelete() {
-    keep int32* value = new int32(1);
+    raw int32* value = new raw int32(1);
     delete value;
     delete value;
     return 0;
 }
 
 int32 overwriteBeforeDelete() {
-    keep int32* value = new int32(1);
-    value = new int32(2);
+    raw int32* value = new raw int32(1);
+    value = new raw int32(2);
     delete value;
     return 0;
 }

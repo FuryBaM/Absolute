@@ -1,0 +1,5 @@
+int32 main() {
+    keep int32* value = new int32(1);
+    delete value;
+    return 0;
+}

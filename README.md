@@ -147,11 +147,12 @@ delete owner;
 assert(!subscriber);
 ```
 
-Managed owners use scope-based RAII. `keep` disables automatic destruction, but
-an explicit `delete` still works:
+Managed owners use scope-based RAII. Ownership is a compile-time role: a managed
+variable is either an owner or a non-owning subscriber and cannot switch between
+those roles. An explicit `delete` still works:
 
 ```absolute
-keep int32* value = new int32(42);
+int32* value = new int32(42);
 delete value;
 ```
 
@@ -164,21 +165,19 @@ raw int32* address = &value;
 *address = 42;
 
 int32* tracked = new int32(42);
-keep int32* kept = new int32(7);
-raw int32* unsafe = new int32(11);
+raw int32* unsafe = new raw int32(11);
 ```
 
-`new T(...)` has one spelling. The expected pointer type chooses the allocation
-model: `T*` creates a tracked owner, `keep T*` creates a tracked owner without
-scope RAII, and `raw T*` creates an unsafe native allocation. The same contextual
-typing applies to assignments, function arguments, and return expressions.
-
-`keep` is checked by the semantic lifetime analysis. A keep owner must come from
-an owning allocation and must be passed to `delete` on every path before its
-scope is left, including `return`, `break`, and `continue`. Missing cleanup,
-overwriting a live keep owner, and double deletion produce stable diagnostic
-codes (`E_KEEP_DELETE_REQUIRED`, `E_KEEP_OVERWRITE`, and
-`E_KEEP_DOUBLE_DELETE`) through the analyzer API for IDE integrations.
+The expected pointer type chooses the allocation model: `new T(...)` assigned to
+`T*` creates a tracked RAII owner, while `new raw T(...)` assigned to `raw T*`
+creates an unsafe native allocation. A raw allocation created directly in a
+local variable must be passed to `delete` on every path before its scope is left,
+including `return`, `break`,
+and `continue`. Missing cleanup, overwriting a live raw owner, and double deletion
+produce stable diagnostic codes (`E_RAW_DELETE_REQUIRED`, `E_RAW_OVERWRITE`, and
+`E_RAW_DOUBLE_DELETE`) through the analyzer API for IDE integrations. Borrowed raw
+addresses and raw values returned by external/native functions remain explicitly
+unsafe and are not automatically reclaimed.
 
 The analyzer also performs control-flow dataflow for definite assignment and
 pointer validity. Branch and loop states are merged by `SymbolId`; managed

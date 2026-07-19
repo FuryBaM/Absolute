@@ -1,0 +1,17 @@
+int32 ownerCannotBecomeBorrower() {
+    int32* first = new int32(1);
+    int32* second = new int32(2);
+    first = second;
+    return 0;
+}
+
+int32 borrowerCannotBecomeOwner() {
+    int32* owner = new int32(1);
+    int32* borrower = owner;
+    borrower = new int32(2);
+    return 0;
+}
+
+int32 main() {
+    return ownerCannotBecomeBorrower() + borrowerCannotBecomeOwner();
+}

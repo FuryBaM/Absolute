@@ -84,7 +84,3 @@ extern "C" void absolute_managed_destroy(std::uint64_t handle) {
     if (slot->generation == 0) ++slot->generation;
     freeSlots.push_back(id);
 }
-
-extern "C" void absolute_managed_destroy_if(std::uint64_t handle, bool owner) {
-    if (owner) absolute_managed_destroy(handle);
-}

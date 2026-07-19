@@ -167,11 +167,12 @@ namespace Absolute {
             llvm::Value* address = nullptr;
             llvm::Type* type = nullptr;
             std::string typeName;
-            llvm::AllocaInst* managedOwner = nullptr;
-            bool keep = false;
+            bool managedOwner = false;
             bool isArray = false;
             llvm::Type* arrayElementType = nullptr;
             std::vector<llvm::Value*> arrayDimensions;
+            llvm::AllocaInst* managedPointee = nullptr;
+            SymbolId symbol = InvalidSymbolId;
         };
 
         struct ArrayView {
@@ -242,10 +243,10 @@ namespace Absolute {
         std::string currentNamespace;
         std::unordered_map<std::string, std::string> functionLinkNames;
         bool valueCreatesManagedOwner = false;
+        llvm::Value* valueManagedPointee = nullptr;
         std::string currentValueType;
         bool addressMode = false;
         llvm::Value* addressValue = nullptr;
-        bool declarationKeep = false;
         std::string currentReturnTypeName;
         std::string currentClassName;
         llvm::Value* currentThis = nullptr;
@@ -529,7 +530,7 @@ namespace Absolute {
                 llvm::Value* pointer = Evaluate(expression);
                 addressMode = oldAddressMode;
                 return IsManagedPointerTypeName(typeName)
-                    ? builder.CreateCall(ManagedGet(true), {pointer}, "object.pointer") : pointer;
+                    ? ManagedPointee(expression, pointer) : pointer;
             }
             return EvaluateAddress(expression);
         }
@@ -559,6 +560,7 @@ namespace Absolute {
             if (!expression) Fail("missing expression");
             value = nullptr;
             valueCreatesManagedOwner = false;
+            valueManagedPointee = nullptr;
             expression->Accept(visitor);
             if (!value) Fail("expression does not produce a value");
             currentValueType = SemanticType(expression);
@@ -583,12 +585,6 @@ namespace Absolute {
             scopes.emplace_back();
         }
 
-        llvm::FunctionCallee ManagedDestroyIf() {
-            llvm::FunctionType* type = llvm::FunctionType::get(
-                builder.getVoidTy(), {builder.getInt64Ty(), builder.getInt1Ty()}, false);
-            return module->getOrInsertFunction("absolute_managed_destroy_if", type);
-        }
-
         llvm::FunctionCallee TaskSpawn() {
             llvm::FunctionType* entryType = llvm::FunctionType::get(
                 builder.getVoidTy(), {builder.getPtrTy()}, false);
@@ -609,7 +605,7 @@ namespace Absolute {
             return module->getOrInsertFunction("absolute_task_destroy", type);
         }
 
-        void EmitScopeCleanup(size_t index) {
+        void EmitScopeCleanup(size_t index, SymbolId transferredOwner = InvalidSymbolId) {
             if (index >= scopes.size() || !builder.GetInsertBlock() || builder.GetInsertBlock()->getTerminator()) return;
             for (auto& [name, variable] : scopes[index]) {
                 (void)name;
@@ -619,18 +615,18 @@ namespace Absolute {
                     builder.CreateStore(llvm::ConstantPointerNull::get(builder.getPtrTy()), variable.address);
                     continue;
                 }
-                if (!variable.managedOwner || variable.keep) continue;
+                if (!variable.managedOwner || variable.symbol == transferredOwner) continue;
                 llvm::Value* handle = builder.CreateLoad(variable.type, variable.address, "cleanup.handle");
-                llvm::Value* owner = builder.CreateLoad(builder.getInt1Ty(), variable.managedOwner, "cleanup.owner");
-                builder.CreateCall(ManagedDestroyIf(), {handle, owner});
+                builder.CreateCall(ManagedDestroy(), {handle});
                 builder.CreateStore(builder.getInt64(0), variable.address);
-                builder.CreateStore(builder.getFalse(), variable.managedOwner);
+                if (variable.managedPointee)
+                    builder.CreateStore(llvm::ConstantPointerNull::get(builder.getPtrTy()), variable.managedPointee);
             }
         }
 
-        void EmitCleanupsFrom(size_t firstScope) {
+        void EmitCleanupsFrom(size_t firstScope, SymbolId transferredOwner = InvalidSymbolId) {
             for (size_t index = scopes.size(); index > firstScope; --index)
-                EmitScopeCleanup(index - 1);
+                EmitScopeCleanup(index - 1, transferredOwner);
         }
 
         void PopScope(bool cleanup = false) {
@@ -661,6 +657,31 @@ namespace Absolute {
             const std::string name = IdentifierName(expression);
             if (name.empty()) Fail("expected assignable identifier");
             return RequireVariable(name);
+        }
+
+        SymbolId SemanticSymbol(Expression* expression) const {
+            if (!analyzer || !expression) return InvalidSymbolId;
+            const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
+            return info ? info->symbol : InvalidSymbolId;
+        }
+
+        bool StaticManagedOwner(SymbolId symbol) const {
+            if (!analyzer || symbol == InvalidSymbolId) return false;
+            const Symbol* resolved = analyzer->GetSymbol(symbol);
+            return resolved && resolved->managedOwner;
+        }
+
+        llvm::Value* ManagedPointee(Expression* expression, llvm::Value* handle) {
+            if (auto* identifier = dynamic_cast<IdentifierExpr*>(expression)) {
+                Variable* variable = FindVariable(identifier->name);
+                const ExpressionInfo* info = analyzer ? analyzer->GetExpressionInfo(*expression) : nullptr;
+                if (variable && variable->managedPointee && info &&
+                    info->pointerOwner == variable->symbol) {
+                    return builder.CreateLoad(builder.getPtrTy(), variable->managedPointee,
+                        identifier->name + ".cached.pointee");
+                }
+            }
+            return builder.CreateCall(ManagedGet(true), {handle}, "managed.pointee");
         }
 
         llvm::Value* BuildArrayDescriptor(const ArrayView& view) {
@@ -1303,8 +1324,8 @@ namespace Absolute {
                 storageType, storage, llvm::ArrayRef<llvm::Constant*>(indices));
             std::vector<llvm::Value*> dimensionValues;
             for (size_t dimension : dimensions) dimensionValues.push_back(builder.getInt64(dimension));
-            globals.emplace(globalName, Variable{address, elementType, typeName, nullptr,
-                false, true, elementType, std::move(dimensionValues)});
+            globals.emplace(globalName, Variable{address, elementType, typeName, false,
+                true, elementType, std::move(dimensionValues), nullptr, InvalidSymbolId});
         }
 
         llvm::Function* DeclareFunction(FunctionDeclStmt& statement) {
@@ -1356,8 +1377,8 @@ namespace Absolute {
                 if (ArrayRankName(typeName) > 0) {
                     ArrayView view = ArrayViewFromValue(&argument, typeName);
                     if (!scopes.back().emplace(name,
-                        Variable{view.address, view.elementType, typeName, nullptr, false,
-                            true, view.elementType, view.dimensions}).second) {
+                        Variable{view.address, view.elementType, typeName, false,
+                            true, view.elementType, view.dimensions, nullptr, InvalidSymbolId}).second) {
                         Fail("duplicate parameter '" + name + "'");
                     }
                     continue;
@@ -1365,7 +1386,8 @@ namespace Absolute {
                 llvm::AllocaInst* address = CreateEntryAlloca(*function, argument.getType(), name);
                 builder.CreateStore(&argument, address);
                 if (!scopes.back().emplace(name,
-                    Variable{address, argument.getType(), typeName, nullptr, false, false, nullptr, {}}).second) {
+                    Variable{address, argument.getType(), typeName, false, false, nullptr, {},
+                        nullptr, SemanticSymbol(parameter.get())}).second) {
                     Fail("duplicate parameter '" + name + "'");
                 }
             }
@@ -1394,15 +1416,16 @@ namespace Absolute {
             if (ArrayRankName(typeName) > 0) {
                 ArrayView view = ArrayViewFromValue(&argument, typeName);
                 if (!scopes.back().emplace(name,
-                    Variable{view.address, view.elementType, typeName, nullptr, false,
-                        true, view.elementType, view.dimensions}).second)
+                    Variable{view.address, view.elementType, typeName, false,
+                        true, view.elementType, view.dimensions, nullptr, InvalidSymbolId}).second)
                     Fail("duplicate parameter '" + name + "'");
                 return;
             }
             llvm::AllocaInst* address = CreateEntryAlloca(*argument.getParent(), argument.getType(), name);
             builder.CreateStore(&argument, address);
             if (!scopes.back().emplace(name,
-                Variable{address, argument.getType(), typeName, nullptr, false, false, nullptr, {}}).second)
+                Variable{address, argument.getType(), typeName, false, false, nullptr, {},
+                    nullptr, SemanticSymbol(&parameter)}).second)
                 Fail("duplicate parameter '" + name + "'");
         }
 
@@ -1491,9 +1514,9 @@ namespace Absolute {
             value = nullptr;
             currentValueType.clear();
             valueCreatesManagedOwner = false;
+            valueManagedPointee = nullptr;
             addressMode = false;
             addressValue = nullptr;
-            declarationKeep = false;
             taskThunkCounter = 0;
             currentClassName.clear();
             currentThis = nullptr;
@@ -1898,6 +1921,7 @@ namespace Absolute {
         llvm::Type* targetType = impl->TypeFromName(targetTypeName);
         llvm::Value* assigned = impl->Evaluate(expr->value.get());
         const bool createsOwner = impl->valueCreatesManagedOwner;
+        llvm::Value* assignedPointee = impl->valueManagedPointee;
 
         if (expr->op != "=") {
             llvm::Value* current = impl->builder.CreateLoad(targetType, targetAddress, "assignment.current");
@@ -1908,12 +1932,18 @@ namespace Absolute {
             const std::string name = IdentifierName(expr->target.get());
             if (!name.empty()) {
                 Impl::Variable& variable = impl->RequireVariable(name);
-                if (variable.managedOwner && !variable.keep) {
+                if (variable.managedOwner) {
                     llvm::Value* oldHandle = impl->builder.CreateLoad(variable.type, variable.address, "assignment.old.handle");
-                    llvm::Value* oldOwner = impl->builder.CreateLoad(
-                        impl->builder.getInt1Ty(), variable.managedOwner, "assignment.old.owner");
-                    impl->builder.CreateCall(impl->ManagedDestroyIf(), {oldHandle, oldOwner});
-                    impl->builder.CreateStore(impl->builder.getInt1(createsOwner), variable.managedOwner);
+                    impl->builder.CreateCall(impl->ManagedDestroy(), {oldHandle});
+                    if (createsOwner && assignedPointee) {
+                        if (!variable.managedPointee)
+                            variable.managedPointee = impl->CreateEntryAlloca(
+                                *impl->CurrentFunction(), impl->builder.getPtrTy(), name + ".cached.pointee");
+                        impl->builder.CreateStore(assignedPointee, variable.managedPointee);
+                    }
+                    else if (variable.managedPointee)
+                        impl->builder.CreateStore(
+                            llvm::ConstantPointerNull::get(impl->builder.getPtrTy()), variable.managedPointee);
                 }
             }
         }
@@ -1921,6 +1951,7 @@ namespace Absolute {
         impl->builder.CreateStore(assigned, targetAddress);
         impl->value = assigned;
         impl->valueCreatesManagedOwner = false;
+        impl->valueManagedPointee = nullptr;
     }
 
     void CodeGenerator::Visit(VarDeclExpr* expr) {
@@ -1974,7 +2005,6 @@ namespace Absolute {
             variable.address = address;
             variable.type = elementType;
             variable.typeName = declaredTypeName;
-            variable.keep = impl->declarationKeep;
             variable.isArray = true;
             variable.arrayElementType = elementType;
             variable.arrayDimensions = dimensions;
@@ -2004,8 +2034,8 @@ namespace Absolute {
             Impl::ArrayView view = impl->ArrayViewFromValue(
                 impl->Evaluate(expr->value.get()), declaredTypeName);
             if (!impl->scopes.back().emplace(name,
-                Impl::Variable{view.address, view.elementType, declaredTypeName, nullptr,
-                    impl->declarationKeep, true, view.elementType, view.dimensions}).second) {
+                Impl::Variable{view.address, view.elementType, declaredTypeName, false,
+                    true, view.elementType, view.dimensions, nullptr, InvalidSymbolId}).second) {
                 impl->Fail("duplicate variable '" + name + "'");
             }
             impl->value = impl->BuildArrayDescriptor(view);
@@ -2017,22 +2047,28 @@ namespace Absolute {
         if (type->isVoidTy()) impl->Fail("variable '" + name + "' cannot have type void");
 
         llvm::AllocaInst* address = impl->CreateEntryAlloca(*function, type, name);
-        llvm::AllocaInst* ownerAddress = nullptr;
-        if (IsManagedPointerTypeName(typeName))
-            ownerAddress = impl->CreateEntryAlloca(*function, impl->builder.getInt1Ty(), name + ".owner");
+        const SymbolId symbol = impl->SemanticSymbol(expr);
+        const bool staticOwner = IsManagedPointerTypeName(typeName) && impl->StaticManagedOwner(symbol);
         if (!impl->scopes.back().emplace(name,
-            Impl::Variable{address, type, typeName, ownerAddress, impl->declarationKeep,
-                false, nullptr, {}}).second) {
+            Impl::Variable{address, type, typeName, staticOwner, false, nullptr, {},
+                nullptr, symbol}).second) {
             impl->Fail("duplicate variable '" + name + "'");
         }
 
         llvm::Value* initial = expr->value ? impl->Evaluate(expr->value.get()) : llvm::Constant::getNullValue(type);
         const bool createsOwner = impl->valueCreatesManagedOwner;
+        llvm::Value* managedPointee = impl->valueManagedPointee;
         initial = impl->Coerce(initial, type);
         impl->builder.CreateStore(initial, address);
-        if (ownerAddress) impl->builder.CreateStore(impl->builder.getInt1(createsOwner), ownerAddress);
+        if (staticOwner && createsOwner && managedPointee) {
+            Impl::Variable& variable = impl->RequireVariable(name);
+            variable.managedPointee = impl->CreateEntryAlloca(
+                *function, impl->builder.getPtrTy(), name + ".cached.pointee");
+            impl->builder.CreateStore(managedPointee, variable.managedPointee);
+        }
         impl->value = initial;
         impl->valueCreatesManagedOwner = false;
+        impl->valueManagedPointee = nullptr;
     }
 
     void CodeGenerator::Visit(MemberAccessExpr* expr) {
@@ -2104,6 +2140,7 @@ namespace Absolute {
                 impl->Fail("class '" + info.name + "' has no constructor");
             impl->value = result;
             impl->valueCreatesManagedOwner = !rawAllocation;
+            impl->valueManagedPointee = rawAllocation ? nullptr : pointer;
             return;
         }
 
@@ -2114,6 +2151,7 @@ namespace Absolute {
         impl->builder.CreateStore(initial, pointer);
         impl->value = result;
         impl->valueCreatesManagedOwner = !rawAllocation;
+        impl->valueManagedPointee = rawAllocation ? nullptr : pointer;
     }
 
     void CodeGenerator::Visit(DestructorCallExpr* expr) {
@@ -2123,16 +2161,13 @@ namespace Absolute {
         llvm::Value* pointer = impl->builder.CreateLoad(type, targetAddress, "delete.target");
         if (IsManagedPointerTypeName(typeName)) {
             const std::string name = IdentifierName(expr->target.get());
-            llvm::Value* owner = impl->builder.getFalse();
             if (!name.empty()) {
                 Impl::Variable& variable = impl->RequireVariable(name);
-                if (variable.managedOwner) {
-                    owner = impl->builder.CreateLoad(
-                        impl->builder.getInt1Ty(), variable.managedOwner, "delete.owner");
-                    impl->builder.CreateStore(impl->builder.getFalse(), variable.managedOwner);
-                }
+                if (variable.managedPointee)
+                    impl->builder.CreateStore(
+                        llvm::ConstantPointerNull::get(impl->builder.getPtrTy()), variable.managedPointee);
             }
-            impl->builder.CreateCall(impl->ManagedDestroyIf(), {pointer, owner});
+            impl->builder.CreateCall(impl->ManagedDestroy(), {pointer});
             impl->builder.CreateStore(impl->builder.getInt64(0), targetAddress);
         }
         else {
@@ -2160,7 +2195,8 @@ namespace Absolute {
             impl->builder.CreateCall(constructor, {address});
         }
         if (!impl->scopes.back().emplace(name,
-            Impl::Variable{address, info.llvmType, typeName, nullptr, false, false, nullptr, {}}).second)
+            Impl::Variable{address, info.llvmType, typeName, false, false, nullptr, {},
+                nullptr, impl->SemanticSymbol(expr)}).second)
             impl->Fail("duplicate object '" + name + "'");
         impl->value = impl->builder.CreateLoad(info.llvmType, address, name + ".value");
         impl->valueCreatesManagedOwner = false;
@@ -2193,7 +2229,7 @@ namespace Absolute {
             llvm::Value* pointer = impl->Evaluate(expr->operand.get());
             impl->addressMode = outerAddressMode;
             llvm::Value* pointeeAddress = IsManagedPointerTypeName(pointerType)
-                ? impl->builder.CreateCall(impl->ManagedGet(true), {pointer}, "managed.pointee")
+                ? impl->ManagedPointee(expr->operand.get(), pointer)
                 : pointer;
             if (outerAddressMode) {
                 impl->addressValue = pointeeAddress;
@@ -2293,15 +2329,15 @@ namespace Absolute {
             result = impl->BuildArrayDescriptor(source);
         }
         else result = impl->Coerce(impl->Evaluate(stmt->expr.get()), function->getReturnType());
+        SymbolId transferredOwner = InvalidSymbolId;
         if (IsManagedPointerTypeName(impl->currentReturnTypeName)) {
             const std::string returnedName = IdentifierName(stmt->expr.get());
             if (!returnedName.empty()) {
                 Impl::Variable& returned = impl->RequireVariable(returnedName);
-                if (returned.managedOwner)
-                    impl->builder.CreateStore(impl->builder.getFalse(), returned.managedOwner);
+                if (returned.managedOwner) transferredOwner = returned.symbol;
             }
         }
-        impl->EmitCleanupsFrom(0);
+        impl->EmitCleanupsFrom(0, transferredOwner);
         impl->builder.CreateRet(result);
     }
 
@@ -2317,11 +2353,7 @@ namespace Absolute {
             return;
         }
         if (!impl->CurrentFunction()) return;
-        const bool oldKeep = impl->declarationKeep;
-        impl->declarationKeep = std::any_of(stmt->modifiers.begin(), stmt->modifiers.end(),
-            [](const Token& modifier) { return modifier.value == "keep"; });
         stmt->expr->Accept(*this);
-        impl->declarationKeep = oldKeep;
     }
 
     void CodeGenerator::Visit(StructDeclStmt* stmt) {

@@ -294,8 +294,8 @@ namespace Absolute {
                 const std::string qualifier = found->second.state == KeepState::MaybeDeleted
                     ? " is not deleted on every control-flow path"
                     : " must be explicitly deleted";
-                Report("keep owner '" + found->second.name + "'" + qualifier + " before " + exitKind,
-                    "E_KEEP_DELETE_REQUIRED", id);
+                Report("raw owner '" + found->second.name + "'" + qualifier + " before " + exitKind,
+                    "E_RAW_DELETE_REQUIRED", id);
             }
         }
     }
@@ -456,7 +456,8 @@ namespace Absolute {
             result.symbol, result.type, result.isLValue,
             result.createsManagedOwner, result.referencesManagedOwner,
             result.initialization, result.pointerValidity, result.pointerOwner,
-            result.taskState, result.createsTask, result.asyncCall};
+            result.taskState, result.createsTask, result.asyncCall,
+            result.createsRawOwner};
     }
 
     bool Analyzer::IsKnownType(const std::string& name) const {
@@ -577,8 +578,11 @@ namespace Absolute {
                 Report("extern parameter '" + name + "' cannot use an Absolute array descriptor");
             SymbolId parameterId = InvalidSymbolId;
             if (name.empty()) Report("function parameter requires an identifier");
-            else if (const auto declared = table.Declare(SymbolKind::Parameter, name, type))
+            else if (const auto declared = table.Declare(SymbolKind::Parameter, name, type)) {
                 parameterId = *declared;
+                if (Symbol* symbol = table.Get(parameterId); symbol && IsManagedPointerType(type))
+                    symbol->managedBorrower = true;
+            }
             else Report("parameter '" + name + "' is already declared");
         RegisterFlowSymbol(parameterId, {
                 InitializationState::Initialized,
@@ -1034,10 +1038,12 @@ namespace Absolute {
             ? trueResult.pointerOwner : InvalidSymbolId;
         if (trueResult.pointerValidity == PointerValidity::Null) pointerOwner = falseResult.pointerOwner;
         if (falseResult.pointerValidity == PointerValidity::Null) pointerOwner = trueResult.pointerOwner;
-        Save(expr, {InvalidSymbolId, type, false,
+        Result combined{InvalidSymbolId, type, false,
             trueResult.createsManagedOwner && falseResult.createsManagedOwner,
             trueResult.referencesManagedOwner && falseResult.referencesManagedOwner,
-            InitializationState::Initialized, pointerValidity, pointerOwner});
+            InitializationState::Initialized, pointerValidity, pointerOwner};
+        combined.createsRawOwner = trueResult.createsRawOwner && falseResult.createsRawOwner;
+        Save(expr, std::move(combined));
     }
 
     void Analyzer::Visit(NullExpr* expr) {
@@ -1096,13 +1102,27 @@ namespace Absolute {
         if (IsTaskType(target.type))
             Report("tasks cannot be reassigned or copied", "E_TASK_ASSIGNMENT", target.symbol);
         if (IsManagedPointerType(target.type)) {
-            if (Symbol* symbol = table.Get(target.symbol)) symbol->managedOwner = value.createsManagedOwner;
+            if (Symbol* symbol = table.Get(target.symbol)) {
+                const bool assignsOwner = value.createsManagedOwner;
+                const bool assignsBorrower = value.type != "null" && !assignsOwner &&
+                    value.pointerOwner != InvalidSymbolId;
+                if (assignsOwner && symbol->managedBorrower)
+                    Report("managed borrower '" + symbol->name +
+                        "' cannot become an owner; declare a separate owner variable",
+                        "E_MANAGED_ROLE_CHANGE", target.symbol);
+                if (assignsBorrower && symbol->managedOwner)
+                    Report("managed owner '" + symbol->name +
+                        "' cannot become a borrower; use a separate subscriber variable",
+                        "E_MANAGED_ROLE_CHANGE", target.symbol);
+                symbol->managedOwner = symbol->managedOwner || assignsOwner;
+                symbol->managedBorrower = symbol->managedBorrower || assignsBorrower;
+            }
         }
         if (const auto keep = keepLifetimes.find(target.symbol); keep != keepLifetimes.end()) {
             if (keep->second.state != KeepState::Deleted)
-                Report("keep owner '" + keep->second.name + "' is overwritten before delete",
-                    "E_KEEP_OVERWRITE", target.symbol);
-            keep->second.state = value.createsManagedOwner ? KeepState::Live : KeepState::Deleted;
+                Report("raw owner '" + keep->second.name + "' is overwritten before delete",
+                    "E_RAW_OVERWRITE", target.symbol);
+            keep->second.state = value.createsRawOwner ? KeepState::Live : KeepState::Deleted;
         }
         if (auto flow = valueFlow.find(target.symbol); flow != valueFlow.end()) {
             flow->second.initialization = InitializationState::Initialized;
@@ -1215,7 +1235,11 @@ namespace Absolute {
             else id = *declared;
         }
         if (IsManagedPointerType(type)) {
-            if (Symbol* symbol = table.Get(id)) symbol->managedOwner = value.createsManagedOwner;
+            if (Symbol* symbol = table.Get(id)) {
+                symbol->managedOwner = value.createsManagedOwner;
+                symbol->managedBorrower = expr->value && value.type != "null" &&
+                    !value.createsManagedOwner && value.pointerOwner != InvalidSymbolId;
+            }
         }
         else if (Symbol* symbol = table.Get(id)) symbol->type = type;
         ValueFlowState flow;
@@ -1304,9 +1328,12 @@ namespace Absolute {
                 Report("constructor argument " + std::to_string(index + 1) + " has type '" +
                     value.type + "', expected '" + expected + "'");
         }
-        Save(expr, {InvalidSymbolId, (rawAllocation ? "raw " : "") + constructedType + "*", false,
+        Result allocation{InvalidSymbolId,
+            (rawAllocation ? "raw " : "") + constructedType + "*", false,
             !rawAllocation, false, InitializationState::Initialized,
-            PointerValidity::Live, InvalidSymbolId});
+            PointerValidity::Live, InvalidSymbolId};
+        allocation.createsRawOwner = rawAllocation;
+        Save(expr, std::move(allocation));
     }
 
     void Analyzer::Visit(DestructorCallExpr* expr) {
@@ -1336,8 +1363,8 @@ namespace Absolute {
 
         if (keep != keepLifetimes.end()) {
             if (keep->second.state == KeepState::Deleted)
-                Report("keep owner '" + keep->second.name + "' is deleted more than once",
-                    "E_KEEP_DOUBLE_DELETE", target.symbol);
+                Report("raw owner '" + keep->second.name + "' is deleted more than once",
+                    "E_RAW_DOUBLE_DELETE", target.symbol);
             keep->second.state = KeepState::Deleted;
         }
         if (auto flow = valueFlow.find(target.symbol); flow != valueFlow.end()) {
@@ -1551,25 +1578,14 @@ namespace Absolute {
     void Analyzer::Visit(VarDeclStmt* stmt) {
         AcceptIfPresent(stmt->expr, *this);
         if (phase != Phase::ResolveBodies || functionDepth == 0 || !stmt->expr) return;
-        const bool keep = std::any_of(stmt->modifiers.begin(), stmt->modifiers.end(),
-            [](const Token& modifier) { return modifier.value == "keep"; });
-        if (!keep) return;
-
         const ExpressionInfo* declaration = GetExpressionInfo(*stmt->expr);
         const ExpressionInfo* initializer = stmt->expr->value
             ? GetExpressionInfo(*stmt->expr->value) : nullptr;
         const SymbolId id = declaration ? declaration->symbol : InvalidSymbolId;
         const Symbol* symbol = table.Get(id);
         const std::string name = symbol ? symbol->name : ExtractIdentifier(stmt->expr->name.get());
-        if (!declaration || !IsManagedPointerType(declaration->type)) {
-            Report("keep modifier requires a managed pointer owner", "E_KEEP_TYPE", id);
-            return;
-        }
-        if (!initializer || !initializer->createsManagedOwner) {
-            Report("keep owner '" + name + "' requires an owning initializer such as new T(...)",
-                "E_KEEP_OWNER_REQUIRED", id);
-            return;
-        }
+        if (!declaration || !IsRawPointerType(declaration->type) ||
+            !initializer || !initializer->createsRawOwner) return;
         if (keepScopes.empty()) PushKeepScope();
         keepLifetimes[id] = {name, KeepState::Live};
         keepScopes.back().push_back(id);

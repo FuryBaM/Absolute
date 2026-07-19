@@ -1,5 +1,5 @@
 int32 missingOnSomePaths(bool release) {
-    keep int32* value = new int32(42);
+    raw int32* value = new raw int32(42);
     if (release) {
         delete value;
     }
@@ -8,14 +8,14 @@ int32 missingOnSomePaths(bool release) {
 
 int32 missingAtScopeExit() {
     {
-        keep int32* scoped = new int32(7);
+        raw int32* scoped = new raw int32(7);
     }
     return 0;
 }
 
 int32 missingBeforeBreak() {
     while (true) {
-        keep int32* iteration = new int32(1);
+        raw int32* iteration = new raw int32(1);
         break;
     }
     return 0;

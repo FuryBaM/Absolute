@@ -67,24 +67,38 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-functions.abs"
     )
     add_test(
+        NAME absolute.managed-fast-path-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-fast-path.abs"
+    )
+    add_test(
+        NAME absolute.managed-role-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-role-errors.abs"
+    )
+    set_tests_properties(absolute.managed-role-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.pointer-subscriber-return
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-subscriber-return.abs"
     )
     set_tests_properties(absolute.pointer-subscriber-return PROPERTIES WILL_FAIL TRUE)
     add_test(
-        NAME absolute.keep-lifetime-semantic
-        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/keep-lifetime.abs"
+        NAME absolute.raw-lifetime-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/raw-lifetime.abs"
     )
     add_test(
-        NAME absolute.keep-missing-delete
-        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/keep-missing-delete.abs"
+        NAME absolute.raw-missing-delete
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/raw-missing-delete.abs"
     )
-    set_tests_properties(absolute.keep-missing-delete PROPERTIES WILL_FAIL TRUE)
+    set_tests_properties(absolute.raw-missing-delete PROPERTIES WILL_FAIL TRUE)
     add_test(
-        NAME absolute.keep-invalid-operations
-        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/keep-invalid-operations.abs"
+        NAME absolute.raw-invalid-operations
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/raw-invalid-operations.abs"
     )
-    set_tests_properties(absolute.keep-invalid-operations PROPERTIES WILL_FAIL TRUE)
+    set_tests_properties(absolute.raw-invalid-operations PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.removed-keep
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/removed-keep.abs"
+    )
+    set_tests_properties(absolute.removed-keep PROPERTIES WILL_FAIL TRUE)
     add_test(
         NAME absolute.flow-analysis-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/flow-analysis.abs"
@@ -179,6 +193,23 @@ if(BUILD_TESTING)
         )
         set_tests_properties(absolute.emit-classes-codegen PROPERTIES
             FIXTURES_SETUP absolute-classes-codegen-ir
+        )
+        add_test(
+            NAME absolute.emit-managed-fast-path
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-fast-path.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/managed-fast-path.ll"
+        )
+        set_tests_properties(absolute.emit-managed-fast-path PROPERTIES
+            FIXTURES_SETUP absolute-managed-fast-path-ir
+        )
+        add_test(
+            NAME absolute.check-managed-fast-path
+            COMMAND "${CMAKE_COMMAND}"
+                -DIR_FILE=${CMAKE_BINARY_DIR}/managed-fast-path.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-managed-fast-path.cmake"
+        )
+        set_tests_properties(absolute.check-managed-fast-path PROPERTIES
+            FIXTURES_REQUIRED absolute-managed-fast-path-ir
         )
         add_test(
             NAME absolute.emit-slice-out-of-bounds
@@ -357,17 +388,30 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "pointer-functions=ok"
         )
         add_test(
-            NAME absolute.build-keep-lifetime
-            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/keep-lifetime.abs"
-                --build-exe -o "${CMAKE_BINARY_DIR}/keep-lifetime-app"
+            NAME absolute.build-managed-fast-path
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-fast-path.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/managed-fast-path-app"
         )
-        set_tests_properties(absolute.build-keep-lifetime PROPERTIES
-            FIXTURES_SETUP absolute-keep-lifetime-executable
+        set_tests_properties(absolute.build-managed-fast-path PROPERTIES
+            FIXTURES_SETUP absolute-managed-fast-path-executable
         )
-        add_test(NAME absolute.run-keep-lifetime COMMAND "${CMAKE_BINARY_DIR}/keep-lifetime-app")
-        set_tests_properties(absolute.run-keep-lifetime PROPERTIES
-            FIXTURES_REQUIRED absolute-keep-lifetime-executable
-            PASS_REGULAR_EXPRESSION "keep-lifetime=ok"
+        add_test(NAME absolute.run-managed-fast-path COMMAND "${CMAKE_BINARY_DIR}/managed-fast-path-app")
+        set_tests_properties(absolute.run-managed-fast-path PROPERTIES
+            FIXTURES_REQUIRED absolute-managed-fast-path-executable
+            PASS_REGULAR_EXPRESSION "managed-fast-path="
+        )
+        add_test(
+            NAME absolute.build-raw-lifetime
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/raw-lifetime.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/raw-lifetime-app"
+        )
+        set_tests_properties(absolute.build-raw-lifetime PROPERTIES
+            FIXTURES_SETUP absolute-raw-lifetime-executable
+        )
+        add_test(NAME absolute.run-raw-lifetime COMMAND "${CMAKE_BINARY_DIR}/raw-lifetime-app")
+        set_tests_properties(absolute.run-raw-lifetime PROPERTIES
+            FIXTURES_REQUIRED absolute-raw-lifetime-executable
+            PASS_REGULAR_EXPRESSION "raw-lifetime=ok"
         )
         add_test(
             NAME absolute.build-flow-analysis

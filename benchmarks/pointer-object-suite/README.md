@@ -2,7 +2,7 @@
 
 This suite measures four pointer-heavy workloads in Release mode:
 
-- `managed-deref`: 50 million read/modify/write operations through one pointer or object reference. Absolute uses its generation-checked managed pointer.
+- `managed-deref`: 50 million read/modify/write operations through one pointer or object reference. Absolute uses its generation-checked managed pointer. For a local owner whose lifetime is proven stable, codegen resolves the slot once and reuses the checked address; subscribers and unknown lifetimes retain checked dereference.
 - `heap-nodes`: allocates 131,072 separate heap nodes, performs 20 million pseudo-random mutations, then releases native nodes where the language exposes deterministic release.
 - `arena-graph`: builds a shuffled cycle of 1,048,576 nodes in primitive arenas and follows five million links. Absolute and C++ use raw pointer arithmetic for the arena loads.
 - `object-tree`: builds 131,071 linked objects in a `Node -> BinaryNode -> AddNode/XorNode` hierarchy and repeatedly traverses it through virtual/dynamic calls.
