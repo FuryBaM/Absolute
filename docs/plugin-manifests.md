@@ -10,6 +10,7 @@ capabilities that other plugins consume.
   "version": "1.2.0",
   "abi": 1,
   "library": "absolute-shader-opengl.dll",
+  "editor": "absolute-shader-opengl.editor.json",
   "nativeLibraries": ["absolute-shader-runtime.lib", "opengl32.lib"],
   "dependencies": {
     "absolute.shader": ">=1.0.0 <2.0.0",
@@ -28,6 +29,13 @@ match `ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION`.
 builds an executable. Relative files are resolved beside the manifest; bare
 system library names such as `user32.lib` or `pthread` are passed through. This
 lets one plugin package contain a compiler adapter and a separate runtime.
+
+`editor` points to an optional JSON sidecar consumed by IDE extensions without
+loading native code into the editor process. Schema version 1 supports
+`keywords`, `namespaces`, `types`, `functions`, and `snippets`; types may include
+`members`. Entries can contain `name`, `detail`, `documentation`, and an
+optional snippet. The Absolute VS Code extension follows dependency manifests
+recursively and combines their editor metadata.
 
 Dependencies may use the compact name-to-range object shown above. The resolver
 looks for `<name>.absplugin` and then `<name-with-dots-replaced-by-dashes>.absplugin`

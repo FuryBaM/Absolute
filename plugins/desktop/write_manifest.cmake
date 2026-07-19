@@ -17,6 +17,7 @@ file(WRITE "${OUTPUT}"
   \"version\": \"1.0.0\",
   \"abi\": 1,
   \"library\": \"${PLUGIN_NAME}\",
+  \"editor\": \"absolute-desktop.editor.json\",
   \"nativeLibraries\": [${NATIVE_LIBRARIES}],
   \"provides\": [\"desktop.window\", \"desktop.framebuffer\", \"desktop.input\"],
   \"dependencies\": {}

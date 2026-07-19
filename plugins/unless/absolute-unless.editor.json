@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "plugin": "absolute.unless",
+  "keywords": [
+    { "name": "unless", "detail": "unless (condition) statement", "documentation": "Executes the statement when the condition is false.", "snippet": "unless (${1:condition}) {\n    ${0}\n}" }
+  ]
+}

@@ -228,6 +228,27 @@ See `plugins/desktop/README.md` and `examples/desktop/window.abs` for build and
 run commands. The generated `.absplugin` manifest automatically links its native
 runtime and Win32 libraries.
 
+### VS Code extension
+
+`absolute-extension` provides plugin-aware completion, hover information,
+semantic highlighting, manifest diagnostics, build/run commands, and native
+debugging through `cppvsdbg` or `cppdbg`. It reads `.absproj` plugin roots,
+follows `.absplugin` dependencies, and consumes their safe `editor` JSON
+sidecars without loading native DLL/SO code into VS Code.
+
+Install the packaged extension:
+
+```powershell
+code --install-extension absolute-extension\absolute-extension-0.2.1.vsix --force
+```
+
+Use `F5` to build and debug or `Ctrl+F5` to build and run. Compiler paths,
+custom build commands, extra plugin roots, search paths, and debugger selection
+are available under the `absolute.*` VS Code settings.
+
+`.absproj` files are directly runnable. Use `Absolute: Open Project` to open a
+project folder, or right-click an `.absproj` and choose Run/Debug Project.
+
 Emit verified textual LLVM IR:
 
 ```bash

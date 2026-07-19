@@ -1993,8 +1993,45 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(ArrayExpr* expr) {
-        (void)expr;
-        impl->Fail("array literal requires an array variable initializer");
+        llvm::Function* function = impl->CurrentFunction();
+        if (!function) impl->Fail("array literal outside a function is not a runtime expression");
+
+        const std::string typeName = impl->SemanticType(expr);
+        const size_t rank = ArrayRankName(typeName);
+        if (rank == 0) impl->Fail("array literal does not have an array type");
+        const auto shape = InferArrayShape(*expr);
+        if (!shape) impl->Fail("array literal must be rectangular");
+        if (shape->size() != rank)
+            impl->Fail("array literal rank does not match its semantic type");
+
+        const std::string elementTypeName = ArrayElementTypeName(typeName, rank);
+        llvm::Type* elementType = impl->TypeFromName(elementTypeName);
+        std::vector<Expression*> values;
+        FlattenArrayValues(*expr, values);
+
+        llvm::Value* elementCount = impl->builder.getInt64(values.size());
+        llvm::AllocaInst* address = impl->builder.CreateAlloca(
+            elementType, elementCount, "array.literal.storage");
+        address->setAlignment(llvm::Align(16));
+        llvm::Value* byteCount = impl->builder.getInt64(
+            static_cast<std::uint64_t>(values.size()) * impl->SizeOfTypeName(elementTypeName));
+        impl->builder.CreateMemSet(address, impl->builder.getInt8(0),
+            byteCount, llvm::MaybeAlign(16));
+
+        for (size_t index = 0; index < values.size(); ++index) {
+            llvm::Value* initial = impl->Coerce(impl->Evaluate(values[index]), elementType);
+            llvm::Value* destination = impl->builder.CreateInBoundsGEP(
+                elementType, address, impl->builder.getInt64(index), "array.literal.element");
+            impl->builder.CreateStore(initial, destination);
+        }
+
+        std::vector<llvm::Value*> dimensions;
+        dimensions.reserve(shape->size());
+        for (size_t size : *shape) dimensions.push_back(impl->builder.getInt64(size));
+        impl->value = impl->BuildArrayDescriptor(
+            {address, elementType, typeName, std::move(dimensions)});
+        impl->valueCreatesManagedOwner = false;
+        impl->valueManagedPointee = nullptr;
     }
 
     void CodeGenerator::Visit(AssignmentExpr* expr) {
@@ -2113,8 +2150,6 @@ namespace Absolute {
         }
         if (ArrayRankName(declaredTypeName) > 0) {
             if (!expr->value) impl->Fail("array view declaration requires an initializer");
-            if (dynamic_cast<ArrayExpr*>(expr->value.get()))
-                impl->Fail("use a sized array declarator for an array literal");
             Impl::ArrayView view = impl->ArrayViewFromValue(
                 impl->Evaluate(expr->value.get()), declaredTypeName);
             if (!impl->scopes.back().emplace(name,

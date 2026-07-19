@@ -23,6 +23,10 @@ int32[] makeSquares() {
     return values[];
 }
 
+int32[] makeLiteral() {
+    return {8, 13, 21};
+}
+
 int32 main() {
     assert(sum(globalValues[]) == 30, "global array parameter");
     assert(sum(inferredGlobal[]) == 10, "inferred global array");
@@ -52,6 +56,12 @@ int32 main() {
 
     int32[] squares = makeSquares();
     assert(sum(squares) == 30, "returned local array lifetime");
+
+    int32[] literalLocal = {3, 1, 4};
+    assert(sum(literalLocal) == 8, "array literal as an unsized initializer");
+    assert(sum({2, 3, 5}) == 10, "array literal as a function argument");
+    int32[] literalReturn = makeLiteral();
+    assert(sum(literalReturn) == 42, "array literal as a return expression");
 
     int32 checksum = sum(globalValues[]) + sum(inferredGlobal[]) +
         sum(middle) + filtered + sum(returned) + sum(squares);

@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "plugin": "absolute.desktop",
+  "namespaces": [
+    { "name": "Desktop", "documentation": "Native windows, input, timing, and software framebuffer rendering." }
+  ],
+  "types": [
+    {
+      "name": "Desktop.Window",
+      "detail": "class Desktop.Window",
+      "documentation": "Managed Absolute wrapper around a native Win32 or X11 window.",
+      "snippet": "new Desktop.Window(${1:\"Absolute\"}, ${2:800}, ${3:450}, ${4:true})",
+      "members": [
+        { "name": "poll", "detail": "bool poll()", "documentation": "Processes pending OS events and returns whether the window remains open." },
+        { "name": "isOpen", "detail": "bool isOpen()" },
+        { "name": "close", "detail": "void close()", "documentation": "Destroys the native window handle." },
+        { "name": "setTitle", "detail": "void setTitle(string title)" },
+        { "name": "width", "detail": "int32 width()" },
+        { "name": "height", "detail": "int32 height()" },
+        { "name": "clear", "detail": "void clear(uint32 color)" },
+        { "name": "pixel", "detail": "void pixel(int32 x, int32 y, uint32 color)" },
+        { "name": "fillRect", "detail": "void fillRect(int32 x, int32 y, int32 width, int32 height, uint32 color)" },
+        { "name": "present", "detail": "void present()" },
+        { "name": "keyDown", "detail": "bool keyDown(int32 key)" },
+        { "name": "mouseX", "detail": "int32 mouseX()" },
+        { "name": "mouseY", "detail": "int32 mouseY()" },
+        { "name": "mouseDown", "detail": "bool mouseDown(int32 button)" }
+      ]
+    }
+  ],
+  "functions": [
+    { "name": "Desktop.rgb", "detail": "uint32 Desktop.rgb(int32 red, int32 green, int32 blue)", "documentation": "Creates a 0x00RRGGBB framebuffer color.", "snippet": "Desktop.rgb(${1:255}, ${2:255}, ${3:255})" },
+    { "name": "Desktop.time", "detail": "double Desktop.time()", "documentation": "Returns monotonic high-resolution time in seconds." },
+    { "name": "Desktop.sleep", "detail": "void Desktop.sleep(int32 milliseconds)", "snippet": "Desktop.sleep(${1:16})" }
+  ],
+  "snippets": [
+    {
+      "label": "desktop window loop",
+      "detail": "Create a window and run an event/render loop",
+      "body": "auto ${1:window} = new Desktop.Window(${2:\"Absolute\"}, ${3:800}, ${4:450}, true);\nwhile ($1.poll()) {\n    $1.clear(Desktop.rgb(18, 22, 32));\n    ${0}\n    $1.present();\n}\n$1.close();"
+    }
+  ]
+}

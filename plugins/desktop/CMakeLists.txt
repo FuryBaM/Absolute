@@ -41,6 +41,9 @@ set_target_properties(Absolute-Desktop-Plugin PROPERTIES
 add_dependencies(Absolute-Desktop-Plugin Absolute-Desktop-Runtime)
 
 add_custom_command(TARGET Absolute-Desktop-Plugin POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/absolute-desktop.editor.json"
+        "$<TARGET_FILE_DIR:Absolute-Desktop-Plugin>/absolute-desktop.editor.json"
     COMMAND "${CMAKE_COMMAND}"
         "-DOUTPUT=$<TARGET_FILE_DIR:Absolute-Desktop-Plugin>/absolute-desktop.absplugin"
         "-DPLUGIN_LIBRARY=$<TARGET_FILE:Absolute-Desktop-Plugin>"

@@ -10,4 +10,8 @@ set_target_properties(Absolute-Unless-Plugin PROPERTIES
     PREFIX ""
     OUTPUT_NAME "absolute-unless"
 )
-
+add_custom_command(TARGET Absolute-Unless-Plugin POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/absolute-unless.editor.json"
+        "$<TARGET_FILE_DIR:Absolute-Unless-Plugin>/absolute-unless.editor.json"
+)

@@ -1,0 +1,60 @@
+namespace Demo.Chess {
+    string[] initialBoard() {
+        return {
+            "rnbqkbnr",
+            "pppppppp",
+            "........",
+            "........",
+            "........",
+            "........",
+            "PPPPPPPP",
+            "RNBQKBNR"
+        };
+    }
+
+    int32 printBoard(string[] board) {
+        println("  a b c d e f g h");
+        for (int32 rank = 0; rank < 8; rank = rank + 1) {
+            string row = board[rank];
+            println(format("{} {}", 8 - rank, row));
+        }
+        return 0;
+    }
+
+    int32 play() {
+        println("=== Chess Demo ===");
+
+        string[] startBoard = initialBoard();
+        println("Start position:");
+        printBoard(startBoard);
+
+        string[] afterE4E5 = {
+            "rnbqkbnr",
+            "pppppppp",
+            "........",
+            "....p...",
+            "....P...",
+            "........",
+            "PPPP.PPP",
+            "RNBQKBNR"
+        };
+        println("\n1. e4 e5");
+        printBoard(afterE4E5);
+
+        string[] afterNf3 = {
+            "rnbqkbnr",
+            "pppppppp",
+            "........",
+            "....p...",
+            "....P...",
+            "...N....",
+            "PPPP.PPP",
+            "RNBQKBNR"
+        };
+        println("\n2. Nf3");
+        printBoard(afterNf3);
+
+        println("\nChess demo finished.");
+        return 0;
+    }
+}

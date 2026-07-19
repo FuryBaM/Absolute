@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "plugin": "absolute.math",
+  "namespaces": [
+    { "name": "Math", "documentation": "Math functions, vectors, matrices, and camera transforms." }
+  ],
+  "types": [
+    { "name": "vec2", "detail": "plugin type vec2", "snippet": "new vec2(${1:0.0}, ${2:0.0})" },
+    { "name": "vec3", "detail": "plugin type vec3", "snippet": "new vec3(${1:0.0}, ${2:0.0}, ${3:0.0})" },
+    { "name": "mat3", "detail": "plugin type mat3" },
+    { "name": "mat4", "detail": "plugin type mat4" }
+  ],
+  "functions": [
+    { "name": "Math.abs", "detail": "int32|double Math.abs(value)" },
+    { "name": "Math.sqrt", "detail": "double Math.sqrt(double value)" },
+    { "name": "Math.sin", "detail": "double Math.sin(double radians)" },
+    { "name": "Math.cos", "detail": "double Math.cos(double radians)" },
+    { "name": "Math.projection", "detail": "void Math.projection(mat4* output, double fov, double aspect, double near, double far)" },
+    { "name": "Math.lookAt", "detail": "void Math.lookAt(mat4* output, vec3* eye, vec3* center, vec3* up)" }
+  ]
+}

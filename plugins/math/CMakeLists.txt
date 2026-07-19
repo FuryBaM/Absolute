@@ -10,4 +10,8 @@ set_target_properties(Absolute-Math-Plugin PROPERTIES
     PREFIX ""
     OUTPUT_NAME "absolute-math"
 )
-
+add_custom_command(TARGET Absolute-Math-Plugin POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/absolute-math.editor.json"
+        "$<TARGET_FILE_DIR:Absolute-Math-Plugin>/absolute-math.editor.json"
+)
