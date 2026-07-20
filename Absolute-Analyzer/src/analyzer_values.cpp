@@ -192,7 +192,18 @@ namespace Absolute {
             if (!declared) Report("object '" + name + "' is already declared in this scope");
             else id = *declared;
         }
-        if (Symbol* symbol = table.Get(id)) symbol->isConst = expr->isConst;
+        if (Symbol* symbol = table.Get(id)) {
+            symbol->isConst = expr->isConst;
+            if (ArrayRank(type) > 0) {
+                bool storageEscapes = globalDeclaration || IsExplicitArrayCopy(expr->value.get());
+                if (const Symbol* source = table.Get(value.symbol)) {
+                    storageEscapes = storageEscapes || source->arrayStorageEscapes ||
+                        source->scopeDepth == 0 || source->kind == SymbolKind::Function ||
+                        source->kind == SymbolKind::Method;
+                }
+                symbol->arrayStorageEscapes = storageEscapes;
+            }
+        }
         if (IsManagedPointerType(type)) {
             if (Symbol* symbol = table.Get(id)) {
                 symbol->managedOwner = value.createsManagedOwner;

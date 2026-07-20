@@ -139,6 +139,17 @@ namespace Absolute {
         const Result value = EvaluateExpected(stmt->expr.get(), currentReturnType);
         if (!IsAssignable(currentReturnType, value.type))
             Report("return type '" + value.type + "' does not match '" + currentReturnType + "'");
+        if (ArrayRank(currentReturnType) > 0 && value.type != "error") {
+            bool storageEscapes = IsExplicitArrayCopy(stmt->expr.get());
+            if (const Symbol* symbol = table.Get(value.symbol)) {
+                storageEscapes = storageEscapes || symbol->arrayStorageEscapes ||
+                    symbol->scopeDepth == 0 || symbol->kind == SymbolKind::Function ||
+                    symbol->kind == SymbolKind::Method;
+            }
+            if (!storageEscapes)
+                Report("returning a local array or borrowed slice requires copy(...)",
+                    "E_ARRAY_RETURN_REQUIRES_COPY", value.symbol);
+        }
         if (value.pointerValidity == PointerValidity::Deleted || value.pointerValidity == PointerValidity::Expired)
             Report("return expression contains an invalid pointer", "E_RETURN_INVALID_POINTER", value.symbol);
         else if (value.pointerValidity == PointerValidity::MaybeInvalid)

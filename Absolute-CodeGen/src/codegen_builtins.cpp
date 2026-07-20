@@ -63,6 +63,31 @@ namespace Absolute {
             return;
         }
 
+        if (name == "copy") {
+            if (expression.arguments.size() != 1)
+                Fail("copy expects exactly one array or slice argument");
+            Expression* argument = expression.arguments.front().get();
+            const std::string typeName = SemanticType(argument);
+            const size_t rank = ArrayRankName(typeName);
+            if (rank == 0) Fail("copy expects an array or slice");
+
+            ArrayView source = ViewOfArray(argument);
+            llvm::Value* elementCount = builder.getInt64(1);
+            for (llvm::Value* dimension : source.dimensions)
+                elementCount = builder.CreateMul(elementCount, dimension, "copy.element.count");
+            llvm::Value* byteCount = builder.CreateMul(elementCount,
+                builder.getInt64(SizeOfTypeName(ArrayElementTypeName(typeName, rank))),
+                "copy.byte.count");
+            llvm::Value* copiedData = builder.CreateCall(Malloc(), {byteCount}, "copy.data");
+            builder.CreateMemCpy(copiedData, llvm::MaybeAlign(16),
+                source.address, llvm::MaybeAlign(1), byteCount);
+            source.address = copiedData;
+            value = BuildArrayDescriptor(source);
+            valueCreatesManagedOwner = false;
+            valueManagedPointee = nullptr;
+            return;
+        }
+
         Fail("unknown builtin function '" + name + "'");
     }
 

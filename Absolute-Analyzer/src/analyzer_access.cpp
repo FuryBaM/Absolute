@@ -152,6 +152,22 @@ namespace Absolute {
                 return;
             }
 
+            if (callName == "copy") {
+                if (arguments.size() != 1) {
+                    Report("copy expects exactly one array or slice argument", "E_COPY_ARGUMENT_COUNT");
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                if (ArrayRank(arguments.front().type) == 0 && arguments.front().type != "error") {
+                    Report("copy expects an array or slice, got '" + arguments.front().type + "'",
+                        "E_COPY_ARGUMENT_TYPE");
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                Save(expr, {table.Lookup(callName), arguments.front().type, false});
+                return;
+            }
+
             if (arguments.empty()) {
                 Report("format expects a string literal template");
             }

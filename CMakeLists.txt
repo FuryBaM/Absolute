@@ -327,6 +327,15 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-advanced.abs"
     )
     add_test(
+        NAME absolute.array-copy-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-copy.abs"
+    )
+    add_test(
+        NAME absolute.array-copy-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-copy-errors.abs"
+    )
+    set_tests_properties(absolute.array-copy-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.chess-rules-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/chess-rules.abs"
     )
@@ -633,6 +642,14 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-array-advanced-ir
         )
         add_test(
+            NAME absolute.emit-array-copy
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-copy.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/array-copy.ll"
+        )
+        set_tests_properties(absolute.emit-array-copy PROPERTIES
+            FIXTURES_SETUP absolute-array-copy-ir
+        )
+        add_test(
             NAME absolute.emit-chess-rules
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/chess-rules.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/chess-rules.ll"
@@ -750,6 +767,14 @@ if(BUILD_TESTING)
             set_tests_properties(absolute.run-array-advanced PROPERTIES
                 FIXTURES_REQUIRED absolute-array-advanced-ir
                 PASS_REGULAR_EXPRESSION "advanced-arrays=227"
+            )
+            add_test(
+                NAME absolute.run-array-copy
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/array-copy.ll"
+            )
+            set_tests_properties(absolute.run-array-copy PROPERTIES
+                FIXTURES_REQUIRED absolute-array-copy-ir
+                PASS_REGULAR_EXPRESSION "array-copy=ok"
             )
             add_test(
                 NAME absolute.run-chess-rules

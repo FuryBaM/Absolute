@@ -63,26 +63,8 @@ namespace Absolute {
             impl->builder.CreateRetVoid();
             return;
         }
-        llvm::Value* result = nullptr;
-        if (ArrayRankName(impl->currentReturnTypeName) > 0) {
-            Impl::ArrayView source = impl->ArrayViewFromValue(
-                impl->Evaluate(stmt->expr.get()), impl->currentReturnTypeName);
-            llvm::Value* elementCount = impl->builder.getInt64(1);
-            for (llvm::Value* dimension : source.dimensions)
-                elementCount = impl->builder.CreateMul(elementCount, dimension, "return.array.element.count");
-            llvm::Value* byteCount = impl->builder.CreateMul(elementCount,
-                impl->builder.getInt64(impl->SizeOfTypeName(
-                    ArrayElementTypeName(impl->currentReturnTypeName,
-                        ArrayRankName(impl->currentReturnTypeName)))),
-                "return.array.byte.count");
-            llvm::Value* copiedData = impl->builder.CreateCall(
-                impl->Malloc(), {byteCount}, "return.array.data");
-            impl->builder.CreateMemCpy(copiedData, llvm::MaybeAlign(16),
-                source.address, llvm::MaybeAlign(1), byteCount);
-            source.address = copiedData;
-            result = impl->BuildArrayDescriptor(source);
-        }
-        else result = impl->Coerce(impl->Evaluate(stmt->expr.get()), function->getReturnType());
+        llvm::Value* result = impl->Coerce(
+            impl->Evaluate(stmt->expr.get()), function->getReturnType());
         SymbolId transferredOwner = InvalidSymbolId;
         if (IsManagedPointerTypeName(impl->currentReturnTypeName)) {
             const auto* returnedIdentifier = dynamic_cast<IdentifierExpr*>(stmt->expr.get());

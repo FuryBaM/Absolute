@@ -368,7 +368,7 @@ namespace Absolute {
 
     bool CodeGenerator::Impl::IsBuiltinFunction(const std::string& name) const {
         return name == "print" || name == "println" || name == "format" ||
-            name == "toString" || name == "assert";
+            name == "toString" || name == "assert" || name == "copy";
     }
 
     llvm::FunctionCallee CodeGenerator::Impl::Printf() {

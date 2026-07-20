@@ -51,6 +51,7 @@ namespace Absolute {
         bool externalFunction = false;
         bool isConst = false;
         bool isStatic = false;
+        bool arrayStorageEscapes = false;
         AccessLevel access = AccessLevel::Public;
         std::string memberOwner;
         std::vector<std::string> genericParameters;

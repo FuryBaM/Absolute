@@ -14,17 +14,17 @@ int32 firstLegacy(int32 values[]) {
 }
 
 int32[] copyTail(int32[] values) {
-    int32[] tail = values[1:4];
+    int32[] tail = copy(values[1:4]);
     return tail;
 }
 
 int32[] makeSquares() {
     int32 values[4] = {1, 4, 9, 16};
-    return values[];
+    return copy(values[]);
 }
 
 int32[] makeLiteral() {
-    return {8, 13, 21};
+    return copy({8, 13, 21});
 }
 
 int32 main() {
