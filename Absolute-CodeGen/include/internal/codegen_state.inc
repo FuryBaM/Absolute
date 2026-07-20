@@ -173,6 +173,7 @@
         bool addressMode = false;
         llvm::Value* addressValue = nullptr;
         std::string currentReturnTypeName;
+        llvm::Value* currentReturnStorage = nullptr;
         std::string currentClassName;
         std::unordered_map<std::string, std::string> currentGenericSubstitutions;
         llvm::Value* currentThis = nullptr;

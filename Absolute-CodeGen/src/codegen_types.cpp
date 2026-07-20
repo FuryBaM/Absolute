@@ -589,10 +589,11 @@ namespace Absolute {
 
     llvm::FunctionType* CodeGenerator::Impl::MethodFunctionType(const ClassMethod& method) {
         std::vector<llvm::Type*> parameters;
+        if (AbiReturnOffset(method.returnType) != 0) parameters.push_back(builder.getPtrTy());
         if (!method.isStatic) parameters.push_back(builder.getPtrTy());
         for (const std::string& parameter : method.parameterTypes)
-            parameters.push_back(TypeFromName(parameter));
-        return llvm::FunctionType::get(TypeFromName(method.returnType), parameters, false);
+            parameters.push_back(AbiParameterType(parameter));
+        return llvm::FunctionType::get(AbiReturnType(method.returnType), parameters, false);
     }
 
     llvm::Function* CodeGenerator::Impl::DeclareMethodFunction(const ClassMethod& method) {
@@ -604,8 +605,9 @@ namespace Absolute {
             Fail("conflicting method declaration '" + method.linkName + "'");
         function->setCallingConv(llvm::CallingConv::C);
         ApplyCallableAttributes(*function, *method.statement);
-        const unsigned offset = method.isStatic ? 0U : 1U;
-        if (!method.isStatic) function->getArg(0)->setName("this");
+        unsigned offset = AbiReturnOffset(method.returnType);
+        if (offset != 0) function->getArg(0)->setName("__result");
+        if (!method.isStatic) function->getArg(offset++)->setName("this");
         for (size_t index = 0; index < method.statement->parameters.size(); ++index)
             function->getArg(static_cast<unsigned>(index) + offset)->setName(
                 IdentifierName(method.statement->parameters[index]->name.get()));
@@ -712,7 +714,7 @@ namespace Absolute {
         std::vector<llvm::Type*> parameters{builder.getPtrTy()};
         if (info.constructor)
             for (const auto& parameter : info.constructor->parameters)
-                parameters.push_back(TypeFromName(SubstituteCodegenType(
+                parameters.push_back(AbiParameterType(SubstituteCodegenType(
                     DeclaredTypeName(*parameter), info.substitutions)));
         llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
         const std::string name = info.name + ".__ctor";
@@ -733,7 +735,7 @@ namespace Absolute {
         if (!info.constructor) return nullptr;
         std::vector<llvm::Type*> parameters{builder.getPtrTy()};
         for (const auto& parameter : info.constructor->parameters)
-            parameters.push_back(TypeFromName(SubstituteCodegenType(
+            parameters.push_back(AbiParameterType(SubstituteCodegenType(
                 DeclaredTypeName(*parameter), info.substitutions)));
         llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
         const std::string name = info.name + ".__ctor";

@@ -102,13 +102,18 @@ namespace Absolute {
 
         std::vector<llvm::Type*> parameterTypes;
         std::vector<std::string> parameterTypeNames;
-        parameterTypes.reserve(statement.parameters.size());
+        const bool external = statement.IsExternal();
+        const std::string returnTypeName = specialization
+            ? specialization->type : ResolveTypeName(statement.returnType.get());
+        parameterTypes.reserve(statement.parameters.size() + AbiReturnOffset(returnTypeName, external));
         parameterTypeNames.reserve(statement.parameters.size());
+        if (AbiReturnOffset(returnTypeName, external) != 0)
+            parameterTypes.push_back(builder.getPtrTy());
         for (size_t index = 0; index < statement.parameters.size(); ++index) {
             const auto& parameter = statement.parameters[index];
             parameterTypeNames.push_back(specialization
                 ? specialization->parameterTypes[index] : DeclaredTypeName(*parameter));
-            parameterTypes.push_back(TypeFromName(parameterTypeNames.back()));
+            parameterTypes.push_back(AbiParameterType(parameterTypeNames.back(), external));
         }
 
         const Symbol* symbol = specialization ? specialization : (analyzer
@@ -119,7 +124,7 @@ namespace Absolute {
             functionLinkNames[sourceName] = functionName;
 
         llvm::FunctionType* functionType = llvm::FunctionType::get(
-            specialization ? TypeFromName(specialization->type) : ResolveType(statement.returnType.get()),
+            AbiReturnType(returnTypeName, external),
             parameterTypes, false);
         if (llvm::Function* existing = module->getFunction(functionName)) {
             if (existing->getFunctionType() != functionType)
@@ -132,11 +137,11 @@ namespace Absolute {
         function->setCallingConv(llvm::CallingConv::C);
         ApplyCallableAttributes(*function, statement);
 
-        size_t index = 0;
-        for (llvm::Argument& argument : function->args()) {
-            const std::string name = IdentifierName(statement.parameters[index++]->name.get());
-            argument.setName(name);
-        }
+        unsigned argumentIndex = 0;
+        if (AbiReturnOffset(returnTypeName, external) != 0)
+            function->getArg(argumentIndex++)->setName("__result");
+        for (const auto& parameter : statement.parameters)
+            function->getArg(argumentIndex++)->setName(IdentifierName(parameter->name.get()));
         return function;
     }
 
@@ -167,35 +172,25 @@ namespace Absolute {
         builder.SetInsertPoint(entry);
         PushScope();
         const std::string oldReturnTypeName = currentReturnTypeName;
+        llvm::Value* oldReturnStorage = currentReturnStorage;
         currentReturnTypeName = specialization
             ? specialization->type : ResolveTypeName(statement.returnType.get());
+        unsigned argumentIndex = 0;
+        currentReturnStorage = AbiReturnOffset(currentReturnTypeName) != 0
+            ? function->getArg(argumentIndex++) : nullptr;
 
-        size_t index = 0;
-        for (llvm::Argument& argument : function->args()) {
-            const auto& parameter = statement.parameters[index++];
-            const std::string name = IdentifierName(parameter->name.get());
+        for (size_t index = 0; index < statement.parameters.size(); ++index) {
+            const auto& parameter = statement.parameters[index];
             const std::string typeName = specialization
-                ? specialization->parameterTypes[index - 1] : DeclaredTypeName(*parameter);
-            if (ArrayRankName(typeName) > 0) {
-                ArrayView view = ArrayViewFromValue(&argument, typeName);
-                if (!scopes.back().emplace(name,
-                    Variable{view.address, view.elementType, typeName, false,
-                        true, view.elementType, view.dimensions, nullptr, InvalidSymbolId}).second) {
-                    Fail("duplicate parameter '" + name + "'");
-                }
-                continue;
-            }
-            llvm::AllocaInst* address = CreateEntryAlloca(*function, argument.getType(), name);
-            builder.CreateStore(&argument, address);
-            if (!scopes.back().emplace(name,
-                Variable{address, argument.getType(), typeName, false, false, nullptr, {},
-                    nullptr, SemanticSymbol(parameter.get())}).second) {
-                Fail("duplicate parameter '" + name + "'");
-            }
+                ? specialization->parameterTypes[index] : DeclaredTypeName(*parameter);
+            BindCallableParameter(*function->getArg(argumentIndex++), *parameter, typeName);
         }
 
         if (statement.body) statement.body->Accept(visitor);
         if (!builder.GetInsertBlock()->getTerminator()) {
+            if (currentReturnStorage)
+                builder.CreateStore(llvm::Constant::getNullValue(
+                    TypeFromName(currentReturnTypeName)), currentReturnStorage);
             if (function->getReturnType()->isVoidTy()) builder.CreateRetVoid();
             else builder.CreateRet(llvm::Constant::getNullValue(function->getReturnType()));
         }
@@ -209,19 +204,30 @@ namespace Absolute {
 
         PopScope();
         currentReturnTypeName = oldReturnTypeName;
+        currentReturnStorage = oldReturnStorage;
         builder.ClearInsertionPoint();
         currentGenericSubstitutions = oldSubstitutions;
         currentNamespace = oldNamespace;
     }
 
-    void CodeGenerator::Impl::BindCallableParameter(llvm::Argument& argument, VarDeclExpr& parameter) {
+    void CodeGenerator::Impl::BindCallableParameter(
+        llvm::Argument& argument, VarDeclExpr& parameter, const std::string& explicitTypeName) {
         const std::string name = IdentifierName(parameter.name.get());
-        const std::string typeName = DeclaredTypeName(parameter);
+        const std::string typeName = explicitTypeName.empty()
+            ? SubstituteCodegenType(DeclaredTypeName(parameter), currentGenericSubstitutions)
+            : explicitTypeName;
         if (ArrayRankName(typeName) > 0) {
             ArrayView view = ArrayViewFromValue(&argument, typeName);
             if (!scopes.back().emplace(name,
                 Variable{view.address, view.elementType, typeName, false,
                     true, view.elementType, view.dimensions, nullptr, InvalidSymbolId}).second)
+                Fail("duplicate parameter '" + name + "'");
+            return;
+        }
+        if (IsIndirectValueType(typeName)) {
+            if (!scopes.back().emplace(name,
+                Variable{&argument, TypeFromName(typeName), typeName, false, false, nullptr, {},
+                    nullptr, SemanticSymbol(&parameter)}).second)
                 Fail("duplicate parameter '" + name + "'");
             return;
         }
@@ -235,6 +241,9 @@ namespace Absolute {
 
     void CodeGenerator::Impl::FinishClassCallable(llvm::Function& function) {
         if (!builder.GetInsertBlock()->getTerminator()) {
+            if (currentReturnStorage)
+                builder.CreateStore(llvm::Constant::getNullValue(
+                    TypeFromName(currentReturnTypeName)), currentReturnStorage);
             if (function.getReturnType()->isVoidTy()) builder.CreateRetVoid();
             else builder.CreateRet(llvm::Constant::getNullValue(function.getReturnType()));
         }
@@ -255,26 +264,38 @@ namespace Absolute {
         const std::string oldClass = currentClassName;
         llvm::Value* oldThis = currentThis;
         const std::string oldReturn = currentReturnTypeName;
+        llvm::Value* oldReturnStorage = currentReturnStorage;
         const auto oldSubstitutions = currentGenericSubstitutions;
         currentGenericSubstitutions = method.substitutions;
         currentClassName = info.name;
-        currentThis = method.isStatic ? nullptr : function->getArg(0);
         currentReturnTypeName = ResolveTypeName(method.statement->returnType.get());
-        const unsigned offset = method.isStatic ? 0U : 1U;
+        const unsigned returnOffset = AbiReturnOffset(method.returnType);
+        currentReturnStorage = returnOffset != 0 ? function->getArg(0) : nullptr;
+        currentThis = method.isStatic ? nullptr : function->getArg(returnOffset);
+        const unsigned offset = returnOffset + (method.isStatic ? 0U : 1U);
         for (size_t index = 0; index < method.statement->parameters.size(); ++index)
             BindCallableParameter(*function->getArg(static_cast<unsigned>(index) + offset),
-                *method.statement->parameters[index]);
+                *method.statement->parameters[index], method.parameterTypes[index]);
         if (method.statement->autoPropertyAccessor) {
             llvm::Value* storage = ImplicitFieldAddress(
                 PropertyBackingFieldName(method.statement->propertyName));
             if (!storage) Fail("missing auto-property storage for '" +
                 method.statement->propertyName + "'");
             if (method.statement->propertyAccessor == PropertyAccessorKind::Getter) {
-                builder.CreateRet(builder.CreateLoad(
-                    TypeFromName(method.returnType), storage, "auto.property.value"));
+                llvm::Value* propertyValue = builder.CreateLoad(
+                    TypeFromName(method.returnType), storage, "auto.property.value");
+                if (currentReturnStorage) {
+                    builder.CreateStore(propertyValue, currentReturnStorage);
+                    builder.CreateRetVoid();
+                }
+                else builder.CreateRet(propertyValue);
             }
             else {
-                builder.CreateStore(function->getArg(1), storage);
+                llvm::Value* assigned = function->getArg(offset);
+                if (IsIndirectValueType(method.parameterTypes.front()))
+                    assigned = builder.CreateLoad(
+                        TypeFromName(method.parameterTypes.front()), assigned, "auto.property.input");
+                builder.CreateStore(assigned, storage);
                 builder.CreateRetVoid();
             }
         }
@@ -284,6 +305,7 @@ namespace Absolute {
         currentClassName = oldClass;
         currentThis = oldThis;
         currentReturnTypeName = oldReturn;
+        currentReturnStorage = oldReturnStorage;
         currentGenericSubstitutions = oldSubstitutions;
         builder.ClearInsertionPoint();
     }
@@ -313,20 +335,19 @@ namespace Absolute {
             if (ClassNeedsConstructor(base->second)) {
                 llvm::Function* baseConstructor = module->getFunction(info.baseClass + ".__ctor");
                 if (!baseConstructor) Fail("missing base constructor for '" + info.baseClass + "'");
-                std::vector<llvm::Value*> arguments{currentThis};
+                std::vector<llvm::Value*> arguments;
+                std::vector<std::string> parameterTypes;
                 if (info.constructor && info.constructor->hasExplicitBaseCall) {
-                    for (size_t index = 0; index < info.constructor->baseArguments.size(); ++index) {
-                        if (index + 1 >= baseConstructor->arg_size())
-                            Fail("too many base constructor arguments for '" + info.baseClass + "'");
-                        arguments.push_back(Coerce(Evaluate(
-                            info.constructor->baseArguments[index].get()),
-                            baseConstructor->getFunctionType()->getParamType(
-                                static_cast<unsigned>(index + 1))));
-                    }
+                    for (const auto& argument : info.constructor->baseArguments)
+                        arguments.push_back(Evaluate(argument.get()));
                 }
-                if (arguments.size() != baseConstructor->arg_size())
-                    Fail("invalid base constructor argument count for '" + info.baseClass + "'");
-                builder.CreateCall(baseConstructor, arguments);
+                if (base->second.constructor) {
+                    for (const auto& parameter : base->second.constructor->parameters)
+                        parameterTypes.push_back(SubstituteCodegenType(
+                            DeclaredTypeName(*parameter), base->second.substitutions));
+                }
+                EmitAbiCall(baseConstructor->getFunctionType(), baseConstructor, "void",
+                    {currentThis}, parameterTypes, arguments, "base.constructor.result");
                 EmitExceptionCheck();
             }
         }
@@ -360,19 +381,23 @@ namespace Absolute {
         const std::string oldClass = currentClassName;
         llvm::Value* oldThis = currentThis;
         const std::string oldReturn = currentReturnTypeName;
+        llvm::Value* oldReturnStorage = currentReturnStorage;
         currentClassName = info.name;
-        currentThis = method.isStatic ? nullptr : function->getArg(0);
         currentReturnTypeName = ResolveTypeName(method.statement->returnType.get());
-        const unsigned offset = method.isStatic ? 0U : 1U;
+        const unsigned returnOffset = AbiReturnOffset(method.returnType);
+        currentReturnStorage = returnOffset != 0 ? function->getArg(0) : nullptr;
+        currentThis = method.isStatic ? nullptr : function->getArg(returnOffset);
+        const unsigned offset = returnOffset + (method.isStatic ? 0U : 1U);
         for (size_t index = 0; index < method.statement->parameters.size(); ++index)
             BindCallableParameter(*function->getArg(static_cast<unsigned>(index) + offset),
-                *method.statement->parameters[index]);
+                *method.statement->parameters[index], method.parameterTypes[index]);
         method.statement->body->Accept(visitor);
         FinishClassCallable(*function);
         PopScope();
         currentClassName = oldClass;
         currentThis = oldThis;
         currentReturnTypeName = oldReturn;
+        currentReturnStorage = oldReturnStorage;
         builder.ClearInsertionPoint();
     }
 
@@ -394,26 +419,38 @@ namespace Absolute {
         const std::string oldClass = currentClassName;
         llvm::Value* oldThis = currentThis;
         const std::string oldReturn = currentReturnTypeName;
+        llvm::Value* oldReturnStorage = currentReturnStorage;
         const auto oldSubstitutions = currentGenericSubstitutions;
         currentGenericSubstitutions = method.substitutions;
         currentClassName = info.name;
-        currentThis = method.isStatic ? nullptr : function->getArg(0);
         currentReturnTypeName = ResolveTypeName(method.statement->returnType.get());
-        const unsigned offset = method.isStatic ? 0U : 1U;
+        const unsigned returnOffset = AbiReturnOffset(method.returnType);
+        currentReturnStorage = returnOffset != 0 ? function->getArg(0) : nullptr;
+        currentThis = method.isStatic ? nullptr : function->getArg(returnOffset);
+        const unsigned offset = returnOffset + (method.isStatic ? 0U : 1U);
         for (size_t index = 0; index < method.statement->parameters.size(); ++index)
             BindCallableParameter(*function->getArg(static_cast<unsigned>(index) + offset),
-                *method.statement->parameters[index]);
+                *method.statement->parameters[index], method.parameterTypes[index]);
         if (method.statement->autoPropertyAccessor) {
             llvm::Value* storage = ImplicitFieldAddress(
                 PropertyBackingFieldName(method.statement->propertyName));
             if (!storage) Fail("missing auto-property storage for '" +
                 method.statement->propertyName + "'");
             if (method.statement->propertyAccessor == PropertyAccessorKind::Getter) {
-                builder.CreateRet(builder.CreateLoad(
-                    TypeFromName(method.returnType), storage, "auto.property.value"));
+                llvm::Value* propertyValue = builder.CreateLoad(
+                    TypeFromName(method.returnType), storage, "auto.property.value");
+                if (currentReturnStorage) {
+                    builder.CreateStore(propertyValue, currentReturnStorage);
+                    builder.CreateRetVoid();
+                }
+                else builder.CreateRet(propertyValue);
             }
             else {
-                builder.CreateStore(function->getArg(1), storage);
+                llvm::Value* assigned = function->getArg(offset);
+                if (IsIndirectValueType(method.parameterTypes.front()))
+                    assigned = builder.CreateLoad(
+                        TypeFromName(method.parameterTypes.front()), assigned, "auto.property.input");
+                builder.CreateStore(assigned, storage);
                 builder.CreateRetVoid();
             }
         }
@@ -423,6 +460,7 @@ namespace Absolute {
         currentClassName = oldClass;
         currentThis = oldThis;
         currentReturnTypeName = oldReturn;
+        currentReturnStorage = oldReturnStorage;
         currentGenericSubstitutions = oldSubstitutions;
         builder.ClearInsertionPoint();
     }
@@ -501,6 +539,7 @@ namespace Absolute {
         taskThunkCounter = 0;
         currentClassName.clear();
         currentThis = nullptr;
+        currentReturnStorage = nullptr;
         currentGenericSubstitutions.clear();
 
         CollectClassDeclarations(program.statements);

@@ -185,14 +185,14 @@ namespace Absolute {
         if (impl->phase != Impl::Phase::EmitBodies) return;
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("return outside a function");
-        if (function->getReturnType()->isVoidTy()) {
+        if (function->getReturnType()->isVoidTy() && !impl->currentReturnStorage) {
             impl->EmitTransferCleanups(0, true);
             if (impl->builder.GetInsertBlock()->getTerminator()) return;
             impl->builder.CreateRetVoid();
             return;
         }
         llvm::Value* result = impl->Coerce(
-            impl->Evaluate(stmt->expr.get()), function->getReturnType());
+            impl->Evaluate(stmt->expr.get()), impl->TypeFromName(impl->currentReturnTypeName));
         SymbolId transferredOwner = InvalidSymbolId;
         if (IsManagedPointerTypeName(impl->currentReturnTypeName)) {
             const auto* returnedIdentifier = dynamic_cast<IdentifierExpr*>(stmt->expr.get());
@@ -203,7 +203,11 @@ namespace Absolute {
         }
         impl->EmitTransferCleanups(0, true, transferredOwner);
         if (impl->builder.GetInsertBlock()->getTerminator()) return;
-        impl->builder.CreateRet(result);
+        if (impl->currentReturnStorage) {
+            impl->builder.CreateStore(result, impl->currentReturnStorage);
+            impl->builder.CreateRetVoid();
+        }
+        else impl->builder.CreateRet(result);
     }
 
     void CodeGenerator::Visit(AssignmentStmt* stmt) {

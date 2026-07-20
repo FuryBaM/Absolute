@@ -802,6 +802,15 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-structs-codegen-ir
         )
         add_test(
+            NAME absolute.check-struct-value-abi
+            COMMAND "${CMAKE_COMMAND}"
+                -DINPUT=${CMAKE_BINARY_DIR}/structs-codegen.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-struct-value-abi.cmake"
+        )
+        set_tests_properties(absolute.check-struct-value-abi PROPERTIES
+            FIXTURES_REQUIRED absolute-structs-codegen-ir
+        )
+        add_test(
             NAME absolute.emit-managed-fast-path
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-fast-path.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/managed-fast-path.ll"

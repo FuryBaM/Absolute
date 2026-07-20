@@ -59,11 +59,13 @@ add_library(Absolute-CodeGen STATIC
     include/codegen.h
     include/codegen_internal.h
     include/codegen_pch.h
+    include/internal/codegen_abi.inc
     include/internal/codegen_module.inc
     include/internal/codegen_runtime.inc
     include/internal/codegen_state.inc
     include/internal/codegen_types.inc
     src/codegen.cpp
+    src/codegen_abi.cpp
     src/codegen_access.cpp
     src/codegen_builtins.cpp
     src/codegen_core.cpp

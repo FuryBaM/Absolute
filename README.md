@@ -557,6 +557,13 @@ A struct cannot contain itself by value because that would have infinite size;
 use `raw T*` or `T*` for recursive links. Structs do not have inheritance or
 virtual dispatch and therefore carry no class vtable field.
 
+The generated Absolute ABI passes structs up to 16 bytes directly. Larger
+structs use an isolated caller-side argument copy and a hidden result pointer,
+so mutating a by-value parameter never aliases the source. This applies equally
+to functions, methods, properties, and constructors. `extern "C"` declarations
+continue to use the platform C ABI. The exact lowering and copy-elision rules
+are documented in [docs/value-type-abi.md](docs/value-type-abi.md).
+
 ## Static members
 
 Classes, structs, and interfaces support static fields and methods. Access them

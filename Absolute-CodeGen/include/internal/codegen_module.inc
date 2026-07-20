@@ -12,7 +12,8 @@
 
         void EmitFunction(FunctionDeclStmt& statement, const Symbol* specialization);
 
-        void BindCallableParameter(llvm::Argument& argument, VarDeclExpr& parameter);
+        void BindCallableParameter(llvm::Argument& argument, VarDeclExpr& parameter,
+            const std::string& typeName = {});
 
         void FinishClassCallable(llvm::Function& function);
 

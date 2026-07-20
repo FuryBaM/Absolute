@@ -102,6 +102,9 @@ objects.
 
 Runtime ABI changes affect emitted LLVM signatures and are therefore versioned
 design changes. Update Runtime, CodeGen and native runtime tests together.
+The internal value-type calling convention is specified separately in
+`docs/value-type-abi.md`; aggregate signatures and their callers must always be
+lowered by the same CodeGen version.
 Language exceptions use the portable thread-local state and explicit
 exceptional edges specified in `docs/error-model.md`; native C++ EH must not
 cross generated, C ABI, task, or plugin boundaries.

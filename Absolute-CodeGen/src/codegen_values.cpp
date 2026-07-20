@@ -383,16 +383,17 @@ namespace Absolute {
             Impl::ClassInfo& info = impl->classes.at(pointeeType);
             impl->InitializeObject(pointer, info);
             if (llvm::Function* constructor = impl->module->getFunction(info.name + ".__ctor")) {
-                std::vector<llvm::Value*> arguments{pointer};
-                for (size_t index = 0; index < expr->arguments.size(); ++index) {
-                    if (index + 1 >= constructor->arg_size())
-                        impl->Fail("too many constructor arguments for '" + info.name + "'");
-                    arguments.push_back(impl->Coerce(impl->Evaluate(expr->arguments[index].get()),
-                        constructor->getFunctionType()->getParamType(static_cast<unsigned>(index + 1))));
+                std::vector<llvm::Value*> arguments;
+                std::vector<std::string> parameterTypes;
+                for (const auto& argument : expr->arguments)
+                    arguments.push_back(impl->Evaluate(argument.get()));
+                if (info.constructor) {
+                    for (const auto& parameter : info.constructor->parameters)
+                        parameterTypes.push_back(SubstituteCodegenType(
+                            impl->DeclaredTypeName(*parameter), info.substitutions));
                 }
-                if (arguments.size() != constructor->arg_size())
-                    impl->Fail("invalid constructor argument count for '" + info.name + "'");
-                impl->builder.CreateCall(constructor, arguments);
+                impl->EmitAbiCall(constructor->getFunctionType(), constructor, "void",
+                    {pointer}, parameterTypes, arguments, "constructor.result");
                 impl->EmitExceptionCheck(
                     rawAllocation ? nullptr : result,
                     rawAllocation ? pointer : nullptr);
@@ -411,16 +412,15 @@ namespace Absolute {
             if (info.constructor) {
                 llvm::Function* constructor = impl->module->getFunction(info.name + ".__ctor");
                 if (!constructor) impl->Fail("missing constructor for '" + info.name + "'");
-                std::vector<llvm::Value*> arguments{pointer};
-                for (size_t index = 0; index < expr->arguments.size(); ++index) {
-                    if (index + 1 >= constructor->arg_size())
-                        impl->Fail("too many constructor arguments for '" + info.name + "'");
-                    arguments.push_back(impl->Coerce(impl->Evaluate(expr->arguments[index].get()),
-                        constructor->getFunctionType()->getParamType(static_cast<unsigned>(index + 1))));
-                }
-                if (arguments.size() != constructor->arg_size())
-                    impl->Fail("invalid constructor argument count for '" + info.name + "'");
-                impl->builder.CreateCall(constructor, arguments);
+                std::vector<llvm::Value*> arguments;
+                std::vector<std::string> parameterTypes;
+                for (const auto& argument : expr->arguments)
+                    arguments.push_back(impl->Evaluate(argument.get()));
+                for (const auto& parameter : info.constructor->parameters)
+                    parameterTypes.push_back(SubstituteCodegenType(
+                        impl->DeclaredTypeName(*parameter), info.substitutions));
+                impl->EmitAbiCall(constructor->getFunctionType(), constructor, "void",
+                    {pointer}, parameterTypes, arguments, "constructor.result");
                 impl->EmitExceptionCheck(
                     rawAllocation ? nullptr : result,
                     rawAllocation ? pointer : nullptr);
