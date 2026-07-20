@@ -1,7 +1,39 @@
 #include "analyzer_internal.h"
 
 namespace Absolute {
-    void Analyzer::Visit(SingleStatement* stmt) { AcceptIfPresent(stmt->expr, *this); }
+    namespace {
+        struct OpaqueAttributeViews {
+            std::vector<std::vector<AbsoluteAttributeArgumentV1>> argumentStorage;
+            std::vector<AbsoluteAttributeV1> attributes;
+
+            explicit OpaqueAttributeViews(const Statement& statement) {
+                argumentStorage.resize(statement.attributes.size());
+                attributes.reserve(statement.attributes.size());
+                for (size_t index = 0; index < statement.attributes.size(); ++index) {
+                    const Attribute& source = statement.attributes[index];
+                    auto& arguments = argumentStorage[index];
+                    arguments.reserve(source.arguments.size());
+                    for (const AttributeArgument& argument : source.arguments) {
+                        arguments.push_back({
+                            argument.name.empty() ? nullptr : argument.name.c_str(),
+                            argument.name.size(),
+                            static_cast<uint32_t>(argument.value.kind),
+                            argument.value.text.c_str(),
+                            argument.value.text.size()
+                        });
+                    }
+                    attributes.push_back({source.name.c_str(), source.name.size(),
+                        arguments.size(), arguments.empty() ? nullptr : arguments.data()});
+                }
+            }
+        };
+    }
+
+    void Analyzer::Visit(SingleStatement* stmt) {
+        if (phase == Phase::ResolveBodies && !stmt->attributes.empty())
+            ValidateAttributes(*stmt, "statement", false);
+        AcceptIfPresent(stmt->expr, *this);
+    }
 
     void Analyzer::Visit(CompoundStmt* stmt) {
         if (phase == Phase::CollectDeclarations && currentType.empty()) return;
@@ -37,6 +69,7 @@ namespace Absolute {
                     {SymbolKind::Method, ResolveType(stmt->returnType.get()), ResolveParameterTypes(stmt->parameters)});
         }
         else if (!currentType.empty() && types[currentType].kind == TypeKind::Interface) {
+            ValidateAttributes(*stmt, "interface method", true);
             const std::string returnType = ResolveType(stmt->returnType.get());
             if (!IsKnownType(returnType))
                 Report("unknown return type '" + returnType + "' of interface method '" +
@@ -56,7 +89,10 @@ namespace Absolute {
                 Report("interface method '" + currentType + "." + stmt->name->value +
                     "' has an unsupported modifier");
         }
-        else ResolveFunction(*stmt, currentType.empty() ? SymbolKind::Function : SymbolKind::Method);
+        else {
+            ValidateAttributes(*stmt, currentType.empty() ? "function" : "method", true);
+            ResolveFunction(*stmt, currentType.empty() ? SymbolKind::Function : SymbolKind::Method);
+        }
     }
 
     void Analyzer::Visit(ReturnStmt* stmt) {
@@ -84,6 +120,8 @@ namespace Absolute {
 
     void Analyzer::Visit(AssignmentStmt* stmt) { if (phase == Phase::ResolveBodies) AcceptIfPresent(stmt->expr, *this); }
     void Analyzer::Visit(VarDeclStmt* stmt) {
+        if (phase == Phase::ResolveBodies && !stmt->attributes.empty())
+            ValidateAttributes(*stmt, functionDepth == 0 ? "variable declaration" : "local declaration", false);
         AcceptIfPresent(stmt->expr, *this);
         if (phase != Phase::ResolveBodies || functionDepth == 0 || !stmt->expr) return;
         const ExpressionInfo* declaration = GetExpressionInfo(*stmt->expr);
@@ -624,6 +662,8 @@ namespace Absolute {
     }
 
     void Analyzer::Visit(ImportStmt* stmt) {
+        if (phase == Phase::ResolveBodies && !stmt->attributes.empty())
+            ValidateAttributes(*stmt, "import declaration", false);
         if (stmt->isFile) return;
         importedNamespaces.insert(stmt->target);
         if (phase == Phase::ResolveBodies && !namespaces.contains(stmt->target))
@@ -631,6 +671,8 @@ namespace Absolute {
     }
 
     void Analyzer::Visit(NamespaceDeclStmt* stmt) {
+        if (phase == Phase::ResolveBodies && !stmt->attributes.empty())
+            ValidateAttributes(*stmt, "namespace declaration", false);
         const std::string oldNamespace = currentNamespace;
         const std::string namespaceName = Qualify(stmt->name);
         if (phase == Phase::CollectDeclarations && namespaces.insert(namespaceName).second) {
@@ -643,12 +685,16 @@ namespace Absolute {
     }
 
     void Analyzer::Visit(OpaquePluginStmt* stmt) {
-        if (phase != Phase::ResolveBodies || !stmt || !stmt->node.vtable ||
-            !stmt->node.vtable->validate) return;
+        if (phase != Phase::ResolveBodies || !stmt) return;
+        ValidateAttributes(*stmt, "plugin declaration", false);
+        if (!stmt->node.vtable || !stmt->node.vtable->validate) return;
+        OpaqueAttributeViews attributeViews(*stmt);
         AbsoluteOpaqueValidationContextV1 context{
             ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION,
             static_cast<uint32_t>(functionDepth),
-            currentNamespace.c_str()
+            currentNamespace.c_str(),
+            attributeViews.attributes.size(),
+            attributeViews.attributes.empty() ? nullptr : attributeViews.attributes.data()
         };
         const char* errorMessage = nullptr;
         int32_t valid = 0;

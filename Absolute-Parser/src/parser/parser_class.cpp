@@ -5,6 +5,7 @@ namespace Absolute {
     std::unique_ptr<ClassDeclStmt> Parser::ParseClassDecl()
     {
         std::vector<Token> modifiers = this->modifiers;
+        std::vector<Attribute> attributes = this->attributes;
         std::vector<std::string> parents;
 
         Consume(TokenType::KEYWORD, "class"); // class
@@ -59,6 +60,7 @@ namespace Absolute {
         ExitScope();
         auto stmt = std::make_unique<ClassDeclStmt>(identifier->value, std::move(parents), templateParams, std::move(body));
         stmt->modifiers = modifiers;
+        stmt->attributes = std::move(attributes);
         return stmt;
     }
 }

@@ -306,6 +306,7 @@ namespace Absolute {
     private:
         void AnalyzeProgram(Program& program);
         void Report(std::string message, std::string code = {}, SymbolId symbol = InvalidSymbolId);
+        void ValidateAttributes(const Statement& statement, const std::string& target, bool callableTarget);
         Result Evaluate(Expression* expression);
         Result EvaluateExpected(Expression* expression, const std::string& type);
         std::string ResolveType(Expression* expression);

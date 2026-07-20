@@ -5,6 +5,7 @@ namespace Absolute {
     std::unique_ptr<StructDeclStmt> Parser::ParseStructDecl()
     {
         std::vector<Token> declarationModifiers = modifiers;
+        std::vector<Attribute> declarationAttributes = attributes;
         Consume(TokenType::KEYWORD, "struct");
         Token* identifier = Consume(TokenType::IDENTIFIER);
 
@@ -22,6 +23,7 @@ namespace Absolute {
         auto statement = std::make_unique<StructDeclStmt>(
             identifier->value, std::move(body->statements));
         statement->modifiers = std::move(declarationModifiers);
+        statement->attributes = std::move(declarationAttributes);
         return statement;
     }
 }

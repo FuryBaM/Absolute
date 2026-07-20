@@ -96,6 +96,23 @@ namespace {
             lastError = "shader requires at least one output";
         }
         else {
+            for (size_t index = 0; index < context->attribute_count; ++index) {
+                const AbsoluteAttributeV1& attribute = context->attributes[index];
+                const std::string name(attribute.name, attribute.name_length);
+                if (name != "shader.stage") continue;
+                if (attribute.argument_count != 1 || !attribute.arguments) {
+                    lastError = "@shader.stage requires one stage name";
+                    if (errorMessage) *errorMessage = lastError.c_str();
+                    return 0;
+                }
+                const AbsoluteAttributeArgumentV1& argument = attribute.arguments[0];
+                const std::string stage(argument.value, argument.value_length);
+                if (argument.value_kind != ABSOLUTE_ATTRIBUTE_IDENTIFIER || stage != shader.stage) {
+                    lastError = "@shader.stage must match the shader block stage";
+                    if (errorMessage) *errorMessage = lastError.c_str();
+                    return 0;
+                }
+            }
             if (errorMessage) *errorMessage = nullptr;
             return 1;
         }
@@ -118,6 +135,8 @@ namespace {
            << shader.inputs.size() << "\n";
         ir << "@absolute.shader." << shader.stage << ".output_count = constant i32 "
            << shader.outputs.size() << "\n";
+        ir << "@absolute.shader." << shader.stage << ".metadata_count = constant i32 "
+           << context->attribute_count << "\n";
         ir << "define void @absolute.shader." << shader.stage << "() {\n";
         ir << "entry:\n  ret void\n}\n";
         shader.moduleIr = ir.str();

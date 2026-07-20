@@ -107,6 +107,10 @@ exceptional edges specified in `docs/error-model.md`; native C++ EH must not
 cross generated, C ABI, task, or plugin boundaries.
 Lexical `defer` actions are stored per CodeGen scope and emitted in LIFO order
 by the same transfer-cleanup path, without runtime callback registration.
+Declaration attributes are stored as constant metadata in the core AST.
+CodeGen consumes compiler attributes such as `@inline`, while qualified
+attributes are exposed to opaque plugin validation and LLVM callbacks through
+the C ABI described in `docs/attributes.md`.
 
 ## Plugins
 

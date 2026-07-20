@@ -6,6 +6,7 @@ the resulting payload, validates it during semantic analysis, and emits a
 standalone LLVM IR module during code generation.
 
 ```absolute
+@shader.stage(Vertex)
 shader Vertex {
     input position;
     input normal;
@@ -13,7 +14,8 @@ shader Vertex {
 }
 ```
 
-The example emits `absolute.shader.Vertex`, plus input/output count globals.
+The example validates the qualified attribute received from the host and emits
+`absolute.shader.Vertex`, plus input/output and metadata count globals.
 This is deliberately a small shader DSL: a production plugin can replace the
 payload and callbacks with a real shader AST, type checker, SPIR-V/DXIL
 compiler, reflection data, or LLVM lowering without changing the Absolute AST.

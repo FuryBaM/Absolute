@@ -1,3 +1,4 @@
+@shader.stage(Vertex)
 shader Vertex {
     input position;
     input normal;

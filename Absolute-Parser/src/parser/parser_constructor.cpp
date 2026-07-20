@@ -41,6 +41,7 @@ namespace Absolute {
     std::unique_ptr<ConstructorDeclStmt> Parser::ParseConstructor()
     {
         std::vector<Token> modifiers = this->modifiers;
+        std::vector<Attribute> attributes = this->attributes;
         Token* name = Consume(TokenType::IDENTIFIER);
 
         std::vector<std::unique_ptr<VarDeclExpr>> parameters = ParseParameters();
@@ -48,6 +49,7 @@ namespace Absolute {
         std::unique_ptr<Statement> body = ParseStatement();
         auto stmt = std::make_unique<ConstructorDeclStmt>(std::make_unique<Token>(*name), std::move(parameters), std::move(body));
         stmt->modifiers = modifiers;
+        stmt->attributes = std::move(attributes);
         return stmt;
     }
 }

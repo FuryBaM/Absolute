@@ -188,6 +188,15 @@ current scope exits. It runs for normal completion and every control-transfer
 path, and can satisfy raw-owner deletion and task-await lifetime checks. See
 [docs/defer.md](docs/defer.md) for syntax and ordering rules.
 
+## Attributes
+
+Declarations and opaque plugin blocks can carry compile-time attributes such
+as `@inline`, `@noinline`, `@deprecated("message")`, or qualified plugin
+metadata like `@shader.stage(Vertex)`. Arguments are constant positional or
+named values. Qualified attributes are passed to opaque plugins during
+validation and LLVM emission. See [docs/attributes.md](docs/attributes.md) for
+the target and argument rules.
+
 ## Syntax plugins
 
 New keywords and syntax that can be expressed using existing Absolute constructs

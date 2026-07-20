@@ -5,6 +5,7 @@ namespace Absolute {
     std::unique_ptr<InterfaceDeclStmt> Parser::ParseInterfaceDecl()
     {
         std::vector<Token> declarationModifiers = modifiers;
+        std::vector<Attribute> declarationAttributes = attributes;
         std::vector<std::string> parents;
         Consume(TokenType::KEYWORD, "interface");
         Token* identifier = Consume(TokenType::IDENTIFIER);
@@ -27,12 +28,14 @@ namespace Absolute {
         try {
             while (CurrentToken() && !(CurrentToken()->type == TokenType::BRACKET &&
                 CurrentToken()->value == "}")) {
+                ParseAttributes();
                 ParseModifiers();
                 if (!LooksLikeFunctionDeclaration()) {
                     ReportSyntaxError(CurrentToken(), "Interfaces may only contain method signatures");
                     throw std::runtime_error("Invalid interface member");
                 }
                 std::vector<Token> methodModifiers = modifiers;
+                std::vector<Attribute> methodAttributes = attributes;
                 std::unique_ptr<TypeExpr> returnType = ParseType();
                 Token* methodName = Consume(TokenType::IDENTIFIER);
                 auto parameters = ParseParameters();
@@ -41,6 +44,7 @@ namespace Absolute {
                     std::move(returnType), std::make_unique<Token>(*methodName),
                     std::move(parameters), nullptr);
                 method->modifiers = std::move(methodModifiers);
+                method->attributes = std::move(methodAttributes);
                 methods.push_back(std::move(method));
             }
             if (!CurrentToken()) {
@@ -58,6 +62,7 @@ namespace Absolute {
         auto statement = std::make_unique<InterfaceDeclStmt>(
             identifier->value, std::move(parents), std::move(methods));
         statement->modifiers = std::move(declarationModifiers);
+        statement->attributes = std::move(declarationAttributes);
         return statement;
     }
 }

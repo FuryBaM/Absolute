@@ -42,6 +42,7 @@ namespace Absolute {
     std::unique_ptr<FunctionDeclStmt> Parser::ParseFunctionDeclaration()
     {
         std::vector<Token> modifiers = this->modifiers;
+        std::vector<Attribute> attributes = this->attributes;
         std::unique_ptr<TypeExpr> returnType = ParseType();
         Token* identifier = Consume(TokenType::IDENTIFIER);
 
@@ -62,12 +63,14 @@ namespace Absolute {
             std::move(body)
         );
         stmt->modifiers = modifiers;
+        stmt->attributes = std::move(attributes);
         return stmt;
     }
 
     std::unique_ptr<FunctionDeclStmt> Parser::ParseExternalFunctionDeclaration()
     {
         std::vector<Token> modifiers = this->modifiers;
+        std::vector<Attribute> attributes = this->attributes;
         Consume(TokenType::KEYWORD, "extern");
         Token* abiToken = Consume(TokenType::STRING);
         if (!abiToken || abiToken->value != "\"C\"") {
@@ -91,6 +94,7 @@ namespace Absolute {
             std::move(parameters), nullptr);
         statement->externalAbi = "C";
         statement->modifiers = std::move(modifiers);
+        statement->attributes = std::move(attributes);
         return statement;
     }
 

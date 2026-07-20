@@ -397,6 +397,7 @@ namespace Absolute {
         if (function->getFunctionType() != type)
             Fail("conflicting method declaration '" + method.linkName + "'");
         function->setCallingConv(llvm::CallingConv::C);
+        ApplyCallableAttributes(*function, *method.statement);
         function->getArg(0)->setName("this");
         for (size_t index = 0; index < method.statement->parameters.size(); ++index)
             function->getArg(static_cast<unsigned>(index + 1))->setName(
@@ -415,6 +416,7 @@ namespace Absolute {
         if (!function)
             function = llvm::Function::Create(type, llvm::Function::ExternalLinkage, name, *module);
         function->setCallingConv(llvm::CallingConv::C);
+        ApplyCallableAttributes(*function, *info.constructor);
         function->getArg(0)->setName("this");
         for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
             function->getArg(static_cast<unsigned>(index + 1))->setName(
@@ -435,6 +437,7 @@ namespace Absolute {
         if (function->getFunctionType() != type)
             Fail("conflicting constructor declaration '" + name + "'");
         function->setCallingConv(llvm::CallingConv::C);
+        ApplyCallableAttributes(*function, *info.constructor);
         function->getArg(0)->setName("this");
         for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
             function->getArg(static_cast<unsigned>(index + 1))->setName(

@@ -29,6 +29,7 @@ namespace Absolute {
         if (variableDeclaration) {
             auto stmt = std::make_unique<VarDeclStmt>(std::move(variableDeclaration));
             stmt->modifiers = modifiers;
+            stmt->attributes = attributes;
             return stmt;
         }
         return nullptr;

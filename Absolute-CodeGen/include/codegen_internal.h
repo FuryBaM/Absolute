@@ -92,6 +92,13 @@ namespace Absolute {
                 [&](const Token& modifier) { return modifier.value == name; });
         }
 
+        inline void ApplyCallableAttributes(llvm::Function& function, const Statement& statement) {
+            if (statement.FindAttribute("inline"))
+                function.addFnAttr(llvm::Attribute::AlwaysInline);
+            if (statement.FindAttribute("noinline"))
+                function.addFnAttr(llvm::Attribute::NoInline);
+        }
+
         inline size_t ArrayRankName(std::string type) {
             size_t rank = 0;
             while (type.ends_with("[]")) {

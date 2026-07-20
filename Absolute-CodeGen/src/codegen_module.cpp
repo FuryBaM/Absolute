@@ -105,11 +105,13 @@ namespace Absolute {
         if (llvm::Function* existing = module->getFunction(functionName)) {
             if (existing->getFunctionType() != functionType)
                 Fail("conflicting declarations for external symbol '" + functionName + "'");
+            ApplyCallableAttributes(*existing, statement);
             return existing;
         }
         llvm::Function* function = llvm::Function::Create(
             functionType, llvm::Function::ExternalLinkage, functionName, *module);
         function->setCallingConv(llvm::CallingConv::C);
+        ApplyCallableAttributes(*function, statement);
 
         size_t index = 0;
         for (llvm::Argument& argument : function->args()) {

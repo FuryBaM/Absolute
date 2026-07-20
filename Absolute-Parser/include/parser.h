@@ -11,6 +11,7 @@ namespace Absolute {
     public:
         std::vector<Token> tokens;
         std::vector<Token> modifiers;
+        std::vector<Attribute> attributes;
         size_t pos = 0;
 
         Parser(std::vector<Token> tokens) : tokens(std::move(tokens)) {}
@@ -51,6 +52,7 @@ namespace Absolute {
         Token* Consume(TokenType tokenType, const std::string& expectedValue);
 
         void ParseModifiers();
+        void ParseAttributes();
         bool LooksLikeFunctionDeclaration() const;
         void ConsumeTemplateClose();
         bool IsTemplateArgumentList(size_t start, size_t* close = nullptr) const;

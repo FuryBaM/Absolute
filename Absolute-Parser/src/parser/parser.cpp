@@ -147,6 +147,7 @@ namespace Absolute{
 
     std::unique_ptr<Statement> Parser::ParseStatement()
     {
+        ParseAttributes();
         ParseModifiers();
 
         Token* token = CurrentToken();
@@ -154,7 +155,19 @@ namespace Absolute{
 
         if (auto opaque = TryParseOpaquePluginStatement(tokens, pos)) {
             opaque->modifiers = modifiers;
+            opaque->attributes = attributes;
             return opaque;
+        }
+
+        if (!attributes.empty() && token->type != TokenType::IDENTIFIER &&
+            !(token->type == TokenType::KEYWORD &&
+                (IsPrimitiveType(token->value) || token->value == "raw" ||
+                    token->value == "class" || token->value == "struct" ||
+                    token->value == "interface" || token->value == "enum" ||
+                    token->value == "group" || token->value == "extern" ||
+                    token->value == "namespace" || token->value == "import"))) {
+            ReportSyntaxError(token, "Attributes may only precede declarations or opaque plugin blocks");
+            throw std::runtime_error("Invalid attribute target");
         }
 
         if (LooksLikeFunctionDeclaration()) return ParseFunctionDeclaration();

@@ -4,6 +4,7 @@
 namespace Absolute {
     std::unique_ptr<EnumDeclStmt> Parser::ParseEnumDecl() {
         std::vector<Token> modifiers = this->modifiers;
+        std::vector<Attribute> attributes = this->attributes;
         std::vector<std::string> members;
 
         Consume(TokenType::KEYWORD, "enum");
@@ -31,11 +32,13 @@ namespace Absolute {
 
         auto stmt = std::make_unique<EnumDeclStmt>(name->value, members);
         stmt->modifiers = modifiers;
+        stmt->attributes = std::move(attributes);
         return stmt;
     }
 
     std::unique_ptr<GroupDeclStmt> Parser::ParseGroupDecl() {
         std::vector<Token> modifiers = this->modifiers;
+        std::vector<Attribute> attributes = this->attributes;
         std::vector<std::unique_ptr<EnumDeclStmt>> enums;
         std::vector<std::unique_ptr<GroupDeclStmt>> groups;
 
@@ -69,6 +72,7 @@ namespace Absolute {
 
         auto stmt = std::make_unique<GroupDeclStmt>(name->value, std::move(enums), std::move(groups));
         stmt->modifiers = modifiers;
+        stmt->attributes = std::move(attributes);
         return stmt;
     }
 }

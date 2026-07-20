@@ -22,6 +22,7 @@ namespace Absolute {
                 Consume(TokenType::DELIMITER, ";");
                 auto stmt = std::make_unique<SingleStatement>(std::move(expr));
                 stmt->modifiers = modifiers;
+                stmt->attributes = attributes;
                 return stmt;
             }
         }

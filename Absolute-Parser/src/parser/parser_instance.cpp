@@ -17,9 +17,11 @@ namespace Absolute {
     std::unique_ptr<SingleStatement> Parser::ParseInstanceDeclStmt()
     {
         std::vector<Token> modifiers = this->modifiers;
+        std::vector<Attribute> attributes = this->attributes;
         std::unique_ptr<InstanceDeclExpr> instanceDecl = ParseInstanceDeclExpr();
         auto stmt = std::make_unique<SingleStatement>(std::move(instanceDecl));
         stmt->modifiers = modifiers;
+        stmt->attributes = std::move(attributes);
         return stmt;
     }
 }

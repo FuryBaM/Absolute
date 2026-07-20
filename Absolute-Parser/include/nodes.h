@@ -1,9 +1,36 @@
 ﻿#ifndef ABSOLUTE_PARSER_NODES_H
 #define ABSOLUTE_PARSER_NODES_H
 
+#include <algorithm>
+
 namespace Absolute {
     class ExpressionVisitor;
     class StatementVisitor;
+
+    enum class AttributeValueKind {
+        Identifier,
+        String,
+        Number,
+        Character,
+        Boolean
+    };
+
+    struct AttributeValue {
+        AttributeValueKind kind = AttributeValueKind::Identifier;
+        std::string text;
+    };
+
+    struct AttributeArgument {
+        std::string name;
+        AttributeValue value;
+    };
+
+    struct Attribute {
+        std::string name;
+        std::vector<AttributeArgument> arguments;
+        int line = 0;
+        int column = 0;
+    };
 
     struct ASTNode {
         virtual ~ASTNode() = default;
@@ -23,6 +50,13 @@ namespace Absolute {
 
     struct Statement : ASTNode {
         std::vector<Token> modifiers;
+        std::vector<Attribute> attributes;
+
+        const Attribute* FindAttribute(const std::string& name) const {
+            const auto found = std::find_if(attributes.begin(), attributes.end(),
+                [&](const Attribute& attribute) { return attribute.name == name; });
+            return found == attributes.end() ? nullptr : &*found;
+        }
 
         virtual void Accept(StatementVisitor& visitor) = 0;
     };

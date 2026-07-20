@@ -54,6 +54,7 @@ namespace Absolute {
             currentType = old;
             return;
         }
+        ValidateAttributes(*stmt, "struct declaration", false);
         const std::string old = currentType;
         currentType = typeName;
         table.EnterScope();
@@ -79,6 +80,7 @@ namespace Absolute {
             currentType = old;
             return;
         }
+        ValidateAttributes(*stmt, "class declaration", false);
         size_t classParentCount = 0;
         for (const std::string& parent : stmt->parents) {
             const std::string resolvedParent = ResolveTypeReference(parent);
@@ -116,6 +118,7 @@ namespace Absolute {
             currentType = old;
             return;
         }
+        ValidateAttributes(*stmt, "interface declaration", false);
         for (const std::string& parent : stmt->parents) {
             const std::string resolvedParent = ResolveTypeReference(parent);
             const auto found = types.find(resolvedParent);
@@ -146,6 +149,7 @@ namespace Absolute {
                 ResolveParameterTypes(stmt->parameters)};
             return;
         }
+        ValidateAttributes(*stmt, "constructor", true);
         if (stmt->name && Qualify(stmt->name->value) != currentType)
             Report("constructor '" + stmt->name->value + "' must match type '" + currentType + "'");
         ++functionDepth;
@@ -182,6 +186,7 @@ namespace Absolute {
 
     void Analyzer::Visit(EnumDeclStmt* stmt) {
         if (phase != Phase::CollectDeclarations) return;
+        ValidateAttributes(*stmt, "enum declaration", false);
         const std::string typeName = Qualify(stmt->name);
         const bool duplicateType = types.contains(typeName);
         DeclareType(stmt->name, TypeKind::Enum);
@@ -204,7 +209,10 @@ namespace Absolute {
     }
 
     void Analyzer::Visit(GroupDeclStmt* stmt) {
-        if (phase == Phase::CollectDeclarations) DeclareType(stmt->name);
+        if (phase == Phase::CollectDeclarations) {
+            ValidateAttributes(*stmt, "group declaration", false);
+            DeclareType(stmt->name);
+        }
         for (const auto& declaration : stmt->enums) if (declaration) declaration->Accept(*this);
         for (const auto& declaration : stmt->subgroups) if (declaration) declaration->Accept(*this);
     }

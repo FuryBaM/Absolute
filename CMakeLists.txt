@@ -270,6 +270,15 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/defer-errors.abs"
     )
     set_tests_properties(absolute.defer-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.attributes-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/attributes.abs"
+    )
+    add_test(
+        NAME absolute.attribute-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/attribute-errors.abs"
+    )
+    set_tests_properties(absolute.attribute-errors PROPERTIES WILL_FAIL TRUE)
     foreach(flow_error IN ITEMS uninitialized-errors pointer-flow-errors)
         add_test(
             NAME "absolute.${flow_error}"
@@ -411,6 +420,23 @@ if(BUILD_TESTING)
         )
         set_tests_properties(absolute.emit-llvm PROPERTIES
             PASS_REGULAR_EXPRESSION "define i32 @main"
+        )
+        add_test(
+            NAME absolute.emit-attributes
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/attributes.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/attributes.ll"
+        )
+        set_tests_properties(absolute.emit-attributes PROPERTIES
+            FIXTURES_SETUP absolute-attributes-ir
+        )
+        add_test(
+            NAME absolute.check-attributes-ir
+            COMMAND "${CMAKE_COMMAND}"
+                -DIR_FILE=${CMAKE_BINARY_DIR}/attributes.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-attributes-ir.cmake"
+        )
+        set_tests_properties(absolute.check-attributes-ir PROPERTIES
+            FIXTURES_REQUIRED absolute-attributes-ir
         )
         add_test(
             NAME absolute.emit-builtins
@@ -835,6 +861,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-defer PROPERTIES
             FIXTURES_REQUIRED absolute-defer-executable
             PASS_REGULAR_EXPRESSION "defer=ok"
+        )
+        add_test(
+            NAME absolute.build-attributes
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/attributes.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/attributes-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-attributes PROPERTIES
+            FIXTURES_SETUP absolute-attributes-executable
+        )
+        add_test(NAME absolute.run-attributes
+            COMMAND "${CMAKE_BINARY_DIR}/attributes-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-attributes PROPERTIES
+            FIXTURES_REQUIRED absolute-attributes-executable
+            PASS_REGULAR_EXPRESSION "attributes=ok"
         )
         add_test(
             NAME absolute.build-unhandled-exception

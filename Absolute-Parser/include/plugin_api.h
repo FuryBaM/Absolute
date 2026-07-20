@@ -88,6 +88,30 @@ typedef const AbsoluteBinaryOperatorTableV1* (*AbsoluteSyntaxPluginBinaryOperato
    owns the payload through this versioned C vtable. */
 typedef struct AbsoluteParserCursorV1 AbsoluteParserCursorV1;
 
+typedef enum AbsoluteAttributeValueKindV1 {
+    ABSOLUTE_ATTRIBUTE_IDENTIFIER = 0,
+    ABSOLUTE_ATTRIBUTE_STRING = 1,
+    ABSOLUTE_ATTRIBUTE_NUMBER = 2,
+    ABSOLUTE_ATTRIBUTE_CHARACTER = 3,
+    ABSOLUTE_ATTRIBUTE_BOOLEAN = 4
+} AbsoluteAttributeValueKindV1;
+
+typedef struct AbsoluteAttributeArgumentV1 {
+    /* name is null for a positional argument. */
+    const char* name;
+    size_t name_length;
+    uint32_t value_kind;
+    const char* value;
+    size_t value_length;
+} AbsoluteAttributeArgumentV1;
+
+typedef struct AbsoluteAttributeV1 {
+    const char* name;
+    size_t name_length;
+    size_t argument_count;
+    const AbsoluteAttributeArgumentV1* arguments;
+} AbsoluteAttributeV1;
+
 typedef size_t (*AbsoluteParserRemainingV1)(void* context);
 typedef const AbsoluteSyntaxTokenV1* (*AbsoluteParserPeekV1)(void* context, size_t offset);
 typedef int32_t (*AbsoluteParserConsumeV1)(
@@ -106,6 +130,8 @@ typedef struct AbsoluteOpaqueValidationContextV1 {
     uint32_t abi_version;
     uint32_t function_depth;
     const char* namespace_name;
+    size_t attribute_count;
+    const AbsoluteAttributeV1* attributes;
 } AbsoluteOpaqueValidationContextV1;
 
 typedef struct AbsoluteOpaqueLlvmContextV1 {
@@ -113,6 +139,8 @@ typedef struct AbsoluteOpaqueLlvmContextV1 {
     const char* module_name;
     const char* target_triple;
     const char* data_layout;
+    size_t attribute_count;
+    const AbsoluteAttributeV1* attributes;
 } AbsoluteOpaqueLlvmContextV1;
 
 typedef int32_t (*AbsoluteOpaqueValidateV1)(

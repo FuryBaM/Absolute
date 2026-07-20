@@ -1,6 +1,34 @@
 #include "codegen_internal.h"
 
 namespace Absolute {
+    namespace {
+        struct OpaqueAttributeViews {
+            std::vector<std::vector<AbsoluteAttributeArgumentV1>> argumentStorage;
+            std::vector<AbsoluteAttributeV1> attributes;
+
+            explicit OpaqueAttributeViews(const Statement& statement) {
+                argumentStorage.resize(statement.attributes.size());
+                attributes.reserve(statement.attributes.size());
+                for (size_t index = 0; index < statement.attributes.size(); ++index) {
+                    const Attribute& source = statement.attributes[index];
+                    auto& arguments = argumentStorage[index];
+                    arguments.reserve(source.arguments.size());
+                    for (const AttributeArgument& argument : source.arguments) {
+                        arguments.push_back({
+                            argument.name.empty() ? nullptr : argument.name.c_str(),
+                            argument.name.size(),
+                            static_cast<uint32_t>(argument.value.kind),
+                            argument.value.text.c_str(),
+                            argument.value.text.size()
+                        });
+                    }
+                    attributes.push_back({source.name.c_str(), source.name.size(),
+                        arguments.size(), arguments.empty() ? nullptr : arguments.data()});
+                }
+            }
+        };
+    }
+
     void CodeGenerator::Visit(SingleStatement* stmt) {
         if (impl->phase == Impl::Phase::EmitBodies && stmt->expr) stmt->expr->Accept(*this);
     }
@@ -476,11 +504,14 @@ namespace Absolute {
         const std::string moduleName = impl->module->getName().str();
         const std::string triple = impl->module->getTargetTriple();
         const std::string dataLayout = impl->module->getDataLayoutStr();
+        OpaqueAttributeViews attributeViews(*stmt);
         AbsoluteOpaqueLlvmContextV1 context{
             ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION,
             moduleName.c_str(),
             triple.c_str(),
-            dataLayout.c_str()
+            dataLayout.c_str(),
+            attributeViews.attributes.size(),
+            attributeViews.attributes.empty() ? nullptr : attributeViews.attributes.data()
         };
         const char* fragmentText = nullptr;
         const char* errorMessage = nullptr;

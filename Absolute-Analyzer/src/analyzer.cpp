@@ -92,6 +92,68 @@ namespace Absolute {
         diagnostics.push_back({std::move(message), std::move(code), symbol});
     }
 
+    void Analyzer::ValidateAttributes(
+        const Statement& statement, const std::string& target, bool callableTarget) {
+        std::unordered_set<std::string> names;
+        bool hasInline = false;
+        bool hasNoInline = false;
+        for (const Attribute& attribute : statement.attributes) {
+            if (target == "statement")
+                Report("attribute '@" + attribute.name + "' requires a declaration or opaque plugin block",
+                    "E_ATTRIBUTE_TARGET");
+            if (!names.insert(attribute.name).second) {
+                Report("duplicate attribute '@" + attribute.name + "' on " + target,
+                    "E_DUPLICATE_ATTRIBUTE");
+                continue;
+            }
+
+            std::unordered_set<std::string> argumentNames;
+            bool sawNamedArgument = false;
+            for (const AttributeArgument& argument : attribute.arguments) {
+                if (argument.name.empty()) {
+                    if (sawNamedArgument)
+                        Report("positional argument follows a named argument in '@" +
+                            attribute.name + "'", "E_ATTRIBUTE_ARGUMENT_ORDER");
+                }
+                else {
+                    sawNamedArgument = true;
+                    if (!argumentNames.insert(argument.name).second)
+                        Report("duplicate named argument '" + argument.name + "' in '@" +
+                            attribute.name + "'", "E_DUPLICATE_ATTRIBUTE_ARGUMENT");
+                }
+            }
+
+            if (attribute.name == "inline" || attribute.name == "noinline") {
+                if (!callableTarget)
+                    Report("attribute '@" + attribute.name + "' is only valid on functions, methods, and constructors",
+                        "E_ATTRIBUTE_TARGET");
+                if (!attribute.arguments.empty())
+                    Report("attribute '@" + attribute.name + "' does not accept arguments",
+                        "E_ATTRIBUTE_ARGUMENTS");
+                hasInline = hasInline || attribute.name == "inline";
+                hasNoInline = hasNoInline || attribute.name == "noinline";
+                continue;
+            }
+            if (attribute.name == "deprecated") {
+                if (attribute.arguments.size() > 1 ||
+                    (!attribute.arguments.empty() &&
+                        (!attribute.arguments.front().name.empty() ||
+                            attribute.arguments.front().value.kind != AttributeValueKind::String))) {
+                    Report("attribute '@deprecated' accepts at most one positional string argument",
+                        "E_ATTRIBUTE_ARGUMENTS");
+                }
+                continue;
+            }
+            if (attribute.name.find('.') == std::string::npos)
+                Report("unknown compiler attribute '@" + attribute.name +
+                    "'; plugin attributes must use a qualified name such as '@vendor.name'",
+                    "E_UNKNOWN_ATTRIBUTE");
+        }
+        if (hasInline && hasNoInline)
+            Report("attributes '@inline' and '@noinline' cannot be used together",
+                "E_CONFLICTING_ATTRIBUTES");
+    }
+
     void Analyzer::PushKeepScope() {
         keepScopes.emplace_back();
         deferredKeepScopes.emplace_back();

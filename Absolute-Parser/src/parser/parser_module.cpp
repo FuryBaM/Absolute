@@ -23,6 +23,7 @@ namespace Absolute {
     }
 
     std::unique_ptr<ImportStmt> Parser::ParseImport() {
+        std::vector<Attribute> declarationAttributes = attributes;
         Consume(TokenType::KEYWORD, "import");
         Token* target = RequireCurrent("an import target");
         bool isFile = target->type == TokenType::STRING;
@@ -33,12 +34,18 @@ namespace Absolute {
         }
         else value = ParseQualifiedName();
         Consume(TokenType::DELIMITER, ";");
-        return std::make_unique<ImportStmt>(std::move(value), isFile);
+        auto statement = std::make_unique<ImportStmt>(std::move(value), isFile);
+        statement->attributes = std::move(declarationAttributes);
+        return statement;
     }
 
     std::unique_ptr<NamespaceDeclStmt> Parser::ParseNamespace() {
+        std::vector<Attribute> declarationAttributes = attributes;
         Consume(TokenType::KEYWORD, "namespace");
         std::string name = ParseQualifiedName();
-        return std::make_unique<NamespaceDeclStmt>(std::move(name), ParseCompoundStatement());
+        auto statement = std::make_unique<NamespaceDeclStmt>(
+            std::move(name), ParseCompoundStatement());
+        statement->attributes = std::move(declarationAttributes);
+        return statement;
     }
 }
