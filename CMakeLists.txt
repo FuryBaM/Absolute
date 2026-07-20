@@ -8,8 +8,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(ABSOLUTE_ENABLE_LLVM "Build the LLVM IR backend" ON)
 option(ABSOLUTE_BUILD_EXAMPLE_PLUGINS "Build example syntax plugins" ON)
 option(ABSOLUTE_USE_COMPILER_CACHE "Use sccache or ccache when available" OFF)
+set(ABSOLUTE_LLVM_ROOT "" CACHE PATH "Root of a native LLVM SDK containing lib/cmake/llvm/LLVMConfig.cmake")
 
-if(MSVC)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(AbsoluteLLVM)
+
+if(MSVC AND CMAKE_GENERATOR MATCHES "Visual Studio")
     add_compile_options(/MP)
 endif()
 
@@ -22,6 +26,10 @@ if(ABSOLUTE_USE_COMPILER_CACHE)
     else()
         message(WARNING "ABSOLUTE_USE_COMPILER_CACHE is ON, but neither sccache nor ccache was found")
     endif()
+endif()
+
+if(ABSOLUTE_ENABLE_LLVM)
+    absolute_find_llvm()
 endif()
 
 # Добавляем подпроекты
@@ -485,7 +493,16 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-slice-out-of-bounds-ir
         )
 
-        find_program(ABSOLUTE_LLI_EXECUTABLE NAMES lli lli-18)
+        # Windows UCRT exposes printf/snprintf as inline wrappers rather than
+        # JIT-resolvable symbols. Native Windows runtime coverage therefore
+        # uses the --build-exe tests below instead of lli.
+        if(NOT WIN32)
+            find_program(ABSOLUTE_LLI_EXECUTABLE NAMES lli lli-18
+                HINTS "${LLVM_TOOLS_BINARY_DIR}" "${LLVM_DIR}/../../../bin")
+        else()
+            unset(ABSOLUTE_LLI_EXECUTABLE CACHE)
+            set(ABSOLUTE_LLI_EXECUTABLE "")
+        endif()
         if(ABSOLUTE_LLI_EXECUTABLE)
             if(TARGET Absolute-Unless-Plugin)
                 add_test(
@@ -619,7 +636,7 @@ if(BUILD_TESTING)
         endif()
 
         add_library(absolute-native-test STATIC tests/native/native_math.cpp)
-        file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/NativeFfi.absproj" CONTENT
+        file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/NativeFfi-$<CONFIG>.absproj" CONTENT
 "{
   \"name\": \"NativeFfi\",
   \"entry\": \"${PROJECT_SOURCE_DIR}/tests/projects/native-ffi/src/main.abs\",
@@ -630,12 +647,12 @@ if(BUILD_TESTING)
 ")
         add_test(
             NAME absolute.emit-object
-            COMMAND Absolute-Compiler build "${CMAKE_BINARY_DIR}/NativeFfi.absproj"
+            COMMAND Absolute-Compiler build "${CMAKE_BINARY_DIR}/NativeFfi-$<CONFIG>.absproj"
                 --emit-object -o "${CMAKE_BINARY_DIR}/native-ffi-object.o"
         )
         add_test(
             NAME absolute.build-native
-            COMMAND Absolute-Compiler build "${CMAKE_BINARY_DIR}/NativeFfi.absproj"
+            COMMAND Absolute-Compiler build "${CMAKE_BINARY_DIR}/NativeFfi-$<CONFIG>.absproj"
                 --build-exe -o "${CMAKE_BINARY_DIR}/native-ffi-app"
         )
         set_tests_properties(absolute.build-native PROPERTIES

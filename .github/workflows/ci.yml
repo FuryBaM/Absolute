@@ -42,3 +42,18 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build -C ${{ matrix.configuration }} --output-on-failure
+
+  windows-llvm-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache portable LLVM SDK
+        uses: actions/cache@v4
+        with:
+          path: .absolute/toolchains/llvm-18.1.8
+          key: windows-llvm-18.1.8-sdk-v1
+
+      - name: Bootstrap LLVM, build, and test natively
+        shell: cmd
+        run: build-windows.bat --bootstrap

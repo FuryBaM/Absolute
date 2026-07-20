@@ -4,16 +4,12 @@ setlocal EnableExtensions
 set "SAMPLES=%~1"
 set "WARMUPS=%~2"
 set "INCLUDE_PYTHON=%~3"
+set "BACKEND=%~4"
 
 if not defined SAMPLES set "SAMPLES=15"
 if not defined WARMUPS set "WARMUPS=2"
 if not defined INCLUDE_PYTHON set "INCLUDE_PYTHON=1"
-
-where wsl.exe >nul 2>nul
-if errorlevel 1 (
-    echo ERROR: WSL is required but wsl.exe was not found.
-    goto :failed
-)
+if not defined BACKEND set "BACKEND=windows"
 
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 if not exist "%VSWHERE%" (
@@ -34,10 +30,10 @@ if errorlevel 1 (
     goto :failed
 )
 
-echo Array benchmark: samples=%SAMPLES%, warmups=%WARMUPS%, python=%INCLUDE_PYTHON%
+echo Array benchmark: samples=%SAMPLES%, warmups=%WARMUPS%, python=%INCLUDE_PYTHON%, backend=%BACKEND%
 echo.
 
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0run-benchmark.ps1" -Samples %SAMPLES% -Warmups %WARMUPS% -IncludePython %INCLUDE_PYTHON%
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0run-benchmark.ps1" -Samples %SAMPLES% -Warmups %WARMUPS% -IncludePython %INCLUDE_PYTHON% -Backend %BACKEND%
 set "RESULT=%ERRORLEVEL%"
 
 if not "%RESULT%"=="0" goto :failed_with_code

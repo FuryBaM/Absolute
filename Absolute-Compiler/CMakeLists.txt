@@ -34,6 +34,7 @@ if(TARGET Absolute-CodeGen)
     target_compile_definitions(Absolute-Compiler PRIVATE
         ABSOLUTE_HAS_LLVM=1
         ABSOLUTE_HOST_CXX_COMPILER="${CMAKE_CXX_COMPILER}"
+        ABSOLUTE_HOST_LINKER="${CMAKE_LINKER}"
         ABSOLUTE_RUNTIME_LIBRARY="$<TARGET_FILE:Absolute-Runtime>"
     )
     add_dependencies(Absolute-Compiler Absolute-Runtime)

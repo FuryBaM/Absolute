@@ -44,11 +44,8 @@
     {
       "name": "windows-msvc-release",
       "displayName": "Windows MSVC x64 Release",
-      "generator": "Visual Studio 17 2022",
-      "architecture": {
-        "value": "x64",
-        "strategy": "set"
-      },
+      "description": "Run from an x64 Native Tools shell or use build-windows.bat.",
+      "generator": "NMake Makefiles",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
@@ -56,7 +53,25 @@
       },
       "binaryDir": "${sourceDir}/.absolute/build/msvc-release",
       "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
         "ABSOLUTE_ENABLE_LLVM": "ON",
+        "ABSOLUTE_BUILD_EXAMPLE_PLUGINS": "ON"
+      }
+    },
+    {
+      "name": "windows-msvc-frontend",
+      "displayName": "Windows MSVC frontend only",
+      "description": "Parser, analyzer and DLL plugins without the LLVM SDK.",
+      "generator": "NMake Makefiles",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "binaryDir": "${sourceDir}/.absolute/build/msvc-frontend",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ABSOLUTE_ENABLE_LLVM": "OFF",
         "ABSOLUTE_BUILD_EXAMPLE_PLUGINS": "ON"
       }
     }
@@ -73,6 +88,11 @@
     {
       "name": "windows-msvc-release",
       "configurePreset": "windows-msvc-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-msvc-frontend",
+      "configurePreset": "windows-msvc-frontend",
       "configuration": "Release"
     }
   ],
@@ -94,6 +114,14 @@
     {
       "name": "windows-msvc-release",
       "configurePreset": "windows-msvc-release",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-msvc-frontend",
+      "configurePreset": "windows-msvc-frontend",
       "configuration": "Release",
       "output": {
         "outputOnFailure": true

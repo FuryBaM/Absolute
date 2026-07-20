@@ -370,13 +370,18 @@ namespace {
         response += ".absolute-link.rsp";
         std::ostringstream arguments;
 #ifdef _WIN32
-        arguments << "/nologo\n" << QuoteResponseArgument(object) << '\n';
+        arguments << "/nologo\n/out:" << QuoteResponseArgument(executable)
+            << "\n/subsystem:console\n/stack:67108864\n" << QuoteResponseArgument(object) << '\n';
 #ifdef ABSOLUTE_RUNTIME_LIBRARY
         arguments << QuoteResponseArgument(ABSOLUTE_RUNTIME_LIBRARY) << '\n';
 #endif
         for (const fs::path& library : compilation.nativeLibraries)
             arguments << QuoteResponseArgument(library) << '\n';
-        arguments << "/Fe:" << QuoteResponseArgument(executable) << "\n/link\n";
+        // LLVM-emitted COFF objects do not carry the /DEFAULTLIB directives
+        // that cl.exe normally writes while compiling C/C++. Supply the
+        // Release dynamic CRT explicitly so mainCRTStartup and C builtins are
+        // available even when the runtime archive contributes no object file.
+        arguments << "msvcrt.lib\nvcruntime.lib\nucrt.lib\noldnames.lib\nlegacy_stdio_definitions.lib\n";
         for (const fs::path& path : compilation.nativeSearchPaths)
             arguments << "/LIBPATH:" << QuoteResponseArgument(path) << '\n';
 #else
@@ -395,8 +400,22 @@ namespace {
 #ifndef ABSOLUTE_HOST_CXX_COMPILER
 #define ABSOLUTE_HOST_CXX_COMPILER "c++"
 #endif
-        const std::string command = QuoteShellArgument(ABSOLUTE_HOST_CXX_COMPILER) +
+#ifdef _WIN32
+#ifndef ABSOLUTE_HOST_LINKER
+#define ABSOLUTE_HOST_LINKER "link.exe"
+#endif
+        constexpr const char* nativeTool = ABSOLUTE_HOST_LINKER;
+#else
+        constexpr const char* nativeTool = ABSOLUTE_HOST_CXX_COMPILER;
+#endif
+        std::string command = QuoteShellArgument(nativeTool) +
             " @" + QuoteShellArgument(response.string());
+#ifdef _WIN32
+        // cmd.exe removes the first pair of quotes when /c starts with a
+        // quoted executable. The outer pair preserves paths such as
+        // "C:\\Program Files\\...\\cl.exe" when invoked through system().
+        command = "\"" + command + "\"";
+#endif
         const int status = std::system(command.c_str());
         std::error_code ignored;
         fs::remove(response, ignored);

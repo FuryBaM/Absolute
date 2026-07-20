@@ -72,8 +72,8 @@ From PowerShell or Command Prompt, launch:
 benchmarks\array-suite\run.bat
 ```
 
-The batch file finds the Visual Studio x64 linker, builds an LLVM-enabled
-Release version of Absolute in WSL, compiles every language implementation,
+The batch file finds the Visual Studio x64 toolchain, builds an LLVM-enabled
+Release version of Absolute natively on Windows, compiles every language implementation,
 validates every checksum, and writes a timestamped CSV file to `results\`.
 Generated compilers and executables are cached in `.benchmark-build\`, so the
 next run is incremental.
@@ -87,6 +87,9 @@ benchmarks\array-suite\run.bat 3 1 0
 
 rem Recorded methodology: 15 samples, 2 warm-ups, include Python
 benchmarks\array-suite\run.bat 15 2 1
+
+rem Optional legacy WSL backend
+benchmarks\array-suite\run.bat 15 2 1 wsl
 ```
 
 The full Python run takes several minutes. Set

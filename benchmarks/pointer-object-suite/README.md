@@ -17,13 +17,19 @@ From the repository root:
 benchmarks\pointer-object-suite\run.bat
 ```
 
-Arguments are `samples`, `warmups`, and `include Python`:
+Arguments are `samples`, `warmups`, `include Python`, and an optional backend:
 
 ```bat
 benchmarks\pointer-object-suite\run.bat 15 3 1
 benchmarks\pointer-object-suite\run.bat 10 2 0
+benchmarks\pointer-object-suite\run.bat 10 2 0 wsl
 ```
 
-The runner requires WSL with LLVM/CMake, Visual Studio C++ Build Tools, .NET 10, Java, and Node.js. Python is required only when the third argument is `1`. It reuses the array-suite Release compiler build when available, compiles all native code with LLVM `-O3 -march=native`, validates a shared checksum for every implementation, alternates language order between samples, and writes a timestamped CSV under `results/`.
+The default backend is native Windows and requires the portable LLVM SDK from
+`build-windows.bat --bootstrap`, Visual Studio C++ Build Tools, .NET 10, Java,
+and Node.js. Python is required only when the third argument is `1`. The
+optional `wsl` backend preserves the older cross-compilation path. Every run
+validates a shared checksum, alternates language order between samples, and
+writes a timestamped CSV under `results/`.
 
 The CSV includes median/min/max duration, speed relative to the winner, work-unit count, and approximate million work units per second. The stopwatch includes process startup, graph construction/allocation, traversal, and cleanup. This matches the existing benchmark suites, but it means JIT startup and GC policy are part of the result. `heap-nodes` also compares different ownership models: raw native nodes in Absolute/C++ versus garbage-collected object references in C#/Java/JavaScript/Python. Use `arena-graph` for the closest representation-level comparison.

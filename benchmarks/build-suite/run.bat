@@ -1,22 +1,31 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 
 set "JOBS=%~1"
 if not defined JOBS set "JOBS=%NUMBER_OF_PROCESSORS%"
 if not defined JOBS set "JOBS=4"
 set "BUILD_LOCATION=%~2"
 if not defined BUILD_LOCATION set "BUILD_LOCATION=linux"
+set "BACKEND=%~3"
+if not defined BACKEND set "BACKEND=windows"
 
-where wsl.exe >nul 2>nul
-if errorlevel 1 (
-    echo ERROR: WSL is required but wsl.exe was not found.
-    goto :failed
-)
-
-echo Absolute build benchmark: jobs=%JOBS%, location=%BUILD_LOCATION%
+echo Absolute build benchmark: jobs=%JOBS%, backend=%BACKEND%, location=%BUILD_LOCATION%
 echo.
 
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0run-build-benchmark.ps1" -Jobs %JOBS% -BuildLocation %BUILD_LOCATION%
+if /i "%BACKEND%"=="windows" (
+    set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+    if not exist "!VSWHERE!" goto :failed
+    set "VSINSTALL="
+    for /f "usebackq tokens=*" %%I in (`"!VSWHERE!" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%I"
+    if not defined VSINSTALL goto :failed
+    call "!VSINSTALL!\VC\Auxiliary\Build\vcvars64.bat" >nul
+    if errorlevel 1 goto :failed
+    powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0run-build-benchmark-windows.ps1" -Jobs %JOBS%
+) else (
+    where wsl.exe >nul 2>nul
+    if errorlevel 1 goto :failed
+    powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0run-build-benchmark.ps1" -Jobs %JOBS% -BuildLocation %BUILD_LOCATION%
+)
 set "RESULT=%ERRORLEVEL%"
 if not "%RESULT%"=="0" goto :failed_with_code
 

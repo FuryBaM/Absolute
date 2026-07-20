@@ -14,9 +14,19 @@ cmake --build build
 LLVM development libraries and an LLVM CMake package are required. If CMake
 cannot locate them automatically, pass `-DLLVM_DIR="$(llvm-config --cmakedir)"`.
 The frontend can still be built without LLVM using
-`-DABSOLUTE_ENABLE_LLVM=OFF`. The prebuilt Windows LLVM installer does not ship
-the C++ CMake development package, so Windows builds need a full LLVM development
-build and its `LLVM_DIR`; CI keeps validating the Windows frontend separately.
+`-DABSOLUTE_ENABLE_LLVM=OFF`.
+
+For a complete native Windows build without WSL, run:
+
+```bat
+build-windows.bat --bootstrap
+```
+
+This installs a portable LLVM 18.1.8 SDK under the ignored `.absolute`
+directory, builds the compiler and DLL plugins with MSVC, and runs the native
+tests. Later builds use `build-windows.bat` without `--bootstrap`. See
+[`docs/windows-build.md`](docs/windows-build.md) for toolchain overrides and
+benchmark commands.
 
 On multi-config generators such as Visual Studio, pass `--config Debug` to the
 build command.
@@ -34,7 +44,8 @@ cmake --preset wsl-release-ninja
 ```
 
 ```powershell
-# Run from a Visual Studio developer shell. CMake enables MSVC /MP globally.
+# Run from a Visual Studio developer shell. build-windows.bat is easier because
+# it detects and initializes the installed Visual Studio version automatically.
 cmake --preset windows-msvc-release
 cmake --build --preset windows-msvc-release --parallel
 ctest --preset windows-msvc-release
@@ -44,11 +55,11 @@ Set `-DABSOLUTE_USE_COMPILER_CACHE=ON` to enable `sccache` or `ccache` when one
 of them is installed. To compare clean, incremental, and PCH build times, run:
 
 ```bat
-benchmarks\build-suite\run.bat 4 linux
+benchmarks\build-suite\run.bat
 ```
 
-Use `mounted` instead of `linux` as the second argument to keep build artifacts
-on the Windows filesystem for an I/O comparison.
+The native Windows backend is the default. Use
+`benchmarks\build-suite\run.bat 4 linux wsl` for the older WSL measurement.
 
 ## Run
 

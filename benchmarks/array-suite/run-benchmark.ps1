@@ -7,7 +7,10 @@ param(
     [int]$Warmups = 2,
 
     [ValidateSet(0, 1)]
-    [int]$IncludePython = 1
+    [int]$IncludePython = 1,
+
+    [ValidateSet('windows', 'wsl')]
+    [string]$Backend = 'windows'
 )
 
 Set-StrictMode -Version Latest
@@ -81,56 +84,12 @@ function Link-NativeExecutable([string]$objectPath, [string]$executablePath) {
     }
 }
 
-Require-Command 'wsl.exe'
 Require-Command 'link.exe'
 Require-Command 'dotnet.exe'
 Require-Command 'javac.exe'
 Require-Command 'java.exe'
 Require-Command 'node.exe'
 if ($IncludePython -eq 1) { Require-Command 'python.exe' }
-
-$wslCmake = Find-WslTool @('cmake')
-$wslClang = Find-WslTool @('clang++-18', 'clang++')
-$wslLlvmConfig = Find-WslTool @('llvm-config-18', 'llvm-config')
-$llvmDirectory = (& wsl.exe $wslLlvmConfig --cmakedir | Select-Object -Last 1).Trim()
-if ($LASTEXITCODE -ne 0 -or -not $llvmDirectory) {
-    throw 'Could not determine the LLVM CMake directory in WSL.'
-}
-$zstdIncludeResult = & wsl.exe sh -lc "find /usr/include /usr/local/include /root -type f -name zstd.h -print 2>/dev/null | head -n 1"
-$zstdLibraryResult = & wsl.exe sh -lc "find /usr/lib /usr/local/lib /root -name libzstd.so -print 2>/dev/null | head -n 1"
-$zstdInclude = if ($zstdIncludeResult) { ($zstdIncludeResult | Select-Object -Last 1).Trim() } else { '' }
-$zstdLibrary = if ($zstdLibraryResult) { ($zstdLibraryResult | Select-Object -Last 1).Trim() } else { '' }
-$zstdIncludeDirectory = if ($zstdInclude) {
-    (& wsl.exe dirname $zstdInclude | Select-Object -Last 1).Trim()
-} else { '' }
-
-$repoWsl = Convert-ToWslPath $repoRoot
-$compilerBuildWsl = Convert-ToWslPath $compilerBuild
-
-$configureArguments = @(
-    $wslCmake,
-    '-S', $repoWsl,
-    '-B', $compilerBuildWsl,
-    '-DCMAKE_BUILD_TYPE=Release',
-    '-DABSOLUTE_ENABLE_LLVM=ON',
-    "-DLLVM_DIR=$llvmDirectory"
-)
-if ($zstdIncludeDirectory -and $zstdLibrary) {
-    $configureArguments += "-Dzstd_INCLUDE_DIR=$zstdIncludeDirectory"
-    $configureArguments += "-Dzstd_LIBRARY=$zstdLibrary"
-}
-Invoke-External 'Configure Absolute Release compiler' 'wsl.exe' $configureArguments
-Invoke-External 'Build Absolute Release compiler' 'wsl.exe' @(
-    $wslCmake,
-    '--build', $compilerBuildWsl,
-    '--parallel'
-)
-
-$absoluteCompiler = Join-Path $compilerBuild 'Release\absolutec'
-if (-not (Test-Path -LiteralPath $absoluteCompiler)) {
-    throw "Absolute compiler was not produced at $absoluteCompiler"
-}
-$absoluteCompilerWsl = Convert-ToWslPath $absoluteCompiler
 
 $algorithms = @('scan', 'random-access', 'insertion-sort')
 $expected = @{
@@ -139,31 +98,65 @@ $expected = @{
     'insertion-sort' = '312098439810'
 }
 
-Write-Host '[Compile Absolute benchmarks]'
-foreach ($algorithm in $algorithms) {
-    $source = Join-Path $suiteRoot "absolute\$algorithm.abs"
-    $llvmIr = Join-Path $nativeOut "absolute-$algorithm.ll"
-    $object = Join-Path $nativeOut "absolute-$algorithm.obj"
-    $executable = Join-Path $nativeOut "absolute-$algorithm.exe"
-
-    & wsl.exe $absoluteCompilerWsl (Convert-ToWslPath $source) --emit-llvm -o (Convert-ToWslPath $llvmIr)
-    if ($LASTEXITCODE -ne 0) { throw "Absolute compilation failed for $algorithm." }
-
-    & wsl.exe $wslClang --target=x86_64-pc-windows-msvc -O3 -march=native -DNDEBUG `
-        -c (Convert-ToWslPath $llvmIr) -o (Convert-ToWslPath $object)
-    if ($LASTEXITCODE -ne 0) { throw "LLVM optimization failed for $algorithm." }
-
-    Link-NativeExecutable $object $executable
-}
-
-Write-Host '[Compile C++ benchmark]'
-$cppObject = Join-Path $nativeOut 'benchmark-cpp.obj'
 $cppExecutable = Join-Path $nativeOut 'benchmark-cpp.exe'
-& wsl.exe $wslClang --target=x86_64-pc-windows-msvc -O3 -march=native -DNDEBUG `
-    -fno-exceptions -fno-rtti -c (Convert-ToWslPath (Join-Path $suiteRoot 'benchmark.cpp')) `
-    -o (Convert-ToWslPath $cppObject)
-if ($LASTEXITCODE -ne 0) { throw 'C++ compilation failed.' }
-Link-NativeExecutable $cppObject $cppExecutable
+if ($Backend -eq 'windows') {
+    Require-Command 'cl.exe'
+    & (Join-Path $repoRoot 'scripts\windows\build-windows.ps1') -Mode release -NoTest
+    $absoluteCompiler = Join-Path $repoRoot '.absolute\build\windows-release\Release\absolutec.exe'
+    if (-not (Test-Path -LiteralPath $absoluteCompiler)) {
+        throw "Absolute compiler was not produced at $absoluteCompiler"
+    }
+    Write-Host '[Compile Absolute benchmarks natively]'
+    foreach ($algorithm in $algorithms) {
+        $source = Join-Path $suiteRoot "absolute\$algorithm.abs"
+        $executable = Join-Path $nativeOut "absolute-$algorithm.exe"
+        & $absoluteCompiler $source --build-exe -o $executable
+        if ($LASTEXITCODE -ne 0) { throw "Absolute compilation failed for $algorithm." }
+    }
+    Write-Host '[Compile C++ benchmark with MSVC]'
+    & cl.exe /nologo /std:c++20 /O2 /Ob3 /GL /DNDEBUG `
+        (Join-Path $suiteRoot 'benchmark.cpp') "/Fe:$cppExecutable" /link /LTCG /stack:67108864
+    if ($LASTEXITCODE -ne 0) { throw 'C++ compilation failed.' }
+}
+else {
+    Require-Command 'wsl.exe'
+    $wslCmake = Find-WslTool @('cmake')
+    $wslClang = Find-WslTool @('clang++-18', 'clang++')
+    $wslLlvmConfig = Find-WslTool @('llvm-config-18', 'llvm-config')
+    $llvmDirectory = (& wsl.exe $wslLlvmConfig --cmakedir | Select-Object -Last 1).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $llvmDirectory) { throw 'Could not determine LLVM CMake directory in WSL.' }
+    $repoWsl = Convert-ToWslPath $repoRoot
+    $compilerBuildWsl = Convert-ToWslPath $compilerBuild
+    Invoke-External 'Configure Absolute Release compiler' 'wsl.exe' @(
+        $wslCmake, '-S', $repoWsl, '-B', $compilerBuildWsl,
+        '-DCMAKE_BUILD_TYPE=Release', '-DABSOLUTE_ENABLE_LLVM=ON', "-DLLVM_DIR=$llvmDirectory"
+    )
+    Invoke-External 'Build Absolute Release compiler' 'wsl.exe' @(
+        $wslCmake, '--build', $compilerBuildWsl, '--parallel'
+    )
+    $absoluteCompiler = Join-Path $compilerBuild 'Release\absolutec'
+    $absoluteCompilerWsl = Convert-ToWslPath $absoluteCompiler
+    Write-Host '[Compile Absolute benchmarks through WSL]'
+    foreach ($algorithm in $algorithms) {
+        $source = Join-Path $suiteRoot "absolute\$algorithm.abs"
+        $llvmIr = Join-Path $nativeOut "absolute-$algorithm.ll"
+        $object = Join-Path $nativeOut "absolute-$algorithm.obj"
+        $executable = Join-Path $nativeOut "absolute-$algorithm.exe"
+        & wsl.exe $absoluteCompilerWsl (Convert-ToWslPath $source) --emit-llvm -o (Convert-ToWslPath $llvmIr)
+        if ($LASTEXITCODE -ne 0) { throw "Absolute compilation failed for $algorithm." }
+        & wsl.exe $wslClang --target=x86_64-pc-windows-msvc -O3 -march=native -DNDEBUG `
+            -c (Convert-ToWslPath $llvmIr) -o (Convert-ToWslPath $object)
+        if ($LASTEXITCODE -ne 0) { throw "LLVM optimization failed for $algorithm." }
+        Link-NativeExecutable $object $executable
+    }
+    Write-Host '[Compile C++ benchmark through WSL]'
+    $cppObject = Join-Path $nativeOut 'benchmark-cpp.obj'
+    & wsl.exe $wslClang --target=x86_64-pc-windows-msvc -O3 -march=native -DNDEBUG `
+        -fno-exceptions -fno-rtti -c (Convert-ToWslPath (Join-Path $suiteRoot 'benchmark.cpp')) `
+        -o (Convert-ToWslPath $cppObject)
+    if ($LASTEXITCODE -ne 0) { throw 'C++ compilation failed.' }
+    Link-NativeExecutable $cppObject $cppExecutable
+}
 
 Invoke-External 'Compile C# Release benchmark' 'dotnet.exe' @(
     'publish',

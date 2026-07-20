@@ -194,7 +194,8 @@ namespace Absolute {
         size_t index = 0;
         for (const auto& expression : expr->arguments) {
             llvm::Value* argument = impl->Evaluate(expression.get());
-            arguments.push_back(impl->Coerce(argument, function->getFunctionType()->getParamType(index++)));
+            arguments.push_back(impl->Coerce(argument,
+                function->getFunctionType()->getParamType(static_cast<unsigned>(index++))));
         }
 
         llvm::CallInst* call = impl->builder.CreateCall(function, arguments,

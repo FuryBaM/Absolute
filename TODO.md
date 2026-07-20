@@ -62,19 +62,25 @@
 
 ### P1.5 — Native Windows без WSL
 
-- [ ] Обеспечить полную сборку Absolute через MSVC и Windows CMake без `wsl.exe`.
-- [ ] Автоматически находить native Windows LLVM development package и проверять его версию.
-- [ ] Добавить понятную диагностику и инструкцию установки, если Windows LLVM не содержит CMake development files.
-- [ ] Добавить native Windows варианты `run.bat` для build, array и pointer/object benchmark suites.
-- [ ] Убрать обязательную проверку WSL из benchmark-скриптов при выбранном Windows backend.
-- [ ] Собирать и загружать syntax/math/shader/desktop plugins как `.dll` без Linux-промежуточных шагов.
-- [ ] Проверить генерацию `.obj`/`.exe`, native runtime и C ABI через MSVC linker.
-- [ ] Запускать все доступные semantic, emit и runtime tests непосредственно на Windows.
-- [ ] Добавить Windows Release build benchmark: clean, no-op, Analyzer unit, CodeGen unit и PCH.
-- [ ] Сравнить MSVC `/MP` с Ninja + `clang-cl` и выбрать рекомендуемый Windows preset.
-- [ ] Добавить необязательный `sccache` для MSVC/clang-cl.
-- [ ] Добавить CI job с полным Windows LLVM backend, когда будет доступен воспроизводимый LLVM SDK.
-- [ ] Документировать workflow в `docs/windows-build.md`.
+- [x] Обеспечить полную сборку Absolute через MSVC и Windows CMake без `wsl.exe`.
+- [x] Автоматически находить native Windows LLVM development package и проверять его версию.
+- [x] Добавить понятную диагностику и инструкцию установки, если Windows LLVM не содержит CMake development files.
+- [x] Добавить native Windows варианты `run.bat` для build, array и pointer/object benchmark suites.
+- [x] Убрать обязательную проверку WSL из benchmark-скриптов при выбранном Windows backend.
+- [x] Собирать и загружать syntax/math/shader/desktop plugins как `.dll` без Linux-промежуточных шагов.
+- [x] Проверить генерацию `.obj`/`.exe`, native runtime и C ABI через MSVC linker.
+- [x] Запускать все доступные semantic, emit и runtime tests непосредственно на Windows.
+  На Windows проходят 98/98 тестов; десять Linux-only `lli`-тестов заменены покрытием через скомпилированные `.exe`.
+- [x] Добавить Windows Release build benchmark: clean, no-op, Analyzer unit, CodeGen unit и PCH.
+  Первый native MSVC запуск: clean — 44,82 с; no-op — 1,17 с; Analyzer unit — 6,38 с;
+  CodeGen unit — 5,43 с; CodeGen PCH — 17,11 с.
+- [x] Сравнить MSVC `/MP` с Ninja + `clang-cl` и выбрать рекомендуемый Windows preset.
+  Рекомендуется MSVC `/MP`: LLVM 18 `clang-cl` несовместим с STL из Visual Studio 2026,
+  который требует Clang 19 или новее. Скрипт определяет это до запуска CMake.
+- [x] Добавить необязательный `sccache` для MSVC/clang-cl.
+  Флаг `build-windows.bat --sccache` использует локальный Ninja и отдельный build-каталог.
+- [x] Добавить CI job с полным Windows LLVM backend на воспроизводимом portable LLVM 18.1.8 SDK.
+- [x] Документировать workflow в `docs/windows-build.md`.
 
 ## Критерии готовности ускорения
 

@@ -13,6 +13,44 @@ endif()
 
 find_package(LLVM REQUIRED CONFIG)
 
+if(LLVM_PACKAGE_VERSION VERSION_LESS 18)
+    message(FATAL_ERROR "Absolute requires LLVM 18 or newer; found ${LLVM_PACKAGE_VERSION}")
+endif()
+
+if(LLVM_PACKAGE_VERSION VERSION_GREATER_EQUAL 19)
+    message(WARNING "Absolute is validated with LLVM 18; LLVM ${LLVM_PACKAGE_VERSION} may require API adjustments")
+endif()
+
+# Official portable Windows LLVM 18 archives contain an absolute DIA SDK path
+# from the machine that produced the archive. Replace it with the active Visual
+# Studio installation so the SDK remains relocatable.
+if(MSVC AND TARGET LLVMDebugInfoPDB)
+    find_library(ABSOLUTE_DIAGUIDS_LIBRARY NAMES diaguids
+        HINTS
+            "$ENV{VSINSTALLDIR}/DIA SDK/lib/amd64"
+            "$ENV{ProgramFiles}/Microsoft Visual Studio/2022/Community/DIA SDK/lib/amd64"
+            "$ENV{ProgramFiles}/Microsoft Visual Studio/2022/Professional/DIA SDK/lib/amd64"
+            "$ENV{ProgramFiles}/Microsoft Visual Studio/2022/Enterprise/DIA SDK/lib/amd64")
+    get_target_property(_absolute_pdb_links LLVMDebugInfoPDB INTERFACE_LINK_LIBRARIES)
+    if(_absolute_pdb_links)
+        set(_absolute_fixed_pdb_links)
+        foreach(_absolute_link IN LISTS _absolute_pdb_links)
+            if(_absolute_link MATCHES "diaguids\\.lib$" AND NOT EXISTS "${_absolute_link}")
+                if(NOT ABSOLUTE_DIAGUIDS_LIBRARY)
+                    message(FATAL_ERROR
+                        "LLVM requires diaguids.lib, but the active Visual Studio DIA SDK was not found")
+                endif()
+                list(APPEND _absolute_fixed_pdb_links "${ABSOLUTE_DIAGUIDS_LIBRARY}")
+                message(STATUS "Replaced non-relocatable LLVM DIA library with ${ABSOLUTE_DIAGUIDS_LIBRARY}")
+            else()
+                list(APPEND _absolute_fixed_pdb_links "${_absolute_link}")
+            endif()
+        endforeach()
+        set_target_properties(LLVMDebugInfoPDB PROPERTIES
+            INTERFACE_LINK_LIBRARIES "${_absolute_fixed_pdb_links}")
+    endif()
+endif()
+
 message(STATUS "Using LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "LLVMConfig.cmake: ${LLVM_DIR}")
 message(STATUS "LLVM optional integrations: LibEdit=${ABSOLUTE_LLVM_USE_LIBEDIT}, CURL=${ABSOLUTE_LLVM_USE_CURL}")
@@ -63,7 +101,7 @@ target_link_libraries(Absolute-CodeGen
 )
 
 if(MSVC)
-    target_compile_options(Absolute-CodeGen PRIVATE /W3 /permissive-)
+    target_compile_options(Absolute-CodeGen PRIVATE /W3 /permissive- /external:W0)
 else()
     target_compile_options(Absolute-CodeGen PRIVATE -Wall -Wextra -Wpedantic)
 endif()
