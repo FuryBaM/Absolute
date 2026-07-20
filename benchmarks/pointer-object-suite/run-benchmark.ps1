@@ -112,6 +112,9 @@ $zstdIncludeResult = & wsl.exe sh -lc "find /usr/include /usr/local/include /roo
 $zstdLibraryResult = & wsl.exe sh -lc "find /usr/lib /usr/local/lib /root -name libzstd.so -print 2>/dev/null | head -n 1"
 $zstdInclude = if ($zstdIncludeResult) { ($zstdIncludeResult | Select-Object -Last 1).Trim() } else { '' }
 $zstdLibrary = if ($zstdLibraryResult) { ($zstdLibraryResult | Select-Object -Last 1).Trim() } else { '' }
+$zstdIncludeDirectory = if ($zstdInclude) {
+    (& wsl.exe dirname $zstdInclude | Select-Object -Last 1).Trim()
+} else { '' }
 
 $repoWsl = Convert-ToWslPath $repoRoot
 $compilerBuildWsl = Convert-ToWslPath $compilerBuild
@@ -123,8 +126,8 @@ $configureArguments = @(
     '-DABSOLUTE_ENABLE_LLVM=ON',
     "-DLLVM_DIR=$llvmDirectory"
 )
-if ($zstdInclude -and $zstdLibrary) {
-    $configureArguments += "-Dzstd_INCLUDE_DIR=$zstdInclude"
+if ($zstdIncludeDirectory -and $zstdLibrary) {
+    $configureArguments += "-Dzstd_INCLUDE_DIR=$zstdIncludeDirectory"
     $configureArguments += "-Dzstd_LIBRARY=$zstdLibrary"
 }
 Invoke-External 'Configure Absolute Release compiler' 'wsl.exe' $configureArguments

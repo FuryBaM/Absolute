@@ -33,7 +33,7 @@ namespace Absolute {
             : statements(std::move(statements)) {
         }
 
-        void print(int indent = 0) override {
+        void print(int = 0) override {
             for (const auto& stmt : statements) {
                 if (stmt == nullptr) {
                     continue;

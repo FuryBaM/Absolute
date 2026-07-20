@@ -35,31 +35,54 @@
   Первый полный запуск на WSL `/mnt/f`, GNU 13.3, Unix Makefiles и четырёх потоках:
   clean Release — 497,18 с; no-op — 13,51 с; Analyzer unit — 224,77 с;
   CodeGen unit — 247,10 с; CodeGen PCH — 375,31 с.
+  При переносе build-каталога на Linux FS: clean Release — 90,24 с; no-op — 2,77 с;
+  Analyzer unit — 7,44 с; CodeGen unit — 10,89 с; CodeGen PCH — 46,73 с.
 
 ### P1 — окружение сборки
 
-- [ ] Для WSL хранить build-каталог на файловой системе Linux, а не на `/mnt/f`.
-- [ ] Добавить CMake preset для `Ninja + Release + LLVM 18`.
-- [ ] Добавить Windows preset для MSVC Release с `/MP`.
-- [ ] Проверить поддержку `ccache` или `sccache` как необязательного ускорителя.
-- [ ] Исправить предупреждение, где путь к `zstd.h` передаётся как include-directory.
-- [ ] Явно оформить LibEdit, CURL и X11 как необязательные зависимости, чтобы сообщения конфигурации были понятными.
+- [x] Для WSL хранить build-каталог на файловой системе Linux, а не на `/mnt/f`.
+  Build benchmark по умолчанию использует `/root/.cache/absolute/build-benchmark`.
+- [x] Добавить CMake preset для `Ninja + Release + LLVM 18`.
+  Preset добавлен; в текущем WSL Ninja пока не установлен. Проверен fallback `wsl-release` с Unix Makefiles.
+- [x] Добавить Windows preset для MSVC Release с `/MP`.
+- [x] Проверить поддержку `ccache` или `sccache` как необязательного ускорителя.
+  Добавлена опция `ABSOLUTE_USE_COMPILER_CACHE`; в текущем WSL ни один cache launcher не установлен.
+- [x] Исправить предупреждение, где путь к `zstd.h` передаётся как include-directory.
+- [x] Явно оформить LibEdit, CURL и X11 как необязательные зависимости, чтобы сообщения конфигурации были понятными.
 
 ### P2 — стабильность архитектуры
 
-- [ ] Минимизировать зависимости private PCH от часто меняющихся заголовков AST.
-- [ ] Добавить forward declarations в публичные заголовки Analyzer и CodeGen, где это возможно.
-- [ ] Добавить CI-проверку чистой Debug/Release-сборки без заранее созданного PCH.
-- [ ] Добавить CI-проверку полного `ctest`.
-- [ ] Документировать назначение каждого внутреннего модуля в `docs/compiler-architecture.md`.
+- [x] Минимизировать зависимости private PCH от часто меняющихся заголовков AST.
+  Analyzer PCH теперь содержит только стабильные заголовки стандартной библиотеки, CodeGen PCH — LLVM и стандартную библиотеку; AST, analyzer и plugin API подключаются явно после PCH.
+- [x] Добавить forward declarations в публичные заголовки Analyzer и CodeGen, где это возможно.
+  `CodeGenerator` использует forward declaration для `Analyzer`; из `analyzer.h` удалена лишняя зависимость от `type.h`.
+- [x] Добавить CI-проверку чистой Debug/Release-сборки без заранее созданного PCH.
+- [x] Добавить CI-проверку полного `ctest`.
+- [x] Документировать назначение каждого внутреннего модуля в `docs/compiler-architecture.md`.
+
+### P1.5 — Native Windows без WSL
+
+- [ ] Обеспечить полную сборку Absolute через MSVC и Windows CMake без `wsl.exe`.
+- [ ] Автоматически находить native Windows LLVM development package и проверять его версию.
+- [ ] Добавить понятную диагностику и инструкцию установки, если Windows LLVM не содержит CMake development files.
+- [ ] Добавить native Windows варианты `run.bat` для build, array и pointer/object benchmark suites.
+- [ ] Убрать обязательную проверку WSL из benchmark-скриптов при выбранном Windows backend.
+- [ ] Собирать и загружать syntax/math/shader/desktop plugins как `.dll` без Linux-промежуточных шагов.
+- [ ] Проверить генерацию `.obj`/`.exe`, native runtime и C ABI через MSVC linker.
+- [ ] Запускать все доступные semantic, emit и runtime tests непосредственно на Windows.
+- [ ] Добавить Windows Release build benchmark: clean, no-op, Analyzer unit, CodeGen unit и PCH.
+- [ ] Сравнить MSVC `/MP` с Ninja + `clang-cl` и выбрать рекомендуемый Windows preset.
+- [ ] Добавить необязательный `sccache` для MSVC/clang-cl.
+- [ ] Добавить CI job с полным Windows LLVM backend, когда будет доступен воспроизводимый LLVM SDK.
+- [ ] Документировать workflow в `docs/windows-build.md`.
 
 ## Критерии готовности ускорения
 
-- [ ] Изменение одного visitor-файла пересобирает только соответствующий объектный файл и необходимые библиотеки/исполняемый файл.
-- [ ] PCH не пересоздаётся при изменении обычного `.cpp`.
-- [ ] Incremental CodeGen build минимум в два раза быстрее прежней монолитной сборки на одной и той же машине.
-- [ ] После каждого этапа проходят все 108 тестов.
-- [ ] Build-бенчмарк воспроизводится одной командой из `.bat`.
+- [x] Изменение одного visitor-файла пересобирает только соответствующий объектный файл и необходимые библиотеки/исполняемый файл.
+- [x] PCH не пересоздаётся при изменении обычного `.cpp`.
+- [x] Incremental CodeGen build минимум в два раза быстрее прежней монолитной сборки на одной и той же машине.
+- [x] После каждого этапа проходят все 108 тестов.
+- [x] Build-бенчмарк воспроизводится одной командой из `.bat`.
 
 ## Функциональность языка
 

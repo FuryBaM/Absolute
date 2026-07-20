@@ -1,7 +1,10 @@
 [CmdletBinding()]
 param(
     [ValidateRange(1, 256)]
-    [int]$Jobs = 4
+    [int]$Jobs = 4,
+
+    [ValidateSet('linux', 'mounted')]
+    [string]$BuildLocation = 'linux'
 )
 
 Set-StrictMode -Version Latest
@@ -11,7 +14,7 @@ $invariant = [System.Globalization.CultureInfo]::InvariantCulture
 
 $suiteRoot = [IO.Path]::GetFullPath($PSScriptRoot)
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $suiteRoot '..\..'))
-$buildRoot = Join-Path $suiteRoot '.benchmark-build\compiler'
+$mountedBuildRoot = Join-Path $suiteRoot '.benchmark-build\compiler'
 $resultsRoot = Join-Path $suiteRoot 'results'
 
 function Convert-ToWslPath([string]$Path) {
@@ -57,7 +60,7 @@ function Measure-WslBuild([string]$Scenario, [string[]]$Arguments) {
         Compiler = $script:compilerDescription
         Generator = $script:generator
         Jobs = $Jobs
-        BuildLocation = if ($script:buildRootWsl.StartsWith('/mnt/')) { 'wsl-mounted-windows' } else { 'wsl-linux' }
+        BuildLocation = $BuildLocation
         BuildDirectory = $script:buildRootWsl
     })
 }
@@ -77,17 +80,28 @@ if ($LASTEXITCODE -ne 0 -or -not $llvmDirectory) {
 $compilerLine = & wsl.exe $wslCompiler --version
 $compilerDescription = ($compilerLine | Select-Object -First 1).Trim()
 $repoRootWsl = Convert-ToWslPath $repoRoot
-$buildRootWsl = Convert-ToWslPath $buildRoot
+$buildRootWsl = if ($BuildLocation -eq 'linux') {
+    '/root/.cache/absolute/build-benchmark'
+} else {
+    Convert-ToWslPath $mountedBuildRoot
+}
 $results = [Collections.Generic.List[object]]::new()
 
-$resolvedBuild = [IO.Path]::GetFullPath($buildRoot)
-$resolvedSuite = [IO.Path]::GetFullPath($suiteRoot).TrimEnd('\') + '\'
-if (-not $resolvedBuild.StartsWith($resolvedSuite, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "Refusing to clean build directory outside benchmark suite: $resolvedBuild"
-}
-if (Test-Path -LiteralPath $resolvedBuild) {
-    Write-Host '[Clean dedicated build directory]'
-    Remove-Item -LiteralPath $resolvedBuild -Recurse -Force
+if ($BuildLocation -eq 'linux') {
+    if (-not $buildRootWsl.StartsWith('/root/.cache/absolute/')) {
+        throw "Refusing to clean unexpected WSL build directory: $buildRootWsl"
+    }
+    Invoke-Wsl 'Clean dedicated Linux build directory' @($wslCmake, '-E', 'remove_directory', $buildRootWsl)
+} else {
+    $resolvedBuild = [IO.Path]::GetFullPath($mountedBuildRoot)
+    $resolvedSuite = [IO.Path]::GetFullPath($suiteRoot).TrimEnd('\') + '\'
+    if (-not $resolvedBuild.StartsWith($resolvedSuite, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to clean build directory outside benchmark suite: $resolvedBuild"
+    }
+    if (Test-Path -LiteralPath $resolvedBuild) {
+        Write-Host '[Clean dedicated mounted build directory]'
+        Remove-Item -LiteralPath $resolvedBuild -Recurse -Force
+    }
 }
 New-Item -ItemType Directory -Force -Path $resultsRoot | Out-Null
 
@@ -116,11 +130,10 @@ $configureTimer = [Diagnostics.Stopwatch]::StartNew()
 Invoke-Wsl 'Configure clean Release build' $configureArguments
 $configureTimer.Stop()
 
-$cachePath = Join-Path $buildRoot 'CMakeCache.txt'
 $generator = 'unknown'
-if (Test-Path -LiteralPath $cachePath) {
-    $generatorLine = Select-String -Path $cachePath -Pattern '^CMAKE_GENERATOR:INTERNAL=' | Select-Object -First 1
-    if ($generatorLine) { $generator = ($generatorLine.Line -split '=', 2)[1] }
+$generatorResult = & wsl.exe sh -lc "grep '^CMAKE_GENERATOR:INTERNAL=' '$buildRootWsl/CMakeCache.txt' | head -n 1"
+if ($LASTEXITCODE -eq 0 -and $generatorResult) {
+    $generator = (($generatorResult | Select-Object -Last 1).Trim() -split '=', 2)[1]
 }
 $results.Add([pscustomobject]@{
     Timestamp = [DateTime]::Now.ToString('o', $invariant)
@@ -129,7 +142,7 @@ $results.Add([pscustomobject]@{
     Compiler = $compilerDescription
     Generator = $generator
     Jobs = $Jobs
-    BuildLocation = if ($buildRootWsl.StartsWith('/mnt/')) { 'wsl-mounted-windows' } else { 'wsl-linux' }
+    BuildLocation = $BuildLocation
     BuildDirectory = $buildRootWsl
 })
 

@@ -21,6 +21,35 @@ build and its `LLVM_DIR`; CI keeps validating the Windows frontend separately.
 On multi-config generators such as Visual Studio, pass `--config Debug` to the
 build command.
 
+Release presets are available for WSL and Visual Studio:
+
+```bash
+# Run inside WSL. Build artifacts stay on the Linux filesystem.
+cmake --preset wsl-release
+cmake --build --preset wsl-release --parallel 4
+ctest --preset wsl-release --parallel 4
+
+# Use this variant after installing Ninja in WSL.
+cmake --preset wsl-release-ninja
+```
+
+```powershell
+# Run from a Visual Studio developer shell. CMake enables MSVC /MP globally.
+cmake --preset windows-msvc-release
+cmake --build --preset windows-msvc-release --parallel
+ctest --preset windows-msvc-release
+```
+
+Set `-DABSOLUTE_USE_COMPILER_CACHE=ON` to enable `sccache` or `ccache` when one
+of them is installed. To compare clean, incremental, and PCH build times, run:
+
+```bat
+benchmarks\build-suite\run.bat 4 linux
+```
+
+Use `mounted` instead of `linux` as the second argument to keep build artifacts
+on the Windows filesystem for an I/O comparison.
+
 ## Run
 
 ```bash

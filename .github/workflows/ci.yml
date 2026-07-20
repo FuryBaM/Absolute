@@ -9,6 +9,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
+        configuration: [Debug, Release]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -23,14 +24,21 @@ jobs:
       - name: Configure with LLVM
         if: runner.os == 'Linux'
         shell: bash
-        run: cmake -S . -B build -DBUILD_TESTING=ON -DLLVM_DIR="$(llvm-config --cmakedir)"
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.configuration }}
+          -DBUILD_TESTING=ON
+          -DLLVM_DIR="$(llvm-config --cmakedir)"
 
       - name: Configure frontend (Windows)
         if: runner.os == 'Windows'
-        run: cmake -S . -B build -DBUILD_TESTING=ON -DABSOLUTE_ENABLE_LLVM=OFF
+        run: >-
+          cmake -S . -B build
+          -DBUILD_TESTING=ON
+          -DABSOLUTE_ENABLE_LLVM=OFF
 
       - name: Build
-        run: cmake --build build --config Debug --parallel 2
+        run: cmake --build build --config ${{ matrix.configuration }} --parallel 2
 
       - name: Test
-        run: ctest --test-dir build -C Debug --output-on-failure
+        run: ctest --test-dir build -C ${{ matrix.configuration }} --output-on-failure

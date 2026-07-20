@@ -1,0 +1,103 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "wsl-release-base",
+      "hidden": true,
+      "binaryDir": "$env{HOME}/.cache/absolute/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ABSOLUTE_ENABLE_LLVM": "ON",
+        "ABSOLUTE_BUILD_EXAMPLE_PLUGINS": "ON",
+        "LLVM_DIR": "/usr/lib/llvm-18/lib/cmake/llvm"
+      }
+    },
+    {
+      "name": "wsl-release",
+      "displayName": "WSL Release (Linux filesystem)",
+      "description": "Release build stored under $HOME/.cache instead of /mnt for faster WSL I/O.",
+      "inherits": "wsl-release-base",
+      "generator": "Unix Makefiles",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "wsl-release-ninja",
+      "displayName": "WSL Release (Ninja)",
+      "description": "Requires ninja in WSL.",
+      "inherits": "wsl-release-base",
+      "generator": "Ninja",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "windows-msvc-release",
+      "displayName": "Windows MSVC x64 Release",
+      "generator": "Visual Studio 17 2022",
+      "architecture": {
+        "value": "x64",
+        "strategy": "set"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "binaryDir": "${sourceDir}/.absolute/build/msvc-release",
+      "cacheVariables": {
+        "ABSOLUTE_ENABLE_LLVM": "ON",
+        "ABSOLUTE_BUILD_EXAMPLE_PLUGINS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "wsl-release",
+      "configurePreset": "wsl-release"
+    },
+    {
+      "name": "wsl-release-ninja",
+      "configurePreset": "wsl-release-ninja"
+    },
+    {
+      "name": "windows-msvc-release",
+      "configurePreset": "windows-msvc-release",
+      "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "wsl-release",
+      "configurePreset": "wsl-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "wsl-release-ninja",
+      "configurePreset": "wsl-release-ninja",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-msvc-release",
+      "configurePreset": "windows-msvc-release",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

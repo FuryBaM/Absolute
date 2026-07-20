@@ -1,9 +1,5 @@
 #pragma once
 
-#include "codegen.h"
-#include "analyzer.h"
-#include "syntax_plugins.h"
-
 #include <llvm/AsmParser/Parser.h>
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/BasicBlock.h>

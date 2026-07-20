@@ -1,4 +1,4 @@
-#include "analyzer_build_pch.h"
+#include "analyzer_internal.h"
 
 namespace Absolute {
     std::optional<Analyzer::MemberSignature> Analyzer::FindConcreteMethod(

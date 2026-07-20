@@ -7,6 +7,22 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(ABSOLUTE_ENABLE_LLVM "Build the LLVM IR backend" ON)
 option(ABSOLUTE_BUILD_EXAMPLE_PLUGINS "Build example syntax plugins" ON)
+option(ABSOLUTE_USE_COMPILER_CACHE "Use sccache or ccache when available" OFF)
+
+if(MSVC)
+    add_compile_options(/MP)
+endif()
+
+if(ABSOLUTE_USE_COMPILER_CACHE)
+    find_program(ABSOLUTE_COMPILER_CACHE NAMES sccache ccache)
+    if(ABSOLUTE_COMPILER_CACHE)
+        message(STATUS "Using compiler cache: ${ABSOLUTE_COMPILER_CACHE}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${ABSOLUTE_COMPILER_CACHE}" CACHE FILEPATH
+            "Compiler cache launcher" FORCE)
+    else()
+        message(WARNING "ABSOLUTE_USE_COMPILER_CACHE is ON, but neither sccache nor ccache was found")
+    endif()
+endif()
 
 # Добавляем подпроекты
 add_subdirectory(Absolute-Runtime)

@@ -34,7 +34,7 @@ set(HEADER_FILES
 add_library(Absolute-Analyzer STATIC ${SOURCE_FILES} ${HEADER_FILES})
 
 # Предкомпилированные заголовки
-target_precompile_headers(Absolute-Analyzer PRIVATE include/analyzer_internal.h)
+target_precompile_headers(Absolute-Analyzer PRIVATE include/analyzer_build_pch.h)
 
 # Пути к заголовочным файлам
 target_include_directories(${PROJECT_NAME} PUBLIC include)

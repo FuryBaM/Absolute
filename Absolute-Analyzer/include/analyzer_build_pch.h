@@ -1,13 +1,14 @@
 #pragma once
 
-#include "analyzer_pch.h"
-#include "syntax_plugins.h"
-
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <iostream>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <sstream>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>

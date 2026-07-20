@@ -4,6 +4,8 @@ setlocal EnableExtensions
 set "JOBS=%~1"
 if not defined JOBS set "JOBS=%NUMBER_OF_PROCESSORS%"
 if not defined JOBS set "JOBS=4"
+set "BUILD_LOCATION=%~2"
+if not defined BUILD_LOCATION set "BUILD_LOCATION=linux"
 
 where wsl.exe >nul 2>nul
 if errorlevel 1 (
@@ -11,10 +13,10 @@ if errorlevel 1 (
     goto :failed
 )
 
-echo Absolute build benchmark: jobs=%JOBS%
+echo Absolute build benchmark: jobs=%JOBS%, location=%BUILD_LOCATION%
 echo.
 
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0run-build-benchmark.ps1" -Jobs %JOBS%
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0run-build-benchmark.ps1" -Jobs %JOBS% -BuildLocation %BUILD_LOCATION%
 set "RESULT=%ERRORLEVEL%"
 if not "%RESULT%"=="0" goto :failed_with_code
 

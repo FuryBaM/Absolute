@@ -1,5 +1,7 @@
 #pragma once
 #include "analyzer_build_pch.h"
+#include "analyzer_pch.h"
+#include "syntax_plugins.h"
 
 namespace Absolute {
     namespace {
@@ -13,34 +15,34 @@ namespace Absolute {
             for (const auto& node : nodes) AcceptIfPresent(node, visitor);
         }
 
-        bool IsConditionType(const std::string& type) {
+        inline bool IsConditionType(const std::string& type) {
             return type == "bool" || type == "dynamic" || type == "error" ||
                 type.starts_with("int") || type.starts_with("uint") || type.ends_with("*");
         }
 
-        bool IsRawPointerType(const std::string& type) {
+        inline bool IsRawPointerType(const std::string& type) {
             return type.starts_with("raw ") && type.ends_with("*");
         }
 
-        bool IsManagedPointerType(const std::string& type) {
+        inline bool IsManagedPointerType(const std::string& type) {
             return !IsRawPointerType(type) && type.ends_with("*");
         }
 
-        bool IsPointerType(const std::string& type) {
+        inline bool IsPointerType(const std::string& type) {
             return IsRawPointerType(type) || IsManagedPointerType(type);
         }
 
-        std::string PointerPointee(std::string type) {
+        inline std::string PointerPointee(std::string type) {
             if (IsRawPointerType(type)) type.erase(0, 4);
             if (!type.empty() && type.back() == '*') type.pop_back();
             return type;
         }
 
-        bool IsTaskType(const std::string& type) {
+        inline bool IsTaskType(const std::string& type) {
             return type.size() > 6 && type.starts_with("task<") && type.ends_with(">");
         }
 
-        size_t ArrayRank(std::string type) {
+        inline size_t ArrayRank(std::string type) {
             size_t rank = 0;
             while (type.ends_with("[]")) {
                 type.resize(type.size() - 2);
@@ -49,17 +51,17 @@ namespace Absolute {
             return rank;
         }
 
-        std::string ArrayElementType(std::string type, size_t dimensions = 1) {
+        inline std::string ArrayElementType(std::string type, size_t dimensions = 1) {
             while (dimensions-- > 0 && type.ends_with("[]")) type.resize(type.size() - 2);
             return type;
         }
 
-        std::string ArrayType(std::string elementType, size_t rank) {
+        inline std::string ArrayType(std::string elementType, size_t rank) {
             while (rank-- > 0) elementType += "[]";
             return elementType;
         }
 
-        std::optional<std::vector<size_t>> InferArrayShape(const ArrayExpr& array) {
+        inline std::optional<std::vector<size_t>> InferArrayShape(const ArrayExpr& array) {
             std::vector<size_t> childShape;
             bool hasChildShape = false;
             for (const auto& value : array.values) {
@@ -79,11 +81,11 @@ namespace Absolute {
             return childShape;
         }
 
-        std::string TaskValueType(const std::string& type) {
+        inline std::string TaskValueType(const std::string& type) {
             return IsTaskType(type) ? type.substr(5, type.size() - 6) : "error";
         }
 
-        bool HasModifier(const Statement& statement, const std::string& name) {
+        inline bool HasModifier(const Statement& statement, const std::string& name) {
             return std::any_of(statement.modifiers.begin(), statement.modifiers.end(),
                 [&](const Token& modifier) { return modifier.value == name; });
         }
@@ -126,18 +128,18 @@ namespace Absolute {
             }
         };
 
-        bool IsBuiltinFunction(const std::string& name) {
+        inline bool IsBuiltinFunction(const std::string& name) {
             return name == "print" || name == "println" || name == "format" ||
                 name == "toString" || name == "assert";
         }
 
-        bool IsPrintableType(const std::string& type) {
+        inline bool IsPrintableType(const std::string& type) {
             return type == "bool" || type == "string" || type == "char" || type == "null" ||
                 type == "dynamic" || type == "error" || type == "float" || type == "double" ||
                 type.starts_with("int") || type.starts_with("uint");
         }
 
-        std::optional<size_t> CountFormatPlaceholders(const std::string& format) {
+        inline std::optional<size_t> CountFormatPlaceholders(const std::string& format) {
             size_t count = 0;
             for (size_t index = 0; index < format.size(); ++index) {
                 if (format[index] == '{') {

@@ -1,4 +1,5 @@
 #include "analyzer_build_pch.h"
+#include "analyzer.h"
 
 namespace Absolute {
     SymbolTable::SymbolTable() { Reset(); }

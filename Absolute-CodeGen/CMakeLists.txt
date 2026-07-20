@@ -1,10 +1,21 @@
 cmake_minimum_required(VERSION 3.20)
 project(Absolute-CodeGen LANGUAGES CXX)
 
+option(ABSOLUTE_LLVM_USE_LIBEDIT "Allow LLVM to use LibEdit integration" OFF)
+option(ABSOLUTE_LLVM_USE_CURL "Allow LLVM to use CURL integration" OFF)
+
+if(NOT ABSOLUTE_LLVM_USE_LIBEDIT)
+    set(CMAKE_DISABLE_FIND_PACKAGE_LibEdit TRUE)
+endif()
+if(NOT ABSOLUTE_LLVM_USE_CURL)
+    set(CMAKE_DISABLE_FIND_PACKAGE_CURL TRUE)
+endif()
+
 find_package(LLVM REQUIRED CONFIG)
 
 message(STATUS "Using LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "LLVMConfig.cmake: ${LLVM_DIR}")
+message(STATUS "LLVM optional integrations: LibEdit=${ABSOLUTE_LLVM_USE_LIBEDIT}, CURL=${ABSOLUTE_LLVM_USE_CURL}")
 
 add_library(Absolute-CodeGen STATIC
     include/codegen.h
@@ -27,7 +38,7 @@ add_library(Absolute-CodeGen STATIC
     src/codegen_values.cpp
 )
 
-target_precompile_headers(Absolute-CodeGen PRIVATE include/codegen_internal.h)
+target_precompile_headers(Absolute-CodeGen PRIVATE include/codegen_pch.h)
 
 target_compile_features(Absolute-CodeGen PUBLIC cxx_std_20)
 target_include_directories(Absolute-CodeGen PUBLIC include)

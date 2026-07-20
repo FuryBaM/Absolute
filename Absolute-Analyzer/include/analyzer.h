@@ -4,8 +4,8 @@
 #define ANALYZER_API
 #endif
 
+#include "expression_visitor.h"
 #include "statement_visitor.h"
-#include "type.h"
 
 #include <cstdint>
 #include <iostream>

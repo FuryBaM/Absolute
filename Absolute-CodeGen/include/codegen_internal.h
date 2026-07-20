@@ -1,5 +1,8 @@
 #pragma once
 #include "codegen_pch.h"
+#include "analyzer.h"
+#include "codegen.h"
+#include "syntax_plugins.h"
 
 namespace Absolute {
     namespace {
@@ -35,32 +38,32 @@ namespace Absolute {
             void Visit(StringLiteralExpr* expr) override { literal = expr; }
         };
 
-        std::string IdentifierName(Expression* expression) {
+        inline std::string IdentifierName(Expression* expression) {
             if (!expression) return {};
             BaseIdentifierVisitor visitor;
             expression->Accept(visitor);
             return visitor.identifierExpr ? visitor.identifierExpr->name : std::string{};
         }
 
-        bool IsRawPointerTypeName(const std::string& name) {
+        inline bool IsRawPointerTypeName(const std::string& name) {
             return name.starts_with("raw ") && name.ends_with("*");
         }
 
-        bool IsManagedPointerTypeName(const std::string& name) {
+        inline bool IsManagedPointerTypeName(const std::string& name) {
             return !IsRawPointerTypeName(name) && name.ends_with("*");
         }
 
-        bool IsPointerTypeName(const std::string& name) {
+        inline bool IsPointerTypeName(const std::string& name) {
             return IsRawPointerTypeName(name) || IsManagedPointerTypeName(name);
         }
 
-        std::string PointerPointeeName(std::string name) {
+        inline std::string PointerPointeeName(std::string name) {
             if (IsRawPointerTypeName(name)) name.erase(0, 4);
             if (!name.empty() && name.back() == '*') name.pop_back();
             return name;
         }
 
-        std::string EncodeLinkComponent(const std::string& value) {
+        inline std::string EncodeLinkComponent(const std::string& value) {
             constexpr char digits[] = "0123456789ABCDEF";
             std::string result;
             for (const unsigned char character : value) {
@@ -74,22 +77,22 @@ namespace Absolute {
             return result;
         }
 
-        std::string CallableKey(const std::string& name, const std::vector<std::string>& parameterTypes) {
+        inline std::string CallableKey(const std::string& name, const std::vector<std::string>& parameterTypes) {
             std::string result = name;
             for (const std::string& type : parameterTypes) result += "$" + EncodeLinkComponent(type);
             return result;
         }
 
-        bool IsTaskTypeName(const std::string& name) {
+        inline bool IsTaskTypeName(const std::string& name) {
             return name.size() > 6 && name.starts_with("task<") && name.ends_with(">");
         }
 
-        bool HasModifier(const Statement& statement, const std::string& name) {
+        inline bool HasModifier(const Statement& statement, const std::string& name) {
             return std::any_of(statement.modifiers.begin(), statement.modifiers.end(),
                 [&](const Token& modifier) { return modifier.value == name; });
         }
 
-        size_t ArrayRankName(std::string type) {
+        inline size_t ArrayRankName(std::string type) {
             size_t rank = 0;
             while (type.ends_with("[]")) {
                 type.resize(type.size() - 2);
@@ -98,16 +101,16 @@ namespace Absolute {
             return rank;
         }
 
-        std::string ArrayElementTypeName(std::string type, size_t dimensions = 1) {
+        inline std::string ArrayElementTypeName(std::string type, size_t dimensions = 1) {
             while (dimensions-- > 0 && type.ends_with("[]")) type.resize(type.size() - 2);
             return type;
         }
 
-        std::string TaskValueTypeName(const std::string& name) {
+        inline std::string TaskValueTypeName(const std::string& name) {
             return IsTaskTypeName(name) ? name.substr(5, name.size() - 6) : std::string{};
         }
 
-        std::optional<std::vector<size_t>> InferArrayShape(const ArrayExpr& array) {
+        inline std::optional<std::vector<size_t>> InferArrayShape(const ArrayExpr& array) {
             std::vector<size_t> childShape;
             bool hasChildShape = false;
             for (const auto& value : array.values) {
@@ -127,7 +130,7 @@ namespace Absolute {
             return childShape;
         }
 
-        void FlattenArrayValues(ArrayExpr& array, std::vector<Expression*>& output) {
+        inline void FlattenArrayValues(ArrayExpr& array, std::vector<Expression*>& output) {
             for (const auto& value : array.values) {
                 if (auto* nested = dynamic_cast<ArrayExpr*>(value.get())) FlattenArrayValues(*nested, output);
                 else output.push_back(value.get());

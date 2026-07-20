@@ -43,8 +43,6 @@ namespace Absolute {
         Token* name = Consume(TokenType::IDENTIFIER);
         Consume(TokenType::BRACKET, "{"); // Открывающая `{`
 
-        bool expectComma = false; // Следующий элемент должен идти после запятой
-
         while (CurrentToken()->value != "}") {
             Token* next = CurrentToken();
 
