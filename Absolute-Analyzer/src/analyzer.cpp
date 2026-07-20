@@ -36,6 +36,7 @@ namespace Absolute {
         spawnContextDepth = 0;
         currentFunctionAsync = false;
         currentMethodConst = false;
+        currentMethodStatic = false;
         currentConstructor = false;
         loopDepth = functionDepth = catchDepth = finallyDepth = deferDepth =
             typeContextDepth = constructorContextDepth = 0;
@@ -499,9 +500,24 @@ namespace Absolute {
         if (!genericScope.empty()) genericTypeScopes.push_back(genericScope);
         const std::string returnType = ResolveType(statement.returnType.get());
         const bool constMethod = HasModifier(statement, "const");
+        const bool staticMethod = HasModifier(statement, "static");
         if (constMethod && kind != SymbolKind::Method)
             Report("const callable '" + statement.name->value +
                 "' must be a class or struct method", "E_CONST_NON_METHOD");
+        if (staticMethod && kind != SymbolKind::Method)
+            Report("static callable '" + statement.name->value +
+                "' must be a class or struct method", "E_STATIC_NON_METHOD");
+        if (staticMethod && constMethod)
+            Report("static method '" + statement.name->value + "' cannot be const",
+                "E_STATIC_CONST_METHOD");
+        if (staticMethod && (HasModifier(statement, "virtual") ||
+            HasModifier(statement, "override") || HasModifier(statement, "sealed")))
+            Report("static method '" + statement.name->value +
+                "' cannot be virtual, override, or sealed", "E_STATIC_DISPATCH_MODIFIER");
+        if (staticMethod && !currentType.empty() &&
+            !types[currentType].genericParameters.empty())
+            Report("static members of generic types are not implemented yet",
+                "E_STATIC_GENERIC_UNSUPPORTED");
         if (!IsKnownType(returnType))
             Report("unknown return type '" + returnType + "' of function '" + statement.name->value + "'");
 
@@ -538,9 +554,11 @@ namespace Absolute {
         const std::string oldReturn = currentReturnType;
         const bool oldAsync = currentFunctionAsync;
         const bool oldConstMethod = currentMethodConst;
+        const bool oldStaticMethod = currentMethodStatic;
         currentReturnType = returnType;
         currentFunctionAsync = HasModifier(statement, "async");
         currentMethodConst = constMethod && kind == SymbolKind::Method;
+        currentMethodStatic = staticMethod && kind == SymbolKind::Method;
         ++functionDepth;
         table.EnterScope();
         keepLifetimes.clear();
@@ -598,6 +616,7 @@ namespace Absolute {
         currentReturnType = oldReturn;
         currentFunctionAsync = oldAsync;
         currentMethodConst = oldConstMethod;
+        currentMethodStatic = oldStaticMethod;
         if (!genericScope.empty()) genericTypeScopes.pop_back();
         (void)kind;
     }
@@ -634,7 +653,11 @@ namespace Absolute {
             return;
         }
         signature.symbol = *declared;
-        if (Symbol* symbol = table.Get(*declared)) symbol->isConst = signature.isConst;
+        if (Symbol* symbol = table.Get(*declared)) {
+            symbol->isConst = signature.isConst;
+            symbol->isStatic = signature.isStatic;
+            symbol->memberOwner = owner;
+        }
         overloads.push_back(std::move(signature));
     }
 

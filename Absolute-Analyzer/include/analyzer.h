@@ -44,6 +44,8 @@ namespace Absolute {
         bool extensionFunction = false;
         bool externalFunction = false;
         bool isConst = false;
+        bool isStatic = false;
+        std::string memberOwner;
         std::vector<std::string> genericParameters;
         std::vector<std::string> genericArguments;
         SymbolId genericOrigin = InvalidSymbolId;
@@ -128,6 +130,7 @@ namespace Absolute {
             std::vector<std::string> parameterTypes;
             SymbolId symbol = InvalidSymbolId;
             bool isConst = false;
+            bool isStatic = false;
         };
 
         enum class TypeKind {
@@ -250,6 +253,7 @@ namespace Absolute {
         int spawnContextDepth = 0;
         bool currentFunctionAsync = false;
         bool currentMethodConst = false;
+        bool currentMethodStatic = false;
         bool currentConstructor = false;
 
     public:

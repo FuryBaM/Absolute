@@ -68,7 +68,7 @@ namespace Absolute {
                 DeclareMember(currentType, stmt->name->value,
                     {SymbolKind::Method, ResolveType(stmt->returnType.get()),
                         ResolveParameterTypes(stmt->parameters), InvalidSymbolId,
-                        HasModifier(*stmt, "const")});
+                        HasModifier(*stmt, "const"), HasModifier(*stmt, "static")});
                 auto& overloads = types[currentType].members[stmt->name->value];
                 if (!overloads.empty()) {
                     Symbol* symbol = table.Get(overloads.back().symbol);

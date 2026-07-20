@@ -47,6 +47,9 @@ namespace Absolute {
             Save(expr, {InvalidSymbolId, "error", false});
             return;
         }
+        if (currentMethodStatic && symbol->kind == SymbolKind::Field && !symbol->isStatic)
+            Report("static method cannot access instance field '" + expr->name + "'",
+                "E_STATIC_INSTANCE_ACCESS", id);
         const bool value = symbol->kind == SymbolKind::Variable || symbol->kind == SymbolKind::Parameter ||
             symbol->kind == SymbolKind::Field;
         if (!value) Report("object '" + expr->name + "' is not a value");
@@ -172,34 +175,57 @@ namespace Absolute {
                 qualifiedCandidates, arguments, qualifiedCallName, explicitTypeArguments);
         }
         else if (auto* memberCall = dynamic_cast<MemberAccessExpr*>(expr->base.get())) {
-            receiver = Evaluate(memberCall->base.get());
-            hasReceiver = true;
+            const std::string ownerName = ResolveTypeReference(
+                ExtractQualifiedName(memberCall->base.get()));
+            const bool typeReceiver = types.contains(ownerName);
+            if (!typeReceiver) {
+                receiver = Evaluate(memberCall->base.get());
+                hasReceiver = true;
+            }
             for (const auto& argument : expr->arguments) arguments.push_back(Evaluate(argument.get()));
 
-            const auto members = FindMembers(receiver.type, memberCall->member);
+            const auto members = FindMembers(typeReceiver ? ownerName : receiver.type, memberCall->member);
             std::vector<SymbolId> methodCandidates;
             for (const MemberSignature& member : members)
-                if (member.kind == SymbolKind::Method) methodCandidates.push_back(member.symbol);
+                if (member.kind == SymbolKind::Method && member.isStatic == typeReceiver)
+                    methodCandidates.push_back(member.symbol);
             if (!methodCandidates.empty()) {
                 symbolId = SelectOverload(
                     methodCandidates, arguments, memberCall->member, explicitTypeArguments);
             }
-            else if (const auto extensions = FindExtensionCandidates(memberCall->member);
-                !extensions.empty()) {
-                std::vector<Result> extensionArguments;
-                extensionArguments.reserve(arguments.size() + 1);
-                extensionArguments.push_back(receiver);
-                extensionArguments.insert(extensionArguments.end(), arguments.begin(), arguments.end());
-                symbolId = SelectOverload(
-                    extensions, extensionArguments, memberCall->member, explicitTypeArguments);
+            else if (std::any_of(members.begin(), members.end(), [&](const MemberSignature& member) {
+                return member.kind == SymbolKind::Method && member.isStatic != typeReceiver;
+            })) {
+                Report(typeReceiver
+                    ? "instance method '" + memberCall->member + "' requires an object"
+                    : "static method '" + memberCall->member + "' requires a type receiver",
+                    typeReceiver ? "E_INSTANCE_MEMBER_ON_TYPE" : "E_STATIC_MEMBER_ON_OBJECT");
             }
             else {
-                Report("type '" + receiver.type + "' has no method '" + memberCall->member + "'");
+                const auto extensions = typeReceiver
+                    ? std::vector<SymbolId>{} : FindExtensionCandidates(memberCall->member);
+                if (!extensions.empty()) {
+                    std::vector<Result> extensionArguments;
+                    extensionArguments.reserve(arguments.size() + 1);
+                    extensionArguments.push_back(receiver);
+                    extensionArguments.insert(extensionArguments.end(), arguments.begin(), arguments.end());
+                    symbolId = SelectOverload(
+                        extensions, extensionArguments, memberCall->member, explicitTypeArguments);
+                }
+                else {
+                    Report("type '" + (typeReceiver ? ownerName : receiver.type) +
+                        "' has no method '" + memberCall->member + "'");
+                }
             }
         }
         else {
             for (const auto& argument : expr->arguments) arguments.push_back(Evaluate(argument.get()));
-            const std::vector<SymbolId> candidates = FindFunctionCandidates(callName);
+            std::vector<SymbolId> candidates = FindFunctionCandidates(callName);
+            if (candidates.empty() && !currentType.empty()) {
+                for (const MemberSignature& member : FindMembers(currentType, callName))
+                    if (member.kind == SymbolKind::Method && member.isStatic)
+                        candidates.push_back(member.symbol);
+            }
             if (candidates.empty()) Report("unknown function '" + callName + "'");
             else symbolId = SelectOverload(candidates, arguments, callName, explicitTypeArguments);
         }
@@ -208,6 +234,7 @@ namespace Absolute {
         const std::string returnType = selected ? selected->type : "error";
         const bool asyncCall = selected && selected->asyncFunction;
         if (currentMethodConst && selected && selected->kind == SymbolKind::Method &&
+            !selected->isStatic &&
             !selected->isConst) {
             Report("const method cannot call non-const method '" + selected->name + "'",
                 "E_CONST_METHOD_CALL", selected->id);

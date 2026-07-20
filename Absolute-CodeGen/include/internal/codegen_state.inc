@@ -28,6 +28,13 @@
             unsigned index = 0;
         };
 
+        struct StaticField {
+            std::string name;
+            std::string typeName;
+            Expression* initializer = nullptr;
+            bool isConst = false;
+        };
+
         struct ClassMethod {
             FunctionDeclStmt* statement = nullptr;
             std::string owner;
@@ -36,6 +43,7 @@
             std::vector<std::string> parameterTypes;
             std::string returnType;
             std::unordered_map<std::string, std::string> substitutions;
+            bool isStatic = false;
         };
 
         struct ClassInfo {
@@ -45,10 +53,13 @@
             std::vector<std::string> parents;
             std::vector<VarDeclExpr*> ownPrimitiveFields;
             std::vector<InstanceDeclExpr*> ownObjectFields;
+            std::vector<VarDeclExpr*> ownStaticPrimitiveFields;
+            std::vector<InstanceDeclExpr*> ownStaticObjectFields;
             std::vector<FunctionDeclStmt*> ownMethods;
             ConstructorDeclStmt* constructor = nullptr;
             std::vector<ClassField> fields;
             std::unordered_map<std::string, ClassField> fieldByName;
+            std::vector<StaticField> staticFields;
             std::unordered_map<std::string, ClassMethod> methods;
             std::unordered_map<std::string, ClassMethod> declaredMethods;
             std::vector<std::string> virtualNames;
@@ -66,10 +77,13 @@
             StructDeclStmt* statement = nullptr;
             std::vector<VarDeclExpr*> ownPrimitiveFields;
             std::vector<InstanceDeclExpr*> ownObjectFields;
+            std::vector<VarDeclExpr*> ownStaticPrimitiveFields;
+            std::vector<InstanceDeclExpr*> ownStaticObjectFields;
             std::vector<FunctionDeclStmt*> ownMethods;
             ConstructorDeclStmt* constructor = nullptr;
             std::vector<ClassField> fields;
             std::unordered_map<std::string, ClassField> fieldByName;
+            std::vector<StaticField> staticFields;
             std::unordered_map<std::string, ClassMethod> methods;
             llvm::StructType* llvmType = nullptr;
             std::unordered_map<std::string, std::string> substitutions;

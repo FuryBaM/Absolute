@@ -22,6 +22,24 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(IdentifierExpr* expr) {
+        if (impl->analyzer) {
+            const ExpressionInfo* info = impl->analyzer->GetExpressionInfo(*expr);
+            const Symbol* symbol = info ? impl->analyzer->GetSymbol(info->symbol) : nullptr;
+            if (symbol && symbol->kind == SymbolKind::Field && symbol->isStatic) {
+                const std::string globalName = symbol->memberOwner + "." + expr->name;
+                auto field = impl->globals.find(globalName);
+                if (field == impl->globals.end())
+                    impl->Fail("missing static field '" + globalName + "'");
+                if (impl->addressMode) {
+                    impl->addressValue = field->second.address;
+                    return;
+                }
+                impl->value = impl->builder.CreateLoad(
+                    field->second.type, field->second.address, expr->name + ".static.value");
+                impl->valueCreatesManagedOwner = false;
+                return;
+            }
+        }
         Impl::Variable* variable = impl->FindVariable(expr->name);
         if (!variable) {
             llvm::Value* fieldAddress = impl->ImplicitFieldAddress(expr->name);
@@ -52,6 +70,24 @@ namespace Absolute {
     void CodeGenerator::Visit(FunctionCallExpr* expr) {
         const ExpressionInfo* callInfo = impl->analyzer ? impl->analyzer->GetExpressionInfo(*expr) : nullptr;
         const Symbol* selected = callInfo ? impl->analyzer->GetSymbol(callInfo->symbol) : nullptr;
+        if (selected && selected->kind == SymbolKind::Method && selected->isStatic) {
+            const std::string name = impl->ResolvedName(expr);
+            llvm::Function* function = impl->module->getFunction(name);
+            if (!function) impl->Fail("unknown static method '" + name + "'");
+            if (function->arg_size() != expr->arguments.size())
+                impl->Fail("invalid argument count for static method '" + name + "'");
+            std::vector<llvm::Value*> arguments;
+            arguments.reserve(expr->arguments.size());
+            for (size_t index = 0; index < expr->arguments.size(); ++index)
+                arguments.push_back(impl->Coerce(impl->Evaluate(expr->arguments[index].get()),
+                    function->getFunctionType()->getParamType(static_cast<unsigned>(index))));
+            llvm::CallInst* call = impl->builder.CreateCall(function, arguments,
+                function->getReturnType()->isVoidTy() ? "" : "static.method.result");
+            impl->EmitExceptionCheck();
+            impl->value = function->getReturnType()->isVoidTy() ? nullptr : call;
+            impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
+            return;
+        }
         if (auto* member = dynamic_cast<MemberAccessExpr*>(expr->base.get())) {
             if (selected && selected->extensionFunction) {
                 const std::string name = impl->ResolvedName(expr);

@@ -21,6 +21,8 @@ namespace Absolute {
         std::unique_ptr<InstanceDeclExpr> instanceDecl = ParseInstanceDeclExpr();
         instanceDecl->isConst = std::any_of(modifiers.begin(), modifiers.end(),
             [](const Token& modifier) { return modifier.value == "const"; });
+        instanceDecl->isStatic = std::any_of(modifiers.begin(), modifiers.end(),
+            [](const Token& modifier) { return modifier.value == "static"; });
         auto stmt = std::make_unique<SingleStatement>(std::move(instanceDecl));
         stmt->modifiers = modifiers;
         stmt->attributes = std::move(attributes);

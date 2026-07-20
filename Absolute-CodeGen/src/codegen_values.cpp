@@ -165,6 +165,20 @@ namespace Absolute {
         if (impl->analyzer) {
             const ExpressionInfo* info = impl->analyzer->GetExpressionInfo(*expr);
             const Symbol* symbol = info ? impl->analyzer->GetSymbol(info->symbol) : nullptr;
+            if (symbol && symbol->kind == SymbolKind::Field && symbol->isStatic) {
+                const std::string globalName = symbol->memberOwner + "." + expr->member;
+                auto field = impl->globals.find(globalName);
+                if (field == impl->globals.end())
+                    impl->Fail("missing static field '" + globalName + "'");
+                if (impl->addressMode) {
+                    impl->addressValue = field->second.address;
+                    return;
+                }
+                impl->value = impl->builder.CreateLoad(
+                    field->second.type, field->second.address, expr->member + ".static.value");
+                impl->valueCreatesManagedOwner = false;
+                return;
+            }
             const auto constant = symbol ? impl->enumConstants.find(symbol->name) : impl->enumConstants.end();
             if (constant != impl->enumConstants.end()) {
                 if (impl->addressMode) impl->Fail("an enum constant is not assignable");

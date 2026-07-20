@@ -8,7 +8,8 @@ namespace Absolute {
         if (found == types.end() || found->second.kind != TypeKind::Class) return std::nullopt;
         if (const auto members = found->second.members.find(name); members != found->second.members.end()) {
             for (const MemberSignature& member : members->second)
-                if (member.kind == SymbolKind::Method && member.parameterTypes == parameterTypes)
+                if (member.kind == SymbolKind::Method && !member.isStatic &&
+                    member.parameterTypes == parameterTypes)
                     return member;
         }
         for (const std::string& parent : found->second.parents) {
@@ -77,7 +78,13 @@ namespace Absolute {
             for (const MemberSignature& member : overloads) {
                 const auto declared = table.Declare(
                     member.kind, name, member.type, member.parameterTypes);
-                if (declared) table.Get(*declared)->isConst = member.isConst;
+                if (declared) {
+                    Symbol* symbol = table.Get(*declared);
+                    symbol->isConst = member.isConst;
+                    symbol->isStatic = member.isStatic;
+                    if (const Symbol* original = table.Get(member.symbol))
+                        symbol->memberOwner = original->memberOwner;
+                }
             }
         for (const auto& member : stmt->members) if (member) member->Accept(*this);
         table.ExitScope();
@@ -130,7 +137,13 @@ namespace Absolute {
             for (const MemberSignature& member : overloads) {
                 const auto declared = table.Declare(
                     member.kind, name, member.type, member.parameterTypes);
-                if (declared) table.Get(*declared)->isConst = member.isConst;
+                if (declared) {
+                    Symbol* symbol = table.Get(*declared);
+                    symbol->isConst = member.isConst;
+                    symbol->isStatic = member.isStatic;
+                    if (const Symbol* original = table.Get(member.symbol))
+                        symbol->memberOwner = original->memberOwner;
+                }
             }
         if (stmt->body) stmt->body->Accept(*this);
         ValidateInterfaceImplementation(typeName);
@@ -172,7 +185,13 @@ namespace Absolute {
             for (const MemberSignature& member : overloads) {
                 const auto declared = table.Declare(
                     member.kind, name, member.type, member.parameterTypes);
-                if (declared) table.Get(*declared)->isConst = member.isConst;
+                if (declared) {
+                    Symbol* symbol = table.Get(*declared);
+                    symbol->isConst = member.isConst;
+                    symbol->isStatic = member.isStatic;
+                    if (const Symbol* original = table.Get(member.symbol))
+                        symbol->memberOwner = original->memberOwner;
+                }
             }
         for (const auto& method : stmt->methods) if (method) method->Accept(*this);
         table.ExitScope();
@@ -193,6 +212,8 @@ namespace Absolute {
         ValidateAttributes(*stmt, "constructor", true);
         if (HasModifier(*stmt, "const"))
             Report("constructors cannot be const", "E_CONST_CONSTRUCTOR");
+        if (HasModifier(*stmt, "static"))
+            Report("constructors cannot be static", "E_STATIC_CONSTRUCTOR");
         if (stmt->name && Qualify(stmt->name->value) != currentType)
             Report("constructor '" + stmt->name->value + "' must match type '" + currentType + "'");
         ++functionDepth;

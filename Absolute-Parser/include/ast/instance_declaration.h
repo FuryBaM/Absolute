@@ -6,6 +6,7 @@ namespace Absolute {
         std::unique_ptr<Expression> identifierName;
         std::unique_ptr<Expression> value;
         bool isConst = false;
+        bool isStatic = false;
 
         InstanceDeclExpr(std::unique_ptr<Expression> constructType,
             std::unique_ptr<Expression> identifierName,

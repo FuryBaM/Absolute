@@ -95,11 +95,16 @@ namespace Absolute {
         if (!body) Fail("class '" + name + "' requires a compound body");
         for (const auto& member : body->statements) {
             if (auto* declaration = dynamic_cast<VarDeclStmt*>(member.get())) {
-                if (declaration->expr) info.ownPrimitiveFields.push_back(declaration->expr.get());
+                if (declaration->expr) {
+                    if (declaration->expr->isStatic)
+                        info.ownStaticPrimitiveFields.push_back(declaration->expr.get());
+                    else info.ownPrimitiveFields.push_back(declaration->expr.get());
+                }
             }
             else if (auto* single = dynamic_cast<SingleStatement*>(member.get())) {
                 if (auto* instance = dynamic_cast<InstanceDeclExpr*>(single->expr.get()))
-                    info.ownObjectFields.push_back(instance);
+                    if (instance->isStatic) info.ownStaticObjectFields.push_back(instance);
+                    else info.ownObjectFields.push_back(instance);
             }
             else if (auto* method = dynamic_cast<FunctionDeclStmt*>(member.get()))
                 info.ownMethods.push_back(method);
@@ -127,11 +132,16 @@ namespace Absolute {
         info.llvmType = llvm::StructType::create(context, "absolute.struct." + name);
         for (const auto& member : statement.members) {
             if (auto* declaration = dynamic_cast<VarDeclStmt*>(member.get())) {
-                if (declaration->expr) info.ownPrimitiveFields.push_back(declaration->expr.get());
+                if (declaration->expr) {
+                    if (declaration->expr->isStatic)
+                        info.ownStaticPrimitiveFields.push_back(declaration->expr.get());
+                    else info.ownPrimitiveFields.push_back(declaration->expr.get());
+                }
             }
             else if (auto* single = dynamic_cast<SingleStatement*>(member.get())) {
                 if (auto* instance = dynamic_cast<InstanceDeclExpr*>(single->expr.get()))
-                    info.ownObjectFields.push_back(instance);
+                    if (instance->isStatic) info.ownStaticObjectFields.push_back(instance);
+                    else info.ownObjectFields.push_back(instance);
             }
             else if (auto* method = dynamic_cast<FunctionDeclStmt*>(member.get()))
                 info.ownMethods.push_back(method);
@@ -294,6 +304,12 @@ namespace Absolute {
             addField(IdentifierName(field->name.get()), DeclaredTypeName(*field));
         for (InstanceDeclExpr* field : info.ownObjectFields)
             addField(IdentifierName(field->identifierName.get()), ResolveTypeName(field->constructType.get()));
+        for (VarDeclExpr* field : info.ownStaticPrimitiveFields)
+            info.staticFields.push_back({IdentifierName(field->name.get()), DeclaredTypeName(*field),
+                field->value.get(), field->isConst});
+        for (InstanceDeclExpr* field : info.ownStaticObjectFields)
+            info.staticFields.push_back({IdentifierName(field->identifierName.get()),
+                ResolveTypeName(field->constructType.get()), field->value.get(), field->isConst});
 
         for (FunctionDeclStmt* statement : info.ownMethods) {
             if (!statement || !statement->name) continue;
@@ -307,7 +323,8 @@ namespace Absolute {
                 Fail("duplicate method '" + name + "." + methodName + "'");
             info.methods.emplace(methodKey, ClassMethod{
                 statement, name, CallableKey(name + "." + methodName, parameterTypes), std::nullopt,
-                parameterTypes, ResolveTypeName(statement->returnType.get()), info.substitutions});
+                parameterTypes, ResolveTypeName(statement->returnType.get()), info.substitutions,
+                HasModifier(*statement, "static")});
         }
 
         std::vector<llvm::Type*> layout;
@@ -385,6 +402,12 @@ namespace Absolute {
             addField(IdentifierName(field->name.get()), DeclaredTypeName(*field));
         for (InstanceDeclExpr* field : info.ownObjectFields)
             addField(IdentifierName(field->identifierName.get()), ResolveTypeName(field->constructType.get()));
+        for (VarDeclExpr* field : info.ownStaticPrimitiveFields)
+            info.staticFields.push_back({IdentifierName(field->name.get()), DeclaredTypeName(*field),
+                field->value.get(), field->isConst});
+        for (InstanceDeclExpr* field : info.ownStaticObjectFields)
+            info.staticFields.push_back({IdentifierName(field->identifierName.get()),
+                ResolveTypeName(field->constructType.get()), field->value.get(), field->isConst});
 
         for (FunctionDeclStmt* statement : info.ownMethods) {
             if (!statement || !statement->name) continue;
@@ -396,7 +419,8 @@ namespace Absolute {
             const std::string methodKey = CallableKey(methodName, parameterTypes);
             const auto inherited = info.methods.find(methodKey);
             std::optional<unsigned> slot;
-            if (inherited != info.methods.end() && inherited->second.virtualSlot) {
+            const bool staticMethod = HasModifier(*statement, "static");
+            if (!staticMethod && inherited != info.methods.end() && inherited->second.virtualSlot) {
                 if (!SameMethodSignature(*inherited->second.statement, *statement))
                     Fail("override signature mismatch for '" + name + "." + methodName + "'");
                 slot = inherited->second.virtualSlot;
@@ -408,7 +432,8 @@ namespace Absolute {
                 info.virtualNames.push_back(methodKey);
             }
             ClassMethod method{statement, name, CallableKey(name + "." + methodName, parameterTypes), slot,
-                parameterTypes, ResolveTypeName(statement->returnType.get()), info.substitutions};
+                parameterTypes, ResolveTypeName(statement->returnType.get()), info.substitutions,
+                staticMethod};
             info.methods[methodKey] = method;
             info.declaredMethods[methodKey] = std::move(method);
         }
@@ -439,7 +464,8 @@ namespace Absolute {
     }
 
     llvm::FunctionType* CodeGenerator::Impl::MethodFunctionType(const ClassMethod& method) {
-        std::vector<llvm::Type*> parameters{builder.getPtrTy()};
+        std::vector<llvm::Type*> parameters;
+        if (!method.isStatic) parameters.push_back(builder.getPtrTy());
         for (const std::string& parameter : method.parameterTypes)
             parameters.push_back(TypeFromName(parameter));
         return llvm::FunctionType::get(TypeFromName(method.returnType), parameters, false);
@@ -454,11 +480,38 @@ namespace Absolute {
             Fail("conflicting method declaration '" + method.linkName + "'");
         function->setCallingConv(llvm::CallingConv::C);
         ApplyCallableAttributes(*function, *method.statement);
-        function->getArg(0)->setName("this");
+        const unsigned offset = method.isStatic ? 0U : 1U;
+        if (!method.isStatic) function->getArg(0)->setName("this");
         for (size_t index = 0; index < method.statement->parameters.size(); ++index)
-            function->getArg(static_cast<unsigned>(index + 1))->setName(
+            function->getArg(static_cast<unsigned>(index) + offset)->setName(
                 IdentifierName(method.statement->parameters[index]->name.get()));
         return function;
+    }
+
+    void CodeGenerator::Impl::DeclareStaticFields(ClassInfo& info) {
+        for (const StaticField& field : info.staticFields) {
+            const std::string globalName = info.name + "." + field.name;
+            if (globals.contains(globalName)) Fail("duplicate static field '" + globalName + "'");
+            llvm::Type* type = TypeFromName(field.typeName);
+            llvm::Constant* initializer = GlobalConstant(field.initializer, type);
+            auto* storage = new llvm::GlobalVariable(*module, type, field.isConst,
+                llvm::GlobalValue::ExternalLinkage, initializer, globalName);
+            globals.emplace(globalName, Variable{storage, type, field.typeName, false,
+                false, nullptr, {}, nullptr, InvalidSymbolId});
+        }
+    }
+
+    void CodeGenerator::Impl::DeclareStaticFields(StructInfo& info) {
+        for (const StaticField& field : info.staticFields) {
+            const std::string globalName = info.name + "." + field.name;
+            if (globals.contains(globalName)) Fail("duplicate static field '" + globalName + "'");
+            llvm::Type* type = TypeFromName(field.typeName);
+            llvm::Constant* initializer = GlobalConstant(field.initializer, type);
+            auto* storage = new llvm::GlobalVariable(*module, type, field.isConst,
+                llvm::GlobalValue::ExternalLinkage, initializer, globalName);
+            globals.emplace(globalName, Variable{storage, type, field.typeName, false,
+                false, nullptr, {}, nullptr, InvalidSymbolId});
+        }
     }
 
     llvm::Function* CodeGenerator::Impl::DeclareConstructorFunction(ClassInfo& info) {
@@ -507,6 +560,7 @@ namespace Absolute {
         for (const std::string& name : classOrder) FinalizeClass(name);
         for (const std::string& name : classOrder) {
             ClassInfo& info = classes.at(name);
+            DeclareStaticFields(info);
             for (const auto& [methodName, method] : info.declaredMethods) {
                 (void)methodName;
                 DeclareMethodFunction(method);
@@ -537,6 +591,7 @@ namespace Absolute {
         for (const std::string& name : structOrder) FinalizeStruct(name);
         for (const std::string& name : structOrder) {
             StructInfo& info = structs.at(name);
+            DeclareStaticFields(info);
             for (const auto& [methodName, method] : info.methods) {
                 (void)methodName;
                 DeclareMethodFunction(method);

@@ -1,7 +1,8 @@
 #include "codegen_internal.h"
 
 namespace Absolute {
-    llvm::Constant* CodeGenerator::Impl::GlobalArrayConstant(Expression* expression, llvm::Type* type) {
+    llvm::Constant* CodeGenerator::Impl::GlobalConstant(Expression* expression, llvm::Type* type) {
+        if (!expression) return llvm::Constant::getNullValue(type);
         if (auto* number = dynamic_cast<NumberLiteralExpr*>(expression)) {
             if (type->isFloatingPointTy())
                 return llvm::ConstantFP::get(type, std::stod(number->value));
@@ -11,6 +12,15 @@ namespace Absolute {
             return llvm::ConstantInt::get(type, boolean->value ? 1 : 0);
         if (auto* character = dynamic_cast<CharLiteralExpr*>(expression))
             return llvm::ConstantInt::get(type, static_cast<unsigned char>(character->value));
+        if (auto* string = dynamic_cast<StringLiteralExpr*>(expression)) {
+            if (!type->isPointerTy()) Fail("string constant requires pointer storage");
+            return llvm::cast<llvm::Constant>(builder.CreateGlobalStringPtr(
+                string->value, "static.string", 0, module.get()));
+        }
+        if (dynamic_cast<NullExpr*>(expression)) {
+            if (!type->isPointerTy()) Fail("null constant requires pointer storage");
+            return llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(type));
+        }
         if (auto* unary = dynamic_cast<PrefixUnaryExpr*>(expression);
             unary && unary->op == "-") {
             if (auto* number = dynamic_cast<NumberLiteralExpr*>(unary->operand.get())) {
@@ -19,7 +29,7 @@ namespace Absolute {
                 return llvm::ConstantInt::get(type, -std::stoll(number->value), true);
             }
         }
-        Fail("global array initializer requires constant primitive values");
+        Fail("global initializer requires a constant primitive value");
     }
 
     void CodeGenerator::Impl::DeclareGlobalArray(VarDeclExpr& expression) {
@@ -62,7 +72,7 @@ namespace Absolute {
                 Fail("global array initializer size does not match its dimensions");
             std::vector<llvm::Constant*> constants;
             constants.reserve(values.size());
-            for (Expression* value : values) constants.push_back(GlobalArrayConstant(value, elementType));
+            for (Expression* value : values) constants.push_back(GlobalConstant(value, elementType));
             initializer = llvm::ConstantArray::get(storageType, constants);
         }
 
@@ -248,10 +258,11 @@ namespace Absolute {
         const auto oldSubstitutions = currentGenericSubstitutions;
         currentGenericSubstitutions = method.substitutions;
         currentClassName = info.name;
-        currentThis = function->getArg(0);
+        currentThis = method.isStatic ? nullptr : function->getArg(0);
         currentReturnTypeName = ResolveTypeName(method.statement->returnType.get());
+        const unsigned offset = method.isStatic ? 0U : 1U;
         for (size_t index = 0; index < method.statement->parameters.size(); ++index)
-            BindCallableParameter(*function->getArg(static_cast<unsigned>(index + 1)),
+            BindCallableParameter(*function->getArg(static_cast<unsigned>(index) + offset),
                 *method.statement->parameters[index]);
         if (method.statement->body) method.statement->body->Accept(visitor);
         FinishClassCallable(*function);
@@ -313,10 +324,11 @@ namespace Absolute {
         const auto oldSubstitutions = currentGenericSubstitutions;
         currentGenericSubstitutions = method.substitutions;
         currentClassName = info.name;
-        currentThis = function->getArg(0);
+        currentThis = method.isStatic ? nullptr : function->getArg(0);
         currentReturnTypeName = ResolveTypeName(method.statement->returnType.get());
+        const unsigned offset = method.isStatic ? 0U : 1U;
         for (size_t index = 0; index < method.statement->parameters.size(); ++index)
-            BindCallableParameter(*function->getArg(static_cast<unsigned>(index + 1)),
+            BindCallableParameter(*function->getArg(static_cast<unsigned>(index) + offset),
                 *method.statement->parameters[index]);
         if (method.statement->body) method.statement->body->Accept(visitor);
         FinishClassCallable(*function);

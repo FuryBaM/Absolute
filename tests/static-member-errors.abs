@@ -1,0 +1,31 @@
+class InvalidStaticMembers {
+    public int32 instanceValue;
+    public static int32 sharedValue = 1;
+    public static int32 dynamicValue = makeValue();
+    public static InvalidStaticMembers objectValue;
+
+    public static int32 readInstance() {
+        return instanceValue;
+    }
+
+    public static virtual int32 invalidDispatch() {
+        return 0;
+    }
+
+    public int32 instanceMethod() {
+        return 0;
+    }
+}
+
+int32 makeValue() {
+    return 1;
+}
+
+int32 main() {
+    static int32 localValue = 0;
+    InvalidStaticMembers value;
+    value.sharedValue = 2;
+    InvalidStaticMembers.instanceValue = 3;
+    InvalidStaticMembers.instanceMethod();
+    return localValue;
+}

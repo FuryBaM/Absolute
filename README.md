@@ -557,6 +557,19 @@ A struct cannot contain itself by value because that would have infinite size;
 use `raw T*` or `T*` for recursive links. Structs do not have inheritance or
 virtual dispatch and therefore carry no class vtable field.
 
+## Static members
+
+Classes and structs support static fields and methods. Access them through the
+type, for example `Counter.value` and `Counter.advance()`. Static fields are
+LLVM globals and do not increase object size; static methods have no hidden
+`this` parameter. Derived classes see the same inherited static storage.
+
+Static field initializers are currently limited to constant primitive, string,
+enum, or raw-pointer values. Managed/array/aggregate static storage, runtime
+initializers, and static members of generic types are intentionally rejected
+until module initialization and ownership are defined. See
+[docs/static-members.md](docs/static-members.md) for the exact rules.
+
 ## Interfaces
 
 Interfaces declare method contracts without storage or method bodies. An
@@ -704,9 +717,9 @@ The backend also supports primitive values, functions, local variables, calls,
 casts, arithmetic/comparison operators, assignments, `return`, `if`, `for`,
 `while`, `do-while`, `foreach`, `break`, and `continue`. User-defined classes
 support fields, local value instances, constructors, raw or managed allocation,
-single inheritance, instance methods, and `virtual`/`override` dispatch. Multiple
-inheritance, automatic destructor calls, interfaces, and static class members are
-not emitted yet. Base-constructor chaining is also not automatic. Raw object
+single inheritance, interfaces, instance and static methods, static fields, and
+`virtual`/`override` dispatch. Multiple class inheritance and automatic
+destructor calls are not emitted. Base-constructor chaining is also not automatic. Raw object
 graphs that own child nodes must release them explicitly before `delete`.
 
 Both pointer modes preserve class methods and virtual dispatch:

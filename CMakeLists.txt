@@ -348,6 +348,15 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/structs-codegen.abs"
     )
     add_test(
+        NAME absolute.static-members-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/static-members.abs"
+    )
+    add_test(
+        NAME absolute.static-member-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/static-member-errors.abs"
+    )
+    set_tests_properties(absolute.static-member-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.array-advanced-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-advanced-errors.abs"
     )
@@ -435,6 +444,22 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-overloads-extensions PROPERTIES
             FIXTURES_REQUIRED absolute-overloads-extensions-executable
             PASS_REGULAR_EXPRESSION "overloads-extensions=ok"
+        )
+        add_test(
+            NAME absolute.build-static-members
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/static-members.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/static-members${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-static-members PROPERTIES
+            FIXTURES_SETUP absolute-static-members-executable
+        )
+        add_test(
+            NAME absolute.run-static-members
+            COMMAND "${CMAKE_BINARY_DIR}/static-members${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-static-members PROPERTIES
+            FIXTURES_REQUIRED absolute-static-members-executable
+            PASS_REGULAR_EXPRESSION "static-members=ok"
         )
         add_test(
             NAME absolute.emit-llvm
@@ -759,12 +784,12 @@ if(BUILD_TESTING)
         add_test(
             NAME absolute.build-native
             COMMAND Absolute-Compiler build "${CMAKE_BINARY_DIR}/NativeFfi-$<CONFIG>.absproj"
-                --build-exe -o "${CMAKE_BINARY_DIR}/native-ffi-app"
+                --build-exe -o "${CMAKE_BINARY_DIR}/native-ffi-app${CMAKE_EXECUTABLE_SUFFIX}"
         )
         set_tests_properties(absolute.build-native PROPERTIES
             FIXTURES_SETUP absolute-native-executable
         )
-        add_test(NAME absolute.run-native COMMAND "${CMAKE_BINARY_DIR}/native-ffi-app")
+        add_test(NAME absolute.run-native COMMAND "${CMAKE_BINARY_DIR}/native-ffi-app${CMAKE_EXECUTABLE_SUFFIX}")
         set_tests_properties(absolute.run-native PROPERTIES
             FIXTURES_REQUIRED absolute-native-executable
             PASS_REGULAR_EXPRESSION "native=42"
@@ -772,12 +797,12 @@ if(BUILD_TESTING)
         add_test(
             NAME absolute.build-pointers
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointers.abs"
-                --build-exe -o "${CMAKE_BINARY_DIR}/pointers-app"
+                --build-exe -o "${CMAKE_BINARY_DIR}/pointers-app${CMAKE_EXECUTABLE_SUFFIX}"
         )
         set_tests_properties(absolute.build-pointers PROPERTIES
             FIXTURES_SETUP absolute-pointers-executable
         )
-        add_test(NAME absolute.run-pointers COMMAND "${CMAKE_BINARY_DIR}/pointers-app")
+        add_test(NAME absolute.run-pointers COMMAND "${CMAKE_BINARY_DIR}/pointers-app${CMAKE_EXECUTABLE_SUFFIX}")
         set_tests_properties(absolute.run-pointers PROPERTIES
             FIXTURES_REQUIRED absolute-pointers-executable
             PASS_REGULAR_EXPRESSION "pointers=ok"
@@ -785,12 +810,12 @@ if(BUILD_TESTING)
         add_test(
             NAME absolute.build-pointer-functions
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-functions.abs"
-                --build-exe -o "${CMAKE_BINARY_DIR}/pointer-functions-app"
+                --build-exe -o "${CMAKE_BINARY_DIR}/pointer-functions-app${CMAKE_EXECUTABLE_SUFFIX}"
         )
         set_tests_properties(absolute.build-pointer-functions PROPERTIES
             FIXTURES_SETUP absolute-pointer-functions-executable
         )
-        add_test(NAME absolute.run-pointer-functions COMMAND "${CMAKE_BINARY_DIR}/pointer-functions-app")
+        add_test(NAME absolute.run-pointer-functions COMMAND "${CMAKE_BINARY_DIR}/pointer-functions-app${CMAKE_EXECUTABLE_SUFFIX}")
         set_tests_properties(absolute.run-pointer-functions PROPERTIES
             FIXTURES_REQUIRED absolute-pointer-functions-executable
             PASS_REGULAR_EXPRESSION "pointer-functions=ok"
@@ -798,12 +823,12 @@ if(BUILD_TESTING)
         add_test(
             NAME absolute.build-classes-codegen
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/classes-codegen.abs"
-                --build-exe -o "${CMAKE_BINARY_DIR}/classes-codegen-app"
+                --build-exe -o "${CMAKE_BINARY_DIR}/classes-codegen-app${CMAKE_EXECUTABLE_SUFFIX}"
         )
         set_tests_properties(absolute.build-classes-codegen PROPERTIES
             FIXTURES_SETUP absolute-classes-codegen-executable
         )
-        add_test(NAME absolute.run-classes-codegen COMMAND "${CMAKE_BINARY_DIR}/classes-codegen-app")
+        add_test(NAME absolute.run-classes-codegen COMMAND "${CMAKE_BINARY_DIR}/classes-codegen-app${CMAKE_EXECUTABLE_SUFFIX}")
         set_tests_properties(absolute.run-classes-codegen PROPERTIES
             FIXTURES_REQUIRED absolute-classes-codegen-executable
             PASS_REGULAR_EXPRESSION "classes=42"
@@ -811,12 +836,12 @@ if(BUILD_TESTING)
         add_test(
             NAME absolute.build-interfaces-codegen
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interfaces-codegen.abs"
-                --build-exe -o "${CMAKE_BINARY_DIR}/interfaces-codegen-app"
+                --build-exe -o "${CMAKE_BINARY_DIR}/interfaces-codegen-app${CMAKE_EXECUTABLE_SUFFIX}"
         )
         set_tests_properties(absolute.build-interfaces-codegen PROPERTIES
             FIXTURES_SETUP absolute-interfaces-codegen-executable
         )
-        add_test(NAME absolute.run-interfaces-codegen COMMAND "${CMAKE_BINARY_DIR}/interfaces-codegen-app")
+        add_test(NAME absolute.run-interfaces-codegen COMMAND "${CMAKE_BINARY_DIR}/interfaces-codegen-app${CMAKE_EXECUTABLE_SUFFIX}")
         set_tests_properties(absolute.run-interfaces-codegen PROPERTIES
             FIXTURES_REQUIRED absolute-interfaces-codegen-executable
             PASS_REGULAR_EXPRESSION "interfaces=ok"
@@ -824,12 +849,12 @@ if(BUILD_TESTING)
         add_test(
             NAME absolute.build-structs-codegen
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/structs-codegen.abs"
-                --build-exe -o "${CMAKE_BINARY_DIR}/structs-codegen-app"
+                --build-exe -o "${CMAKE_BINARY_DIR}/structs-codegen-app${CMAKE_EXECUTABLE_SUFFIX}"
         )
         set_tests_properties(absolute.build-structs-codegen PROPERTIES
             FIXTURES_SETUP absolute-structs-codegen-executable
         )
-        add_test(NAME absolute.run-structs-codegen COMMAND "${CMAKE_BINARY_DIR}/structs-codegen-app")
+        add_test(NAME absolute.run-structs-codegen COMMAND "${CMAKE_BINARY_DIR}/structs-codegen-app${CMAKE_EXECUTABLE_SUFFIX}")
         set_tests_properties(absolute.run-structs-codegen PROPERTIES
             FIXTURES_REQUIRED absolute-structs-codegen-executable
             PASS_REGULAR_EXPRESSION "structs=ok"
@@ -851,12 +876,12 @@ if(BUILD_TESTING)
         add_test(
             NAME absolute.build-managed-fast-path
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-fast-path.abs"
-                --build-exe -o "${CMAKE_BINARY_DIR}/managed-fast-path-app"
+                --build-exe -o "${CMAKE_BINARY_DIR}/managed-fast-path-app${CMAKE_EXECUTABLE_SUFFIX}"
         )
         set_tests_properties(absolute.build-managed-fast-path PROPERTIES
             FIXTURES_SETUP absolute-managed-fast-path-executable
         )
-        add_test(NAME absolute.run-managed-fast-path COMMAND "${CMAKE_BINARY_DIR}/managed-fast-path-app")
+        add_test(NAME absolute.run-managed-fast-path COMMAND "${CMAKE_BINARY_DIR}/managed-fast-path-app${CMAKE_EXECUTABLE_SUFFIX}")
         set_tests_properties(absolute.run-managed-fast-path PROPERTIES
             FIXTURES_REQUIRED absolute-managed-fast-path-executable
             PASS_REGULAR_EXPRESSION "managed-fast-path="
@@ -864,12 +889,12 @@ if(BUILD_TESTING)
         add_test(
             NAME absolute.build-raw-lifetime
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/raw-lifetime.abs"
-                --build-exe -o "${CMAKE_BINARY_DIR}/raw-lifetime-app"
+                --build-exe -o "${CMAKE_BINARY_DIR}/raw-lifetime-app${CMAKE_EXECUTABLE_SUFFIX}"
         )
         set_tests_properties(absolute.build-raw-lifetime PROPERTIES
             FIXTURES_SETUP absolute-raw-lifetime-executable
         )
-        add_test(NAME absolute.run-raw-lifetime COMMAND "${CMAKE_BINARY_DIR}/raw-lifetime-app")
+        add_test(NAME absolute.run-raw-lifetime COMMAND "${CMAKE_BINARY_DIR}/raw-lifetime-app${CMAKE_EXECUTABLE_SUFFIX}")
         set_tests_properties(absolute.run-raw-lifetime PROPERTIES
             FIXTURES_REQUIRED absolute-raw-lifetime-executable
             PASS_REGULAR_EXPRESSION "raw-lifetime=ok"
@@ -877,12 +902,12 @@ if(BUILD_TESTING)
         add_test(
             NAME absolute.build-flow-analysis
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/flow-analysis.abs"
-                --build-exe -o "${CMAKE_BINARY_DIR}/flow-analysis-app"
+                --build-exe -o "${CMAKE_BINARY_DIR}/flow-analysis-app${CMAKE_EXECUTABLE_SUFFIX}"
         )
         set_tests_properties(absolute.build-flow-analysis PROPERTIES
             FIXTURES_SETUP absolute-flow-analysis-executable
         )
-        add_test(NAME absolute.run-flow-analysis COMMAND "${CMAKE_BINARY_DIR}/flow-analysis-app")
+        add_test(NAME absolute.run-flow-analysis COMMAND "${CMAKE_BINARY_DIR}/flow-analysis-app${CMAKE_EXECUTABLE_SUFFIX}")
         set_tests_properties(absolute.run-flow-analysis PROPERTIES
             FIXTURES_REQUIRED absolute-flow-analysis-executable
             PASS_REGULAR_EXPRESSION "flow-analysis=ok"
@@ -988,12 +1013,12 @@ if(BUILD_TESTING)
         add_test(
             NAME absolute.build-async
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/async-basic.abs"
-                --build-exe -o "${CMAKE_BINARY_DIR}/async-app"
+                --build-exe -o "${CMAKE_BINARY_DIR}/async-app${CMAKE_EXECUTABLE_SUFFIX}"
         )
         set_tests_properties(absolute.build-async PROPERTIES
             FIXTURES_SETUP absolute-async-executable
         )
-        add_test(NAME absolute.run-async COMMAND "${CMAKE_BINARY_DIR}/async-app")
+        add_test(NAME absolute.run-async COMMAND "${CMAKE_BINARY_DIR}/async-app${CMAKE_EXECUTABLE_SUFFIX}")
         set_tests_properties(absolute.run-async PROPERTIES
             FIXTURES_REQUIRED absolute-async-executable
             PASS_REGULAR_EXPRESSION "async=42"
