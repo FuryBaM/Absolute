@@ -1,7 +1,7 @@
 #include "codegen_internal.h"
 
 namespace Absolute {
-    // Value lowering is isolated so routine expression changes rebuild only this unit.
+    // Value lowering is isolated; its implementation is intentionally absent from the private PCH.
     void CodeGenerator::Visit(AssignmentExpr* expr) {
         const std::string targetTypeName = impl->SemanticType(expr->target.get());
         if (ArrayRankName(targetTypeName) > 0 &&

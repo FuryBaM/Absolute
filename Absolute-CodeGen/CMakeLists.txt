@@ -16,9 +16,14 @@ add_library(Absolute-CodeGen STATIC
     include/internal/codegen_types.inc
     src/codegen.cpp
     src/codegen_access.cpp
+    src/codegen_builtins.cpp
+    src/codegen_core.cpp
+    src/codegen_module.cpp
     src/codegen_operators.cpp
     src/codegen_pch.cpp
+    src/codegen_runtime.cpp
     src/codegen_statements.cpp
+    src/codegen_types.cpp
     src/codegen_values.cpp
 )
 

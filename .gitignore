@@ -371,6 +371,8 @@ build/
 benchmarks/array-suite/.benchmark-build/
 benchmarks/array-suite/results/
 benchmarks/pointer-object-suite/.benchmark-build/
+benchmarks/build-suite/.benchmark-build/
+benchmarks/build-suite/results/
 examples/desktop/.desktop-build/
 examples/chess/.build/
 .absolute/

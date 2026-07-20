@@ -124,11 +124,6 @@
         llvm::Value* currentThis = nullptr;
         std::uint64_t taskThunkCounter = 0;
 
-        explicit Impl(CodeGenerator& visitor, const Analyzer* analyzer)
-            : visitor(visitor), analyzer(analyzer), builder(context) {
-        }
+        explicit Impl(CodeGenerator& visitor, const Analyzer* analyzer);
 
-        [[noreturn]] void Fail(const std::string& message) const {
-            throw std::runtime_error("LLVM codegen: " + message);
-        }
-
+        [[noreturn]] void Fail(const std::string& message) const;
