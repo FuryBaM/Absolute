@@ -3,6 +3,7 @@
 #include <iostream>
 #include <limits>
 #include <vector>
+#include <atomic>
 
 namespace {
     struct Slot {
@@ -35,7 +36,27 @@ namespace {
     }
 }
 
+extern "C" void absolute_managed_check_leaks() {
+    std::uint32_t leakCount = 0;
+    for (size_t i = 0; i < slots.size(); ++i) {
+        if (slots[i].pointer != nullptr) {
+            std::cerr << "Absolute runtime error: memory leak detected for handle " 
+                      << MakeHandle(static_cast<std::uint32_t>(i), slots[i].generation) << "\n";
+            leakCount++;
+        }
+    }
+    if (leakCount > 0) {
+        std::cerr << "Absolute runtime error: " << leakCount << " managed pointer(s) leaked!\n";
+        std::abort();
+    }
+}
+
 extern "C" std::uint64_t absolute_managed_create(std::uint64_t size) {
+    static std::atomic<bool> initialized = false;
+    if (!initialized.exchange(true)) {
+        std::atexit(absolute_managed_check_leaks);
+    }
+
     void* allocation = std::calloc(1, static_cast<std::size_t>(size == 0 ? 1 : size));
     if (!allocation) {
         std::cerr << "Absolute runtime error: managed allocation failed\n";

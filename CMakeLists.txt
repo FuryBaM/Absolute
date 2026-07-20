@@ -257,6 +257,11 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.raw-lifetime-semantic-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
+        NAME absolute.leak-detector
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/leak-detector.abs"
+    )
+    set_tests_properties(absolute.leak-detector PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.raw-missing-delete
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/raw-missing-delete.abs"
     )
