@@ -38,4 +38,4 @@
 
         std::string Generate(Program& program, const std::string& moduleName);
 
-        void GenerateObject(Program& program, const std::string& moduleName, const std::string& outputPath);
+        void GenerateObject(Program& program, const std::string& moduleName, const std::string& outputPath, bool sanitizeAddress = false);

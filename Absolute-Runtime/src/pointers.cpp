@@ -11,6 +11,14 @@ namespace {
         std::uint32_t generation = 1;
         std::uint64_t type = 0;
     };
+}
+
+extern "C" {
+    Slot* absolute_managed_slots_data = nullptr;
+    std::uint32_t absolute_managed_slots_size = 0;
+}
+
+namespace {
 
     std::vector<Slot> slots;
     std::vector<std::uint32_t> freeSlots;
@@ -78,6 +86,8 @@ extern "C" std::uint64_t absolute_managed_create(std::uint64_t size) {
         }
         id = static_cast<std::uint32_t>(slots.size());
         slots.push_back({allocation, 1});
+        absolute_managed_slots_data = slots.data();
+        absolute_managed_slots_size = static_cast<std::uint32_t>(slots.size());
     }
     return MakeHandle(id, slots[id].generation);
 }

@@ -403,7 +403,7 @@ namespace Absolute {
                 impl->builder.CreateCall(impl->ManagedSetType(), {handle,
                     impl->builder.getInt64(impl->ExceptionTypeId(pointeeType))});
             }
-            pointer = impl->builder.CreateCall(impl->ManagedGet(true), {handle}, "managed.allocation");
+            pointer = impl->EmitManagedGet(handle, true);
             result = handle;
         }
 
@@ -484,8 +484,7 @@ namespace Absolute {
                     impl->builder.CreateStore(
                         llvm::ConstantPointerNull::get(impl->builder.getPtrTy()), variable.managedPointee);
             }
-            llvm::Value* pointee = impl->builder.CreateCall(
-                impl->ManagedGet(false), {pointer}, "delete.pointee");
+            llvm::Value* pointee = impl->EmitManagedGet(pointer, false);
             impl->EmitPointeeCleanup(pointee, typeName);
             impl->builder.CreateCall(impl->ManagedDestroy(), {pointer});
             impl->builder.CreateStore(impl->builder.getInt64(0), targetAddress);

@@ -30,6 +30,7 @@ namespace {
         bool emitObject = false;
         bool buildExecutable = false;
         bool parseOnly = false;
+        bool sanitizeAddress = false;
         fs::path output;
         std::vector<fs::path> plugins;
         std::vector<fs::path> pluginSearchPaths;
@@ -51,13 +52,14 @@ namespace {
         std::string moduleName;
         std::vector<fs::path> nativeLibraries;
         std::vector<fs::path> nativeSearchPaths;
+        bool sanitizeAddress = false;
     };
 
     void PrintUsage() {
         std::cerr
             << "Usage:\n"
-            << "  absolutec <source.abs> [--plugin path] [--plugin-path directory] [--parse-only | --emit-llvm | --emit-object | --build-exe] [-o output]\n"
-            << "  absolutec build <project.absproj> [--plugin path] [--plugin-path directory] [--parse-only | --emit-llvm | --emit-object | --build-exe] [-o output]\n"
+            << "  absolutec <source.abs> [--plugin path] [--plugin-path directory] [--parse-only | --emit-llvm | --emit-object | --build-exe] [--sanitize=address] [-o output]\n"
+            << "  absolutec build <project.absproj> [--plugin path] [--plugin-path directory] [--parse-only | --emit-llvm | --emit-object | --build-exe] [--sanitize=address] [-o output]\n"
             << "  absolutec new <name> [--directory path]\n";
     }
 
@@ -68,6 +70,7 @@ namespace {
             else if (argument == "--emit-object") result.emitObject = true;
             else if (argument == "--build-exe") result.buildExecutable = true;
             else if (argument == "--parse-only") result.parseOnly = true;
+            else if (argument == "--sanitize=address") result.sanitizeAddress = true;
             else if (argument == "--plugin") {
                 if (++index >= argc) throw std::invalid_argument("--plugin requires a library path");
                 result.plugins.emplace_back(argv[index]);
@@ -394,6 +397,9 @@ namespace {
         // Release dynamic CRT explicitly so mainCRTStartup and C builtins are
         // available even when the runtime archive contributes no object file.
         arguments << "msvcrt.lib\nvcruntime.lib\nucrt.lib\noldnames.lib\nlegacy_stdio_definitions.lib\n";
+        if (compilation.sanitizeAddress) {
+            arguments << "clang_rt.asan_dynamic-x86_64.lib\nclang_rt.asan_dynamic_runtime_thunk-x86_64.lib\n";
+        }
         for (const fs::path& path : compilation.nativeSearchPaths)
             arguments << "/LIBPATH:" << QuoteResponseArgument(path) << '\n';
 #else

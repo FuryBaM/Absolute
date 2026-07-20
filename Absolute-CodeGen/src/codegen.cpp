@@ -12,8 +12,8 @@ namespace Absolute {
     }
 
     void CodeGenerator::GenerateObject(
-        Program& program, const std::string& moduleName, const std::string& outputPath) {
-        impl->GenerateObject(program, moduleName, outputPath);
+        Program& program, const std::string& moduleName, const std::string& outputPath, bool sanitizeAddress) {
+        impl->GenerateObject(program, moduleName, outputPath, sanitizeAddress);
     }
 
 }

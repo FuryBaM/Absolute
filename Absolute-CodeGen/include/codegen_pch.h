@@ -15,6 +15,7 @@
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Passes/OptimizationLevel.h>
 #include <llvm/Passes/PassBuilder.h>
+#include <llvm/Transforms/Instrumentation/AddressSanitizer.h>
 #include <llvm/Support/CodeGen.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/SourceMgr.h>

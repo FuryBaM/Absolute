@@ -98,8 +98,7 @@ namespace Absolute {
             }
             if (!variable.managedOwner || variable.symbol == transferredOwner) continue;
             llvm::Value* handle = builder.CreateLoad(variable.type, variable.address, "cleanup.handle");
-            llvm::Value* pointee = builder.CreateCall(
-                ManagedGet(false), {handle}, "cleanup.pointee");
+            llvm::Value* pointee = EmitManagedGet(handle, false);
             EmitPointeeCleanup(pointee, variable.typeName);
             builder.CreateCall(ManagedDestroy(), {handle});
             builder.CreateStore(builder.getInt64(0), variable.address);
@@ -181,7 +180,7 @@ namespace Absolute {
                     identifier->name + ".cached.pointee");
             }
         }
-        return builder.CreateCall(ManagedGet(true), {handle}, "managed.pointee");
+        return EmitManagedGet(handle, true);
     }
 
     llvm::Value* CodeGenerator::Impl::EvaluateCallArgument(
@@ -603,6 +602,75 @@ namespace Absolute {
         return module->getOrInsertFunction(
             requireValid ? "absolute_managed_require" : "absolute_managed_get", type);
     }
+
+    llvm::Value* CodeGenerator::Impl::EmitManagedGet(llvm::Value* handle, bool requireValid) {
+        llvm::Function* function = CurrentFunction();
+        if (!function) return builder.CreateCall(ManagedGet(requireValid), {handle}, "managed.pointee");
+
+        llvm::BasicBlock* checkBlock = llvm::BasicBlock::Create(context, "managed.fast.check", function);
+        llvm::BasicBlock* loadBlock = llvm::BasicBlock::Create(context, "managed.fast.load", function);
+        llvm::BasicBlock* validBlock = llvm::BasicBlock::Create(context, "managed.fast.valid", function);
+        llvm::BasicBlock* slowBlock = llvm::BasicBlock::Create(context, "managed.slow", function);
+        llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(context, "managed.end", function);
+
+        llvm::Value* id = builder.CreateTrunc(handle, builder.getInt32Ty(), "managed.id");
+        llvm::Value* gen = builder.CreateTrunc(builder.CreateLShr(handle, 32), builder.getInt32Ty(), "managed.gen");
+
+        llvm::GlobalVariable* slotsSize = module->getGlobalVariable("absolute_managed_slots_size");
+        if (!slotsSize) {
+            slotsSize = new llvm::GlobalVariable(*module, builder.getInt32Ty(), false, 
+                llvm::GlobalValue::ExternalLinkage, nullptr, "absolute_managed_slots_size");
+        }
+        
+        llvm::Value* size = builder.CreateLoad(builder.getInt32Ty(), slotsSize, "managed.slots.size");
+        llvm::Value* inBounds = builder.CreateICmpULT(id, size, "managed.in.bounds");
+        
+        builder.CreateCondBr(inBounds, loadBlock, slowBlock);
+        
+        builder.SetInsertPoint(loadBlock);
+        llvm::StructType* slotType = llvm::StructType::getTypeByName(context, "absolute.Slot");
+        if (!slotType) {
+            slotType = llvm::StructType::create(context, "absolute.Slot");
+            slotType->setBody({builder.getPtrTy(), builder.getInt32Ty(), builder.getInt32Ty(), builder.getInt64Ty()});
+        }
+        
+        llvm::GlobalVariable* slotsData = module->getGlobalVariable("absolute_managed_slots_data");
+        if (!slotsData) {
+            slotsData = new llvm::GlobalVariable(*module, builder.getPtrTy(), false, 
+                llvm::GlobalValue::ExternalLinkage, nullptr, "absolute_managed_slots_data");
+        }
+        
+        llvm::Value* dataPtr = builder.CreateLoad(builder.getPtrTy(), slotsData, "managed.slots.data");
+        llvm::Value* slotPtr = builder.CreateGEP(slotType, dataPtr, {id}, "managed.slot.ptr");
+        
+        llvm::Value* slotGenPtr = builder.CreateStructGEP(slotType, slotPtr, 1, "managed.slot.gen.ptr");
+        llvm::Value* slotGen = builder.CreateLoad(builder.getInt32Ty(), slotGenPtr, "managed.slot.gen");
+        
+        llvm::Value* genMatch = builder.CreateICmpEQ(slotGen, gen, "managed.gen.match");
+        builder.CreateCondBr(genMatch, checkBlock, slowBlock);
+        
+        builder.SetInsertPoint(checkBlock);
+        llvm::Value* slotPtrField = builder.CreateStructGEP(slotType, slotPtr, 0, "managed.slot.ptr.field");
+        llvm::Value* ptr = builder.CreateLoad(builder.getPtrTy(), slotPtrField, "managed.ptr");
+        llvm::Value* ptrNotNull = builder.CreateICmpNE(ptr, llvm::ConstantPointerNull::get(builder.getPtrTy()), "managed.ptr.not.null");
+        
+        builder.CreateCondBr(ptrNotNull, validBlock, slowBlock);
+        
+        builder.SetInsertPoint(validBlock);
+        builder.CreateBr(endBlock);
+        
+        builder.SetInsertPoint(slowBlock);
+        llvm::Value* slowPtr = builder.CreateCall(ManagedGet(requireValid), {handle}, "managed.slow.ptr");
+        builder.CreateBr(endBlock);
+        
+        builder.SetInsertPoint(endBlock);
+        llvm::PHINode* phi = builder.CreatePHI(builder.getPtrTy(), 2, "managed.final.ptr");
+        phi->addIncoming(ptr, validBlock);
+        phi->addIncoming(slowPtr, slowBlock);
+        
+        return phi;
+    }
+
 
     llvm::FunctionCallee CodeGenerator::Impl::ManagedValid() {
         llvm::FunctionType* type = llvm::FunctionType::get(

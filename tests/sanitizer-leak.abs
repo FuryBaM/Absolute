@@ -1,0 +1,4 @@
+int32 main() {
+    raw int32* ptr = new int32();
+    return 0; // Leak!
+}

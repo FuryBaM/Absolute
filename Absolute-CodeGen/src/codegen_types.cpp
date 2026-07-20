@@ -681,7 +681,7 @@ namespace Absolute {
         llvm::Function* function = CurrentFunction();
         if (!function) Fail("runtime type test outside a function");
         llvm::Value* object = IsManagedPointerTypeName(sourceType)
-            ? builder.CreateCall(ManagedGet(false), {reference}, "type.test.object")
+            ? EmitManagedGet(reference, false)
             : reference;
         llvm::BasicBlock* origin = builder.GetInsertBlock();
         llvm::BasicBlock* inspect = llvm::BasicBlock::Create(context, "type.test.inspect", function);
@@ -967,9 +967,8 @@ namespace Absolute {
         if (IsManagedPointerTypeName(typeName)) {
             llvm::Value* handle = builder.CreateLoad(
                 builder.getInt64Ty(), address, "field.cleanup.handle");
-            llvm::Value* pointer = builder.CreateCall(
-                ManagedGet(false), {handle}, "field.cleanup.pointee");
-            EmitPointeeCleanup(pointer, typeName);
+            llvm::Value* pointee = EmitManagedGet(handle, false);
+            EmitPointeeCleanup(pointee, typeName);
             builder.CreateCall(ManagedDestroy(), {handle});
             builder.CreateStore(builder.getInt64(0), address);
             return;

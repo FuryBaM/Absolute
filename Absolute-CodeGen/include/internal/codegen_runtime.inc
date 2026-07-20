@@ -89,6 +89,8 @@
         llvm::FunctionCallee ManagedCreate();
 
         llvm::FunctionCallee ManagedGet(bool requireValid = false);
+        
+        llvm::Value* EmitManagedGet(llvm::Value* handle, bool requireValid = false);
 
         llvm::FunctionCallee ManagedValid();
 

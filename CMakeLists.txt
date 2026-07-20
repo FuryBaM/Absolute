@@ -262,6 +262,16 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.leak-detector PROPERTIES WILL_FAIL TRUE)
     add_test(
+        NAME absolute.sanitizer-uaf
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/sanitizer-uaf.abs" --sanitize=address
+    )
+    set_tests_properties(absolute.sanitizer-uaf PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.sanitizer-leak
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/sanitizer-leak.abs" --sanitize=address
+    )
+    set_tests_properties(absolute.sanitizer-leak PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.raw-missing-delete
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/raw-missing-delete.abs"
     )

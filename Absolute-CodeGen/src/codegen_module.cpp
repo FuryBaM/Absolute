@@ -621,7 +621,7 @@ namespace Absolute {
         return output;
     }
 
-    void CodeGenerator::Impl::GenerateObject(Program& program, const std::string& moduleName, const std::string& outputPath) {
+    void CodeGenerator::Impl::GenerateObject(Program& program, const std::string& moduleName, const std::string& outputPath, bool sanitizeAddress) {
         static std::once_flag initializeTarget;
         std::call_once(initializeTarget, [] {
             if (llvm::InitializeNativeTarget())
@@ -649,6 +649,13 @@ namespace Absolute {
         llvm::CGSCCAnalysisManager cgsccAnalyses;
         llvm::ModuleAnalysisManager moduleAnalyses;
         llvm::PassBuilder passBuilder(targetMachine.get());
+        if (sanitizeAddress) {
+            passBuilder.registerOptimizerLastEPCallback(
+                [](llvm::ModulePassManager& mpm, llvm::OptimizationLevel) {
+                    llvm::AddressSanitizerOptions options;
+                    mpm.addPass(llvm::AddressSanitizerPass(options));
+                });
+        }
         passBuilder.registerModuleAnalyses(moduleAnalyses);
         passBuilder.registerCGSCCAnalyses(cgsccAnalyses);
         passBuilder.registerFunctionAnalyses(functionAnalyses);
