@@ -361,9 +361,10 @@ namespace Absolute {
             return CallableKey(symbol.name, symbol.parameterTypes);
         if (symbol.genericOrigin != InvalidSymbolId)
             return CallableKey(symbol.name, symbol.parameterTypes);
-        if (symbol.externalFunction || symbol.name == "main" || !analyzer ||
+        if (symbol.externalFunction || symbol.exportedFunction || symbol.name == "main" || !analyzer ||
             analyzer->FunctionOverloadCount(symbol.name) <= 1)
-            return symbol.externalFunction ? symbol.name.substr(symbol.name.rfind('.') + 1) : symbol.name;
+            return (symbol.externalFunction || symbol.exportedFunction)
+                ? symbol.name.substr(symbol.name.rfind('.') + 1) : symbol.name;
         return CallableKey(symbol.name, symbol.parameterTypes);
     }
 

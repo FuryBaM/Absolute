@@ -368,6 +368,9 @@
 ### Native interop и платформы
 
 - [x] C ABI imports и native FFI.
+- [x] C ABI exports через `export "C"` с неманглированным символом, Windows
+  `dllexport`, проверкой ABI-safe сигнатур и запретом overload/generics/default
+  parameters; PE export table и вызов из Absolute покрыты native/LLVM тестами.
 - [x] Генерация LLVM IR и native object/executable.
 - [ ] Добавить генератор Absolute declarations из C headers.
 - [ ] Добавить безопасные wrappers для native handles и callbacks.

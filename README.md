@@ -173,8 +173,9 @@ objects derive from the managed `Error` base class; throwing transfers ownership
 to the exception runtime, and a matching catch takes that owner. A future
 `Result<T, E>` is an ordinary generic library type for expected failures, not a
 hidden propagation ABI. Native C++ exceptions may not cross an `extern "C"` or
-plugin boundary. The accepted syntax, cleanup rules, portable LLVM/runtime ABI,
-and async behavior are specified in [docs/error-model.md](docs/error-model.md).
+plugin boundary, and an Absolute error must not escape an `export "C"` body.
+The accepted syntax, cleanup rules, portable LLVM/runtime ABI, and async behavior
+are specified in [docs/error-model.md](docs/error-model.md).
 
 The compiler accepts `throw expression;`, `throw;`, ordered typed `catch`
 clauses, and optional `finally`. `finally` runs on normal completion,
@@ -410,6 +411,21 @@ function without a body:
 extern "C" int32 native_add(int32 left, int32 right);
 ```
 
+The opposite direction uses `export "C"`: Absolute supplies the body and emits
+an unmangled symbol that native C or C++ code can call:
+
+```absolute
+export "C" int32 absolute_add(int32 left, int32 right) {
+    return left + right;
+}
+```
+
+On Windows the compiler marks this function `dllexport`; on other targets it
+uses default external visibility. Exported functions cannot be overloaded or
+generic and cannot have default parameters. Both `extern "C"` and `export "C"`
+reject managed pointers and Absolute array descriptors at the boundary; use raw
+pointers plus explicit lengths for native buffers.
+
 C code can define that symbol directly. C++ code must expose a small C wrapper
 to disable C++ name mangling:
 
@@ -440,8 +456,9 @@ Demo.exe
 
 The generated `.obj` is retained next to the executable so it can be inspected
 or linked manually. Current FFI types map primitive scalars directly; `string`
-is passed as a C `char*`. Ownership stays with the caller, and native exceptions
-must not cross the `extern "C"` boundary.
+is passed as a C `char*`. Ownership stays with the caller. Native exceptions
+must not enter `extern "C"`, and Absolute errors must be handled before leaving
+an `export "C"` function.
 
 ## Pointers and lifetime
 

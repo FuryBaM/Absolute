@@ -102,7 +102,7 @@ namespace Absolute {
 
         std::vector<llvm::Type*> parameterTypes;
         std::vector<std::string> parameterTypeNames;
-        const bool external = statement.IsExternal();
+        const bool external = statement.UsesCAbi();
         const std::string returnTypeName = specialization
             ? specialization->type : ResolveTypeName(statement.returnType.get());
         parameterTypes.reserve(statement.parameters.size() + AbiReturnOffset(returnTypeName, external));
@@ -118,7 +118,7 @@ namespace Absolute {
 
         const Symbol* symbol = specialization ? specialization : (analyzer
             ? analyzer->FindFunctionSymbol(sourceName, parameterTypeNames) : nullptr);
-        const std::string functionName = statement.IsExternal() ? statement.name->value :
+        const std::string functionName = statement.UsesCAbi() ? statement.name->value :
             (symbol ? FunctionLinkName(*symbol) : sourceName);
         if (!symbol || (analyzer && analyzer->FunctionOverloadCount(sourceName) <= 1))
             functionLinkNames[sourceName] = functionName;
@@ -129,12 +129,22 @@ namespace Absolute {
         if (llvm::Function* existing = module->getFunction(functionName)) {
             if (existing->getFunctionType() != functionType)
                 Fail("conflicting declarations for external symbol '" + functionName + "'");
+            if (statement.IsExported()) {
+                existing->setVisibility(llvm::GlobalValue::DefaultVisibility);
+                if (llvm::Triple(module->getTargetTriple()).isOSWindows())
+                    existing->setDLLStorageClass(llvm::GlobalValue::DLLExportStorageClass);
+            }
             ApplyCallableAttributes(*existing, statement);
             return existing;
         }
         llvm::Function* function = llvm::Function::Create(
             functionType, llvm::Function::ExternalLinkage, functionName, *module);
         function->setCallingConv(llvm::CallingConv::C);
+        if (statement.IsExported()) {
+            function->setVisibility(llvm::GlobalValue::DefaultVisibility);
+            if (llvm::Triple(module->getTargetTriple()).isOSWindows())
+                function->setDLLStorageClass(llvm::GlobalValue::DLLExportStorageClass);
+        }
         ApplyCallableAttributes(*function, statement);
 
         unsigned argumentIndex = 0;
@@ -176,14 +186,16 @@ namespace Absolute {
         currentReturnTypeName = specialization
             ? specialization->type : ResolveTypeName(statement.returnType.get());
         unsigned argumentIndex = 0;
-        currentReturnStorage = AbiReturnOffset(currentReturnTypeName) != 0
+        currentReturnStorage = AbiReturnOffset(
+            currentReturnTypeName, statement.UsesCAbi()) != 0
             ? function->getArg(argumentIndex++) : nullptr;
 
         for (size_t index = 0; index < statement.parameters.size(); ++index) {
             const auto& parameter = statement.parameters[index];
             const std::string typeName = specialization
                 ? specialization->parameterTypes[index] : DeclaredTypeName(*parameter);
-            BindCallableParameter(*function->getArg(argumentIndex++), *parameter, typeName);
+            BindCallableParameter(*function->getArg(argumentIndex++), *parameter,
+                typeName, statement.UsesCAbi());
         }
 
         if (statement.body) statement.body->Accept(visitor);
@@ -211,7 +223,8 @@ namespace Absolute {
     }
 
     void CodeGenerator::Impl::BindCallableParameter(
-        llvm::Argument& argument, VarDeclExpr& parameter, const std::string& explicitTypeName) {
+        llvm::Argument& argument, VarDeclExpr& parameter,
+        const std::string& explicitTypeName, bool external) {
         const std::string name = IdentifierName(parameter.name.get());
         const std::string typeName = explicitTypeName.empty()
             ? SubstituteCodegenType(DeclaredTypeName(parameter), currentGenericSubstitutions)
@@ -224,7 +237,7 @@ namespace Absolute {
                 Fail("duplicate parameter '" + name + "'");
             return;
         }
-        if (IsIndirectValueType(typeName)) {
+        if (!external && IsIndirectValueType(typeName)) {
             if (!scopes.back().emplace(name,
                 Variable{&argument, TypeFromName(typeName), typeName, false, false, nullptr, {},
                     nullptr, SemanticSymbol(&parameter)}).second)

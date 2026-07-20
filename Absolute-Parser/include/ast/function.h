@@ -76,6 +76,7 @@ namespace Absolute {
         std::vector<Token> templateParams;
         std::unique_ptr<Statement> body;
         std::string externalAbi;
+        std::string exportAbi;
         PropertyAccessorKind propertyAccessor = PropertyAccessorKind::None;
         std::string propertyName;
         bool autoPropertyAccessor = false;
@@ -90,6 +91,8 @@ namespace Absolute {
         }
 
         bool IsExternal() const { return !externalAbi.empty(); }
+        bool IsExported() const { return !exportAbi.empty(); }
+        bool UsesCAbi() const { return externalAbi == "C" || exportAbi == "C"; }
         bool IsGeneric() const { return !templateParams.empty(); }
         bool IsPropertyAccessor() const {
             return propertyAccessor != PropertyAccessorKind::None;
@@ -98,6 +101,7 @@ namespace Absolute {
         void print(int indent = 0) override {
             std::cout << std::string(indent, ' ') << "Function declaration: ";
             if (IsExternal()) std::cout << "extern \"" << externalAbi << "\" ";
+            if (IsExported()) std::cout << "export \"" << exportAbi << "\" ";
             std::cout << "\n" << returnType->ToString(indent + 1) << "\n"
                 << std::string(indent + 1, ' ') << "Name: " << name->value;
             // Выводим модификаторы, если есть

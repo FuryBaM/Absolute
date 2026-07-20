@@ -99,6 +99,7 @@ namespace Absolute {
         std::unique_ptr<PropertyDeclStmt> ParsePropertyDeclaration();
         std::unique_ptr<IndexerDeclStmt> ParseIndexerDeclaration();
         std::unique_ptr<FunctionDeclStmt> ParseExternalFunctionDeclaration();
+        std::unique_ptr<FunctionDeclStmt> ParseExportFunctionDeclaration();
         std::unique_ptr<ReturnStmt> ParseReturnStmt();
         std::unique_ptr<IfStmt> ParseIfStmt();
         std::unique_ptr<SwitchStmt> ParseSwitchStmt(bool exhaustive);

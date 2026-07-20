@@ -276,7 +276,8 @@ namespace Absolute {
         }
         if (selected) parameterTypes = selected->parameterTypes;
         const std::string returnType = selected ? selected->type : impl->SemanticType(expr);
-        const bool external = selected && selected->externalFunction;
+        const bool external = selected &&
+            (selected->externalFunction || selected->exportedFunction);
         llvm::Value* result = impl->EmitAbiCall(function->getFunctionType(), function,
             returnType, {}, parameterTypes, arguments, name + ".result", external);
         if (!selected || !selected->externalFunction) impl->EmitExceptionCheck();

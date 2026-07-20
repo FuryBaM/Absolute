@@ -165,6 +165,7 @@ namespace Absolute{
                     token->value == "class" || token->value == "struct" ||
                     token->value == "interface" || token->value == "enum" ||
                     token->value == "group" || token->value == "extern" ||
+                    token->value == "export" ||
                     token->value == "namespace" || token->value == "import" ||
                     token->value == "using"))) {
             ReportSyntaxError(token, "Attributes may only precede declarations or opaque plugin blocks");
@@ -267,6 +268,8 @@ namespace Absolute{
                 return ParseTypeAlias();
             case Hash("extern"):
                 return ParseExternalFunctionDeclaration();
+            case Hash("export"):
+                return ParseExportFunctionDeclaration();
             case Hash("raw"):
                 return ParseVarDeclaration();
             default:

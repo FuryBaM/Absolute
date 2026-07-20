@@ -50,6 +50,7 @@ Consequently, returning a local value is eligible for copy elision but does not
 invalidate that local at the language level.
 
 All objects linked through this internal ABI must be rebuilt with the same
-compiler ABI revision. `extern "C"` declarations are intentionally excluded:
-their aggregate layout and passing rules are defined by the selected platform C
-ABI, so a native wrapper is required when its struct convention differs.
+compiler ABI revision. `extern "C"` declarations and `export "C"` definitions
+are intentionally excluded: their aggregate layout and passing rules are
+defined by the selected platform C ABI, so a native wrapper is required when
+its struct convention differs.

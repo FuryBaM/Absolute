@@ -1,0 +1,15 @@
+export "C" int32 absolute_add(int32 left, int32 right) {
+    return left + right;
+}
+
+export "C" void absolute_increment(raw int32* value) {
+    *value += 1;
+}
+
+int32 main() {
+    int32 value = absolute_add(20, 21);
+    absolute_increment(&value);
+    assert(value == 42, "export C function call");
+    println("export=42");
+    return 0;
+}

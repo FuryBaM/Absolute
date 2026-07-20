@@ -965,6 +965,16 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/invalid-extern-abi.abs" --parse-only
     )
     set_tests_properties(absolute.invalid-extern-abi PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.invalid-export-abi
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/invalid-export-abi.abs" --parse-only
+    )
+    set_tests_properties(absolute.invalid-export-abi PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.export-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-errors.abs"
+    )
+    set_tests_properties(absolute.export-errors PROPERTIES WILL_FAIL TRUE)
 
     if(ABSOLUTE_ENABLE_LLVM)
         add_test(
@@ -974,6 +984,23 @@ if(BUILD_TESTING)
         )
         set_tests_properties(absolute.emit-native-ffi PROPERTIES
             FIXTURES_SETUP absolute-native-ffi-ir
+        )
+        add_test(
+            NAME absolute.emit-export-c-abi
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-c-abi.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/export-c-abi.ll"
+        )
+        set_tests_properties(absolute.emit-export-c-abi PROPERTIES
+            FIXTURES_SETUP absolute-export-c-abi-ir
+        )
+        add_test(
+            NAME absolute.check-export-c-abi
+            COMMAND "${CMAKE_COMMAND}"
+                -DINPUT=${CMAKE_BINARY_DIR}/export-c-abi.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-export-c-abi.cmake"
+        )
+        set_tests_properties(absolute.check-export-c-abi PROPERTIES
+            FIXTURES_REQUIRED absolute-export-c-abi-ir
         )
         if(ABSOLUTE_LLI_EXECUTABLE)
             add_test(
@@ -987,6 +1014,29 @@ if(BUILD_TESTING)
         endif()
 
         add_library(absolute-native-test STATIC tests/native/native_math.cpp)
+        set(ABSOLUTE_EXPORT_TEST_OBJECT
+            "${CMAKE_BINARY_DIR}/absolute-export-library${CMAKE_CXX_OUTPUT_EXTENSION}")
+        add_custom_command(
+            OUTPUT "${ABSOLUTE_EXPORT_TEST_OBJECT}"
+            COMMAND $<TARGET_FILE:Absolute-Compiler>
+                "${PROJECT_SOURCE_DIR}/tests/export-library.abs"
+                --emit-object -o "${ABSOLUTE_EXPORT_TEST_OBJECT}"
+            DEPENDS Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-library.abs"
+            VERBATIM
+        )
+        set_source_files_properties("${ABSOLUTE_EXPORT_TEST_OBJECT}" PROPERTIES
+            GENERATED TRUE
+            EXTERNAL_OBJECT TRUE
+        )
+        add_executable(absolute-export-consumer
+            tests/native/export_consumer.cpp
+            "${ABSOLUTE_EXPORT_TEST_OBJECT}"
+        )
+        add_test(NAME absolute.run-native-export-consumer
+            COMMAND $<TARGET_FILE:absolute-export-consumer>)
+        set_tests_properties(absolute.run-native-export-consumer PROPERTIES
+            PASS_REGULAR_EXPRESSION "native-export=42"
+        )
         file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/NativeFfi-$<CONFIG>.absproj" CONTENT
 "{
   \"name\": \"NativeFfi\",
@@ -1013,6 +1063,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-native PROPERTIES
             FIXTURES_REQUIRED absolute-native-executable
             PASS_REGULAR_EXPRESSION "native=42"
+        )
+        add_test(
+            NAME absolute.build-export-c-abi
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-c-abi.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/export-c-abi-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-export-c-abi PROPERTIES
+            FIXTURES_SETUP absolute-export-c-abi-executable
+        )
+        add_test(NAME absolute.run-export-c-abi
+            COMMAND "${CMAKE_BINARY_DIR}/export-c-abi-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-export-c-abi PROPERTIES
+            FIXTURES_REQUIRED absolute-export-c-abi-executable
+            PASS_REGULAR_EXPRESSION "export=42"
         )
         add_test(
             NAME absolute.build-pointers

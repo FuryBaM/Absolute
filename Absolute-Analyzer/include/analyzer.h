@@ -51,6 +51,7 @@ namespace Absolute {
         bool asyncFunction = false;
         bool extensionFunction = false;
         bool externalFunction = false;
+        bool exportedFunction = false;
         bool isConst = false;
         bool isStatic = false;
         bool canRead = true;
@@ -246,6 +247,7 @@ namespace Absolute {
         std::unordered_map<std::string, TypeAliasDefinition> typeAliases;
         std::unordered_set<std::string> resolvingTypeAliases;
         std::unordered_map<std::string, std::vector<SymbolId>> functionOverloads;
+        std::unordered_map<std::string, std::string> exportedFunctionNames;
         std::unordered_map<std::string, std::vector<SymbolId>> extensionMethods;
         std::unordered_map<SymbolId, FunctionDeclStmt*> functionDeclarations;
         std::unordered_map<std::string, SymbolId> genericFunctionSpecializations;

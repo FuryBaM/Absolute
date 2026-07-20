@@ -11,7 +11,7 @@ const coreKeywords = [
     'null', 'class', 'struct', 'enum', 'group', 'this', 'public', 'private', 'protected',
     'sealed', 'internal', 'virtual', 'override', 'const', 'static', 'auto', 'async', 'await',
     'catch', 'finally', 'try', 'throw', 'yield', 'get', 'set', 'operator', 'extension',
-    'extern', 'raw'
+    'extern', 'export', 'raw'
 ];
 const coreTypes = [
     'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64',
