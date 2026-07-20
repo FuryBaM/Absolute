@@ -1,0 +1,44 @@
+using Count = int32;
+using Counts = int32[];
+using FutureRecord = Record;
+using IntegerBox = Box<int32>;
+
+namespace Domain {
+    using Score = int64;
+}
+
+struct Record {
+    public int32 value;
+}
+
+class Box<T> {
+    private const T value;
+
+    public Box(T initial) {
+        value = initial;
+    }
+
+    public T read() const {
+        return value;
+    }
+}
+
+Count add(const Count left, Count right) {
+    return left + right;
+}
+
+int32 main() {
+    const Count answer = add(40, 2);
+    Counts values = {20, 22};
+    FutureRecord record;
+    record.value = answer;
+    Domain.Score score = 42;
+    const IntegerBox* box = new IntegerBox(42);
+
+    assert(record.value == 42, "forward type alias");
+    assert(values[0] + values[1] == 42, "array type alias");
+    assert(score == 42, "namespace type alias");
+    assert(box.read() == 42, "generic specialization through alias");
+    println("base-language=ok");
+    return 0;
+}

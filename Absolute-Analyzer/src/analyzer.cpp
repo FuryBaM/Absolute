@@ -4,6 +4,8 @@ namespace Absolute {
     bool Analyzer::Analyze() {
         table.Reset();
         types.clear();
+        typeAliases.clear();
+        resolvingTypeAliases.clear();
         functionOverloads.clear();
         extensionMethods.clear();
         functionDeclarations.clear();
@@ -33,16 +35,21 @@ namespace Absolute {
         flowTerminated = false;
         spawnContextDepth = 0;
         currentFunctionAsync = false;
+        currentMethodConst = false;
+        currentMethodStatic = false;
+        currentConstructor = false;
         loopDepth = functionDepth = catchDepth = finallyDepth = deferDepth =
             typeContextDepth = constructorContextDepth = 0;
         usesExceptions = false;
 
-        phase = Phase::CollectDeclarations;
+        phase = Phase::CollectTypeNames;
         table.Declare(SymbolKind::Function, "print", "void", {"..."});
         table.Declare(SymbolKind::Function, "println", "void", {"..."});
         table.Declare(SymbolKind::Function, "format", "string", {"string", "..."});
         table.Declare(SymbolKind::Function, "toString", "string", {"dynamic"});
         table.Declare(SymbolKind::Function, "assert", "void", {"bool", "string?"});
+        for (Program* program : programs) if (program) CollectProgramTypeNames(*program);
+        phase = Phase::CollectDeclarations;
         for (Program* program : programs) if (program) AnalyzeProgram(*program);
         phase = Phase::ResolveBodies;
         for (Program* program : programs) if (program) AnalyzeProgram(*program);
@@ -94,6 +101,21 @@ namespace Absolute {
     FunctionDeclStmt* Analyzer::FunctionDeclaration(SymbolId symbol) const {
         const auto found = functionDeclarations.find(symbol);
         return found == functionDeclarations.end() ? nullptr : found->second;
+    }
+
+    void Analyzer::CollectProgramTypeNames(Program& program) {
+        for (const auto& statement : program.statements)
+            if (statement) CollectTypeName(*statement);
+    }
+
+    void Analyzer::CollectTypeName(Statement& statement) {
+        if (auto* declaration = dynamic_cast<TypeAliasStmt*>(&statement)) declaration->Accept(*this);
+        else if (auto* declaration = dynamic_cast<StructDeclStmt*>(&statement)) declaration->Accept(*this);
+        else if (auto* declaration = dynamic_cast<ClassDeclStmt*>(&statement)) declaration->Accept(*this);
+        else if (auto* declaration = dynamic_cast<InterfaceDeclStmt*>(&statement)) declaration->Accept(*this);
+        else if (auto* declaration = dynamic_cast<EnumDeclStmt*>(&statement)) declaration->Accept(*this);
+        else if (auto* declaration = dynamic_cast<GroupDeclStmt*>(&statement)) declaration->Accept(*this);
+        else if (auto* declaration = dynamic_cast<NamespaceDeclStmt*>(&statement)) declaration->Accept(*this);
     }
 
     void Analyzer::AnalyzeProgram(Program& program) { AcceptAll(program.statements, *this); }
@@ -459,6 +481,7 @@ namespace Absolute {
             symbol->asyncFunction = HasModifier(statement, "async");
             symbol->extensionFunction = HasModifier(statement, "extension");
             symbol->externalFunction = statement.IsExternal();
+            symbol->isConst = HasModifier(statement, "const");
             for (const Token& parameter : statement.templateParams)
                 symbol->genericParameters.push_back(parameter.value);
             functionOverloads[name].push_back(*declared);
@@ -476,6 +499,25 @@ namespace Absolute {
             genericScope.emplace(parameter.value, parameter.value);
         if (!genericScope.empty()) genericTypeScopes.push_back(genericScope);
         const std::string returnType = ResolveType(statement.returnType.get());
+        const bool constMethod = HasModifier(statement, "const");
+        const bool staticMethod = HasModifier(statement, "static");
+        if (constMethod && kind != SymbolKind::Method)
+            Report("const callable '" + statement.name->value +
+                "' must be a class or struct method", "E_CONST_NON_METHOD");
+        if (staticMethod && kind != SymbolKind::Method)
+            Report("static callable '" + statement.name->value +
+                "' must be a class or struct method", "E_STATIC_NON_METHOD");
+        if (staticMethod && constMethod)
+            Report("static method '" + statement.name->value + "' cannot be const",
+                "E_STATIC_CONST_METHOD");
+        if (staticMethod && (HasModifier(statement, "virtual") ||
+            HasModifier(statement, "override") || HasModifier(statement, "sealed")))
+            Report("static method '" + statement.name->value +
+                "' cannot be virtual, override, or sealed", "E_STATIC_DISPATCH_MODIFIER");
+        if (staticMethod && !currentType.empty() &&
+            !types[currentType].genericParameters.empty())
+            Report("static members of generic types are not implemented yet",
+                "E_STATIC_GENERIC_UNSUPPORTED");
         if (!IsKnownType(returnType))
             Report("unknown return type '" + returnType + "' of function '" + statement.name->value + "'");
 
@@ -511,8 +553,12 @@ namespace Absolute {
 
         const std::string oldReturn = currentReturnType;
         const bool oldAsync = currentFunctionAsync;
+        const bool oldConstMethod = currentMethodConst;
+        const bool oldStaticMethod = currentMethodStatic;
         currentReturnType = returnType;
         currentFunctionAsync = HasModifier(statement, "async");
+        currentMethodConst = constMethod && kind == SymbolKind::Method;
+        currentMethodStatic = staticMethod && kind == SymbolKind::Method;
         ++functionDepth;
         table.EnterScope();
         keepLifetimes.clear();
@@ -540,8 +586,10 @@ namespace Absolute {
             if (name.empty()) Report("function parameter requires an identifier");
             else if (const auto declared = table.Declare(SymbolKind::Parameter, name, type)) {
                 parameterId = *declared;
-                if (Symbol* symbol = table.Get(parameterId); symbol && IsManagedPointerType(type))
-                    symbol->managedBorrower = true;
+                if (Symbol* symbol = table.Get(parameterId)) {
+                    symbol->isConst = parameter->isConst;
+                    if (IsManagedPointerType(type)) symbol->managedBorrower = true;
+                }
             }
             else Report("parameter '" + name + "' is already declared");
         RegisterFlowSymbol(parameterId, {
@@ -567,6 +615,8 @@ namespace Absolute {
         --functionDepth;
         currentReturnType = oldReturn;
         currentFunctionAsync = oldAsync;
+        currentMethodConst = oldConstMethod;
+        currentMethodStatic = oldStaticMethod;
         if (!genericScope.empty()) genericTypeScopes.pop_back();
         (void)kind;
     }
@@ -603,6 +653,11 @@ namespace Absolute {
             return;
         }
         signature.symbol = *declared;
+        if (Symbol* symbol = table.Get(*declared)) {
+            symbol->isConst = signature.isConst;
+            symbol->isStatic = signature.isStatic;
+            symbol->memberOwner = owner;
+        }
         overloads.push_back(std::move(signature));
     }
 
@@ -913,6 +968,8 @@ namespace Absolute {
         }
         for (auto scope = genericTypeScopes.rbegin(); scope != genericTypeScopes.rend(); ++scope)
             if (const auto found = scope->find(name); found != scope->end()) return found->second;
+        if (const std::string alias = LookupTypeAliasName(name); !alias.empty())
+            return ResolveTypeAlias(alias);
         std::string genericBase;
         std::vector<std::string> genericArguments;
         if (ParseGenericTypeName(name, genericBase, genericArguments)) {
@@ -941,6 +998,81 @@ namespace Absolute {
         if (PrimitiveStringToEnum(name).has_value() || name == "null" || name == "error") return name;
         const Symbol* symbol = table.Get(LookupSymbol(name));
         return symbol && symbol->kind == SymbolKind::Type ? symbol->name : name;
+    }
+
+    std::string Analyzer::LookupTypeAliasName(const std::string& name) const {
+        if (typeAliases.contains(name)) return name;
+        if (name.find('.') == std::string::npos && !currentNamespace.empty()) {
+            std::string scope = currentNamespace;
+            while (!scope.empty()) {
+                const std::string candidate = scope + "." + name;
+                if (typeAliases.contains(candidate)) return candidate;
+                const size_t separator = scope.rfind('.');
+                if (separator == std::string::npos) break;
+                scope.resize(separator);
+            }
+        }
+        for (const std::string& imported : importedNamespaces) {
+            const std::string candidate = imported + "." + name;
+            if (typeAliases.contains(candidate)) return candidate;
+        }
+        return {};
+    }
+
+    std::string Analyzer::ResolveTypeAlias(const std::string& name) {
+        const auto found = typeAliases.find(name);
+        if (found == typeAliases.end()) return name;
+        if (!found->second.resolvedType.empty()) return found->second.resolvedType;
+        if (!resolvingTypeAliases.insert(name).second) {
+            Report("cyclic type alias involving '" + name + "'", "E_TYPE_ALIAS_CYCLE");
+            return "error";
+        }
+
+        const std::string oldNamespace = currentNamespace;
+        currentNamespace = found->second.namespaceName;
+        const std::string target = ResolveType(found->second.target);
+        currentNamespace = oldNamespace;
+        resolvingTypeAliases.erase(name);
+        found->second.resolvedType = target;
+        if (Symbol* symbol = table.Get(table.Lookup(name))) symbol->type = target;
+        return target;
+    }
+
+    bool Analyzer::IsConstMutationTarget(Expression* expression, const Result& target) const {
+        if (const Symbol* symbol = table.Get(target.symbol)) {
+            if (symbol->isConst && !(currentConstructor && symbol->kind == SymbolKind::Field))
+                return true;
+            if (currentMethodConst && symbol->kind == SymbolKind::Field)
+                return true;
+        }
+
+        Expression* current = expression;
+        while (current) {
+            if (auto* member = dynamic_cast<MemberAccessExpr*>(current)) {
+                const ExpressionInfo* base = GetExpressionInfo(*member->base);
+                if (base && IsPointerType(base->type)) return false;
+                current = member->base.get();
+                continue;
+            }
+            if (auto* array = dynamic_cast<ArrayAccessExpr*>(current)) {
+                current = array->base.get();
+                continue;
+            }
+            break;
+        }
+        if (current) {
+            const ExpressionInfo* root = GetExpressionInfo(*current);
+            const Symbol* symbol = root ? table.Get(root->symbol) : nullptr;
+            return symbol && symbol->isConst &&
+                !(currentConstructor && symbol->kind == SymbolKind::Field);
+        }
+        return false;
+    }
+
+    void Analyzer::CheckMutableTarget(
+        Expression* expression, const Result& target, const std::string& operation) {
+        if (IsConstMutationTarget(expression, target))
+            Report(operation + " cannot modify a const value", "E_CONST_MUTATION", target.symbol);
     }
 
 }

@@ -1,6 +1,21 @@
 #pragma once
 
 namespace Absolute {
+    struct TypeAliasStmt : Statement {
+        std::string name;
+        std::unique_ptr<TypeExpr> target;
+
+        TypeAliasStmt(std::string name, std::unique_ptr<TypeExpr> target)
+            : name(std::move(name)), target(std::move(target)) {}
+
+        std::string ToString(int indent = 0) const override {
+            return std::string(indent, ' ') + "Type alias: " + name + "\n" +
+                (target ? target->ToString(indent + 1) : std::string(indent + 1, ' ') + "<missing>");
+        }
+
+        void Accept(StatementVisitor& visitor) override;
+    };
+
     struct ImportStmt : Statement {
         std::string target;
         bool isFile = false;

@@ -229,6 +229,10 @@ namespace Absolute {
         visitor.Visit(this);
     }
 
+    void TypeAliasStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
     void ImportStmt::Accept(StatementVisitor& visitor) {
         visitor.Visit(this);
     }

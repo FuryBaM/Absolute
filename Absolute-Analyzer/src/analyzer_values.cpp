@@ -3,11 +3,12 @@
 namespace Absolute {
     void Analyzer::Visit(AssignmentExpr* expr) {
         const AccessMode previousAccess = accessMode;
-        accessMode = expr->op == "=" ? AccessMode::Write : AccessMode::Read;
+        accessMode = AccessMode::Write;
         const Result target = Evaluate(expr->target.get());
         accessMode = previousAccess;
         const Result value = EvaluateExpected(expr->value.get(), target.type);
         if (!target.isLValue) Report("assignment target is not assignable");
+        CheckMutableTarget(expr->target.get(), target, "assignment");
         if (ArrayRank(target.type) > 0 &&
             dynamic_cast<MemberAccessExpr*>(expr->target.get()) == nullptr)
             Report("array variables cannot be reassigned; assign an element or declare a new array view");
@@ -66,15 +67,26 @@ namespace Absolute {
         auto* arrayDeclarator = dynamic_cast<ArrayAccessExpr*>(expr->name.get());
         const size_t arrayRank = arrayDeclarator ? arrayDeclarator->indexes.size() : 0;
         if (arrayRank > 0) type = ArrayType(std::move(type), arrayRank);
+        const bool fieldDeclaration = !currentType.empty() && functionDepth == 0;
         if (phase == Phase::CollectDeclarations) {
             if (currentType.empty()) {
-                if (!table.Declare(SymbolKind::Variable, declarationName, type))
+                const auto declared = table.Declare(SymbolKind::Variable, declarationName, type);
+                if (!declared)
                     Report("object '" + declarationName + "' is already declared in this scope");
+                else table.Get(*declared)->isConst = expr->isConst;
             }
-            else DeclareMember(currentType, name, {SymbolKind::Field, type, {}});
+            else DeclareMember(currentType, name,
+                {SymbolKind::Field, type, {}, InvalidSymbolId, expr->isConst, expr->isStatic});
             Save(expr, {InvalidSymbolId, type, false});
             return;
         }
+        if (expr->isStatic && !fieldDeclaration)
+            Report("static field '" + name + "' must be declared inside a class or struct",
+                "E_STATIC_NON_MEMBER_FIELD");
+        if (expr->isStatic && !currentType.empty() &&
+            !types[currentType].genericParameters.empty())
+            Report("static members of generic types are not implemented yet",
+                "E_STATIC_GENERIC_UNSUPPORTED");
         if (!IsKnownType(type)) Report("unknown type '" + type + "' of variable '" + name + "'");
         std::optional<std::vector<size_t>> initializerShape;
         if (arrayDeclarator) {
@@ -134,14 +146,43 @@ namespace Absolute {
         }
         else if (expr->value && !IsAssignable(type, value.type))
             Report("initializer of '" + name + "' has type '" + value.type + "', expected '" + type + "'");
+        if (expr->isStatic) {
+            const auto definition = types.find(type);
+            const bool enumType = definition != types.end() && definition->second.kind == TypeKind::Enum;
+            const bool scalarType = (PrimitiveStringToEnum(type).has_value() && type != "void" &&
+                type != "auto" && type != "dynamic") || enumType || IsRawPointerType(type);
+            if (!scalarType)
+                Report("static field '" + currentType + "." + name +
+                    "' currently requires a primitive, enum, string, or raw pointer type",
+                    "E_STATIC_FIELD_TYPE");
+            const auto constantInitializer = [](Expression* expression) {
+                if (!expression) return true;
+                if (dynamic_cast<NumberLiteralExpr*>(expression) ||
+                    dynamic_cast<BooleanLiteralExpr*>(expression) ||
+                    dynamic_cast<CharLiteralExpr*>(expression) ||
+                    dynamic_cast<StringLiteralExpr*>(expression) ||
+                    dynamic_cast<NullExpr*>(expression)) return true;
+                const auto* unary = dynamic_cast<PrefixUnaryExpr*>(expression);
+                return unary && unary->op == "-" &&
+                    dynamic_cast<NumberLiteralExpr*>(unary->operand.get());
+            };
+            if (!constantInitializer(expr->value.get()))
+                Report("static field initializer must be a constant literal",
+                    "E_STATIC_FIELD_INITIALIZER");
+            if (expr->isConst && !expr->value)
+                Report("const static field '" + name + "' requires an initializer",
+                    "E_CONST_REQUIRES_INITIALIZER");
+        }
         if (IsTaskType(type) && expr->value && !value.createsTask)
             Report("task variable '" + name + "' requires a spawn initializer",
                 "E_TASK_SPAWN_REQUIRED");
         if (IsTaskType(type) && !expr->value)
             Report("task variable '" + name + "' requires a spawn initializer",
                 "E_TASK_SPAWN_REQUIRED");
+        if (expr->isConst && currentType.empty() && !expr->value)
+            Report("const variable '" + name + "' requires an initializer",
+                "E_CONST_REQUIRES_INITIALIZER");
 
-        const bool fieldDeclaration = !currentType.empty() && functionDepth == 0;
         const bool globalDeclaration = currentType.empty() && table.ScopeDepth() == 0;
         SymbolId id = fieldDeclaration ? table.Lookup(name) :
             (globalDeclaration ? table.Lookup(declarationName) : table.LookupCurrent(name));
@@ -150,6 +191,7 @@ namespace Absolute {
             if (!declared) Report("object '" + name + "' is already declared in this scope");
             else id = *declared;
         }
+        if (Symbol* symbol = table.Get(id)) symbol->isConst = expr->isConst;
         if (IsManagedPointerType(type)) {
             if (Symbol* symbol = table.Get(id)) {
                 symbol->managedOwner = value.createsManagedOwner;
@@ -184,6 +226,43 @@ namespace Absolute {
             return;
         }
 
+        const SymbolId nonFieldQualifiedId = LookupSymbol(qualifiedName);
+        if (const Symbol* symbol = table.Get(nonFieldQualifiedId);
+            symbol && symbol->kind != SymbolKind::Field) {
+            const bool isValue = symbol->kind == SymbolKind::Variable ||
+                symbol->kind == SymbolKind::Parameter;
+            if (!isValue && symbol->kind != SymbolKind::Function && symbol->kind != SymbolKind::Method)
+                Report("object '" + qualifiedName + "' is not a value");
+            callable = symbol->kind == SymbolKind::Function || symbol->kind == SymbolKind::Method;
+            callableParameters = symbol->parameterTypes;
+            Save(expr, {nonFieldQualifiedId, symbol->type, isValue});
+            return;
+        }
+
+        const std::string typeReceiverName = ResolveTypeReference(
+            ExtractQualifiedName(expr->base.get()));
+        if (types.contains(typeReceiverName)) {
+            const auto members = FindMembers(typeReceiverName, expr->member);
+            const auto field = std::find_if(members.begin(), members.end(), [](const MemberSignature& member) {
+                return member.kind == SymbolKind::Field && member.isStatic;
+            });
+            if (field != members.end()) {
+                callable = false;
+                callableParameters.clear();
+                Save(expr, {field->symbol, field->type, true});
+                return;
+            }
+            if (std::any_of(members.begin(), members.end(), [](const MemberSignature& member) {
+                return member.kind == SymbolKind::Field && !member.isStatic;
+            }))
+                Report("instance field '" + expr->member + "' requires an object",
+                    "E_INSTANCE_MEMBER_ON_TYPE");
+            else
+                Report("type '" + typeReceiverName + "' has no static field '" + expr->member + "'");
+            Save(expr, {InvalidSymbolId, "error", false});
+            return;
+        }
+
         const SymbolId qualifiedId = LookupSymbol(qualifiedName);
         if (const Symbol* symbol = table.Get(qualifiedId)) {
             const bool isValue = symbol->kind == SymbolKind::Variable || symbol->kind == SymbolKind::Parameter ||
@@ -207,10 +286,15 @@ namespace Absolute {
         }
         const auto members = FindMembers(base.type, expr->member);
         const auto field = std::find_if(members.begin(), members.end(), [](const MemberSignature& member) {
-            return member.kind == SymbolKind::Field;
+            return member.kind == SymbolKind::Field && !member.isStatic;
         });
         if (field == members.end()) {
-            Report("type '" + base.type + "' has no member '" + expr->member + "'");
+            if (std::any_of(members.begin(), members.end(), [](const MemberSignature& member) {
+                return member.kind == SymbolKind::Field && member.isStatic;
+            }))
+                Report("static field '" + expr->member + "' requires a type receiver",
+                    "E_STATIC_MEMBER_ON_OBJECT");
+            else Report("type '" + base.type + "' has no member '" + expr->member + "'");
             Save(expr, {InvalidSymbolId, "error", false});
             return;
         }
@@ -287,6 +371,7 @@ namespace Absolute {
         accessMode = AccessMode::Delete;
         const Result target = Evaluate(expr->target.get());
         accessMode = previousAccess;
+        CheckMutableTarget(expr->target.get(), target, "delete");
         if (!IsPointerType(target.type) && target.type != "error")
             Report("delete requires a pointer, got '" + target.type + "'");
         if (!target.isLValue) Report("delete target must be an assignable pointer variable");
@@ -339,14 +424,29 @@ namespace Absolute {
         const std::string name = ExtractIdentifier(expr->identifierName.get());
         const std::string declarationName = currentType.empty() && functionDepth == 0 ? Qualify(name) : name;
         const std::string type = ResolveType(expr->constructType.get());
+        const bool fieldDeclaration = !currentType.empty() && functionDepth == 0;
         if (phase == Phase::CollectDeclarations) {
             if (currentType.empty()) {
-                if (!table.Declare(SymbolKind::Variable, declarationName, type))
+                const auto declared = table.Declare(SymbolKind::Variable, declarationName, type);
+                if (!declared)
                     Report("object '" + declarationName + "' is already declared in this scope");
+                else table.Get(*declared)->isConst = expr->isConst;
             }
-            else DeclareMember(currentType, name, {SymbolKind::Field, type, {}});
+            else DeclareMember(currentType, name,
+                {SymbolKind::Field, type, {}, InvalidSymbolId, expr->isConst, expr->isStatic});
             Save(expr, {InvalidSymbolId, type, false});
             return;
+        }
+        if (expr->isStatic && !fieldDeclaration)
+            Report("static field '" + name + "' must be declared inside a class or struct",
+                "E_STATIC_NON_MEMBER_FIELD");
+        if (expr->isStatic) {
+            Report("static field '" + currentType + "." + name +
+                "' currently requires a primitive, enum, string, or raw pointer type",
+                "E_STATIC_FIELD_TYPE");
+            if (!currentType.empty() && !types[currentType].genericParameters.empty())
+                Report("static members of generic types are not implemented yet",
+                    "E_STATIC_GENERIC_UNSUPPORTED");
         }
         std::string definitionName = type;
         std::string genericBase;
@@ -360,6 +460,9 @@ namespace Absolute {
         if (expr->value) value = Evaluate(expr->value.get());
         if (expr->value && !IsAssignable(type, value.type))
             Report("initializer of '" + name + "' has type '" + value.type + "', expected '" + type + "'");
+        if (expr->isConst && currentType.empty() && !expr->value)
+            Report("const variable '" + name + "' requires an initializer",
+                "E_CONST_REQUIRES_INITIALIZER");
         const bool existingDeclaration = (!currentType.empty() && functionDepth == 0) ||
             (currentType.empty() && table.ScopeDepth() == 0);
         SymbolId id = (!currentType.empty() && functionDepth == 0) ? table.Lookup(name) :
@@ -369,6 +472,7 @@ namespace Absolute {
             if (!declared) Report("object '" + name + "' is already declared in this scope");
             else id = *declared;
         }
+        if (Symbol* symbol = table.Get(id)) symbol->isConst = expr->isConst;
         Save(expr, {id, type, true});
     }
 
@@ -418,10 +522,12 @@ namespace Absolute {
         }
         const AccessMode previousAccess = accessMode;
         if (expr->op == "&") accessMode = AccessMode::Address;
+        else if (expr->op == "++" || expr->op == "--") accessMode = AccessMode::Write;
         const Result operand = Evaluate(expr->operand.get());
         accessMode = previousAccess;
         if (expr->op == "&") {
             if (!operand.isLValue) Report("operator '&' requires an assignable value");
+            CheckMutableTarget(expr->operand.get(), operand, "taking a mutable address");
             Save(expr, {InvalidSymbolId, "raw " + operand.type + "*", false, false, false,
                 InitializationState::Initialized, PointerValidity::Live, InvalidSymbolId});
             return;
@@ -446,8 +552,11 @@ namespace Absolute {
             }
             return;
         }
-        if ((expr->op == "++" || expr->op == "--") && (!operand.isLValue || !IsNumeric(operand.type)))
-            Report("operator '" + expr->op + "' requires an assignable numeric operand");
+        if (expr->op == "++" || expr->op == "--") {
+            if (!operand.isLValue || !IsNumeric(operand.type))
+                Report("operator '" + expr->op + "' requires an assignable numeric operand");
+            CheckMutableTarget(expr->operand.get(), operand, "operator '" + expr->op + "'");
+        }
         else if (expr->op == "!" && !IsConditionType(operand.type)) Report("operator '!' requires a boolean-compatible operand");
         else if ((expr->op == "+" || expr->op == "-") && !IsNumeric(operand.type)) Report("unary numeric operator requires a number");
         else if (expr->op == "~" && !IsInteger(operand.type)) Report("operator '~' requires an integer");
@@ -455,9 +564,13 @@ namespace Absolute {
     }
 
     void Analyzer::Visit(PostfixUnaryExpr* expr) {
+        const AccessMode previousAccess = accessMode;
+        accessMode = AccessMode::Write;
         const Result operand = Evaluate(expr->operand.get());
+        accessMode = previousAccess;
         if (!operand.isLValue || !IsNumeric(operand.type))
             Report("operator '" + expr->op + "' requires an assignable numeric operand");
+        CheckMutableTarget(expr->operand.get(), operand, "operator '" + expr->op + "'");
         Save(expr, {operand.symbol, operand.type, false});
     }
 

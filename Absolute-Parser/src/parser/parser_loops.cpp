@@ -12,7 +12,11 @@ namespace Absolute {
         if (CurrentToken()->type != TokenType::DELIMITER || CurrentToken()->value != ";") {
             do {
                 if (CurrentToken()->type == TokenType::KEYWORD) {
-                    init.push_back(ParseVarDeclExpr());
+                    const bool isConst = CurrentToken()->value == "const";
+                    if (isConst) Consume(TokenType::KEYWORD, "const");
+                    auto declaration = ParseVarDeclExpr();
+                    declaration->isConst = isConst;
+                    init.push_back(std::move(declaration));
                 }
                 else {
                     init.push_back(ParseExpression());
@@ -85,7 +89,11 @@ namespace Absolute {
     {
         Consume(TokenType::KEYWORD, "foreach");
 	    Consume(TokenType::BRACKET, "(");
+	    const bool isConst = CurrentToken() && CurrentToken()->type == TokenType::KEYWORD &&
+	        CurrentToken()->value == "const";
+	    if (isConst) Consume(TokenType::KEYWORD, "const");
 	    std::unique_ptr<VarDeclExpr> variable = ParseVarDeclExpr();
+	    variable->isConst = isConst;
 	    Consume(TokenType::KEYWORD, "in");
 	    std::unique_ptr<Expression> iterable = ParseExpression();
 	    Consume(TokenType::BRACKET, ")");

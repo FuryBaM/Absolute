@@ -1,6 +1,6 @@
         void EmitBuiltin(FunctionCallExpr& expression, const std::string& name);
 
-        llvm::Constant* GlobalArrayConstant(Expression* expression, llvm::Type* type);
+        llvm::Constant* GlobalConstant(Expression* expression, llvm::Type* type);
 
         void DeclareGlobalArray(VarDeclExpr& expression);
 

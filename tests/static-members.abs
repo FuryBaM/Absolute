@@ -1,0 +1,37 @@
+class Counter {
+    public static int64 value = 40;
+    public const static int64 step = 2;
+
+    public static int64 add(int64 amount) {
+        value += amount;
+        return value;
+    }
+
+    public static int64 advance() {
+        return add(step);
+    }
+}
+
+class DerivedCounter : Counter {
+}
+
+struct Metrics {
+    public static int32 calls = 0;
+
+    public static int32 next() {
+        calls += 1;
+        return calls;
+    }
+}
+
+int32 main() {
+    assert(Counter.value == 40, "class static field initializer");
+    assert(Counter.add(1) == 41, "class static method");
+    assert(Counter.advance() == 43, "implicit static call and const field");
+    assert(DerivedCounter.value == 43, "inherited static field");
+    assert(DerivedCounter.add(-1) == 42, "inherited static method");
+    assert(Metrics.next() == 1, "struct static method");
+    assert(Metrics.calls == 1, "struct static field");
+    println("static-members=ok");
+    return 0;
+}

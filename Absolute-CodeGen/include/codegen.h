@@ -71,6 +71,7 @@ namespace Absolute {
         void Visit(ForEachStmt* stmt) override;
         void Visit(ContinueStmt* stmt) override;
         void Visit(BreakStmt* stmt) override;
+        void Visit(TypeAliasStmt* stmt) override;
         void Visit(ImportStmt* stmt) override;
         void Visit(NamespaceDeclStmt* stmt) override;
         void Visit(OpaquePluginStmt* stmt) override;

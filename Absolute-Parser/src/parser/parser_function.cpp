@@ -56,6 +56,11 @@ namespace Absolute {
 
         std::vector<std::unique_ptr<VarDeclExpr>> parameters = ParseParameters();
 
+        if (CurrentToken() && CurrentToken()->type == TokenType::KEYWORD &&
+            CurrentToken()->value == "const") {
+            modifiers.push_back(*Consume(TokenType::KEYWORD, "const"));
+        }
+
         if (CurrentToken() && IsEndOfStatement(*CurrentToken())) {
             ReportSyntaxError(CurrentToken(), "A function body is required; use extern \"C\" for a native declaration");
             throw std::runtime_error("Function declaration without a body");

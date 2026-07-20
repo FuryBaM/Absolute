@@ -112,6 +112,7 @@ namespace Absolute {
         std::unique_ptr<StructDeclStmt> ParseStructDecl();
         std::unique_ptr<EnumDeclStmt> ParseEnumDecl();
         std::unique_ptr<GroupDeclStmt> ParseGroupDecl();
+        std::unique_ptr<TypeAliasStmt> ParseTypeAlias();
         std::unique_ptr<ImportStmt> ParseImport();
         std::unique_ptr<NamespaceDeclStmt> ParseNamespace();
         std::string ParseQualifiedName();

@@ -116,8 +116,13 @@
 - [x] Добавить атрибуты/аннотации для compiler и plugin metadata.
 - [x] Спроектировать и реализовать мономорфизируемые generics для функций,
   структур и классов; constraints/traits остаются следующим слоем.
-- [ ] Добавить type aliases в ядро, не зависящие от plugin prelude.
-- [ ] Определить правила `const`/immutability для переменных, параметров и методов.
+- [x] Добавить type aliases в ядро, не зависящие от plugin prelude.
+  `using Alias = Type;` прозрачно разрешает primitive, aggregate, concrete generic,
+  array, task и pointer-типы, поддерживает namespaces и выявляет циклы.
+- [x] Определить правила `const`/immutability для переменных, параметров, полей и методов.
+  Const binding запрещает mutation/delete/mutable address; const value objects и
+  массивы неизменяемы вглубь, pointer binding остаётся shallow, а const-метод не
+  меняет поля и не вызывает non-const методы.
 
 ### Типы и ООП
 
@@ -126,7 +131,10 @@
 - [x] Raw и managed pointers на структуры и классы.
 - [x] Интерфейсы, наследование интерфейсов и реализация несколькими интерфейсами.
 - [x] Проверка перегрузок и возвращаемых типов при реализации интерфейса.
-- [ ] Реализовать static-поля и static-методы классов в CodeGen.
+- [x] Реализовать static-поля и static-методы классов и структур в CodeGen.
+  Static-поле не входит в object layout, static-метод не имеет `this`; до появления
+  module initialization допускаются constant scalar/string/raw-pointer инициализаторы,
+  а static-члены generic-типов остаются отдельным слоем.
 - [ ] Добавить автоматическую цепочку base-конструкторов и явный вызов `base(...)`.
 - [ ] Добавить default-реализации методов интерфейсов.
 - [ ] Добавить properties в классы, структуры и интерфейсы.

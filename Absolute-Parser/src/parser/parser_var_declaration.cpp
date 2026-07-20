@@ -25,6 +25,10 @@ namespace Absolute {
 
     std::unique_ptr<VarDeclStmt> Parser::ParseVarDeclaration() {
         std::unique_ptr<VarDeclExpr> variableDeclaration = ParseVarDeclExpr();
+        variableDeclaration->isConst = std::any_of(modifiers.begin(), modifiers.end(),
+            [](const Token& modifier) { return modifier.value == "const"; });
+        variableDeclaration->isStatic = std::any_of(modifiers.begin(), modifiers.end(),
+            [](const Token& modifier) { return modifier.value == "static"; });
         Consume(TokenType::DELIMITER, ";");  // Теперь `;` съедается здесь
         if (variableDeclaration) {
             auto stmt = std::make_unique<VarDeclStmt>(std::move(variableDeclaration));

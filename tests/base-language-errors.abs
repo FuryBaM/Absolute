@@ -1,0 +1,45 @@
+using AliasCycleA = AliasCycleB;
+using AliasCycleB = AliasCycleA;
+using MissingAlias = MissingType;
+
+class MutableBox {
+    public int32 value;
+
+    public MutableBox(int32 initial) {
+        value = initial;
+    }
+
+    public void change(int32 next) {
+        value = next;
+    }
+
+    public void invalidConstWrite() const {
+        value = 1;
+    }
+
+    public void invalidConstCall(MutableBox* other) const {
+        other.change(2);
+    }
+}
+
+int32 mutateParameter(const int32 value) {
+    value += 1;
+    return value;
+}
+
+int32 invalidConstFunction() const {
+    return 0;
+}
+
+int32 main() {
+    const int32 missingInitializer;
+    const int32 value = 42;
+    value = 1;
+    value++;
+    const int32[] values = {1, 2};
+    values[0] = 3;
+    raw int32* address = &value;
+    const raw int32* owner = new raw int32(1);
+    delete owner;
+    return missingInitializer;
+}
