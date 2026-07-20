@@ -570,6 +570,53 @@ initializers, and static members of generic types are intentionally rejected
 until module initialization and ownership are defined. See
 [docs/static-members.md](docs/static-members.md) for the exact rules.
 
+## Base constructors
+
+A derived constructor may pass values to its direct base constructor with
+`base(...)`. The call must be the first statement in the constructor body:
+
+```absolute
+class NamedNode : Node {
+    public NamedNode(string name, int32 value) {
+        base(value);
+        label = name;
+    }
+}
+```
+
+When the call is omitted, the compiler inserts `base()` automatically. Classes
+without a declared constructor also receive an implicit zero-argument
+constructor when their inheritance chain needs one. A base constructor with
+required parameters must always be called explicitly. See
+[docs/base-constructors.md](docs/base-constructors.md) for the complete rules.
+
+## Access control and runtime type checks
+
+Class and struct members may be `public`, `protected`, or `private`. Public is
+the compatibility default when no access modifier is present. Private members
+are visible only inside their declaring type; protected members are visible in
+the declaring class and derived classes. The same checks apply to fields,
+methods, static members, constructors, base-constructor calls, and interface
+implementations. Interface methods and their implementations must be public.
+
+Class and interface pointers support runtime type tests and safe casts:
+
+```absolute
+Node* node = new AddNode(2);
+assert(node is AddNode);
+
+AddNode* add = node as AddNode;
+OtherNode* missing = node as OtherNode;
+assert(add != null);
+assert(missing == null);
+```
+
+`is` returns false for null or an incompatible dynamic type. `as` preserves raw
+or managed ownership mode and returns null on failure. Managed results are
+subscribers to the original owner. Numeric `as` conversions remain available.
+See [docs/access-and-runtime-types.md](docs/access-and-runtime-types.md) for the
+full rules.
+
 ## Interfaces
 
 Interfaces declare method contracts without storage or method bodies. An
@@ -689,7 +736,7 @@ int32 sum(int32[] values) {
 }
 
 int32[] tail(int32[] values) {
-    return values[1:];
+    return copy(values[1:]);
 }
 ```
 
@@ -700,6 +747,20 @@ modify its source and the source must remain alive while the slice is used.
 Slice bounds are checked at runtime. `foreach` currently iterates
 one-dimensional arrays by value.
 
+Use `copy(arrayOrSlice)` when an independent owning buffer is required. The
+result has the same array type and dimensions, but later writes no longer alias
+the source. Elements are copied by value; pointer elements remain references to
+the same pointees rather than recursively cloning an object graph. The backend
+lowers copies of contiguous storage to `memcpy`:
+
+```absolute
+int32 values[4] = {10, 20, 30, 40};
+int32[] view = values[1:3];   // zero-copy
+int32[] owned = copy(view);   // separate buffer
+view[0] = 99;                 // changes values[1]
+owned[0] = 7;                 // does not change values
+```
+
 Global arrays use the same sized or inferred literal declarations as local
 storage:
 
@@ -709,9 +770,12 @@ int32[] flags = {1, 0, 1};
 ```
 
 Their dimensions and initializer values must be compile-time primitive
-constants. Returning an array makes a heap-backed copy, including when the
-source is a local array or a slice; automatic reclamation of these returned
-buffers is not implemented yet.
+constants. Returning an array descriptor no longer performs an implicit copy.
+A global view may therefore be returned without allocation. A local array or a
+slice borrowed from a parameter must use `copy(...)` before it can escape a
+function; this prevents a dangling reference until explicit slice lifetime
+annotations are implemented. Automatic reclamation of copied buffers is not
+implemented yet.
 
 The backend also supports primitive values, functions, local variables, calls,
 casts, arithmetic/comparison operators, assignments, `return`, `if`, `for`,
@@ -719,8 +783,10 @@ casts, arithmetic/comparison operators, assignments, `return`, `if`, `for`,
 support fields, local value instances, constructors, raw or managed allocation,
 single inheritance, interfaces, instance and static methods, static fields, and
 `virtual`/`override` dispatch. Multiple class inheritance and automatic
-destructor calls are not emitted. Base-constructor chaining is also not automatic. Raw object
-graphs that own child nodes must release them explicitly before `delete`.
+destructor calls are not emitted. Base constructors run before the derived
+constructor body, with either explicit `base(...)` arguments or an automatic
+zero-argument call. Raw object graphs that own child nodes must release them
+explicitly before `delete`.
 
 Both pointer modes preserve class methods and virtual dispatch:
 

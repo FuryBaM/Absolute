@@ -383,6 +383,7 @@ namespace Absolute {
             info.virtualNames = parent.virtualNames;
         }
         else info.virtualNames.resize(interfaceSlotCount);
+        info.baseClass = baseClass;
 
         std::unordered_map<std::string, std::vector<ClassMethod>> interfaceRequirements;
         for (const std::string& interfaceName : implementedInterfaces) {
@@ -514,23 +515,81 @@ namespace Absolute {
         }
     }
 
+    bool CodeGenerator::Impl::ClassNeedsConstructor(const ClassInfo& info) const {
+        if (info.constructor) return true;
+        if (info.baseClass.empty()) return false;
+        const auto base = classes.find(info.baseClass);
+        return base != classes.end() && ClassNeedsConstructor(base->second);
+    }
+
+    bool CodeGenerator::Impl::RuntimeTypeDerivesFrom(
+        const std::string& type, const std::string& base) const {
+        if (type == base) return true;
+        if (const auto found = classes.find(type); found != classes.end()) {
+            for (const std::string& parent : found->second.parents)
+                if (RuntimeTypeDerivesFrom(parent, base)) return true;
+        }
+        if (const auto found = interfaces.find(type); found != interfaces.end()) {
+            for (const std::string& parent : found->second.parents)
+                if (RuntimeTypeDerivesFrom(parent, base)) return true;
+        }
+        return false;
+    }
+
+    llvm::Value* CodeGenerator::Impl::EmitRuntimeTypeTest(
+        llvm::Value* reference, const std::string& sourceType, const std::string& targetType) {
+        llvm::Function* function = CurrentFunction();
+        if (!function) Fail("runtime type test outside a function");
+        llvm::Value* object = IsManagedPointerTypeName(sourceType)
+            ? builder.CreateCall(ManagedGet(false), {reference}, "type.test.object")
+            : reference;
+        llvm::BasicBlock* origin = builder.GetInsertBlock();
+        llvm::BasicBlock* inspect = llvm::BasicBlock::Create(context, "type.test.inspect", function);
+        llvm::BasicBlock* complete = llvm::BasicBlock::Create(context, "type.test.end", function);
+        llvm::Value* present = builder.CreateICmpNE(object,
+            llvm::ConstantPointerNull::get(builder.getPtrTy()), "type.test.present");
+        builder.CreateCondBr(present, inspect, complete);
+
+        builder.SetInsertPoint(inspect);
+        llvm::Value* dynamicVtable = builder.CreateLoad(builder.getPtrTy(), object, "type.test.vtable");
+        llvm::Value* matches = builder.getFalse();
+        for (const std::string& className : classOrder) {
+            if (!RuntimeTypeDerivesFrom(className, targetType)) continue;
+            const auto found = classes.find(className);
+            if (found == classes.end() || !found->second.vtable) continue;
+            llvm::Value* same = builder.CreateICmpEQ(
+                dynamicVtable, found->second.vtable, "type.test.class");
+            matches = builder.CreateOr(matches, same, "type.test.match");
+        }
+        llvm::BasicBlock* inspected = builder.GetInsertBlock();
+        builder.CreateBr(complete);
+
+        builder.SetInsertPoint(complete);
+        llvm::PHINode* result = builder.CreatePHI(builder.getInt1Ty(), 2, "type.test.result");
+        result->addIncoming(builder.getFalse(), origin);
+        result->addIncoming(matches, inspected);
+        return result;
+    }
+
     llvm::Function* CodeGenerator::Impl::DeclareConstructorFunction(ClassInfo& info) {
-        if (!info.constructor) return nullptr;
+        if (!ClassNeedsConstructor(info)) return nullptr;
         std::vector<llvm::Type*> parameters{builder.getPtrTy()};
-        for (const auto& parameter : info.constructor->parameters)
-            parameters.push_back(TypeFromName(SubstituteCodegenType(
-                DeclaredTypeName(*parameter), info.substitutions)));
+        if (info.constructor)
+            for (const auto& parameter : info.constructor->parameters)
+                parameters.push_back(TypeFromName(SubstituteCodegenType(
+                    DeclaredTypeName(*parameter), info.substitutions)));
         llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
         const std::string name = info.name + ".__ctor";
         llvm::Function* function = module->getFunction(name);
         if (!function)
             function = llvm::Function::Create(type, llvm::Function::ExternalLinkage, name, *module);
         function->setCallingConv(llvm::CallingConv::C);
-        ApplyCallableAttributes(*function, *info.constructor);
+        if (info.constructor) ApplyCallableAttributes(*function, *info.constructor);
         function->getArg(0)->setName("this");
-        for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
-            function->getArg(static_cast<unsigned>(index + 1))->setName(
-                IdentifierName(info.constructor->parameters[index]->name.get()));
+        if (info.constructor)
+            for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
+                function->getArg(static_cast<unsigned>(index + 1))->setName(
+                    IdentifierName(info.constructor->parameters[index]->name.get()));
         return function;
     }
 

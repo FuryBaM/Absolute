@@ -50,6 +50,9 @@ namespace Absolute {
         if (currentMethodStatic && symbol->kind == SymbolKind::Field && !symbol->isStatic)
             Report("static method cannot access instance field '" + expr->name + "'",
                 "E_STATIC_INSTANCE_ACCESS", id);
+        if ((symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Method) &&
+            !symbol->memberOwner.empty())
+            RequireAccess(symbol->access, symbol->memberOwner, expr->name, id);
         const bool value = symbol->kind == SymbolKind::Variable || symbol->kind == SymbolKind::Parameter ||
             symbol->kind == SymbolKind::Field;
         if (!value) Report("object '" + expr->name + "' is not a value");
@@ -83,6 +86,9 @@ namespace Absolute {
             const auto found = types.find(typeName);
             const std::vector<std::string> expected = found != types.end() && found->second.constructor
                 ? found->second.constructor->parameterTypes : std::vector<std::string>{};
+            if (found != types.end() && found->second.constructor)
+                RequireAccess(found->second.constructor->access, typeName,
+                    typeName, found->second.constructor->symbol);
             if (expr->arguments.size() != expected.size())
                 Report("constructor of '" + typeName + "' expects " + std::to_string(expected.size()) +
                     " argument(s), got " + std::to_string(expr->arguments.size()));
@@ -101,6 +107,16 @@ namespace Absolute {
         if (expr->base) expr->base->Accept(probe);
         const std::string callName = probe.identifierExpr ? probe.identifierExpr->name : std::string{};
         const std::string qualifiedCallName = ExtractQualifiedName(expr->base.get());
+
+        if (!probe.isMember && callName == "base") {
+            for (const auto& argument : expr->arguments) Evaluate(argument.get());
+            Report(currentConstructor
+                ? "base(...) must be the first statement of a constructor"
+                : "base(...) is only allowed as the first statement of a constructor",
+                currentConstructor ? "E_BASE_CALL_POSITION" : "E_BASE_CALL_OUTSIDE_CONSTRUCTOR");
+            Save(expr, {InvalidSymbolId, "error", false});
+            return;
+        }
 
         if (!probe.isMember && IsBuiltinFunction(callName)) {
             std::vector<Result> arguments;
@@ -133,6 +149,22 @@ namespace Absolute {
                 if (arguments.size() == 2 && arguments[1].type != "string" && arguments[1].type != "error")
                     Report("assert message must be a string");
                 Save(expr, {table.Lookup(callName), "void", false});
+                return;
+            }
+
+            if (callName == "copy") {
+                if (arguments.size() != 1) {
+                    Report("copy expects exactly one array or slice argument", "E_COPY_ARGUMENT_COUNT");
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                if (ArrayRank(arguments.front().type) == 0 && arguments.front().type != "error") {
+                    Report("copy expects an array or slice, got '" + arguments.front().type + "'",
+                        "E_COPY_ARGUMENT_TYPE");
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                Save(expr, {table.Lookup(callName), arguments.front().type, false});
                 return;
             }
 
@@ -231,6 +263,8 @@ namespace Absolute {
         }
 
         const Symbol* selected = table.Get(symbolId);
+        if (selected && selected->kind == SymbolKind::Method)
+            RequireAccess(selected->access, selected->memberOwner, selected->name, selected->id);
         const std::string returnType = selected ? selected->type : "error";
         const bool asyncCall = selected && selected->asyncFunction;
         if (currentMethodConst && selected && selected->kind == SymbolKind::Method &&

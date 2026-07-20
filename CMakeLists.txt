@@ -327,6 +327,15 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-advanced.abs"
     )
     add_test(
+        NAME absolute.array-copy-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-copy.abs"
+    )
+    add_test(
+        NAME absolute.array-copy-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-copy-errors.abs"
+    )
+    set_tests_properties(absolute.array-copy-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.chess-rules-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/chess-rules.abs"
     )
@@ -356,6 +365,33 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/static-member-errors.abs"
     )
     set_tests_properties(absolute.static-member-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.base-constructors-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/base-constructors.abs"
+    )
+    add_test(
+        NAME absolute.base-constructor-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/base-constructor-errors.abs"
+    )
+    set_tests_properties(absolute.base-constructor-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.access-control-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/access-control.abs"
+    )
+    add_test(
+        NAME absolute.access-control-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/access-control-errors.abs"
+    )
+    set_tests_properties(absolute.access-control-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.runtime-type-operations-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/runtime-type-operations.abs"
+    )
+    add_test(
+        NAME absolute.runtime-type-operation-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/runtime-type-operation-errors.abs"
+    )
+    set_tests_properties(absolute.runtime-type-operation-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
         NAME absolute.array-advanced-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-advanced-errors.abs"
@@ -462,6 +498,54 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "static-members=ok"
         )
         add_test(
+            NAME absolute.build-base-constructors
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/base-constructors.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/base-constructors${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-base-constructors PROPERTIES
+            FIXTURES_SETUP absolute-base-constructors-executable
+        )
+        add_test(
+            NAME absolute.run-base-constructors
+            COMMAND "${CMAKE_BINARY_DIR}/base-constructors${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-base-constructors PROPERTIES
+            FIXTURES_REQUIRED absolute-base-constructors-executable
+            PASS_REGULAR_EXPRESSION "base-constructors=ok"
+        )
+        add_test(
+            NAME absolute.build-access-control
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/access-control.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/access-control${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-access-control PROPERTIES
+            FIXTURES_SETUP absolute-access-control-executable
+        )
+        add_test(
+            NAME absolute.run-access-control
+            COMMAND "${CMAKE_BINARY_DIR}/access-control${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-access-control PROPERTIES
+            FIXTURES_REQUIRED absolute-access-control-executable
+            PASS_REGULAR_EXPRESSION "access-control=ok"
+        )
+        add_test(
+            NAME absolute.build-runtime-type-operations
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/runtime-type-operations.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/runtime-type-operations${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-runtime-type-operations PROPERTIES
+            FIXTURES_SETUP absolute-runtime-type-operations-executable
+        )
+        add_test(
+            NAME absolute.run-runtime-type-operations
+            COMMAND "${CMAKE_BINARY_DIR}/runtime-type-operations${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-runtime-type-operations PROPERTIES
+            FIXTURES_REQUIRED absolute-runtime-type-operations-executable
+            PASS_REGULAR_EXPRESSION "runtime-types=ok"
+        )
+        add_test(
             NAME absolute.emit-llvm
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/llvm-basic.abs" --emit-llvm
         )
@@ -556,6 +640,32 @@ if(BUILD_TESTING)
         )
         set_tests_properties(absolute.emit-array-advanced PROPERTIES
             FIXTURES_SETUP absolute-array-advanced-ir
+        )
+        add_test(
+            NAME absolute.emit-array-copy
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-copy.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/array-copy.ll"
+        )
+        set_tests_properties(absolute.emit-array-copy PROPERTIES
+            FIXTURES_SETUP absolute-array-copy-ir
+        )
+        add_test(
+            NAME absolute.emit-insertion-sort-optimization
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/benchmarks/array-suite/absolute/insertion-sort.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/insertion-sort-optimization.ll"
+        )
+        set_tests_properties(absolute.emit-insertion-sort-optimization PROPERTIES
+            FIXTURES_SETUP absolute-insertion-sort-optimization-ir
+        )
+        add_test(
+            NAME absolute.check-insertion-sort-optimization-ir
+            COMMAND "${CMAKE_COMMAND}"
+                -DIR_FILE=${CMAKE_BINARY_DIR}/insertion-sort-optimization.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-insertion-sort-optimization-ir.cmake"
+        )
+        set_tests_properties(absolute.check-insertion-sort-optimization-ir PROPERTIES
+            FIXTURES_REQUIRED absolute-insertion-sort-optimization-ir
         )
         add_test(
             NAME absolute.emit-chess-rules
@@ -675,6 +785,14 @@ if(BUILD_TESTING)
             set_tests_properties(absolute.run-array-advanced PROPERTIES
                 FIXTURES_REQUIRED absolute-array-advanced-ir
                 PASS_REGULAR_EXPRESSION "advanced-arrays=227"
+            )
+            add_test(
+                NAME absolute.run-array-copy
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/array-copy.ll"
+            )
+            set_tests_properties(absolute.run-array-copy PROPERTIES
+                FIXTURES_REQUIRED absolute-array-copy-ir
+                PASS_REGULAR_EXPRESSION "array-copy=ok"
             )
             add_test(
                 NAME absolute.run-chess-rules

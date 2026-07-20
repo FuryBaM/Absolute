@@ -37,6 +37,13 @@
 
         llvm::Function* DeclareMethodFunction(const ClassMethod& method);
 
+        bool ClassNeedsConstructor(const ClassInfo& info) const;
+
+        bool RuntimeTypeDerivesFrom(const std::string& type, const std::string& base) const;
+
+        llvm::Value* EmitRuntimeTypeTest(
+            llvm::Value* reference, const std::string& sourceType, const std::string& targetType);
+
         void DeclareStaticFields(ClassInfo& info);
 
         void DeclareStaticFields(StructInfo& info);

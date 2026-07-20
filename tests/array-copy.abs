@@ -1,0 +1,51 @@
+int32 globalValues[5] = {2, 4, 6, 8, 10};
+
+int32[] copiedTail(int32[] values) {
+    return copy(values[1:4]);
+}
+
+int32[] storedCopy(int32[] values) {
+    int32[] result = copy(values[0:2]);
+    return result;
+}
+
+int32[] slicedCopy(int32[] values) {
+    return copy(values)[1:3];
+}
+
+int32[] globalView() {
+    return globalValues[1:4];
+}
+
+int32 main() {
+    int32 local[5] = {1, 2, 3, 4, 5};
+    int32[] view = local[1:4];
+    view[0] = 20;
+    assert(local[1] == 20, "slice must alias its source");
+
+    int32[] independent = copy(view);
+    independent[0] = 99;
+    assert(local[1] == 20, "copy must not alias its source");
+    assert(independent[0] == 99, "copy must remain writable");
+
+    int32[] returned = copiedTail(globalValues[]);
+    globalValues[1] = 40;
+    assert(returned[0] == 4, "returned copy must own separate storage");
+
+    int32[] stored = storedCopy(globalValues[]);
+    globalValues[0] = 100;
+    assert(stored[0] == 2, "stored copy must remain safe to return");
+
+    int32[] narrowed = slicedCopy(globalValues[]);
+    globalValues[1] = 400;
+    assert(narrowed[0] == 40, "slice of a copy must keep independent storage");
+
+    int32[] borrowedGlobal = globalView();
+    borrowedGlobal[1] = 60;
+    assert(globalValues[2] == 60, "returned global slice must stay zero-copy");
+
+    int32[] literal = copy({7, 8, 9});
+    assert(literal[2] == 9, "array literal copy");
+    println("array-copy=ok");
+    return 0;
+}

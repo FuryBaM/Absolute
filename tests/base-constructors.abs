@@ -1,0 +1,54 @@
+class ValueBase {
+    public int32 value;
+
+    public ValueBase(int32 initial) {
+        value = initial;
+    }
+}
+
+class ForwardingValue : ValueBase {
+    public ForwardingValue(int32 initial) {
+        base(initial + 1);
+        value += 1;
+    }
+}
+
+class DefaultBase {
+    public int32 value;
+
+    public DefaultBase() {
+        value = 40;
+    }
+}
+
+class AutomaticValue : DefaultBase {
+    public AutomaticValue() {
+        value += 2;
+    }
+}
+
+class ImplicitValue : DefaultBase {
+}
+
+class DeepImplicitValue : ImplicitValue {
+}
+
+int32 main() {
+    ForwardingValue* forwarded = new ForwardingValue(40);
+    assert(forwarded.value == 42, "explicit base arguments before derived body");
+
+    raw ForwardingValue* rawForwarded = new raw ForwardingValue(40);
+    assert(rawForwarded.value == 42, "raw allocation uses the same base chain");
+    delete rawForwarded;
+
+    AutomaticValue automatic;
+    assert(automatic.value == 42, "automatic base() for declared constructor");
+
+    ImplicitValue implicitValue;
+    assert(implicitValue.value == 40, "synthetic implicit constructor");
+
+    DeepImplicitValue deepValue;
+    assert(deepValue.value == 40, "recursive implicit constructor chain");
+    println("base-constructors=ok");
+    return 0;
+}

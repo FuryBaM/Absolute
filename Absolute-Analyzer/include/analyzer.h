@@ -20,6 +20,12 @@ namespace Absolute {
     using SymbolId = std::uint32_t;
     inline constexpr SymbolId InvalidSymbolId = static_cast<SymbolId>(-1);
 
+    enum class AccessLevel {
+        Public,
+        Protected,
+        Private
+    };
+
     enum class SymbolKind {
         Variable,
         Parameter,
@@ -45,6 +51,8 @@ namespace Absolute {
         bool externalFunction = false;
         bool isConst = false;
         bool isStatic = false;
+        bool arrayStorageEscapes = false;
+        AccessLevel access = AccessLevel::Public;
         std::string memberOwner;
         std::vector<std::string> genericParameters;
         std::vector<std::string> genericArguments;
@@ -131,6 +139,19 @@ namespace Absolute {
             SymbolId symbol = InvalidSymbolId;
             bool isConst = false;
             bool isStatic = false;
+            AccessLevel access = AccessLevel::Public;
+            std::string owner;
+
+            MemberSignature() = default;
+            MemberSignature(SymbolKind memberKind, std::string memberType,
+                std::vector<std::string> parameters = {},
+                SymbolId memberSymbol = InvalidSymbolId, bool memberConst = false,
+                bool memberStatic = false,
+                AccessLevel memberAccess = AccessLevel::Public)
+                : kind(memberKind), type(std::move(memberType)),
+                  parameterTypes(std::move(parameters)), symbol(memberSymbol),
+                  isConst(memberConst), isStatic(memberStatic), access(memberAccess) {
+            }
         };
 
         enum class TypeKind {
@@ -255,6 +276,7 @@ namespace Absolute {
         bool currentMethodConst = false;
         bool currentMethodStatic = false;
         bool currentConstructor = false;
+        AccessLevel pendingMemberAccess = AccessLevel::Public;
 
     public:
         explicit Analyzer(std::vector<Program*> programs)
@@ -354,6 +376,13 @@ namespace Absolute {
         bool IsInteger(const std::string& name) const;
         bool IsAssignable(const std::string& target, const std::string& source) const;
         bool IsDerivedFrom(const std::string& type, const std::string& base) const;
+        AccessLevel DeclaredAccess(const Statement& statement) const;
+        void ValidateAccessModifiers(const Statement& statement,
+            bool memberDeclaration, const std::string& target);
+        bool CanAccess(AccessLevel access, const std::string& owner) const;
+        void RequireAccess(AccessLevel access, const std::string& owner,
+            const std::string& member, SymbolId symbol = InvalidSymbolId);
+        void RequireAccess(const MemberSignature& member, const std::string& name);
         std::string CommonType(const std::string& left, const std::string& right) const;
         std::vector<std::string> ResolveParameterTypes(const std::vector<std::unique_ptr<VarDeclExpr>>& parameters);
         void DeclareGlobalFunction(FunctionDeclStmt& statement);
@@ -361,12 +390,17 @@ namespace Absolute {
         void DeclareType(const std::string& name, TypeKind kind = TypeKind::Other);
         void DeclareMember(const std::string& owner, std::string name, MemberSignature signature);
         std::vector<MemberSignature> FindMembers(const std::string& owner, const std::string& name);
+        std::vector<MemberSignature> FindInheritedMembers(
+            const std::string& owner, const std::string& name);
         std::unordered_map<std::string, std::vector<MemberSignature>> VisibleMembers(
             const std::string& owner) const;
         std::optional<MemberSignature> FindConcreteMethod(
             const std::string& owner, const std::string& name,
             const std::vector<std::string>& parameterTypes) const;
         void ValidateInterfaceImplementation(const std::string& className);
+        std::string DirectBaseClass(const std::string& className) const;
+        std::optional<std::vector<std::string>> ConstructorParameterTypes(
+            const std::string& typeName) const;
         std::vector<SymbolId> FindFunctionCandidates(const std::string& name) const;
         std::vector<SymbolId> FindExtensionCandidates(const std::string& name) const;
         SymbolId SelectOverload(const std::vector<SymbolId>& candidates,

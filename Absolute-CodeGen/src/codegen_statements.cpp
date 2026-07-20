@@ -2,6 +2,33 @@
 
 namespace Absolute {
     namespace {
+        bool ContainsDirectNestedLoop(const Statement* statement) {
+            const auto* compound = dynamic_cast<const CompoundStmt*>(statement);
+            if (!compound) return false;
+            for (const auto& child : compound->statements) {
+                if (dynamic_cast<const ForStmt*>(child.get()) ||
+                    dynamic_cast<const WhileStmt*>(child.get()) ||
+                    dynamic_cast<const DoWhileStmt*>(child.get()) ||
+                    dynamic_cast<const ForEachStmt*>(child.get())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        void DisableLoopUnrolling(llvm::BranchInst* backEdge) {
+            if (!backEdge) return;
+            llvm::LLVMContext& context = backEdge->getContext();
+            llvm::Metadata* operands[] = {
+                nullptr,
+                llvm::MDNode::get(context,
+                    llvm::MDString::get(context, "llvm.loop.unroll.disable"))
+            };
+            llvm::MDNode* loopId = llvm::MDNode::getDistinct(context, operands);
+            loopId->replaceOperandWith(0, loopId);
+            backEdge->setMetadata(llvm::LLVMContext::MD_loop, loopId);
+        }
+
         struct OpaqueAttributeViews {
             std::vector<std::vector<AbsoluteAttributeArgumentV1>> argumentStorage;
             std::vector<AbsoluteAttributeV1> attributes;
@@ -63,26 +90,8 @@ namespace Absolute {
             impl->builder.CreateRetVoid();
             return;
         }
-        llvm::Value* result = nullptr;
-        if (ArrayRankName(impl->currentReturnTypeName) > 0) {
-            Impl::ArrayView source = impl->ArrayViewFromValue(
-                impl->Evaluate(stmt->expr.get()), impl->currentReturnTypeName);
-            llvm::Value* elementCount = impl->builder.getInt64(1);
-            for (llvm::Value* dimension : source.dimensions)
-                elementCount = impl->builder.CreateMul(elementCount, dimension, "return.array.element.count");
-            llvm::Value* byteCount = impl->builder.CreateMul(elementCount,
-                impl->builder.getInt64(impl->SizeOfTypeName(
-                    ArrayElementTypeName(impl->currentReturnTypeName,
-                        ArrayRankName(impl->currentReturnTypeName)))),
-                "return.array.byte.count");
-            llvm::Value* copiedData = impl->builder.CreateCall(
-                impl->Malloc(), {byteCount}, "return.array.data");
-            impl->builder.CreateMemCpy(copiedData, llvm::MaybeAlign(16),
-                source.address, llvm::MaybeAlign(1), byteCount);
-            source.address = copiedData;
-            result = impl->BuildArrayDescriptor(source);
-        }
-        else result = impl->Coerce(impl->Evaluate(stmt->expr.get()), function->getReturnType());
+        llvm::Value* result = impl->Coerce(
+            impl->Evaluate(stmt->expr.get()), function->getReturnType());
         SymbolId transferredOwner = InvalidSymbolId;
         if (IsManagedPointerTypeName(impl->currentReturnTypeName)) {
             const auto* returnedIdentifier = dynamic_cast<IdentifierExpr*>(stmt->expr.get());
@@ -400,7 +409,14 @@ namespace Absolute {
         impl->loops.push_back({conditionBlock, endBlock, impl->scopes.size()});
         impl->builder.SetInsertPoint(bodyBlock);
         if (stmt->body) stmt->body->Accept(*this);
+        llvm::BasicBlock* backEdgeBlock = impl->builder.GetInsertBlock();
         impl->BranchIfNeeded(conditionBlock);
+        // Replicating a nested loop bloats its control flow and can duplicate
+        // safety checks. Keep LLVM's normal unrolling policy for simple loops.
+        if (ContainsDirectNestedLoop(stmt->body.get())) {
+            DisableLoopUnrolling(llvm::dyn_cast_or_null<llvm::BranchInst>(
+                backEdgeBlock ? backEdgeBlock->getTerminator() : nullptr));
+        }
         impl->loops.pop_back();
 
         impl->builder.SetInsertPoint(endBlock);

@@ -179,6 +179,26 @@ namespace Absolute {
             }
         };
 
+        inline bool IsExplicitArrayCopy(Expression* expression) {
+            while (expression) {
+                if (auto* slice = dynamic_cast<SliceExpr*>(expression)) {
+                    expression = slice->base.get();
+                    continue;
+                }
+                if (auto* access = dynamic_cast<ArrayAccessExpr*>(expression);
+                    access && access->indexes.size() == 1 && !access->indexes.front()) {
+                    expression = access->base.get();
+                    continue;
+                }
+                break;
+            }
+            auto* call = dynamic_cast<FunctionCallExpr*>(expression);
+            if (!call || !call->base) return false;
+            CallTargetProbe probe;
+            call->base->Accept(probe);
+            return !probe.isMember && probe.identifierExpr && probe.identifierExpr->name == "copy";
+        }
+
         class StringLiteralProbe final : public BaseIdentifierVisitor {
         public:
             const StringLiteralExpr* literal = nullptr;
@@ -209,7 +229,7 @@ namespace Absolute {
 
         inline bool IsBuiltinFunction(const std::string& name) {
             return name == "print" || name == "println" || name == "format" ||
-                name == "toString" || name == "assert";
+                name == "toString" || name == "assert" || name == "copy";
         }
 
         inline bool IsPrintableType(const std::string& type) {

@@ -1,0 +1,76 @@
+class ProtectedBase {
+    private int32 secret;
+    protected int32 value;
+
+    protected ProtectedBase(int32 initial) {
+        secret = initial;
+        value = initial;
+    }
+
+    private int32 readSecret() {
+        return secret;
+    }
+
+    public int32 reveal() {
+        return secret;
+    }
+
+    public int32 revealFrom(ProtectedBase* other) {
+        return other.readSecret();
+    }
+}
+
+class AccessibleChild : ProtectedBase {
+    public AccessibleChild(int32 initial) {
+        base(initial);
+        value += 2;
+    }
+
+    public int32 readProtected() {
+        return value;
+    }
+}
+
+class PrivateFactory {
+    private int32 value;
+
+    private PrivateFactory(int32 initial) {
+        value = initial;
+    }
+
+    public static raw PrivateFactory* create(int32 initial) {
+        return new raw PrivateFactory(initial);
+    }
+
+    public int32 read() {
+        return value;
+    }
+}
+
+struct PrivateStructField {
+    private int32 value;
+
+    public PrivateStructField() {
+        value = 42;
+    }
+
+    public int32 read() {
+        return value;
+    }
+}
+
+int32 main() {
+    AccessibleChild* child = new AccessibleChild(40);
+    assert(child.reveal() == 40, "private base access inside declaring class");
+    assert(child.revealFrom(child) == 40, "private method access inside declaring class");
+    assert(child.readProtected() == 42, "protected access inside derived class");
+
+    raw PrivateFactory* factory = PrivateFactory.create(42);
+    assert(factory.read() == 42, "private constructor through public factory");
+    delete factory;
+
+    PrivateStructField value;
+    assert(value.read() == 42, "private struct field inside public method");
+    println("access-control=ok");
+    return 0;
+}

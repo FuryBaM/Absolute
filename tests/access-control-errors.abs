@@ -1,0 +1,79 @@
+class PrivateBase {
+    private int32 hidden;
+    protected int32 inherited;
+
+    private PrivateBase() {
+    }
+
+    private int32 hiddenMethod() {
+        return hidden;
+    }
+
+    protected int32 inheritedMethod() {
+        return inherited;
+    }
+}
+
+class InvalidChild : PrivateBase {
+    public InvalidChild() {
+        base();
+        hidden = 1;
+        hiddenMethod();
+    }
+}
+
+class ProtectedOnly {
+    protected ProtectedOnly() {
+    }
+
+    protected int32 value;
+    protected int32 read() {
+        return value;
+    }
+}
+
+interface IVisible {
+    private int32 read();
+}
+
+interface IRequired {
+    int32 value();
+}
+
+class HiddenImplementation : IRequired {
+    private int32 value() {
+        return 1;
+    }
+}
+
+class ConflictingAccess {
+    public private int32 value;
+}
+
+class PublicVirtualBase {
+    public virtual int32 read() {
+        return 1;
+    }
+}
+
+class ReducedOverride : PublicVirtualBase {
+    private override int32 read() {
+        return 2;
+    }
+}
+
+public int32 invalidGlobalAccess() {
+    return 0;
+}
+
+int32 main() {
+    private int32 local = 0;
+    PrivateBase* baseValue = new PrivateBase();
+    baseValue.hidden = 1;
+    baseValue.hiddenMethod();
+
+    ProtectedOnly* protectedValue = new ProtectedOnly();
+    protectedValue.value = 1;
+    protectedValue.read();
+    return local;
+}
