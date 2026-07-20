@@ -1,0 +1,85 @@
+name: Multi-language benchmarks
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [master]
+    paths:
+      - "Absolute-*/**"
+      - "benchmarks/**"
+      - "scripts/**"
+      - "build-windows.bat"
+      - "CMakeLists.txt"
+      - ".github/workflows/benchmarks.yml"
+
+jobs:
+  windows-benchmarks:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    env:
+      ABSOLUTE_BENCHMARK_NO_PAUSE: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Cache portable LLVM SDK
+        uses: actions/cache@v4
+        with:
+          path: .absolute/toolchains/llvm-18.1.8
+          key: windows-llvm-18.1.8-benchmark-v1
+
+      - name: Record runner environment
+        shell: pwsh
+        run: |
+          Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors | Format-List
+          dotnet --info
+          java -version
+          node --version
+          python --version
+          cmake --version
+
+      - name: Bootstrap and build Absolute Release
+        shell: cmd
+        run: build-windows.bat --bootstrap -NoTest
+
+      - name: Run array and memory benchmarks
+        shell: cmd
+        run: benchmarks\array-suite\run.bat 7 2 1
+
+      - name: Run pointer and object benchmarks
+        shell: cmd
+        run: benchmarks\pointer-object-suite\run.bat 7 2 1
+
+      - name: Run compiler build benchmark
+        shell: cmd
+        run: benchmarks\build-suite\run.bat 4 linux windows
+
+      - name: Upload benchmark CSV files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: absolute-benchmark-results
+          path: benchmarks/**/results/*.csv
+          if-no-files-found: warn
