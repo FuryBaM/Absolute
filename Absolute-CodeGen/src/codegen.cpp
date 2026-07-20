@@ -2,6 +2,7 @@
 
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Analysis/LazyValueInfo.h>
+#include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Transforms/Scalar/DCE.h>
 #include <llvm/Transforms/Scalar/SimplifyCFG.h>
 
@@ -11,11 +12,40 @@ namespace Absolute {
             return block && block->getName().find("array.bounds.failure") == 0;
         }
 
+        bool IsKnownIntegerComparison(
+            const llvm::ICmpInst& comparison,
+            bool expected,
+            llvm::Instruction* context,
+            llvm::LazyValueInfo& lazyValues,
+            llvm::ScalarEvolution& scalarEvolution) {
+            const llvm::ICmpInst::Predicate predicate = expected
+                ? comparison.getPredicate()
+                : comparison.getInversePredicate();
+            llvm::Value* left = comparison.getOperand(0);
+            llvm::Value* right = comparison.getOperand(1);
+
+            if (llvm::isa<llvm::Constant>(left) || llvm::isa<llvm::Constant>(right)) {
+                llvm::Constant* result = lazyValues.getPredicateAt(
+                    predicate, left, right, context, true);
+                if (const auto* known = llvm::dyn_cast_or_null<llvm::ConstantInt>(result))
+                    if (known->isOne()) return true;
+            }
+
+            if (!left->getType()->isIntegerTy() || left->getType() != right->getType())
+                return false;
+            return scalarEvolution.isKnownPredicateAt(
+                predicate,
+                scalarEvolution.getSCEV(left),
+                scalarEvolution.getSCEV(right),
+                context);
+        }
+
         bool IsKnownBoolean(
             llvm::Value* value,
             bool expected,
             llvm::Instruction* context,
             llvm::LazyValueInfo& lazyValues,
+            llvm::ScalarEvolution& scalarEvolution,
             unsigned depth = 0) {
             if (!value || depth > 12 || !value->getType()->isIntegerTy(1)) return false;
             if (const auto* constant = llvm::dyn_cast<llvm::ConstantInt>(value))
@@ -30,18 +60,9 @@ namespace Absolute {
             if (const auto* result = llvm::dyn_cast_or_null<llvm::ConstantInt>(known))
                 if (result->isOne()) return true;
 
-            if (const auto* compare = llvm::dyn_cast<llvm::ICmpInst>(value)) {
-                llvm::CmpInst::Predicate predicate = expected
-                    ? compare->getPredicate()
-                    : compare->getInversePredicate();
-                llvm::Value* left = compare->getOperand(0);
-                llvm::Value* right = compare->getOperand(1);
-                if (llvm::isa<llvm::Constant>(left) || llvm::isa<llvm::Constant>(right)) {
-                    llvm::Constant* comparison = lazyValues.getPredicateAt(
-                        predicate, left, right, context, true);
-                    if (const auto* result = llvm::dyn_cast_or_null<llvm::ConstantInt>(comparison))
-                        return result->isOne();
-                }
+            if (const auto* comparison = llvm::dyn_cast<llvm::ICmpInst>(value)) {
+                if (IsKnownIntegerComparison(
+                    *comparison, expected, context, lazyValues, scalarEvolution)) return true;
             }
 
             const auto* binary = llvm::dyn_cast<llvm::BinaryOperator>(value);
@@ -51,22 +72,32 @@ namespace Absolute {
             switch (binary->getOpcode()) {
             case llvm::Instruction::And:
                 if (expected)
-                    return IsKnownBoolean(left, true, context, lazyValues, depth + 1) &&
-                        IsKnownBoolean(right, true, context, lazyValues, depth + 1);
-                return IsKnownBoolean(left, false, context, lazyValues, depth + 1) ||
-                    IsKnownBoolean(right, false, context, lazyValues, depth + 1);
+                    return IsKnownBoolean(
+                               left, true, context, lazyValues, scalarEvolution, depth + 1) &&
+                        IsKnownBoolean(
+                               right, true, context, lazyValues, scalarEvolution, depth + 1);
+                return IsKnownBoolean(
+                           left, false, context, lazyValues, scalarEvolution, depth + 1) ||
+                    IsKnownBoolean(
+                           right, false, context, lazyValues, scalarEvolution, depth + 1);
             case llvm::Instruction::Or:
                 if (expected)
-                    return IsKnownBoolean(left, true, context, lazyValues, depth + 1) ||
-                        IsKnownBoolean(right, true, context, lazyValues, depth + 1);
-                return IsKnownBoolean(left, false, context, lazyValues, depth + 1) &&
-                    IsKnownBoolean(right, false, context, lazyValues, depth + 1);
+                    return IsKnownBoolean(
+                               left, true, context, lazyValues, scalarEvolution, depth + 1) ||
+                        IsKnownBoolean(
+                               right, true, context, lazyValues, scalarEvolution, depth + 1);
+                return IsKnownBoolean(
+                           left, false, context, lazyValues, scalarEvolution, depth + 1) &&
+                    IsKnownBoolean(
+                           right, false, context, lazyValues, scalarEvolution, depth + 1);
             case llvm::Instruction::Xor:
                 if (const auto* constant = llvm::dyn_cast<llvm::ConstantInt>(right)) {
                     if (constant->isOne())
-                        return IsKnownBoolean(left, !expected, context, lazyValues, depth + 1);
+                        return IsKnownBoolean(
+                            left, !expected, context, lazyValues, scalarEvolution, depth + 1);
                     if (constant->isZero())
-                        return IsKnownBoolean(left, expected, context, lazyValues, depth + 1);
+                        return IsKnownBoolean(
+                            left, expected, context, lazyValues, scalarEvolution, depth + 1);
                 }
                 return false;
             default:
@@ -82,6 +113,8 @@ namespace Absolute {
                 llvm::FunctionAnalysisManager& analyses) {
                 llvm::LazyValueInfo& lazyValues =
                     analyses.getResult<llvm::LazyValueAnalysis>(function);
+                llvm::ScalarEvolution& scalarEvolution =
+                    analyses.getResult<llvm::ScalarEvolutionAnalysis>(function);
                 llvm::SmallVector<std::pair<llvm::BranchInst*, llvm::BasicBlock*>, 8> rewrites;
 
                 for (llvm::BasicBlock& block : function) {
@@ -94,8 +127,8 @@ namespace Absolute {
                     if (firstFailure == secondFailure) continue;
 
                     const bool requiredCondition = secondFailure;
-                    if (!IsKnownBoolean(
-                        branch->getCondition(), requiredCondition, branch, lazyValues)) continue;
+                    if (!IsKnownBoolean(branch->getCondition(), requiredCondition, branch,
+                            lazyValues, scalarEvolution)) continue;
                     rewrites.emplace_back(branch, firstFailure ? second : first);
                 }
 
