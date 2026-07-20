@@ -37,6 +37,8 @@
 
         llvm::Function* DeclareMethodFunction(const ClassMethod& method);
 
+        bool ClassNeedsConstructor(const ClassInfo& info) const;
+
         void DeclareStaticFields(ClassInfo& info);
 
         void DeclareStaticFields(StructInfo& info);

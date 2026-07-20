@@ -367,6 +367,9 @@ namespace Absolute {
             const std::string& owner, const std::string& name,
             const std::vector<std::string>& parameterTypes) const;
         void ValidateInterfaceImplementation(const std::string& className);
+        std::string DirectBaseClass(const std::string& className) const;
+        std::optional<std::vector<std::string>> ConstructorParameterTypes(
+            const std::string& typeName) const;
         std::vector<SymbolId> FindFunctionCandidates(const std::string& name) const;
         std::vector<SymbolId> FindExtensionCandidates(const std::string& name) const;
         SymbolId SelectOverload(const std::vector<SymbolId>& candidates,

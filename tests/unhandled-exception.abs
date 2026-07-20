@@ -1,6 +1,6 @@
 class FatalError : Error {
     public FatalError(string text) {
-        message = text;
+        base(text);
     }
 }
 

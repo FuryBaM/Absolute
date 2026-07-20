@@ -1,0 +1,48 @@
+class NeedsArgument {
+    public NeedsArgument(int32 value) {
+    }
+}
+
+class MissingExplicitCall : NeedsArgument {
+    public MissingExplicitCall() {
+    }
+}
+
+class MissingImplicitConstructor : NeedsArgument {
+}
+
+class WrongArgumentCount : NeedsArgument {
+    public WrongArgumentCount() {
+        base();
+    }
+}
+
+class WrongArgumentType : NeedsArgument {
+    public WrongArgumentType() {
+        base("bad");
+    }
+}
+
+class LateBaseCall : NeedsArgument {
+    public LateBaseCall(int32 value) {
+        int32 copy = value;
+        base(copy);
+    }
+}
+
+class RootBaseCall {
+    public RootBaseCall() {
+        base();
+    }
+}
+
+struct StructBaseCall {
+    public StructBaseCall() {
+        base();
+    }
+}
+
+int32 main() {
+    base();
+    return 0;
+}

@@ -570,6 +570,26 @@ initializers, and static members of generic types are intentionally rejected
 until module initialization and ownership are defined. See
 [docs/static-members.md](docs/static-members.md) for the exact rules.
 
+## Base constructors
+
+A derived constructor may pass values to its direct base constructor with
+`base(...)`. The call must be the first statement in the constructor body:
+
+```absolute
+class NamedNode : Node {
+    public NamedNode(string name, int32 value) {
+        base(value);
+        label = name;
+    }
+}
+```
+
+When the call is omitted, the compiler inserts `base()` automatically. Classes
+without a declared constructor also receive an implicit zero-argument
+constructor when their inheritance chain needs one. A base constructor with
+required parameters must always be called explicitly. See
+[docs/base-constructors.md](docs/base-constructors.md) for the complete rules.
+
 ## Interfaces
 
 Interfaces declare method contracts without storage or method bodies. An
@@ -719,8 +739,10 @@ casts, arithmetic/comparison operators, assignments, `return`, `if`, `for`,
 support fields, local value instances, constructors, raw or managed allocation,
 single inheritance, interfaces, instance and static methods, static fields, and
 `virtual`/`override` dispatch. Multiple class inheritance and automatic
-destructor calls are not emitted. Base-constructor chaining is also not automatic. Raw object
-graphs that own child nodes must release them explicitly before `delete`.
+destructor calls are not emitted. Base constructors run before the derived
+constructor body, with either explicit `base(...)` arguments or an automatic
+zero-argument call. Raw object graphs that own child nodes must release them
+explicitly before `delete`.
 
 Both pointer modes preserve class methods and virtual dispatch:
 

@@ -383,6 +383,7 @@ namespace Absolute {
             info.virtualNames = parent.virtualNames;
         }
         else info.virtualNames.resize(interfaceSlotCount);
+        info.baseClass = baseClass;
 
         std::unordered_map<std::string, std::vector<ClassMethod>> interfaceRequirements;
         for (const std::string& interfaceName : implementedInterfaces) {
@@ -514,23 +515,32 @@ namespace Absolute {
         }
     }
 
+    bool CodeGenerator::Impl::ClassNeedsConstructor(const ClassInfo& info) const {
+        if (info.constructor) return true;
+        if (info.baseClass.empty()) return false;
+        const auto base = classes.find(info.baseClass);
+        return base != classes.end() && ClassNeedsConstructor(base->second);
+    }
+
     llvm::Function* CodeGenerator::Impl::DeclareConstructorFunction(ClassInfo& info) {
-        if (!info.constructor) return nullptr;
+        if (!ClassNeedsConstructor(info)) return nullptr;
         std::vector<llvm::Type*> parameters{builder.getPtrTy()};
-        for (const auto& parameter : info.constructor->parameters)
-            parameters.push_back(TypeFromName(SubstituteCodegenType(
-                DeclaredTypeName(*parameter), info.substitutions)));
+        if (info.constructor)
+            for (const auto& parameter : info.constructor->parameters)
+                parameters.push_back(TypeFromName(SubstituteCodegenType(
+                    DeclaredTypeName(*parameter), info.substitutions)));
         llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
         const std::string name = info.name + ".__ctor";
         llvm::Function* function = module->getFunction(name);
         if (!function)
             function = llvm::Function::Create(type, llvm::Function::ExternalLinkage, name, *module);
         function->setCallingConv(llvm::CallingConv::C);
-        ApplyCallableAttributes(*function, *info.constructor);
+        if (info.constructor) ApplyCallableAttributes(*function, *info.constructor);
         function->getArg(0)->setName("this");
-        for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
-            function->getArg(static_cast<unsigned>(index + 1))->setName(
-                IdentifierName(info.constructor->parameters[index]->name.get()));
+        if (info.constructor)
+            for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
+                function->getArg(static_cast<unsigned>(index + 1))->setName(
+                    IdentifierName(info.constructor->parameters[index]->name.get()));
         return function;
     }
 

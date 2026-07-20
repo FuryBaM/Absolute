@@ -51,6 +51,7 @@
             std::string nameSpace;
             ClassDeclStmt* statement = nullptr;
             std::vector<std::string> parents;
+            std::string baseClass;
             std::vector<VarDeclExpr*> ownPrimitiveFields;
             std::vector<InstanceDeclExpr*> ownObjectFields;
             std::vector<VarDeclExpr*> ownStaticPrimitiveFields;

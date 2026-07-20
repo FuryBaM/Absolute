@@ -146,6 +146,14 @@ namespace Absolute {
                 }
             }
         if (stmt->body) stmt->body->Accept(*this);
+        if (!types[typeName].constructor) {
+            const std::string baseClass = DirectBaseClass(typeName);
+            const auto baseParameters = ConstructorParameterTypes(baseClass);
+            if (!baseClass.empty() && baseParameters && !baseParameters->empty())
+                Report("implicit constructor of '" + typeName + "' cannot call base constructor '" +
+                    baseClass + "' without arguments; declare a constructor with base(...)",
+                    "E_BASE_CONSTRUCTOR_REQUIRED");
+        }
         ValidateInterfaceImplementation(typeName);
         table.ExitScope();
         currentType = old;
@@ -242,6 +250,36 @@ namespace Absolute {
                     IsTaskType(type) ? TaskState::Unknown : TaskState::NotTask});
             }
             else Report("parameter '" + name + "' is already declared");
+        }
+        const std::string baseClass = DirectBaseClass(currentType);
+        if (stmt->hasExplicitBaseCall && baseClass.empty()) {
+            Report("constructor of '" + currentType + "' calls base(...), but the type has no base class",
+                "E_BASE_WITHOUT_CLASS");
+            for (const auto& argument : stmt->baseArguments) Evaluate(argument.get());
+        }
+        else if (!baseClass.empty()) {
+            const auto declaredParameters = ConstructorParameterTypes(baseClass);
+            const std::vector<std::string> expected = declaredParameters.value_or(
+                std::vector<std::string>{});
+            if (!stmt->hasExplicitBaseCall && declaredParameters && !expected.empty()) {
+                Report("constructor of '" + currentType + "' must call base(...) with " +
+                    std::to_string(expected.size()) + " argument(s)", "E_BASE_CONSTRUCTOR_REQUIRED");
+            }
+            if (stmt->hasExplicitBaseCall) {
+                if (stmt->baseArguments.size() != expected.size())
+                    Report("base constructor of '" + baseClass + "' expects " +
+                        std::to_string(expected.size()) + " argument(s), got " +
+                        std::to_string(stmt->baseArguments.size()), "E_BASE_ARGUMENT_COUNT");
+                for (size_t index = 0; index < stmt->baseArguments.size(); ++index) {
+                    const std::string expectedType = index < expected.size() ? expected[index] : std::string{};
+                    const Result argument = EvaluateExpected(
+                        stmt->baseArguments[index].get(), expectedType);
+                    if (!expectedType.empty() && !IsAssignable(expectedType, argument.type))
+                        Report("base constructor argument " + std::to_string(index + 1) +
+                            " has type '" + argument.type + "', expected '" + expectedType + "'",
+                            "E_BASE_ARGUMENT_TYPE", argument.symbol);
+                }
+            }
         }
         if (stmt->body) stmt->body->Accept(*this);
         PopValueFlowScope();

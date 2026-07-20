@@ -53,6 +53,17 @@ namespace Absolute {
 
         std::unique_ptr<Statement> body = ParseStatement();
         auto stmt = std::make_unique<ConstructorDeclStmt>(std::make_unique<Token>(*name), std::move(parameters), std::move(body));
+        if (auto* compound = dynamic_cast<CompoundStmt*>(stmt->body.get());
+            compound && !compound->statements.empty()) {
+            auto* first = dynamic_cast<SingleStatement*>(compound->statements.front().get());
+            auto* call = first ? dynamic_cast<FunctionCallExpr*>(first->expr.get()) : nullptr;
+            auto* identifier = call ? dynamic_cast<IdentifierExpr*>(call->base.get()) : nullptr;
+            if (identifier && identifier->name == "base") {
+                stmt->hasExplicitBaseCall = true;
+                stmt->baseArguments = std::move(call->arguments);
+                compound->statements.erase(compound->statements.begin());
+            }
+        }
         stmt->modifiers = modifiers;
         stmt->attributes = std::move(attributes);
         return stmt;

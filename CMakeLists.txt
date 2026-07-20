@@ -357,6 +357,15 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.static-member-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
+        NAME absolute.base-constructors-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/base-constructors.abs"
+    )
+    add_test(
+        NAME absolute.base-constructor-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/base-constructor-errors.abs"
+    )
+    set_tests_properties(absolute.base-constructor-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.array-advanced-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-advanced-errors.abs"
     )
@@ -460,6 +469,22 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-static-members PROPERTIES
             FIXTURES_REQUIRED absolute-static-members-executable
             PASS_REGULAR_EXPRESSION "static-members=ok"
+        )
+        add_test(
+            NAME absolute.build-base-constructors
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/base-constructors.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/base-constructors${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-base-constructors PROPERTIES
+            FIXTURES_SETUP absolute-base-constructors-executable
+        )
+        add_test(
+            NAME absolute.run-base-constructors
+            COMMAND "${CMAKE_BINARY_DIR}/base-constructors${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-base-constructors PROPERTIES
+            FIXTURES_REQUIRED absolute-base-constructors-executable
+            PASS_REGULAR_EXPRESSION "base-constructors=ok"
         )
         add_test(
             NAME absolute.emit-llvm

@@ -2,7 +2,7 @@ class ParseError : Error {
     public int32 code;
 
     public ParseError(string text, int32 value) {
-        message = text;
+        base(text);
         code = value;
     }
 }

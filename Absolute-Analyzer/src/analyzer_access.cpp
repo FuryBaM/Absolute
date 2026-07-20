@@ -102,6 +102,16 @@ namespace Absolute {
         const std::string callName = probe.identifierExpr ? probe.identifierExpr->name : std::string{};
         const std::string qualifiedCallName = ExtractQualifiedName(expr->base.get());
 
+        if (!probe.isMember && callName == "base") {
+            for (const auto& argument : expr->arguments) Evaluate(argument.get());
+            Report(currentConstructor
+                ? "base(...) must be the first statement of a constructor"
+                : "base(...) is only allowed as the first statement of a constructor",
+                currentConstructor ? "E_BASE_CALL_POSITION" : "E_BASE_CALL_OUTSIDE_CONSTRUCTOR");
+            Save(expr, {InvalidSymbolId, "error", false});
+            return;
+        }
+
         if (!probe.isMember && IsBuiltinFunction(callName)) {
             std::vector<Result> arguments;
             arguments.reserve(expr->arguments.size());

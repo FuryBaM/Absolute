@@ -257,9 +257,7 @@ namespace Absolute {
         if (classAllocation) {
             Impl::ClassInfo& info = impl->classes.at(pointeeType);
             impl->InitializeObject(pointer, info);
-            if (info.constructor) {
-                llvm::Function* constructor = impl->module->getFunction(info.name + ".__ctor");
-                if (!constructor) impl->Fail("missing constructor for '" + info.name + "'");
+            if (llvm::Function* constructor = impl->module->getFunction(info.name + ".__ctor")) {
                 std::vector<llvm::Value*> arguments{pointer};
                 for (size_t index = 0; index < expr->arguments.size(); ++index) {
                     if (index + 1 >= constructor->arg_size())
@@ -392,16 +390,13 @@ namespace Absolute {
             return;
         }
         llvm::StructType* llvmType = nullptr;
-        ConstructorDeclStmt* constructorStatement = nullptr;
         std::string constructorName;
         if (auto found = impl->classes.find(typeName); found != impl->classes.end()) {
             llvmType = found->second.llvmType;
-            constructorStatement = found->second.constructor;
             constructorName = found->second.name + ".__ctor";
         }
         else if (auto found = impl->structs.find(typeName); found != impl->structs.end()) {
             llvmType = found->second.llvmType;
-            constructorStatement = found->second.constructor;
             constructorName = found->second.name + ".__ctor";
         }
         else impl->Fail("type '" + typeName + "' is not a class or struct");
@@ -414,9 +409,8 @@ namespace Absolute {
             llvm::Value* initial = impl->Coerce(impl->Evaluate(expr->value.get()), llvmType);
             impl->builder.CreateStore(initial, address);
         }
-        else if (constructorStatement && constructorStatement->parameters.empty()) {
-            llvm::Function* constructor = impl->module->getFunction(constructorName);
-            if (!constructor) impl->Fail("missing constructor for '" + typeName + "'");
+        else if (llvm::Function* constructor = impl->module->getFunction(constructorName);
+            constructor && constructor->arg_size() == 1) {
             impl->builder.CreateCall(constructor, {address});
             impl->EmitExceptionCheck();
         }

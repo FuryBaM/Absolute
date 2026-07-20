@@ -736,6 +736,47 @@ namespace Absolute {
         return result;
     }
 
+    std::string Analyzer::DirectBaseClass(const std::string& className) const {
+        std::string definitionName = className;
+        std::string ignoredBase;
+        std::vector<std::string> ignoredArguments;
+        if (ParseGenericTypeName(className, ignoredBase, ignoredArguments)) definitionName = ignoredBase;
+        const auto found = types.find(definitionName);
+        if (found == types.end()) return {};
+        for (const std::string& parent : found->second.parents) {
+            std::string parentDefinition = parent;
+            std::string genericBase;
+            std::vector<std::string> genericArguments;
+            if (ParseGenericTypeName(parent, genericBase, genericArguments)) parentDefinition = genericBase;
+            const auto candidate = types.find(parentDefinition);
+            if (candidate != types.end() && candidate->second.kind == TypeKind::Class)
+                return parent;
+        }
+        return {};
+    }
+
+    std::optional<std::vector<std::string>> Analyzer::ConstructorParameterTypes(
+        const std::string& typeName) const {
+        std::string definitionName = typeName;
+        std::unordered_map<std::string, std::string> substitutions;
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseGenericTypeName(typeName, genericBase, genericArguments)) {
+            definitionName = genericBase;
+            const auto definition = types.find(definitionName);
+            if (definition != types.end() &&
+                definition->second.genericParameters.size() == genericArguments.size())
+                for (size_t index = 0; index < genericArguments.size(); ++index)
+                    substitutions.emplace(definition->second.genericParameters[index], genericArguments[index]);
+        }
+        const auto found = types.find(definitionName);
+        if (found == types.end() || !found->second.constructor) return std::nullopt;
+        std::vector<std::string> parameters = found->second.constructor->parameterTypes;
+        for (std::string& parameter : parameters)
+            parameter = SubstituteGenericType(parameter, substitutions);
+        return parameters;
+    }
+
     std::string Analyzer::ExtractIdentifier(Expression* expression) const {
         if (!expression) return {};
         BaseIdentifierVisitor visitor;

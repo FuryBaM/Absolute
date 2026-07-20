@@ -275,7 +275,7 @@ namespace Absolute {
     }
 
     void CodeGenerator::Impl::EmitConstructor(ClassInfo& info) {
-        if (!info.constructor) return;
+        if (!ClassNeedsConstructor(info)) return;
         llvm::Function* function = DeclareConstructorFunction(info);
         if (!function->empty()) return;
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
@@ -289,10 +289,34 @@ namespace Absolute {
         currentClassName = info.name;
         currentThis = function->getArg(0);
         currentReturnTypeName = "void";
-        for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
-            BindCallableParameter(*function->getArg(static_cast<unsigned>(index + 1)),
-                *info.constructor->parameters[index]);
-        if (info.constructor->body) info.constructor->body->Accept(visitor);
+        if (info.constructor)
+            for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
+                BindCallableParameter(*function->getArg(static_cast<unsigned>(index + 1)),
+                    *info.constructor->parameters[index]);
+        if (!info.baseClass.empty()) {
+            auto base = classes.find(info.baseClass);
+            if (base == classes.end()) Fail("missing base class '" + info.baseClass + "'");
+            if (ClassNeedsConstructor(base->second)) {
+                llvm::Function* baseConstructor = module->getFunction(info.baseClass + ".__ctor");
+                if (!baseConstructor) Fail("missing base constructor for '" + info.baseClass + "'");
+                std::vector<llvm::Value*> arguments{currentThis};
+                if (info.constructor && info.constructor->hasExplicitBaseCall) {
+                    for (size_t index = 0; index < info.constructor->baseArguments.size(); ++index) {
+                        if (index + 1 >= baseConstructor->arg_size())
+                            Fail("too many base constructor arguments for '" + info.baseClass + "'");
+                        arguments.push_back(Coerce(Evaluate(
+                            info.constructor->baseArguments[index].get()),
+                            baseConstructor->getFunctionType()->getParamType(
+                                static_cast<unsigned>(index + 1))));
+                    }
+                }
+                if (arguments.size() != baseConstructor->arg_size())
+                    Fail("invalid base constructor argument count for '" + info.baseClass + "'");
+                builder.CreateCall(baseConstructor, arguments);
+                EmitExceptionCheck();
+            }
+        }
+        if (info.constructor && info.constructor->body) info.constructor->body->Accept(visitor);
         FinishClassCallable(*function);
         PopScope();
         currentClassName = oldClass;

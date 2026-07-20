@@ -30,6 +30,8 @@ namespace Absolute {
     struct ConstructorDeclStmt : Statement {
         std::unique_ptr<Token> name;
         std::vector<std::unique_ptr<VarDeclExpr>> parameters;
+        std::vector<std::unique_ptr<Expression>> baseArguments;
+        bool hasExplicitBaseCall = false;
         std::unique_ptr<Statement> body;
 
         ConstructorDeclStmt(std::unique_ptr<Token> name,
@@ -56,6 +58,12 @@ namespace Absolute {
                 for (const auto& param : parameters) {
                     param->print(indent + 2);
                 }
+            }
+
+            if (hasExplicitBaseCall) {
+                std::cout << std::string(indent + 1, ' ') << "Base constructor arguments:\n";
+                for (const auto& argument : baseArguments)
+                    if (argument) argument->print(indent + 2);
             }
 
             if (body) body->print(indent + 1);
