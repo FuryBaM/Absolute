@@ -1,0 +1,26 @@
+int32 missingOnSomePaths(bool release) {
+    raw int32* value = new raw int32(42);
+    if (release) {
+        delete value;
+    }
+    return 0;
+}
+
+int32 missingAtScopeExit() {
+    {
+        raw int32* scoped = new raw int32(7);
+    }
+    return 0;
+}
+
+int32 missingBeforeBreak() {
+    while (true) {
+        raw int32* iteration = new raw int32(1);
+        break;
+    }
+    return 0;
+}
+
+int32 main() {
+    return missingOnSomePaths(false) + missingAtScopeExit() + missingBeforeBreak();
+}

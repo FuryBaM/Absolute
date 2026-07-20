@@ -1,0 +1,7 @@
+int32 main() {
+    uint32 color = Desktop.rgb(64, 128, 255);
+    assert(color == 4227327, "desktop runtime RGB function failed");
+    println(format("desktop-plugin={}", color));
+    return 0;
+}
+

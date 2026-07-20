@@ -1,0 +1,12 @@
+int32 main() {
+    auto window = new Desktop.Window("Absolute desktop smoke test", 320, 180, false);
+    if (!window.isOpen()) { return 1; }
+    window.clear(Desktop.rgb(20, 28, 42));
+    window.fillRect(40, 45, 240, 90, Desktop.rgb(70, 150, 255));
+    window.present();
+    Desktop.sleep(120);
+    window.close();
+    println("desktop-window=ok");
+    return 0;
+}
+

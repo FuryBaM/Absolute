@@ -1,0 +1,36 @@
+int32 regular(int32 value) {
+    return value;
+}
+
+async int32 background(int32 value) {
+    return value;
+}
+
+int32 spawnRegular() {
+    task<int32> work = spawn regular(1);
+    return 0;
+}
+
+int32 awaitOutsideAsync() {
+    task<int32> work = spawn background(2);
+    return await work;
+}
+
+async int32 forgottenTask() {
+    task<int32> work = spawn background(3);
+    return 0;
+}
+
+async int32 doubleAwait() {
+    task<int32> work = spawn background(4);
+    int32 value = await work;
+    return value + await work;
+}
+
+async int32 directAsyncCall() {
+    return background(5);
+}
+
+async int32 awaitValue() {
+    return await 42;
+}

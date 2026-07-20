@@ -1,0 +1,19 @@
+int32 main() {
+    int32 checksum = 0;
+    int32 round = 0;
+
+    while (round < 5) {
+        int32 state = 123456789 + round;
+        int32 i = 0;
+        while (i < 20000000) {
+            state = state * 1664525 + 1013904223;
+            state = state ^ (state >> 16);
+            i += 1;
+        }
+        checksum = checksum ^ state;
+        round += 1;
+    }
+
+    println(checksum);
+    return 0;
+}

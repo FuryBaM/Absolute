@@ -4,6 +4,7 @@ project(Absolute-Parser LANGUAGES CXX)
 # Опции компиляции
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 file(GLOB HEADER_FILES
     "include/*.h"
@@ -33,12 +34,18 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 
 # Опции компилятора
 target_compile_options(${PROJECT_NAME} PRIVATE
-    $<$<CXX_COMPILER_ID:MSVC>:/W3 /permissive- /std:c++latest /MP>
+    $<$<CXX_COMPILER_ID:MSVC>:/W3>
+    $<$<CXX_COMPILER_ID:MSVC>:/permissive->
+    $<$<CXX_COMPILER_ID:MSVC>:/MP>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wextra>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wpedantic>
 )
 
 # Опции линковки
 target_link_options(${PROJECT_NAME} PRIVATE
-    $<$<CONFIG:Release>:/OPT:REF /OPT:ICF>
+    $<$<AND:$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Release>>:/OPT:REF>
+    $<$<AND:$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Release>>:/OPT:ICF>
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES

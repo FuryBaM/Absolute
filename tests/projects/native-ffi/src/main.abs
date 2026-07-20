@@ -1,0 +1,12 @@
+extern "C" int32 native_add(int32 left, int32 right);
+extern "C" void native_increment(raw int32* value);
+
+int32 main() {
+    int32 value = native_add(20, 22);
+    int32 pointerValue = 41;
+    native_increment(&pointerValue);
+    println(format("native={}", value));
+    assert(value == 42, "native library call failed");
+    assert(pointerValue == 42, "native raw pointer call failed");
+    return 0;
+}

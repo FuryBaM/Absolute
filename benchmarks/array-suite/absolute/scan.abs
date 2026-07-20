@@ -1,0 +1,23 @@
+int32 main() {
+    int32 size = 1000000;
+    int32 values[size];
+    int32 index = 0;
+    while (index < size) {
+        values[index] = index * 17 + 3;
+        index += 1;
+    }
+
+    int64 checksum = 0;
+    int32 round = 0;
+    while (round < 100) {
+        index = 0;
+        while (index < size) {
+            values[index] = values[index] * 3 + round;
+            checksum += values[index];
+            index += 1;
+        }
+        round += 1;
+    }
+    println(checksum);
+    return 0;
+}

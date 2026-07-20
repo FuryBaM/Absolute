@@ -1,0 +1,23 @@
+int32 main() {
+    int32 size = 1048576;
+    int32 mask = size - 1;
+    int32 values[size];
+    int32 index = 0;
+    while (index < size) {
+        values[index] = index * 31 + 7;
+        index += 1;
+    }
+
+    int32 state = 123456789;
+    int64 checksum = 0;
+    int32 iteration = 0;
+    while (iteration < 100000000) {
+        state = state * 1664525 + 1013904223;
+        index = state & mask;
+        values[index] = values[index] ^ state;
+        checksum += values[index];
+        iteration += 1;
+    }
+    println(checksum);
+    return 0;
+}

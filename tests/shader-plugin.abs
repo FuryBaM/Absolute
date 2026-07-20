@@ -1,0 +1,11 @@
+@shader.stage(Vertex)
+shader Vertex {
+    input position;
+    input normal;
+    output clipPosition;
+}
+
+int32 main() {
+    println("shader-plugin=ok");
+    return 0;
+}

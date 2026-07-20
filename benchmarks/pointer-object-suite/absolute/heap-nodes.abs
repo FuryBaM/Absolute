@@ -1,0 +1,35 @@
+int64 heapNodes() {
+    int32 size = 131072;
+    int32 mask = size - 1;
+    raw int64* nodes[131072];
+
+    int32 index = 0;
+    while (index < size) {
+        nodes[index] = new int64(index * 17 + 3);
+        index += 1;
+    }
+
+    uint32 state = 123456789;
+    int64 checksum = 0;
+    int32 iteration = 0;
+    while (iteration < 20000000) {
+        state = state * 1664525 + 1013904223;
+        int32 selected = state & mask;
+        int64 next = (*nodes[selected] + selected + (iteration & 1023)) & 2147483647;
+        *nodes[selected] = next;
+        checksum = (checksum + next) & 2147483647;
+        iteration += 1;
+    }
+
+    index = 0;
+    while (index < size) {
+        delete nodes[index];
+        index += 1;
+    }
+    return checksum;
+}
+
+int32 main() {
+    println(heapNodes());
+    return 0;
+}

@@ -1,0 +1,52 @@
+int32 nullDereference() {
+    raw int32* value = null;
+    return *value;
+}
+
+int32 useAfterDelete() {
+    raw int32* value = new int32(42);
+    delete value;
+    return *value;
+}
+
+int32 expiredSubscriber() {
+    int32* owner = new int32(42);
+    int32* subscriber = owner;
+    delete owner;
+    return *subscriber;
+}
+
+int32 deleteSubscriber() {
+    int32* owner = new int32(42);
+    int32* subscriber = owner;
+    delete subscriber;
+    delete owner;
+    return 0;
+}
+
+int32 maybeInvalid(bool release) {
+    raw int32* value = new int32(42);
+    if (release) {
+        delete value;
+    }
+    return *value;
+}
+
+int32 maybeNull(bool allocate) {
+    raw int32* value = null;
+    if (allocate) {
+        value = new int32(42);
+    }
+    return *value;
+}
+
+int32 deleteUninitialized() {
+    raw int32* value;
+    delete value;
+    return 0;
+}
+
+int32 main() {
+    return nullDereference() + useAfterDelete() + expiredSubscriber() +
+        deleteSubscriber() + maybeInvalid(false) + maybeNull(false) + deleteUninitialized();
+}

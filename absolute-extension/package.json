@@ -1,24 +1,184 @@
 {
-    "name": "absolute-extension",
-    "publisher": "FuryBaM",
-    "version": "0.0.2",
-    "engines": { "vscode": "^1.80.0" },
-    "contributes": {
-      "languages": [
-        {
-          "id": "absolute",
-          "aliases": ["Absolute", "absolute"],
-          "extensions": [".abs"],
-          "configuration": "./language-configuration.json"
-        }
+  "name": "absolute-extension",
+  "displayName": "Absolute Language",
+  "description": "Absolute language support with plugin-aware IntelliSense, build, run, and native debugging.",
+  "publisher": "FuryBaM",
+  "version": "0.2.1",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": ["Programming Languages", "Debuggers"],
+  "activationEvents": [
+    "onLanguage:absolute",
+    "onCommand:absolute.refreshPlugins",
+    "onCommand:absolute.runFile",
+    "onCommand:absolute.debugFile",
+    "onCommand:absolute.openProject",
+    "onCommand:absolute.runProject",
+    "onCommand:absolute.debugProject",
+    "onDebug:absolute"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "absolute",
+        "aliases": ["Absolute", "absolute"],
+        "extensions": [".abs"],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "absolute-project",
+        "aliases": ["Absolute Project"],
+        "extensions": [".absproj"],
+        "configuration": "./project-language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "absolute",
+        "scopeName": "source.absolute",
+        "path": "./syntaxes/absolute.tmLanguage.json"
+      },
+      {
+        "language": "absolute-project",
+        "scopeName": "source.absolute-project",
+        "path": "./syntaxes/absolute-project.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      { "command": "absolute.runFile", "title": "Absolute: Build and Run", "category": "Absolute" },
+      { "command": "absolute.debugFile", "title": "Absolute: Build and Debug", "category": "Absolute" },
+      { "command": "absolute.openProject", "title": "Absolute: Open Project", "category": "Absolute" },
+      { "command": "absolute.runProject", "title": "Absolute: Run Project", "category": "Absolute" },
+      { "command": "absolute.debugProject", "title": "Absolute: Debug Project", "category": "Absolute" },
+      { "command": "absolute.refreshPlugins", "title": "Absolute: Refresh Plugins", "category": "Absolute" },
+      { "command": "absolute.showPluginInfo", "title": "Absolute: Show Loaded Plugins", "category": "Absolute" }
+    ],
+    "menus": {
+      "editor/title/run": [
+        { "command": "absolute.runFile", "when": "editorLangId == absolute", "group": "run@1" },
+        { "command": "absolute.debugFile", "when": "editorLangId == absolute", "group": "run@2" },
+        { "command": "absolute.runProject", "when": "editorLangId == absolute-project", "group": "run@1" },
+        { "command": "absolute.debugProject", "when": "editorLangId == absolute-project", "group": "run@2" }
       ],
-      "grammars": [
-        {
-          "language": "absolute",
-          "scopeName": "source.absolute",
-          "path": "./syntaxes/absolute.tmLanguage.json"
-        }
+      "explorer/context": [
+        { "command": "absolute.openProject", "when": "resourceExtname == .absproj", "group": "navigation@1" },
+        { "command": "absolute.runProject", "when": "resourceExtname == .absproj", "group": "navigation@2" },
+        { "command": "absolute.debugProject", "when": "resourceExtname == .absproj", "group": "navigation@3" }
       ]
+    },
+    "keybindings": [
+      { "command": "absolute.debugFile", "key": "f5", "when": "editorLangId == absolute && !inDebugMode" },
+      { "command": "absolute.runFile", "key": "ctrl+f5", "mac": "cmd+f5", "when": "editorLangId == absolute && !inDebugMode" },
+      { "command": "absolute.debugProject", "key": "f5", "when": "editorLangId == absolute-project && !inDebugMode" },
+      { "command": "absolute.runProject", "key": "ctrl+f5", "mac": "cmd+f5", "when": "editorLangId == absolute-project && !inDebugMode" }
+    ],
+    "debuggers": [
+      {
+        "type": "absolute",
+        "label": "Absolute Native Debug",
+        "languages": ["absolute"],
+        "configurationAttributes": {
+          "launch": {
+            "required": [],
+            "properties": {
+              "source": { "type": "string", "description": "Absolute .abs or .absproj input. Defaults to the active file/project." },
+              "program": { "type": "string", "description": "Prebuilt executable used when noBuild is true." },
+              "noBuild": { "type": "boolean", "default": false },
+              "stopAtEntry": { "type": "boolean", "default": true },
+              "args": { "type": "array", "items": { "type": "string" }, "default": [] },
+              "cwd": { "type": "string", "default": "${workspaceFolder}" }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "absolute",
+            "request": "launch",
+            "name": "Debug Absolute",
+            "source": "${file}",
+            "stopAtEntry": true
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Absolute: Build and debug",
+            "description": "Build the active Absolute source/project and launch the native debugger.",
+            "body": {
+              "type": "absolute",
+              "request": "launch",
+              "name": "Debug Absolute",
+              "source": "${file}",
+              "stopAtEntry": true,
+              "args": []
+            }
+          }
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "Absolute",
+      "properties": {
+        "absolute.compilerPath": {
+          "type": "string",
+          "default": "absolutec",
+          "description": "Path to the Absolute compiler used for native --build-exe builds."
+        },
+        "absolute.compilerArguments": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Additional arguments passed to absolutec before --build-exe."
+        },
+        "absolute.buildCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Optional shell build command. Placeholders: {input}, {output}, {workspace}, {plugins}. Overrides compilerPath."
+        },
+        "absolute.outputDirectory": {
+          "type": "string",
+          "default": "${workspaceFolder}/.absolute/bin",
+          "description": "Directory for native executables."
+        },
+        "absolute.preferProject": {
+          "type": "boolean",
+          "default": true,
+          "description": "Build the nearest .absproj instead of only the active source file."
+        },
+        "absolute.plugins": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Additional root .absplugin manifests or native plugin libraries."
+        },
+        "absolute.pluginSearchPaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Additional directories used to resolve plugin dependency manifests."
+        },
+        "absolute.editorMetadata": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Editor-only *.editor.json sidecars to load without enabling their native plugins for builds."
+        },
+        "absolute.debugger": {
+          "type": "string",
+          "enum": ["auto", "cppvsdbg", "cppdbg"],
+          "default": "auto",
+          "description": "Native debugger supplied by the Microsoft C/C++ extension."
+        },
+        "absolute.externalConsole": {
+          "type": "boolean",
+          "default": false
+        }
+      }
     }
+  },
+  "scripts": {
+    "check": "node --check extension.js",
+    "package": "npx @vscode/vsce package --allow-missing-repository"
   }
-  
+}

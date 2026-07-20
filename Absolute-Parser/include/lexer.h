@@ -1,7 +1,9 @@
 #pragma once
 
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace Absolute {
 	enum class TokenType {
@@ -14,8 +16,7 @@ namespace Absolute {
 		CHAR = 6,
 		COMMENT = 7,
 		BRACKET = 8,
-		DOLLAR = 9,
-		WHITESPACE = 10,
+		WHITESPACE = 9,
 	};
 
 	enum class OperatorCategory {
@@ -30,8 +31,8 @@ namespace Absolute {
 	struct Token {
 		TokenType type;
 		std::string value;
-		int line;   // Номер строки
-		int column; // Номер колонки
+		int line;   // ГЌГ®Г¬ГҐГ° Г±ГІГ°Г®ГЄГЁ
+		int column; // ГЌГ®Г¬ГҐГ° ГЄГ®Г«Г®Г­ГЄГЁ
 
 		Token(TokenType type, std::string value, int line, int column)
 			: type(type), value(std::move(value)), line(line), column(column) {
@@ -59,4 +60,3 @@ namespace Absolute {
 	OperatorCategory GetOperatorCategory(const std::string& op);
 	std::vector<Token> lexer(const std::string& code);
 }
-

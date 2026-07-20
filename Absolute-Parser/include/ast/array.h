@@ -69,4 +69,28 @@ namespace Absolute {
 
         void Accept(ExpressionVisitor& visitor) override;
     };
+
+    struct SliceExpr : Expression {
+        std::unique_ptr<Expression> base;
+        std::unique_ptr<Expression> begin;
+        std::unique_ptr<Expression> end;
+
+        SliceExpr(std::unique_ptr<Expression> base,
+            std::unique_ptr<Expression> begin,
+            std::unique_ptr<Expression> end)
+            : base(std::move(base)), begin(std::move(begin)), end(std::move(end)) {}
+
+        std::string ToString(int indent = 0) const override {
+            std::string result = std::string(indent, ' ') + "Slice [";
+            result += begin ? begin->ToString(0) : std::string{};
+            result += ":";
+            result += end ? end->ToString(0) : std::string{};
+            result += "]:\n";
+            result += base ? base->ToString(indent + 1) : std::string(indent + 1, ' ') + "<missing>";
+            return result;
+        }
+
+        void print(int indent = 0) override { std::cout << ToString(indent) << "\n"; }
+        void Accept(ExpressionVisitor& visitor) override;
+    };
 }

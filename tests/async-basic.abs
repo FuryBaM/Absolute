@@ -1,0 +1,15 @@
+async int32 doubleValue(int32 value) {
+    return value * 2;
+}
+
+async int32 increment(int32 value) {
+    return value + 1;
+}
+
+async int32 main() {
+    task<int32> first = spawn doubleValue(20);
+    task<int32> second = spawn increment(1);
+    int32 result = await first + await second;
+    println(format("async={}", result));
+    return 0;
+}

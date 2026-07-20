@@ -3,11 +3,16 @@
 namespace Absolute {
     class ExpressionVisitor {
     public:
+        virtual ~ExpressionVisitor() = default;
+
         virtual void Visit(PrimitiveTypeExpr* expr) = 0;
         virtual void Visit(UserTypeExpr* expr) = 0;
+        virtual void Visit(PointerTypeExpr* expr) = 0;
+        virtual void Visit(ArrayTypeExpr* expr) = 0;
         virtual void Visit(IdentifierExpr* expr) = 0;
         virtual void Visit(FunctionCallExpr* expr) = 0;
         virtual void Visit(ArrayAccessExpr* expr) = 0;
+        virtual void Visit(SliceExpr* expr) = 0;
         virtual void Visit(BinaryExpr* expr) = 0;
         virtual void Visit(TernaryExpr* expr) = 0;
         virtual void Visit(NullExpr* expr) = 0;
@@ -33,11 +38,19 @@ namespace Absolute {
         IdentifierExpr* identifierExpr = nullptr;
 
         void Visit(PrimitiveTypeExpr* expr) override {
-            expr->Accept(*this);
+            (void)expr;
         }
 
         void Visit(UserTypeExpr* expr) override {
-            expr->Accept(*this);
+            if (expr->typeExpr) expr->typeExpr->Accept(*this);
+        }
+
+        void Visit(PointerTypeExpr* expr) override {
+            if (expr->pointee) expr->pointee->Accept(*this);
+        }
+
+        void Visit(ArrayTypeExpr* expr) override {
+            if (expr->element) expr->element->Accept(*this);
         }
 
         void Visit(IdentifierExpr* expr) override {
@@ -52,9 +65,13 @@ namespace Absolute {
             expr->base->Accept(*this);
         }
 
+        void Visit(SliceExpr* expr) override {
+            if (expr->base) expr->base->Accept(*this);
+        }
+
         void Visit(BinaryExpr* expr) override {
-            expr->left->Accept(*this);  // Ðåêóðñèâíî èùåì â ëåâîì ïîääåðåâå
-            expr->right->Accept(*this); // Ðåêóðñèâíî èùåì â ïðàâîì ïîääåðåâå
+            expr->left->Accept(*this);  // Ð ÐµÐºÑƒÑ€ÑÐ¸Ð²Ð½Ð¾ Ð¸Ñ‰ÐµÐ¼ Ð² Ð»ÐµÐ²Ð¾Ð¼ Ð¿Ð¾Ð´Ð´ÐµÑ€ÐµÐ²Ðµ
+            expr->right->Accept(*this); // Ð ÐµÐºÑƒÑ€ÑÐ¸Ð²Ð½Ð¾ Ð¸Ñ‰ÐµÐ¼ Ð² Ð¿Ñ€Ð°Ð²Ð¾Ð¼ Ð¿Ð¾Ð´Ð´ÐµÑ€ÐµÐ²Ðµ
         }
 
         void Visit(TernaryExpr* expr) override {
@@ -64,59 +81,61 @@ namespace Absolute {
         }
 
         void Visit(NullExpr* expr) override {
-            expr->Accept(*this);
+            (void)expr;
         }
 
         void Visit(BooleanLiteralExpr* expr) override {
-            expr->Accept(*this);
+            (void)expr;
         }
 
         void Visit(NumberLiteralExpr* expr) override {
-            expr->Accept(*this);
+            (void)expr;
         }
 
         void Visit(StringLiteralExpr* expr) override {
-            expr->Accept(*this);
+            (void)expr;
         }
 
         void Visit(CharLiteralExpr* expr) override {
-            expr->Accept(*this);
+            (void)expr;
         }
 
         void Visit(ArrayExpr* expr) override {
-            expr->Accept(*this);
+            for (auto& value : expr->values) {
+                if (value) value->Accept(*this);
+            }
         }
 
         void Visit(AssignmentExpr* expr) override {
-            expr->Accept(*this);
+            if (expr->target) expr->target->Accept(*this);
         }
 
         void Visit(VarDeclExpr* expr) override {
-            expr->Accept(*this);
+            if (expr->name) expr->name->Accept(*this);
         }
 
         void Visit(MemberAccessExpr* expr) override {
             if (expr->base) {
-                expr->base->Accept(*this); // Îáõîä áàçîâîãî âûðàæåíèÿ
+                expr->base->Accept(*this); // ÐžÐ±Ñ…Ð¾Ð´ Ð±Ð°Ð·Ð¾Ð²Ð¾Ð³Ð¾ Ð²Ñ‹Ñ€Ð°Ð¶ÐµÐ½Ð¸Ñ
             }
         }
 
         void Visit(CastExpr* expr) override {
             if (expr->base) {
-                expr->base->Accept(*this); // Îáõîä áàçîâîãî âûðàæåíèÿ
+                expr->base->Accept(*this); // ÐžÐ±Ñ…Ð¾Ð´ Ð±Ð°Ð·Ð¾Ð²Ð¾Ð³Ð¾ Ð²Ñ‹Ñ€Ð°Ð¶ÐµÐ½Ð¸Ñ
             }
         }
 
         void Visit(ConstructorCallExpr* expr) override {
-            expr->Accept(*this);
+            if (expr->constructName) expr->constructName->Accept(*this);
         }
 
         void Visit(DestructorCallExpr* expr) override {
-            expr->Accept(*this);
+            if (expr->target) expr->target->Accept(*this);
         }
 
         void Visit(InstanceDeclExpr* expr) override {
-            expr->Accept(*this);
+            if (expr->identifierName) expr->identifierName->Accept(*this);
         }
 
         void Visit(PrefixUnaryExpr* expr) override {

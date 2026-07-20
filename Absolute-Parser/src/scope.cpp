@@ -2,7 +2,7 @@
 #include "scope.h"
 
 namespace Absolute {
-    std::vector<Scope> Absolute::scopeStack;
+    std::vector<Scope> scopeStack;
 
     void EnterScope(ScopeType type, const std::string& name) {
         scopeStack.emplace_back(type, name);

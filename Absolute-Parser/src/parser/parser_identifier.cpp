@@ -14,13 +14,15 @@ namespace Absolute {
                 return ParseConstructor();
             }
             else {
-                std::unique_ptr<Expression> expr = ParseIdentifierExpr();
-                if (GetOperatorCategory(CurrentToken()->value) == OperatorCategory::Assignment) {
+                std::unique_ptr<Expression> expr = ParsePrimaryExpr();
+                Token* current = CurrentToken();
+                if (current && GetOperatorCategory(current->value) == OperatorCategory::Assignment) {
                     expr = ParseAssignmentExpr(std::move(expr));
                 }
                 Consume(TokenType::DELIMITER, ";");
                 auto stmt = std::make_unique<SingleStatement>(std::move(expr));
                 stmt->modifiers = modifiers;
+                stmt->attributes = attributes;
                 return stmt;
             }
         }
@@ -29,7 +31,7 @@ namespace Absolute {
         return nullptr;
     }
 
-    std::unique_ptr<Expression> Parser::ParseIdentifierExpr() {
+    std::unique_ptr<Expression> Parser::ParseIdentifierExpr(bool allowTemplate) {
         Token* identifier = CurrentToken();
         if (!identifier || identifier->type != TokenType::IDENTIFIER) {
             ReportSyntaxError(identifier, "Expected identifier");
@@ -53,7 +55,15 @@ namespace Absolute {
             else if (next->value == ".") {
                 expr = ParseMemberAccess(std::move(expr));
             }
-            else if (next->value == "$" && PeekToken(1)->value == "<") {
+            else if (next->value == "<") {
+                size_t close = 0;
+                if (!IsTemplateArgumentList(pos, &close)) break;
+
+                Token* afterTemplate = close + 1 < tokens.size() ? &tokens[close + 1] : nullptr;
+                const bool followedByPostfix = afterTemplate &&
+                    (afterTemplate->value == "(" || afterTemplate->value == "." || afterTemplate->value == "[");
+                if (!allowTemplate && !followedByPostfix) break;
+
                 expr = std::make_unique<UserTypeExpr>(std::move(expr));
                 expr = ParseTemplateExpr(std::move(expr));
             }

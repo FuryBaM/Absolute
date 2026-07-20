@@ -1,0 +1,18 @@
+interface IWorker {
+    int32 work(int32 value);
+}
+
+class MissingWorker : IWorker {
+}
+
+class WrongWorker : IWorker {
+    int64 work(int32 value) {
+        return value;
+    }
+}
+
+int32 main() {
+    IWorker value;
+    IWorker* invalid = new IWorker();
+    return 0;
+}

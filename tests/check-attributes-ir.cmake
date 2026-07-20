@@ -1,0 +1,11 @@
+if(NOT DEFINED IR_FILE)
+    message(FATAL_ERROR "IR_FILE is required")
+endif()
+
+file(READ "${IR_FILE}" ir)
+if(NOT ir MATCHES "attributes #[0-9]+ = \\{[^\\n]*alwaysinline")
+    message(FATAL_ERROR "@inline did not produce the LLVM alwaysinline function attribute")
+endif()
+if(NOT ir MATCHES "attributes #[0-9]+ = \\{[^\\n]*noinline")
+    message(FATAL_ERROR "@noinline did not produce the LLVM noinline function attribute")
+endif()

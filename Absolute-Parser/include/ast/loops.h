@@ -30,6 +30,8 @@ namespace Absolute {
 
             if (body) body->print(indent + 1);
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 
     struct WhileStmt : Statement {
@@ -44,6 +46,8 @@ namespace Absolute {
             if (condition) condition->print(indent + 1);
             if (body) body->print(indent + 1);
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 
     struct DoWhileStmt : Statement {
@@ -58,6 +62,8 @@ namespace Absolute {
             if (body) body->print(indent + 1);
             if (condition) condition->print(indent + 1);
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 
     struct ForEachStmt : Statement {
@@ -73,6 +79,8 @@ namespace Absolute {
             if (iterable) iterable->print(indent + 1);
             if (body) body->print(indent + 1);
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 
     struct ContinueStmt : Statement {
@@ -80,6 +88,8 @@ namespace Absolute {
         void print(int indent = 0) override {
             std::cout << std::string(indent, ' ') << "Continue statement" << "\n";
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 
     struct BreakStmt : Statement {
@@ -87,5 +97,7 @@ namespace Absolute {
         void print(int indent = 0) override {
             std::cout << std::string(indent, ' ') << "Break statement" << "\n";
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 }

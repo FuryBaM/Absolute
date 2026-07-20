@@ -1,0 +1,13 @@
+class FatalError : Error {
+    public FatalError(string text) {
+        message = text;
+    }
+}
+
+int32 failAtTop() {
+    throw new FatalError("fatal");
+}
+
+int32 main() {
+    return failAtTop();
+}

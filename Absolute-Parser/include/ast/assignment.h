@@ -46,5 +46,7 @@ namespace Absolute {
         void print(int indent = 0) override {
             std::cout << expr->ToString(indent) + "\n";
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 }

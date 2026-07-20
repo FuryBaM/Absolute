@@ -1,12 +1,13 @@
 #include "parser_pch.h"
 #include "parser.h"
+#include "syntax_plugins.h"
 
 namespace Absolute{
     constexpr unsigned int Hash(const char* str, int h = 0) {
         return !str[h] ? 5381 : (Hash(str, h + 1) * 33) ^ str[h];
     }
     std::vector<Token> Tokenize(const std::string& code) {
-        return lexer(code);  // Использует внутренний лексер
+        return ExpandSyntaxPlugins(lexer(code));
     }
 
     std::unique_ptr<Program> ParseCode(const std::vector<Token>& tokens) {
@@ -18,7 +19,15 @@ namespace Absolute{
     {
         std::vector<std::unique_ptr<Statement>> statements;
         while (CurrentToken()) {
-            statements.push_back(std::unique_ptr<Statement>(ParseStatement()));
+            const size_t statementStart = pos;
+            auto statement = ParseStatement();
+            if (statement) {
+                statements.push_back(std::move(statement));
+            }
+            else if (pos == statementStart) {
+                ReportSyntaxError(CurrentToken(), "Unexpected token at the start of a statement");
+                throw std::runtime_error("Parser made no progress");
+            }
         }
 	    return std::make_unique<Program>(std::move(statements));
     }
@@ -32,14 +41,16 @@ namespace Absolute{
         }
         std::unique_ptr<Expression> left = nullptr;
 
-        // Парсим первичное выражение
+        // РџР°СЂСЃРёРј РїРµСЂРІРёС‡РЅРѕРµ РІС‹СЂР°Р¶РµРЅРёРµ
         left = ParsePrimaryExpr();
-        if (GetOperatorCategory(CurrentToken()->value) == OperatorCategory::Assignment) {
-            left = ParseAssignmentExpr(std::move(left));
-        }
         if (!left) return nullptr;
 
-        // Проверяем, идет ли дальше бинарный оператор
+        Token* current = CurrentToken();
+        if (current && GetOperatorCategory(current->value) == OperatorCategory::Assignment) {
+            left = ParseAssignmentExpr(std::move(left));
+        }
+
+        // РџСЂРѕРІРµСЂСЏРµРј, РёРґРµС‚ Р»Рё РґР°Р»СЊС€Рµ Р±РёРЅР°СЂРЅС‹Р№ РѕРїРµСЂР°С‚РѕСЂ
         Token* next = CurrentToken();
         if (next && next->type == TokenType::OPERATOR) {
             return ParseBinaryExpr(0, std::move(left));
@@ -81,22 +92,22 @@ namespace Absolute{
             return ParseIdentifierExpr();
         }
 
-        if (CurrentToken()->value == "new") {
+        if (token->value == "new") {
             return ParseConstructorCall();
         }
 
-        if (CurrentToken()->value == "delete") {
+        if (token->value == "delete") {
             return ParseDestructorCall();
         }
 
-        // Вложенное выражение в скобках: (a + b)
+        // Р’Р»РѕР¶РµРЅРЅРѕРµ РІС‹СЂР°Р¶РµРЅРёРµ РІ СЃРєРѕР±РєР°С…: (a + b)
         if (token->type == TokenType::BRACKET && token->value == "(") {
-            Consume(TokenType::BRACKET, "("); // Пропускаем "("
+            Consume(TokenType::BRACKET, "("); // РџСЂРѕРїСѓСЃРєР°РµРј "("
             auto expr = ParseExpression();
             if (!expr)
                 return nullptr;
 
-            // Проверяем закрывающую скобку
+            // РџСЂРѕРІРµСЂСЏРµРј Р·Р°РєСЂС‹РІР°СЋС‰СѓСЋ СЃРєРѕР±РєСѓ
             Consume(TokenType::BRACKET, ")");
 
             return expr;
@@ -136,9 +147,34 @@ namespace Absolute{
 
     std::unique_ptr<Statement> Parser::ParseStatement()
     {
+        ParseAttributes();
         ParseModifiers();
 
         Token* token = CurrentToken();
+        if (!token) return nullptr;
+
+        if (auto opaque = TryParseOpaquePluginStatement(tokens, pos)) {
+            opaque->modifiers = modifiers;
+            opaque->attributes = attributes;
+            return opaque;
+        }
+
+        if (!attributes.empty() && token->type != TokenType::IDENTIFIER &&
+            !(token->type == TokenType::KEYWORD &&
+                (IsPrimitiveType(token->value) || token->value == "raw" ||
+                    token->value == "class" || token->value == "struct" ||
+                    token->value == "interface" || token->value == "enum" ||
+                    token->value == "group" || token->value == "extern" ||
+                    token->value == "namespace" || token->value == "import"))) {
+            ReportSyntaxError(token, "Attributes may only precede declarations or opaque plugin blocks");
+            throw std::runtime_error("Invalid attribute target");
+        }
+
+        if (LooksLikeFunctionDeclaration()) return ParseFunctionDeclaration();
+
+        if (token->type == TokenType::KEYWORD && IsPrimitiveType(token->value)) {
+            return ParseVarDeclaration();
+        }
 
         switch (token->type)
         {
@@ -171,6 +207,13 @@ namespace Absolute{
             case Hash("new"):
             case Hash("delete"):
                 return std::make_unique<SingleStatement>(ParsePrimaryExpr());
+            case Hash("await"):
+            case Hash("spawn"):
+            {
+                auto expression = ParseExpression();
+                Consume(TokenType::DELIMITER, ";");
+                return std::make_unique<SingleStatement>(std::move(expression));
+            }
             case Hash("void"):
                 return ParseFunctionDeclaration();
 		    case Hash("return"):
@@ -185,6 +228,16 @@ namespace Absolute{
                 return std::make_unique<BreakStmt>();
             case Hash("if"):
 			    return ParseIfStmt();
+            case Hash("switch"):
+                return ParseSwitchStmt(false);
+            case Hash("match"):
+                return ParseSwitchStmt(true);
+            case Hash("throw"):
+                return ParseThrowStmt();
+            case Hash("try"):
+                return ParseTryStmt();
+            case Hash("defer"):
+                return ParseDeferStmt();
 		    case Hash("for"):
 			    return ParseForStmt();
 		    case Hash("while"):
@@ -197,22 +250,61 @@ namespace Absolute{
 			    return ParseClassDecl();
 		    case Hash("struct"):
 			    return ParseStructDecl();
+		    case Hash("interface"):
+			    return ParseInterfaceDecl();
 		    case Hash("enum"):
 			    return ParseEnumDecl();
             case Hash("group"):
                 return ParseGroupDecl();
+            case Hash("import"):
+                return ParseImport();
+            case Hash("namespace"):
+                return ParseNamespace();
+            case Hash("extern"):
+                return ParseExternalFunctionDeclaration();
+            case Hash("raw"):
+                return ParseVarDeclaration();
             default:
                 break;
             }
             break;
 
         case TokenType::IDENTIFIER:
-            if (PeekToken(1)->type == TokenType::DOLLAR || PeekToken(1)->type == TokenType::IDENTIFIER || 
-                PeekTokenAfterIdentifiers()->type == TokenType::IDENTIFIER || 
-                IsPrefixUnary(*PeekToken(1)) || IsPrefixUnary(*PeekTokenAfterIdentifiers())) {
+        {
+            if (token->value == "task" && PeekToken() && PeekToken()->value == "<")
+                return ParseVarDeclaration();
+            Token* next = PeekToken(1);
+            Token* afterIdentifiers = PeekTokenAfterIdentifiers();
+            const auto isDeclaratorPrefix = [](const Token* candidate) {
+                return candidate && candidate->type == TokenType::OPERATOR &&
+                    (candidate->value == "*" || candidate->value == "&");
+            };
+            bool templateType = false;
+            bool templatePointer = false;
+            if (afterIdentifiers && afterIdentifiers->value == "<") {
+                const size_t templateStart = static_cast<size_t>(afterIdentifiers - tokens.data());
+                size_t templateClose = 0;
+                if (IsTemplateArgumentList(templateStart, &templateClose)) {
+                    Token* afterTemplate = templateClose + 1 < tokens.size() ? &tokens[templateClose + 1] : nullptr;
+                    templateType = afterTemplate &&
+                        (afterTemplate->type == TokenType::IDENTIFIER || isDeclaratorPrefix(afterTemplate));
+                    templatePointer = isDeclaratorPrefix(afterTemplate);
+                }
+            }
+
+            if ((next && next->type == TokenType::OPERATOR && next->value == "*") ||
+                (afterIdentifiers && afterIdentifiers->type == TokenType::OPERATOR &&
+                    afterIdentifiers->value == "*") || templatePointer) {
+                return ParseVarDeclaration();
+            }
+
+            if ((next && (next->type == TokenType::IDENTIFIER || isDeclaratorPrefix(next))) ||
+                (afterIdentifiers && (afterIdentifiers->type == TokenType::IDENTIFIER || isDeclaratorPrefix(afterIdentifiers))) ||
+                templateType) {
                 return ParseInstanceDeclStmt();
             }
-            return ParseIdentifier(); // Обрабатываем идентификатор
+            return ParseIdentifier(); // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ
+        }
 
 	    case TokenType::BRACKET:
 		    if (token->value == "{") {
@@ -228,7 +320,11 @@ namespace Absolute{
 		    break;
 
         case TokenType::OPERATOR:
-            return std::make_unique<SingleStatement>(ParsePrimaryExpr());
+        {
+            auto expression = ParseExpression();
+            Consume(TokenType::DELIMITER, ";");
+            return std::make_unique<SingleStatement>(std::move(expression));
+        }
 
         default:
             break;
@@ -241,9 +337,20 @@ namespace Absolute{
         std::vector<std::unique_ptr<Statement>> statements;
         Consume(TokenType::BRACKET, "{"); // "{"
 
-        while (!(CurrentToken()->type == TokenType::BRACKET && CurrentToken()->value == "}"))
+        while (CurrentToken() && !(CurrentToken()->type == TokenType::BRACKET && CurrentToken()->value == "}"))
         {
-            statements.push_back(std::unique_ptr<Statement>(ParseStatement()));
+            const size_t statementStart = pos;
+            auto statement = ParseStatement();
+            if (statement) statements.push_back(std::move(statement));
+            else if (pos == statementStart) {
+                ReportSyntaxError(CurrentToken(), "Unexpected token in compound statement");
+                throw std::runtime_error("Parser made no progress");
+            }
+        }
+
+        if (!CurrentToken()) {
+            ReportSyntaxError(nullptr, "Unexpected end of file; expected '}'");
+            throw std::runtime_error("Unterminated compound statement");
         }
 
         Consume(TokenType::BRACKET, "}"); // "}"

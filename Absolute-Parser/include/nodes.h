@@ -1,7 +1,36 @@
-﻿#pragma once
+﻿#ifndef ABSOLUTE_PARSER_NODES_H
+#define ABSOLUTE_PARSER_NODES_H
+
+#include <algorithm>
 
 namespace Absolute {
     class ExpressionVisitor;
+    class StatementVisitor;
+
+    enum class AttributeValueKind {
+        Identifier,
+        String,
+        Number,
+        Character,
+        Boolean
+    };
+
+    struct AttributeValue {
+        AttributeValueKind kind = AttributeValueKind::Identifier;
+        std::string text;
+    };
+
+    struct AttributeArgument {
+        std::string name;
+        AttributeValue value;
+    };
+
+    struct Attribute {
+        std::string name;
+        std::vector<AttributeArgument> arguments;
+        int line = 0;
+        int column = 0;
+    };
 
     struct ASTNode {
         virtual ~ASTNode() = default;
@@ -21,6 +50,15 @@ namespace Absolute {
 
     struct Statement : ASTNode {
         std::vector<Token> modifiers;
+        std::vector<Attribute> attributes;
+
+        const Attribute* FindAttribute(const std::string& name) const {
+            const auto found = std::find_if(attributes.begin(), attributes.end(),
+                [&](const Attribute& attribute) { return attribute.name == name; });
+            return found == attributes.end() ? nullptr : &*found;
+        }
+
+        virtual void Accept(StatementVisitor& visitor) = 0;
     };
 
     struct Program : ASTNode {
@@ -29,7 +67,7 @@ namespace Absolute {
             : statements(std::move(statements)) {
         }
 
-        void print(int indent = 0) override {
+        void print(int = 0) override {
             for (const auto& stmt : statements) {
                 if (stmt == nullptr) {
                     continue;
@@ -69,6 +107,8 @@ namespace Absolute {
         void print(int indent = 0) override {
             std::cout << ToString(indent) << "\n";
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 
     struct CompoundStmt : Statement {
@@ -83,5 +123,10 @@ namespace Absolute {
                     stmt->print(indent + 1);
             }
         }
+
+
+        void Accept(StatementVisitor& visitor) override;
     };
 }
+
+#endif // ABSOLUTE_PARSER_NODES_H

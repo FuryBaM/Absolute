@@ -1,0 +1,8 @@
+int32 main() {
+    int32 ragged[2][2] = {{1, 2}, {3}};
+    int32 wrongSize[3] = {1, 2};
+    int32 missingSize[];
+    int32 values[2] = {1, 2};
+    int32 invalidRank = values[0][1];
+    return invalidRank;
+}

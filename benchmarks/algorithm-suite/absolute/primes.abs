@@ -1,0 +1,21 @@
+int32 main() {
+    int32 count = 1;
+    int32 candidate = 3;
+    while (candidate <= 2000000) {
+        bool isPrime = true;
+        int32 divisor = 3;
+        while (divisor * divisor <= candidate) {
+            if (candidate % divisor == 0) {
+                isPrime = false;
+                break;
+            }
+            divisor += 2;
+        }
+        if (isPrime) {
+            count += 1;
+        }
+        candidate += 2;
+    }
+    println(count);
+    return 0;
+}

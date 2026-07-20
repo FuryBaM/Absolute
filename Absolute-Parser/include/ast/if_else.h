@@ -29,5 +29,7 @@ namespace Absolute {
 				elseBranch->print(indent + 2);
 			}
 		}
+
+		void Accept(StatementVisitor& visitor) override;
 	};
 }

@@ -1,0 +1,8 @@
+int32 main() {
+    string pattern = "value={}";
+    format(pattern, 1);
+    format("{} {}", 1);
+    toString();
+    assert("not a condition");
+    return 0;
+}

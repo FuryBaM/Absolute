@@ -45,7 +45,9 @@
     <ClInclude Include="include\nodes.h" />
     <ClInclude Include="include\parser.h" />
     <ClInclude Include="include\parser_pch.h" />
+    <ClInclude Include="include\plugin_api.h" />
     <ClInclude Include="include\scope.h" />
+    <ClInclude Include="include\syntax_plugins.h" />
     <ClInclude Include="include\syntax_tree.h" />
   </ItemGroup>
   <ItemGroup>
@@ -69,6 +71,7 @@
     <ClCompile Include="src\parser\parser_loops.cpp" />
     <ClCompile Include="src\parser\parser_member.cpp" />
     <ClCompile Include="src\parser\parser_modifiers.cpp" />
+    <ClCompile Include="src\parser\parser_module.cpp" />
     <ClCompile Include="src\parser\parser_parameters.cpp" />
     <ClCompile Include="src\parser\parser_struct.cpp" />
     <ClCompile Include="src\parser\parser_template.cpp" />
@@ -84,6 +87,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="src\scope.cpp" />
+    <ClCompile Include="src\syntax_plugins.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="CMakeLists.txt" />
@@ -100,26 +104,26 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>MultiByte</CharacterSet>
   </PropertyGroup>

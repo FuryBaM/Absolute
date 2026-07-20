@@ -59,15 +59,19 @@ namespace Absolute {
             std::cout << ":\n";
             if (value) value->print(indent + 1);
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 
     struct FunctionDeclStmt : Statement {
-        std::unique_ptr<Token> returnType;
+        std::unique_ptr<TypeExpr> returnType;
         std::unique_ptr<Token> name;
         std::vector<std::unique_ptr<VarDeclExpr>> parameters;
+        std::vector<Token> templateParams;
         std::unique_ptr<Statement> body;
+        std::string externalAbi;
 
-        FunctionDeclStmt(std::unique_ptr<Token> returnType, std::unique_ptr<Token> name,
+        FunctionDeclStmt(std::unique_ptr<TypeExpr> returnType, std::unique_ptr<Token> name,
             std::vector<std::unique_ptr<VarDeclExpr>> params,
             std::unique_ptr<Statement> body)
             : returnType(std::move(returnType)),
@@ -76,8 +80,14 @@ namespace Absolute {
             body(std::move(body)) {
         }
 
+        bool IsExternal() const { return !externalAbi.empty(); }
+        bool IsGeneric() const { return !templateParams.empty(); }
+
         void print(int indent = 0) override {
-            std::cout << std::string(indent, ' ') << "Function declaration: " << returnType->value << " " << name->value;
+            std::cout << std::string(indent, ' ') << "Function declaration: ";
+            if (IsExternal()) std::cout << "extern \"" << externalAbi << "\" ";
+            std::cout << "\n" << returnType->ToString(indent + 1) << "\n"
+                << std::string(indent + 1, ' ') << "Name: " << name->value;
             // Выводим модификаторы, если есть
             if (!modifiers.empty()) {
                 std::cout << " [";
@@ -97,6 +107,8 @@ namespace Absolute {
             }
             if (body) body->print(indent + 1);
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 
     struct ReturnStmt : Statement {
@@ -106,5 +118,7 @@ namespace Absolute {
             std::cout << std::string(indent, ' ') << "Return statement: " << "\n";
             if (expr) expr->print(indent + 1);
         }
+
+        void Accept(StatementVisitor& visitor) override;
     };
 }

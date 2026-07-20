@@ -1,0 +1,49 @@
+defer {
+    println("outside");
+}
+
+int32 invalidReturn() {
+    defer {
+        return 1;
+    }
+    return 0;
+}
+
+void invalidThrow() {
+    defer {
+        throw new Error("invalid");
+    }
+}
+
+void unknownCapture() {
+    defer {
+        println(later);
+    }
+    int32 later = 1;
+}
+
+void doubleCleanup() {
+    raw int32* value = new raw int32(1);
+    defer delete value;
+    defer delete value;
+}
+
+void deleteAfterDefer() {
+    raw int32* value = new raw int32(2);
+    defer delete value;
+    delete value;
+}
+
+async int32 taskValue() {
+    return 1;
+}
+
+async int32 awaitAfterDefer() {
+    task<int32> pending = spawn taskValue();
+    defer await pending;
+    return await pending;
+}
+
+int32 main() {
+    return 0;
+}

@@ -1,0 +1,95 @@
+interface IEvaluable {
+    int64 evaluate(int64 input);
+}
+
+interface IAdvanced : IEvaluable {
+    int64 twice(int64 input);
+}
+
+interface INamed {
+    int64 id();
+}
+
+interface IScored {
+    int64 id();
+}
+
+namespace ContractSpace {
+    interface IValue {
+        int32 value();
+    }
+
+    class Value : IValue {
+        int32 value() {
+            return 42;
+        }
+    }
+}
+
+class BaseNode {
+    public virtual int64 evaluate(int64 input) {
+        return input;
+    }
+}
+
+class AddNode : BaseNode, IAdvanced, INamed, IScored {
+    public int64 bias;
+
+    public AddNode(int64 initialBias) {
+        bias = initialBias;
+    }
+
+    public override int64 evaluate(int64 input) {
+        return input + bias;
+    }
+
+    public int64 twice(int64 input) {
+        return (input + bias) * 2;
+    }
+
+    public int64 id() {
+        return 42;
+    }
+}
+
+int64 runRaw(raw IEvaluable* value, int64 input) {
+    return value.evaluate(input);
+}
+
+int64 runManaged(IEvaluable* value, int64 input) {
+    return value.evaluate(input);
+}
+
+int64 managedInterfaceScope() {
+    IEvaluable* value = new AddNode(2);
+    return value.evaluate(40);
+}
+
+int32 main() {
+    raw IAdvanced* unsafe = new raw AddNode(2);
+    assert(runRaw(unsafe, 40) == 42, "raw interface dispatch");
+    assert(unsafe.twice(19) == 42, "inherited raw interface dispatch");
+    delete unsafe;
+
+    AddNode* owner = new AddNode(3);
+    IAdvanced* advanced = owner;
+    IEvaluable* base = advanced;
+    INamed* named = owner;
+    IScored* scored = owner;
+    assert(runManaged(base, 39) == 42, "managed interface dispatch");
+    assert(advanced.twice(18) == 42, "managed child interface dispatch");
+    assert(named.id() == 42 && scored.id() == 42,
+        "one implementation may satisfy multiple interface slots");
+    delete owner;
+    assert(!advanced && !base && !named && !scored,
+        "interface subscribers expire with the managed owner");
+    assert(managedInterfaceScope() == 42,
+        "managed interface owner cleans up at scope exit");
+
+    ContractSpace.Value* namespacedOwner = new ContractSpace.Value();
+    ContractSpace.IValue* namespacedContract = namespacedOwner;
+    assert(namespacedContract.value() == 42, "namespaced interface dispatch");
+
+    println("interfaces=ok");
+    return 0;
+}

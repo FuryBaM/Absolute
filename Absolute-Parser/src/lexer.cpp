@@ -1,53 +1,54 @@
 #include "parser_pch.h"
 #include "lexer.h"
+#include "syntax_plugins.h"
 
 #include <regex>
+#include <cctype>
+#include <stdexcept>
 
 namespace Absolute {
     std::unordered_map<TokenType, std::string> token_spec = {
         {TokenType::NUMBER, R"(\d+(\.\d+)?)"},
-        {TokenType::KEYWORD, R"(\b(int8|int16|int32|int64|uint8|uint16|uint32|uint64|float|double|char|bool|string|void|dynamic|auto|if|else|switch|case|default|for|while|foreach|in|do|break|continue|new|delete|using|namespace|return|keep|true|false|null|class|struct|enum|group|this|public|private|protected|sealed|internal|virtual|override|const|static|async|await|catch|finally|try|throw|yield|get|set|operator|as)\b)"},
+        {TokenType::KEYWORD, R"(\b(int8|int16|int32|int64|uint8|uint16|uint32|uint64|float|double|char|bool|string|void|dynamic|auto|if|else|switch|match|case|default|for|while|foreach|in|do|break|continue|new|delete|raw|using|import|namespace|extern|return|true|false|null|class|struct|interface|enum|group|this|public|private|protected|sealed|internal|virtual|override|const|static|extension|async|await|spawn|catch|finally|try|throw|defer|yield|get|set|operator|as)\b)"},
         {TokenType::IDENTIFIER, R"([_a-zA-Z][_a-zA-Z0-9]*)"},
         {TokenType::COMMENT, R"(\/\*[\s\S]*?\*\/|\/\/.*)"},
-        {TokenType::OPERATOR, R"(==|!=|<=|>=|&&|\|\||!|~|<<|>>|\+=|-=|\*=|/=|%=|&=|\|=|\^=|\+\+|--|\?|[+\-*/=<>&%|^:])"},
+        {TokenType::OPERATOR, R"(==|!=|<=|>=|&&|\|\||!|~|<<|>>|\+=|-=|\*=|/=|%=|&=|\|=|\^=|\+\+|--|\?|[+\-*/=<>&%|^:@])"},
         {TokenType::DELIMITER, R"([;,.])"},
         {TokenType::STRING, R"("(\\.|[^"\\])*")"},
         {TokenType::CHAR, R"('((\\.)|[^'\\])')"},
         {TokenType::BRACKET, R"([\{\}\[\]\(\)])"},
-        {TokenType::DOLLAR, R"(\$)"},
         {TokenType::WHITESPACE, R"(\s+)"},
     };
 
     std::unordered_set<std::string> modifiers = {
         "public", "private", "protected", "sealed", "internal",
-        "virtual", "override", "const", "static",
-        "async", "await",
-        "keep"
+        "virtual", "override", "const", "static", "extension",
+        "async"
     };
 
     std::unordered_map<std::string, int> precedence = {
-        {"=", 1}, {"+=", 1}, {"-=", 1}, {"*=", 1}, {"/=", 1}, {"%=", 1}, {"&=", 1}, {"|=", 1}, {"^=", 1}, // Присваивание
-        {"?", 2}, // Тернарный оператор (между `||` и `=`)
-        {"||", 3}, // Логическое ИЛИ
-        {"&&", 4}, // Логическое И
-        {"|", 5},  // Побитовое ИЛИ
-        {"^", 6},  // Побитовое исключающее ИЛИ
-        {"&", 7},  // Побитовое И
-        {"==", 8}, {"!=", 8}, // Равенство
-        {"<", 9}, {"<=", 9}, {">", 9}, {">=", 9}, // Сравнение
-        {"<<", 10}, {">>", 10}, // Сдвиги
-        {"+", 11}, {"-", 11},  // Сложение, вычитание
-        {"*", 12}, {"/", 12}, {"%", 12},  // Умножение, деление, остаток
-        {"!", 13}, {"~", 13}, // Логическое НЕ, побитовое НЕ (унарные)
-        {"++", 14}, {"--", 14}  // Инкремент и декремент (постфикс)
+        {"=", 1}, {"+=", 1}, {"-=", 1}, {"*=", 1}, {"/=", 1}, {"%=", 1}, {"&=", 1}, {"|=", 1}, {"^=", 1}, // РџСЂРёСЃРІР°РёРІР°РЅРёРµ
+        {"?", 2}, // РўРµСЂРЅР°СЂРЅС‹Р№ РѕРїРµСЂР°С‚РѕСЂ (РјРµР¶РґСѓ `||` Рё `=`)
+        {"||", 3}, // Р›РѕРіРёС‡РµСЃРєРѕРµ РР›Р
+        {"&&", 4}, // Р›РѕРіРёС‡РµСЃРєРѕРµ Р
+        {"|", 5},  // РџРѕР±РёС‚РѕРІРѕРµ РР›Р
+        {"^", 6},  // РџРѕР±РёС‚РѕРІРѕРµ РёСЃРєР»СЋС‡Р°СЋС‰РµРµ РР›Р
+        {"&", 7},  // РџРѕР±РёС‚РѕРІРѕРµ Р
+        {"==", 8}, {"!=", 8}, // Р Р°РІРµРЅСЃС‚РІРѕ
+        {"<", 9}, {"<=", 9}, {">", 9}, {">=", 9}, // РЎСЂР°РІРЅРµРЅРёРµ
+        {"<<", 10}, {">>", 10}, // РЎРґРІРёРіРё
+        {"+", 11}, {"-", 11},  // РЎР»РѕР¶РµРЅРёРµ, РІС‹С‡РёС‚Р°РЅРёРµ
+        {"*", 12}, {"/", 12}, {"%", 12},  // РЈРјРЅРѕР¶РµРЅРёРµ, РґРµР»РµРЅРёРµ, РѕСЃС‚Р°С‚РѕРє
+        {"!", 13}, {"~", 13}, // Р›РѕРіРёС‡РµСЃРєРѕРµ РќР•, РїРѕР±РёС‚РѕРІРѕРµ РќР• (СѓРЅР°СЂРЅС‹Рµ)
+        {"++", 14}, {"--", 14}  // РРЅРєСЂРµРјРµРЅС‚ Рё РґРµРєСЂРµРјРµРЅС‚ (РїРѕСЃС‚С„РёРєСЃ)
     };
 
     std::unordered_set<std::string> prefixUnaryOps = {
-            "*", "&", "++", "--", "!", "~"
+            "*", "&", "+", "-", "++", "--", "!", "~"
     };
 
     std::unordered_set<std::string> postfixUnaryOps = {
-            "++", "--", "*", "&"
+            "++", "--"
     };
 
     std::unordered_set<std::string> primitiveTypes = {
@@ -96,7 +97,7 @@ namespace Absolute {
 
     int GetOperatorPrecedence(const std::string& op) {
         auto it = Absolute::precedence.find(op);
-        return (it != Absolute::precedence.end()) ? it->second : -1; // -1 если оператор не найден
+        return (it != Absolute::precedence.end()) ? it->second : -1; // -1 РµСЃР»Рё РѕРїРµСЂР°С‚РѕСЂ РЅРµ РЅР°Р№РґРµРЅ
     }
 
     bool IsModifier(const std::string& value) {
@@ -108,14 +109,16 @@ namespace Absolute {
     }
 
     bool IsPrefixUnary(const Token& token) {
-        return token.type == TokenType::OPERATOR && prefixUnaryOps.count(token.value) > 0;
+        return (token.type == TokenType::OPERATOR && prefixUnaryOps.count(token.value) > 0) ||
+            (token.type == TokenType::KEYWORD &&
+                (token.value == "await" || token.value == "spawn"));
     }
 
     bool IsPostfixUnary(const Token& token) {
         return token.type == TokenType::OPERATOR && postfixUnaryOps.count(token.value) > 0;
     }
 
-    // Проверка, входит ли значение в допустимые токены по token_spec
+    // РџСЂРѕРІРµСЂРєР°, РІС…РѕРґРёС‚ Р»Рё Р·РЅР°С‡РµРЅРёРµ РІ РґРѕРїСѓСЃС‚РёРјС‹Рµ С‚РѕРєРµРЅС‹ РїРѕ token_spec
     bool IsValidTokenValue(TokenType tokenType, const std::string& value) {
         auto it = Absolute::token_spec.find(tokenType);
         if (it != Absolute::token_spec.end()) {
@@ -144,10 +147,26 @@ namespace Absolute {
     {
         std::vector<Token> tokens;
 
+        // Some token patterns overlap (for example, every keyword also matches
+        // IDENTIFIER). Keep matching deterministic instead of depending on the
+        // iteration order of unordered_map.
+        static const std::vector<TokenType> tokenOrder = {
+            TokenType::COMMENT,
+            TokenType::STRING,
+            TokenType::CHAR,
+            TokenType::NUMBER,
+            TokenType::KEYWORD,
+            TokenType::OPERATOR,
+            TokenType::DELIMITER,
+            TokenType::BRACKET,
+            TokenType::IDENTIFIER,
+            TokenType::WHITESPACE,
+        };
+
         std::string token_regex;
-        for (const auto& [_, pattern] : Absolute::token_spec) {
+        for (TokenType type : tokenOrder) {
             if (!token_regex.empty()) token_regex += "|";
-            token_regex += "(" + pattern + ")";
+            token_regex += "(" + Absolute::token_spec.at(type) + ")";
         }
 
         std::regex re(token_regex);
@@ -156,15 +175,22 @@ namespace Absolute {
 
         int line = 1;
         int column = 1;
-        size_t lastPos = 0; // Отслеживаем текущую позицию
+        size_t lastPos = 0; // РћС‚СЃР»РµР¶РёРІР°РµРј С‚РµРєСѓС‰СѓСЋ РїРѕР·РёС†РёСЋ
 
         for (std::sregex_iterator i = begin; i != end; ++i) {
             std::smatch match = *i;
             std::string value = match.str();
             size_t matchPos = match.position();
 
-            // Обновляем `line` и `column`, учитывая пропущенные символы
+            // Any gap means that the lexer could not recognize source text.
+            // Previously such characters were silently discarded.
             for (size_t j = lastPos; j < matchPos; j++) {
+                if (!std::isspace(static_cast<unsigned char>(code[j]))) {
+                    throw std::runtime_error(
+                        "Lexical error at line " + std::to_string(line) +
+                        ", column " + std::to_string(column) +
+                        ": unexpected character '" + std::string(1, code[j]) + "'");
+                }
                 if (code[j] == '\n') {
                     line++;
                     column = 1;
@@ -174,18 +200,17 @@ namespace Absolute {
                 }
             }
 
-            for (const auto& [name, pattern] : Absolute::token_spec) {
-                std::regex regex_pattern(pattern);
+            for (TokenType name : tokenOrder) {
+                std::regex regex_pattern(Absolute::token_spec.at(name));
                 if (std::regex_match(value, regex_pattern)) {
-                    if (name == TokenType::COMMENT) {
-                        break; // Пропускаем комментарии
+                    if (name != TokenType::COMMENT && name != TokenType::WHITESPACE) {
+                        const TokenType actualType = name == TokenType::IDENTIFIER && IsSyntaxPluginKeyword(value)
+                            ? TokenType::KEYWORD
+                            : name;
+                        tokens.emplace_back(actualType, value, line, column);
                     }
 
-                    if (name != TokenType::WHITESPACE) {
-                        tokens.emplace_back(name, value, line, column);
-                    }
-
-                    // Обновляем `line` и `column` после обработки токена
+                    // РћР±РЅРѕРІР»СЏРµРј `line` Рё `column` РїРѕСЃР»Рµ РѕР±СЂР°Р±РѕС‚РєРё С‚РѕРєРµРЅР°
                     for (char c : value) {
                         if (c == '\n') {
                             line++;
@@ -199,6 +224,22 @@ namespace Absolute {
                     lastPos = matchPos + value.length();
                     break;
                 }
+            }
+        }
+
+        for (size_t j = lastPos; j < code.size(); ++j) {
+            if (!std::isspace(static_cast<unsigned char>(code[j]))) {
+                throw std::runtime_error(
+                    "Lexical error at line " + std::to_string(line) +
+                    ", column " + std::to_string(column) +
+                    ": unexpected character '" + std::string(1, code[j]) + "'");
+            }
+            if (code[j] == '\n') {
+                ++line;
+                column = 1;
+            }
+            else {
+                ++column;
             }
         }
 

@@ -1,0 +1,29 @@
+int32 main() {
+    auto window = new Desktop.Window("Absolute Desktop", 800, 450, true);
+    if (!window.isOpen()) {
+        println("Could not create desktop window");
+        return 1;
+    }
+
+    int32 position = 0;
+    int32 direction = 1;
+    while (window.poll()) {
+        if (window.keyDown(27)) {
+            window.close();
+        }
+        else {
+            window.clear(Desktop.rgb(18, 22, 32));
+            window.fillRect(position, 170, 120, 90, Desktop.rgb(70, 150, 255));
+            window.fillRect(window.mouseX() - 5, window.mouseY() - 5, 10, 10,
+                Desktop.rgb(255, 190, 60));
+            window.present();
+
+            position += direction * 4;
+            if (position >= window.width() - 120) { direction = -1; }
+            if (position <= 0) { direction = 1; }
+            Desktop.sleep(16);
+        }
+    }
+    window.close();
+    return 0;
+}

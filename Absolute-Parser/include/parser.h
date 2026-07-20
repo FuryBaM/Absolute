@@ -11,6 +11,7 @@ namespace Absolute {
     public:
         std::vector<Token> tokens;
         std::vector<Token> modifiers;
+        std::vector<Attribute> attributes;
         size_t pos = 0;
 
         Parser(std::vector<Token> tokens) : tokens(std::move(tokens)) {}
@@ -45,12 +46,17 @@ namespace Absolute {
         }
 
         void ReportSyntaxError(const Token* token, const std::string& message);
+        Token* RequireCurrent(const std::string& expectation);
 
         Token* Consume(TokenType tokenType);
         Token* Consume(TokenType tokenType, const std::string& expectedValue);
 
         void ParseModifiers();
+        void ParseAttributes();
+        std::vector<Token> ParseTemplateParameters();
+        bool LooksLikeFunctionDeclaration() const;
         void ConsumeTemplateClose();
+        bool IsTemplateArgumentList(size_t start, size_t* close = nullptr) const;
 
         std::unique_ptr<Expression> ParseExpression();
         std::vector<std::unique_ptr<VarDeclExpr>> ParseParameters();
@@ -59,7 +65,7 @@ namespace Absolute {
         std::unique_ptr<TypeExpr> ParseType();
         std::unique_ptr<PrimitiveTypeExpr> ParsePrimitiveType();
         std::unique_ptr<CastExpr> ParseCastExpr(std::unique_ptr<Expression> base);
-        std::unique_ptr<Expression> ParseIdentifierExpr();
+        std::unique_ptr<Expression> ParseIdentifierExpr(bool allowTemplate = false);
         std::unique_ptr<Expression> ParseTemplateExpr(std::unique_ptr<Expression> base);
         std::unique_ptr<Expression> ParseLiteralExpr();
         std::unique_ptr<BooleanLiteralExpr> ParseBooleanLiteralExpr();
@@ -88,17 +94,27 @@ namespace Absolute {
         std::unique_ptr<CompoundStmt> ParseCompoundStatement();
         std::unique_ptr<VarDeclStmt> ParseVarDeclaration();
         std::unique_ptr<FunctionDeclStmt> ParseFunctionDeclaration();
+        std::unique_ptr<FunctionDeclStmt> ParseExternalFunctionDeclaration();
         std::unique_ptr<ReturnStmt> ParseReturnStmt();
         std::unique_ptr<IfStmt> ParseIfStmt();
+        std::unique_ptr<SwitchStmt> ParseSwitchStmt(bool exhaustive);
+        std::unique_ptr<ThrowStmt> ParseThrowStmt();
+        std::unique_ptr<TryStmt> ParseTryStmt();
+        std::unique_ptr<DeferStmt> ParseDeferStmt();
         std::unique_ptr<ForStmt> ParseForStmt();
         std::unique_ptr<WhileStmt> ParseWhileStmt();
         std::unique_ptr<DoWhileStmt> ParseDoWhileStmt();
         std::unique_ptr<ForEachStmt> ParseForEachStmt();
         std::unique_ptr<ClassDeclStmt> ParseClassDecl();
+        std::unique_ptr<InterfaceDeclStmt> ParseInterfaceDecl();
         std::unique_ptr<ConstructorDeclStmt> ParseConstructor();
         std::unique_ptr<SingleStatement> ParseInstanceDeclStmt();
         std::unique_ptr<StructDeclStmt> ParseStructDecl();
         std::unique_ptr<EnumDeclStmt> ParseEnumDecl();
         std::unique_ptr<GroupDeclStmt> ParseGroupDecl();
+        std::unique_ptr<ImportStmt> ParseImport();
+        std::unique_ptr<NamespaceDeclStmt> ParseNamespace();
+        std::string ParseQualifiedName();
+        std::unique_ptr<TypeExpr> ParsePointerSuffix(std::unique_ptr<TypeExpr> base, bool raw);
     };
 }

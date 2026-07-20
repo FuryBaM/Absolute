@@ -1,0 +1,17 @@
+int32 doubleDelete() {
+    raw int32* value = new raw int32(1);
+    delete value;
+    delete value;
+    return 0;
+}
+
+int32 overwriteBeforeDelete() {
+    raw int32* value = new raw int32(1);
+    value = new raw int32(2);
+    delete value;
+    return 0;
+}
+
+int32 main() {
+    return doubleDelete() + overwriteBeforeDelete();
+}

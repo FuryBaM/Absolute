@@ -4,7 +4,7 @@
 namespace Absolute {
     std::unique_ptr<InstanceDeclExpr> Parser::ParseInstanceDeclExpr()
     {
-        std::unique_ptr<UserTypeExpr> constructType = std::make_unique<UserTypeExpr>(ParseIdentifierExpr());
+        std::unique_ptr<UserTypeExpr> constructType = std::make_unique<UserTypeExpr>(ParseIdentifierExpr(true));
         std::unique_ptr<Expression> identifierName = ParsePrimaryExpr();
         std::unique_ptr<Expression> initializer = nullptr;
         if (CurrentToken()->value == "=") {
@@ -17,9 +17,11 @@ namespace Absolute {
     std::unique_ptr<SingleStatement> Parser::ParseInstanceDeclStmt()
     {
         std::vector<Token> modifiers = this->modifiers;
+        std::vector<Attribute> attributes = this->attributes;
         std::unique_ptr<InstanceDeclExpr> instanceDecl = ParseInstanceDeclExpr();
         auto stmt = std::make_unique<SingleStatement>(std::move(instanceDecl));
         stmt->modifiers = modifiers;
+        stmt->attributes = std::move(attributes);
         return stmt;
     }
 }

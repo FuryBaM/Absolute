@@ -4,19 +4,20 @@
 namespace Absolute{
     std::vector<std::unique_ptr<VarDeclExpr>> Parser::ParseParameters()
     {
-        if (CurrentToken()->value != "(") {
+        if (!CurrentToken() || CurrentToken()->value != "(") {
             ReportSyntaxError(CurrentToken(), "Expected '(' in parameters");
             std::exit(EXIT_FAILURE);
         }
         Consume(TokenType::BRACKET, "("); // "("
 
         std::vector<std::unique_ptr<VarDeclExpr>> parameters;
-        while (CurrentToken()->type != TokenType::BRACKET && CurrentToken()->value != ")")
+        while (!(RequireCurrent("a parameter or ')'")->type == TokenType::BRACKET && CurrentToken()->value == ")"))
         {
-            std::unique_ptr<PrimitiveTypeExpr> type = ParsePrimitiveType();
+            std::unique_ptr<TypeExpr> type = ParseType();
             std::unique_ptr<Expression> nameExpr = ParsePrimaryExpr();
 
-            if (CurrentToken()->type == TokenType::OPERATOR && CurrentToken()->value == "=") {
+            Token* current = RequireCurrent("'=', ',' or ')'");
+            if (current->type == TokenType::OPERATOR && current->value == "=") {
                 Consume(TokenType::OPERATOR, "=");
                 std::unique_ptr<Expression> value = ParseExpression();
                 parameters.push_back(std::make_unique<VarDeclExpr>(std::move(type), std::move(nameExpr), std::move(value)));
@@ -25,11 +26,16 @@ namespace Absolute{
                 parameters.push_back(std::make_unique<VarDeclExpr>(std::move(type), std::move(nameExpr), nullptr));
             }
 
-            if (CurrentToken()->type == TokenType::DELIMITER && CurrentToken()->value == ",") {
+            current = RequireCurrent("',' or ')'");
+            if (current->type == TokenType::DELIMITER && current->value == ",") {
                 Consume(TokenType::DELIMITER, ",");
             }
             else if (CurrentToken()->type == TokenType::BRACKET && CurrentToken()->value == ")") {
                 break;
+            }
+            else {
+                ReportSyntaxError(CurrentToken(), "Expected ',' or ')' after parameter");
+                throw std::runtime_error("Invalid parameter list");
             }
         }
         Consume(TokenType::BRACKET, ")"); // ")"

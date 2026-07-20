@@ -1,0 +1,38 @@
+@inline
+@noinline
+int32 conflicting() {
+    return 1;
+}
+
+@inline(reason = "invalid")
+int32 inlineArguments() {
+    return 2;
+}
+
+@inline
+int32 invalidTarget = 3;
+
+@unknown
+int32 unknownCompilerAttribute() {
+    return 4;
+}
+
+@deprecated(message = "named is not supported")
+int32 invalidDeprecated() {
+    return 5;
+}
+
+@demo.options(first = 1, first = 2)
+int32 duplicateNamedArgument() {
+    return 6;
+}
+
+int32 invalidStatementTarget() {
+    @demo.trace
+    println("not a declaration");
+    return 7;
+}
+
+int32 main() {
+    return 0;
+}

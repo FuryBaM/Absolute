@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        configuration: [Debug, Release]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-dev
+
+      - name: Configure with LLVM
+        if: runner.os == 'Linux'
+        shell: bash
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.configuration }}
+          -DBUILD_TESTING=ON
+          -DLLVM_DIR="$(llvm-config --cmakedir)"
+
+      - name: Configure frontend (Windows)
+        if: runner.os == 'Windows'
+        run: >-
+          cmake -S . -B build
+          -DBUILD_TESTING=ON
+          -DABSOLUTE_ENABLE_LLVM=OFF
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.configuration }} --parallel 2
+
+      - name: Test
+        run: ctest --test-dir build -C ${{ matrix.configuration }} --output-on-failure
+
+  windows-llvm-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache portable LLVM SDK
+        uses: actions/cache@v4
+        with:
+          path: .absolute/toolchains/llvm-18.1.8
+          key: windows-llvm-18.1.8-sdk-v1
+
+      - name: Bootstrap LLVM, build, and test natively
+        shell: cmd
+        run: build-windows.bat --bootstrap

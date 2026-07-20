@@ -1,0 +1,19 @@
+int64 managedDeref() {
+    int64* value = new int64(1);
+    int64 checksum = 0;
+    int32 iteration = 0;
+
+    while (iteration < 50000000) {
+        int64 next = ((*value * 1664525) + 1013904223 + iteration) & 2147483647;
+        *value = next;
+        checksum = (checksum + next) & 2147483647;
+        iteration += 1;
+    }
+
+    return checksum;
+}
+
+int32 main() {
+    println(managedDeref());
+    return 0;
+}

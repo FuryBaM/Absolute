@@ -1,0 +1,16 @@
+int64 managedFastPath() {
+    int64* value = new int64(1);
+    int32 iteration = 0;
+    while (iteration < 1000) {
+        *value = (*value * 3 + iteration) & 2147483647;
+        iteration += 1;
+    }
+    int64 result = *value;
+    delete value;
+    return result;
+}
+
+int32 main() {
+    println(format("managed-fast-path={}", managedFastPath()));
+    return 0;
+}

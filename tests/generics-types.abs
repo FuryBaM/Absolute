@@ -1,0 +1,50 @@
+struct Pair<T> {
+    public T first;
+    public T second;
+
+    public Pair(T left, T right) {
+        first = left;
+        second = right;
+    }
+
+    public T left() {
+        return first;
+    }
+
+    public T right() {
+        return second;
+    }
+}
+
+class Box<T> {
+    public T value;
+
+    public Box(T initialValue) {
+        value = initialValue;
+    }
+
+    public T read() {
+        return value;
+    }
+
+    public void assign(T next) {
+        value = next;
+    }
+}
+
+int32 main() {
+    raw Pair<int32>* pair = new raw Pair<int32>(20, 22);
+    assert(pair.left() + pair.right() == 42, "generic struct specialization");
+    delete pair;
+
+    Box<int32>* integers = new Box<int32>(40);
+    integers.assign(42);
+    assert(integers.read() == 42, "generic class int specialization");
+
+    Box<double>* doubles = new Box<double>(20.5);
+    doubles.assign(21.0);
+    assert(doubles.read() * 2.0 == 42.0, "generic class double specialization");
+
+    println("generic-types=ok");
+    return 0;
+}

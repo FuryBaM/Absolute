@@ -1,0 +1,39 @@
+@inline
+int32 addOne(int32 value) {
+    return value + 1;
+}
+
+@noinline
+@demo.profile(category = "cold", samples = 4, enabled = true)
+int32 multiplyTwo(int32 value) {
+    return value * 2;
+}
+
+@deprecated("Use addOne instead")
+int32 legacyIncrement(int32 value) {
+    return value + 1;
+}
+
+@demo.layout(kind = packed)
+class Box {
+    public int32 value;
+
+    @inline
+    public Box(int32 initialValue) {
+        value = initialValue;
+    }
+
+    @noinline
+    public int32 read() {
+        return value;
+    }
+}
+
+int32 main() {
+    Box* box = new Box(20);
+    int32 result = multiplyTwo(addOne(box.read()));
+    assert(result == 42, "attribute callables");
+    assert(legacyIncrement(41) == 42, "deprecated metadata does not change behavior");
+    println("attributes=ok");
+    return 0;
+}

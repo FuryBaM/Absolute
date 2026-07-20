@@ -5,7 +5,7 @@
 #include "scope.h"
 
 namespace Absolute {
-    // Модификаторы доступа
+    // РњРѕРґРёС„РёРєР°С‚РѕСЂС‹ РґРѕСЃС‚СѓРїР°
     enum class AccessModifier {
         PUBLIC,
         PRIVATE,
@@ -13,11 +13,11 @@ namespace Absolute {
         INTERNAL
     };
 
-    // Перечисление примитивных типов
+    // РџРµСЂРµС‡РёСЃР»РµРЅРёРµ РїСЂРёРјРёС‚РёРІРЅС‹С… С‚РёРїРѕРІ
     enum class PrimitiveTypeEnum {
         INT8, INT16, INT32, INT64,
         UINT8, UINT16, UINT32, UINT64,
-        FLOAT, DOUBLE, STRING, CHAR, VOID, DYNAMIC, AUTO
+        FLOAT, DOUBLE, BOOL, STRING, CHAR, VOID, DYNAMIC, AUTO
     };
 
 
@@ -32,6 +32,7 @@ namespace Absolute {
         {"uint64", PrimitiveTypeEnum::UINT64},
         {"float", PrimitiveTypeEnum::FLOAT},
         {"double", PrimitiveTypeEnum::DOUBLE},
+        {"bool", PrimitiveTypeEnum::BOOL},
         {"string", PrimitiveTypeEnum::STRING},
         {"char", PrimitiveTypeEnum::CHAR},
         {"void", PrimitiveTypeEnum::VOID},
@@ -50,6 +51,7 @@ namespace Absolute {
         {PrimitiveTypeEnum::UINT64, "uint64"},
         {PrimitiveTypeEnum::FLOAT, "float"},
         {PrimitiveTypeEnum::DOUBLE, "double"},
+        {PrimitiveTypeEnum::BOOL, "bool"},
         {PrimitiveTypeEnum::STRING, "string"},
         {PrimitiveTypeEnum::CHAR, "char"},
         {PrimitiveTypeEnum::VOID, "void"},
@@ -57,35 +59,41 @@ namespace Absolute {
         {PrimitiveTypeEnum::AUTO, "auto"}
     };
 
-    // Функция для получения Enum из строки
+    // Р¤СѓРЅРєС†РёСЏ РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ Enum РёР· СЃС‚СЂРѕРєРё
     inline std::optional<PrimitiveTypeEnum> PrimitiveStringToEnum(const std::string& str) {
         auto it = StringToPrimitiveType.find(str);
         if (it != StringToPrimitiveType.end()) {
             return it->second;
         }
-        return std::nullopt; // Если строка не найдена, вернём пустой результат
+        return std::nullopt; // Р•СЃР»Рё СЃС‚СЂРѕРєР° РЅРµ РЅР°Р№РґРµРЅР°, РІРµСЂРЅС‘Рј РїСѓСЃС‚РѕР№ СЂРµР·СѓР»СЊС‚Р°С‚
     }
 
-    // Функция для получения строки
+    // Р¤СѓРЅРєС†РёСЏ РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ СЃС‚СЂРѕРєРё
     inline std::string PrimitiveEnumToString(PrimitiveTypeEnum type) {
         return PrimitiveTypeToString.at(type);
     }
 
-    // Абстрактный базовый класс для типов
+    // РђР±СЃС‚СЂР°РєС‚РЅС‹Р№ Р±Р°Р·РѕРІС‹Р№ РєР»Р°СЃСЃ РґР»СЏ С‚РёРїРѕРІ
     struct Type {
         virtual ~Type() = default;
+
+        virtual std::string GetName() const = 0;
     };
 
-    // Примитивный тип (int, float и т. д.)
+    // РџСЂРёРјРёС‚РёРІРЅС‹Р№ С‚РёРї (int, float Рё С‚. Рґ.)
     struct PrimitiveType : Type {
     public:
         PrimitiveTypeEnum type;
 
         PrimitiveType(PrimitiveTypeEnum type) : type(type) {}
 		PrimitiveType(const PrimitiveType& other) : type(other.type) {}
+
+        std::string GetName() const override {
+            return PrimitiveEnumToString(type);
+        }
     };
 
-    // Поля класса
+    // РџРѕР»СЏ РєР»Р°СЃСЃР°
     struct ClassField {
         AccessModifier access;
         Type* type;
@@ -95,7 +103,7 @@ namespace Absolute {
         }
     };
 
-    // Методы класса
+    // РњРµС‚РѕРґС‹ РєР»Р°СЃСЃР°
     struct ClassMethod {
         AccessModifier access;
         std::string name;
@@ -107,19 +115,21 @@ namespace Absolute {
         }
     };
 
-    // Пользовательский тип (класс, структура)
+    // РџРѕР»СЊР·РѕРІР°С‚РµР»СЊСЃРєРёР№ С‚РёРї (РєР»Р°СЃСЃ, СЃС‚СЂСѓРєС‚СѓСЂР°)
     struct UserType : Type {
     public:
         std::string name;
-        AccessModifier access;  // Уровень доступа (private, public и т.д.)
-        Scope scope;            // Область, в которой объявлен
+        AccessModifier access;  // РЈСЂРѕРІРµРЅСЊ РґРѕСЃС‚СѓРїР° (private, public Рё С‚.Рґ.)
+        Scope scope;            // РћР±Р»Р°СЃС‚СЊ, РІ РєРѕС‚РѕСЂРѕР№ РѕР±СЉСЏРІР»РµРЅ
 
         std::unordered_map<std::string, ClassField> fields;
         std::unordered_map<std::string, ClassMethod> methods;
 
         UserType(AccessModifier access, Scope scope, std::string name)
-            : access(access), scope(scope) {
-            name = std::move(name);
+            : name(std::move(name)), access(access), scope(std::move(scope)) {}
+
+        std::string GetName() const override {
+            return name;
         }
     };
 }

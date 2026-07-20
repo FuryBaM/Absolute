@@ -1,0 +1,5 @@
+{
+  "name": "AbsoluteChess",
+  "entry": "src/main.abs",
+  "sources": ["src"]
+}

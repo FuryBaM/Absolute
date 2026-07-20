@@ -1,0 +1,41 @@
+int32 releaseOnReturn(bool early) {
+    raw int32* value = new raw int32(42);
+    if (early) {
+        delete value;
+        return 1;
+    }
+    delete value;
+    return 0;
+}
+
+int32 releaseInBranches(bool first) {
+    raw int32* value = new raw int32(7);
+    if (first) {
+        delete value;
+    }
+    else {
+        delete value;
+    }
+    return 0;
+}
+
+int32 releaseBeforeBreak(bool stop) {
+    int32 iteration = 0;
+    while (iteration < 2) {
+        raw int32* value = new raw int32(iteration);
+        delete value;
+        if (stop) {
+            break;
+        }
+        iteration = iteration + 1;
+    }
+    return iteration;
+}
+
+int32 main() {
+    assert(releaseOnReturn(false) == 0, "raw return cleanup");
+    assert(releaseInBranches(true) == 0, "raw branch cleanup");
+    assert(releaseBeforeBreak(true) == 0, "raw break cleanup");
+    println("raw-lifetime=ok");
+    return 0;
+}

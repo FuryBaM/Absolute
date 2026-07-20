@@ -1,0 +1,24 @@
+int32 main() {
+    int32* owner = new int32(42);
+    int32* subscriber = owner;
+    int32* subscriber2 = subscriber;
+
+    assert(*owner == 42, "owner value mismatch");
+    assert(*subscriber == 42, "subscriber value mismatch");
+
+    delete owner;
+    assert(!subscriber, "subscriber must be invalid after delete");
+    assert(!subscriber2, "copied subscriber must be invalid after delete");
+
+    int32 local = 5;
+    raw int32* address = &local;
+    *address = 9;
+    assert(local == 9, "raw address write failed");
+
+    raw int32* rawHeap = new int32(11);
+    assert(*rawHeap == 11, "raw allocation mismatch");
+    delete rawHeap;
+
+    println("pointers=ok");
+    return 0;
+}

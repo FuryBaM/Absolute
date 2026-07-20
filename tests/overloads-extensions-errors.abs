@@ -1,0 +1,31 @@
+int32 duplicate(int32 value) {
+    return value;
+}
+
+double duplicate(int32 value) {
+    return value;
+}
+
+extension int32 missingReceiver() {
+    return 0;
+}
+
+extern "C" int32 nativeOverload(int32 value);
+extern "C" double nativeOverload(double value);
+
+int32 main(double value) {
+    return 0;
+}
+
+int32 ambiguous(int64 value) {
+    return 1;
+}
+
+int32 ambiguous(uint64 value) {
+    return 2;
+}
+
+int32 main() {
+    int32 value = 1;
+    return ambiguous(value);
+}

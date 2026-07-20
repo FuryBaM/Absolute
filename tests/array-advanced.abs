@@ -1,0 +1,70 @@
+int32 globalValues[5] = {2, 4, 6, 8, 10};
+int32[] inferredGlobal = {3, 7};
+
+int32 sum(int32[] values) {
+    int32 total = 0;
+    foreach (int32 value in values) {
+        total += value;
+    }
+    return total;
+}
+
+int32 firstLegacy(int32 values[]) {
+    return values[0];
+}
+
+int32[] copyTail(int32[] values) {
+    int32[] tail = values[1:4];
+    return tail;
+}
+
+int32[] makeSquares() {
+    int32 values[4] = {1, 4, 9, 16};
+    return values[];
+}
+
+int32[] makeLiteral() {
+    return {8, 13, 21};
+}
+
+int32 main() {
+    assert(sum(globalValues[]) == 30, "global array parameter");
+    assert(sum(inferredGlobal[]) == 10, "inferred global array");
+    assert(firstLegacy(globalValues[]) == 2, "legacy array parameter");
+
+    int32 local[6] = {1, 2, 3, 4, 5, 6};
+    int32[] middle = local[1:5];
+    middle[0] = 20;
+    assert(local[1] == 20, "slice must reference the source array");
+    assert(sum(middle) == 32, "half-open slice bounds");
+
+    int32 filtered = 0;
+    foreach (int32 value in local[]) {
+        if (value == 20) {
+            continue;
+        }
+        if (value == 6) {
+            break;
+        }
+        filtered += value;
+    }
+    assert(filtered == 13, "foreach break and continue");
+
+    int32[] returned = copyTail(globalValues[]);
+    globalValues[2] = 100;
+    assert(sum(returned) == 18, "returned array must own its copy");
+
+    int32[] squares = makeSquares();
+    assert(sum(squares) == 30, "returned local array lifetime");
+
+    int32[] literalLocal = {3, 1, 4};
+    assert(sum(literalLocal) == 8, "array literal as an unsized initializer");
+    assert(sum({2, 3, 5}) == 10, "array literal as a function argument");
+    int32[] literalReturn = makeLiteral();
+    assert(sum(literalReturn) == 42, "array literal as a return expression");
+
+    int32 checksum = sum(globalValues[]) + sum(inferredGlobal[]) +
+        sum(middle) + filtered + sum(returned) + sum(squares);
+    println(format("advanced-arrays={}", checksum));
+    return 0;
+}

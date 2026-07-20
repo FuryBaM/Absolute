@@ -1,0 +1,35 @@
+int32 main() {
+    int32 values[5] = {1, 2, 3, 4, 5};
+    values[2] += 10;
+
+    int32 matrix[2][3] = {{1, 2, 3}, {4, 5, 6}};
+    matrix[1][0] = 40;
+
+    int32 inferred[] = {7, 8, 9};
+
+    int32 size = 4;
+    int32 buffer[size];
+    int32 index = 0;
+    while (index < size) {
+        buffer[index] = index * index;
+        index += 1;
+    }
+
+    int32 checksum = 0;
+    index = 0;
+    while (index < 5) {
+        checksum += values[index];
+        index += 1;
+    }
+    checksum += matrix[1][0] + matrix[0][2];
+    checksum += inferred[1];
+    index = 0;
+    while (index < size) {
+        checksum += buffer[index];
+        index += 1;
+    }
+
+    println(format("arrays={}", checksum));
+    assert(checksum == 90, "array codegen failed");
+    return 0;
+}

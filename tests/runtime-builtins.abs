@@ -1,0 +1,11 @@
+int32 main() {
+    int32 value = 40;
+    print("before=", value, " ");
+
+    value += 2;
+    string snapshot = format("after={}", value);
+    println(snapshot);
+    println("string=", toString(value), " bool=", true);
+    assert(value == 42, "value mutation was lost");
+    return 0;
+}

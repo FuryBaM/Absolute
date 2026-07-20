@@ -1,0 +1,40 @@
+int32 selectValue(bool first) {
+    int32 value;
+    if (first) {
+        value = 40;
+    }
+    else {
+        value = 42;
+    }
+    return value;
+}
+
+int32 pointerBranches(bool first) {
+    raw int32* value;
+    if (first) {
+        value = new int32(20);
+    }
+    else {
+        value = new int32(22);
+    }
+    int32 result = *value;
+    delete value;
+    return result;
+}
+
+int32 optionalOwner(bool allocate) {
+    int32* value = null;
+    if (allocate) {
+        value = new int32(7);
+    }
+    delete value;
+    return 7;
+}
+
+int32 main() {
+    assert(selectValue(false) == 42, "definite assignment branch merge");
+    assert(pointerBranches(true) == 20, "pointer validity branch merge");
+    assert(optionalOwner(false) == 7, "nullable owner delete");
+    println("flow-analysis=ok");
+    return 0;
+}

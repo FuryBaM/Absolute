@@ -1,0 +1,9 @@
+{
+  "absolute.buildCommand": "\"${workspaceFolder}\\examples\\desktop\\run.bat\" -Source {input} -Output {output} -NoRun",
+  "absolute.editorMetadata": [
+    "${workspaceFolder}/plugins/unless/absolute-unless.editor.json",
+    "${workspaceFolder}/plugins/math/absolute-math.editor.json",
+    "${workspaceFolder}/plugins/shader/absolute-shader.editor.json",
+    "${workspaceFolder}/plugins/desktop/absolute-desktop.editor.json"
+  ]
+}

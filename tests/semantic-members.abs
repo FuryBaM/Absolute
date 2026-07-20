@@ -1,0 +1,13 @@
+class Counter {
+    public int32 value;
+
+    public int32 read() {
+        return value;
+    }
+}
+
+int32 main() {
+    Counter counter;
+    counter.value = 41;
+    return counter.read();
+}
