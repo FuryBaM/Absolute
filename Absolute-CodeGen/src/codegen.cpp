@@ -9,7 +9,8 @@
 namespace Absolute {
     namespace {
         bool IsArrayBoundsFailure(const llvm::BasicBlock* block) {
-            return block && block->getName().find("array.bounds.failure") == 0;
+            return block && block->getName().find("array.bounds.failure") == 0 &&
+                llvm::isa<llvm::UnreachableInst>(block->getTerminator());
         }
 
         bool IsKnownIntegerComparison(
@@ -20,7 +21,7 @@ namespace Absolute {
             llvm::ScalarEvolution& scalarEvolution) {
             const llvm::ICmpInst::Predicate predicate = expected
                 ? comparison.getPredicate()
-                : comparison.getInversePredicate();
+                : llvm::CmpInst::getInversePredicate(comparison.getPredicate());
             llvm::Value* left = comparison.getOperand(0);
             llvm::Value* right = comparison.getOperand(1);
 
@@ -206,6 +207,14 @@ namespace Absolute {
             passBuilder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
         AddAbsoluteOptimizationPasses(optimizationPasses);
         optimizationPasses.run(generatedModule, moduleAnalyses);
+
+        std::string verifierMessage;
+        llvm::raw_string_ostream verifierStream(verifierMessage);
+        if (llvm::verifyModule(generatedModule, &verifierStream)) {
+            verifierStream.flush();
+            throw std::runtime_error(
+                "optimized module verification failed: " + verifierMessage);
+        }
 
         std::error_code error;
         llvm::raw_fd_ostream output(outputPath, error, llvm::sys::fs::OF_None);
