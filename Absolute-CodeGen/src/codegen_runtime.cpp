@@ -206,26 +206,38 @@ namespace Absolute {
             Fail("array access must provide all dimensions");
 
         llvm::Value* offset = builder.getInt64(0);
+        llvm::Value* oneDimensionalIndex = nullptr;
         for (size_t dimension = 0; dimension < expression.indexes.size(); ++dimension) {
             if (!expression.indexes[dimension]) Fail("array access requires an index");
             const bool outerAddressMode = addressMode;
             addressMode = false;
             llvm::Value* index = Evaluate(expression.indexes[dimension].get());
             addressMode = outerAddressMode;
-            index = Coerce(index, builder.getInt64Ty());
-            llvm::Value* nonNegative = builder.CreateICmpSGE(
-                index, builder.getInt64(0), "array.index.nonnegative");
-            llvm::Value* belowSize = builder.CreateICmpSLT(
-                index, view.dimensions[dimension], "array.index.below.size");
+            if (!index->getType()->isIntegerTy()) Fail("array index must be an integer");
+
+            const std::string indexTypeName = SemanticType(expression.indexes[dimension].get());
+            const bool unsignedIndex = indexTypeName.starts_with("uint") || indexTypeName == "char";
+            llvm::Value* nonNegative = unsignedIndex
+                ? builder.getTrue()
+                : builder.CreateICmpSGE(
+                    index, llvm::ConstantInt::get(index->getType(), 0), "array.index.nonnegative");
+            llvm::Value* wideIndex = index->getType()->isIntegerTy(64)
+                ? index
+                : builder.CreateIntCast(index, builder.getInt64Ty(), !unsignedIndex, "array.index.wide");
+            llvm::Value* belowSize = unsignedIndex
+                ? builder.CreateICmpULT(wideIndex, view.dimensions[dimension], "array.index.below.size")
+                : builder.CreateICmpSLT(wideIndex, view.dimensions[dimension], "array.index.below.size");
             EmitOrExit(builder.CreateAnd(nonNegative, belowSize, "array.index.valid"), "array.bounds");
-            if (dimension == 0) offset = index;
+            if (expression.indexes.size() == 1) oneDimensionalIndex = index;
+            if (dimension == 0) offset = wideIndex;
             else {
                 offset = builder.CreateMul(offset, view.dimensions[dimension], "array.row.offset");
-                offset = builder.CreateAdd(offset, index, "array.linear.offset");
+                offset = builder.CreateAdd(offset, wideIndex, "array.linear.offset");
             }
         }
         return builder.CreateInBoundsGEP(
-            view.elementType, view.address, offset, "array.element.address");
+            view.elementType, view.address,
+            oneDimensionalIndex ? oneDimensionalIndex : offset, "array.element.address");
     }
 
     llvm::AllocaInst* CodeGenerator::Impl::CreateEntryAlloca(llvm::Function& function, llvm::Type* type, const std::string& name) {

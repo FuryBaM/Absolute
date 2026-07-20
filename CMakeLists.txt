@@ -650,6 +650,24 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-array-copy-ir
         )
         add_test(
+            NAME absolute.emit-insertion-sort-optimization
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/benchmarks/array-suite/absolute/insertion-sort.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/insertion-sort-optimization.ll"
+        )
+        set_tests_properties(absolute.emit-insertion-sort-optimization PROPERTIES
+            FIXTURES_SETUP absolute-insertion-sort-optimization-ir
+        )
+        add_test(
+            NAME absolute.check-insertion-sort-optimization-ir
+            COMMAND "${CMAKE_COMMAND}"
+                -DIR_FILE=${CMAKE_BINARY_DIR}/insertion-sort-optimization.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-insertion-sort-optimization-ir.cmake"
+        )
+        set_tests_properties(absolute.check-insertion-sort-optimization-ir PROPERTIES
+            FIXTURES_REQUIRED absolute-insertion-sort-optimization-ir
+        )
+        add_test(
             NAME absolute.emit-chess-rules
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/chess-rules.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/chess-rules.ll"
