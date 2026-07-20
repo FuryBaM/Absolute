@@ -47,11 +47,31 @@ namespace Absolute {
                 Report("array resource fields require copy(...), a returned array, or a global view",
                     "E_ARRAY_FIELD_REQUIRES_OWNER", target.symbol);
         }
+        bool transfersAggregateOwner = value.isMoveResult;
+        if (const Symbol* source = table.Get(value.symbol)) {
+            transfersAggregateOwner = transfersAggregateOwner ||
+                source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;
+        }
         if (ArrayRank(target.type) == 0 && !IsPointerType(target.type) &&
-            TypeOwnsResources(target.type)) {
+            TypeOwnsResources(target.type) && !transfersAggregateOwner) {
             Report("resource-owning aggregate '" + target.type +
-                "' cannot be copied; explicit move semantics are not implemented yet",
+                "' cannot be copied; use move(...) for lvalues",
                 "E_RESOURCE_AGGREGATE_COPY", target.symbol);
+        }
+        if (IsRawPointerType(target.type) && value.type != "error" && value.type != "null") {
+            const Symbol* owner = table.Get(value.pointerOwner);
+            if (owner && owner->scopeDepth > 0) {
+                bool escapes = false;
+                if (!targetSymbol) escapes = true;
+                else if (targetSymbol->scopeDepth == 0) escapes = true;
+                else if (owningField) escapes = true;
+                else if (targetSymbol->scopeDepth < owner->scopeDepth) escapes = true;
+
+                if (escapes) {
+                    Report("cannot assign a raw pointer to a local variable to a longer-lived location",
+                           "E_RAW_ESCAPE_LOCAL", value.symbol);
+                }
+            }
         }
         if (IsManagedPointerType(target.type)) {
             if (Symbol* symbol = table.Get(target.symbol)) {
@@ -605,11 +625,16 @@ namespace Absolute {
         if (expr->value) value = Evaluate(expr->value.get());
         if (expr->value && !IsAssignable(type, value.type))
             Report("initializer of '" + name + "' has type '" + value.type + "', expected '" + type + "'");
+        bool transfersAggregateOwner = value.isMoveResult;
+        if (const Symbol* source = table.Get(value.symbol)) {
+            transfersAggregateOwner = transfersAggregateOwner ||
+                source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;
+        }
         if (expr->value && ArrayRank(type) == 0 && !IsPointerType(type) &&
-            TypeOwnsResources(type))
+            TypeOwnsResources(type) && !transfersAggregateOwner)
             Report("resource-owning aggregate '" + type +
                 "' cannot be copied into '" + name +
-                "'; explicit move semantics are not implemented yet",
+                "'; use move(...) for lvalues",
                 "E_RESOURCE_AGGREGATE_COPY", value.symbol);
         if (expr->isConst && currentType.empty() && !expr->value)
             Report("const variable '" + name + "' requires an initializer",
@@ -680,7 +705,7 @@ namespace Absolute {
             if (!operand.isLValue) Report("operator '&' requires an assignable value");
             CheckMutableTarget(expr->operand.get(), operand, "taking a mutable address");
             Save(expr, {InvalidSymbolId, "raw " + operand.type + "*", false, false, false,
-                InitializationState::Initialized, PointerValidity::Live, InvalidSymbolId});
+                InitializationState::Initialized, PointerValidity::Live, operand.symbol});
             return;
         }
         if (expr->op == "*") {

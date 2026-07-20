@@ -144,10 +144,15 @@ namespace Absolute {
         const Result value = EvaluateExpected(stmt->expr.get(), currentReturnType);
         if (!IsAssignable(currentReturnType, value.type))
             Report("return type '" + value.type + "' does not match '" + currentReturnType + "'");
+        bool transfersAggregateOwner = value.isMoveResult;
+        if (const Symbol* source = table.Get(value.symbol)) {
+            transfersAggregateOwner = transfersAggregateOwner ||
+                source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;
+        }
         if (ArrayRank(currentReturnType) == 0 && !IsPointerType(currentReturnType) &&
-            TypeOwnsResources(currentReturnType)) {
+            TypeOwnsResources(currentReturnType) && !transfersAggregateOwner) {
             Report("resource-owning aggregate '" + currentReturnType +
-                "' cannot be returned by value; explicit move semantics are not implemented yet",
+                "' cannot be returned by value; use move(...) for lvalues",
                 "E_RESOURCE_AGGREGATE_RETURN", value.symbol);
         }
         if (ArrayRank(currentReturnType) > 0 && value.type != "error") {
@@ -169,6 +174,12 @@ namespace Absolute {
             value.type != "null" &&
             !value.createsManagedOwner && !value.referencesManagedOwner)
             Report("a managed pointer return must transfer an owner; subscribers cannot escape their owner");
+        if (IsRawPointerType(currentReturnType) && value.type != "error" && value.type != "null") {
+            if (const Symbol* owner = table.Get(value.pointerOwner)) {
+                if (owner->scopeDepth > 0)
+                    Report("cannot return a raw pointer to a local variable", "E_RAW_RETURN_LOCAL", value.symbol);
+            }
+        }
         CheckKeepScopesFrom(0, "return");
         CheckTaskScopesFrom(0, "return");
         flowTerminated = true;

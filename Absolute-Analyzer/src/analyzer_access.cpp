@@ -168,6 +168,28 @@ namespace Absolute {
                 return;
             }
 
+            if (callName == "move") {
+                if (arguments.size() != 1) {
+                    Report("move expects exactly one argument");
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                const Result& argument = arguments.front();
+                if (!argument.isLValue && argument.type != "error") {
+                    Report("move expects an lvalue argument");
+                }
+                if (argument.symbol != InvalidSymbolId) {
+                    if (auto flow = valueFlow.find(argument.symbol); flow != valueFlow.end()) {
+                        flow->second.initialization = InitializationState::Uninitialized;
+                        flow->second.pointerValidity = PointerValidity::MaybeNull;
+                    }
+                }
+                Result result = {table.Lookup(callName), argument.type, false};
+                result.isMoveResult = true;
+                Save(expr, result);
+                return;
+            }
+
             if (callName == "copy") {
                 if (arguments.size() != 1) {
                     Report("copy expects exactly one array or slice argument", "E_COPY_ARGUMENT_COUNT");
@@ -301,10 +323,15 @@ namespace Absolute {
                 (selected && selected->extensionFunction && hasReceiver ? 1 : 0);
             if (selected && parameterIndex < selected->parameterTypes.size()) {
                 const std::string& parameterType = selected->parameterTypes[parameterIndex];
+                bool transfersAggregateOwner = argument.isMoveResult;
+                if (const Symbol* source = table.Get(argument.symbol)) {
+                    transfersAggregateOwner = transfersAggregateOwner ||
+                        source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;
+                }
                 if (ArrayRank(parameterType) == 0 && !IsPointerType(parameterType) &&
-                    TypeOwnsResources(parameterType)) {
+                    TypeOwnsResources(parameterType) && !transfersAggregateOwner) {
                     Report("resource-owning aggregate argument '" + parameterType +
-                        "' cannot be copied by value",
+                        "' cannot be copied by value; use move(...) for lvalues",
                         "E_RESOURCE_AGGREGATE_ARGUMENT", argument.symbol);
                 }
             }

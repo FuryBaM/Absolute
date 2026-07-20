@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #define ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION 1u
 
@@ -192,6 +193,22 @@ typedef const AbsoluteOpaqueSyntaxTableV1* (*AbsoluteSyntaxPluginOpaqueRulesV1)(
 /* They may also export: absolute_syntax_plugin_prelude_v1. */
 /* They may also export: absolute_syntax_plugin_binary_operators_v1. */
 /* They may also export: absolute_syntax_plugin_opaque_rules_v1. */
+
+typedef struct AbsoluteResourceDescriptorV1 {
+    uint32_t struct_size;
+    const char* type_name;
+    bool is_resource;
+    const char* destroy_function;
+    const char* move_into_function;
+} AbsoluteResourceDescriptorV1;
+
+typedef struct AbsoluteResourceTableV1 {
+    size_t descriptor_count;
+    const AbsoluteResourceDescriptorV1* descriptors;
+} AbsoluteResourceTableV1;
+
+/* They may also export: absolute_syntax_plugin_resources_v1. */
+typedef const AbsoluteResourceTableV1* (*AbsoluteSyntaxPluginResourcesV1)(void);
 
 #ifdef __cplusplus
 }

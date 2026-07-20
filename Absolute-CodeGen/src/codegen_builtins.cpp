@@ -63,6 +63,24 @@ namespace Absolute {
             return;
         }
 
+        if (name == "move") {
+            if (expression.arguments.size() != 1) Fail("move expects exactly one argument");
+            Expression* argument = expression.arguments.front().get();
+            llvm::Value* address = EvaluateAddress(argument);
+            llvm::Type* type = TypeFromName(SemanticType(argument));
+            value = builder.CreateLoad(type, address, "move.value");
+            valueCreatesManagedOwner = IsManagedPointerTypeName(SemanticType(argument));
+            if (ArrayRankName(SemanticType(argument)) > 0) {
+                valueCreatesArrayOwner = true;
+                valueArrayOwner = builder.CreateExtractValue(value, {1}, "move.array.owner");
+            }
+            uint64_t size = SizeOfTypeName(SemanticType(argument));
+            if (size > 0) {
+                builder.CreateMemSet(address, builder.getInt8(0), size, llvm::MaybeAlign(8));
+            }
+            return;
+        }
+
         if (name == "copy") {
             if (expression.arguments.size() != 1)
                 Fail("copy expects exactly one array or slice argument");

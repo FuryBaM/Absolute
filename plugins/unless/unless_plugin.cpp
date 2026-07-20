@@ -115,8 +115,21 @@ namespace {
         1,
         rules
     };
+
+    const AbsoluteResourceDescriptorV1 resources[] = {
+        {sizeof(AbsoluteResourceDescriptorV1), "TestResource", true, "test_resource_destroy", nullptr}
+    };
+    
+    const AbsoluteResourceTableV1 resourceTable = {
+        1,
+        resources
+    };
 }
 
 extern "C" ABSOLUTE_PLUGIN_EXPORT const AbsoluteSyntaxPluginV1* absolute_syntax_plugin_init_v1() {
     return &plugin;
+}
+
+extern "C" ABSOLUTE_PLUGIN_EXPORT const AbsoluteResourceTableV1* absolute_syntax_plugin_resources_v1() {
+    return &resourceTable;
 }

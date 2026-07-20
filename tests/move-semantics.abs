@@ -1,0 +1,62 @@
+class Leaf {
+    public int32 value;
+
+    public Leaf(int32 initial) {
+        value = initial;
+    }
+}
+
+struct ResourceBase {
+    Leaf* child;
+    int32[] values;
+
+    void initialize(int32 seed) {
+        child = new Leaf(seed);
+        values = copy({seed, seed + 1});
+    }
+
+    int32 read() {
+        return child.value + values[1];
+    }
+}
+
+int32 testVariableMove() {
+    ResourceBase source;
+    source.initialize(10);
+    ResourceBase destination = move(source);
+    
+    // Check that destination has the ownership
+    assert(destination.read() == 21, "destination got ownership");
+    return destination.read();
+}
+
+void processResource(ResourceBase param) {
+    assert(param.read() == 41, "parameter got ownership");
+}
+
+int32 testParameterMove() {
+    ResourceBase arg;
+    arg.initialize(20);
+    processResource(move(arg));
+    return 0;
+}
+
+ResourceBase createResource(int32 seed) {
+    ResourceBase local;
+    local.initialize(seed);
+    return move(local);
+}
+
+int32 testReturnMove() {
+    ResourceBase res = createResource(30);
+    assert(res.read() == 61, "returned value got ownership");
+    return res.read();
+}
+
+int32 main() {
+    testVariableMove();
+    testParameterMove();
+    testReturnMove();
+    println("move-semantics=ok");
+    return 0;
+}

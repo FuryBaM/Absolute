@@ -61,6 +61,24 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "Loaded syntax plugin absolute.unless"
         )
         add_test(
+            NAME absolute.plugin-resource-type
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/plugin-resource-type.abs"
+                --plugin "$<TARGET_FILE:Absolute-Unless-Plugin>"
+                --build-exe -o "${CMAKE_BINARY_DIR}/plugin-resource-type${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.plugin-resource-type PROPERTIES
+            FIXTURES_SETUP absolute-plugin-resource-executable
+        )
+        add_test(
+            NAME absolute.run-plugin-resource-type
+            COMMAND "${CMAKE_BINARY_DIR}/plugin-resource-type${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-plugin-resource-type PROPERTIES
+            FIXTURES_REQUIRED absolute-plugin-resource-executable
+            PASS_REGULAR_EXPRESSION "test_resource_destroy called for 42.*test_resource_destroy called for 100"
+        )
+
+        add_test(
             NAME absolute.syntax-plugin-required
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/syntax-plugin.abs"
         )
@@ -203,6 +221,15 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointers.abs"
     )
     add_test(
+        NAME absolute.move-semantics
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/move-semantics.abs"
+    )
+    add_test(
+        NAME absolute.move-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/move-errors.abs"
+    )
+    set_tests_properties(absolute.move-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.pointer-functions-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-functions.abs"
     )
@@ -224,6 +251,11 @@ if(BUILD_TESTING)
         NAME absolute.raw-lifetime-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/raw-lifetime.abs"
     )
+    add_test(
+        NAME absolute.raw-lifetime-semantic-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/raw-lifetime-semantic-errors.abs"
+    )
+    set_tests_properties(absolute.raw-lifetime-semantic-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
         NAME absolute.raw-missing-delete
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/raw-missing-delete.abs"

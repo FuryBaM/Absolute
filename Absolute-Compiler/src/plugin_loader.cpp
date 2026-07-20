@@ -482,10 +482,14 @@ namespace Absolute {
             const auto opaqueRules = reinterpret_cast<AbsoluteSyntaxPluginOpaqueRulesV1>(
                 FindSymbol(handle, "absolute_syntax_plugin_opaque_rules_v1"));
             const AbsoluteOpaqueSyntaxTableV1* opaqueTable = opaqueRules ? opaqueRules() : nullptr;
+            const auto pluginResources = reinterpret_cast<AbsoluteSyntaxPluginResourcesV1>(
+                FindSymbol(handle, "absolute_syntax_plugin_resources_v1"));
+            const AbsoluteResourceTableV1* resourceTable = pluginResources ? pluginResources() : nullptr;
             RegisterSyntaxPlugin(descriptor);
             if (prelude) RegisterSyntaxPluginPrelude(descriptor->name, preludeSource);
             if (binaryOperators) RegisterPluginBinaryOperators(descriptor->name, operatorTable);
             if (opaqueRules) RegisterOpaqueSyntaxRules(descriptor->name, opaqueTable);
+            if (pluginResources) RegisterPluginResources(descriptor->name, resourceTable);
             handles.push_back(handle);
             loadedLibraries.emplace(key, descriptor->name);
             loadedPlugins.emplace(descriptor->name,

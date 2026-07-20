@@ -104,6 +104,7 @@ namespace Absolute {
         bool createsTask = false;
         bool asyncCall = false;
         bool createsRawOwner = false;
+        bool isMoveResult = false;
         std::vector<std::string> parameterTypes;
     };
 
@@ -210,6 +211,7 @@ namespace Absolute {
             bool createsTask = false;
             bool asyncCall = false;
             bool createsRawOwner = false;
+            bool isMoveResult = false;
         };
 
         enum class KeepState {

@@ -1,4 +1,5 @@
 #include "analyzer_internal.h"
+#include "syntax_plugins.h"
 
 namespace Absolute {
     bool Analyzer::Analyze() {
@@ -250,7 +251,14 @@ namespace Absolute {
             if (auto found = valueFlow.find(id); found != valueFlow.end())
                 found->second.taskState = TaskState::Awaited;
         }
-        for (SymbolId id : valueFlowScopes.back()) valueFlow.erase(id);
+        for (SymbolId id : valueFlowScopes.back()) {
+            for (auto& [aliasId, alias] : valueFlow) {
+                if (aliasId != id && alias.pointerOwner == id &&
+                    alias.pointerValidity != PointerValidity::Null)
+                    alias.pointerValidity = PointerValidity::Expired;
+            }
+            valueFlow.erase(id);
+        }
         valueFlowScopes.pop_back();
         deferredTaskScopes.pop_back();
     }
@@ -437,6 +445,10 @@ namespace Absolute {
         const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
             if (IsManagedPointerType(candidate) || ArrayRank(candidate) > 0) return true;
             if (IsPointerType(candidate)) return false;
+
+            if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(candidate)) {
+                return descriptor->isResource;
+            }
 
             std::string definitionName = candidate;
             std::string genericBase;

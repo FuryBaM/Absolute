@@ -38,6 +38,8 @@ namespace Absolute {
 
         std::unordered_map<std::string, size_t> binaryOperatorsBySignature;
 
+        std::unordered_map<std::string, PluginResourceDescriptor> resourcesByTypeName;
+
         bool IsIdentifier(const std::string& value) {
             if (value.empty()) return false;
             const auto first = static_cast<unsigned char>(value.front());
@@ -149,6 +151,7 @@ namespace Absolute {
         preludes.clear();
         binaryOperatorsBySignature.clear();
         binaryOperators.clear();
+        resourcesByTypeName.clear();
     }
 
     void RegisterSyntaxPluginPrelude(const std::string& pluginName, const char* source) {
@@ -211,6 +214,31 @@ namespace Absolute {
         }
     }
 
+    void RegisterPluginResources(const std::string& pluginName, const AbsoluteResourceTableV1* resources) {
+        if (!resources) return;
+        if (resources->descriptor_count != 0 && !resources->descriptors)
+            throw std::runtime_error("Plugin '" + pluginName + "' has invalid resources table");
+        
+        for (size_t index = 0; index < resources->descriptor_count; ++index) {
+            const AbsoluteResourceDescriptorV1& descriptor = resources->descriptors[index];
+            if (descriptor.struct_size < sizeof(AbsoluteResourceDescriptorV1))
+                throw std::runtime_error("Plugin '" + pluginName + "' uses incompatible AbsoluteResourceDescriptorV1");
+            const std::string typeName = descriptor.type_name ? descriptor.type_name : "";
+            if (!IsIdentifier(typeName))
+                throw std::runtime_error("Plugin '" + pluginName + "' registered invalid resource type '" + typeName + "'");
+            if (resourcesByTypeName.contains(typeName))
+                throw std::runtime_error("Plugin resource type '" + typeName + "' is already registered");
+                
+            resourcesByTypeName[typeName] = {
+                pluginName,
+                typeName,
+                descriptor.is_resource,
+                descriptor.destroy_function ? descriptor.destroy_function : "",
+                descriptor.move_into_function ? descriptor.move_into_function : ""
+            };
+        }
+    }
+
     bool IsSyntaxPluginKeyword(const std::string& value) {
         return rulesByKeyword.contains(value) || opaqueRulesByKeyword.contains(value);
     }
@@ -223,6 +251,12 @@ namespace Absolute {
         const std::string& leftType, const std::string& operatorText, const std::string& rightType) {
         const auto found = binaryOperatorsBySignature.find(OperatorKey(leftType, operatorText, rightType));
         return found == binaryOperatorsBySignature.end() ? nullptr : &binaryOperators[found->second];
+    }
+
+    const PluginResourceDescriptor* GetPluginResourceDescriptor(const std::string& typeName) {
+        const auto found = resourcesByTypeName.find(typeName);
+        if (found == resourcesByTypeName.end()) return nullptr;
+        return &found->second;
     }
 
     std::unique_ptr<Statement> TryParseOpaquePluginStatement(

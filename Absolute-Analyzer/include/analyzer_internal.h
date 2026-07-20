@@ -199,6 +199,14 @@ namespace Absolute {
             return !probe.isMember && probe.identifierExpr && probe.identifierExpr->name == "copy";
         }
 
+        inline bool IsExplicitMove(Expression* expression) {
+            auto* call = dynamic_cast<FunctionCallExpr*>(expression);
+            if (!call || !call->base) return false;
+            CallTargetProbe probe;
+            call->base->Accept(probe);
+            return !probe.isMember && probe.identifierExpr && probe.identifierExpr->name == "move";
+        }
+
         class StringLiteralProbe final : public BaseIdentifierVisitor {
         public:
             const StringLiteralExpr* literal = nullptr;
@@ -229,7 +237,7 @@ namespace Absolute {
 
         inline bool IsBuiltinFunction(const std::string& name) {
             return name == "print" || name == "println" || name == "format" ||
-                name == "toString" || name == "assert" || name == "copy";
+                name == "toString" || name == "assert" || name == "copy" || name == "move";
         }
 
         inline bool IsPrintableType(const std::string& type) {

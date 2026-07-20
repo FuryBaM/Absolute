@@ -1,0 +1,33 @@
+// Test for plugin resource types
+
+export "C" void test_resource_destroy(raw TestResource* ptr) {
+    if (ptr.value == 42) {
+        println("test_resource_destroy called for 42");
+    } else if (ptr.value == 100) {
+        println("test_resource_destroy called for 100");
+    }
+}
+
+struct TestResource {
+    int64 value;
+}
+
+struct TestResourceWrapper {
+    TestResource inner;
+}
+
+void test_local_cleanup() {
+    TestResource r;
+    r.value = 42;
+    // When r goes out of scope, test_resource_destroy should be called for it.
+}
+
+void test_wrapper_cleanup() {
+    TestResourceWrapper w;
+    w.inner.value = 100;
+}
+
+void main() {
+    test_local_cleanup();
+    test_wrapper_cleanup();
+}

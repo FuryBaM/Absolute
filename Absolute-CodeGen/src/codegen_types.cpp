@@ -902,6 +902,11 @@ namespace Absolute {
         const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
             if (IsManagedPointerTypeName(candidate) || ArrayRankName(candidate) > 0) return true;
             if (IsRawPointerTypeName(candidate) || !visiting.insert(candidate).second) return false;
+            
+            if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(candidate)) {
+                if (descriptor->isResource) return true;
+            }
+            
             const auto release = [&] { visiting.erase(candidate); };
             if (const auto found = classes.find(candidate); found != classes.end()) {
                 for (const ClassField& field : found->second.fields) {
@@ -987,6 +992,14 @@ namespace Absolute {
         if (const auto found = structs.find(typeName); found != structs.end()) {
             if (TypeNeedsCleanup(typeName))
                 builder.CreateCall(DeclareStructDestructor(found->second), {address});
+            return;
+        }
+        if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(typeName)) {
+            if (!descriptor->destroyFunction.empty()) {
+                llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), {builder.getPtrTy()}, false);
+                llvm::FunctionCallee callee = module->getOrInsertFunction(descriptor->destroyFunction, type);
+                builder.CreateCall(callee, {address});
+            }
         }
     }
 
@@ -999,6 +1012,13 @@ namespace Absolute {
         for (auto field = info.fields.rbegin(); field != info.fields.rend(); ++field) {
             if (!TypeNeedsCleanup(field->typeName)) continue;
             EmitValueCleanup(FieldAddress(object, info, *field), field->typeName);
+        }
+        if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(info.name)) {
+            if (!descriptor->destroyFunction.empty()) {
+                llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), {builder.getPtrTy()}, false);
+                llvm::FunctionCallee callee = module->getOrInsertFunction(descriptor->destroyFunction, type);
+                builder.CreateCall(callee, {object});
+            }
         }
         builder.CreateRetVoid();
         builder.ClearInsertionPoint();
@@ -1014,6 +1034,13 @@ namespace Absolute {
         for (auto field = info.fields.rbegin(); field != info.fields.rend(); ++field) {
             if (!TypeNeedsCleanup(field->typeName)) continue;
             EmitValueCleanup(FieldAddress(object, info, *field), field->typeName);
+        }
+        if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(info.name)) {
+            if (!descriptor->destroyFunction.empty()) {
+                llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), {builder.getPtrTy()}, false);
+                llvm::FunctionCallee callee = module->getOrInsertFunction(descriptor->destroyFunction, type);
+                builder.CreateCall(callee, {object});
+            }
         }
         builder.CreateRetVoid();
         builder.ClearInsertionPoint();
