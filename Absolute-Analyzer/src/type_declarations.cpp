@@ -181,7 +181,26 @@ namespace Absolute {
     }
 
     void Analyzer::Visit(EnumDeclStmt* stmt) {
-        if (phase == Phase::CollectDeclarations) DeclareType(stmt->name);
+        if (phase != Phase::CollectDeclarations) return;
+        const std::string typeName = Qualify(stmt->name);
+        const bool duplicateType = types.contains(typeName);
+        DeclareType(stmt->name, TypeKind::Enum);
+        if (duplicateType) return;
+        TypeDefinition& definition = types[typeName];
+        definition.enumMembers.clear();
+        std::unordered_set<std::string> members;
+        for (const std::string& member : stmt->members) {
+            if (!members.insert(member).second) {
+                Report("enum '" + typeName + "' contains duplicate member '" + member + "'",
+                    "E_DUPLICATE_ENUM_MEMBER");
+                continue;
+            }
+            definition.enumMembers.push_back(member);
+            const std::string qualifiedMember = typeName + "." + member;
+            if (!table.Declare(SymbolKind::Variable, qualifiedMember, typeName))
+                Report("enum member '" + qualifiedMember + "' is already declared",
+                    "E_DUPLICATE_ENUM_MEMBER");
+        }
     }
 
     void Analyzer::Visit(GroupDeclStmt* stmt) {

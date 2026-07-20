@@ -15,6 +15,7 @@ namespace Absolute {
         if (name == "double") return builder.getDoubleTy();
         if (name == "string") return builder.getPtrTy();
         if (name == "void") return builder.getVoidTy();
+        if (enumTypes.contains(name)) return builder.getInt32Ty();
         if (classes.contains(name)) {
             FinalizeClass(name);
             return classes.at(name).llvmType;
@@ -73,7 +74,7 @@ namespace Absolute {
 
     void CodeGenerator::Impl::CollectClass(ClassDeclStmt& statement, const std::string& nameSpace) {
         const std::string name = QualifiedClassName(statement.name, nameSpace);
-        if (classes.contains(name) || structs.contains(name) || interfaces.contains(name))
+        if (classes.contains(name) || structs.contains(name) || interfaces.contains(name) || enumTypes.contains(name))
             Fail("duplicate type '" + name + "'");
         ClassInfo info;
         info.name = name;
@@ -106,7 +107,7 @@ namespace Absolute {
 
     void CodeGenerator::Impl::CollectStruct(StructDeclStmt& statement, const std::string& nameSpace) {
         const std::string name = QualifiedClassName(statement.name, nameSpace);
-        if (structs.contains(name) || classes.contains(name) || interfaces.contains(name))
+        if (structs.contains(name) || classes.contains(name) || interfaces.contains(name) || enumTypes.contains(name))
             Fail("duplicate type '" + name + "'");
         StructInfo info;
         info.name = name;
@@ -134,7 +135,7 @@ namespace Absolute {
 
     void CodeGenerator::Impl::CollectInterface(InterfaceDeclStmt& statement, const std::string& nameSpace) {
         const std::string name = QualifiedClassName(statement.name, nameSpace);
-        if (interfaces.contains(name) || classes.contains(name) || structs.contains(name))
+        if (interfaces.contains(name) || classes.contains(name) || structs.contains(name) || enumTypes.contains(name))
             Fail("duplicate type '" + name + "'");
         InterfaceInfo info;
         info.name = name;
@@ -155,6 +156,17 @@ namespace Absolute {
                 CollectStruct(*structDeclaration, nameSpace);
             else if (auto* interfaceDeclaration = dynamic_cast<InterfaceDeclStmt*>(statement.get()))
                 CollectInterface(*interfaceDeclaration, nameSpace);
+            else if (auto* enumDeclaration = dynamic_cast<EnumDeclStmt*>(statement.get())) {
+                const std::string name = QualifiedClassName(enumDeclaration->name, nameSpace);
+                if (classes.contains(name) || structs.contains(name) || interfaces.contains(name) ||
+                    !enumTypes.insert(name).second)
+                    Fail("duplicate type '" + name + "'");
+                for (size_t index = 0; index < enumDeclaration->members.size(); ++index) {
+                    const std::string member = name + "." + enumDeclaration->members[index];
+                    if (!enumConstants.emplace(member, static_cast<std::int32_t>(index)).second)
+                        Fail("duplicate enum member '" + member + "'");
+                }
+            }
             else if (auto* nameSpaceDeclaration = dynamic_cast<NamespaceDeclStmt*>(statement.get())) {
                 const std::string nested = nameSpace.empty()
                     ? nameSpaceDeclaration->name : nameSpace + "." + nameSpaceDeclaration->name;

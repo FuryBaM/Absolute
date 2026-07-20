@@ -215,6 +215,10 @@ namespace Absolute{
                 return std::make_unique<BreakStmt>();
             case Hash("if"):
 			    return ParseIfStmt();
+            case Hash("switch"):
+                return ParseSwitchStmt(false);
+            case Hash("match"):
+                return ParseSwitchStmt(true);
 		    case Hash("for"):
 			    return ParseForStmt();
 		    case Hash("while"):

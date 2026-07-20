@@ -334,6 +334,8 @@ namespace Absolute {
         structOrder.clear();
         interfaces.clear();
         interfaceOrder.clear();
+        enumTypes.clear();
+        enumConstants.clear();
         interfaceSlotCount = 0;
         loops.clear();
         currentNamespace.clear();

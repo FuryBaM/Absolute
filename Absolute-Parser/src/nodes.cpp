@@ -189,6 +189,10 @@ namespace Absolute {
         visitor.Visit(this);
     }
 
+    void SwitchStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
     void ForStmt::Accept(StatementVisitor& visitor) {
         visitor.Visit(this);
     }

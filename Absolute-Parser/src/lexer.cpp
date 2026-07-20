@@ -9,7 +9,7 @@
 namespace Absolute {
     std::unordered_map<TokenType, std::string> token_spec = {
         {TokenType::NUMBER, R"(\d+(\.\d+)?)"},
-        {TokenType::KEYWORD, R"(\b(int8|int16|int32|int64|uint8|uint16|uint32|uint64|float|double|char|bool|string|void|dynamic|auto|if|else|switch|case|default|for|while|foreach|in|do|break|continue|new|delete|raw|using|import|namespace|extern|return|true|false|null|class|struct|interface|enum|group|this|public|private|protected|sealed|internal|virtual|override|const|static|extension|async|await|spawn|catch|finally|try|throw|yield|get|set|operator|as)\b)"},
+        {TokenType::KEYWORD, R"(\b(int8|int16|int32|int64|uint8|uint16|uint32|uint64|float|double|char|bool|string|void|dynamic|auto|if|else|switch|match|case|default|for|while|foreach|in|do|break|continue|new|delete|raw|using|import|namespace|extern|return|true|false|null|class|struct|interface|enum|group|this|public|private|protected|sealed|internal|virtual|override|const|static|extension|async|await|spawn|catch|finally|try|throw|yield|get|set|operator|as)\b)"},
         {TokenType::IDENTIFIER, R"([_a-zA-Z][_a-zA-Z0-9]*)"},
         {TokenType::COMMENT, R"(\/\*[\s\S]*?\*\/|\/\/.*)"},
         {TokenType::OPERATOR, R"(==|!=|<=|>=|&&|\|\||!|~|<<|>>|\+=|-=|\*=|/=|%=|&=|\|=|\^=|\+\+|--|\?|[+\-*/=<>&%|^:])"},

@@ -94,6 +94,7 @@ namespace Absolute {
         std::unique_ptr<FunctionDeclStmt> ParseExternalFunctionDeclaration();
         std::unique_ptr<ReturnStmt> ParseReturnStmt();
         std::unique_ptr<IfStmt> ParseIfStmt();
+        std::unique_ptr<SwitchStmt> ParseSwitchStmt(bool exhaustive);
         std::unique_ptr<ForStmt> ParseForStmt();
         std::unique_ptr<WhileStmt> ParseWhileStmt();
         std::unique_ptr<DoWhileStmt> ParseDoWhileStmt();

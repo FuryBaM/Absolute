@@ -162,6 +162,17 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(MemberAccessExpr* expr) {
+        if (impl->analyzer) {
+            const ExpressionInfo* info = impl->analyzer->GetExpressionInfo(*expr);
+            const Symbol* symbol = info ? impl->analyzer->GetSymbol(info->symbol) : nullptr;
+            const auto constant = symbol ? impl->enumConstants.find(symbol->name) : impl->enumConstants.end();
+            if (constant != impl->enumConstants.end()) {
+                if (impl->addressMode) impl->Fail("an enum constant is not assignable");
+                impl->value = impl->builder.getInt32(constant->second);
+                impl->valueCreatesManagedOwner = false;
+                return;
+            }
+        }
         const std::string baseType = impl->SemanticType(expr->base.get());
         const std::string aggregateName = impl->ClassNameFromType(baseType);
         llvm::Value* fieldAddress = nullptr;
@@ -314,6 +325,21 @@ namespace Absolute {
         if (!function || impl->scopes.empty()) impl->Fail("object declaration outside a function");
         const std::string name = IdentifierName(expr->identifierName.get());
         const std::string typeName = impl->SemanticType(expr);
+        if (impl->enumTypes.contains(typeName)) {
+            llvm::Type* type = impl->TypeFromName(typeName);
+            llvm::AllocaInst* address = impl->CreateEntryAlloca(*function, type, name);
+            llvm::Value* initial = expr->value
+                ? impl->Coerce(impl->Evaluate(expr->value.get()), type)
+                : llvm::Constant::getNullValue(type);
+            impl->builder.CreateStore(initial, address);
+            if (!impl->scopes.back().emplace(name,
+                Impl::Variable{address, type, typeName, false, false, nullptr, {},
+                    nullptr, impl->SemanticSymbol(expr)}).second)
+                impl->Fail("duplicate enum variable '" + name + "'");
+            impl->value = initial;
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
         llvm::StructType* llvmType = nullptr;
         ConstructorDeclStmt* constructorStatement = nullptr;
         std::string constructorName;

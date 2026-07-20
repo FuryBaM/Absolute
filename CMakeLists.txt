@@ -243,6 +243,15 @@ if(BUILD_TESTING)
         NAME absolute.flow-analysis-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/flow-analysis.abs"
     )
+    add_test(
+        NAME absolute.switch-match-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/switch-match.abs"
+    )
+    add_test(
+        NAME absolute.switch-match-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/switch-match-errors.abs"
+    )
+    set_tests_properties(absolute.switch-match-errors PROPERTIES WILL_FAIL TRUE)
     foreach(flow_error IN ITEMS uninitialized-errors pointer-flow-errors)
         add_test(
             NAME "absolute.${flow_error}"
@@ -766,6 +775,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-flow-analysis PROPERTIES
             FIXTURES_REQUIRED absolute-flow-analysis-executable
             PASS_REGULAR_EXPRESSION "flow-analysis=ok"
+        )
+        add_test(
+            NAME absolute.build-switch-match
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/switch-match.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/switch-match-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-switch-match PROPERTIES
+            FIXTURES_SETUP absolute-switch-match-executable
+        )
+        add_test(NAME absolute.run-switch-match
+            COMMAND "${CMAKE_BINARY_DIR}/switch-match-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-switch-match PROPERTIES
+            FIXTURES_REQUIRED absolute-switch-match-executable
+            PASS_REGULAR_EXPRESSION "switch-match=ok"
         )
         add_test(
             NAME absolute.build-async

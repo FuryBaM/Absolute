@@ -1,0 +1,65 @@
+enum Direction {
+    North,
+    East,
+    South,
+    West
+}
+
+namespace Controls {
+    enum Mode { Idle, Active }
+
+    int32 modeScore(Mode mode) {
+        match (mode) {
+        case Mode.Idle:
+            return 3;
+        case Mode.Active:
+            return 6;
+        }
+    }
+}
+
+int32 directionScore(Direction direction) {
+    match (direction) {
+    case Direction.North:
+        return 10;
+    case Direction.East:
+        return 20;
+    case Direction.South:
+        return 30;
+    case Direction.West:
+        return 40;
+    }
+}
+
+int32 boolScore(bool enabled) {
+    match (enabled) {
+    case true:
+        return 1;
+    case false:
+        return 2;
+    }
+}
+
+int32 numberScore(int32 value) {
+    switch (value) {
+    case -1:
+        return 5;
+    case 7:
+        return 70;
+    default:
+        return 9;
+    }
+}
+
+int32 main() {
+    Direction direction = Direction.East;
+    assert(directionScore(direction) == 20, "enum match failed");
+    assert(boolScore(true) == 1, "bool match failed");
+    assert(boolScore(false) == 2, "bool match false failed");
+    assert(numberScore(-1) == 5, "negative switch case failed");
+    assert(numberScore(7) == 70, "integer switch case failed");
+    assert(numberScore(100) == 9, "switch default failed");
+    assert(Controls.modeScore(Controls.Mode.Active) == 6, "namespace enum match failed");
+    println("switch-match=ok");
+    return 0;
+}

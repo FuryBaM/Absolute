@@ -138,6 +138,34 @@ Global extensions are immediately visible. Namespace extensions become visible
 after `import NamespaceName;`. Real instance methods take precedence over
 extensions with the same name.
 
+## Switch, match, and enums
+
+Enum members are typed constants and use qualified names. `switch` and `match`
+cases do not fall through, so `break` is unnecessary:
+
+```absolute
+enum Direction { North, East, South, West }
+
+int32 score(Direction direction) {
+    match (direction) {
+    case Direction.North:
+        return 10;
+    case Direction.East:
+        return 20;
+    case Direction.South:
+        return 30;
+    case Direction.West:
+        return 40;
+    }
+}
+```
+
+`match` must be exhaustive. Boolean matches require both `true` and `false`,
+enum matches require every member, and integer/character matches require a
+`default` branch. Ordinary `switch` may be partial; its optional `default`
+branch handles values not listed by a case. Case labels must be compile-time
+boolean, integer, character, or enum constants, and duplicates are rejected.
+
 ## Syntax plugins
 
 New keywords and syntax that can be expressed using existing Absolute constructs

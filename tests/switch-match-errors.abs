@@ -1,0 +1,51 @@
+enum State {
+    Ready,
+    Running,
+    Stopped
+}
+
+int32 missingEnumCase(State state) {
+    match (state) {
+    case State.Ready:
+        return 1;
+    case State.Running:
+        return 2;
+    }
+}
+
+int32 missingBoolCase(bool value) {
+    match (value) {
+    case true:
+        return 1;
+    }
+}
+
+int32 integerWithoutDefault(int32 value) {
+    match (value) {
+    case 1:
+        return 1;
+    }
+}
+
+int32 invalidLabels(int32 value) {
+    int32 runtimeLabel = 2;
+    switch (value) {
+    case 1:
+        return 1;
+    case 1:
+        return 2;
+    case runtimeLabel:
+        return 3;
+    default:
+        return 0;
+    }
+}
+
+int32 wrongType(bool value) {
+    switch (value) {
+    case 1:
+        return 1;
+    default:
+        return 0;
+    }
+}

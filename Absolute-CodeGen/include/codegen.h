@@ -61,6 +61,7 @@ namespace Absolute {
         void Visit(EnumDeclStmt* stmt) override;
         void Visit(GroupDeclStmt* stmt) override;
         void Visit(IfStmt* stmt) override;
+        void Visit(SwitchStmt* stmt) override;
         void Visit(ForStmt* stmt) override;
         void Visit(WhileStmt* stmt) override;
         void Visit(DoWhileStmt* stmt) override;

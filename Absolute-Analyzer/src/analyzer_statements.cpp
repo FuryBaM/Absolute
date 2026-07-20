@@ -132,6 +132,125 @@ namespace Absolute {
         flowTerminated = continuingPaths.empty();
     }
 
+    void Analyzer::Visit(SwitchStmt* stmt) {
+        if (phase == Phase::CollectDeclarations) return;
+        const Result selector = Evaluate(stmt->value.get());
+        const auto enumType = types.find(selector.type);
+        const bool selectsEnum = enumType != types.end() && enumType->second.kind == TypeKind::Enum;
+        if (!IsInteger(selector.type) && selector.type != "bool" && !selectsEnum &&
+            selector.type != "error") {
+            Report((stmt->exhaustive ? "match" : "switch") +
+                std::string(" value must be an integer, bool, char, or enum"),
+                "E_SWITCH_TYPE");
+        }
+
+        const KeepLifetimeMap base = keepLifetimes;
+        const ValueFlowMap baseValues = valueFlow;
+        std::vector<KeepLifetimeMap> continuingPaths;
+        std::vector<ValueFlowMap> continuingValuePaths;
+        std::unordered_set<std::string> labels;
+        std::unordered_set<std::string> enumCoverage;
+        bool coversTrue = false;
+        bool coversFalse = false;
+
+        const auto constantKey = [&](Expression* expression) -> std::optional<std::string> {
+            if (const auto* boolean = dynamic_cast<BooleanLiteralExpr*>(expression))
+                return std::string("bool:") + (boolean->value ? "true" : "false");
+            if (const auto* number = dynamic_cast<NumberLiteralExpr*>(expression)) {
+                if (number->value.find('.') != std::string::npos) return std::nullopt;
+                return "integer:" + std::to_string(std::stoll(number->value));
+            }
+            if (const auto* character = dynamic_cast<CharLiteralExpr*>(expression))
+                return "integer:" + std::to_string(static_cast<unsigned char>(character->value));
+            if (const auto* unary = dynamic_cast<PrefixUnaryExpr*>(expression)) {
+                if ((unary->op == "+" || unary->op == "-") &&
+                    dynamic_cast<NumberLiteralExpr*>(unary->operand.get())) {
+                    const auto* number = static_cast<NumberLiteralExpr*>(unary->operand.get());
+                    if (number->value.find('.') != std::string::npos) return std::nullopt;
+                    const std::int64_t magnitude = std::stoll(number->value);
+                    return "integer:" + std::to_string(unary->op == "-" ? -magnitude : magnitude);
+                }
+            }
+            if (dynamic_cast<MemberAccessExpr*>(expression)) {
+                const std::string name = ExtractQualifiedName(expression);
+                if (!name.empty()) return "enum:" + name;
+            }
+            return std::nullopt;
+        };
+
+        for (auto& branch : stmt->cases) {
+            keepLifetimes = base;
+            valueFlow = baseValues;
+            flowTerminated = false;
+            const Result label = Evaluate(branch.label.get());
+            if (!IsAssignable(selector.type, label.type))
+                Report("case label has type '" + label.type + "', expected '" + selector.type + "'",
+                    "E_SWITCH_CASE_TYPE");
+            auto key = constantKey(branch.label.get());
+            if (dynamic_cast<MemberAccessExpr*>(branch.label.get())) {
+                if (const Symbol* symbol = table.Get(label.symbol)) key = "enum:" + symbol->name;
+            }
+            if (!key) {
+                Report("case label must be a compile-time bool, integer, char, or enum constant",
+                    "E_SWITCH_CASE_CONSTANT");
+            }
+            else if (!labels.insert(*key).second) {
+                Report("duplicate case label '" + *key + "'", "E_DUPLICATE_SWITCH_CASE");
+            }
+            else if (*key == "bool:true") coversTrue = true;
+            else if (*key == "bool:false") coversFalse = true;
+            else if (key->starts_with("enum:")) enumCoverage.insert(key->substr(5));
+
+            AcceptIfPresent(branch.body, *this);
+            if (!flowTerminated) {
+                continuingPaths.push_back(keepLifetimes);
+                continuingValuePaths.push_back(valueFlow);
+            }
+        }
+
+        if (stmt->defaultCase) {
+            keepLifetimes = base;
+            valueFlow = baseValues;
+            flowTerminated = false;
+            AcceptIfPresent(stmt->defaultCase, *this);
+            if (!flowTerminated) {
+                continuingPaths.push_back(keepLifetimes);
+                continuingValuePaths.push_back(valueFlow);
+            }
+        }
+
+        bool exhaustive = stmt->defaultCase != nullptr;
+        if (!exhaustive && selector.type == "bool") exhaustive = coversTrue && coversFalse;
+        if (!exhaustive && selectsEnum) {
+            exhaustive = std::all_of(enumType->second.enumMembers.begin(),
+                enumType->second.enumMembers.end(), [&](const std::string& member) {
+                    return enumCoverage.contains(selector.type + "." + member);
+                });
+        }
+        if (stmt->exhaustive && !exhaustive) {
+            if (selector.type == "bool")
+                Report("non-exhaustive match: bool requires both true and false cases",
+                    "E_NON_EXHAUSTIVE_MATCH");
+            else if (selectsEnum) {
+                std::string missing;
+                for (const std::string& member : enumType->second.enumMembers) {
+                    if (enumCoverage.contains(selector.type + "." + member)) continue;
+                    if (!missing.empty()) missing += ", ";
+                    missing += selector.type + "." + member;
+                }
+                Report("non-exhaustive match; missing: " + missing, "E_NON_EXHAUSTIVE_MATCH");
+            }
+            else Report("non-exhaustive match requires a default branch", "E_NON_EXHAUSTIVE_MATCH");
+        }
+        if (!exhaustive) {
+            continuingPaths.push_back(base);
+            continuingValuePaths.push_back(baseValues);
+        }
+        MergeKeepPaths(base, continuingPaths);
+        MergeValueFlowPaths(baseValues, continuingValuePaths);
+        flowTerminated = exhaustive && continuingPaths.empty();
+    }
+
     void Analyzer::Visit(ForStmt* stmt) {
         if (phase == Phase::CollectDeclarations) return;
         table.EnterScope();

@@ -21,6 +21,7 @@ namespace Absolute {
         virtual void Visit(EnumDeclStmt* stmt) = 0;
         virtual void Visit(GroupDeclStmt* stmt) = 0;
         virtual void Visit(IfStmt* stmt) = 0;
+        virtual void Visit(SwitchStmt* stmt) = 0;
         virtual void Visit(ForStmt* stmt) = 0;
         virtual void Visit(WhileStmt* stmt) = 0;
         virtual void Visit(DoWhileStmt* stmt) = 0;

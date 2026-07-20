@@ -249,6 +249,7 @@ namespace {
         void Visit(EnumDeclStmt*) override {}
         void Visit(GroupDeclStmt*) override {}
         void Visit(IfStmt*) override {}
+        void Visit(SwitchStmt*) override {}
         void Visit(ForStmt*) override {}
         void Visit(WhileStmt*) override {}
         void Visit(DoWhileStmt*) override {}

@@ -21,6 +21,7 @@
 #include "ast/instance_declaration.h"
 #include "ast/enum.h"
 #include "ast/if_else.h"
+#include "ast/switch.h"
 #include "ast/loops.h"
 #include "ast/member.h"
 #include "ast/struct.h"

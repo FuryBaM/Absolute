@@ -126,6 +126,7 @@ namespace Absolute {
 
         enum class TypeKind {
             Other,
+            Enum,
             Struct,
             Class,
             Interface
@@ -135,6 +136,7 @@ namespace Absolute {
             std::unordered_map<std::string, std::vector<MemberSignature>> members;
             std::optional<MemberSignature> constructor;
             std::vector<std::string> parents;
+            std::vector<std::string> enumMembers;
             TypeKind kind = TypeKind::Other;
         };
 
@@ -279,6 +281,7 @@ namespace Absolute {
         void Visit(EnumDeclStmt* stmt) override;
         void Visit(GroupDeclStmt* stmt) override;
         void Visit(IfStmt* stmt) override;
+        void Visit(SwitchStmt* stmt) override;
         void Visit(ForStmt* stmt) override;
         void Visit(WhileStmt* stmt) override;
         void Visit(DoWhileStmt* stmt) override;

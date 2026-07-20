@@ -141,6 +141,38 @@ namespace Absolute {
         impl->builder.SetInsertPoint(mergeBlock);
     }
 
+    void CodeGenerator::Visit(SwitchStmt* stmt) {
+        if (impl->phase != Impl::Phase::EmitBodies) return;
+        llvm::Function* function = impl->CurrentFunction();
+        if (!function) impl->Fail("switch outside a function");
+
+        llvm::Value* selector = impl->Evaluate(stmt->value.get());
+        llvm::Type* selectorType = selector->getType();
+        if (!selectorType->isIntegerTy())
+            impl->Fail("switch value must lower to an integer");
+
+        llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(
+            impl->context, stmt->exhaustive ? "match.end" : "switch.end", function);
+        for (auto& branch : stmt->cases) {
+            llvm::Value* label = impl->Coerce(impl->Evaluate(branch.label.get()), selectorType);
+            llvm::Value* equal = impl->builder.CreateICmpEQ(selector, label, "switch.equal");
+            llvm::BasicBlock* bodyBlock = llvm::BasicBlock::Create(
+                impl->context, "switch.case", function);
+            llvm::BasicBlock* nextBlock = llvm::BasicBlock::Create(
+                impl->context, "switch.next", function);
+            impl->builder.CreateCondBr(equal, bodyBlock, nextBlock);
+
+            impl->builder.SetInsertPoint(bodyBlock);
+            if (branch.body) branch.body->Accept(*this);
+            impl->BranchIfNeeded(endBlock);
+            impl->builder.SetInsertPoint(nextBlock);
+        }
+
+        if (stmt->defaultCase) stmt->defaultCase->Accept(*this);
+        impl->BranchIfNeeded(endBlock);
+        impl->builder.SetInsertPoint(endBlock);
+    }
+
     void CodeGenerator::Visit(ForStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
         llvm::Function* function = impl->CurrentFunction();

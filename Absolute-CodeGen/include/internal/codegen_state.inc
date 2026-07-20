@@ -110,6 +110,8 @@
         std::vector<std::string> structOrder;
         std::unordered_map<std::string, InterfaceInfo> interfaces;
         std::vector<std::string> interfaceOrder;
+        std::unordered_set<std::string> enumTypes;
+        std::unordered_map<std::string, std::int32_t> enumConstants;
         unsigned interfaceSlotCount = 0;
         std::vector<LoopTarget> loops;
         std::string currentNamespace;
