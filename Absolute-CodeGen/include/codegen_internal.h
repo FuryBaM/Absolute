@@ -1,0 +1,152 @@
+#pragma once
+#include "codegen_pch.h"
+
+namespace Absolute {
+    namespace {
+        class PrimitiveTypeNameVisitor final : public BaseIdentifierVisitor {
+        public:
+            std::string name;
+
+            void Visit(PrimitiveTypeExpr* expr) override {
+                name = expr->type;
+            }
+
+            void Visit(UserTypeExpr* expr) override {
+                (void)expr;
+            }
+
+            void Visit(PointerTypeExpr* expr) override {
+                name.clear();
+                if (expr->pointee) expr->pointee->Accept(*this);
+                if (!name.empty()) name = (expr->raw ? "raw " : "") + name + "*";
+            }
+
+            void Visit(ArrayTypeExpr* expr) override {
+                name.clear();
+                if (expr->element) expr->element->Accept(*this);
+                if (!name.empty()) name += "[]";
+            }
+        };
+
+        class StringLiteralProbe final : public BaseIdentifierVisitor {
+        public:
+            const StringLiteralExpr* literal = nullptr;
+
+            void Visit(StringLiteralExpr* expr) override { literal = expr; }
+        };
+
+        std::string IdentifierName(Expression* expression) {
+            if (!expression) return {};
+            BaseIdentifierVisitor visitor;
+            expression->Accept(visitor);
+            return visitor.identifierExpr ? visitor.identifierExpr->name : std::string{};
+        }
+
+        bool IsRawPointerTypeName(const std::string& name) {
+            return name.starts_with("raw ") && name.ends_with("*");
+        }
+
+        bool IsManagedPointerTypeName(const std::string& name) {
+            return !IsRawPointerTypeName(name) && name.ends_with("*");
+        }
+
+        bool IsPointerTypeName(const std::string& name) {
+            return IsRawPointerTypeName(name) || IsManagedPointerTypeName(name);
+        }
+
+        std::string PointerPointeeName(std::string name) {
+            if (IsRawPointerTypeName(name)) name.erase(0, 4);
+            if (!name.empty() && name.back() == '*') name.pop_back();
+            return name;
+        }
+
+        std::string EncodeLinkComponent(const std::string& value) {
+            constexpr char digits[] = "0123456789ABCDEF";
+            std::string result;
+            for (const unsigned char character : value) {
+                if (std::isalnum(character) || character == '_') result.push_back(static_cast<char>(character));
+                else {
+                    result.push_back('_');
+                    result.push_back(digits[character >> 4]);
+                    result.push_back(digits[character & 15]);
+                }
+            }
+            return result;
+        }
+
+        std::string CallableKey(const std::string& name, const std::vector<std::string>& parameterTypes) {
+            std::string result = name;
+            for (const std::string& type : parameterTypes) result += "$" + EncodeLinkComponent(type);
+            return result;
+        }
+
+        bool IsTaskTypeName(const std::string& name) {
+            return name.size() > 6 && name.starts_with("task<") && name.ends_with(">");
+        }
+
+        bool HasModifier(const Statement& statement, const std::string& name) {
+            return std::any_of(statement.modifiers.begin(), statement.modifiers.end(),
+                [&](const Token& modifier) { return modifier.value == name; });
+        }
+
+        size_t ArrayRankName(std::string type) {
+            size_t rank = 0;
+            while (type.ends_with("[]")) {
+                type.resize(type.size() - 2);
+                ++rank;
+            }
+            return rank;
+        }
+
+        std::string ArrayElementTypeName(std::string type, size_t dimensions = 1) {
+            while (dimensions-- > 0 && type.ends_with("[]")) type.resize(type.size() - 2);
+            return type;
+        }
+
+        std::string TaskValueTypeName(const std::string& name) {
+            return IsTaskTypeName(name) ? name.substr(5, name.size() - 6) : std::string{};
+        }
+
+        std::optional<std::vector<size_t>> InferArrayShape(const ArrayExpr& array) {
+            std::vector<size_t> childShape;
+            bool hasChildShape = false;
+            for (const auto& value : array.values) {
+                std::vector<size_t> currentShape;
+                if (const auto* nested = dynamic_cast<const ArrayExpr*>(value.get())) {
+                    const auto nestedShape = InferArrayShape(*nested);
+                    if (!nestedShape) return std::nullopt;
+                    currentShape = *nestedShape;
+                }
+                if (!hasChildShape) {
+                    childShape = std::move(currentShape);
+                    hasChildShape = true;
+                }
+                else if (childShape != currentShape) return std::nullopt;
+            }
+            childShape.insert(childShape.begin(), array.values.size());
+            return childShape;
+        }
+
+        void FlattenArrayValues(ArrayExpr& array, std::vector<Expression*>& output) {
+            for (const auto& value : array.values) {
+                if (auto* nested = dynamic_cast<ArrayExpr*>(value.get())) FlattenArrayValues(*nested, output);
+                else output.push_back(value.get());
+            }
+        }
+
+        class FunctionCallProbe final : public BaseIdentifierVisitor {
+        public:
+            FunctionCallExpr* call = nullptr;
+
+            void Visit(FunctionCallExpr* expr) override { call = expr; }
+        };
+    }
+
+    struct CodeGenerator::Impl {
+#include "internal/codegen_state.inc"
+#include "internal/codegen_types.inc"
+#include "internal/codegen_runtime.inc"
+#include "internal/codegen_module.inc"
+    };
+
+}

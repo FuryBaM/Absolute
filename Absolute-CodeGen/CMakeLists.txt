@@ -8,8 +8,21 @@ message(STATUS "LLVMConfig.cmake: ${LLVM_DIR}")
 
 add_library(Absolute-CodeGen STATIC
     include/codegen.h
+    include/codegen_internal.h
+    include/codegen_pch.h
+    include/internal/codegen_module.inc
+    include/internal/codegen_runtime.inc
+    include/internal/codegen_state.inc
+    include/internal/codegen_types.inc
     src/codegen.cpp
+    src/codegen_access.cpp
+    src/codegen_operators.cpp
+    src/codegen_pch.cpp
+    src/codegen_statements.cpp
+    src/codegen_values.cpp
 )
+
+target_precompile_headers(Absolute-CodeGen PRIVATE include/codegen_internal.h)
 
 target_compile_features(Absolute-CodeGen PUBLIC cxx_std_20)
 target_include_directories(Absolute-CodeGen PUBLIC include)

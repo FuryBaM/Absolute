@@ -8,8 +8,14 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Пути к исходникам
 set(SOURCE_FILES
     declaration_visitor.cpp
+    src/analyzer_access.cpp
     src/analyzer.cpp
+    src/analyzer_operators.cpp
     src/analyzer_pch.cpp
+    src/analyzer_statements.cpp
+    src/analyzer_values.cpp
+    src/symbol_table.cpp
+    src/type_declarations.cpp
     src/type.cpp
     src/variable.cpp
 )
@@ -17,6 +23,8 @@ set(SOURCE_FILES
 set(HEADER_FILES
     declaration_visitor.h
     include/analyzer.h
+    include/analyzer_build_pch.h
+    include/analyzer_internal.h
     include/analyzer_pch.h
     include/type.h
     include/variable.h
@@ -26,7 +34,7 @@ set(HEADER_FILES
 add_library(Absolute-Analyzer STATIC ${SOURCE_FILES} ${HEADER_FILES})
 
 # Предкомпилированные заголовки
-target_precompile_headers(Absolute-Analyzer PRIVATE include/analyzer_pch.h)
+target_precompile_headers(Absolute-Analyzer PRIVATE include/analyzer_internal.h)
 
 # Пути к заголовочным файлам
 target_include_directories(${PROJECT_NAME} PUBLIC include)

@@ -1,0 +1,225 @@
+# Absolute TODO
+
+## Сборка и структура компилятора
+
+### Выполнено
+
+- [x] Разделить Analyzer на отдельные translation units: access, operators, values и statements.
+- [x] Вынести таблицу символов и анализ деклараций типов из `analyzer.cpp`.
+- [x] Разделить CodeGen на отдельные translation units: access, operators, values и statements.
+- [x] Оставить `analyzer.cpp` и `codegen.cpp` тонкими координаторами.
+- [x] Подключить private PCH через `target_precompile_headers` для Analyzer и CodeGen.
+- [x] Разделить внутренности CodeGen на state, types, runtime и module.
+- [x] Проверить Release-сборку с LLVM 18.1.3.
+- [x] Прогнать полный набор тестов: 108/108.
+
+### P0 — реальное ускорение incremental build
+
+- [ ] Оставить в `codegen_internal.h` только структуру `Impl`, поля и объявления методов.
+- [ ] Перенести тела методов `CodeGenerator::Impl` из `.inc` в отдельные `.cpp`:
+  - [ ] `codegen_types.cpp` — типы, классы, структуры и интерфейсы.
+  - [ ] `codegen_runtime.cpp` — значения, массивы, managed/raw pointers и runtime-вызовы.
+  - [ ] `codegen_builtins.cpp` — print, format, async и прочие встроенные операции.
+  - [ ] `codegen_module.cpp` — функции, глобальные значения, создание LLVM module/object.
+- [ ] Убедиться, что изменение одного visitor-файла не приводит к повторной оптимизации всех методов `Impl`.
+- [ ] Добавить `benchmarks/build/run.bat` для измерения:
+  - [ ] чистой Release-сборки;
+  - [ ] повторной сборки без изменений;
+  - [ ] изменения одного Analyzer-файла;
+  - [ ] изменения одного CodeGen-файла;
+  - [ ] пересоздания PCH после изменения заголовка.
+- [ ] Сохранять результаты build-бенчмарка в CSV вместе с компилятором, генератором, количеством потоков и расположением build-каталога.
+
+### P1 — окружение сборки
+
+- [ ] Для WSL хранить build-каталог на файловой системе Linux, а не на `/mnt/f`.
+- [ ] Добавить CMake preset для `Ninja + Release + LLVM 18`.
+- [ ] Добавить Windows preset для MSVC Release с `/MP`.
+- [ ] Проверить поддержку `ccache` или `sccache` как необязательного ускорителя.
+- [ ] Исправить предупреждение, где путь к `zstd.h` передаётся как include-directory.
+- [ ] Явно оформить LibEdit, CURL и X11 как необязательные зависимости, чтобы сообщения конфигурации были понятными.
+
+### P2 — стабильность архитектуры
+
+- [ ] Минимизировать зависимости private PCH от часто меняющихся заголовков AST.
+- [ ] Добавить forward declarations в публичные заголовки Analyzer и CodeGen, где это возможно.
+- [ ] Добавить CI-проверку чистой Debug/Release-сборки без заранее созданного PCH.
+- [ ] Добавить CI-проверку полного `ctest`.
+- [ ] Документировать назначение каждого внутреннего модуля в `docs/compiler-architecture.md`.
+
+## Критерии готовности ускорения
+
+- [ ] Изменение одного visitor-файла пересобирает только соответствующий объектный файл и необходимые библиотеки/исполняемый файл.
+- [ ] PCH не пересоздаётся при изменении обычного `.cpp`.
+- [ ] Incremental CodeGen build минимум в два раза быстрее прежней монолитной сборки на одной и той же машине.
+- [ ] После каждого этапа проходят все 108 тестов.
+- [ ] Build-бенчмарк воспроизводится одной командой из `.bat`.
+
+## Функциональность языка
+
+Этот раздел описывает roadmap самого Absolute. Отмеченными считаются только
+возможности, которые уже представлены в документации и тестах проекта.
+
+### Базовый язык
+
+- [x] Переменные, функции, возвращаемые значения и области видимости.
+- [x] `if`, `for`, `while`, `do-while`, `foreach`, `break` и `continue`.
+- [x] Перегрузка функций и методов.
+- [x] Методы расширения.
+- [x] Пространства имён, файловые и namespace-импорты.
+- [x] Строковые шаблоны, форматирование, `print` и `println`.
+- [ ] Добавить `switch`/`match` и проверку полноты вариантов.
+- [ ] Определить модель ошибок языка: exceptions либо типизированный `Result`.
+- [ ] Добавить `try`/`catch`/`finally`, если будет выбрана модель exceptions.
+- [ ] Добавить `defer` для гарантированного выполнения cleanup-кода.
+- [ ] Добавить атрибуты/аннотации для compiler и plugin metadata.
+- [ ] Спроектировать настоящие generics для функций, структур и классов.
+- [ ] Добавить type aliases в ядро, не зависящие от plugin prelude.
+- [ ] Определить правила `const`/immutability для переменных, параметров и методов.
+
+### Типы и ООП
+
+- [x] Value-типы `struct`, поля, конструкторы и методы.
+- [x] Классы, наследование, virtual dispatch и деструкторы.
+- [x] Raw и managed pointers на структуры и классы.
+- [x] Интерфейсы, наследование интерфейсов и реализация несколькими интерфейсами.
+- [x] Проверка перегрузок и возвращаемых типов при реализации интерфейса.
+- [ ] Реализовать static-поля и static-методы классов в CodeGen.
+- [ ] Добавить автоматическую цепочку base-конструкторов и явный вызов `base(...)`.
+- [ ] Добавить default-реализации методов интерфейсов.
+- [ ] Добавить properties в классы, структуры и интерфейсы.
+- [ ] Добавить indexers для пользовательских контейнеров.
+- [ ] Добавить static-члены интерфейсов.
+- [ ] Завершить и протестировать правила доступа `public`/`protected`/`private`.
+- [ ] Добавить безопасные downcast/type-test операции (`is`, `as`).
+- [ ] Определить ABI и правила копирования/перемещения больших value-типов.
+
+### Память и указатели
+
+- [x] Managed `T*` с generation-check и автоматическим освобождением владельца.
+- [x] `raw T*`, адресная арифметика, сравнение и явный `delete`.
+- [x] Flow-анализ и диагностика uninitialized, expired и invalid pointers.
+- [x] Передача и возврат raw/managed pointers из функций.
+- [ ] Добавить автоматическое освобождение heap-копий возвращаемых массивов.
+- [ ] Формализовать ownership для полей классов, структур, массивов и плагиновых типов.
+- [ ] Добавить borrow/lifetime-проверки для slices и временных значений.
+- [ ] Определить weak/non-owning managed references.
+- [ ] Проверить циклические графы объектов и выбрать стратегию их очистки.
+- [ ] Добавить sanitizer-набор тестов на use-after-free, double-free и утечки.
+- [ ] Оптимизировать managed dereference и доказать корректность удаления bounds/lifetime checks в Release.
+
+### Массивы, slices и коллекции
+
+- [x] Одномерные и многомерные прямоугольные массивы.
+- [x] Локальные и глобальные массивы, литералы и runtime-размеры.
+- [x] Параметры и возврат массивов.
+- [x] Одномерные slices без копирования.
+- [x] `foreach` по массивам и slices.
+- [x] Проверка выхода за границы.
+- [ ] Добавить многомерные slices.
+- [ ] Добавить безопасные iterators и пользовательский протокол iteration.
+- [ ] Добавить динамические коллекции: `Vector`, `Map`, `Set` и queue/deque.
+- [ ] Добавить стандартные алгоритмы: sort, search, transform, reduce и filter.
+- [ ] Реализовать Release-elimination доказуемо лишних bounds checks.
+- [ ] Добавить SIMD/vectorization-тесты для числовых массивов.
+
+### Async и параллельность
+
+- [x] `async`-функции, `spawn`, `await` и runtime worker pool.
+- [x] Проверка незавершённых локальных tasks анализатором.
+- [ ] Добавить async-методы классов и структур.
+- [ ] Добавить cancellation tokens и timeout.
+- [ ] Добавить channels и безопасные concurrent queues.
+- [ ] Добавить async file/network I/O.
+- [ ] Добавить `select`/`whenAny` для ожидания нескольких tasks.
+- [ ] Добавить mutex, semaphore и atomic API в стандартную библиотеку.
+- [ ] Формализовать thread-safety managed pointers и объектов.
+
+### Модули, проекты и пакеты
+
+- [x] `.absproj`, несколько source-файлов и рекурсивные импорты.
+- [x] Namespace imports.
+- [x] Подключение native libraries через проект.
+- [ ] Добавить package manifest и lock-файл зависимостей.
+- [ ] Добавить локальный/удалённый package registry.
+- [ ] Добавить версионирование модулей и проверку конфликтов зависимостей.
+- [ ] Добавить отдельные library/application targets в одном workspace.
+- [ ] Добавить incremental module cache вместо повторного анализа всех файлов.
+
+### Plugin API
+
+- [x] Versioned C ABI для syntax plugins.
+- [x] Новые ключевые слова и lowering в обычный Absolute AST.
+- [x] Opaque AST nodes с собственным анализом и генерацией LLVM IR.
+- [x] Plugin prelude, операторы, extension methods и встроенные типы плагина.
+- [x] `.absplugin` manifests и зависимости плагинов.
+- [x] Math, shader и desktop example plugins.
+- [ ] Добавить capability/version negotiation для новых ABI-функций.
+- [ ] Добавить plugin ABI compatibility tests для Windows и Linux.
+- [ ] Изолировать падение/исключение плагина от процесса компилятора.
+- [ ] Добавить unload/reload плагинов для IDE без перезапуска.
+- [ ] Добавить API для plugin diagnostics, source ranges и quick fixes.
+- [ ] Добавить API отладчика для просмотра значений plugin-defined типов.
+
+### Стандартная библиотека
+
+- [x] Базовый console I/O и форматирование.
+- [x] Async task runtime.
+- [x] Math-типы и функции как пример плагина.
+- [ ] Определить стабильную структуру standard library и правила версионирования.
+- [ ] Добавить полноценные String/StringBuilder и Unicode API.
+- [ ] Добавить filesystem, paths и streams.
+- [ ] Добавить date/time, timers и random.
+- [ ] Добавить JSON и binary serialization.
+- [ ] Добавить networking: sockets, HTTP client/server и URI.
+- [ ] Добавить collections и algorithms.
+- [ ] Добавить logging, assertions и test framework.
+
+### Desktop, игры и графика
+
+- [x] Native Win32/X11 окно, event loop и headless backend через desktop plugin.
+- [x] Shader-блоки как opaque plugin syntax.
+- [x] Векторные и матричные math-типы, projection и lookAt.
+- [ ] Добавить keyboard, mouse, gamepad и text-input API.
+- [ ] Добавить OpenGL/Vulkan/Direct3D backend либо общий RHI.
+- [ ] Добавить GPU buffers, textures, samplers, pipelines и shader reflection.
+- [ ] Добавить загрузку изображений, шрифтов, моделей и аудио.
+- [ ] Добавить 2D renderer, sprites и batching.
+- [ ] Добавить базовый UI toolkit для desktop-приложений.
+- [ ] Добавить audio output/mixer.
+- [ ] Добавить game loop, frame timing и fixed update.
+- [ ] Добавить примеры: triangle, sprite scene, UI window и небольшая игра.
+
+### Native interop и платформы
+
+- [x] C ABI imports и native FFI.
+- [x] Генерация LLVM IR и native object/executable.
+- [ ] Добавить генератор Absolute declarations из C headers.
+- [ ] Добавить безопасные wrappers для native handles и callbacks.
+- [ ] Определить ограниченную поддержку C++ ABI либо официально оставить только C ABI.
+- [ ] Проверить targets x64, ARM64, Windows, Linux и macOS в CI.
+- [ ] Добавить WebAssembly target и browser runtime.
+- [ ] Формализовать ABI массивов, strings, structs, interfaces и callbacks.
+
+### IDE, debugger и developer tools
+
+- [x] VS Code extension с project/plugin discovery, completion и hover.
+- [x] Запуск проекта и подключение native debugger.
+- [ ] Перевести language intelligence в отдельный LSP server.
+- [ ] Добавить go-to-definition, references, rename и document symbols.
+- [ ] Добавить semantic highlighting и code actions.
+- [ ] Добавить formatter и конфигурируемый linter.
+- [ ] Добавить debugger visualization для arrays, slices, tasks и managed pointers.
+- [ ] Добавить breakpoints/source mapping для opaque plugin nodes.
+- [ ] Добавить REPL и expression evaluator.
+- [ ] Добавить генератор документации из исходного кода.
+- [ ] Добавить `absolute test`, `absolute fmt`, `absolute doc` и `absolute package`.
+
+## Критерии готовности языка
+
+- [ ] Для каждой заявленной возможности есть semantic, error, LLVM emit и runtime test.
+- [ ] Документация не называет экспериментальную возможность стабильной.
+- [ ] Примеры собираются на Windows и Linux одной командой.
+- [ ] Публичные ABI и plugin ABI имеют версию и compatibility policy.
+- [ ] Ошибки компилятора всегда содержат файл, строку, колонку и понятный diagnostic code.
+- [ ] Есть минимум один реальный desktop/game example и одна reusable library на Absolute.
