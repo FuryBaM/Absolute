@@ -1,0 +1,21 @@
+int32 safeUnitDecrement(int32 position) {
+    while (position >= 0) {
+        if (position == 3) {
+            break;
+        }
+        position -= 1;
+    }
+    return position;
+}
+
+int32 unsafeDoubleDecrement(int32 position) {
+    while (position >= 0) {
+        position -= 2;
+    }
+    return position;
+}
+
+int32 main() {
+    println(safeUnitDecrement(5) + unsafeDoubleDecrement(5));
+    return 0;
+}

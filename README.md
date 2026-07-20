@@ -619,13 +619,17 @@ full rules.
 
 ## Interfaces
 
-Interfaces declare method contracts without storage or method bodies. An
-interface may inherit other interfaces, and a class may inherit one base class
-plus any number of interfaces:
+Interfaces declare method contracts without storage. A contract may provide a
+default method body. An interface may inherit other interfaces, and a class may
+inherit one base class plus any number of interfaces:
 
 ```absolute
 interface IEvaluable {
     int64 evaluate(int64 input);
+
+    int64 doubled(int64 input) {
+        return input * 2;
+    }
 }
 
 interface INamed {
@@ -655,10 +659,13 @@ assert(tracked.evaluate(40) == 42);
 delete unsafe;
 ```
 
-The analyzer verifies every required overload and its return type. Instantiating
-an interface, declaring it as an inline value, omitting a method, or implementing
-an incompatible signature is rejected. Interface fields, default method bodies,
-properties, and static interface members are not implemented yet.
+The analyzer verifies every required overload and its return type. A class method
+has precedence over an inherited default. The same default inherited through a
+diamond is shared; two different defaults with the same signature require the
+class to declare a resolving implementation. Instantiating an interface,
+declaring it as an inline value, omitting an abstract method, or implementing an
+incompatible signature is rejected. Interface fields, properties, and static
+interface members are not implemented yet.
 
 ## Async tasks and parallel execution
 

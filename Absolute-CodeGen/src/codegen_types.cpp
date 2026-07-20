@@ -251,8 +251,33 @@ namespace Absolute {
             if (!interfaces.contains(parent))
                 Fail("unknown parent interface '" + parent + "' of '" + name + "'");
             FinalizeInterface(parent);
-            for (const auto& [methodKey, method] : interfaces.at(parent).methods)
-                info.methods.emplace(methodKey, method);
+            const InterfaceInfo& parentInfo = interfaces.at(parent);
+            info.ambiguousDefaults.insert(
+                parentInfo.ambiguousDefaults.begin(), parentInfo.ambiguousDefaults.end());
+            for (const auto& [methodKey, contracts] : parentInfo.methodContracts) {
+                auto& inheritedContracts = info.methodContracts[methodKey];
+                inheritedContracts.insert(
+                    inheritedContracts.end(), contracts.begin(), contracts.end());
+            }
+            for (const auto& [methodKey, method] : parentInfo.methods) {
+                const auto inherited = info.methods.find(methodKey);
+                if (inherited == info.methods.end()) {
+                    info.methods.emplace(methodKey, method);
+                    continue;
+                }
+                if (!SameMethodSignature(*inherited->second.statement, *method.statement))
+                    Fail("inherited interface method signature mismatch for '" + name + "." +
+                        method.statement->name->value + "'");
+                const bool existingDefault = inherited->second.statement->body != nullptr;
+                const bool candidateDefault = method.statement->body != nullptr;
+                if (existingDefault && candidateDefault &&
+                    inherited->second.statement != method.statement) {
+                    info.ambiguousDefaults.insert(methodKey);
+                }
+                else if (!existingDefault && candidateDefault) {
+                    inherited->second = method;
+                }
+            }
         }
 
         for (const auto& methodStatement : info.statement->methods) {
@@ -270,9 +295,25 @@ namespace Absolute {
                 slot = inherited->second.virtualSlot;
             }
             else slot = interfaceSlotCount++;
-            info.methods[methodKey] = ClassMethod{
-                statement, name, {}, slot, parameterTypes,
+            ClassMethod method{
+                statement, name, CallableKey(name + "." + statement->name->value, parameterTypes),
+                slot, parameterTypes,
                 ResolveTypeName(statement->returnType.get()), {}};
+            auto& contracts = info.methodContracts[methodKey];
+            if (contracts.empty()) {
+                contracts.push_back(method);
+            }
+            else {
+                for (ClassMethod& contract : contracts) {
+                    const std::optional<unsigned> inheritedSlot = contract.virtualSlot;
+                    contract = method;
+                    contract.virtualSlot = inheritedSlot;
+                }
+                method.virtualSlot = contracts.front().virtualSlot;
+            }
+            info.methods[methodKey] = method;
+            info.ambiguousDefaults.erase(methodKey);
+            if (statement->body) info.declaredMethods[methodKey] = std::move(method);
         }
         info.finalizing = false;
         info.finalized = true;
@@ -386,10 +427,16 @@ namespace Absolute {
         info.baseClass = baseClass;
 
         std::unordered_map<std::string, std::vector<ClassMethod>> interfaceRequirements;
+        std::unordered_set<std::string> ambiguousInterfaceDefaults;
         for (const std::string& interfaceName : implementedInterfaces) {
             FinalizeInterface(interfaceName);
-            for (const auto& [methodKey, method] : interfaces.at(interfaceName).methods)
-                interfaceRequirements[methodKey].push_back(method);
+            const InterfaceInfo& interfaceInfo = interfaces.at(interfaceName);
+            ambiguousInterfaceDefaults.insert(interfaceInfo.ambiguousDefaults.begin(),
+                interfaceInfo.ambiguousDefaults.end());
+            for (const auto& [methodKey, contracts] : interfaceInfo.methodContracts) {
+                auto& requirements = interfaceRequirements[methodKey];
+                requirements.insert(requirements.end(), contracts.begin(), contracts.end());
+            }
         }
 
         const auto addField = [&](const std::string& fieldName, const std::string& typeName) {
@@ -441,8 +488,23 @@ namespace Absolute {
 
         for (const auto& [methodKey, requirements] : interfaceRequirements) {
             auto implementation = info.methods.find(methodKey);
-            if (implementation == info.methods.end())
-                Fail("class '" + name + "' does not implement interface method '" + methodKey + "'");
+            if (implementation == info.methods.end()) {
+                if (ambiguousInterfaceDefaults.contains(methodKey))
+                    Fail("class '" + name + "' inherits ambiguous default interface method '" +
+                        methodKey + "'");
+                const ClassMethod* defaultMethod = nullptr;
+                for (const ClassMethod& requirement : requirements) {
+                    if (!requirement.statement->body) continue;
+                    if (defaultMethod && defaultMethod->statement != requirement.statement)
+                        Fail("class '" + name + "' inherits multiple default implementations of '" +
+                            methodKey + "'");
+                    defaultMethod = &requirement;
+                }
+                if (!defaultMethod)
+                    Fail("class '" + name + "' does not implement interface method '" + methodKey + "'");
+                info.methods.emplace(methodKey, *defaultMethod);
+                implementation = info.methods.find(methodKey);
+            }
             for (const ClassMethod& requirement : requirements) {
                 if (!SameMethodSignature(*requirement.statement, *implementation->second.statement))
                     Fail("class method '" + name + "." + methodKey +

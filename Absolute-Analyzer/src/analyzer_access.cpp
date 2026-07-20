@@ -218,9 +218,15 @@ namespace Absolute {
 
             const auto members = FindMembers(typeReceiver ? ownerName : receiver.type, memberCall->member);
             std::vector<SymbolId> methodCandidates;
-            for (const MemberSignature& member : members)
-                if (member.kind == SymbolKind::Method && member.isStatic == typeReceiver)
+            std::vector<std::vector<std::string>> candidateSignatures;
+            for (const MemberSignature& member : members) {
+                if (member.kind == SymbolKind::Method && member.isStatic == typeReceiver &&
+                    std::find(candidateSignatures.begin(), candidateSignatures.end(),
+                        member.parameterTypes) == candidateSignatures.end()) {
                     methodCandidates.push_back(member.symbol);
+                    candidateSignatures.push_back(member.parameterTypes);
+                }
+            }
             if (!methodCandidates.empty()) {
                 symbolId = SelectOverload(
                     methodCandidates, arguments, memberCall->member, explicitTypeArguments);

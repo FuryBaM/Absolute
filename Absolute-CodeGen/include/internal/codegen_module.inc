@@ -22,6 +22,10 @@
 
         void EmitClassBodies(ClassInfo& info);
 
+        void EmitInterfaceMethod(InterfaceInfo& info, const ClassMethod& method);
+
+        void EmitInterfaceBodies(InterfaceInfo& info);
+
         void EmitStructMethod(StructInfo& info, const ClassMethod& method);
 
         void EmitStructConstructor(StructInfo& info);

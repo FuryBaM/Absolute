@@ -1,0 +1,21 @@
+interface ILeftDefault {
+    int32 value() {
+        return 1;
+    }
+}
+
+interface IRightDefault {
+    int32 value() {
+        return 2;
+    }
+}
+
+interface IAmbiguousDefault : ILeftDefault, IRightDefault {
+}
+
+class AmbiguousDefault : IAmbiguousDefault {
+}
+
+int32 main() {
+    return 0;
+}

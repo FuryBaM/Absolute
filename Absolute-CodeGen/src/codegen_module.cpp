@@ -336,6 +336,40 @@ namespace Absolute {
         info.emitted = true;
     }
 
+    void CodeGenerator::Impl::EmitInterfaceMethod(
+        InterfaceInfo& info, const ClassMethod& method) {
+        llvm::Function* function = DeclareMethodFunction(method);
+        if (!function->empty()) return;
+        llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+        builder.SetInsertPoint(entry);
+        PushScope();
+        const std::string oldClass = currentClassName;
+        llvm::Value* oldThis = currentThis;
+        const std::string oldReturn = currentReturnTypeName;
+        currentClassName = info.name;
+        currentThis = function->getArg(0);
+        currentReturnTypeName = ResolveTypeName(method.statement->returnType.get());
+        for (size_t index = 0; index < method.statement->parameters.size(); ++index)
+            BindCallableParameter(*function->getArg(static_cast<unsigned>(index + 1)),
+                *method.statement->parameters[index]);
+        method.statement->body->Accept(visitor);
+        FinishClassCallable(*function);
+        PopScope();
+        currentClassName = oldClass;
+        currentThis = oldThis;
+        currentReturnTypeName = oldReturn;
+        builder.ClearInsertionPoint();
+    }
+
+    void CodeGenerator::Impl::EmitInterfaceBodies(InterfaceInfo& info) {
+        if (info.emitted) return;
+        for (const auto& [methodName, method] : info.declaredMethods) {
+            (void)methodName;
+            EmitInterfaceMethod(info, method);
+        }
+        info.emitted = true;
+    }
+
     void CodeGenerator::Impl::EmitStructMethod(StructInfo& info, const ClassMethod& method) {
         llvm::Function* function = DeclareMethodFunction(method);
         if (!function->empty()) return;

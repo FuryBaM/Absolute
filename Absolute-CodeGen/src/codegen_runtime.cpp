@@ -1,4 +1,5 @@
 #include "codegen_internal.h"
+#include <llvm/IR/MDBuilder.h>
 
 namespace Absolute {
     llvm::Value* CodeGenerator::Impl::Evaluate(Expression* expression) {
@@ -189,7 +190,8 @@ namespace Absolute {
             constant && !constant->isZero()) return;
         llvm::BasicBlock* success = llvm::BasicBlock::Create(context, name + ".success", function);
         llvm::BasicBlock* failure = llvm::BasicBlock::Create(context, name + ".failure", function);
-        builder.CreateCondBr(condition, success, failure);
+        builder.CreateCondBr(condition, success, failure,
+            llvm::MDBuilder(context).createBranchWeights(2000, 1));
         builder.SetInsertPoint(failure);
         const std::string message = name == "array.size"
             ? "Array size must be greater than zero"

@@ -22,6 +22,13 @@ Struct members may be public or private; protected struct members are rejected
 because structs do not participate in inheritance. The recognized `internal`
 modifier remains unsupported and produces an explicit diagnostic.
 
+An interface method may contain a default body. Class methods take precedence
+over defaults during vtable construction. A default inherited repeatedly from
+the same declaration is unambiguous, including diamond inheritance. If separate
+interfaces provide different defaults for the same signature, the implementing
+class must declare a public method to resolve the conflict. Abstract declarations
+in a child interface replace an inherited default for that contract.
+
 ## Runtime type tests
 
 `is` tests the dynamic class of a raw or managed class/interface pointer:

@@ -108,12 +108,12 @@ namespace Absolute {
                 if (parameter->value)
                     Report("interface methods cannot declare default parameter values");
             }
-            if (stmt->body) Report("interface methods cannot have a body");
             if (HasModifier(*stmt, "static") || HasModifier(*stmt, "extension") ||
                 HasModifier(*stmt, "async") || HasModifier(*stmt, "override") ||
                 HasModifier(*stmt, "sealed"))
                 Report("interface method '" + currentType + "." + stmt->name->value +
                     "' has an unsupported modifier");
+            if (stmt->body) ResolveFunction(*stmt, SymbolKind::Method);
         }
         else {
             ValidateAccessModifiers(*stmt, !currentType.empty(),

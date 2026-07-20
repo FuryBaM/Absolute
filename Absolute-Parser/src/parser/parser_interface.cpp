@@ -43,10 +43,23 @@ namespace Absolute {
                     CurrentToken()->value == "const") {
                     methodModifiers.push_back(*Consume(TokenType::KEYWORD, "const"));
                 }
-                Consume(TokenType::DELIMITER, ";");
+                std::unique_ptr<Statement> body;
+                if (CurrentToken() && CurrentToken()->type == TokenType::DELIMITER &&
+                    CurrentToken()->value == ";") {
+                    Consume(TokenType::DELIMITER, ";");
+                }
+                else if (CurrentToken() && CurrentToken()->type == TokenType::BRACKET &&
+                    CurrentToken()->value == "{") {
+                    body = ParseCompoundStatement();
+                }
+                else {
+                    ReportSyntaxError(CurrentToken(),
+                        "Expected ';' or a default interface method body");
+                    throw std::runtime_error("Invalid interface method declaration");
+                }
                 auto method = std::make_unique<FunctionDeclStmt>(
                     std::move(returnType), std::make_unique<Token>(*methodName),
-                    std::move(parameters), nullptr);
+                    std::move(parameters), std::move(body));
                 method->modifiers = std::move(methodModifiers);
                 method->attributes = std::move(methodAttributes);
                 methods.push_back(std::move(method));

@@ -23,32 +23,80 @@ namespace Absolute {
     void Analyzer::ValidateInterfaceImplementation(const std::string& className) {
         const auto found = types.find(className);
         if (found == types.end()) return;
+
+        struct InterfaceRequirement {
+            std::string contract;
+            std::string methodName;
+            MemberSignature signature;
+        };
+        std::unordered_map<std::string, std::vector<InterfaceRequirement>> requirements;
+        const auto requirementKey = [](const std::string& methodName,
+            const std::vector<std::string>& parameterTypes) {
+            std::string key = methodName;
+            for (const std::string& parameterType : parameterTypes)
+                key += "\x1f" + parameterType;
+            return key;
+        };
         for (const std::string& parent : found->second.parents) {
             const auto contract = types.find(parent);
             if (contract == types.end() || contract->second.kind != TypeKind::Interface) continue;
             for (const auto& [methodName, overloads] : VisibleMembers(parent)) {
                 for (const MemberSignature& requirement : overloads) {
                     if (requirement.kind != SymbolKind::Method) continue;
-                    const auto implementation = FindConcreteMethod(
-                        className, methodName, requirement.parameterTypes);
-                    if (!implementation) {
-                        Report("class '" + className + "' does not implement interface method '" +
-                            parent + "." + methodName + "'");
+                    requirements[requirementKey(methodName, requirement.parameterTypes)]
+                        .push_back({parent, methodName, requirement});
+                }
+            }
+        }
+
+        for (const auto& [key, contracts] : requirements) {
+            (void)key;
+            const InterfaceRequirement& first = contracts.front();
+            const auto implementation = FindConcreteMethod(
+                className, first.methodName, first.signature.parameterTypes);
+            if (!implementation) {
+                std::unordered_set<SymbolId> defaults;
+                for (const InterfaceRequirement& contract : contracts) {
+                    FunctionDeclStmt* declaration = FunctionDeclaration(contract.signature.symbol);
+                    if (declaration && declaration->body) defaults.insert(contract.signature.symbol);
+                }
+                if (defaults.empty()) {
+                    Report("class '" + className + "' does not implement interface method '" +
+                        first.contract + "." + first.methodName + "'");
+                }
+                else if (defaults.size() > 1) {
+                    Report("class '" + className + "' inherits multiple default implementations of '" +
+                        first.methodName + "'; declare an override to resolve the ambiguity",
+                        "E_INTERFACE_DEFAULT_AMBIGUOUS");
+                }
+                else {
+                    const Symbol* defaultSymbol = table.Get(*defaults.begin());
+                    for (const InterfaceRequirement& contract : contracts) {
+                        if (defaultSymbol && (defaultSymbol->type != contract.signature.type ||
+                            defaultSymbol->isConst != contract.signature.isConst)) {
+                            Report("default interface method '" + defaultSymbol->name +
+                                "' does not match the contract of interface '" + contract.contract + "'",
+                                "E_INTERFACE_DEFAULT_CONTRACT");
+                        }
                     }
-                    else if (implementation->type != requirement.type) {
-                        Report("class method '" + className + "." + methodName +
-                            "' returns '" + implementation->type + "', but interface '" + parent +
-                            "' requires '" + requirement.type + "'");
-                    }
-                    else if (implementation->isConst != requirement.isConst) {
-                        Report("class method '" + className + "." + methodName +
-                            "' does not match the const contract of interface '" + parent + "'");
-                    }
-                    else if (implementation->access != AccessLevel::Public) {
-                        Report("class method '" + className + "." + methodName +
-                            "' implements interface '" + parent + "' and must be public",
-                            "E_INTERFACE_IMPLEMENTATION_ACCESS", implementation->symbol);
-                    }
+                }
+                continue;
+            }
+            for (const InterfaceRequirement& contract : contracts) {
+                const MemberSignature& requirement = contract.signature;
+                if (implementation->type != requirement.type) {
+                    Report("class method '" + className + "." + contract.methodName +
+                        "' returns '" + implementation->type + "', but interface '" + contract.contract +
+                        "' requires '" + requirement.type + "'");
+                }
+                else if (implementation->isConst != requirement.isConst) {
+                    Report("class method '" + className + "." + contract.methodName +
+                        "' does not match the const contract of interface '" + contract.contract + "'");
+                }
+                else if (implementation->access != AccessLevel::Public) {
+                    Report("class method '" + className + "." + contract.methodName +
+                        "' implements interface '" + contract.contract + "' and must be public",
+                        "E_INTERFACE_IMPLEMENTATION_ACCESS", implementation->symbol);
                 }
             }
         }

@@ -353,6 +353,16 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.interface-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
+        NAME absolute.interface-default-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-default-errors.abs"
+    )
+    set_tests_properties(absolute.interface-default-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.interface-default-body-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-default-body-errors.abs"
+    )
+    set_tests_properties(absolute.interface-default-body-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.structs-codegen-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/structs-codegen.abs"
     )
@@ -666,6 +676,23 @@ if(BUILD_TESTING)
         )
         set_tests_properties(absolute.check-insertion-sort-optimization-ir PROPERTIES
             FIXTURES_REQUIRED absolute-insertion-sort-optimization-ir
+        )
+        add_test(
+            NAME absolute.emit-loop-range-facts
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/loop-range-facts.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/loop-range-facts.ll"
+        )
+        set_tests_properties(absolute.emit-loop-range-facts PROPERTIES
+            FIXTURES_SETUP absolute-loop-range-facts-ir
+        )
+        add_test(
+            NAME absolute.check-loop-range-facts-ir
+            COMMAND "${CMAKE_COMMAND}"
+                -DIR_FILE=${CMAKE_BINARY_DIR}/loop-range-facts.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-loop-range-facts-ir.cmake"
+        )
+        set_tests_properties(absolute.check-loop-range-facts-ir PROPERTIES
+            FIXTURES_REQUIRED absolute-loop-range-facts-ir
         )
         add_test(
             NAME absolute.emit-chess-rules

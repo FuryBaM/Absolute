@@ -99,8 +99,12 @@
             InterfaceDeclStmt* statement = nullptr;
             std::vector<std::string> parents;
             std::unordered_map<std::string, ClassMethod> methods;
+            std::unordered_map<std::string, std::vector<ClassMethod>> methodContracts;
+            std::unordered_map<std::string, ClassMethod> declaredMethods;
+            std::unordered_set<std::string> ambiguousDefaults;
             bool finalizing = false;
             bool finalized = false;
+            bool emitted = false;
         };
 
         struct LoopTarget {
