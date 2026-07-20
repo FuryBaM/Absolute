@@ -344,6 +344,15 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/classes-codegen.abs"
     )
     add_test(
+        NAME absolute.resource-fields-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/resource-fields.abs"
+    )
+    add_test(
+        NAME absolute.resource-field-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/resource-field-errors.abs"
+    )
+    set_tests_properties(absolute.resource-field-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.interfaces-codegen-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interfaces-codegen.abs"
     )
@@ -771,6 +780,23 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-classes-codegen-ir
         )
         add_test(
+            NAME absolute.emit-resource-fields
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/resource-fields.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/resource-fields.ll"
+        )
+        set_tests_properties(absolute.emit-resource-fields PROPERTIES
+            FIXTURES_SETUP absolute-resource-fields-ir
+        )
+        add_test(
+            NAME absolute.check-resource-fields
+            COMMAND "${CMAKE_COMMAND}"
+                -DIR_FILE=${CMAKE_BINARY_DIR}/resource-fields.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-resource-fields.cmake"
+        )
+        set_tests_properties(absolute.check-resource-fields PROPERTIES
+            FIXTURES_REQUIRED absolute-resource-fields-ir
+        )
+        add_test(
             NAME absolute.emit-interfaces-codegen
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interfaces-codegen.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/interfaces-codegen.ll"
@@ -1125,6 +1151,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-classes-codegen PROPERTIES
             FIXTURES_REQUIRED absolute-classes-codegen-executable
             PASS_REGULAR_EXPRESSION "classes=42"
+        )
+        add_test(
+            NAME absolute.build-resource-fields
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/resource-fields.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/resource-fields-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-resource-fields PROPERTIES
+            FIXTURES_SETUP absolute-resource-fields-executable
+        )
+        add_test(NAME absolute.run-resource-fields
+            COMMAND "${CMAKE_BINARY_DIR}/resource-fields-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-resource-fields PROPERTIES
+            FIXTURES_REQUIRED absolute-resource-fields-executable
+            PASS_REGULAR_EXPRESSION "resource-fields=ok"
         )
         add_test(
             NAME absolute.build-interfaces-codegen

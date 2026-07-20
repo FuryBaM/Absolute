@@ -59,7 +59,9 @@ namespace Absolute {
             return;
         }
         if (ArrayRankName(targetTypeName) > 0 &&
-            dynamic_cast<MemberAccessExpr*>(expr->target.get()) == nullptr)
+            dynamic_cast<MemberAccessExpr*>(expr->target.get()) == nullptr &&
+            (!targetSymbol || (targetSymbol->kind != SymbolKind::Field &&
+                targetSymbol->kind != SymbolKind::Property)))
             impl->Fail("array variables cannot be reassigned; only array descriptor fields are assignable");
         if (ArrayRankName(targetTypeName) > 0 && expr->op != "=")
             impl->Fail("array fields only support direct '=' assignment");
@@ -76,7 +78,9 @@ namespace Absolute {
 
         if (IsManagedPointerTypeName(targetTypeName)) {
             const std::string name = IdentifierName(expr->target.get());
-            if (!name.empty()) {
+            if (!name.empty() && (!targetSymbol ||
+                targetSymbol->kind == SymbolKind::Variable ||
+                targetSymbol->kind == SymbolKind::Parameter)) {
                 Impl::Variable& variable = impl->RequireVariable(name);
                 if (variable.managedOwner) {
                     llvm::Value* oldHandle = impl->builder.CreateLoad(variable.type, variable.address, "assignment.old.handle");
@@ -93,11 +97,17 @@ namespace Absolute {
                 }
             }
         }
+        if (targetSymbol && targetSymbol->kind == SymbolKind::Field &&
+            impl->TypeNeedsCleanup(targetTypeName)) {
+            impl->EmitValueCleanup(targetAddress, targetTypeName);
+        }
         assigned = impl->Coerce(assigned, targetType);
         impl->builder.CreateStore(assigned, targetAddress);
         impl->value = assigned;
         impl->valueCreatesManagedOwner = false;
         impl->valueManagedPointee = nullptr;
+        impl->valueCreatesArrayOwner = false;
+        impl->valueArrayOwner = nullptr;
     }
 
     void CodeGenerator::Visit(VarDeclExpr* expr) {
@@ -474,10 +484,14 @@ namespace Absolute {
                     impl->builder.CreateStore(
                         llvm::ConstantPointerNull::get(impl->builder.getPtrTy()), variable.managedPointee);
             }
+            llvm::Value* pointee = impl->builder.CreateCall(
+                impl->ManagedGet(false), {pointer}, "delete.pointee");
+            impl->EmitPointeeCleanup(pointee, typeName);
             impl->builder.CreateCall(impl->ManagedDestroy(), {pointer});
             impl->builder.CreateStore(impl->builder.getInt64(0), targetAddress);
         }
         else {
+            impl->EmitPointeeCleanup(pointer, typeName);
             impl->builder.CreateCall(impl->Free(), {pointer});
             impl->builder.CreateStore(llvm::ConstantPointerNull::get(impl->builder.getPtrTy()), targetAddress);
         }
@@ -573,9 +587,10 @@ namespace Absolute {
             impl->builder.CreateCall(constructor, {address});
             impl->EmitExceptionCheck();
         }
-        if (!impl->scopes.back().emplace(name,
-            Impl::Variable{address, llvmType, typeName, false, false, nullptr, {},
-                nullptr, impl->SemanticSymbol(expr)}).second)
+        Impl::Variable variable{address, llvmType, typeName, false, false, nullptr, {},
+            nullptr, impl->SemanticSymbol(expr)};
+        variable.ownsAggregateResources = impl->TypeNeedsCleanup(typeName);
+        if (!impl->scopes.back().emplace(name, std::move(variable)).second)
             impl->Fail("duplicate object '" + name + "'");
         impl->value = impl->builder.CreateLoad(llvmType, address, name + ".value");
         impl->valueCreatesManagedOwner = false;

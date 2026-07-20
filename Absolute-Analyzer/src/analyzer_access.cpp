@@ -297,6 +297,17 @@ namespace Absolute {
         }
         for (size_t i = 0; i < arguments.size(); ++i) {
             const Result& argument = arguments[i];
+            const size_t parameterIndex = i +
+                (selected && selected->extensionFunction && hasReceiver ? 1 : 0);
+            if (selected && parameterIndex < selected->parameterTypes.size()) {
+                const std::string& parameterType = selected->parameterTypes[parameterIndex];
+                if (ArrayRank(parameterType) == 0 && !IsPointerType(parameterType) &&
+                    TypeOwnsResources(parameterType)) {
+                    Report("resource-owning aggregate argument '" + parameterType +
+                        "' cannot be copied by value",
+                        "E_RESOURCE_AGGREGATE_ARGUMENT", argument.symbol);
+                }
+            }
             if (argument.pointerValidity == PointerValidity::Deleted ||
                 argument.pointerValidity == PointerValidity::Expired)
                 Report("argument " + std::to_string(i + 1) + " passes an invalid pointer",

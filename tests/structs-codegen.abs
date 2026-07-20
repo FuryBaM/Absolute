@@ -92,7 +92,7 @@ int32 main() {
     assert(managedValue.x + managedValue.y == 42, "managed struct pointer member access");
 
     Packet packet;
-    packet.values = {40, 41, 42};
+    packet.values = copy({40, 41, 42});
     packet.link = rawValue;
     assert(packet.values[2] == 42, "array descriptor stored in struct field");
     assert(packet.link.y == 23, "raw pointer stored in struct field");

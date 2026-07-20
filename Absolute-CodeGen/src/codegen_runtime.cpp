@@ -14,12 +14,6 @@ namespace Absolute {
         currentValueType = SemanticType(expression);
         if (ArrayRankName(currentValueType) > 0 && !valueCreatesArrayOwner) {
             bool transfersOwner = dynamic_cast<FunctionCallExpr*>(expression) != nullptr;
-            if (!transfersOwner && analyzer) {
-                const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
-                const Symbol* symbol = info ? analyzer->GetSymbol(info->symbol) : nullptr;
-                transfersOwner = symbol && (symbol->kind == SymbolKind::Property ||
-                    symbol->kind == SymbolKind::Indexer);
-            }
             if (transfersOwner) {
                 ArrayView returned = ArrayViewFromValue(value, currentValueType);
                 valueCreatesArrayOwner = true;
@@ -98,8 +92,15 @@ namespace Absolute {
                 builder.CreateCall(Free(), {variable.arrayOwner});
                 continue;
             }
+            if (variable.ownsAggregateResources) {
+                EmitValueCleanup(variable.address, variable.typeName);
+                continue;
+            }
             if (!variable.managedOwner || variable.symbol == transferredOwner) continue;
             llvm::Value* handle = builder.CreateLoad(variable.type, variable.address, "cleanup.handle");
+            llvm::Value* pointee = builder.CreateCall(
+                ManagedGet(false), {handle}, "cleanup.pointee");
+            EmitPointeeCleanup(pointee, variable.typeName);
             builder.CreateCall(ManagedDestroy(), {handle});
             builder.CreateStore(builder.getInt64(0), variable.address);
             if (variable.managedPointee)
@@ -225,10 +226,11 @@ namespace Absolute {
 
     CodeGenerator::Impl::ArrayView CodeGenerator::Impl::ViewOfArray(Expression* expression) {
         if (auto* identifier = dynamic_cast<IdentifierExpr*>(expression)) {
-            Variable& variable = RequireVariable(identifier->name);
-            if (!variable.isArray) Fail("object is not an array");
-            return {variable.address, variable.arrayElementType,
-                variable.typeName, variable.arrayDimensions, variable.arrayOwner};
+            if (Variable* variable = FindVariable(identifier->name)) {
+                if (!variable->isArray) Fail("object is not an array");
+                return {variable->address, variable->arrayElementType,
+                    variable->typeName, variable->arrayDimensions, variable->arrayOwner};
+            }
         }
         const std::string typeName = SemanticType(expression);
         return ArrayViewFromValue(Evaluate(expression), typeName);

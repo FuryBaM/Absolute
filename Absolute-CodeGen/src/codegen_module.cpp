@@ -315,6 +315,8 @@ namespace Absolute {
                 if (IsIndirectValueType(method.parameterTypes.front()))
                     assigned = builder.CreateLoad(
                         TypeFromName(method.parameterTypes.front()), assigned, "auto.property.input");
+                if (TypeNeedsCleanup(method.parameterTypes.front()))
+                    EmitValueCleanup(storage, method.parameterTypes.front());
                 builder.CreateStore(assigned, storage);
                 builder.CreateRetVoid();
             }
@@ -388,6 +390,7 @@ namespace Absolute {
             EmitMethod(info, method);
         }
         EmitConstructor(info);
+        EmitClassDestructor(info);
         info.emitted = true;
     }
 
@@ -470,6 +473,8 @@ namespace Absolute {
                 if (IsIndirectValueType(method.parameterTypes.front()))
                     assigned = builder.CreateLoad(
                         TypeFromName(method.parameterTypes.front()), assigned, "auto.property.input");
+                if (TypeNeedsCleanup(method.parameterTypes.front()))
+                    EmitValueCleanup(storage, method.parameterTypes.front());
                 builder.CreateStore(assigned, storage);
                 builder.CreateRetVoid();
             }
@@ -520,6 +525,7 @@ namespace Absolute {
             EmitStructMethod(info, method);
         }
         EmitStructConstructor(info);
+        EmitStructDestructor(info);
         info.emitted = true;
     }
 
@@ -539,7 +545,7 @@ namespace Absolute {
         interfaceOrder.clear();
         enumTypes.clear();
         enumConstants.clear();
-        interfaceSlotCount = 0;
+        interfaceSlotCount = 1;
         loops.clear();
         exceptionTargets.clear();
         finallyTargets.clear();

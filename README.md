@@ -484,6 +484,13 @@ int32* value = new int32(42);
 delete value;
 ```
 
+Managed pointer and array fields are owning resource slots. They accept a fresh
+owner (`new`, `copy(...)`, or an owning function result), destroy their previous
+value on reassignment, and are released automatically with the containing class
+or struct. Class and interface deletion dispatches through a destructor entry in
+vtable slot zero, so derived fields are cleaned even through a base pointer. See
+[docs/resource-ownership.md](docs/resource-ownership.md) for the full rules.
+
 Use `raw T*` only for C interop or C++-style address operations. Raw pointers do
 not participate in generation checks or automatic lifetime management:
 
@@ -531,10 +538,12 @@ when managed pointers are used.
 
 ## Structs
 
-`struct` declares an inline value type. Assigning it, passing it to a function,
-or returning it copies the complete value. Fields may contain primitives, other
-structs, pointers, and array descriptors; instance constructors and methods use
-the same syntax as class members:
+`struct` declares an inline value type. Resource-free structs use ordinary value
+semantics: assigning, passing, or returning them copies the complete value.
+Structs containing managed pointers, owning array descriptors, or another
+resource-owning aggregate are move-only; implicit assignment, by-value arguments,
+and by-value returns are rejected until explicit `move` syntax is implemented.
+Instance constructors and methods use the same syntax as class members:
 
 ```absolute
 struct Point {

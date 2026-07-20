@@ -144,6 +144,12 @@ namespace Absolute {
         const Result value = EvaluateExpected(stmt->expr.get(), currentReturnType);
         if (!IsAssignable(currentReturnType, value.type))
             Report("return type '" + value.type + "' does not match '" + currentReturnType + "'");
+        if (ArrayRank(currentReturnType) == 0 && !IsPointerType(currentReturnType) &&
+            TypeOwnsResources(currentReturnType)) {
+            Report("resource-owning aggregate '" + currentReturnType +
+                "' cannot be returned by value; explicit move semantics are not implemented yet",
+                "E_RESOURCE_AGGREGATE_RETURN", value.symbol);
+        }
         if (ArrayRank(currentReturnType) > 0 && value.type != "error") {
             bool storageEscapes = IsExplicitArrayCopy(stmt->expr.get());
             if (const Symbol* symbol = table.Get(value.symbol)) {

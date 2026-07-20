@@ -1,0 +1,27 @@
+class ManagedFieldOwner {
+    int32* value;
+
+    void storeBorrowed(int32* borrowed) {
+        value = borrowed;
+    }
+}
+
+struct ArrayFieldOwner {
+    int32[] values;
+}
+
+void storeLocalView() {
+    int32 local[2] = {1, 2};
+    ArrayFieldOwner owner;
+    owner.values = local[];
+}
+
+void copyOwningAggregate() {
+    ArrayFieldOwner first;
+    first.values = copy({1, 2});
+    ArrayFieldOwner second = first;
+}
+
+int32 main() {
+    return 0;
+}

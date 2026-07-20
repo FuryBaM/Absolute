@@ -36,9 +36,14 @@ There is no separate `borrow` pointer kind or runtime marker. Managed pointer
 parameters and array parameters are non-owning by language rule, slices are
 zero-copy views, and `raw` remains the explicit unsafe escape hatch.
 
-## Current boundary
+## Aggregate fields
 
-Ownership of array-valued object fields, aggregate destruction, plugin-defined
-resources, async captures, and lifetime diagnostics for temporary borrows still
-need a unified design. Those items remain tracked in `TODO.md`; this document
-covers local array descriptors, parameters, calls, slices, and returns.
+An array-valued class or struct field is an owning resource slot. Store a fresh
+`copy(...)`, an owning function result, or a global borrowed descriptor into the
+field. A local array or slice cannot escape into a field because its backing
+storage may disappear before the aggregate. Reassignment frees the old non-null
+owner, and the aggregate destructor frees the final value.
+
+The remaining boundaries are plugin-defined resources, async captures, and
+stronger lifetime diagnostics for temporary borrows. See
+`docs/resource-ownership.md` and `TODO.md`.

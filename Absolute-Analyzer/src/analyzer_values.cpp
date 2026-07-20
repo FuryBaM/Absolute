@@ -14,10 +14,13 @@ namespace Absolute {
                     "E_PROPERTY_COMPOUND_REQUIRES_GETTER", target.symbol);
         }
         const Result value = EvaluateExpected(expr->value.get(), target.type);
+        const Symbol* targetSymbol = table.Get(target.symbol);
         if (!target.isLValue) Report("assignment target is not assignable");
         CheckMutableTarget(expr->target.get(), target, "assignment");
         if (ArrayRank(target.type) > 0 &&
-            dynamic_cast<MemberAccessExpr*>(expr->target.get()) == nullptr)
+            dynamic_cast<MemberAccessExpr*>(expr->target.get()) == nullptr &&
+            (!targetSymbol || (targetSymbol->kind != SymbolKind::Field &&
+                targetSymbol->kind != SymbolKind::Property)))
             Report("array variables cannot be reassigned; assign an element or declare a new array view");
         if (ArrayRank(target.type) > 0 && expr->op != "=")
             Report("array fields only support direct '=' assignment");
@@ -25,6 +28,31 @@ namespace Absolute {
             Report("cannot assign '" + value.type + "' to '" + target.type + "'");
         if (IsTaskType(target.type))
             Report("tasks cannot be reassigned or copied", "E_TASK_ASSIGNMENT", target.symbol);
+        const bool owningField = targetSymbol &&
+            (targetSymbol->kind == SymbolKind::Field ||
+             targetSymbol->kind == SymbolKind::Property);
+        if (owningField && IsManagedPointerType(target.type) &&
+            value.type != "null" && !value.createsManagedOwner) {
+            Report("managed resource fields require a fresh owner or null; "
+                "store a copy/owner instead of a subscriber",
+                "E_RESOURCE_FIELD_REQUIRES_OWNER", target.symbol);
+        }
+        if (owningField && ArrayRank(target.type) > 0) {
+            bool transfersOwner = IsExplicitArrayCopy(expr->value.get());
+            if (const Symbol* source = table.Get(value.symbol)) {
+                transfersOwner = transfersOwner || source->scopeDepth == 0 ||
+                    source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;
+            }
+            if (!transfersOwner)
+                Report("array resource fields require copy(...), a returned array, or a global view",
+                    "E_ARRAY_FIELD_REQUIRES_OWNER", target.symbol);
+        }
+        if (ArrayRank(target.type) == 0 && !IsPointerType(target.type) &&
+            TypeOwnsResources(target.type)) {
+            Report("resource-owning aggregate '" + target.type +
+                "' cannot be copied; explicit move semantics are not implemented yet",
+                "E_RESOURCE_AGGREGATE_COPY", target.symbol);
+        }
         if (IsManagedPointerType(target.type)) {
             if (Symbol* symbol = table.Get(target.symbol)) {
                 const bool assignsOwner = value.createsManagedOwner;
@@ -577,6 +605,12 @@ namespace Absolute {
         if (expr->value) value = Evaluate(expr->value.get());
         if (expr->value && !IsAssignable(type, value.type))
             Report("initializer of '" + name + "' has type '" + value.type + "', expected '" + type + "'");
+        if (expr->value && ArrayRank(type) == 0 && !IsPointerType(type) &&
+            TypeOwnsResources(type))
+            Report("resource-owning aggregate '" + type +
+                "' cannot be copied into '" + name +
+                "'; explicit move semantics are not implemented yet",
+                "E_RESOURCE_AGGREGATE_COPY", value.symbol);
         if (expr->isConst && currentType.empty() && !expr->value)
             Report("const variable '" + name + "' requires an initializer",
                 "E_CONST_REQUIRES_INITIALIZER");

@@ -755,6 +755,32 @@ namespace Absolute {
         return function;
     }
 
+    llvm::Function* CodeGenerator::Impl::DeclareClassDestructor(ClassInfo& info) {
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getVoidTy(), {builder.getPtrTy()}, false);
+        const std::string name = info.name + ".__destroy";
+        llvm::Function* function = module->getFunction(name);
+        if (!function)
+            function = llvm::Function::Create(
+                type, llvm::Function::InternalLinkage, name, *module);
+        function->setCallingConv(llvm::CallingConv::C);
+        function->getArg(0)->setName("this");
+        return function;
+    }
+
+    llvm::Function* CodeGenerator::Impl::DeclareStructDestructor(StructInfo& info) {
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getVoidTy(), {builder.getPtrTy()}, false);
+        const std::string name = info.name + ".__destroy";
+        llvm::Function* function = module->getFunction(name);
+        if (!function)
+            function = llvm::Function::Create(
+                type, llvm::Function::InternalLinkage, name, *module);
+        function->setCallingConv(llvm::CallingConv::C);
+        function->getArg(0)->setName("this");
+        return function;
+    }
+
     void CodeGenerator::Impl::DeclareClasses() {
         for (const std::string& name : classOrder) FinalizeClass(name);
         for (const std::string& name : classOrder) {
@@ -765,11 +791,17 @@ namespace Absolute {
                 DeclareMethodFunction(method);
             }
             DeclareConstructorFunction(info);
+            DeclareClassDestructor(info);
         }
         for (const std::string& name : classOrder) {
             ClassInfo& info = classes.at(name);
             std::vector<llvm::Constant*> entries;
-            for (const std::string& methodName : info.virtualNames) {
+            for (size_t slot = 0; slot < info.virtualNames.size(); ++slot) {
+                if (slot == 0) {
+                    entries.push_back(DeclareClassDestructor(info));
+                    continue;
+                }
+                const std::string& methodName = info.virtualNames[slot];
                 if (methodName.empty()) {
                     entries.push_back(llvm::ConstantPointerNull::get(builder.getPtrTy()));
                     continue;
@@ -796,6 +828,7 @@ namespace Absolute {
                 DeclareMethodFunction(method);
             }
             DeclareConstructorFunction(info);
+            if (TypeNeedsCleanup(info.name)) DeclareStructDestructor(info);
         }
     }
 
@@ -862,5 +895,127 @@ namespace Absolute {
 
     void CodeGenerator::Impl::InitializeObject(llvm::Value* object, StructInfo& info) {
         builder.CreateMemSet(object, builder.getInt8(0), ObjectSize(info), llvm::MaybeAlign(8));
+    }
+
+    bool CodeGenerator::Impl::TypeNeedsCleanup(const std::string& typeName) {
+        std::unordered_set<std::string> visiting;
+        const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
+            if (IsManagedPointerTypeName(candidate) || ArrayRankName(candidate) > 0) return true;
+            if (IsRawPointerTypeName(candidate) || !visiting.insert(candidate).second) return false;
+            const auto release = [&] { visiting.erase(candidate); };
+            if (const auto found = classes.find(candidate); found != classes.end()) {
+                for (const ClassField& field : found->second.fields) {
+                    if (self(self, field.typeName)) {
+                        release();
+                        return true;
+                    }
+                }
+            }
+            else if (const auto found = structs.find(candidate); found != structs.end()) {
+                for (const ClassField& field : found->second.fields) {
+                    if (self(self, field.typeName)) {
+                        release();
+                        return true;
+                    }
+                }
+            }
+            release();
+            return false;
+        };
+        return inspect(inspect, typeName);
+    }
+
+    void CodeGenerator::Impl::EmitPointeeCleanup(
+        llvm::Value* pointer, const std::string& pointerTypeName) {
+        const std::string pointeeName = PointerPointeeName(pointerTypeName);
+        const bool dynamicClass = classes.contains(pointeeName) || interfaces.contains(pointeeName);
+        const bool directStruct = structs.contains(pointeeName) && TypeNeedsCleanup(pointeeName);
+        if (!dynamicClass && !directStruct) return;
+
+        llvm::Function* parent = CurrentFunction();
+        llvm::BasicBlock* cleanup = llvm::BasicBlock::Create(
+            context, "aggregate.cleanup", parent);
+        llvm::BasicBlock* complete = llvm::BasicBlock::Create(
+            context, "aggregate.cleanup.end", parent);
+        builder.CreateCondBr(builder.CreateICmpNE(pointer,
+            llvm::ConstantPointerNull::get(builder.getPtrTy()), "aggregate.present"),
+            cleanup, complete);
+        builder.SetInsertPoint(cleanup);
+        if (dynamicClass) {
+            llvm::Value* vtable = builder.CreateLoad(
+                builder.getPtrTy(), pointer, "aggregate.vtable");
+            llvm::Value* slot = builder.CreateGEP(
+                builder.getPtrTy(), vtable, builder.getInt64(0), "aggregate.destroy.slot");
+            llvm::Value* destructor = builder.CreateLoad(
+                builder.getPtrTy(), slot, "aggregate.destroy");
+            llvm::FunctionType* type = llvm::FunctionType::get(
+                builder.getVoidTy(), {builder.getPtrTy()}, false);
+            builder.CreateCall(type, destructor, {pointer});
+        }
+        else builder.CreateCall(DeclareStructDestructor(structs.at(pointeeName)), {pointer});
+        builder.CreateBr(complete);
+        builder.SetInsertPoint(complete);
+    }
+
+    void CodeGenerator::Impl::EmitValueCleanup(
+        llvm::Value* address, const std::string& typeName) {
+        if (IsManagedPointerTypeName(typeName)) {
+            llvm::Value* handle = builder.CreateLoad(
+                builder.getInt64Ty(), address, "field.cleanup.handle");
+            llvm::Value* pointer = builder.CreateCall(
+                ManagedGet(false), {handle}, "field.cleanup.pointee");
+            EmitPointeeCleanup(pointer, typeName);
+            builder.CreateCall(ManagedDestroy(), {handle});
+            builder.CreateStore(builder.getInt64(0), address);
+            return;
+        }
+        if (ArrayRankName(typeName) > 0) {
+            llvm::Value* descriptor = builder.CreateLoad(
+                ArrayDescriptorType(typeName), address, "field.cleanup.array");
+            llvm::Value* owner = builder.CreateExtractValue(
+                descriptor, {1}, "field.cleanup.array.owner");
+            builder.CreateCall(Free(), {owner});
+            builder.CreateStore(llvm::Constant::getNullValue(
+                ArrayDescriptorType(typeName)), address);
+            return;
+        }
+        if (const auto found = classes.find(typeName); found != classes.end()) {
+            if (TypeNeedsCleanup(typeName))
+                builder.CreateCall(DeclareClassDestructor(found->second), {address});
+            return;
+        }
+        if (const auto found = structs.find(typeName); found != structs.end()) {
+            if (TypeNeedsCleanup(typeName))
+                builder.CreateCall(DeclareStructDestructor(found->second), {address});
+        }
+    }
+
+    void CodeGenerator::Impl::EmitClassDestructor(ClassInfo& info) {
+        llvm::Function* function = DeclareClassDestructor(info);
+        if (!function->empty()) return;
+        llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+        builder.SetInsertPoint(entry);
+        llvm::Value* object = function->getArg(0);
+        for (auto field = info.fields.rbegin(); field != info.fields.rend(); ++field) {
+            if (!TypeNeedsCleanup(field->typeName)) continue;
+            EmitValueCleanup(FieldAddress(object, info, *field), field->typeName);
+        }
+        builder.CreateRetVoid();
+        builder.ClearInsertionPoint();
+    }
+
+    void CodeGenerator::Impl::EmitStructDestructor(StructInfo& info) {
+        if (!TypeNeedsCleanup(info.name)) return;
+        llvm::Function* function = DeclareStructDestructor(info);
+        if (!function->empty()) return;
+        llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+        builder.SetInsertPoint(entry);
+        llvm::Value* object = function->getArg(0);
+        for (auto field = info.fields.rbegin(); field != info.fields.rend(); ++field) {
+            if (!TypeNeedsCleanup(field->typeName)) continue;
+            EmitValueCleanup(FieldAddress(object, info, *field), field->typeName);
+        }
+        builder.CreateRetVoid();
+        builder.ClearInsertionPoint();
     }
 }

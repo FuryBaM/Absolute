@@ -432,6 +432,48 @@ namespace Absolute {
         return source == "null" && !PrimitiveStringToEnum(target).has_value();
     }
 
+    bool Analyzer::TypeOwnsResources(const std::string& name) const {
+        std::unordered_set<std::string> visiting;
+        const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
+            if (IsManagedPointerType(candidate) || ArrayRank(candidate) > 0) return true;
+            if (IsPointerType(candidate)) return false;
+
+            std::string definitionName = candidate;
+            std::string genericBase;
+            std::vector<std::string> genericArguments;
+            if (ParseGenericTypeName(candidate, genericBase, genericArguments))
+                definitionName = genericBase;
+            if (!visiting.insert(definitionName).second) return false;
+            const auto release = [&] { visiting.erase(definitionName); };
+            const auto found = types.find(definitionName);
+            if (found == types.end() || (found->second.kind != TypeKind::Class &&
+                found->second.kind != TypeKind::Struct)) {
+                release();
+                return false;
+            }
+            for (const auto& [memberName, overloads] : found->second.members) {
+                (void)memberName;
+                for (const MemberSignature& member : overloads) {
+                    if (member.isStatic || (member.kind != SymbolKind::Field &&
+                        member.kind != SymbolKind::Property)) continue;
+                    if (self(self, member.type)) {
+                        release();
+                        return true;
+                    }
+                }
+            }
+            for (const std::string& parent : found->second.parents) {
+                if (self(self, parent)) {
+                    release();
+                    return true;
+                }
+            }
+            release();
+            return false;
+        };
+        return inspect(inspect, name);
+    }
+
     bool Analyzer::IsDerivedFrom(const std::string& type, const std::string& base) const {
         if (type == base) return true;
         const auto found = types.find(type);

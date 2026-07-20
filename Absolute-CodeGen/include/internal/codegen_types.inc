@@ -81,3 +81,17 @@
         void InitializeObject(llvm::Value* object, ClassInfo& info);
 
         void InitializeObject(llvm::Value* object, StructInfo& info);
+
+        bool TypeNeedsCleanup(const std::string& typeName);
+
+        llvm::Function* DeclareClassDestructor(ClassInfo& info);
+
+        llvm::Function* DeclareStructDestructor(StructInfo& info);
+
+        void EmitClassDestructor(ClassInfo& info);
+
+        void EmitStructDestructor(StructInfo& info);
+
+        void EmitValueCleanup(llvm::Value* address, const std::string& typeName);
+
+        void EmitPointeeCleanup(llvm::Value* pointer, const std::string& pointerTypeName);

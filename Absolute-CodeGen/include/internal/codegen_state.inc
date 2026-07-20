@@ -16,6 +16,7 @@
             llvm::Value* arrayOwner = nullptr;
             bool ownsArrayStorage = false;
             SymbolId arrayOwnerSymbol = InvalidSymbolId;
+            bool ownsAggregateResources = false;
         };
 
         struct ArrayView {
@@ -160,7 +161,8 @@
         std::vector<std::string> interfaceOrder;
         std::unordered_set<std::string> enumTypes;
         std::unordered_map<std::string, std::int32_t> enumConstants;
-        unsigned interfaceSlotCount = 0;
+        // Slot zero is reserved for the generated aggregate destructor.
+        unsigned interfaceSlotCount = 1;
         std::vector<LoopTarget> loops;
         std::vector<ExceptionTarget> exceptionTargets;
         std::vector<FinallyTarget> finallyTargets;
