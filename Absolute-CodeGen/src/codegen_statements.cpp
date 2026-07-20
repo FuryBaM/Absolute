@@ -48,6 +48,7 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(FunctionDeclStmt* stmt) {
+        if (stmt->IsGeneric()) return;
         if (impl->phase == Impl::Phase::DeclareFunctions) impl->DeclareFunction(*stmt);
         else if (!stmt->IsExternal()) impl->EmitFunction(*stmt);
     }
@@ -112,6 +113,14 @@ namespace Absolute {
 
     void CodeGenerator::Visit(StructDeclStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        if (!stmt->templateParams.empty()) {
+            for (const std::string& specialization : impl->structOrder) {
+                auto found = impl->structs.find(specialization);
+                if (found != impl->structs.end() && found->second.statement == stmt)
+                    impl->EmitStructBodies(found->second);
+            }
+            return;
+        }
         const std::string name = impl->Qualify(stmt->name);
         auto found = impl->structs.find(name);
         if (found == impl->structs.end()) impl->Fail("unregistered struct '" + name + "'");
@@ -120,6 +129,14 @@ namespace Absolute {
 
     void CodeGenerator::Visit(ClassDeclStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        if (!stmt->templateParams.empty()) {
+            for (const std::string& specialization : impl->classOrder) {
+                auto found = impl->classes.find(specialization);
+                if (found != impl->classes.end() && found->second.statement == stmt)
+                    impl->EmitClassBodies(found->second);
+            }
+            return;
+        }
         const std::string name = impl->Qualify(stmt->name);
         auto found = impl->classes.find(name);
         if (found == impl->classes.end()) impl->Fail("unregistered class '" + name + "'");

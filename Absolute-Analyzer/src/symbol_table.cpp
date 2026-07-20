@@ -65,4 +65,11 @@ namespace Absolute {
     }
 
     const std::vector<Symbol>& SymbolTable::All() const { return symbols; }
+
+    SymbolId SymbolTable::AppendSpecialization(Symbol symbol) {
+        symbol.id = static_cast<SymbolId>(symbols.size());
+        symbol.scopeDepth = ScopeDepth();
+        symbols.push_back(std::move(symbol));
+        return symbols.back().id;
+    }
 }

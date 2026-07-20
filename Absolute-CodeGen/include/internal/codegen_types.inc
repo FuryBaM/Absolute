@@ -10,9 +10,13 @@
 
         std::string QualifiedClassName(const std::string& name, const std::string& nameSpace) const;
 
-        void CollectClass(ClassDeclStmt& statement, const std::string& nameSpace);
+        void CollectClass(ClassDeclStmt& statement, const std::string& nameSpace,
+            const std::string& specializedName = {},
+            std::unordered_map<std::string, std::string> substitutions = {});
 
-        void CollectStruct(StructDeclStmt& statement, const std::string& nameSpace);
+        void CollectStruct(StructDeclStmt& statement, const std::string& nameSpace,
+            const std::string& specializedName = {},
+            std::unordered_map<std::string, std::string> substitutions = {});
 
         void CollectInterface(InterfaceDeclStmt& statement, const std::string& nameSpace);
 
@@ -29,7 +33,7 @@
 
         void FinalizeClass(const std::string& name);
 
-        llvm::FunctionType* MethodFunctionType(FunctionDeclStmt& statement);
+        llvm::FunctionType* MethodFunctionType(const ClassMethod& method);
 
         llvm::Function* DeclareMethodFunction(const ClassMethod& method);
 

@@ -343,6 +343,8 @@ namespace Absolute {
     }
 
     std::string CodeGenerator::Impl::FunctionLinkName(const Symbol& symbol) const {
+        if (symbol.genericOrigin != InvalidSymbolId)
+            return CallableKey(symbol.name, symbol.parameterTypes);
         if (symbol.externalFunction || symbol.name == "main" || !analyzer ||
             analyzer->FunctionOverloadCount(symbol.name) <= 1)
             return symbol.externalFunction ? symbol.name.substr(symbol.name.rfind('.') + 1) : symbol.name;
@@ -581,7 +583,7 @@ namespace Absolute {
     std::string CodeGenerator::Impl::SemanticType(Expression* expression) const {
         if (!analyzer || !expression) return {};
         const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
-        return info ? info->type : std::string{};
+        return info ? SubstituteCodegenType(info->type, currentGenericSubstitutions) : std::string{};
     }
 
     CodeGenerator::Impl::PrintableValue CodeGenerator::Impl::PreparePrintable(llvm::Value* source, Expression* expression) {

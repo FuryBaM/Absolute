@@ -12,7 +12,16 @@ namespace Absolute{
         Token* current = RequireCurrent("a type");
         std::unique_ptr<TypeExpr> base;
         if (current->type == TokenType::IDENTIFIER) {
-            base = std::make_unique<UserTypeExpr>(ParseIdentifierExpr(true));
+            std::unique_ptr<Expression> name = std::make_unique<IdentifierExpr>(
+                Consume(TokenType::IDENTIFIER)->value);
+            while (CurrentToken()) {
+                if (CurrentToken()->type == TokenType::DELIMITER && CurrentToken()->value == ".")
+                    name = ParseMemberAccess(std::move(name));
+                else if (CurrentToken()->type == TokenType::OPERATOR && CurrentToken()->value == "<")
+                    name = ParseTemplateExpr(std::move(name));
+                else break;
+            }
+            base = std::make_unique<UserTypeExpr>(std::move(name));
         }
         else if (current->type == TokenType::KEYWORD) {
             base = ParsePrimitiveType();

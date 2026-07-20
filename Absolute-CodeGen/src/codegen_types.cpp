@@ -48,7 +48,8 @@ namespace Absolute {
         if (!expression) Fail("missing type expression");
         if (analyzer) {
             if (const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
-                info && !info->type.empty() && info->type != "error") return info->type;
+                info && !info->type.empty() && info->type != "error")
+                return SubstituteCodegenType(info->type, currentGenericSubstitutions);
         }
         PrimitiveTypeNameVisitor typeVisitor;
         expression->Accept(typeVisitor);
@@ -59,7 +60,8 @@ namespace Absolute {
     std::string CodeGenerator::Impl::DeclaredTypeName(VarDeclExpr& expression) {
         if (analyzer) {
             if (const ExpressionInfo* info = analyzer->GetExpressionInfo(expression);
-                info && !info->type.empty() && info->type != "error") return info->type;
+                info && !info->type.empty() && info->type != "error")
+                return SubstituteCodegenType(info->type, currentGenericSubstitutions);
         }
         std::string type = ResolveTypeName(expression.type.get());
         if (const auto* declarator = dynamic_cast<const ArrayAccessExpr*>(expression.name.get()))
@@ -72,17 +74,22 @@ namespace Absolute {
         return nameSpace + "." + name;
     }
 
-    void CodeGenerator::Impl::CollectClass(ClassDeclStmt& statement, const std::string& nameSpace) {
-        const std::string name = QualifiedClassName(statement.name, nameSpace);
+    void CodeGenerator::Impl::CollectClass(ClassDeclStmt& statement, const std::string& nameSpace,
+        const std::string& specializedName,
+        std::unordered_map<std::string, std::string> substitutions) {
+        const std::string name = specializedName.empty()
+            ? QualifiedClassName(statement.name, nameSpace) : specializedName;
         if (classes.contains(name) || structs.contains(name) || interfaces.contains(name) || enumTypes.contains(name))
             Fail("duplicate type '" + name + "'");
         ClassInfo info;
         info.name = name;
         info.nameSpace = nameSpace;
         info.statement = &statement;
+        info.substitutions = std::move(substitutions);
         info.llvmType = llvm::StructType::create(context, "absolute.class." + name);
         for (const std::string& parent : statement.parents)
-            info.parents.push_back(QualifiedClassName(parent, nameSpace));
+            info.parents.push_back(SubstituteCodegenType(
+                QualifiedClassName(parent, nameSpace), info.substitutions));
 
         auto* body = dynamic_cast<CompoundStmt*>(statement.body.get());
         if (!body) Fail("class '" + name + "' requires a compound body");
@@ -105,14 +112,18 @@ namespace Absolute {
         classOrder.push_back(name);
     }
 
-    void CodeGenerator::Impl::CollectStruct(StructDeclStmt& statement, const std::string& nameSpace) {
-        const std::string name = QualifiedClassName(statement.name, nameSpace);
+    void CodeGenerator::Impl::CollectStruct(StructDeclStmt& statement, const std::string& nameSpace,
+        const std::string& specializedName,
+        std::unordered_map<std::string, std::string> substitutions) {
+        const std::string name = specializedName.empty()
+            ? QualifiedClassName(statement.name, nameSpace) : specializedName;
         if (structs.contains(name) || classes.contains(name) || interfaces.contains(name) || enumTypes.contains(name))
             Fail("duplicate type '" + name + "'");
         StructInfo info;
         info.name = name;
         info.nameSpace = nameSpace;
         info.statement = &statement;
+        info.substitutions = std::move(substitutions);
         info.llvmType = llvm::StructType::create(context, "absolute.struct." + name);
         for (const auto& member : statement.members) {
             if (auto* declaration = dynamic_cast<VarDeclStmt*>(member.get())) {
@@ -150,10 +161,46 @@ namespace Absolute {
     void CodeGenerator::Impl::CollectClassDeclarations(const std::vector<std::unique_ptr<Statement>>& statements,
         const std::string& nameSpace) {
         for (const auto& statement : statements) {
-            if (auto* classDeclaration = dynamic_cast<ClassDeclStmt*>(statement.get()))
-                CollectClass(*classDeclaration, nameSpace);
-            else if (auto* structDeclaration = dynamic_cast<StructDeclStmt*>(statement.get()))
-                CollectStruct(*structDeclaration, nameSpace);
+            if (auto* classDeclaration = dynamic_cast<ClassDeclStmt*>(statement.get())) {
+                if (classDeclaration->templateParams.empty()) CollectClass(*classDeclaration, nameSpace);
+                else if (analyzer) {
+                    const std::string baseName = QualifiedClassName(classDeclaration->name, nameSpace);
+                    std::vector<std::string> specializations(
+                        analyzer->InstantiatedGenericTypes().begin(),
+                        analyzer->InstantiatedGenericTypes().end());
+                    std::sort(specializations.begin(), specializations.end());
+                    for (const std::string& specialization : specializations) {
+                        std::string base;
+                        std::vector<std::string> arguments;
+                        if (!ParseCodegenGenericType(specialization, base, arguments) ||
+                            base != baseName || arguments.size() != classDeclaration->templateParams.size()) continue;
+                        std::unordered_map<std::string, std::string> substitutions;
+                        for (size_t index = 0; index < arguments.size(); ++index)
+                            substitutions.emplace(classDeclaration->templateParams[index].value, arguments[index]);
+                        CollectClass(*classDeclaration, nameSpace, specialization, std::move(substitutions));
+                    }
+                }
+            }
+            else if (auto* structDeclaration = dynamic_cast<StructDeclStmt*>(statement.get())) {
+                if (structDeclaration->templateParams.empty()) CollectStruct(*structDeclaration, nameSpace);
+                else if (analyzer) {
+                    const std::string baseName = QualifiedClassName(structDeclaration->name, nameSpace);
+                    std::vector<std::string> specializations(
+                        analyzer->InstantiatedGenericTypes().begin(),
+                        analyzer->InstantiatedGenericTypes().end());
+                    std::sort(specializations.begin(), specializations.end());
+                    for (const std::string& specialization : specializations) {
+                        std::string base;
+                        std::vector<std::string> arguments;
+                        if (!ParseCodegenGenericType(specialization, base, arguments) ||
+                            base != baseName || arguments.size() != structDeclaration->templateParams.size()) continue;
+                        std::unordered_map<std::string, std::string> substitutions;
+                        for (size_t index = 0; index < arguments.size(); ++index)
+                            substitutions.emplace(structDeclaration->templateParams[index].value, arguments[index]);
+                        CollectStruct(*structDeclaration, nameSpace, specialization, std::move(substitutions));
+                    }
+                }
+            }
             else if (auto* interfaceDeclaration = dynamic_cast<InterfaceDeclStmt*>(statement.get()))
                 CollectInterface(*interfaceDeclaration, nameSpace);
             else if (auto* enumDeclaration = dynamic_cast<EnumDeclStmt*>(statement.get())) {
@@ -214,7 +261,8 @@ namespace Absolute {
             }
             else slot = interfaceSlotCount++;
             info.methods[methodKey] = ClassMethod{
-                statement, name, {}, slot};
+                statement, name, {}, slot, parameterTypes,
+                ResolveTypeName(statement->returnType.get()), {}};
         }
         info.finalizing = false;
         info.finalized = true;
@@ -232,6 +280,8 @@ namespace Absolute {
         if (info.finalizing)
             Fail("struct '" + name + "' contains itself by value; use a pointer field");
         info.finalizing = true;
+        const auto oldSubstitutions = currentGenericSubstitutions;
+        currentGenericSubstitutions = info.substitutions;
 
         const auto addField = [&](const std::string& fieldName, const std::string& typeName) {
             if (info.fieldByName.contains(fieldName))
@@ -256,7 +306,8 @@ namespace Absolute {
             if (info.methods.contains(methodKey))
                 Fail("duplicate method '" + name + "." + methodName + "'");
             info.methods.emplace(methodKey, ClassMethod{
-                statement, name, CallableKey(name + "." + methodName, parameterTypes), std::nullopt});
+                statement, name, CallableKey(name + "." + methodName, parameterTypes), std::nullopt,
+                parameterTypes, ResolveTypeName(statement->returnType.get()), info.substitutions});
         }
 
         std::vector<llvm::Type*> layout;
@@ -265,6 +316,7 @@ namespace Absolute {
         info.llvmType->setBody(layout, false);
         info.finalizing = false;
         info.finalized = true;
+        currentGenericSubstitutions = oldSubstitutions;
     }
 
     bool CodeGenerator::Impl::SameMethodSignature(FunctionDeclStmt& left, FunctionDeclStmt& right) {
@@ -283,6 +335,8 @@ namespace Absolute {
         if (info.finalized) return;
         if (info.finalizing) Fail("cyclic class inheritance involving '" + name + "'");
         info.finalizing = true;
+        const auto oldSubstitutions = currentGenericSubstitutions;
+        currentGenericSubstitutions = info.substitutions;
 
         std::string baseClass;
         std::vector<std::string> implementedInterfaces;
@@ -353,7 +407,8 @@ namespace Absolute {
                 slot = static_cast<unsigned>(info.virtualNames.size());
                 info.virtualNames.push_back(methodKey);
             }
-            ClassMethod method{statement, name, CallableKey(name + "." + methodName, parameterTypes), slot};
+            ClassMethod method{statement, name, CallableKey(name + "." + methodName, parameterTypes), slot,
+                parameterTypes, ResolveTypeName(statement->returnType.get()), info.substitutions};
             info.methods[methodKey] = method;
             info.declaredMethods[methodKey] = std::move(method);
         }
@@ -380,17 +435,18 @@ namespace Absolute {
         info.llvmType->setBody(layout, false);
         info.finalizing = false;
         info.finalized = true;
+        currentGenericSubstitutions = oldSubstitutions;
     }
 
-    llvm::FunctionType* CodeGenerator::Impl::MethodFunctionType(FunctionDeclStmt& statement) {
+    llvm::FunctionType* CodeGenerator::Impl::MethodFunctionType(const ClassMethod& method) {
         std::vector<llvm::Type*> parameters{builder.getPtrTy()};
-        for (const auto& parameter : statement.parameters)
-            parameters.push_back(TypeFromName(DeclaredTypeName(*parameter)));
-        return llvm::FunctionType::get(ResolveType(statement.returnType.get()), parameters, false);
+        for (const std::string& parameter : method.parameterTypes)
+            parameters.push_back(TypeFromName(parameter));
+        return llvm::FunctionType::get(TypeFromName(method.returnType), parameters, false);
     }
 
     llvm::Function* CodeGenerator::Impl::DeclareMethodFunction(const ClassMethod& method) {
-        llvm::FunctionType* type = MethodFunctionType(*method.statement);
+        llvm::FunctionType* type = MethodFunctionType(method);
         llvm::Function* function = module->getFunction(method.linkName);
         if (!function)
             function = llvm::Function::Create(type, llvm::Function::ExternalLinkage, method.linkName, *module);
@@ -409,7 +465,8 @@ namespace Absolute {
         if (!info.constructor) return nullptr;
         std::vector<llvm::Type*> parameters{builder.getPtrTy()};
         for (const auto& parameter : info.constructor->parameters)
-            parameters.push_back(TypeFromName(DeclaredTypeName(*parameter)));
+            parameters.push_back(TypeFromName(SubstituteCodegenType(
+                DeclaredTypeName(*parameter), info.substitutions)));
         llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
         const std::string name = info.name + ".__ctor";
         llvm::Function* function = module->getFunction(name);
@@ -428,7 +485,8 @@ namespace Absolute {
         if (!info.constructor) return nullptr;
         std::vector<llvm::Type*> parameters{builder.getPtrTy()};
         for (const auto& parameter : info.constructor->parameters)
-            parameters.push_back(TypeFromName(DeclaredTypeName(*parameter)));
+            parameters.push_back(TypeFromName(SubstituteCodegenType(
+                DeclaredTypeName(*parameter), info.substitutions)));
         llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
         const std::string name = info.name + ".__ctor";
         llvm::Function* function = module->getFunction(name);

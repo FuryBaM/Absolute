@@ -1,0 +1,31 @@
+T same<T>(T left, T right) {
+    return left;
+}
+
+int32 marker<T>(int32 value) {
+    return value;
+}
+
+int32 ordinary(int32 value) {
+    return value;
+}
+
+class Box<T> {
+    public T value;
+}
+
+class GenericMethodOwner {
+    public T unsupported<T>(T value) {
+        return value;
+    }
+}
+
+int32 main() {
+    int32 conflict = same(1, 2.0);
+    int32 cannotInfer = marker(1);
+    int32 tooManyFunctionArguments = same<int32, double>(1, 2);
+    int32 notGeneric = ordinary<int32>(1);
+    Box<int32, double>* wrongArity = null;
+    Box* missingArguments = null;
+    return conflict + cannotInfer + tooManyFunctionArguments + notGeneric;
+}

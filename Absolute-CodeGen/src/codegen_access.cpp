@@ -84,7 +84,7 @@ namespace Absolute {
                 if (method == info.methods.end())
                     impl->Fail("class '" + info.name + "' has no method '" + member->member + "'");
                 llvm::Value* object = impl->ObjectPointer(member->base.get(), baseType);
-                llvm::FunctionType* methodType = impl->MethodFunctionType(*method->second.statement);
+                llvm::FunctionType* methodType = impl->MethodFunctionType(method->second);
                 std::vector<llvm::Value*> arguments{object};
                 for (size_t index = 0; index < expr->arguments.size(); ++index) {
                     if (index + 1 >= methodType->getNumParams())
@@ -129,7 +129,7 @@ namespace Absolute {
                     impl->Fail("interface method '" + info.name + "." + member->member +
                         "' has no dispatch slot");
                 llvm::Value* object = impl->ObjectPointer(member->base.get(), baseType);
-                llvm::FunctionType* methodType = impl->MethodFunctionType(*method->second.statement);
+                llvm::FunctionType* methodType = impl->MethodFunctionType(method->second);
                 std::vector<llvm::Value*> arguments{object};
                 for (size_t index = 0; index < expr->arguments.size(); ++index) {
                     if (index + 1 >= methodType->getNumParams())
@@ -162,7 +162,7 @@ namespace Absolute {
                 if (method == info.methods.end())
                     impl->Fail("struct '" + info.name + "' has no method '" + member->member + "'");
                 llvm::Value* object = impl->ObjectPointer(member->base.get(), baseType);
-                llvm::FunctionType* methodType = impl->MethodFunctionType(*method->second.statement);
+                llvm::FunctionType* methodType = impl->MethodFunctionType(method->second);
                 std::vector<llvm::Value*> arguments{object};
                 for (size_t index = 0; index < expr->arguments.size(); ++index) {
                     if (index + 1 >= methodType->getNumParams())

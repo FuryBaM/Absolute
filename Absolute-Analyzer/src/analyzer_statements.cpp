@@ -64,9 +64,20 @@ namespace Absolute {
     void Analyzer::Visit(FunctionDeclStmt* stmt) {
         if (phase == Phase::CollectDeclarations) {
             if (currentType.empty()) DeclareGlobalFunction(*stmt);
-            else if (stmt->name && stmt->returnType)
+            else if (stmt->name && stmt->returnType) {
                 DeclareMember(currentType, stmt->name->value,
                     {SymbolKind::Method, ResolveType(stmt->returnType.get()), ResolveParameterTypes(stmt->parameters)});
+                auto& overloads = types[currentType].members[stmt->name->value];
+                if (!overloads.empty()) {
+                    Symbol* symbol = table.Get(overloads.back().symbol);
+                    if (symbol) {
+                        symbol->genericParameters = types[currentType].genericParameters;
+                        for (const Token& parameter : stmt->templateParams)
+                            symbol->genericParameters.push_back(parameter.value);
+                        functionDeclarations[symbol->id] = stmt;
+                    }
+                }
+            }
         }
         else if (!currentType.empty() && types[currentType].kind == TypeKind::Interface) {
             ValidateAttributes(*stmt, "interface method", true);
@@ -90,6 +101,9 @@ namespace Absolute {
                     "' has an unsupported modifier");
         }
         else {
+            if (!currentType.empty() && !stmt->templateParams.empty())
+                Report("independently generic methods are not implemented yet; use the generic parameters of the containing type",
+                    "E_GENERIC_METHOD_UNSUPPORTED");
             ValidateAttributes(*stmt, currentType.empty() ? "function" : "method", true);
             ResolveFunction(*stmt, currentType.empty() ? SymbolKind::Function : SymbolKind::Method);
         }

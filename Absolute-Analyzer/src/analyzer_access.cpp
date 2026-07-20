@@ -26,8 +26,18 @@ namespace Absolute {
     void Analyzer::Visit(IdentifierExpr* expr) {
         if (typeContextDepth > 0) {
             const std::string type = ResolveTypeReference(expr->name);
-            if (phase == Phase::ResolveBodies && !IsKnownType(type)) Report("unknown type '" + expr->name + "'");
-            Save(expr, {InvalidSymbolId, type, false});
+            const auto generic = types.find(type);
+            if (phase == Phase::ResolveBodies && generic != types.end() &&
+                !generic->second.genericParameters.empty()) {
+                Report("generic type '" + type + "' requires type arguments",
+                    "E_GENERIC_TYPE_ARGUMENTS_REQUIRED");
+                Save(expr, {InvalidSymbolId, "error", false});
+            }
+            else {
+                if (phase == Phase::ResolveBodies && !IsKnownType(type))
+                    Report("unknown type '" + expr->name + "'");
+                Save(expr, {InvalidSymbolId, type, false});
+            }
             return;
         }
         const SymbolId id = LookupSymbol(expr->name);
@@ -57,6 +67,12 @@ namespace Absolute {
     }
 
     void Analyzer::Visit(FunctionCallExpr* expr) {
+        std::vector<std::string> explicitTypeArguments;
+        if (auto* specialization = dynamic_cast<TemplateExpr*>(expr->base.get())) {
+            explicitTypeArguments.reserve(specialization->types.size());
+            for (const auto& type : specialization->types)
+                explicitTypeArguments.push_back(ResolveType(type.get()));
+        }
         if (constructorContextDepth > 0) {
             const std::string typeName = ExtractIdentifier(expr->base.get());
             if (!IsKnownType(typeName) || !types.contains(typeName))
@@ -152,7 +168,8 @@ namespace Absolute {
         const std::vector<SymbolId> qualifiedCandidates = FindFunctionCandidates(qualifiedCallName);
         if (!qualifiedCandidates.empty()) {
             for (const auto& argument : expr->arguments) arguments.push_back(Evaluate(argument.get()));
-            symbolId = SelectOverload(qualifiedCandidates, arguments, qualifiedCallName);
+            symbolId = SelectOverload(
+                qualifiedCandidates, arguments, qualifiedCallName, explicitTypeArguments);
         }
         else if (auto* memberCall = dynamic_cast<MemberAccessExpr*>(expr->base.get())) {
             receiver = Evaluate(memberCall->base.get());
@@ -164,7 +181,8 @@ namespace Absolute {
             for (const MemberSignature& member : members)
                 if (member.kind == SymbolKind::Method) methodCandidates.push_back(member.symbol);
             if (!methodCandidates.empty()) {
-                symbolId = SelectOverload(methodCandidates, arguments, memberCall->member);
+                symbolId = SelectOverload(
+                    methodCandidates, arguments, memberCall->member, explicitTypeArguments);
             }
             else if (const auto extensions = FindExtensionCandidates(memberCall->member);
                 !extensions.empty()) {
@@ -172,7 +190,8 @@ namespace Absolute {
                 extensionArguments.reserve(arguments.size() + 1);
                 extensionArguments.push_back(receiver);
                 extensionArguments.insert(extensionArguments.end(), arguments.begin(), arguments.end());
-                symbolId = SelectOverload(extensions, extensionArguments, memberCall->member);
+                symbolId = SelectOverload(
+                    extensions, extensionArguments, memberCall->member, explicitTypeArguments);
             }
             else {
                 Report("type '" + receiver.type + "' has no method '" + memberCall->member + "'");
@@ -182,7 +201,7 @@ namespace Absolute {
             for (const auto& argument : expr->arguments) arguments.push_back(Evaluate(argument.get()));
             const std::vector<SymbolId> candidates = FindFunctionCandidates(callName);
             if (candidates.empty()) Report("unknown function '" + callName + "'");
-            else symbolId = SelectOverload(candidates, arguments, callName);
+            else symbolId = SelectOverload(candidates, arguments, callName, explicitTypeArguments);
         }
 
         const Symbol* selected = table.Get(symbolId);

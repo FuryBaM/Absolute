@@ -33,6 +33,9 @@
             std::string owner;
             std::string linkName;
             std::optional<unsigned> virtualSlot;
+            std::vector<std::string> parameterTypes;
+            std::string returnType;
+            std::unordered_map<std::string, std::string> substitutions;
         };
 
         struct ClassInfo {
@@ -51,6 +54,7 @@
             std::vector<std::string> virtualNames;
             llvm::StructType* llvmType = nullptr;
             llvm::GlobalVariable* vtable = nullptr;
+            std::unordered_map<std::string, std::string> substitutions;
             bool finalizing = false;
             bool finalized = false;
             bool emitted = false;
@@ -68,6 +72,7 @@
             std::unordered_map<std::string, ClassField> fieldByName;
             std::unordered_map<std::string, ClassMethod> methods;
             llvm::StructType* llvmType = nullptr;
+            std::unordered_map<std::string, std::string> substitutions;
             bool finalizing = false;
             bool finalized = false;
             bool emitted = false;
@@ -146,6 +151,7 @@
         llvm::Value* addressValue = nullptr;
         std::string currentReturnTypeName;
         std::string currentClassName;
+        std::unordered_map<std::string, std::string> currentGenericSubstitutions;
         llvm::Value* currentThis = nullptr;
         std::uint64_t taskThunkCounter = 0;
 

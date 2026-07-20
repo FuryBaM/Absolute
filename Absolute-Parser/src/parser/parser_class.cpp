@@ -11,28 +11,7 @@ namespace Absolute {
         Consume(TokenType::KEYWORD, "class"); // class
         Token* identifier = Consume(TokenType::IDENTIFIER); // имя класса
 
-        std::vector<Token> templateParams;
-        if (CurrentToken() && CurrentToken()->value == "<") {
-            Consume(TokenType::OPERATOR, "<");
-            while (RequireCurrent("a template parameter or '>'")->value != ">") {
-                if (CurrentToken()->type == TokenType::IDENTIFIER) {
-                    templateParams.push_back(*Consume(TokenType::IDENTIFIER));
-                }
-                else {
-                    ReportSyntaxError(CurrentToken(), "Expected type name in template expression");
-                    std::exit(EXIT_FAILURE);
-                }
-
-                if (RequireCurrent("',' or '>'")->value == ",") {
-                    Consume(TokenType::DELIMITER, ",");
-                }
-                else if (CurrentToken()->value != ">") {
-                    ReportSyntaxError(CurrentToken(), "Expected ',' or '>' in template expression");
-                    std::exit(EXIT_FAILURE);
-                }
-            }
-            Consume(TokenType::OPERATOR, ">");
-        }
+        std::vector<Token> templateParams = ParseTemplateParameters();
 
         // Проверяем, есть ли наследование или реализация интерфейсов
         if (CurrentToken() && CurrentToken()->value == ":") {

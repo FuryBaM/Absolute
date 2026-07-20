@@ -81,27 +81,36 @@ namespace Absolute {
     }
 
     llvm::Function* CodeGenerator::Impl::DeclareFunction(FunctionDeclStmt& statement) {
+        return DeclareFunction(statement, nullptr);
+    }
+
+    llvm::Function* CodeGenerator::Impl::DeclareFunction(
+        FunctionDeclStmt& statement, const Symbol* specialization) {
         if (!statement.name || !statement.returnType) Fail("invalid function declaration");
-        const std::string sourceName = Qualify(statement.name->value);
+        const std::string sourceName = specialization
+            ? specialization->name : Qualify(statement.name->value);
 
         std::vector<llvm::Type*> parameterTypes;
         std::vector<std::string> parameterTypeNames;
         parameterTypes.reserve(statement.parameters.size());
         parameterTypeNames.reserve(statement.parameters.size());
-        for (const auto& parameter : statement.parameters) {
-            parameterTypeNames.push_back(DeclaredTypeName(*parameter));
+        for (size_t index = 0; index < statement.parameters.size(); ++index) {
+            const auto& parameter = statement.parameters[index];
+            parameterTypeNames.push_back(specialization
+                ? specialization->parameterTypes[index] : DeclaredTypeName(*parameter));
             parameterTypes.push_back(TypeFromName(parameterTypeNames.back()));
         }
 
-        const Symbol* symbol = analyzer
-            ? analyzer->FindFunctionSymbol(sourceName, parameterTypeNames) : nullptr;
+        const Symbol* symbol = specialization ? specialization : (analyzer
+            ? analyzer->FindFunctionSymbol(sourceName, parameterTypeNames) : nullptr);
         const std::string functionName = statement.IsExternal() ? statement.name->value :
             (symbol ? FunctionLinkName(*symbol) : sourceName);
         if (!symbol || (analyzer && analyzer->FunctionOverloadCount(sourceName) <= 1))
             functionLinkNames[sourceName] = functionName;
 
         llvm::FunctionType* functionType = llvm::FunctionType::get(
-            ResolveType(statement.returnType.get()), parameterTypes, false);
+            specialization ? TypeFromName(specialization->type) : ResolveType(statement.returnType.get()),
+            parameterTypes, false);
         if (llvm::Function* existing = module->getFunction(functionName)) {
             if (existing->getFunctionType() != functionType)
                 Fail("conflicting declarations for external symbol '" + functionName + "'");
@@ -122,20 +131,41 @@ namespace Absolute {
     }
 
     void CodeGenerator::Impl::EmitFunction(FunctionDeclStmt& statement) {
-        llvm::Function* function = DeclareFunction(statement);
+        EmitFunction(statement, nullptr);
+    }
+
+    void CodeGenerator::Impl::EmitFunction(
+        FunctionDeclStmt& statement, const Symbol* specialization) {
+        const auto oldSubstitutions = currentGenericSubstitutions;
+        const std::string oldNamespace = currentNamespace;
+        if (specialization) {
+            const Symbol* origin = analyzer ? analyzer->GetSymbol(specialization->genericOrigin) : nullptr;
+            if (!origin || origin->genericParameters.size() != specialization->genericArguments.size())
+                Fail("invalid generic function specialization");
+            currentGenericSubstitutions.clear();
+            for (size_t index = 0; index < origin->genericParameters.size(); ++index)
+                currentGenericSubstitutions.emplace(
+                    origin->genericParameters[index], specialization->genericArguments[index]);
+            const size_t separator = specialization->name.rfind('.');
+            currentNamespace = separator == std::string::npos
+                ? std::string{} : specialization->name.substr(0, separator);
+        }
+        llvm::Function* function = DeclareFunction(statement, specialization);
         if (!function->empty()) Fail("duplicate function body for '" + function->getName().str() + "'");
 
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
         builder.SetInsertPoint(entry);
         PushScope();
         const std::string oldReturnTypeName = currentReturnTypeName;
-        currentReturnTypeName = ResolveTypeName(statement.returnType.get());
+        currentReturnTypeName = specialization
+            ? specialization->type : ResolveTypeName(statement.returnType.get());
 
         size_t index = 0;
         for (llvm::Argument& argument : function->args()) {
             const auto& parameter = statement.parameters[index++];
             const std::string name = IdentifierName(parameter->name.get());
-            const std::string typeName = DeclaredTypeName(*parameter);
+            const std::string typeName = specialization
+                ? specialization->parameterTypes[index - 1] : DeclaredTypeName(*parameter);
             if (ArrayRankName(typeName) > 0) {
                 ArrayView view = ArrayViewFromValue(&argument, typeName);
                 if (!scopes.back().emplace(name,
@@ -170,6 +200,8 @@ namespace Absolute {
         PopScope();
         currentReturnTypeName = oldReturnTypeName;
         builder.ClearInsertionPoint();
+        currentGenericSubstitutions = oldSubstitutions;
+        currentNamespace = oldNamespace;
     }
 
     void CodeGenerator::Impl::BindCallableParameter(llvm::Argument& argument, VarDeclExpr& parameter) {
@@ -213,6 +245,8 @@ namespace Absolute {
         const std::string oldClass = currentClassName;
         llvm::Value* oldThis = currentThis;
         const std::string oldReturn = currentReturnTypeName;
+        const auto oldSubstitutions = currentGenericSubstitutions;
+        currentGenericSubstitutions = method.substitutions;
         currentClassName = info.name;
         currentThis = function->getArg(0);
         currentReturnTypeName = ResolveTypeName(method.statement->returnType.get());
@@ -225,6 +259,7 @@ namespace Absolute {
         currentClassName = oldClass;
         currentThis = oldThis;
         currentReturnTypeName = oldReturn;
+        currentGenericSubstitutions = oldSubstitutions;
         builder.ClearInsertionPoint();
     }
 
@@ -238,6 +273,8 @@ namespace Absolute {
         const std::string oldClass = currentClassName;
         llvm::Value* oldThis = currentThis;
         const std::string oldReturn = currentReturnTypeName;
+        const auto oldSubstitutions = currentGenericSubstitutions;
+        currentGenericSubstitutions = info.substitutions;
         currentClassName = info.name;
         currentThis = function->getArg(0);
         currentReturnTypeName = "void";
@@ -250,6 +287,7 @@ namespace Absolute {
         currentClassName = oldClass;
         currentThis = oldThis;
         currentReturnTypeName = oldReturn;
+        currentGenericSubstitutions = oldSubstitutions;
         builder.ClearInsertionPoint();
     }
 
@@ -272,6 +310,8 @@ namespace Absolute {
         const std::string oldClass = currentClassName;
         llvm::Value* oldThis = currentThis;
         const std::string oldReturn = currentReturnTypeName;
+        const auto oldSubstitutions = currentGenericSubstitutions;
+        currentGenericSubstitutions = method.substitutions;
         currentClassName = info.name;
         currentThis = function->getArg(0);
         currentReturnTypeName = ResolveTypeName(method.statement->returnType.get());
@@ -284,6 +324,7 @@ namespace Absolute {
         currentClassName = oldClass;
         currentThis = oldThis;
         currentReturnTypeName = oldReturn;
+        currentGenericSubstitutions = oldSubstitutions;
         builder.ClearInsertionPoint();
     }
 
@@ -297,6 +338,8 @@ namespace Absolute {
         const std::string oldClass = currentClassName;
         llvm::Value* oldThis = currentThis;
         const std::string oldReturn = currentReturnTypeName;
+        const auto oldSubstitutions = currentGenericSubstitutions;
+        currentGenericSubstitutions = info.substitutions;
         currentClassName = info.name;
         currentThis = function->getArg(0);
         currentReturnTypeName = "void";
@@ -309,6 +352,7 @@ namespace Absolute {
         currentClassName = oldClass;
         currentThis = oldThis;
         currentReturnTypeName = oldReturn;
+        currentGenericSubstitutions = oldSubstitutions;
         builder.ClearInsertionPoint();
     }
 
@@ -358,6 +402,7 @@ namespace Absolute {
         taskThunkCounter = 0;
         currentClassName.clear();
         currentThis = nullptr;
+        currentGenericSubstitutions.clear();
 
         CollectClassDeclarations(program.statements);
         FinalizeInterfaces();
@@ -368,10 +413,26 @@ namespace Absolute {
         for (const auto& statement : program.statements) {
             if (statement) statement->Accept(visitor);
         }
+        if (analyzer) {
+            for (SymbolId id : analyzer->GenericFunctionSpecializations()) {
+                const Symbol* specialization = analyzer->GetSymbol(id);
+                FunctionDeclStmt* declaration = analyzer->FunctionDeclaration(id);
+                if (specialization && declaration && specialization->kind == SymbolKind::Function)
+                    DeclareFunction(*declaration, specialization);
+            }
+        }
 
         phase = Phase::EmitBodies;
         for (const auto& statement : program.statements) {
             if (statement) statement->Accept(visitor);
+        }
+        if (analyzer) {
+            for (SymbolId id : analyzer->GenericFunctionSpecializations()) {
+                const Symbol* specialization = analyzer->GetSymbol(id);
+                FunctionDeclStmt* declaration = analyzer->FunctionDeclaration(id);
+                if (specialization && declaration && specialization->kind == SymbolKind::Function)
+                    EmitFunction(*declaration, specialization);
+            }
         }
 
         std::string verifierMessage;

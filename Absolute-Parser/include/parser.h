@@ -53,6 +53,7 @@ namespace Absolute {
 
         void ParseModifiers();
         void ParseAttributes();
+        std::vector<Token> ParseTemplateParameters();
         bool LooksLikeFunctionDeclaration() const;
         void ConsumeTemplateClose();
         bool IsTemplateArgumentList(size_t start, size_t* close = nullptr) const;

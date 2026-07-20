@@ -280,6 +280,7 @@ namespace Absolute{
                     (candidate->value == "*" || candidate->value == "&");
             };
             bool templateType = false;
+            bool templatePointer = false;
             if (afterIdentifiers && afterIdentifiers->value == "<") {
                 const size_t templateStart = static_cast<size_t>(afterIdentifiers - tokens.data());
                 size_t templateClose = 0;
@@ -287,12 +288,13 @@ namespace Absolute{
                     Token* afterTemplate = templateClose + 1 < tokens.size() ? &tokens[templateClose + 1] : nullptr;
                     templateType = afterTemplate &&
                         (afterTemplate->type == TokenType::IDENTIFIER || isDeclaratorPrefix(afterTemplate));
+                    templatePointer = isDeclaratorPrefix(afterTemplate);
                 }
             }
 
             if ((next && next->type == TokenType::OPERATOR && next->value == "*") ||
                 (afterIdentifiers && afterIdentifiers->type == TokenType::OPERATOR &&
-                    afterIdentifiers->value == "*")) {
+                    afterIdentifiers->value == "*") || templatePointer) {
                 return ParseVarDeclaration();
             }
 

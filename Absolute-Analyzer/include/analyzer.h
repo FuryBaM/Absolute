@@ -43,6 +43,9 @@ namespace Absolute {
         bool asyncFunction = false;
         bool extensionFunction = false;
         bool externalFunction = false;
+        std::vector<std::string> genericParameters;
+        std::vector<std::string> genericArguments;
+        SymbolId genericOrigin = InvalidSymbolId;
     };
 
     enum class InitializationState {
@@ -114,6 +117,7 @@ namespace Absolute {
         Symbol* Get(SymbolId id);
         const Symbol* Get(SymbolId id) const;
         const std::vector<Symbol>& All() const;
+        SymbolId AppendSpecialization(Symbol symbol);
     };
 
     class ANALYZER_API Analyzer final : public ExpressionVisitor, public StatementVisitor {
@@ -138,6 +142,7 @@ namespace Absolute {
             std::vector<std::string> parents;
             std::vector<std::string> enumMembers;
             TypeKind kind = TypeKind::Other;
+            std::vector<std::string> genericParameters;
         };
 
         enum class Phase {
@@ -194,6 +199,11 @@ namespace Absolute {
         std::unordered_map<std::string, TypeDefinition> types;
         std::unordered_map<std::string, std::vector<SymbolId>> functionOverloads;
         std::unordered_map<std::string, std::vector<SymbolId>> extensionMethods;
+        std::unordered_map<SymbolId, FunctionDeclStmt*> functionDeclarations;
+        std::unordered_map<std::string, SymbolId> genericFunctionSpecializations;
+        std::vector<SymbolId> genericFunctionSpecializationOrder;
+        std::unordered_set<std::string> instantiatedGenericTypes;
+        std::vector<std::unordered_map<std::string, std::string>> genericTypeScopes;
         std::unordered_set<std::string> namespaces;
         std::unordered_set<std::string> importedNamespaces;
         std::unordered_map<const Expression*, ExpressionInfo> expressionInfo;
@@ -247,6 +257,13 @@ namespace Absolute {
         const ExpressionInfo* GetExpressionInfo(const Expression& expression) const;
         bool UsesExceptions() const { return usesExceptions; }
         const std::vector<Diagnostic>& Diagnostics() const;
+        FunctionDeclStmt* FunctionDeclaration(SymbolId symbol) const;
+        const std::vector<SymbolId>& GenericFunctionSpecializations() const {
+            return genericFunctionSpecializationOrder;
+        }
+        const std::unordered_set<std::string>& InstantiatedGenericTypes() const {
+            return instantiatedGenericTypes;
+        }
 
         void Visit(PrimitiveTypeExpr* expr) override;
         void Visit(UserTypeExpr* expr) override;
@@ -323,7 +340,7 @@ namespace Absolute {
         void ResolveFunction(FunctionDeclStmt& statement, SymbolKind kind);
         void DeclareType(const std::string& name, TypeKind kind = TypeKind::Other);
         void DeclareMember(const std::string& owner, std::string name, MemberSignature signature);
-        std::vector<MemberSignature> FindMembers(const std::string& owner, const std::string& name) const;
+        std::vector<MemberSignature> FindMembers(const std::string& owner, const std::string& name);
         std::unordered_map<std::string, std::vector<MemberSignature>> VisibleMembers(
             const std::string& owner) const;
         std::optional<MemberSignature> FindConcreteMethod(
@@ -333,13 +350,16 @@ namespace Absolute {
         std::vector<SymbolId> FindFunctionCandidates(const std::string& name) const;
         std::vector<SymbolId> FindExtensionCandidates(const std::string& name) const;
         SymbolId SelectOverload(const std::vector<SymbolId>& candidates,
-            const std::vector<Result>& arguments, const std::string& displayName);
+            const std::vector<Result>& arguments, const std::string& displayName,
+            const std::vector<std::string>& explicitTypeArguments = {});
+        SymbolId InstantiateGenericFunction(
+            SymbolId origin, const std::vector<std::string>& arguments);
         int ConversionCost(const std::string& target, const std::string& source) const;
         std::string ExtractIdentifier(Expression* expression) const;
         std::string ExtractQualifiedName(Expression* expression) const;
         std::string Qualify(const std::string& name) const;
         SymbolId LookupSymbol(const std::string& name) const;
-        std::string ResolveTypeReference(const std::string& name) const;
+        std::string ResolveTypeReference(const std::string& name);
         void PushKeepScope();
         void PopKeepScope();
         void CheckKeepScopesFrom(size_t firstScope, const std::string& exitKind);

@@ -1,0 +1,38 @@
+T identity<T>(T value) {
+    return value;
+}
+
+T first<T>(T[] values) {
+    return values[0];
+}
+
+T chooseFirst<T>(T left, T right) {
+    return left;
+}
+
+int32 preferConcrete(int32 value) {
+    return 42;
+}
+
+T preferConcrete<T>(T value) {
+    return value;
+}
+
+int32 main() {
+    int32 inferred = identity(42);
+    double explicitValue = identity<double>(21.5);
+    string text = identity<string>("generic");
+    int32[] values = {7, 8, 9};
+    int32 firstValue = first(values);
+    int32 selected = chooseFirst<int32>(40, 2);
+    int32 concreteOverload = preferConcrete(1);
+
+    assert(inferred == 42, "generic inference");
+    assert(explicitValue == 21.5, "explicit generic argument");
+    println(text);
+    assert(firstValue == 7, "generic array pattern");
+    assert(selected == 40, "generic multi-parameter call");
+    assert(concreteOverload == 42, "non-generic overload wins an equal match");
+    println("generic-functions=ok");
+    return 0;
+}

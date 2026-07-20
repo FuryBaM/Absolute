@@ -22,8 +22,15 @@ namespace Absolute {
         while (index + 1 < tokens.size() && tokens[index].type == TokenType::BRACKET &&
             tokens[index].value == "[" && tokens[index + 1].type == TokenType::BRACKET &&
             tokens[index + 1].value == "]") index += 2;
-        return index + 1 < tokens.size() && tokens[index].type == TokenType::IDENTIFIER &&
-            tokens[index + 1].type == TokenType::BRACKET && tokens[index + 1].value == "(";
+        if (index >= tokens.size() || tokens[index].type != TokenType::IDENTIFIER) return false;
+        ++index;
+        if (index < tokens.size() && tokens[index].value == "<") {
+            size_t close = 0;
+            if (!IsTemplateArgumentList(index, &close)) return false;
+            index = close + 1;
+        }
+        return index < tokens.size() && tokens[index].type == TokenType::BRACKET &&
+            tokens[index].value == "(";
     }
 
     std::unique_ptr<FunctionCallExpr> Parser::ParseFunctionCallExpr(std::unique_ptr<Expression> base)
@@ -45,6 +52,7 @@ namespace Absolute {
         std::vector<Attribute> attributes = this->attributes;
         std::unique_ptr<TypeExpr> returnType = ParseType();
         Token* identifier = Consume(TokenType::IDENTIFIER);
+        std::vector<Token> templateParams = ParseTemplateParameters();
 
         std::vector<std::unique_ptr<VarDeclExpr>> parameters = ParseParameters();
 
@@ -64,6 +72,7 @@ namespace Absolute {
         );
         stmt->modifiers = modifiers;
         stmt->attributes = std::move(attributes);
+        stmt->templateParams = std::move(templateParams);
         return stmt;
     }
 
@@ -80,6 +89,10 @@ namespace Absolute {
 
         std::unique_ptr<TypeExpr> returnType = ParseType();
         Token* identifier = Consume(TokenType::IDENTIFIER);
+        if (CurrentToken() && CurrentToken()->value == "<") {
+            ReportSyntaxError(CurrentToken(), "Extern functions cannot declare generic parameters");
+            throw std::runtime_error("Generic extern function");
+        }
         auto parameters = ParseParameters();
         for (const auto& parameter : parameters) {
             if (parameter && parameter->value) {

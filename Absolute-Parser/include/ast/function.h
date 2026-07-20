@@ -67,6 +67,7 @@ namespace Absolute {
         std::unique_ptr<TypeExpr> returnType;
         std::unique_ptr<Token> name;
         std::vector<std::unique_ptr<VarDeclExpr>> parameters;
+        std::vector<Token> templateParams;
         std::unique_ptr<Statement> body;
         std::string externalAbi;
 
@@ -80,6 +81,7 @@ namespace Absolute {
         }
 
         bool IsExternal() const { return !externalAbi.empty(); }
+        bool IsGeneric() const { return !templateParams.empty(); }
 
         void print(int indent = 0) override {
             std::cout << std::string(indent, ' ') << "Function declaration: ";

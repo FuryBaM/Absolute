@@ -85,6 +85,85 @@ namespace Absolute {
             return IsTaskType(type) ? type.substr(5, type.size() - 6) : "error";
         }
 
+        inline bool ParseGenericTypeName(
+            const std::string& type, std::string& base, std::vector<std::string>& arguments) {
+            const size_t open = type.find('<');
+            if (open == std::string::npos || type.empty() || type.back() != '>') return false;
+            base = type.substr(0, open);
+            arguments.clear();
+            size_t depth = 0;
+            size_t start = open + 1;
+            for (size_t index = start; index + 1 < type.size(); ++index) {
+                if (type[index] == '<') ++depth;
+                else if (type[index] == '>') {
+                    if (depth == 0) return false;
+                    --depth;
+                }
+                else if (type[index] == ',' && depth == 0) {
+                    arguments.push_back(type.substr(start, index - start));
+                    start = index + 1;
+                }
+            }
+            arguments.push_back(type.substr(start, type.size() - start - 1));
+            return !base.empty() && std::none_of(arguments.begin(), arguments.end(),
+                [](const std::string& argument) { return argument.empty(); });
+        }
+
+        inline std::string SubstituteGenericType(const std::string& type,
+            const std::unordered_map<std::string, std::string>& substitutions) {
+            if (const auto found = substitutions.find(type); found != substitutions.end())
+                return found->second;
+            if (type.ends_with("[]"))
+                return SubstituteGenericType(type.substr(0, type.size() - 2), substitutions) + "[]";
+            if (IsPointerType(type)) {
+                const std::string prefix = IsRawPointerType(type) ? "raw " : "";
+                return prefix + SubstituteGenericType(PointerPointee(type), substitutions) + "*";
+            }
+            std::string base;
+            std::vector<std::string> arguments;
+            if (!ParseGenericTypeName(type, base, arguments)) return type;
+            std::string result = base + "<";
+            for (size_t index = 0; index < arguments.size(); ++index) {
+                if (index) result += ",";
+                result += SubstituteGenericType(arguments[index], substitutions);
+            }
+            return result + ">";
+        }
+
+        inline bool UnifyGenericType(const std::string& pattern, const std::string& actual,
+            const std::unordered_set<std::string>& parameters,
+            std::unordered_map<std::string, std::string>& substitutions) {
+            if (parameters.contains(pattern)) {
+                const auto found = substitutions.find(pattern);
+                if (found == substitutions.end()) {
+                    substitutions.emplace(pattern, actual);
+                    return true;
+                }
+                return found->second == actual;
+            }
+            if (pattern.ends_with("[]") && actual.ends_with("[]"))
+                return UnifyGenericType(pattern.substr(0, pattern.size() - 2),
+                    actual.substr(0, actual.size() - 2), parameters, substitutions);
+            if (IsPointerType(pattern) && IsPointerType(actual) &&
+                IsRawPointerType(pattern) == IsRawPointerType(actual))
+                return UnifyGenericType(PointerPointee(pattern), PointerPointee(actual),
+                    parameters, substitutions);
+            std::string patternBase;
+            std::string actualBase;
+            std::vector<std::string> patternArguments;
+            std::vector<std::string> actualArguments;
+            if (ParseGenericTypeName(pattern, patternBase, patternArguments) &&
+                ParseGenericTypeName(actual, actualBase, actualArguments)) {
+                if (patternBase != actualBase || patternArguments.size() != actualArguments.size())
+                    return false;
+                for (size_t index = 0; index < patternArguments.size(); ++index)
+                    if (!UnifyGenericType(patternArguments[index], actualArguments[index],
+                        parameters, substitutions)) return false;
+                return true;
+            }
+            return pattern == actual;
+        }
+
         inline bool HasModifier(const Statement& statement, const std::string& name) {
             return std::any_of(statement.modifiers.begin(), statement.modifiers.end(),
                 [&](const Token& modifier) { return modifier.value == name; });

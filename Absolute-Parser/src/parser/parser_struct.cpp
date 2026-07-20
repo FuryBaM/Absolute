@@ -8,6 +8,7 @@ namespace Absolute {
         std::vector<Attribute> declarationAttributes = attributes;
         Consume(TokenType::KEYWORD, "struct");
         Token* identifier = Consume(TokenType::IDENTIFIER);
+        std::vector<Token> templateParams = ParseTemplateParameters();
 
         EnterScope(ScopeType::Struct, identifier->value);
         std::unique_ptr<CompoundStmt> body;
@@ -21,7 +22,7 @@ namespace Absolute {
         ExitScope();
 
         auto statement = std::make_unique<StructDeclStmt>(
-            identifier->value, std::move(body->statements));
+            identifier->value, std::move(templateParams), std::move(body->statements));
         statement->modifiers = std::move(declarationModifiers);
         statement->attributes = std::move(declarationAttributes);
         return statement;

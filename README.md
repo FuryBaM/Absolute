@@ -197,6 +197,14 @@ named values. Qualified attributes are passed to opaque plugins during
 validation and LLVM emission. See [docs/attributes.md](docs/attributes.md) for
 the target and argument rules.
 
+## Generics
+
+Functions, structs, and classes support compile-time type parameters. Function
+arguments may be inferred or written explicitly, while every used aggregate
+specialization receives its own native layout and methods. CodeGen emits only
+used monomorphizations, without runtime boxing. See
+[docs/generics.md](docs/generics.md) for syntax and current constraint limits.
+
 ## Syntax plugins
 
 New keywords and syntax that can be expressed using existing Absolute constructs

@@ -46,15 +46,23 @@ namespace Absolute {
 
     void Analyzer::Visit(StructDeclStmt* stmt) {
         const std::string typeName = Qualify(stmt->name);
+        std::unordered_map<std::string, std::string> genericScope;
+        for (const Token& parameter : stmt->templateParams)
+            genericScope.emplace(parameter.value, parameter.value);
         if (phase == Phase::CollectDeclarations) {
             DeclareType(stmt->name, TypeKind::Struct);
+            for (const Token& parameter : stmt->templateParams)
+                types[typeName].genericParameters.push_back(parameter.value);
+            if (!genericScope.empty()) genericTypeScopes.push_back(genericScope);
             const std::string old = currentType;
             currentType = typeName;
             for (const auto& member : stmt->members) if (member) member->Accept(*this);
             currentType = old;
+            if (!genericScope.empty()) genericTypeScopes.pop_back();
             return;
         }
         ValidateAttributes(*stmt, "struct declaration", false);
+        if (!genericScope.empty()) genericTypeScopes.push_back(genericScope);
         const std::string old = currentType;
         currentType = typeName;
         table.EnterScope();
@@ -64,13 +72,20 @@ namespace Absolute {
         for (const auto& member : stmt->members) if (member) member->Accept(*this);
         table.ExitScope();
         currentType = old;
+        if (!genericScope.empty()) genericTypeScopes.pop_back();
     }
 
     void Analyzer::Visit(ClassDeclStmt* stmt) {
         const std::string typeName = Qualify(stmt->name);
+        std::unordered_map<std::string, std::string> genericScope;
+        for (const Token& parameter : stmt->templateParams)
+            genericScope.emplace(parameter.value, parameter.value);
         if (phase == Phase::CollectDeclarations) {
             DeclareType(stmt->name, TypeKind::Class);
             auto& definition = types[typeName];
+            for (const Token& parameter : stmt->templateParams)
+                definition.genericParameters.push_back(parameter.value);
+            if (!genericScope.empty()) genericTypeScopes.push_back(genericScope);
             definition.parents.clear();
             for (const std::string& parent : stmt->parents)
                 definition.parents.push_back(ResolveTypeReference(parent));
@@ -78,9 +93,11 @@ namespace Absolute {
             currentType = typeName;
             if (stmt->body) stmt->body->Accept(*this);
             currentType = old;
+            if (!genericScope.empty()) genericTypeScopes.pop_back();
             return;
         }
         ValidateAttributes(*stmt, "class declaration", false);
+        if (!genericScope.empty()) genericTypeScopes.push_back(genericScope);
         size_t classParentCount = 0;
         for (const std::string& parent : stmt->parents) {
             const std::string resolvedParent = ResolveTypeReference(parent);
@@ -102,6 +119,7 @@ namespace Absolute {
         ValidateInterfaceImplementation(typeName);
         table.ExitScope();
         currentType = old;
+        if (!genericScope.empty()) genericTypeScopes.pop_back();
     }
 
     void Analyzer::Visit(InterfaceDeclStmt* stmt) {

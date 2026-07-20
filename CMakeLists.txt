@@ -279,6 +279,19 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/attribute-errors.abs"
     )
     set_tests_properties(absolute.attribute-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.generic-functions-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generics-functions.abs"
+    )
+    add_test(
+        NAME absolute.generic-types-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generics-types.abs"
+    )
+    add_test(
+        NAME absolute.generics-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generics-errors.abs"
+    )
+    set_tests_properties(absolute.generics-errors PROPERTIES WILL_FAIL TRUE)
     foreach(flow_error IN ITEMS uninitialized-errors pointer-flow-errors)
         add_test(
             NAME "absolute.${flow_error}"
@@ -437,6 +450,32 @@ if(BUILD_TESTING)
         )
         set_tests_properties(absolute.check-attributes-ir PROPERTIES
             FIXTURES_REQUIRED absolute-attributes-ir
+        )
+        add_test(
+            NAME absolute.emit-generic-functions
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generics-functions.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/generic-functions.ll"
+        )
+        set_tests_properties(absolute.emit-generic-functions PROPERTIES
+            FIXTURES_SETUP absolute-generic-functions-ir
+        )
+        add_test(
+            NAME absolute.emit-generic-types
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generics-types.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/generic-types.ll"
+        )
+        set_tests_properties(absolute.emit-generic-types PROPERTIES
+            FIXTURES_SETUP absolute-generic-types-ir
+        )
+        add_test(
+            NAME absolute.check-generics-ir
+            COMMAND "${CMAKE_COMMAND}"
+                -DFUNCTIONS_IR=${CMAKE_BINARY_DIR}/generic-functions.ll
+                -DTYPES_IR=${CMAKE_BINARY_DIR}/generic-types.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-generics-ir.cmake"
+        )
+        set_tests_properties(absolute.check-generics-ir PROPERTIES
+            FIXTURES_REQUIRED "absolute-generic-functions-ir;absolute-generic-types-ir"
         )
         add_test(
             NAME absolute.emit-builtins
@@ -875,6 +914,34 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-attributes PROPERTIES
             FIXTURES_REQUIRED absolute-attributes-executable
             PASS_REGULAR_EXPRESSION "attributes=ok"
+        )
+        add_test(
+            NAME absolute.build-generic-functions
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generics-functions.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/generic-functions-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-generic-functions PROPERTIES
+            FIXTURES_SETUP absolute-generic-functions-executable
+        )
+        add_test(NAME absolute.run-generic-functions
+            COMMAND "${CMAKE_BINARY_DIR}/generic-functions-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-generic-functions PROPERTIES
+            FIXTURES_REQUIRED absolute-generic-functions-executable
+            PASS_REGULAR_EXPRESSION "generic-functions=ok"
+        )
+        add_test(
+            NAME absolute.build-generic-types
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generics-types.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/generic-types-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-generic-types PROPERTIES
+            FIXTURES_SETUP absolute-generic-types-executable
+        )
+        add_test(NAME absolute.run-generic-types
+            COMMAND "${CMAKE_BINARY_DIR}/generic-types-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-generic-types PROPERTIES
+            FIXTURES_REQUIRED absolute-generic-types-executable
+            PASS_REGULAR_EXPRESSION "generic-types=ok"
         )
         add_test(
             NAME absolute.build-unhandled-exception

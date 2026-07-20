@@ -117,6 +117,57 @@ namespace Absolute {
             return IsTaskTypeName(name) ? name.substr(5, name.size() - 6) : std::string{};
         }
 
+        inline std::string SubstituteCodegenType(const std::string& type,
+            const std::unordered_map<std::string, std::string>& substitutions) {
+            if (const auto found = substitutions.find(type); found != substitutions.end())
+                return found->second;
+            if (type.ends_with("[]"))
+                return SubstituteCodegenType(type.substr(0, type.size() - 2), substitutions) + "[]";
+            if (IsPointerTypeName(type)) {
+                const std::string prefix = IsRawPointerTypeName(type) ? "raw " : "";
+                return prefix + SubstituteCodegenType(PointerPointeeName(type), substitutions) + "*";
+            }
+            const size_t open = type.find('<');
+            if (open == std::string::npos || type.empty() || type.back() != '>') return type;
+            std::string result = type.substr(0, open + 1);
+            size_t depth = 0;
+            size_t start = open + 1;
+            bool first = true;
+            for (size_t index = start; index + 1 < type.size(); ++index) {
+                if (type[index] == '<') ++depth;
+                else if (type[index] == '>') --depth;
+                else if (type[index] == ',' && depth == 0) {
+                    if (!first) result += ",";
+                    result += SubstituteCodegenType(type.substr(start, index - start), substitutions);
+                    first = false;
+                    start = index + 1;
+                }
+            }
+            if (!first) result += ",";
+            result += SubstituteCodegenType(type.substr(start, type.size() - start - 1), substitutions);
+            return result + ">";
+        }
+
+        inline bool ParseCodegenGenericType(
+            const std::string& type, std::string& base, std::vector<std::string>& arguments) {
+            const size_t open = type.find('<');
+            if (open == std::string::npos || type.empty() || type.back() != '>') return false;
+            base = type.substr(0, open);
+            arguments.clear();
+            size_t depth = 0;
+            size_t start = open + 1;
+            for (size_t index = start; index + 1 < type.size(); ++index) {
+                if (type[index] == '<') ++depth;
+                else if (type[index] == '>') --depth;
+                else if (type[index] == ',' && depth == 0) {
+                    arguments.push_back(type.substr(start, index - start));
+                    start = index + 1;
+                }
+            }
+            arguments.push_back(type.substr(start, type.size() - start - 1));
+            return true;
+        }
+
         inline std::optional<std::vector<size_t>> InferArrayShape(const ArrayExpr& array) {
             std::vector<size_t> childShape;
             bool hasChildShape = false;

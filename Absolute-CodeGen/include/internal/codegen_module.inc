@@ -6,7 +6,11 @@
 
         llvm::Function* DeclareFunction(FunctionDeclStmt& statement);
 
+        llvm::Function* DeclareFunction(FunctionDeclStmt& statement, const Symbol* specialization);
+
         void EmitFunction(FunctionDeclStmt& statement);
+
+        void EmitFunction(FunctionDeclStmt& statement, const Symbol* specialization);
 
         void BindCallableParameter(llvm::Argument& argument, VarDeclExpr& parameter);
 

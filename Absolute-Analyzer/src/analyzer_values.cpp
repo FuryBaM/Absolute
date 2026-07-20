@@ -235,16 +235,32 @@ namespace Absolute {
             constructedType == "dynamic")
             Report("cannot allocate type '" + constructedType + "'");
         const bool primitive = PrimitiveStringToEnum(constructedType).has_value();
-        if (const auto found = types.find(constructedType);
+        std::string definitionName = constructedType;
+        std::unordered_map<std::string, std::string> substitutions;
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseGenericTypeName(constructedType, genericBase, genericArguments)) {
+            definitionName = genericBase;
+            const auto definition = types.find(definitionName);
+            if (definition != types.end() &&
+                definition->second.genericParameters.size() == genericArguments.size())
+                for (size_t index = 0; index < genericArguments.size(); ++index)
+                    substitutions.emplace(definition->second.genericParameters[index],
+                        genericArguments[index]);
+        }
+        if (const auto found = types.find(definitionName);
             found != types.end() && found->second.kind == TypeKind::Interface)
             Report("cannot instantiate interface '" + constructedType + "'");
         if (expr->arguments.size() > 1 && primitive)
             Report("primitive allocation accepts at most one initializer");
         std::vector<std::string> parameters;
         if (!primitive) {
-            const auto found = types.find(constructedType);
-            if (found != types.end() && found->second.constructor)
+            const auto found = types.find(definitionName);
+            if (found != types.end() && found->second.constructor) {
                 parameters = found->second.constructor->parameterTypes;
+                for (std::string& parameter : parameters)
+                    parameter = SubstituteGenericType(parameter, substitutions);
+            }
             if (expr->arguments.size() != parameters.size())
                 Report("constructor of '" + constructedType + "' expects " +
                     std::to_string(parameters.size()) + " argument(s), got " +
@@ -332,8 +348,13 @@ namespace Absolute {
             Save(expr, {InvalidSymbolId, type, false});
             return;
         }
-        if (!types.contains(type)) Report("unknown object type '" + type + "'");
-        else if (types[type].kind == TypeKind::Interface)
+        std::string definitionName = type;
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseGenericTypeName(type, genericBase, genericArguments)) definitionName = genericBase;
+        if (!IsKnownType(type)) Report("unknown object type '" + type + "'");
+        else if (const auto definition = types.find(definitionName);
+            definition != types.end() && definition->second.kind == TypeKind::Interface)
             Report("interface '" + type + "' must be used through raw or managed pointer");
         Result value;
         if (expr->value) value = Evaluate(expr->value.get());
@@ -453,14 +474,40 @@ namespace Absolute {
             Save(expr, {InvalidSymbolId, "task<" + valueType + ">", false});
             return;
         }
-        std::string base;
-        if (typeContext) base = ResolveType(expr->base.get());
+        if (typeContext) {
+            const std::string base = ResolveTypeReference(ExtractQualifiedName(expr->base.get()));
+            std::vector<std::string> arguments;
+            arguments.reserve(expr->types.size());
+            for (const auto& type : expr->types) arguments.push_back(ResolveType(type.get()));
+            const auto definition = types.find(base);
+            if (definition == types.end() || definition->second.genericParameters.empty()) {
+                Report("type '" + base + "' is not generic", "E_NOT_GENERIC_TYPE");
+                Save(expr, {InvalidSymbolId, "error", false});
+                return;
+            }
+            if (definition->second.genericParameters.size() != arguments.size()) {
+                Report("generic type '" + base + "' expects " +
+                    std::to_string(definition->second.genericParameters.size()) +
+                    " type argument(s), got " + std::to_string(arguments.size()),
+                    "E_GENERIC_TYPE_ARITY");
+                Save(expr, {InvalidSymbolId, "error", false});
+                return;
+            }
+            std::string specialized = base + "<";
+            for (size_t index = 0; index < arguments.size(); ++index) {
+                if (index) specialized += ",";
+                specialized += arguments[index];
+            }
+            specialized += ">";
+            instantiatedGenericTypes.insert(specialized);
+            Save(expr, {InvalidSymbolId, specialized, false});
+            return;
+        }
         else {
             const Result baseResult = Evaluate(expr->base.get());
-            base = baseResult.type;
+            for (const auto& type : expr->types) ResolveType(type.get());
+            Save(expr, {baseResult.symbol, baseResult.type, false});
         }
-        for (const auto& type : expr->types) ResolveType(type.get());
-        Save(expr, {InvalidSymbolId, base, false});
     }
 
 }
