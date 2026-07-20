@@ -97,6 +97,7 @@ namespace Absolute {
         std::unique_ptr<SwitchStmt> ParseSwitchStmt(bool exhaustive);
         std::unique_ptr<ThrowStmt> ParseThrowStmt();
         std::unique_ptr<TryStmt> ParseTryStmt();
+        std::unique_ptr<DeferStmt> ParseDeferStmt();
         std::unique_ptr<ForStmt> ParseForStmt();
         std::unique_ptr<WhileStmt> ParseWhileStmt();
         std::unique_ptr<DoWhileStmt> ParseDoWhileStmt();

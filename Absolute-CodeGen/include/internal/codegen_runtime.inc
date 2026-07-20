@@ -105,7 +105,8 @@
 
         bool IsClassDerivedFrom(const std::string& type, const std::string& base) const;
 
-        void EmitActiveFinalizers(size_t destinationScope, bool includeEqual);
+        void EmitTransferCleanups(size_t destinationScope, bool includeEqualFinalizer,
+            SymbolId transferredOwner = InvalidSymbolId);
 
         void EmitExceptionPropagation(SymbolId transferredOwner = InvalidSymbolId);
 

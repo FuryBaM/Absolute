@@ -223,6 +223,8 @@ namespace Absolute{
                 return ParseThrowStmt();
             case Hash("try"):
                 return ParseTryStmt();
+            case Hash("defer"):
+                return ParseDeferStmt();
 		    case Hash("for"):
 			    return ParseForStmt();
 		    case Hash("while"):

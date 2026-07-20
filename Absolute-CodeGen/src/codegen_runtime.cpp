@@ -28,6 +28,7 @@ namespace Absolute {
 
     void CodeGenerator::Impl::PushScope() {
         scopes.emplace_back();
+        deferredScopes.emplace_back();
     }
 
     llvm::FunctionCallee CodeGenerator::Impl::TaskSpawn() {
@@ -52,6 +53,22 @@ namespace Absolute {
 
     void CodeGenerator::Impl::EmitScopeCleanup(size_t index, SymbolId transferredOwner) {
         if (index >= scopes.size() || !builder.GetInsertBlock() || builder.GetInsertBlock()->getTerminator()) return;
+        if (index < deferredScopes.size()) {
+            const std::vector<DeferStmt*> deferred = deferredScopes[index];
+            const auto active = deferredCleanupCursors.find(index);
+            const size_t start = active == deferredCleanupCursors.end() || active->second.empty()
+                ? deferred.size() : active->second.back();
+            deferredCleanupCursors[index].push_back(start);
+            while (deferredCleanupCursors[index].back() > 0) {
+                const size_t deferredIndex = --deferredCleanupCursors[index].back();
+                DeferStmt* statement = deferred[deferredIndex];
+                if (statement && statement->body) statement->body->Accept(visitor);
+                if (!builder.GetInsertBlock() || builder.GetInsertBlock()->getTerminator()) break;
+            }
+            deferredCleanupCursors[index].pop_back();
+            if (deferredCleanupCursors[index].empty()) deferredCleanupCursors.erase(index);
+            if (!builder.GetInsertBlock() || builder.GetInsertBlock()->getTerminator()) return;
+        }
         for (auto& [name, variable] : scopes[index]) {
             (void)name;
             if (IsTaskTypeName(variable.typeName)) {
@@ -78,6 +95,7 @@ namespace Absolute {
         if (scopes.empty()) return;
         if (cleanup) EmitScopeCleanup(scopes.size() - 1);
         scopes.pop_back();
+        deferredScopes.pop_back();
     }
 
     CodeGenerator::Impl::Variable* CodeGenerator::Impl::FindVariable(const std::string& name) {

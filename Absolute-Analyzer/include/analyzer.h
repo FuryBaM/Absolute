@@ -205,6 +205,7 @@ namespace Absolute {
         int functionDepth = 0;
         int catchDepth = 0;
         int finallyDepth = 0;
+        int deferDepth = 0;
         bool usesExceptions = false;
         std::string currentType;
         std::string currentReturnType;
@@ -215,10 +216,12 @@ namespace Absolute {
         int constructorContextDepth = 0;
         KeepLifetimeMap keepLifetimes;
         std::vector<std::vector<SymbolId>> keepScopes;
+        std::vector<std::unordered_set<SymbolId>> deferredKeepScopes;
         std::vector<size_t> loopKeepDepths;
         std::vector<std::vector<KeepLifetimeMap>> loopBreakStates;
         ValueFlowMap valueFlow;
         std::vector<std::vector<SymbolId>> valueFlowScopes;
+        std::vector<std::unordered_set<SymbolId>> deferredTaskScopes;
         std::vector<std::vector<ValueFlowMap>> loopBreakValueStates;
         std::vector<std::unordered_set<SymbolId>> exceptionTransferredOwners;
         AccessMode accessMode = AccessMode::Read;
@@ -289,6 +292,7 @@ namespace Absolute {
         void Visit(SwitchStmt* stmt) override;
         void Visit(ThrowStmt* stmt) override;
         void Visit(TryStmt* stmt) override;
+        void Visit(DeferStmt* stmt) override;
         void Visit(ForStmt* stmt) override;
         void Visit(WhileStmt* stmt) override;
         void Visit(DoWhileStmt* stmt) override;

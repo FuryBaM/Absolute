@@ -111,7 +111,8 @@
   Portable ABI, ownership, cleanup, async и FFI описаны в `docs/error-model.md`.
 - [x] Добавить `throw`, typed `try`/`catch`/`finally`, portable propagation ABI,
   cleanup на всех выходах и перенос исключений через `await`.
-- [ ] Добавить `defer` для гарантированного выполнения cleanup-кода.
+- [x] Добавить `defer` для гарантированного LIFO cleanup при обычном выходе,
+  `return`, `break`, `continue` и распространении исключения.
 - [ ] Добавить атрибуты/аннотации для compiler и plugin metadata.
 - [ ] Спроектировать настоящие generics для функций, структур и классов.
 - [ ] Добавить type aliases в ядро, не зависящие от plugin prelude.

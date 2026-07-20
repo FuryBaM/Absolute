@@ -46,28 +46,35 @@ namespace Absolute {
         return false;
     }
 
-    void CodeGenerator::Impl::EmitActiveFinalizers(
-        size_t destinationScope, bool includeEqual) {
-        if (emittingFinally) return;
-        const bool old = emittingFinally;
-        emittingFinally = true;
-        for (auto target = finallyTargets.rbegin(); target != finallyTargets.rend(); ++target) {
-            const bool exitsTry = includeEqual
-                ? target->scopeCount >= destinationScope
-                : target->scopeCount > destinationScope;
-            if (!exitsTry || !target->statement || !target->statement->finallyBody) continue;
-            target->statement->finallyBody->Accept(visitor);
-            if (!builder.GetInsertBlock() || builder.GetInsertBlock()->getTerminator()) break;
+    void CodeGenerator::Impl::EmitTransferCleanups(
+        size_t destinationScope, bool includeEqualFinalizer, SymbolId transferredOwner) {
+        for (size_t count = scopes.size(); count > destinationScope; --count) {
+            const size_t scopeIndex = count - 1;
+            EmitScopeCleanup(scopeIndex, transferredOwner);
+            if (!builder.GetInsertBlock() || builder.GetInsertBlock()->getTerminator()) return;
+            if (emittingFinally) continue;
+
+            for (auto target = finallyTargets.rbegin(); target != finallyTargets.rend(); ++target) {
+                if (!target->statement || !target->statement->finallyBody ||
+                    target->scopeCount != scopeIndex) continue;
+                const bool exitsTry = includeEqualFinalizer
+                    ? target->scopeCount >= destinationScope
+                    : target->scopeCount > destinationScope;
+                if (!exitsTry) continue;
+                const bool old = emittingFinally;
+                emittingFinally = true;
+                target->statement->finallyBody->Accept(visitor);
+                emittingFinally = old;
+                if (!builder.GetInsertBlock() || builder.GetInsertBlock()->getTerminator()) return;
+            }
         }
-        emittingFinally = old;
     }
 
     void CodeGenerator::Impl::EmitExceptionPropagation(SymbolId transferredOwner) {
         const size_t destinationScope = exceptionTargets.empty()
             ? 0 : exceptionTargets.back().scopeCount;
-        EmitActiveFinalizers(destinationScope, exceptionTargets.empty());
+        EmitTransferCleanups(destinationScope, exceptionTargets.empty(), transferredOwner);
         if (!builder.GetInsertBlock() || builder.GetInsertBlock()->getTerminator()) return;
-        EmitCleanupsFrom(destinationScope, transferredOwner);
         if (!exceptionTargets.empty()) {
             builder.CreateBr(exceptionTargets.back().handlerBlock);
             return;

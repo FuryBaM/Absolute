@@ -24,6 +24,7 @@ namespace Absolute {
         virtual void Visit(SwitchStmt* stmt) = 0;
         virtual void Visit(ThrowStmt* stmt) = 0;
         virtual void Visit(TryStmt* stmt) = 0;
+        virtual void Visit(DeferStmt* stmt) = 0;
         virtual void Visit(ForStmt* stmt) = 0;
         virtual void Visit(WhileStmt* stmt) = 0;
         virtual void Visit(DoWhileStmt* stmt) = 0;

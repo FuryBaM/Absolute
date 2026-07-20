@@ -183,6 +183,11 @@ control transfer from inside `finally`. Unhandled errors reaching `main` are
 reported and return a non-zero process status. Exceptions raised by an async
 task are restored by `await` and can be caught normally.
 
+`defer` registers either a statement or block for LIFO execution when the
+current scope exits. It runs for normal completion and every control-transfer
+path, and can satisfy raw-owner deletion and task-await lifetime checks. See
+[docs/defer.md](docs/defer.md) for syntax and ordering rules.
+
 ## Syntax plugins
 
 New keywords and syntax that can be expressed using existing Absolute constructs

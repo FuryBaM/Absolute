@@ -29,9 +29,8 @@ namespace Absolute {
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("return outside a function");
         if (function->getReturnType()->isVoidTy()) {
-            impl->EmitActiveFinalizers(0, true);
+            impl->EmitTransferCleanups(0, true);
             if (impl->builder.GetInsertBlock()->getTerminator()) return;
-            impl->EmitCleanupsFrom(0);
             impl->builder.CreateRetVoid();
             return;
         }
@@ -63,9 +62,8 @@ namespace Absolute {
                 if (returned.managedOwner) transferredOwner = returned.symbol;
             }
         }
-        impl->EmitActiveFinalizers(0, true);
+        impl->EmitTransferCleanups(0, true, transferredOwner);
         if (impl->builder.GetInsertBlock()->getTerminator()) return;
-        impl->EmitCleanupsFrom(0, transferredOwner);
         impl->builder.CreateRet(result);
     }
 
@@ -302,6 +300,13 @@ namespace Absolute {
         impl->builder.SetInsertPoint(endBlock);
     }
 
+    void CodeGenerator::Visit(DeferStmt* stmt) {
+        if (impl->phase != Impl::Phase::EmitBodies) return;
+        if (!impl->CurrentFunction() || impl->deferredScopes.empty())
+            impl->Fail("defer outside a function scope");
+        impl->deferredScopes.back().push_back(stmt);
+    }
+
     void CodeGenerator::Visit(ForStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
         llvm::Function* function = impl->CurrentFunction();
@@ -436,9 +441,8 @@ namespace Absolute {
         (void)stmt;
         if (impl->phase != Impl::Phase::EmitBodies) return;
         if (impl->loops.empty()) impl->Fail("continue outside a loop");
-        impl->EmitActiveFinalizers(impl->loops.back().scopeCount, true);
+        impl->EmitTransferCleanups(impl->loops.back().scopeCount, true);
         if (impl->builder.GetInsertBlock()->getTerminator()) return;
-        impl->EmitCleanupsFrom(impl->loops.back().scopeCount);
         impl->builder.CreateBr(impl->loops.back().continueBlock);
     }
 
@@ -446,9 +450,8 @@ namespace Absolute {
         (void)stmt;
         if (impl->phase != Impl::Phase::EmitBodies) return;
         if (impl->loops.empty()) impl->Fail("break outside a loop");
-        impl->EmitActiveFinalizers(impl->loops.back().scopeCount, true);
+        impl->EmitTransferCleanups(impl->loops.back().scopeCount, true);
         if (impl->builder.GetInsertBlock()->getTerminator()) return;
-        impl->EmitCleanupsFrom(impl->loops.back().scopeCount);
         impl->builder.CreateBr(impl->loops.back().breakBlock);
     }
 

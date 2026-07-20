@@ -274,6 +274,13 @@ namespace Absolute {
         if (!IsPointerType(target.type) && target.type != "error")
             Report("delete requires a pointer, got '" + target.type + "'");
         if (!target.isLValue) Report("delete target must be an assignable pointer variable");
+        for (const auto& scope : deferredKeepScopes) {
+            if (scope.contains(target.symbol)) {
+                Report("pointer is already scheduled for deletion by defer",
+                    "E_DELETE_AFTER_DEFER", target.symbol);
+                break;
+            }
+        }
         const auto keep = keepLifetimes.find(target.symbol);
         if (target.initialization == InitializationState::Uninitialized)
             Report("pointer is deleted before initialization", "E_DELETE_UNINITIALIZED", target.symbol);
@@ -373,6 +380,13 @@ namespace Absolute {
             else if (operand.taskState == TaskState::MaybePending)
                 Report("task may already have been awaited on another control-flow path",
                     "E_TASK_MAYBE_DOUBLE_AWAIT", operand.symbol);
+            for (const auto& scope : deferredTaskScopes) {
+                if (scope.contains(operand.symbol)) {
+                    Report("task is already scheduled for await by defer",
+                        "E_AWAIT_AFTER_DEFER", operand.symbol);
+                    break;
+                }
+            }
             if (auto flow = valueFlow.find(operand.symbol); flow != valueFlow.end())
                 flow->second.taskState = TaskState::Awaited;
             Save(expr, {operand.symbol, TaskValueType(operand.type), false,

@@ -105,6 +105,8 @@ design changes. Update Runtime, CodeGen and native runtime tests together.
 Language exceptions use the portable thread-local state and explicit
 exceptional edges specified in `docs/error-model.md`; native C++ EH must not
 cross generated, C ABI, task, or plugin boundaries.
+Lexical `defer` actions are stored per CodeGen scope and emitted in LIFO order
+by the same transfer-cleanup path, without runtime callback registration.
 
 ## Plugins
 

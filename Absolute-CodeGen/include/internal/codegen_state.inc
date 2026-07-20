@@ -133,6 +133,8 @@
         std::vector<ExceptionTarget> exceptionTargets;
         std::vector<FinallyTarget> finallyTargets;
         std::vector<CaughtException> caughtExceptions;
+        std::vector<std::vector<DeferStmt*>> deferredScopes;
+        std::unordered_map<size_t, std::vector<size_t>> deferredCleanupCursors;
         bool emittingFinally = false;
         bool exceptionsEnabled = false;
         std::string currentNamespace;

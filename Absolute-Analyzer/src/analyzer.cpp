@@ -16,17 +16,20 @@ namespace Absolute {
         currentNamespace.clear();
         keepLifetimes.clear();
         keepScopes.clear();
+        deferredKeepScopes.clear();
         loopKeepDepths.clear();
         loopBreakStates.clear();
         valueFlow.clear();
         valueFlowScopes.clear();
+        deferredTaskScopes.clear();
         loopBreakValueStates.clear();
         exceptionTransferredOwners.clear();
         accessMode = AccessMode::Read;
         flowTerminated = false;
         spawnContextDepth = 0;
         currentFunctionAsync = false;
-        loopDepth = functionDepth = catchDepth = finallyDepth = typeContextDepth = constructorContextDepth = 0;
+        loopDepth = functionDepth = catchDepth = finallyDepth = deferDepth =
+            typeContextDepth = constructorContextDepth = 0;
         usesExceptions = false;
 
         phase = Phase::CollectDeclarations;
@@ -89,13 +92,22 @@ namespace Absolute {
         diagnostics.push_back({std::move(message), std::move(code), symbol});
     }
 
-    void Analyzer::PushKeepScope() { keepScopes.emplace_back(); }
+    void Analyzer::PushKeepScope() {
+        keepScopes.emplace_back();
+        deferredKeepScopes.emplace_back();
+    }
 
     void Analyzer::CheckKeepScopesFrom(size_t firstScope, const std::string& exitKind) {
+        const auto deferredDeletes = [&](SymbolId id) {
+            for (size_t scope = firstScope; scope < deferredKeepScopes.size(); ++scope)
+                if (deferredKeepScopes[scope].contains(id)) return true;
+            return false;
+        };
         for (size_t scope = firstScope; scope < keepScopes.size(); ++scope) {
             for (SymbolId id : keepScopes[scope]) {
                 const auto found = keepLifetimes.find(id);
-                if (found == keepLifetimes.end() || found->second.state == KeepState::Deleted) continue;
+                if (found == keepLifetimes.end() || found->second.state == KeepState::Deleted ||
+                    deferredDeletes(id)) continue;
                 const std::string qualifier = found->second.state == KeepState::MaybeDeleted
                     ? " is not deleted on every control-flow path"
                     : " must be explicitly deleted";
@@ -108,8 +120,13 @@ namespace Absolute {
     void Analyzer::PopKeepScope() {
         if (keepScopes.empty()) return;
         if (!flowTerminated) CheckKeepScopesFrom(keepScopes.size() - 1, "leaving its scope");
+        for (const SymbolId id : deferredKeepScopes.back()) {
+            if (auto found = keepLifetimes.find(id); found != keepLifetimes.end())
+                found->second.state = KeepState::Deleted;
+        }
         for (SymbolId id : keepScopes.back()) keepLifetimes.erase(id);
         keepScopes.pop_back();
+        deferredKeepScopes.pop_back();
     }
 
     void Analyzer::MergeKeepPaths(const KeepLifetimeMap& base, const std::vector<KeepLifetimeMap>& paths) {
@@ -125,20 +142,34 @@ namespace Absolute {
         }
     }
 
-    void Analyzer::PushValueFlowScope() { valueFlowScopes.emplace_back(); }
+    void Analyzer::PushValueFlowScope() {
+        valueFlowScopes.emplace_back();
+        deferredTaskScopes.emplace_back();
+    }
 
     void Analyzer::PopValueFlowScope() {
         if (valueFlowScopes.empty()) return;
         if (!flowTerminated) CheckTaskScopesFrom(valueFlowScopes.size() - 1, "leaving its scope");
+        for (const SymbolId id : deferredTaskScopes.back()) {
+            if (auto found = valueFlow.find(id); found != valueFlow.end())
+                found->second.taskState = TaskState::Awaited;
+        }
         for (SymbolId id : valueFlowScopes.back()) valueFlow.erase(id);
         valueFlowScopes.pop_back();
+        deferredTaskScopes.pop_back();
     }
 
     void Analyzer::CheckTaskScopesFrom(size_t firstScope, const std::string& exitKind) {
+        const auto deferredAwaits = [&](SymbolId id) {
+            for (size_t scope = firstScope; scope < deferredTaskScopes.size(); ++scope)
+                if (deferredTaskScopes[scope].contains(id)) return true;
+            return false;
+        };
         for (size_t scope = firstScope; scope < valueFlowScopes.size(); ++scope) {
             for (SymbolId id : valueFlowScopes[scope]) {
                 const auto found = valueFlow.find(id);
                 if (found == valueFlow.end()) continue;
+                if (deferredAwaits(id)) continue;
                 const Symbol* symbol = table.Get(id);
                 const std::string name = symbol ? symbol->name : std::string("<unknown>");
                 if (found->second.taskState == TaskState::Pending)

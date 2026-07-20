@@ -261,6 +261,15 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/exceptions-errors.abs"
     )
     set_tests_properties(absolute.exceptions-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.defer-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/defer.abs"
+    )
+    add_test(
+        NAME absolute.defer-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/defer-errors.abs"
+    )
+    set_tests_properties(absolute.defer-errors PROPERTIES WILL_FAIL TRUE)
     foreach(flow_error IN ITEMS uninitialized-errors pointer-flow-errors)
         add_test(
             NAME "absolute.${flow_error}"
@@ -812,6 +821,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-exceptions PROPERTIES
             FIXTURES_REQUIRED absolute-exceptions-executable
             PASS_REGULAR_EXPRESSION "exceptions=ok"
+        )
+        add_test(
+            NAME absolute.build-defer
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/defer.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/defer-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-defer PROPERTIES
+            FIXTURES_SETUP absolute-defer-executable
+        )
+        add_test(NAME absolute.run-defer
+            COMMAND "${CMAKE_BINARY_DIR}/defer-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-defer PROPERTIES
+            FIXTURES_REQUIRED absolute-defer-executable
+            PASS_REGULAR_EXPRESSION "defer=ok"
         )
         add_test(
             NAME absolute.build-unhandled-exception

@@ -1,0 +1,108 @@
+async int32 delayedValue(int32 value) {
+    return value;
+}
+
+int32 returnWithDefers(raw int32* state) {
+    defer {
+        *state = (*state * 10) + 1;
+    }
+    defer {
+        *state = (*state * 10) + 2;
+    }
+    return 7;
+}
+
+int32 rawCleanup() {
+    raw int32* value = new raw int32(42);
+    defer delete value;
+    return *value;
+}
+
+async int32 deferredAwait() {
+    task<int32> pending = spawn delayedValue(9);
+    defer await pending;
+    return 5;
+}
+
+void raiseFromDeferred() {
+    throw new Error("deferred call failed");
+}
+
+int32 deferredFailure(raw int32* state) {
+    defer {
+        *state = (*state * 10) + 1;
+    }
+    defer {
+        *state = (*state * 10) + 2;
+        raiseFromDeferred();
+    }
+    return 5;
+}
+
+async int32 main() {
+    int32 normal = 0;
+    {
+        defer {
+            normal = (normal * 10) + 1;
+        }
+        defer {
+            normal = (normal * 10) + 2;
+        }
+    }
+    assert(normal == 21, "defer must run in LIFO order");
+
+    int32 returned = 0;
+    assert(returnWithDefers(&returned) == 7, "defer return value");
+    assert(returned == 21, "return must run defers in LIFO order");
+    assert(rawCleanup() == 42, "deferred raw cleanup");
+
+    int32 continueState = 0;
+    while (continueState < 1) {
+        defer {
+            continueState += 10;
+        }
+        continueState += 1;
+        continue;
+    }
+    assert(continueState == 11, "continue must run defer");
+
+    int32 breakState = 0;
+    while (true) {
+        defer {
+            breakState += 10;
+        }
+        breakState += 1;
+        break;
+    }
+    assert(breakState == 11, "break must run defer");
+
+    int32 exceptionState = 0;
+    try {
+        defer {
+            exceptionState = (exceptionState * 10) + 1;
+        }
+        throw new Error("deferred exception");
+    }
+    catch (Error* error) {
+        exceptionState = (exceptionState * 10) + 2;
+    }
+    finally {
+        exceptionState = (exceptionState * 10) + 3;
+    }
+    assert(exceptionState == 123, "defer must run before catch and finally");
+
+    int32 deferredFailureState = 0;
+    try {
+        deferredFailure(&deferredFailureState);
+    }
+    catch (Error* error) {
+        deferredFailureState = (deferredFailureState * 10) + 3;
+    }
+    assert(deferredFailureState == 213,
+        "remaining defers must run when a deferred call throws");
+
+    task<int32> deferredTask = spawn deferredAwait();
+    assert(await deferredTask == 5, "deferred await");
+    println("defer=ok");
+    return 0;
+}

@@ -252,6 +252,7 @@ namespace {
         void Visit(SwitchStmt*) override {}
         void Visit(ThrowStmt*) override {}
         void Visit(TryStmt*) override {}
+        void Visit(DeferStmt*) override {}
         void Visit(ForStmt*) override {}
         void Visit(WhileStmt*) override {}
         void Visit(DoWhileStmt*) override {}

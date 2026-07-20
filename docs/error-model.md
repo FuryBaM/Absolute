@@ -71,7 +71,8 @@ syntax.
 on normal completion, exception propagation, `return`, `break`, and `continue`.
 The first implementation rejects `return`, `break`, `continue`, and `throw`
 inside `finally`; this prevents cleanup code from silently replacing an active
-control transfer. `defer` will later lower through the same cleanup stack.
+control transfer. `defer` uses the same cleanup stack and runs before an
+enclosing handler or `finally` when its lexical scope is exited.
 
 Before an exception leaves a scope, CodeGen performs the existing managed
 owner, raw owner, array, and task cleanup for that scope. A caught exception is

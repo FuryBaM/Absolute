@@ -341,6 +341,8 @@ namespace Absolute {
         exceptionTargets.clear();
         finallyTargets.clear();
         caughtExceptions.clear();
+        deferredScopes.clear();
+        deferredCleanupCursors.clear();
         emittingFinally = false;
         exceptionsEnabled = analyzer ? analyzer->UsesExceptions() : true;
         currentNamespace.clear();

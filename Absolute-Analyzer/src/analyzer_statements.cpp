@@ -63,6 +63,8 @@ namespace Absolute {
         if (phase == Phase::CollectDeclarations) return;
         if (finallyDepth > 0)
             Report("return is not allowed inside finally", "E_FINALLY_CONTROL_TRANSFER");
+        if (deferDepth > 0)
+            Report("return is not allowed inside defer", "E_DEFER_CONTROL_TRANSFER");
         if (functionDepth == 0) Report("return statement is outside a function");
         const Result value = EvaluateExpected(stmt->expr.get(), currentReturnType);
         if (!IsAssignable(currentReturnType, value.type))
@@ -258,6 +260,8 @@ namespace Absolute {
         if (phase == Phase::CollectDeclarations) return;
         if (finallyDepth > 0)
             Report("throw is not allowed inside finally", "E_FINALLY_CONTROL_TRANSFER");
+        if (deferDepth > 0)
+            Report("throw is not allowed inside defer", "E_DEFER_CONTROL_TRANSFER");
         if (!stmt->value) {
             if (catchDepth == 0) Report("rethrow is only valid inside catch", "E_RETHROW_OUTSIDE_CATCH");
         }
@@ -381,6 +385,57 @@ namespace Absolute {
             --finallyDepth;
             if (!flowTerminated) flowTerminated = terminatedBeforeFinally;
         }
+    }
+
+    void Analyzer::Visit(DeferStmt* stmt) {
+        if (phase == Phase::CollectDeclarations) return;
+        if (functionDepth == 0) {
+            Report("defer is only allowed inside a function", "E_DEFER_OUTSIDE_FUNCTION");
+            return;
+        }
+        if (keepScopes.empty() || valueFlowScopes.empty()) {
+            Report("defer requires an active lexical scope", "E_DEFER_OUTSIDE_SCOPE");
+            return;
+        }
+
+        const KeepLifetimeMap beforeKeep = keepLifetimes;
+        const ValueFlowMap beforeValues = valueFlow;
+        const bool beforeTerminated = flowTerminated;
+        flowTerminated = false;
+        ++deferDepth;
+        AcceptIfPresent(stmt->body, *this);
+        --deferDepth;
+
+        for (const auto& [id, before] : beforeKeep) {
+            const auto after = keepLifetimes.find(id);
+            if (before.state != KeepState::Deleted && after != keepLifetimes.end() &&
+                after->second.state == KeepState::Deleted) {
+                bool alreadyDeferred = false;
+                for (const auto& scope : deferredKeepScopes)
+                    alreadyDeferred = alreadyDeferred || scope.contains(id);
+                if (alreadyDeferred)
+                    Report("raw owner '" + before.name + "' is deleted by more than one defer",
+                        "E_DEFER_DOUBLE_CLEANUP", id);
+                deferredKeepScopes.back().insert(id);
+            }
+        }
+        for (const auto& [id, before] : beforeValues) {
+            const auto after = valueFlow.find(id);
+            if (before.taskState == TaskState::Pending && after != valueFlow.end() &&
+                after->second.taskState == TaskState::Awaited) {
+                bool alreadyDeferred = false;
+                for (const auto& scope : deferredTaskScopes)
+                    alreadyDeferred = alreadyDeferred || scope.contains(id);
+                if (alreadyDeferred)
+                    Report("task is awaited by more than one defer",
+                        "E_DEFER_DOUBLE_AWAIT", id);
+                deferredTaskScopes.back().insert(id);
+            }
+        }
+
+        keepLifetimes = beforeKeep;
+        valueFlow = beforeValues;
+        flowTerminated = beforeTerminated;
     }
 
     void Analyzer::Visit(ForStmt* stmt) {
@@ -540,6 +595,8 @@ namespace Absolute {
         if (phase != Phase::ResolveBodies) return;
         if (finallyDepth > 0)
             Report("continue is not allowed inside finally", "E_FINALLY_CONTROL_TRANSFER");
+        if (deferDepth > 0)
+            Report("continue is not allowed inside defer", "E_DEFER_CONTROL_TRANSFER");
         if (loopDepth == 0) Report("continue statement is outside a loop");
         else {
             CheckKeepScopesFrom(loopKeepDepths.back(), "continue");
@@ -554,6 +611,8 @@ namespace Absolute {
         if (phase != Phase::ResolveBodies) return;
         if (finallyDepth > 0)
             Report("break is not allowed inside finally", "E_FINALLY_CONTROL_TRANSFER");
+        if (deferDepth > 0)
+            Report("break is not allowed inside defer", "E_DEFER_CONTROL_TRANSFER");
         if (loopDepth == 0) Report("break statement is outside a loop");
         else {
             CheckKeepScopesFrom(loopKeepDepths.back(), "break");
