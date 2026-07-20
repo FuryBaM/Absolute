@@ -66,7 +66,9 @@ namespace Absolute {
             if (currentType.empty()) DeclareGlobalFunction(*stmt);
             else if (stmt->name && stmt->returnType) {
                 DeclareMember(currentType, stmt->name->value,
-                    {SymbolKind::Method, ResolveType(stmt->returnType.get()), ResolveParameterTypes(stmt->parameters)});
+                    {SymbolKind::Method, ResolveType(stmt->returnType.get()),
+                        ResolveParameterTypes(stmt->parameters), InvalidSymbolId,
+                        HasModifier(*stmt, "const")});
                 auto& overloads = types[currentType].members[stmt->name->value];
                 if (!overloads.empty()) {
                     Symbol* symbol = table.Get(overloads.back().symbol);
@@ -675,6 +677,30 @@ namespace Absolute {
         }
     }
 
+    void Analyzer::Visit(TypeAliasStmt* stmt) {
+        const std::string name = Qualify(stmt->name);
+        if (phase == Phase::CollectTypeNames) {
+            if (types.contains(name) || typeAliases.contains(name)) {
+                Report("type or alias '" + name + "' is already declared", "E_DUPLICATE_TYPE_ALIAS");
+                return;
+            }
+            typeAliases.emplace(name, TypeAliasDefinition{
+                stmt->target.get(), currentNamespace, {}});
+            if (!table.Declare(SymbolKind::Type, name, name))
+                Report("object '" + name + "' is already declared in this scope",
+                    "E_DUPLICATE_TYPE_ALIAS");
+            return;
+        }
+        if (phase == Phase::CollectDeclarations) return;
+        ValidateAttributes(*stmt, "type alias", false);
+        if (!stmt->modifiers.empty())
+            Report("type alias '" + name + "' cannot have modifiers", "E_TYPE_ALIAS_MODIFIER");
+        const std::string target = ResolveTypeAlias(name);
+        if (target == "error" || !IsKnownType(target))
+            Report("type alias '" + name + "' refers to unknown type '" + target + "'",
+                "E_UNKNOWN_ALIAS_TARGET");
+    }
+
     void Analyzer::Visit(ImportStmt* stmt) {
         if (phase == Phase::ResolveBodies && !stmt->attributes.empty())
             ValidateAttributes(*stmt, "import declaration", false);
@@ -689,12 +715,18 @@ namespace Absolute {
             ValidateAttributes(*stmt, "namespace declaration", false);
         const std::string oldNamespace = currentNamespace;
         const std::string namespaceName = Qualify(stmt->name);
-        if (phase == Phase::CollectDeclarations && namespaces.insert(namespaceName).second) {
+        if (phase == Phase::CollectTypeNames && namespaces.insert(namespaceName).second) {
             if (!table.Declare(SymbolKind::Namespace, namespaceName, namespaceName))
                 Report("object '" + namespaceName + "' is already declared in this scope");
         }
         currentNamespace = namespaceName;
-        if (stmt->body) AcceptAll(stmt->body->statements, *this);
+        if (stmt->body) {
+            if (phase == Phase::CollectTypeNames) {
+                for (const auto& statement : stmt->body->statements)
+                    if (statement) CollectTypeName(*statement);
+            }
+            else AcceptAll(stmt->body->statements, *this);
+        }
         currentNamespace = oldNamespace;
     }
 

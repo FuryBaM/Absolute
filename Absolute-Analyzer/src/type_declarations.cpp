@@ -39,6 +39,10 @@ namespace Absolute {
                             "' returns '" + implementation->type + "', but interface '" + parent +
                             "' requires '" + requirement.type + "'");
                     }
+                    else if (implementation->isConst != requirement.isConst) {
+                        Report("class method '" + className + "." + methodName +
+                            "' does not match the const contract of interface '" + parent + "'");
+                    }
                 }
             }
         }
@@ -49,10 +53,13 @@ namespace Absolute {
         std::unordered_map<std::string, std::string> genericScope;
         for (const Token& parameter : stmt->templateParams)
             genericScope.emplace(parameter.value, parameter.value);
-        if (phase == Phase::CollectDeclarations) {
+        if (phase == Phase::CollectTypeNames) {
             DeclareType(stmt->name, TypeKind::Struct);
             for (const Token& parameter : stmt->templateParams)
                 types[typeName].genericParameters.push_back(parameter.value);
+            return;
+        }
+        if (phase == Phase::CollectDeclarations) {
             if (!genericScope.empty()) genericTypeScopes.push_back(genericScope);
             const std::string old = currentType;
             currentType = typeName;
@@ -67,8 +74,11 @@ namespace Absolute {
         currentType = typeName;
         table.EnterScope();
         for (const auto& [name, overloads] : types[typeName].members)
-            for (const MemberSignature& member : overloads)
-                table.Declare(member.kind, name, member.type, member.parameterTypes);
+            for (const MemberSignature& member : overloads) {
+                const auto declared = table.Declare(
+                    member.kind, name, member.type, member.parameterTypes);
+                if (declared) table.Get(*declared)->isConst = member.isConst;
+            }
         for (const auto& member : stmt->members) if (member) member->Accept(*this);
         table.ExitScope();
         currentType = old;
@@ -80,11 +90,15 @@ namespace Absolute {
         std::unordered_map<std::string, std::string> genericScope;
         for (const Token& parameter : stmt->templateParams)
             genericScope.emplace(parameter.value, parameter.value);
-        if (phase == Phase::CollectDeclarations) {
+        if (phase == Phase::CollectTypeNames) {
             DeclareType(stmt->name, TypeKind::Class);
             auto& definition = types[typeName];
             for (const Token& parameter : stmt->templateParams)
                 definition.genericParameters.push_back(parameter.value);
+            return;
+        }
+        if (phase == Phase::CollectDeclarations) {
+            auto& definition = types[typeName];
             if (!genericScope.empty()) genericTypeScopes.push_back(genericScope);
             definition.parents.clear();
             for (const std::string& parent : stmt->parents)
@@ -113,8 +127,11 @@ namespace Absolute {
         currentType = typeName;
         table.EnterScope();
         for (const auto& [name, overloads] : VisibleMembers(typeName))
-            for (const MemberSignature& member : overloads)
-                table.Declare(member.kind, name, member.type, member.parameterTypes);
+            for (const MemberSignature& member : overloads) {
+                const auto declared = table.Declare(
+                    member.kind, name, member.type, member.parameterTypes);
+                if (declared) table.Get(*declared)->isConst = member.isConst;
+            }
         if (stmt->body) stmt->body->Accept(*this);
         ValidateInterfaceImplementation(typeName);
         table.ExitScope();
@@ -124,8 +141,11 @@ namespace Absolute {
 
     void Analyzer::Visit(InterfaceDeclStmt* stmt) {
         const std::string typeName = Qualify(stmt->name);
-        if (phase == Phase::CollectDeclarations) {
+        if (phase == Phase::CollectTypeNames) {
             DeclareType(stmt->name, TypeKind::Interface);
+            return;
+        }
+        if (phase == Phase::CollectDeclarations) {
             auto& definition = types[typeName];
             definition.parents.clear();
             for (const std::string& parent : stmt->parents)
@@ -149,8 +169,11 @@ namespace Absolute {
         currentType = typeName;
         table.EnterScope();
         for (const auto& [name, overloads] : VisibleMembers(typeName))
-            for (const MemberSignature& member : overloads)
-                table.Declare(member.kind, name, member.type, member.parameterTypes);
+            for (const MemberSignature& member : overloads) {
+                const auto declared = table.Declare(
+                    member.kind, name, member.type, member.parameterTypes);
+                if (declared) table.Get(*declared)->isConst = member.isConst;
+            }
         for (const auto& method : stmt->methods) if (method) method->Accept(*this);
         table.ExitScope();
         currentType = old;
@@ -168,9 +191,13 @@ namespace Absolute {
             return;
         }
         ValidateAttributes(*stmt, "constructor", true);
+        if (HasModifier(*stmt, "const"))
+            Report("constructors cannot be const", "E_CONST_CONSTRUCTOR");
         if (stmt->name && Qualify(stmt->name->value) != currentType)
             Report("constructor '" + stmt->name->value + "' must match type '" + currentType + "'");
         ++functionDepth;
+        const bool oldConstructor = currentConstructor;
+        currentConstructor = true;
         table.EnterScope();
         keepLifetimes.clear();
         keepScopes.clear();
@@ -186,11 +213,13 @@ namespace Absolute {
         for (const auto& parameter : stmt->parameters) {
             const std::string name = parameter ? ExtractIdentifier(parameter->name.get()) : std::string{};
             const std::string type = parameter ? ResolveDeclaredType(*parameter) : "error";
-            if (const auto declared = table.Declare(SymbolKind::Parameter, name, type))
+            if (const auto declared = table.Declare(SymbolKind::Parameter, name, type)) {
+                table.Get(*declared)->isConst = parameter && parameter->isConst;
                 RegisterFlowSymbol(*declared, {InitializationState::Initialized,
                     IsPointerType(type) ? PointerValidity::Unknown : PointerValidity::NotPointer,
                     InvalidSymbolId,
                     IsTaskType(type) ? TaskState::Unknown : TaskState::NotTask});
+            }
             else Report("parameter '" + name + "' is already declared");
         }
         if (stmt->body) stmt->body->Accept(*this);
@@ -200,15 +229,20 @@ namespace Absolute {
         valueFlow.clear();
         table.ExitScope();
         --functionDepth;
+        currentConstructor = oldConstructor;
     }
 
     void Analyzer::Visit(EnumDeclStmt* stmt) {
-        if (phase != Phase::CollectDeclarations) return;
-        ValidateAttributes(*stmt, "enum declaration", false);
         const std::string typeName = Qualify(stmt->name);
-        const bool duplicateType = types.contains(typeName);
-        DeclareType(stmt->name, TypeKind::Enum);
-        if (duplicateType) return;
+        if (phase == Phase::CollectTypeNames) {
+            DeclareType(stmt->name, TypeKind::Enum);
+            return;
+        }
+        if (phase == Phase::ResolveBodies) {
+            ValidateAttributes(*stmt, "enum declaration", false);
+            return;
+        }
+        if (phase != Phase::CollectDeclarations) return;
         TypeDefinition& definition = types[typeName];
         definition.enumMembers.clear();
         std::unordered_set<std::string> members;
@@ -227,10 +261,11 @@ namespace Absolute {
     }
 
     void Analyzer::Visit(GroupDeclStmt* stmt) {
-        if (phase == Phase::CollectDeclarations) {
-            ValidateAttributes(*stmt, "group declaration", false);
+        if (phase == Phase::CollectTypeNames) {
             DeclareType(stmt->name);
         }
+        else if (phase == Phase::ResolveBodies)
+            ValidateAttributes(*stmt, "group declaration", false);
         for (const auto& declaration : stmt->enums) if (declaration) declaration->Accept(*this);
         for (const auto& declaration : stmt->subgroups) if (declaration) declaration->Accept(*this);
     }

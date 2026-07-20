@@ -13,6 +13,9 @@ namespace Absolute{
         std::vector<std::unique_ptr<VarDeclExpr>> parameters;
         while (!(RequireCurrent("a parameter or ')'")->type == TokenType::BRACKET && CurrentToken()->value == ")"))
         {
+            const bool isConst = CurrentToken()->type == TokenType::KEYWORD &&
+                CurrentToken()->value == "const";
+            if (isConst) Consume(TokenType::KEYWORD, "const");
             std::unique_ptr<TypeExpr> type = ParseType();
             std::unique_ptr<Expression> nameExpr = ParsePrimaryExpr();
 
@@ -20,10 +23,16 @@ namespace Absolute{
             if (current->type == TokenType::OPERATOR && current->value == "=") {
                 Consume(TokenType::OPERATOR, "=");
                 std::unique_ptr<Expression> value = ParseExpression();
-                parameters.push_back(std::make_unique<VarDeclExpr>(std::move(type), std::move(nameExpr), std::move(value)));
+                auto parameter = std::make_unique<VarDeclExpr>(
+                    std::move(type), std::move(nameExpr), std::move(value));
+                parameter->isConst = isConst;
+                parameters.push_back(std::move(parameter));
             }
             else {
-                parameters.push_back(std::make_unique<VarDeclExpr>(std::move(type), std::move(nameExpr), nullptr));
+                auto parameter = std::make_unique<VarDeclExpr>(
+                    std::move(type), std::move(nameExpr), nullptr);
+                parameter->isConst = isConst;
+                parameters.push_back(std::move(parameter));
             }
 
             current = RequireCurrent("',' or ')'");

@@ -292,6 +292,15 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generics-errors.abs"
     )
     set_tests_properties(absolute.generics-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.base-language-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/base-language.abs"
+    )
+    add_test(
+        NAME absolute.base-language-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/base-language-errors.abs"
+    )
+    set_tests_properties(absolute.base-language-errors PROPERTIES WILL_FAIL TRUE)
     foreach(flow_error IN ITEMS uninitialized-errors pointer-flow-errors)
         add_test(
             NAME "absolute.${flow_error}"
@@ -476,6 +485,11 @@ if(BUILD_TESTING)
         )
         set_tests_properties(absolute.check-generics-ir PROPERTIES
             FIXTURES_REQUIRED "absolute-generic-functions-ir;absolute-generic-types-ir"
+        )
+        add_test(
+            NAME absolute.emit-base-language
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/base-language.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/base-language.ll"
         )
         add_test(
             NAME absolute.emit-builtins
@@ -819,6 +833,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-structs-codegen PROPERTIES
             FIXTURES_REQUIRED absolute-structs-codegen-executable
             PASS_REGULAR_EXPRESSION "structs=ok"
+        )
+        add_test(
+            NAME absolute.build-base-language
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/base-language.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/base-language-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-base-language PROPERTIES
+            FIXTURES_SETUP absolute-base-language-executable
+        )
+        add_test(NAME absolute.run-base-language
+            COMMAND "${CMAKE_BINARY_DIR}/base-language-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-base-language PROPERTIES
+            FIXTURES_REQUIRED absolute-base-language-executable
+            PASS_REGULAR_EXPRESSION "base-language=ok"
         )
         add_test(
             NAME absolute.build-managed-fast-path

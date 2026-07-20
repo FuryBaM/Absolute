@@ -43,6 +43,7 @@ namespace Absolute {
         bool asyncFunction = false;
         bool extensionFunction = false;
         bool externalFunction = false;
+        bool isConst = false;
         std::vector<std::string> genericParameters;
         std::vector<std::string> genericArguments;
         SymbolId genericOrigin = InvalidSymbolId;
@@ -126,6 +127,7 @@ namespace Absolute {
             std::string type;
             std::vector<std::string> parameterTypes;
             SymbolId symbol = InvalidSymbolId;
+            bool isConst = false;
         };
 
         enum class TypeKind {
@@ -145,7 +147,14 @@ namespace Absolute {
             std::vector<std::string> genericParameters;
         };
 
+        struct TypeAliasDefinition {
+            TypeExpr* target = nullptr;
+            std::string namespaceName;
+            std::string resolvedType;
+        };
+
         enum class Phase {
+            CollectTypeNames,
             CollectDeclarations,
             ResolveBodies
         };
@@ -197,6 +206,8 @@ namespace Absolute {
         std::vector<Program*> programs;
         SymbolTable table;
         std::unordered_map<std::string, TypeDefinition> types;
+        std::unordered_map<std::string, TypeAliasDefinition> typeAliases;
+        std::unordered_set<std::string> resolvingTypeAliases;
         std::unordered_map<std::string, std::vector<SymbolId>> functionOverloads;
         std::unordered_map<std::string, std::vector<SymbolId>> extensionMethods;
         std::unordered_map<SymbolId, FunctionDeclStmt*> functionDeclarations;
@@ -238,6 +249,8 @@ namespace Absolute {
         bool flowTerminated = false;
         int spawnContextDepth = 0;
         bool currentFunctionAsync = false;
+        bool currentMethodConst = false;
+        bool currentConstructor = false;
 
     public:
         explicit Analyzer(std::vector<Program*> programs)
@@ -316,11 +329,14 @@ namespace Absolute {
         void Visit(ForEachStmt* stmt) override;
         void Visit(ContinueStmt* stmt) override;
         void Visit(BreakStmt* stmt) override;
+        void Visit(TypeAliasStmt* stmt) override;
         void Visit(ImportStmt* stmt) override;
         void Visit(NamespaceDeclStmt* stmt) override;
         void Visit(OpaquePluginStmt* stmt) override;
 
     private:
+        void CollectProgramTypeNames(Program& program);
+        void CollectTypeName(Statement& statement);
         void AnalyzeProgram(Program& program);
         void Report(std::string message, std::string code = {}, SymbolId symbol = InvalidSymbolId);
         void ValidateAttributes(const Statement& statement, const std::string& target, bool callableTarget);
@@ -360,6 +376,11 @@ namespace Absolute {
         std::string Qualify(const std::string& name) const;
         SymbolId LookupSymbol(const std::string& name) const;
         std::string ResolveTypeReference(const std::string& name);
+        std::string LookupTypeAliasName(const std::string& name) const;
+        std::string ResolveTypeAlias(const std::string& name);
+        bool IsConstMutationTarget(Expression* expression, const Result& target) const;
+        void CheckMutableTarget(Expression* expression, const Result& target,
+            const std::string& operation);
         void PushKeepScope();
         void PopKeepScope();
         void CheckKeepScopesFrom(size_t firstScope, const std::string& exitKind);

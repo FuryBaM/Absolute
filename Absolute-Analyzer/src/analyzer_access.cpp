@@ -207,6 +207,11 @@ namespace Absolute {
         const Symbol* selected = table.Get(symbolId);
         const std::string returnType = selected ? selected->type : "error";
         const bool asyncCall = selected && selected->asyncFunction;
+        if (currentMethodConst && selected && selected->kind == SymbolKind::Method &&
+            !selected->isConst) {
+            Report("const method cannot call non-const method '" + selected->name + "'",
+                "E_CONST_METHOD_CALL", selected->id);
+        }
         for (size_t i = 0; i < arguments.size(); ++i) {
             const Result& argument = arguments[i];
             if (argument.pointerValidity == PointerValidity::Deleted ||

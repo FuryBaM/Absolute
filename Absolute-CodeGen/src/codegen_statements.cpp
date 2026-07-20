@@ -500,6 +500,10 @@ namespace Absolute {
         impl->builder.CreateBr(impl->loops.back().breakBlock);
     }
 
+    void CodeGenerator::Visit(TypeAliasStmt* stmt) {
+        (void)stmt;
+    }
+
     void CodeGenerator::Visit(ImportStmt* stmt) {
         (void)stmt;
     }

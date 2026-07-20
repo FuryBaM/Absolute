@@ -39,6 +39,10 @@ namespace Absolute {
                 std::unique_ptr<TypeExpr> returnType = ParseType();
                 Token* methodName = Consume(TokenType::IDENTIFIER);
                 auto parameters = ParseParameters();
+                if (CurrentToken() && CurrentToken()->type == TokenType::KEYWORD &&
+                    CurrentToken()->value == "const") {
+                    methodModifiers.push_back(*Consume(TokenType::KEYWORD, "const"));
+                }
                 Consume(TokenType::DELIMITER, ";");
                 auto method = std::make_unique<FunctionDeclStmt>(
                     std::move(returnType), std::make_unique<Token>(*methodName),

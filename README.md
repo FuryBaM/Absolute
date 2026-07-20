@@ -205,6 +205,14 @@ specialization receives its own native layout and methods. CodeGen emits only
 used monomorphizations, without runtime boxing. See
 [docs/generics.md](docs/generics.md) for syntax and current constraint limits.
 
+## Type aliases and const
+
+Core type aliases use `using Name = Type;` and are transparent during semantic
+analysis and LLVM lowering. Variables, fields, and parameters accept prefix
+`const`; non-mutating methods use trailing `const` after their parameter list.
+See [docs/type-aliases-const.md](docs/type-aliases-const.md) for the exact
+shallow-const rules and examples.
+
 ## Syntax plugins
 
 New keywords and syntax that can be expressed using existing Absolute constructs

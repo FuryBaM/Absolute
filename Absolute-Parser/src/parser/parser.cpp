@@ -165,7 +165,8 @@ namespace Absolute{
                     token->value == "class" || token->value == "struct" ||
                     token->value == "interface" || token->value == "enum" ||
                     token->value == "group" || token->value == "extern" ||
-                    token->value == "namespace" || token->value == "import"))) {
+                    token->value == "namespace" || token->value == "import" ||
+                    token->value == "using"))) {
             ReportSyntaxError(token, "Attributes may only precede declarations or opaque plugin blocks");
             throw std::runtime_error("Invalid attribute target");
         }
@@ -260,6 +261,8 @@ namespace Absolute{
                 return ParseImport();
             case Hash("namespace"):
                 return ParseNamespace();
+            case Hash("using"):
+                return ParseTypeAlias();
             case Hash("extern"):
                 return ParseExternalFunctionDeclaration();
             case Hash("raw"):

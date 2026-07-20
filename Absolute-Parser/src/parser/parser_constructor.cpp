@@ -46,6 +46,11 @@ namespace Absolute {
 
         std::vector<std::unique_ptr<VarDeclExpr>> parameters = ParseParameters();
 
+        if (CurrentToken() && CurrentToken()->type == TokenType::KEYWORD &&
+            CurrentToken()->value == "const") {
+            modifiers.push_back(*Consume(TokenType::KEYWORD, "const"));
+        }
+
         std::unique_ptr<Statement> body = ParseStatement();
         auto stmt = std::make_unique<ConstructorDeclStmt>(std::make_unique<Token>(*name), std::move(parameters), std::move(body));
         stmt->modifiers = modifiers;

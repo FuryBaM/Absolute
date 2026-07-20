@@ -335,19 +335,46 @@ namespace Absolute {
         if (!function || impl->scopes.empty()) impl->Fail("object declaration outside a function");
         const std::string name = IdentifierName(expr->identifierName.get());
         const std::string typeName = impl->SemanticType(expr);
-        if (impl->enumTypes.contains(typeName)) {
+        if (!impl->classes.contains(typeName) && !impl->structs.contains(typeName)) {
+            if (ArrayRankName(typeName) > 0) {
+                if (!expr->value) impl->Fail("array alias variable requires an initializer");
+                Impl::ArrayView view = impl->ArrayViewFromValue(
+                    impl->Evaluate(expr->value.get()), typeName);
+                if (!impl->scopes.back().emplace(name,
+                    Impl::Variable{view.address, view.elementType, typeName, false,
+                        true, view.elementType, view.dimensions, nullptr,
+                        impl->SemanticSymbol(expr)}).second) {
+                    impl->Fail("duplicate array variable '" + name + "'");
+                }
+                impl->value = impl->BuildArrayDescriptor(view);
+                impl->valueCreatesManagedOwner = false;
+                return;
+            }
             llvm::Type* type = impl->TypeFromName(typeName);
+            if (type->isVoidTy()) impl->Fail("variable '" + name + "' cannot have type void");
             llvm::AllocaInst* address = impl->CreateEntryAlloca(*function, type, name);
+            const SymbolId symbol = impl->SemanticSymbol(expr);
+            const bool staticOwner = IsManagedPointerTypeName(typeName) &&
+                impl->StaticManagedOwner(symbol);
             llvm::Value* initial = expr->value
                 ? impl->Coerce(impl->Evaluate(expr->value.get()), type)
                 : llvm::Constant::getNullValue(type);
+            const bool createsOwner = impl->valueCreatesManagedOwner;
+            llvm::Value* managedPointee = impl->valueManagedPointee;
             impl->builder.CreateStore(initial, address);
             if (!impl->scopes.back().emplace(name,
-                Impl::Variable{address, type, typeName, false, false, nullptr, {},
-                    nullptr, impl->SemanticSymbol(expr)}).second)
-                impl->Fail("duplicate enum variable '" + name + "'");
+                Impl::Variable{address, type, typeName, staticOwner, false, nullptr, {},
+                    nullptr, symbol}).second)
+                impl->Fail("duplicate variable '" + name + "'");
+            if (staticOwner && createsOwner && managedPointee) {
+                Impl::Variable& variable = impl->RequireVariable(name);
+                variable.managedPointee = impl->CreateEntryAlloca(
+                    *function, impl->builder.getPtrTy(), name + ".cached.pointee");
+                impl->builder.CreateStore(managedPointee, variable.managedPointee);
+            }
             impl->value = initial;
             impl->valueCreatesManagedOwner = false;
+            impl->valueManagedPointee = nullptr;
             return;
         }
         llvm::StructType* llvmType = nullptr;

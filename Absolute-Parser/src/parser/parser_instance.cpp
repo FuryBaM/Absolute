@@ -19,6 +19,8 @@ namespace Absolute {
         std::vector<Token> modifiers = this->modifiers;
         std::vector<Attribute> attributes = this->attributes;
         std::unique_ptr<InstanceDeclExpr> instanceDecl = ParseInstanceDeclExpr();
+        instanceDecl->isConst = std::any_of(modifiers.begin(), modifiers.end(),
+            [](const Token& modifier) { return modifier.value == "const"; });
         auto stmt = std::make_unique<SingleStatement>(std::move(instanceDecl));
         stmt->modifiers = modifiers;
         stmt->attributes = std::move(attributes);

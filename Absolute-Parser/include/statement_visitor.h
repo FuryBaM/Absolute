@@ -31,6 +31,7 @@ namespace Absolute {
         virtual void Visit(ForEachStmt* stmt) = 0;
         virtual void Visit(ContinueStmt* stmt) = 0;
         virtual void Visit(BreakStmt* stmt) = 0;
+        virtual void Visit(TypeAliasStmt* stmt) = 0;
         virtual void Visit(ImportStmt* stmt) = 0;
         virtual void Visit(NamespaceDeclStmt* stmt) = 0;
         virtual void Visit(OpaquePluginStmt* stmt) = 0;
