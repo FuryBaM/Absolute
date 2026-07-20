@@ -1,0 +1,40 @@
+class InvalidProperties {
+    int32 ReadOnly {
+        get;
+    }
+
+    int32 WriteOnly {
+        set;
+    }
+
+    private int32 HiddenSetter {
+        get;
+        set;
+    }
+
+    private int32 ExpandedAccessor {
+        public get;
+    }
+}
+
+interface IRequiredProperty {
+    int32 Required {
+        get;
+        set;
+    }
+}
+
+class MissingPropertySetter : IRequiredProperty {
+    public int32 Required {
+        get;
+    }
+}
+
+int32 main() {
+    InvalidProperties value;
+    value.ReadOnly = 1;
+    int32 missingRead = value.WriteOnly;
+    value.HiddenSetter = 2;
+    raw int32* address = &value.ReadOnly;
+    return missingRead;
+}

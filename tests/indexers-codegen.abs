@@ -1,0 +1,131 @@
+interface IIndexedValue {
+    int64 this[int32 index] {
+        get;
+        set;
+    }
+}
+
+interface IDefaultIndexer {
+    int64 this[int32 index] {
+        get {
+            return index * 2;
+        }
+    }
+}
+
+class IndexedBox : IIndexedValue {
+    private int64 storage;
+
+    public int64 this[int32 index] {
+        get {
+            return storage + index;
+        }
+        set {
+            storage = value - index;
+        }
+    }
+}
+
+class DefaultIndexerUser : IDefaultIndexer {
+}
+
+class OverloadedIndexers {
+    public int64 this[int32 index] {
+        get {
+            return index + 40;
+        }
+    }
+
+    public int64 this[string key] {
+        get {
+            return 84;
+        }
+    }
+}
+
+class BaseIndexer {
+    public virtual int64 this[int32 index] {
+        get {
+            return index;
+        }
+    }
+}
+
+class DerivedIndexer : BaseIndexer {
+    public override int64 this[int32 index] {
+        get {
+            return index + 40;
+        }
+    }
+}
+
+class GenericIndexer<T> {
+    private T storage;
+
+    public T this[int32 index] {
+        get {
+            return storage;
+        }
+        set {
+            storage = value;
+        }
+    }
+}
+
+struct StructIndexer {
+    private int64 storage;
+
+    public int64 this[int32 index] {
+        get {
+            return storage + index;
+        }
+        set {
+            storage = value - index;
+        }
+    }
+}
+
+int32 main() {
+    raw IndexedBox* box = new raw IndexedBox();
+    box[2] = 40;
+    box[2] += 2;
+    int64 old = box[2]++;
+    ++box[2];
+    assert(old == 42 && box[2] == 44, "class indexer assignment operators");
+
+    raw IIndexedValue* contract = box;
+    contract[1] = 42;
+    assert(contract[1] == 42, "raw interface indexer dispatch");
+    raw DefaultIndexerUser* defaultUser = new raw DefaultIndexerUser();
+    raw IDefaultIndexer* defaultContract = defaultUser;
+    assert(defaultContract[21] == 42, "default interface indexer");
+    delete defaultUser;
+    delete box;
+
+    raw OverloadedIndexers* overloaded = new raw OverloadedIndexers();
+    assert(overloaded[2] == 42, "integer indexer overload");
+    assert(overloaded["answer"] == 84, "string indexer overload");
+    delete overloaded;
+
+    raw BaseIndexer* virtualIndexer = new raw DerivedIndexer();
+    assert(virtualIndexer[2] == 42, "virtual indexer override");
+    delete virtualIndexer;
+
+    GenericIndexer<int64>* generic = new GenericIndexer<int64>();
+    generic[0] = 42;
+    assert(generic[0] == 42, "generic indexer");
+    delete generic;
+
+    IndexedBox* managedOwner = new IndexedBox();
+    IIndexedValue* managedContract = managedOwner;
+    managedContract[0] = 42;
+    assert(managedContract[0] == 42, "managed interface indexer dispatch");
+    delete managedOwner;
+
+    StructIndexer pair;
+    pair[2] = 42;
+    assert(pair[2] == 42, "struct indexer");
+
+    println("indexers=ok");
+    return 0;
+}

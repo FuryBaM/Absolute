@@ -149,6 +149,14 @@ namespace Absolute {
         visitor.Visit(this);
     }
 
+    void PropertyDeclStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void IndexerDeclStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
     void ReturnStmt::Accept(StatementVisitor& visitor) {
         visitor.Visit(this);
     }

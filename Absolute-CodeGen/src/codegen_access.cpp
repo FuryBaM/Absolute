@@ -1,6 +1,72 @@
 #include "codegen_internal.h"
 
 namespace Absolute {
+    llvm::Value* CodeGenerator::Impl::EmitPropertyAccessor(Expression* receiver,
+        const std::string& receiverType, const std::string& methodKey,
+        const std::vector<llvm::Value*>& explicitArguments) {
+        const std::string aggregateName = ClassNameFromType(receiverType);
+        llvm::Value* object = receiver ? ObjectPointer(receiver, receiverType) : currentThis;
+        if (!object) Fail("property accessor requires an object receiver");
+
+        const auto emitCall = [&](const ClassMethod& method, llvm::Value* callee) -> llvm::Value* {
+            llvm::FunctionType* methodType = MethodFunctionType(method);
+            std::vector<llvm::Value*> arguments{object};
+            for (size_t index = 0; index < explicitArguments.size(); ++index) {
+                if (index + 1 >= methodType->getNumParams())
+                    Fail("too many arguments for property accessor");
+                arguments.push_back(Coerce(explicitArguments[index],
+                    methodType->getParamType(static_cast<unsigned>(index + 1))));
+            }
+            if (arguments.size() != methodType->getNumParams())
+                Fail("invalid property accessor argument count");
+            llvm::CallInst* call = builder.CreateCall(methodType, callee, arguments,
+                methodType->getReturnType()->isVoidTy() ? "" : "property.result");
+            EmitExceptionCheck();
+            return methodType->getReturnType()->isVoidTy() ? nullptr : call;
+        };
+
+        if (auto found = classes.find(aggregateName); found != classes.end()) {
+            const auto method = found->second.methods.find(methodKey);
+            if (method == found->second.methods.end())
+                Fail("class '" + aggregateName + "' has no requested property accessor");
+            llvm::Value* callee = nullptr;
+            if (method->second.virtualSlot) {
+                llvm::Value* vtableAddress = builder.CreateStructGEP(
+                    found->second.llvmType, object, 0, "property.vtable.address");
+                llvm::Value* vtable = builder.CreateLoad(
+                    builder.getPtrTy(), vtableAddress, "property.vtable");
+                llvm::Value* slot = builder.CreateGEP(builder.getPtrTy(), vtable,
+                    builder.getInt64(*method->second.virtualSlot), "property.virtual.slot");
+                callee = builder.CreateLoad(builder.getPtrTy(), slot, "property.virtual.method");
+            }
+            else {
+                callee = module->getFunction(method->second.linkName);
+                if (!callee) Fail("missing property accessor '" + method->second.linkName + "'");
+            }
+            return emitCall(method->second, callee);
+        }
+        if (auto found = interfaces.find(aggregateName); found != interfaces.end()) {
+            const auto method = found->second.methods.find(methodKey);
+            if (method == found->second.methods.end() || !method->second.virtualSlot)
+                Fail("interface '" + aggregateName + "' has no requested property accessor");
+            llvm::Value* vtable = builder.CreateLoad(builder.getPtrTy(), object, "property.interface.vtable");
+            llvm::Value* slot = builder.CreateGEP(builder.getPtrTy(), vtable,
+                builder.getInt64(*method->second.virtualSlot), "property.interface.slot");
+            llvm::Value* callee = builder.CreateLoad(
+                builder.getPtrTy(), slot, "property.interface.method");
+            return emitCall(method->second, callee);
+        }
+        if (auto found = structs.find(aggregateName); found != structs.end()) {
+            const auto method = found->second.methods.find(methodKey);
+            if (method == found->second.methods.end())
+                Fail("struct '" + aggregateName + "' has no requested property accessor");
+            llvm::Function* callee = module->getFunction(method->second.linkName);
+            if (!callee) Fail("missing property accessor '" + method->second.linkName + "'");
+            return emitCall(method->second, callee);
+        }
+        Fail("type '" + receiverType + "' does not support properties");
+    }
+
     void CodeGenerator::Visit(PrimitiveTypeExpr* expr) {
         (void)expr;
         impl->Fail("a type cannot be emitted as a runtime expression");
@@ -25,6 +91,13 @@ namespace Absolute {
         if (impl->analyzer) {
             const ExpressionInfo* info = impl->analyzer->GetExpressionInfo(*expr);
             const Symbol* symbol = info ? impl->analyzer->GetSymbol(info->symbol) : nullptr;
+            if (symbol && symbol->kind == SymbolKind::Property) {
+                if (impl->addressMode) impl->Fail("a property is not addressable");
+                impl->value = impl->EmitPropertyAccessor(nullptr, impl->currentClassName,
+                    CallableKey(PropertyGetterName(expr->name), {}), {});
+                impl->valueCreatesManagedOwner = false;
+                return;
+            }
             if (symbol && symbol->kind == SymbolKind::Field && symbol->isStatic) {
                 const std::string globalName = symbol->memberOwner + "." + expr->name;
                 auto field = impl->globals.find(globalName);
@@ -246,6 +319,22 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(ArrayAccessExpr* expr) {
+        if (impl->analyzer) {
+            const ExpressionInfo* info = impl->analyzer->GetExpressionInfo(*expr);
+            const Symbol* symbol = info ? impl->analyzer->GetSymbol(info->symbol) : nullptr;
+            if (symbol && symbol->kind == SymbolKind::Indexer) {
+                if (impl->addressMode) impl->Fail("an indexer is not addressable");
+                std::vector<llvm::Value*> arguments;
+                arguments.reserve(expr->indexes.size());
+                for (const auto& index : expr->indexes)
+                    arguments.push_back(impl->Evaluate(index.get()));
+                impl->value = impl->EmitPropertyAccessor(
+                    expr->base.get(), impl->SemanticType(expr->base.get()),
+                    CallableKey(IndexerGetterName(), info->parameterTypes), arguments);
+                impl->valueCreatesManagedOwner = false;
+                return;
+            }
+        }
         if (expr->indexes.size() == 1 && !expr->indexes.front()) {
             if (impl->addressMode) impl->Fail("a slice is not assignable");
             impl->value = impl->BuildArrayDescriptor(impl->ViewOfArray(expr->base.get()));

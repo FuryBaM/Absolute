@@ -173,6 +173,14 @@ namespace Absolute {
         else if (!stmt->IsExternal()) impl->EmitFunction(*stmt);
     }
 
+    void CodeGenerator::Visit(PropertyDeclStmt* stmt) {
+        (void)stmt;
+    }
+
+    void CodeGenerator::Visit(IndexerDeclStmt* stmt) {
+        (void)stmt;
+    }
+
     void CodeGenerator::Visit(ReturnStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
         llvm::Function* function = impl->CurrentFunction();

@@ -11,6 +11,8 @@ namespace Absolute {
         virtual void Visit(CompoundStmt* stmt) = 0;
         virtual void Visit(FunctionCallStmt* stmt) = 0;
         virtual void Visit(FunctionDeclStmt* stmt) = 0;
+        virtual void Visit(PropertyDeclStmt* stmt) = 0;
+        virtual void Visit(IndexerDeclStmt* stmt) = 0;
         virtual void Visit(ReturnStmt* stmt) = 0;
         virtual void Visit(AssignmentStmt* stmt) = 0;
         virtual void Visit(VarDeclStmt* stmt) = 0;

@@ -143,8 +143,15 @@
   Default-методы проходят полный parser/analyzer/LLVM pipeline, поддерживают
   namespace и diamond-наследование; метод класса имеет приоритет, а конфликт
   разных defaults требует явной реализации в классе.
-- [ ] Добавить properties в классы, структуры и интерфейсы.
-- [ ] Добавить indexers для пользовательских контейнеров.
+- [x] Добавить properties в классы, структуры и интерфейсы.
+  Поддерживаются explicit и auto `get`/`set`, read-only/write-only свойства,
+  accessors с отдельным уровнем доступа, virtual/override, interface/default
+  dispatch, generic-типы и backing storage без изменения публичного layout API.
+- [x] Добавить indexers для пользовательских контейнеров.
+  Поддерживаются перегруженные `this[...]` с explicit `get`/`set`, отдельным
+  доступом accessor-ов, class/struct, virtual/override, generic-типы и
+  raw/managed interface dispatch. В интерфейсе `;` означает контракт;
+  auto-indexer в class/struct запрещён, потому что индекс требует явной модели хранения.
 - [ ] Добавить static-члены интерфейсов.
 - [x] Завершить и протестировать правила доступа `public`/`protected`/`private`.
   Доступ проверяется для instance/static полей и методов, конструкторов, наследования

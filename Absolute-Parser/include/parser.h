@@ -55,6 +55,8 @@ namespace Absolute {
         void ParseAttributes();
         std::vector<Token> ParseTemplateParameters();
         bool LooksLikeFunctionDeclaration() const;
+        bool LooksLikePropertyDeclaration() const;
+        bool LooksLikeIndexerDeclaration() const;
         void ConsumeTemplateClose();
         bool IsTemplateArgumentList(size_t start, size_t* close = nullptr) const;
 
@@ -94,6 +96,8 @@ namespace Absolute {
         std::unique_ptr<CompoundStmt> ParseCompoundStatement();
         std::unique_ptr<VarDeclStmt> ParseVarDeclaration();
         std::unique_ptr<FunctionDeclStmt> ParseFunctionDeclaration();
+        std::unique_ptr<PropertyDeclStmt> ParsePropertyDeclaration();
+        std::unique_ptr<IndexerDeclStmt> ParseIndexerDeclaration();
         std::unique_ptr<FunctionDeclStmt> ParseExternalFunctionDeclaration();
         std::unique_ptr<ReturnStmt> ParseReturnStmt();
         std::unique_ptr<IfStmt> ParseIfStmt();

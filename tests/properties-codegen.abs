@@ -1,0 +1,113 @@
+interface IPropertyValue {
+    int64 Value {
+        get;
+        set;
+    }
+
+    int64 Answer {
+        get {
+            return 42;
+        }
+    }
+}
+
+class PropertyBox : IPropertyValue {
+    public int64 Value {
+        get;
+        set;
+    }
+}
+
+class ExplicitProperty {
+    private int64 storage;
+
+    public ExplicitProperty(int64 initial) {
+        storage = initial;
+    }
+
+    public int64 Doubled {
+        get {
+            return storage * 2;
+        }
+        private set {
+            storage = value / 2;
+        }
+    }
+
+    public void update(int64 next) {
+        Doubled = next;
+    }
+}
+
+class BaseProperty {
+    public virtual int64 Score {
+        get {
+            return 1;
+        }
+    }
+}
+
+class DerivedProperty : BaseProperty {
+    public override int64 Score {
+        get {
+            return 42;
+        }
+    }
+}
+
+class GenericPropertyBox<T> {
+    public T Value {
+        get;
+        set;
+    }
+}
+
+struct PropertyPair {
+    int64 Value {
+        get;
+        set;
+    }
+}
+
+int32 main() {
+    raw PropertyBox* box = new raw PropertyBox();
+    box.Value = 40;
+    box.Value += 2;
+    int64 oldValue = box.Value++;
+    ++box.Value;
+    raw IPropertyValue* contract = box;
+    assert(oldValue == 42 && box.Value == 44, "property increment operators");
+    assert(contract.Value == 44, "interface property dispatch");
+    assert(contract.Answer == 42, "default interface property getter");
+    contract.Value = 21;
+    assert(box.Value == 21, "interface property setter dispatch");
+    delete box;
+
+    raw ExplicitProperty* calculated = new raw ExplicitProperty(21);
+    assert(calculated.Doubled == 42, "explicit property getter");
+    calculated.update(84);
+    assert(calculated.Doubled == 84, "private property setter inside class");
+    delete calculated;
+
+    raw BaseProperty* virtualProperty = new raw DerivedProperty();
+    assert(virtualProperty.Score == 42, "virtual property override");
+    delete virtualProperty;
+
+    GenericPropertyBox<int32>* generic = new GenericPropertyBox<int32>();
+    generic.Value = 42;
+    assert(generic.Value == 42, "generic auto-property");
+    delete generic;
+
+    PropertyBox* managedOwner = new PropertyBox();
+    IPropertyValue* managedContract = managedOwner;
+    managedContract.Value = 42;
+    assert(managedContract.Value == 42, "managed interface property dispatch");
+    delete managedOwner;
+
+    PropertyPair pair;
+    pair.Value = 42;
+    assert(pair.Value == 42, "struct auto-property");
+
+    println("properties=ok");
+    return 0;
+}

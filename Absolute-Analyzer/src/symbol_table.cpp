@@ -24,13 +24,16 @@ namespace Absolute {
         if (scopes.empty()) scopes.emplace_back();
         if (const auto found = scopes.back().find(name); found != scopes.back().end()) {
             const Symbol* existing = Get(found->second);
-            const bool callable = kind == SymbolKind::Function || kind == SymbolKind::Method;
+            const bool callable = kind == SymbolKind::Function || kind == SymbolKind::Method ||
+                kind == SymbolKind::Indexer;
             const bool existingCallable = existing &&
-                (existing->kind == SymbolKind::Function || existing->kind == SymbolKind::Method);
+                (existing->kind == SymbolKind::Function || existing->kind == SymbolKind::Method ||
+                    existing->kind == SymbolKind::Indexer);
             if (!callable || !existingCallable) return std::nullopt;
             for (const Symbol& symbol : symbols) {
                 if (symbol.scopeDepth == ScopeDepth() && symbol.name == name &&
-                    (symbol.kind == SymbolKind::Function || symbol.kind == SymbolKind::Method) &&
+                    (symbol.kind == SymbolKind::Function || symbol.kind == SymbolKind::Method ||
+                        symbol.kind == SymbolKind::Indexer) &&
                     symbol.parameterTypes == parameterTypes)
                     return std::nullopt;
             }

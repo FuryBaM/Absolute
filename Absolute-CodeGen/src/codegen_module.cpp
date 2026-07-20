@@ -264,7 +264,21 @@ namespace Absolute {
         for (size_t index = 0; index < method.statement->parameters.size(); ++index)
             BindCallableParameter(*function->getArg(static_cast<unsigned>(index) + offset),
                 *method.statement->parameters[index]);
-        if (method.statement->body) method.statement->body->Accept(visitor);
+        if (method.statement->autoPropertyAccessor) {
+            llvm::Value* storage = ImplicitFieldAddress(
+                PropertyBackingFieldName(method.statement->propertyName));
+            if (!storage) Fail("missing auto-property storage for '" +
+                method.statement->propertyName + "'");
+            if (method.statement->propertyAccessor == PropertyAccessorKind::Getter) {
+                builder.CreateRet(builder.CreateLoad(
+                    TypeFromName(method.returnType), storage, "auto.property.value"));
+            }
+            else {
+                builder.CreateStore(function->getArg(1), storage);
+                builder.CreateRetVoid();
+            }
+        }
+        else if (method.statement->body) method.statement->body->Accept(visitor);
         FinishClassCallable(*function);
         PopScope();
         currentClassName = oldClass;
@@ -388,7 +402,21 @@ namespace Absolute {
         for (size_t index = 0; index < method.statement->parameters.size(); ++index)
             BindCallableParameter(*function->getArg(static_cast<unsigned>(index) + offset),
                 *method.statement->parameters[index]);
-        if (method.statement->body) method.statement->body->Accept(visitor);
+        if (method.statement->autoPropertyAccessor) {
+            llvm::Value* storage = ImplicitFieldAddress(
+                PropertyBackingFieldName(method.statement->propertyName));
+            if (!storage) Fail("missing auto-property storage for '" +
+                method.statement->propertyName + "'");
+            if (method.statement->propertyAccessor == PropertyAccessorKind::Getter) {
+                builder.CreateRet(builder.CreateLoad(
+                    TypeFromName(method.returnType), storage, "auto.property.value"));
+            }
+            else {
+                builder.CreateStore(function->getArg(1), storage);
+                builder.CreateRetVoid();
+            }
+        }
+        else if (method.statement->body) method.statement->body->Accept(visitor);
         FinishClassCallable(*function);
         PopScope();
         currentClassName = oldClass;

@@ -172,6 +172,8 @@ namespace Absolute{
         }
 
         if (LooksLikeFunctionDeclaration()) return ParseFunctionDeclaration();
+        if (LooksLikeIndexerDeclaration()) return ParseIndexerDeclaration();
+        if (LooksLikePropertyDeclaration()) return ParsePropertyDeclaration();
 
         if (token->type == TokenType::KEYWORD && IsPrimitiveType(token->value)) {
             return ParseVarDeclaration();

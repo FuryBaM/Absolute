@@ -62,6 +62,10 @@
 
         llvm::Value* ObjectPointer(Expression* expression, const std::string& typeName);
 
+        llvm::Value* EmitPropertyAccessor(Expression* receiver,
+            const std::string& receiverType, const std::string& methodKey,
+            const std::vector<llvm::Value*>& explicitArguments);
+
         llvm::Value* FieldAddress(llvm::Value* object, ClassInfo& info, const ClassField& field);
 
         llvm::Value* FieldAddress(llvm::Value* object, StructInfo& info, const ClassField& field);

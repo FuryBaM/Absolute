@@ -363,6 +363,34 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.interface-default-body-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
+        NAME absolute.properties-codegen-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/properties-codegen.abs"
+    )
+    add_test(
+        NAME absolute.property-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/property-errors.abs"
+    )
+    set_tests_properties(absolute.property-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.property-syntax-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/property-syntax-errors.abs"
+    )
+    set_tests_properties(absolute.property-syntax-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.indexers-codegen-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/indexers-codegen.abs"
+    )
+    add_test(
+        NAME absolute.indexer-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/indexer-errors.abs"
+    )
+    set_tests_properties(absolute.indexer-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.indexer-syntax-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/indexer-syntax-errors.abs"
+    )
+    set_tests_properties(absolute.indexer-syntax-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.structs-codegen-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/structs-codegen.abs"
     )
@@ -728,6 +756,22 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-interfaces-codegen-ir
         )
         add_test(
+            NAME absolute.emit-properties-codegen
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/properties-codegen.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/properties-codegen.ll"
+        )
+        set_tests_properties(absolute.emit-properties-codegen PROPERTIES
+            FIXTURES_SETUP absolute-properties-codegen-ir
+        )
+        add_test(
+            NAME absolute.emit-indexers-codegen
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/indexers-codegen.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/indexers-codegen.ll"
+        )
+        set_tests_properties(absolute.emit-indexers-codegen PROPERTIES
+            FIXTURES_SETUP absolute-indexers-codegen-ir
+        )
+        add_test(
             NAME absolute.emit-structs-codegen
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/structs-codegen.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/structs-codegen.ll"
@@ -990,6 +1034,34 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-interfaces-codegen PROPERTIES
             FIXTURES_REQUIRED absolute-interfaces-codegen-executable
             PASS_REGULAR_EXPRESSION "interfaces=ok"
+        )
+        add_test(
+            NAME absolute.build-properties-codegen
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/properties-codegen.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/properties-codegen-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-properties-codegen PROPERTIES
+            FIXTURES_SETUP absolute-properties-codegen-executable
+        )
+        add_test(NAME absolute.run-properties-codegen
+            COMMAND "${CMAKE_BINARY_DIR}/properties-codegen-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-properties-codegen PROPERTIES
+            FIXTURES_REQUIRED absolute-properties-codegen-executable
+            PASS_REGULAR_EXPRESSION "properties=ok"
+        )
+        add_test(
+            NAME absolute.build-indexers-codegen
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/indexers-codegen.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/indexers-codegen-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-indexers-codegen PROPERTIES
+            FIXTURES_SETUP absolute-indexers-codegen-executable
+        )
+        add_test(NAME absolute.run-indexers-codegen
+            COMMAND "${CMAKE_BINARY_DIR}/indexers-codegen-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-indexers-codegen PROPERTIES
+            FIXTURES_REQUIRED absolute-indexers-codegen-executable
+            PASS_REGULAR_EXPRESSION "indexers=ok"
         )
         add_test(
             NAME absolute.build-structs-codegen

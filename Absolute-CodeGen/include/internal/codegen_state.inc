@@ -57,6 +57,7 @@
             std::vector<VarDeclExpr*> ownStaticPrimitiveFields;
             std::vector<InstanceDeclExpr*> ownStaticObjectFields;
             std::vector<FunctionDeclStmt*> ownMethods;
+            std::vector<PropertyDeclStmt*> ownProperties;
             ConstructorDeclStmt* constructor = nullptr;
             std::vector<ClassField> fields;
             std::unordered_map<std::string, ClassField> fieldByName;
@@ -81,6 +82,7 @@
             std::vector<VarDeclExpr*> ownStaticPrimitiveFields;
             std::vector<InstanceDeclExpr*> ownStaticObjectFields;
             std::vector<FunctionDeclStmt*> ownMethods;
+            std::vector<PropertyDeclStmt*> ownProperties;
             ConstructorDeclStmt* constructor = nullptr;
             std::vector<ClassField> fields;
             std::unordered_map<std::string, ClassField> fieldByName;

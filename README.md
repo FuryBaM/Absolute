@@ -663,9 +663,73 @@ The analyzer verifies every required overload and its return type. A class metho
 has precedence over an inherited default. The same default inherited through a
 diamond is shared; two different defaults with the same signature require the
 class to declare a resolving implementation. Instantiating an interface,
-declaring it as an inline value, omitting an abstract method, or implementing an
-incompatible signature is rejected. Interface fields, properties, and static
-interface members are not implemented yet.
+declaring it as an inline value, omitting an abstract method/property accessor,
+or implementing an incompatible signature is rejected. Interface fields and
+static interface members are not implemented yet.
+
+## Properties
+
+Classes and structs support explicit and automatically stored properties. An
+interface property contributes getter/setter contracts to the same virtual
+dispatch table as methods:
+
+```absolute
+interface IValue {
+    int64 Value {
+        get;
+        set;
+    }
+
+    int64 Answer {
+        get { return 42; }
+    }
+}
+
+class Box : IValue {
+    public int64 Value {
+        get;
+        set;
+    }
+}
+```
+
+An accessor with `;` receives hidden zero-initialized storage in a class or
+struct, but remains an abstract contract in an interface. Accessors with bodies
+are ordinary checked code and setters receive the assigned value as `value`.
+Properties may be read-only or write-only, accessor access may be narrowed (for
+example `private set`), and `virtual`/`override`, generic types, raw/managed
+receivers, compound assignment, and increment operators use normal dispatch.
+Properties are not addressable, so `&object.Value` is rejected.
+
+## Indexers
+
+Classes, structs, and interfaces can expose indexed access with `this[...]`:
+
+```absolute
+interface ITable {
+    int64 this[int32 index] {
+        get;
+        set;
+    }
+}
+
+class Table : ITable {
+    private int64 storage;
+
+    public int64 this[int32 index] {
+        get { return storage + index; }
+        private set { storage = value - index; }
+    }
+}
+```
+
+Indexer parameters participate in overload resolution, so a type may provide,
+for example, both `this[int32]` and `this[string]`. Reads, writes, compound
+assignments, and increment operators call the selected accessors. Indexers use
+normal class/struct, `virtual`/`override`, generic, and raw/managed interface
+dispatch. Interface accessors ending in `;` are contracts; concrete class and
+struct indexers require explicit bodies. Like properties, indexers are not
+addressable.
 
 ## Async tasks and parallel execution
 

@@ -32,6 +32,8 @@ namespace Absolute {
         Function,
         Type,
         Field,
+        Property,
+        Indexer,
         Method,
         Constructor,
         Namespace
@@ -51,8 +53,12 @@ namespace Absolute {
         bool externalFunction = false;
         bool isConst = false;
         bool isStatic = false;
+        bool canRead = true;
+        bool canWrite = true;
         bool arrayStorageEscapes = false;
         AccessLevel access = AccessLevel::Public;
+        AccessLevel readAccess = AccessLevel::Public;
+        AccessLevel writeAccess = AccessLevel::Public;
         std::string memberOwner;
         std::vector<std::string> genericParameters;
         std::vector<std::string> genericArguments;
@@ -97,6 +103,7 @@ namespace Absolute {
         bool createsTask = false;
         bool asyncCall = false;
         bool createsRawOwner = false;
+        std::vector<std::string> parameterTypes;
     };
 
     struct ANALYZER_API Diagnostic {
@@ -139,7 +146,11 @@ namespace Absolute {
             SymbolId symbol = InvalidSymbolId;
             bool isConst = false;
             bool isStatic = false;
+            bool canRead = true;
+            bool canWrite = true;
             AccessLevel access = AccessLevel::Public;
+            AccessLevel readAccess = AccessLevel::Public;
+            AccessLevel writeAccess = AccessLevel::Public;
             std::string owner;
 
             MemberSignature() = default;
@@ -147,10 +158,12 @@ namespace Absolute {
                 std::vector<std::string> parameters = {},
                 SymbolId memberSymbol = InvalidSymbolId, bool memberConst = false,
                 bool memberStatic = false,
-                AccessLevel memberAccess = AccessLevel::Public)
+                AccessLevel memberAccess = AccessLevel::Public,
+                bool memberCanRead = true, bool memberCanWrite = true)
                 : kind(memberKind), type(std::move(memberType)),
                   parameterTypes(std::move(parameters)), symbol(memberSymbol),
-                  isConst(memberConst), isStatic(memberStatic), access(memberAccess) {
+                  isConst(memberConst), isStatic(memberStatic),
+                  canRead(memberCanRead), canWrite(memberCanWrite), access(memberAccess) {
             }
         };
 
@@ -335,6 +348,8 @@ namespace Absolute {
         void Visit(CompoundStmt* stmt) override;
         void Visit(FunctionCallStmt* stmt) override;
         void Visit(FunctionDeclStmt* stmt) override;
+        void Visit(PropertyDeclStmt* stmt) override;
+        void Visit(IndexerDeclStmt* stmt) override;
         void Visit(ReturnStmt* stmt) override;
         void Visit(AssignmentStmt* stmt) override;
         void Visit(VarDeclStmt* stmt) override;

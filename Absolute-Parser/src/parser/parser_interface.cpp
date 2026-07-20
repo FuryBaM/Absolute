@@ -25,13 +25,24 @@ namespace Absolute {
         Consume(TokenType::BRACKET, "{");
         EnterScope(ScopeType::Interface, identifier->value);
         std::vector<std::unique_ptr<FunctionDeclStmt>> methods;
+        std::vector<std::unique_ptr<PropertyDeclStmt>> properties;
+        std::vector<std::unique_ptr<IndexerDeclStmt>> indexers;
         try {
             while (CurrentToken() && !(CurrentToken()->type == TokenType::BRACKET &&
                 CurrentToken()->value == "}")) {
                 ParseAttributes();
                 ParseModifiers();
+                if (LooksLikeIndexerDeclaration()) {
+                    indexers.push_back(ParseIndexerDeclaration());
+                    continue;
+                }
+                if (LooksLikePropertyDeclaration()) {
+                    properties.push_back(ParsePropertyDeclaration());
+                    continue;
+                }
                 if (!LooksLikeFunctionDeclaration()) {
-                    ReportSyntaxError(CurrentToken(), "Interfaces may only contain method signatures");
+                    ReportSyntaxError(CurrentToken(),
+                        "Interfaces may only contain methods, properties, and indexers");
                     throw std::runtime_error("Invalid interface member");
                 }
                 std::vector<Token> methodModifiers = modifiers;
@@ -77,7 +88,8 @@ namespace Absolute {
         ExitScope();
 
         auto statement = std::make_unique<InterfaceDeclStmt>(
-            identifier->value, std::move(parents), std::move(methods));
+            identifier->value, std::move(parents), std::move(methods),
+            std::move(properties), std::move(indexers));
         statement->modifiers = std::move(declarationModifiers);
         statement->attributes = std::move(declarationAttributes);
         return statement;

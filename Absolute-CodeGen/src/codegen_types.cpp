@@ -106,6 +106,15 @@ namespace Absolute {
                     if (instance->isStatic) info.ownStaticObjectFields.push_back(instance);
                     else info.ownObjectFields.push_back(instance);
             }
+            else if (auto* property = dynamic_cast<PropertyDeclStmt*>(member.get())) {
+                info.ownProperties.push_back(property);
+                if (property->getter) info.ownMethods.push_back(property->getter.get());
+                if (property->setter) info.ownMethods.push_back(property->setter.get());
+            }
+            else if (auto* indexer = dynamic_cast<IndexerDeclStmt*>(member.get())) {
+                if (indexer->getter) info.ownMethods.push_back(indexer->getter.get());
+                if (indexer->setter) info.ownMethods.push_back(indexer->setter.get());
+            }
             else if (auto* method = dynamic_cast<FunctionDeclStmt*>(member.get()))
                 info.ownMethods.push_back(method);
             else if (auto* constructor = dynamic_cast<ConstructorDeclStmt*>(member.get())) {
@@ -142,6 +151,15 @@ namespace Absolute {
                 if (auto* instance = dynamic_cast<InstanceDeclExpr*>(single->expr.get()))
                     if (instance->isStatic) info.ownStaticObjectFields.push_back(instance);
                     else info.ownObjectFields.push_back(instance);
+            }
+            else if (auto* property = dynamic_cast<PropertyDeclStmt*>(member.get())) {
+                info.ownProperties.push_back(property);
+                if (property->getter) info.ownMethods.push_back(property->getter.get());
+                if (property->setter) info.ownMethods.push_back(property->setter.get());
+            }
+            else if (auto* indexer = dynamic_cast<IndexerDeclStmt*>(member.get())) {
+                if (indexer->getter) info.ownMethods.push_back(indexer->getter.get());
+                if (indexer->setter) info.ownMethods.push_back(indexer->setter.get());
             }
             else if (auto* method = dynamic_cast<FunctionDeclStmt*>(member.get()))
                 info.ownMethods.push_back(method);
@@ -280,8 +298,17 @@ namespace Absolute {
             }
         }
 
-        for (const auto& methodStatement : info.statement->methods) {
-            FunctionDeclStmt* statement = methodStatement.get();
+        std::vector<FunctionDeclStmt*> interfaceMethods;
+        for (const auto& method : info.statement->methods) interfaceMethods.push_back(method.get());
+        for (const auto& property : info.statement->properties) {
+            if (property->getter) interfaceMethods.push_back(property->getter.get());
+            if (property->setter) interfaceMethods.push_back(property->setter.get());
+        }
+        for (const auto& indexer : info.statement->indexers) {
+            if (indexer->getter) interfaceMethods.push_back(indexer->getter.get());
+            if (indexer->setter) interfaceMethods.push_back(indexer->setter.get());
+        }
+        for (FunctionDeclStmt* statement : interfaceMethods) {
             if (!statement || !statement->name) continue;
             std::vector<std::string> parameterTypes;
             for (const auto& parameter : statement->parameters)
@@ -341,6 +368,10 @@ namespace Absolute {
             info.fields.push_back(field);
             info.fieldByName.emplace(fieldName, std::move(field));
         };
+        for (PropertyDeclStmt* property : info.ownProperties)
+            if (property && property->HasAutoAccessor())
+                addField(PropertyBackingFieldName(property->name),
+                    ResolveTypeName(property->type.get()));
         for (VarDeclExpr* field : info.ownPrimitiveFields)
             addField(IdentifierName(field->name.get()), DeclaredTypeName(*field));
         for (InstanceDeclExpr* field : info.ownObjectFields)
@@ -446,6 +477,10 @@ namespace Absolute {
             info.fields.push_back(field);
             info.fieldByName.emplace(fieldName, std::move(field));
         };
+        for (PropertyDeclStmt* property : info.ownProperties)
+            if (property && property->HasAutoAccessor())
+                addField(PropertyBackingFieldName(property->name),
+                    ResolveTypeName(property->type.get()));
         for (VarDeclExpr* field : info.ownPrimitiveFields)
             addField(IdentifierName(field->name.get()), DeclaredTypeName(*field));
         for (InstanceDeclExpr* field : info.ownObjectFields)

@@ -690,7 +690,8 @@ namespace Absolute {
             }
         }
         if (!statement.IsExternal()) AcceptIfPresent(statement.body, *this);
-        if (!statement.IsExternal() && returnType != "void" && !flowTerminated)
+        if (!statement.IsExternal() && returnType != "void" && !flowTerminated &&
+            !statement.autoPropertyAccessor)
             Report("function '" + statement.name->value + "' does not return a value on every control-flow path",
                 "E_MISSING_RETURN", table.Lookup(Qualify(statement.name->value)));
         PopValueFlowScope();
@@ -723,9 +724,10 @@ namespace Absolute {
     void Analyzer::DeclareMember(const std::string& owner, std::string name, MemberSignature signature) {
         auto& members = types[owner].members;
         auto& overloads = members[name];
-        const bool method = signature.kind == SymbolKind::Method;
+        const bool overloadable = signature.kind == SymbolKind::Method ||
+            signature.kind == SymbolKind::Indexer;
         const bool collision = std::any_of(overloads.begin(), overloads.end(), [&](const MemberSignature& existing) {
-            return !method || existing.kind != SymbolKind::Method ||
+            return !overloadable || existing.kind != signature.kind ||
                 existing.parameterTypes == signature.parameterTypes;
         });
         if (collision) {
@@ -743,7 +745,11 @@ namespace Absolute {
         if (Symbol* symbol = table.Get(*declared)) {
             symbol->isConst = signature.isConst;
             symbol->isStatic = signature.isStatic;
+            symbol->canRead = signature.canRead;
+            symbol->canWrite = signature.canWrite;
             symbol->access = signature.access;
+            symbol->readAccess = signature.readAccess;
+            symbol->writeAccess = signature.writeAccess;
             symbol->memberOwner = owner;
         }
         overloads.push_back(std::move(signature));
@@ -793,6 +799,19 @@ namespace Absolute {
                             inherited.parameterTypes == declared.parameterTypes;
                     }), result.end());
                 }
+                else if (declared.kind == SymbolKind::Property) {
+                    result.erase(std::remove_if(result.begin(), result.end(),
+                        [](const MemberSignature& inherited) {
+                            return inherited.kind == SymbolKind::Property;
+                        }), result.end());
+                }
+                else if (declared.kind == SymbolKind::Indexer) {
+                    result.erase(std::remove_if(result.begin(), result.end(),
+                        [&](const MemberSignature& inherited) {
+                            return inherited.kind == SymbolKind::Indexer &&
+                                inherited.parameterTypes == declared.parameterTypes;
+                        }), result.end());
+                }
                 result.push_back(std::move(declared));
             }
         }
@@ -833,6 +852,21 @@ namespace Absolute {
                         return inherited.kind == SymbolKind::Method &&
                             inherited.parameterTypes == declared.parameterTypes;
                     }), visible.end());
+                }
+                else if (declared.kind == SymbolKind::Property) {
+                    auto& visible = result[name];
+                    visible.erase(std::remove_if(visible.begin(), visible.end(),
+                        [](const MemberSignature& inherited) {
+                            return inherited.kind == SymbolKind::Property;
+                        }), visible.end());
+                }
+                else if (declared.kind == SymbolKind::Indexer) {
+                    auto& visible = result[name];
+                    visible.erase(std::remove_if(visible.begin(), visible.end(),
+                        [&](const MemberSignature& inherited) {
+                            return inherited.kind == SymbolKind::Indexer &&
+                                inherited.parameterTypes == declared.parameterTypes;
+                        }), visible.end());
                 }
                 result[name].push_back(declared);
             }
@@ -1187,7 +1221,9 @@ namespace Absolute {
         if (const Symbol* symbol = table.Get(target.symbol)) {
             if (symbol->isConst && !(currentConstructor && symbol->kind == SymbolKind::Field))
                 return true;
-            if (currentMethodConst && symbol->kind == SymbolKind::Field)
+            if (currentMethodConst &&
+                (symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Property ||
+                    symbol->kind == SymbolKind::Indexer))
                 return true;
         }
 

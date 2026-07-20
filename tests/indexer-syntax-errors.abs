@@ -1,0 +1,6 @@
+class InvalidAutomaticIndexer {
+    int32 this[int32 index] {
+        get;
+        set;
+    }
+}
