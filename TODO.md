@@ -152,7 +152,11 @@
   доступом accessor-ов, class/struct, virtual/override, generic-типы и
   raw/managed interface dispatch. В интерфейсе `;` означает контракт;
   auto-indexer в class/struct запрещён, потому что индекс требует явной модели хранения.
-- [ ] Добавить static-члены интерфейсов.
+- [x] Добавить static-члены интерфейсов.
+  Интерфейсы владеют public static scalar/string/enum/raw-pointer полями и
+  перегруженными static-методами с телом. Они вызываются через имя интерфейса,
+  наследуются без копирования storage, не входят в vtable и не создают контракт
+  для класса. Static abstract methods отложены до generic constraints.
 - [x] Завершить и протестировать правила доступа `public`/`protected`/`private`.
   Доступ проверяется для instance/static полей и методов, конструкторов, наследования
   и реализаций интерфейсов; protected разрешён объявляющему и производным классам,

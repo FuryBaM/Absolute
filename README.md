@@ -559,10 +559,15 @@ virtual dispatch and therefore carry no class vtable field.
 
 ## Static members
 
-Classes and structs support static fields and methods. Access them through the
-type, for example `Counter.value` and `Counter.advance()`. Static fields are
-LLVM globals and do not increase object size; static methods have no hidden
-`this` parameter. Derived classes see the same inherited static storage.
+Classes, structs, and interfaces support static fields and methods. Access them
+through the type, for example `Counter.value` and `Counter.advance()`. Static
+fields are LLVM globals and do not increase object size; static methods have no
+hidden `this` parameter. Derived types see the same inherited static storage.
+
+Interface static members must be public. Static interface methods require a
+body, are called through the interface name, and do not enter the instance
+vtable or create an implementation requirement for classes. Static abstract
+interface methods are reserved for the future generic-constraint system.
 
 Static field initializers are currently limited to constant primitive, string,
 enum, or raw-pointer values. Managed/array/aggregate static storage, runtime
@@ -664,8 +669,9 @@ has precedence over an inherited default. The same default inherited through a
 diamond is shared; two different defaults with the same signature require the
 class to declare a resolving implementation. Instantiating an interface,
 declaring it as an inline value, omitting an abstract method/property accessor,
-or implementing an incompatible signature is rejected. Interface fields and
-static interface members are not implemented yet.
+or implementing an incompatible signature is rejected. Interface instance
+fields are rejected; interfaces may instead own public static fields and
+static methods with bodies.
 
 ## Properties
 

@@ -361,10 +361,11 @@ namespace Absolute {
         llvm::Value* oldThis = currentThis;
         const std::string oldReturn = currentReturnTypeName;
         currentClassName = info.name;
-        currentThis = function->getArg(0);
+        currentThis = method.isStatic ? nullptr : function->getArg(0);
         currentReturnTypeName = ResolveTypeName(method.statement->returnType.get());
+        const unsigned offset = method.isStatic ? 0U : 1U;
         for (size_t index = 0; index < method.statement->parameters.size(); ++index)
-            BindCallableParameter(*function->getArg(static_cast<unsigned>(index + 1)),
+            BindCallableParameter(*function->getArg(static_cast<unsigned>(index) + offset),
                 *method.statement->parameters[index]);
         method.statement->body->Accept(visitor);
         FinishClassCallable(*function);

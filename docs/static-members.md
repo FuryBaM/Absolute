@@ -1,8 +1,8 @@
 # Static fields and methods
 
-Classes and structs may declare static fields and methods with the `static`
-modifier. Static members are accessed through their declaring type (or a
-derived class), not through an object:
+Classes, structs, and interfaces may declare static fields and methods with the
+`static` modifier. Static members are accessed through their declaring type (or
+a derived type), not through an object:
 
 ```absolute
 class Counter {
@@ -23,6 +23,13 @@ instance layout. A static method has no hidden `this` parameter. It may access
 static fields and invoke other static methods by either their short name or a
 qualified `Type.member` name. Static members inherited from a base class refer
 to the same storage and function as the base declaration.
+
+Interface static members follow the same storage and call ABI. They must be
+public, do not occupy an instance vtable slot, and are not contracts that an
+implementing class must repeat. A child interface can access an inherited
+static field or method, and the field still refers to the storage owned by its
+declaring interface. Static interface methods must have bodies; static abstract
+dispatch is deferred until generic constraints can name and validate it.
 
 The analyzer rejects instance-field access from a static method, instance
 members accessed through a type, static members accessed through an object,

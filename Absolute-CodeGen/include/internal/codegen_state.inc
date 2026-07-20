@@ -103,6 +103,8 @@
             std::unordered_map<std::string, ClassMethod> methods;
             std::unordered_map<std::string, std::vector<ClassMethod>> methodContracts;
             std::unordered_map<std::string, ClassMethod> declaredMethods;
+            std::unordered_map<std::string, ClassMethod> staticMethods;
+            std::vector<StaticField> staticFields;
             std::unordered_set<std::string> ambiguousDefaults;
             bool finalizing = false;
             bool finalized = false;

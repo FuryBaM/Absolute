@@ -42,7 +42,7 @@ namespace Absolute {
             if (contract == types.end() || contract->second.kind != TypeKind::Interface) continue;
             for (const auto& [methodName, overloads] : VisibleMembers(parent)) {
                 for (const MemberSignature& requirement : overloads) {
-                    if (requirement.kind != SymbolKind::Method) continue;
+                    if (requirement.kind != SymbolKind::Method || requirement.isStatic) continue;
                     requirements[requirementKey(methodName, requirement.parameterTypes)]
                         .push_back({parent, methodName, requirement});
                 }
@@ -239,6 +239,7 @@ namespace Absolute {
             for (const auto& method : stmt->methods) if (method) method->Accept(*this);
             for (const auto& property : stmt->properties) if (property) property->Accept(*this);
             for (const auto& indexer : stmt->indexers) if (indexer) indexer->Accept(*this);
+            for (const auto& field : stmt->staticFields) if (field) field->Accept(*this);
             currentType = old;
             return;
         }
@@ -274,6 +275,7 @@ namespace Absolute {
         for (const auto& method : stmt->methods) if (method) method->Accept(*this);
         for (const auto& property : stmt->properties) if (property) property->Accept(*this);
         for (const auto& indexer : stmt->indexers) if (indexer) indexer->Accept(*this);
+        for (const auto& field : stmt->staticFields) if (field) field->Accept(*this);
         table.ExitScope();
         currentType = old;
     }

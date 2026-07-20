@@ -182,6 +182,12 @@ namespace Absolute {
         info.statement = &statement;
         for (const std::string& parent : statement.parents)
             info.parents.push_back(QualifiedClassName(parent, nameSpace));
+        for (const auto& declaration : statement.staticFields) {
+            if (!declaration || !declaration->expr) continue;
+            VarDeclExpr* field = declaration->expr.get();
+            info.staticFields.push_back({IdentifierName(field->name.get()),
+                DeclaredTypeName(*field), field->value.get(), field->isConst});
+        }
         interfaces.emplace(name, std::move(info));
         interfaceOrder.push_back(name);
     }
@@ -314,6 +320,18 @@ namespace Absolute {
             for (const auto& parameter : statement->parameters)
                 parameterTypes.push_back(DeclaredTypeName(*parameter));
             const std::string methodKey = CallableKey(statement->name->value, parameterTypes);
+            const bool staticMethod = HasModifier(*statement, "static");
+            if (staticMethod) {
+                ClassMethod method{
+                    statement, name,
+                    CallableKey(name + "." + statement->name->value, parameterTypes),
+                    std::nullopt, parameterTypes,
+                    ResolveTypeName(statement->returnType.get()), {}};
+                method.isStatic = true;
+                info.staticMethods[methodKey] = method;
+                if (statement->body) info.declaredMethods[methodKey] = std::move(method);
+                continue;
+            }
             std::optional<unsigned> slot;
             if (const auto inherited = info.methods.find(methodKey); inherited != info.methods.end()) {
                 if (!SameMethodSignature(*inherited->second.statement, *statement))
@@ -348,6 +366,14 @@ namespace Absolute {
 
     void CodeGenerator::Impl::FinalizeInterfaces() {
         for (const std::string& name : interfaceOrder) FinalizeInterface(name);
+        for (const std::string& name : interfaceOrder) {
+            InterfaceInfo& info = interfaces.at(name);
+            DeclareStaticFields(info);
+            for (const auto& [methodName, method] : info.staticMethods) {
+                (void)methodName;
+                DeclareMethodFunction(method);
+            }
+        }
     }
 
     void CodeGenerator::Impl::FinalizeStruct(const std::string& name) {
@@ -600,6 +626,19 @@ namespace Absolute {
     }
 
     void CodeGenerator::Impl::DeclareStaticFields(StructInfo& info) {
+        for (const StaticField& field : info.staticFields) {
+            const std::string globalName = info.name + "." + field.name;
+            if (globals.contains(globalName)) Fail("duplicate static field '" + globalName + "'");
+            llvm::Type* type = TypeFromName(field.typeName);
+            llvm::Constant* initializer = GlobalConstant(field.initializer, type);
+            auto* storage = new llvm::GlobalVariable(*module, type, field.isConst,
+                llvm::GlobalValue::ExternalLinkage, initializer, globalName);
+            globals.emplace(globalName, Variable{storage, type, field.typeName, false,
+                false, nullptr, {}, nullptr, InvalidSymbolId});
+        }
+    }
+
+    void CodeGenerator::Impl::DeclareStaticFields(InterfaceInfo& info) {
         for (const StaticField& field : info.staticFields) {
             const std::string globalName = info.name + "." + field.name;
             if (globals.contains(globalName)) Fail("duplicate static field '" + globalName + "'");

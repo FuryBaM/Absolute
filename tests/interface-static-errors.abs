@@ -1,0 +1,16 @@
+interface InvalidStaticMembers {
+    private static int64 hidden = 1;
+
+    public static int64 missingBody(int64 value);
+
+    public static virtual int64 invalidDispatch(int64 value) {
+        return value;
+    }
+}
+
+int32 main() {
+    InvalidStaticMembers* value = null;
+    int64 field = value.hidden;
+    int64 result = value.invalidDispatch(1);
+    return field + result;
+}

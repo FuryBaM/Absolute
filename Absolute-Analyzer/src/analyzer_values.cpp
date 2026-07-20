@@ -89,7 +89,7 @@ namespace Absolute {
             return;
         }
         if (expr->isStatic && !fieldDeclaration)
-            Report("static field '" + name + "' must be declared inside a class or struct",
+            Report("static field '" + name + "' must be declared inside a class, struct, or interface",
                 "E_STATIC_NON_MEMBER_FIELD");
         if (expr->isStatic && !currentType.empty() &&
             !types[currentType].genericParameters.empty())

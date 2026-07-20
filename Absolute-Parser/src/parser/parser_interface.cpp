@@ -27,6 +27,7 @@ namespace Absolute {
         std::vector<std::unique_ptr<FunctionDeclStmt>> methods;
         std::vector<std::unique_ptr<PropertyDeclStmt>> properties;
         std::vector<std::unique_ptr<IndexerDeclStmt>> indexers;
+        std::vector<std::unique_ptr<VarDeclStmt>> staticFields;
         try {
             while (CurrentToken() && !(CurrentToken()->type == TokenType::BRACKET &&
                 CurrentToken()->value == "}")) {
@@ -40,9 +41,17 @@ namespace Absolute {
                     properties.push_back(ParsePropertyDeclaration());
                     continue;
                 }
+                const bool staticMember = std::any_of(
+                    modifiers.begin(), modifiers.end(), [](const Token& modifier) {
+                        return modifier.value == "static";
+                    });
+                if (staticMember && !LooksLikeFunctionDeclaration()) {
+                    staticFields.push_back(ParseVarDeclaration());
+                    continue;
+                }
                 if (!LooksLikeFunctionDeclaration()) {
                     ReportSyntaxError(CurrentToken(),
-                        "Interfaces may only contain methods, properties, and indexers");
+                        "Interfaces may only contain methods, properties, indexers, and static fields");
                     throw std::runtime_error("Invalid interface member");
                 }
                 std::vector<Token> methodModifiers = modifiers;
@@ -89,7 +98,7 @@ namespace Absolute {
 
         auto statement = std::make_unique<InterfaceDeclStmt>(
             identifier->value, std::move(parents), std::move(methods),
-            std::move(properties), std::move(indexers));
+            std::move(properties), std::move(indexers), std::move(staticFields));
         statement->modifiers = std::move(declarationModifiers);
         statement->attributes = std::move(declarationAttributes);
         return statement;

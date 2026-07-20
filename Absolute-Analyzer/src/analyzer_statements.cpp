@@ -108,11 +108,16 @@ namespace Absolute {
                 if (parameter->value)
                     Report("interface methods cannot declare default parameter values");
             }
-            if (HasModifier(*stmt, "static") || HasModifier(*stmt, "extension") ||
-                HasModifier(*stmt, "async") || HasModifier(*stmt, "override") ||
+            const bool staticMethod = HasModifier(*stmt, "static");
+            if (HasModifier(*stmt, "extension") || HasModifier(*stmt, "async") ||
+                HasModifier(*stmt, "override") ||
                 HasModifier(*stmt, "sealed"))
                 Report("interface method '" + currentType + "." + stmt->name->value +
                     "' has an unsupported modifier");
+            if (staticMethod && !stmt->body)
+                Report("static interface method '" + currentType + "." +
+                    stmt->name->value + "' requires a body",
+                    "E_STATIC_INTERFACE_METHOD_BODY");
             if (stmt->body) ResolveFunction(*stmt, SymbolKind::Method);
         }
         else {
@@ -174,6 +179,13 @@ namespace Absolute {
             if (memberDeclaration && types[currentType].kind == TypeKind::Struct &&
                 DeclaredAccess(*stmt) == AccessLevel::Protected)
                 Report("struct field cannot be protected", "E_PROTECTED_STRUCT_MEMBER");
+            if (memberDeclaration && types[currentType].kind == TypeKind::Interface) {
+                if (!stmt->expr || !stmt->expr->isStatic)
+                    Report("interface fields must be static", "E_INTERFACE_INSTANCE_FIELD");
+                if (DeclaredAccess(*stmt) != AccessLevel::Public)
+                    Report("interface static fields must be public",
+                        "E_INTERFACE_STATIC_FIELD_ACCESS");
+            }
         }
         const AccessLevel oldAccess = pendingMemberAccess;
         if (memberDeclaration) pendingMemberAccess = DeclaredAccess(*stmt);

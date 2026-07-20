@@ -391,6 +391,20 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.indexer-syntax-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
+        NAME absolute.interface-static-codegen-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-static-codegen.abs"
+    )
+    add_test(
+        NAME absolute.interface-static-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-static-errors.abs"
+    )
+    set_tests_properties(absolute.interface-static-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.interface-field-syntax-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-field-syntax-errors.abs"
+    )
+    set_tests_properties(absolute.interface-field-syntax-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.structs-codegen-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/structs-codegen.abs"
     )
@@ -772,6 +786,14 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-indexers-codegen-ir
         )
         add_test(
+            NAME absolute.emit-interface-static-codegen
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-static-codegen.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/interface-static-codegen.ll"
+        )
+        set_tests_properties(absolute.emit-interface-static-codegen PROPERTIES
+            FIXTURES_SETUP absolute-interface-static-codegen-ir
+        )
+        add_test(
             NAME absolute.emit-structs-codegen
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/structs-codegen.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/structs-codegen.ll"
@@ -1062,6 +1084,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-indexers-codegen PROPERTIES
             FIXTURES_REQUIRED absolute-indexers-codegen-executable
             PASS_REGULAR_EXPRESSION "indexers=ok"
+        )
+        add_test(
+            NAME absolute.build-interface-static-codegen
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-static-codegen.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/interface-static-codegen-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-interface-static-codegen PROPERTIES
+            FIXTURES_SETUP absolute-interface-static-codegen-executable
+        )
+        add_test(NAME absolute.run-interface-static-codegen
+            COMMAND "${CMAKE_BINARY_DIR}/interface-static-codegen-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-interface-static-codegen PROPERTIES
+            FIXTURES_REQUIRED absolute-interface-static-codegen-executable
+            PASS_REGULAR_EXPRESSION "interface-static=ok"
         )
         add_test(
             NAME absolute.build-structs-codegen

@@ -48,6 +48,8 @@
 
         void DeclareStaticFields(StructInfo& info);
 
+        void DeclareStaticFields(InterfaceInfo& info);
+
         llvm::Function* DeclareConstructorFunction(ClassInfo& info);
 
         llvm::Function* DeclareConstructorFunction(StructInfo& info);

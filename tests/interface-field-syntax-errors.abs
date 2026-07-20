@@ -1,0 +1,3 @@
+interface InvalidInstanceField {
+    int64 value;
+}
