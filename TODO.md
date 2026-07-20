@@ -190,18 +190,114 @@
 
 ### Plugin API
 
+#### Готовая основа
+
 - [x] Versioned C ABI для syntax plugins.
 - [x] Новые ключевые слова и lowering в обычный Absolute AST.
 - [x] Opaque AST nodes с собственным анализом и генерацией LLVM IR.
 - [x] Plugin prelude, операторы, extension methods и встроенные типы плагина.
-- [x] `.absplugin` manifests и зависимости плагинов.
+- [x] `.absplugin` manifests, semver-зависимости, обнаружение циклов,
+  топологическая загрузка и `provides`/`requires` capabilities.
+- [x] Безопасный editor-sidecar для чтения keywords, namespaces, типов,
+  функций и snippets без загрузки native-библиотеки в IDE.
 - [x] Math, shader и desktop example plugins.
-- [ ] Добавить capability/version negotiation для новых ABI-функций.
-- [ ] Добавить plugin ABI compatibility tests для Windows и Linux.
-- [ ] Изолировать падение/исключение плагина от процесса компилятора.
-- [ ] Добавить unload/reload плагинов для IDE без перезапуска.
-- [ ] Добавить API для plugin diagnostics, source ranges и quick fixes.
-- [ ] Добавить API отладчика для просмотра значений plugin-defined типов.
+
+#### P0 — стабильный ABI и безопасное расширение парсера
+
+- [ ] Разделить capability-интерфейсы на `AbsoluteCompilerPluginV1`,
+  `AbsoluteLanguagePluginV1`, `AbsoluteEditorPluginV1` и
+  `AbsoluteRuntimePluginV1`; один package может предоставлять несколько
+  независимых интерфейсов.
+- [ ] Добавить `struct_size`, capability bitset/table, reserved fields и
+  `required_host_version` во все расширяемые C ABI descriptors; использовать
+  только ABI-safe типы, opaque handles и пары `pointer + length`.
+- [ ] Реализовать capability/version negotiation между host и plugin с
+  диагностикой недостающих `parser.*`, `semantic.*`, `ir.*`, `backend.*`,
+  `ide.*` возможностей до вызова plugin-кода.
+- [ ] Зафиксировать lifecycle `load -> initialize -> begin_compilation ->
+  begin_module -> end_module -> end_compilation -> shutdown -> unload`,
+  правила thread safety, параллельных вызовов, владения памятью и времени жизни
+  строк/AST handles.
+- [ ] Добавить ABI compatibility matrix и тесты старого/нового host и plugin на
+  Windows и Linux, включая неизвестные поля, урезанный `struct_size` и
+  отсутствующие optional capabilities.
+- [ ] Дать parser plugin доступ к сырому исходнику и точным span через
+  `source_slice`, `source_location`, `capture_raw_block` и `capture_until`,
+  чтобы embedded HLSL/GLSL/SQL не проходили через lexer Absolute.
+- [ ] Расширить parser cursor транзакциями `checkpoint`, `restore`, `commit`,
+  атомарным rollback при отказе plugin rule и гарантией progress.
+- [ ] Открыть безопасную базовую грамматику host через `parse_expression`,
+  `parse_statement`, `parse_type`, `parse_declaration`, `parse_block`,
+  `parse_parameter_list` и `parse_function_body`.
+- [ ] Ввести структурированные plugin diagnostics: severity, code, primary и
+  secondary spans, notes, fixits и mapping ошибок внешнего компилятора обратно
+  в embedded-блок `.abs`.
+- [ ] Расширить opaque AST vtable операциями `clone`, `visit_children`,
+  `serialize`, `deserialize`, `compute_hash`, `validate` и `lower`; сохранить
+  прямой `emit` только как optional backend capability.
+- [ ] Добавить source mapping для expansion/foreign/generated code и IR:
+  `map_generated_span`, `map_foreign_span`, `map_ir_instruction`.
+- [ ] Расширить manifest полями `optional_dependencies`, `conflicts`, `targets`,
+  `permissions` и namespace для syntax rules; конфликты правил разрешать явно,
+  а не порядком загрузки DLL/SO.
+
+#### P1 — semantic, типы и ownership
+
+- [ ] Добавить semantic context: module, namespace, scope, current function,
+  generic parameters, attributes, target platform и ownership context.
+- [ ] Открыть versioned semantic API: `resolve_symbol`, `resolve_type`,
+  `declare_symbol`, `declare_type`, `declare_function`, `check_conversion`,
+  `check_trait`, `infer_expression_type` и `report_diagnostic`.
+- [ ] Разрешить регистрацию opaque, primitive, generic, address-space,
+  resource и compiler-known типов через descriptor с size/alignment,
+  copy/move/destroy, validation и lowering hooks.
+- [ ] Добавить host-controlled регистрацию operators, conversions, literals,
+  attributes и intrinsics с детерминированным разрешением приоритетов и
+  конфликтов между плагинами.
+- [ ] Открыть ownership/lifetime-запросы `query_pointer_mode`, `require_raw`,
+  `require_managed`, `transfer_ownership`, `register_resource`, `mark_escape`,
+  чтобы `GpuTexture`, `NativeWindow`, `Socket` и другие resource-типы
+  участвовали в анализе владения Absolute.
+- [ ] Добавить безопасную генерацию символов: `register_generated_function`,
+  `register_generated_type`, `register_generated_constant` и
+  `register_runtime_symbol`.
+- [ ] Заменить глобальную строку prelude на virtual/prelude modules и import
+  resolver, чтобы плагины предоставляли `import Desktop`, `import Shader` и
+  другие модули без загрязнения глобального namespace.
+- [ ] Ввести общий lowering API в Absolute HIR/MIR или host IR; плагин должен
+  уметь понижать узел без доступа к внутренним C++ AST/Analyzer/LLVM-классам.
+
+#### P2 — artifacts, backends, build graph и runtime
+
+- [ ] Отвязать codegen ABI от одного `emit_llvm`: добавить artifact kinds для
+  LLVM IR/bitcode, object/static/shared library, SPIR-V, DXIL, PTX, CUBIN,
+  AMDGPU code object, source text и custom binary.
+- [ ] Добавить `supports_target`, `emit_artifact` и `link_artifact`, а затем
+  versioned backend registration: `register_target`, `query_target_features`,
+  `compile_module`, `link_module`, `run_toolchain`.
+- [ ] Добавить build graph API для source/binary/tool/environment dependencies,
+  generated files, include paths и link libraries.
+- [ ] Добавить plugin cache keys, artifact hashes и incremental state; opaque
+  AST сериализовать с версией plugin/schema, не инвалидируя весь module cache.
+- [ ] Формализовать runtime-интеграцию: initialize/shutdown runtime,
+  native libraries/functions, allocate/release resource и упаковку compiler,
+  runtime, prelude, IDE и debugger частей в один plugin package.
+
+#### P3 — IDE, debugger и надёжность
+
+- [ ] Добавить отдельный IDE API для completion, hover, definition, references,
+  semantic tokens, formatting, code actions, rename, inlay hints, outline и
+  folding ranges.
+- [ ] Добавить `embedded_language` и virtual-document/source-map contract для
+  передачи HLSL/GLSL/SQL блоков специализированному language server.
+- [ ] Добавить debugger/profiler hooks: debug info, debug adapter, отображение
+  runtime value, просмотр plugin-defined типов и profiler events.
+- [ ] Добавить unload/reload плагинов для IDE без перезапуска с проверкой живых
+  AST/type/runtime handles перед выгрузкой.
+- [ ] Изолировать падение и исключение плагина от процесса компилятора; ввести
+  режимы trusted in-process, isolated process, sandbox и WASM plugin.
+- [ ] Реализовать permission enforcement из manifest для filesystem, network,
+  environment, toolchain и native-library доступа перед plugin marketplace.
 
 ### Стандартная библиотека
 
