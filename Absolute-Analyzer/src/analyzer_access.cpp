@@ -50,6 +50,9 @@ namespace Absolute {
         if (currentMethodStatic && symbol->kind == SymbolKind::Field && !symbol->isStatic)
             Report("static method cannot access instance field '" + expr->name + "'",
                 "E_STATIC_INSTANCE_ACCESS", id);
+        if ((symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Method) &&
+            !symbol->memberOwner.empty())
+            RequireAccess(symbol->access, symbol->memberOwner, expr->name, id);
         const bool value = symbol->kind == SymbolKind::Variable || symbol->kind == SymbolKind::Parameter ||
             symbol->kind == SymbolKind::Field;
         if (!value) Report("object '" + expr->name + "' is not a value");
@@ -83,6 +86,9 @@ namespace Absolute {
             const auto found = types.find(typeName);
             const std::vector<std::string> expected = found != types.end() && found->second.constructor
                 ? found->second.constructor->parameterTypes : std::vector<std::string>{};
+            if (found != types.end() && found->second.constructor)
+                RequireAccess(found->second.constructor->access, typeName,
+                    typeName, found->second.constructor->symbol);
             if (expr->arguments.size() != expected.size())
                 Report("constructor of '" + typeName + "' expects " + std::to_string(expected.size()) +
                     " argument(s), got " + std::to_string(expr->arguments.size()));
@@ -241,6 +247,8 @@ namespace Absolute {
         }
 
         const Symbol* selected = table.Get(symbolId);
+        if (selected && selected->kind == SymbolKind::Method)
+            RequireAccess(selected->access, selected->memberOwner, selected->name, selected->id);
         const std::string returnType = selected ? selected->type : "error";
         const bool asyncCall = selected && selected->asyncFunction;
         if (currentMethodConst && selected && selected->kind == SymbolKind::Method &&

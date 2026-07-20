@@ -130,7 +130,7 @@ namespace Absolute{
             if (IsPostfixUnary(*token)) {
                 base = ParsePostfixUnaryExpr(std::move(base));
             }
-            else if (token->value == "as") {
+            else if (token->value == "as" || token->value == "is") {
                 base = ParseCastExpr(std::move(base));
             }
             else {

@@ -32,7 +32,15 @@ namespace Absolute {
     void Analyzer::Visit(SingleStatement* stmt) {
         if (phase == Phase::ResolveBodies && !stmt->attributes.empty())
             ValidateAttributes(*stmt, "statement", false);
+        const bool memberDeclaration = !currentType.empty() && functionDepth == 0 &&
+            dynamic_cast<InstanceDeclExpr*>(stmt->expr.get()) != nullptr;
+        if (phase == Phase::ResolveBodies)
+            ValidateAccessModifiers(*stmt, memberDeclaration,
+                memberDeclaration ? "field declaration" : "statement");
+        const AccessLevel oldAccess = pendingMemberAccess;
+        if (memberDeclaration) pendingMemberAccess = DeclaredAccess(*stmt);
         AcceptIfPresent(stmt->expr, *this);
+        pendingMemberAccess = oldAccess;
     }
 
     void Analyzer::Visit(CompoundStmt* stmt) {
@@ -68,7 +76,8 @@ namespace Absolute {
                 DeclareMember(currentType, stmt->name->value,
                     {SymbolKind::Method, ResolveType(stmt->returnType.get()),
                         ResolveParameterTypes(stmt->parameters), InvalidSymbolId,
-                        HasModifier(*stmt, "const"), HasModifier(*stmt, "static")});
+                        HasModifier(*stmt, "const"), HasModifier(*stmt, "static"),
+                        DeclaredAccess(*stmt)});
                 auto& overloads = types[currentType].members[stmt->name->value];
                 if (!overloads.empty()) {
                     Symbol* symbol = table.Get(overloads.back().symbol);
@@ -82,6 +91,10 @@ namespace Absolute {
             }
         }
         else if (!currentType.empty() && types[currentType].kind == TypeKind::Interface) {
+            ValidateAccessModifiers(*stmt, true, "interface method");
+            if (DeclaredAccess(*stmt) != AccessLevel::Public)
+                Report("interface method '" + currentType + "." + stmt->name->value +
+                    "' must be public", "E_INTERFACE_METHOD_ACCESS");
             ValidateAttributes(*stmt, "interface method", true);
             const std::string returnType = ResolveType(stmt->returnType.get());
             if (!IsKnownType(returnType))
@@ -103,6 +116,11 @@ namespace Absolute {
                     "' has an unsupported modifier");
         }
         else {
+            ValidateAccessModifiers(*stmt, !currentType.empty(),
+                currentType.empty() ? "function" : "method");
+            if (!currentType.empty() && types[currentType].kind == TypeKind::Struct &&
+                DeclaredAccess(*stmt) == AccessLevel::Protected)
+                Report("struct method cannot be protected", "E_PROTECTED_STRUCT_MEMBER");
             if (!currentType.empty() && !stmt->templateParams.empty())
                 Report("independently generic methods are not implemented yet; use the generic parameters of the containing type",
                     "E_GENERIC_METHOD_UNSUPPORTED");
@@ -138,7 +156,18 @@ namespace Absolute {
     void Analyzer::Visit(VarDeclStmt* stmt) {
         if (phase == Phase::ResolveBodies && !stmt->attributes.empty())
             ValidateAttributes(*stmt, functionDepth == 0 ? "variable declaration" : "local declaration", false);
+        const bool memberDeclaration = !currentType.empty() && functionDepth == 0;
+        if (phase == Phase::ResolveBodies) {
+            ValidateAccessModifiers(*stmt, memberDeclaration,
+                memberDeclaration ? "field declaration" : "variable declaration");
+            if (memberDeclaration && types[currentType].kind == TypeKind::Struct &&
+                DeclaredAccess(*stmt) == AccessLevel::Protected)
+                Report("struct field cannot be protected", "E_PROTECTED_STRUCT_MEMBER");
+        }
+        const AccessLevel oldAccess = pendingMemberAccess;
+        if (memberDeclaration) pendingMemberAccess = DeclaredAccess(*stmt);
         AcceptIfPresent(stmt->expr, *this);
+        pendingMemberAccess = oldAccess;
         if (phase != Phase::ResolveBodies || functionDepth == 0 || !stmt->expr) return;
         const ExpressionInfo* declaration = GetExpressionInfo(*stmt->expr);
         const ExpressionInfo* initializer = stmt->expr->value

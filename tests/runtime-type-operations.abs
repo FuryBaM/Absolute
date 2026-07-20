@@ -1,0 +1,63 @@
+interface ITagged {
+    int32 tag();
+}
+
+class Node {
+    public virtual int32 value() {
+        return 0;
+    }
+}
+
+class TaggedNode : Node, ITagged {
+    public override int32 value() {
+        return 42;
+    }
+
+    public int32 tag() {
+        return 7;
+    }
+}
+
+class OtherNode : Node {
+    public override int32 value() {
+        return 1;
+    }
+}
+
+int32 main() {
+    raw Node* rawNode = new raw TaggedNode();
+    assert(rawNode is TaggedNode, "raw exact type test");
+    assert(rawNode is Node, "raw base type test");
+    assert(rawNode is ITagged, "raw interface type test");
+    assert((rawNode is OtherNode) == false, "raw failed type test");
+
+    raw TaggedNode* rawTagged = rawNode as raw TaggedNode*;
+    raw OtherNode* rawMissing = rawNode as OtherNode;
+    assert(rawTagged != null && rawTagged.value() == 42, "raw safe downcast");
+    assert(rawMissing == null, "failed raw cast returns null");
+    delete rawNode;
+
+    Node* owner = new TaggedNode();
+    assert(owner is TaggedNode*, "managed pointer target spelling");
+    TaggedNode* tagged = owner as TaggedNode;
+    ITagged* contract = owner as ITagged;
+    OtherNode* missing = owner as OtherNode;
+    assert(tagged != null && tagged.value() == 42, "managed safe downcast");
+    assert(contract != null && contract.tag() == 7, "managed interface cast");
+    assert(missing == null, "failed managed cast returns null");
+    delete owner;
+    assert(!tagged && !contract, "managed cast results remain subscribers");
+    assert((tagged is TaggedNode) == false, "expired managed reference fails type test");
+    TaggedNode* expiredCast = tagged as TaggedNode;
+    assert(expiredCast == null, "expired managed reference casts to null");
+
+    OtherNode* rejectedOwner = new TaggedNode() as OtherNode;
+    assert(rejectedOwner == null, "failed managed temporary cast is cleaned up");
+
+    raw OtherNode* rejectedRaw = new raw TaggedNode() as OtherNode;
+    assert(rejectedRaw == null, "failed raw temporary cast is cleaned up");
+    delete rejectedRaw;
+
+    println("runtime-types=ok");
+    return 0;
+}

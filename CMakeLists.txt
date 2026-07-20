@@ -366,6 +366,24 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.base-constructor-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
+        NAME absolute.access-control-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/access-control.abs"
+    )
+    add_test(
+        NAME absolute.access-control-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/access-control-errors.abs"
+    )
+    set_tests_properties(absolute.access-control-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.runtime-type-operations-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/runtime-type-operations.abs"
+    )
+    add_test(
+        NAME absolute.runtime-type-operation-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/runtime-type-operation-errors.abs"
+    )
+    set_tests_properties(absolute.runtime-type-operation-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.array-advanced-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-advanced-errors.abs"
     )
@@ -485,6 +503,38 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-base-constructors PROPERTIES
             FIXTURES_REQUIRED absolute-base-constructors-executable
             PASS_REGULAR_EXPRESSION "base-constructors=ok"
+        )
+        add_test(
+            NAME absolute.build-access-control
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/access-control.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/access-control${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-access-control PROPERTIES
+            FIXTURES_SETUP absolute-access-control-executable
+        )
+        add_test(
+            NAME absolute.run-access-control
+            COMMAND "${CMAKE_BINARY_DIR}/access-control${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-access-control PROPERTIES
+            FIXTURES_REQUIRED absolute-access-control-executable
+            PASS_REGULAR_EXPRESSION "access-control=ok"
+        )
+        add_test(
+            NAME absolute.build-runtime-type-operations
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/runtime-type-operations.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/runtime-type-operations${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-runtime-type-operations PROPERTIES
+            FIXTURES_SETUP absolute-runtime-type-operations-executable
+        )
+        add_test(
+            NAME absolute.run-runtime-type-operations
+            COMMAND "${CMAKE_BINARY_DIR}/runtime-type-operations${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-runtime-type-operations PROPERTIES
+            FIXTURES_REQUIRED absolute-runtime-type-operations-executable
+            PASS_REGULAR_EXPRESSION "runtime-types=ok"
         )
         add_test(
             NAME absolute.emit-llvm

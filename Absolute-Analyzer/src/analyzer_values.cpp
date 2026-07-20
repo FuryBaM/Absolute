@@ -76,7 +76,8 @@ namespace Absolute {
                 else table.Get(*declared)->isConst = expr->isConst;
             }
             else DeclareMember(currentType, name,
-                {SymbolKind::Field, type, {}, InvalidSymbolId, expr->isConst, expr->isStatic});
+                {SymbolKind::Field, type, {}, InvalidSymbolId, expr->isConst, expr->isStatic,
+                    pendingMemberAccess});
             Save(expr, {InvalidSymbolId, type, false});
             return;
         }
@@ -247,6 +248,7 @@ namespace Absolute {
                 return member.kind == SymbolKind::Field && member.isStatic;
             });
             if (field != members.end()) {
+                RequireAccess(*field, expr->member);
                 callable = false;
                 callableParameters.clear();
                 Save(expr, {field->symbol, field->type, true});
@@ -298,6 +300,7 @@ namespace Absolute {
             Save(expr, {InvalidSymbolId, "error", false});
             return;
         }
+        RequireAccess(*field, expr->member);
         callable = false;
         callableParameters.clear();
         Save(expr, {field->symbol, field->type, true});
@@ -306,6 +309,55 @@ namespace Absolute {
     void Analyzer::Visit(CastExpr* expr) {
         const std::string target = ResolveType(expr->typeName.get());
         const Result base = Evaluate(expr->base.get());
+
+        const auto runtimeType = [&](const std::string& type) {
+            const std::string pointee = IsPointerType(type) ? PointerPointee(type) : type;
+            std::string definition = pointee;
+            std::string genericBase;
+            std::vector<std::string> genericArguments;
+            if (ParseGenericTypeName(pointee, genericBase, genericArguments)) definition = genericBase;
+            const auto found = types.find(definition);
+            return found != types.end() &&
+                (found->second.kind == TypeKind::Class || found->second.kind == TypeKind::Interface);
+        };
+        const bool sourceReference = IsPointerType(base.type) && runtimeType(base.type);
+        const bool targetReference = runtimeType(target);
+
+        if (expr->operation == "is") {
+            if (!sourceReference)
+                Report("left operand of 'is' must be a class or interface pointer, got '" +
+                    base.type + "'", "E_TYPE_TEST_SOURCE");
+            if (!targetReference)
+                Report("target of 'is' must be a class or interface type, got '" + target + "'",
+                    "E_TYPE_TEST_TARGET");
+            Save(expr, {InvalidSymbolId, "bool", false});
+            return;
+        }
+
+        if (sourceReference || targetReference) {
+            if (!sourceReference || !targetReference) {
+                Report("safe reference cast requires class or interface pointer types, got '" +
+                    base.type + "' and '" + target + "'", "E_SAFE_CAST_TYPE");
+                Save(expr, {InvalidSymbolId, "error", false});
+                return;
+            }
+            std::string resultType = target;
+            if (!IsPointerType(resultType))
+                resultType = (IsRawPointerType(base.type) ? "raw " : "") + target + "*";
+            else if (IsRawPointerType(resultType) != IsRawPointerType(base.type))
+                Report("safe cast cannot change pointer ownership mode from '" + base.type +
+                    "' to '" + resultType + "'", "E_SAFE_CAST_OWNERSHIP");
+            Result cast{InvalidSymbolId, resultType, false,
+                base.createsManagedOwner, base.referencesManagedOwner,
+                InitializationState::Initialized,
+                base.pointerValidity == PointerValidity::Null
+                    ? PointerValidity::Null : PointerValidity::MaybeNull,
+                base.pointerOwner};
+            cast.createsRawOwner = base.createsRawOwner;
+            Save(expr, std::move(cast));
+            return;
+        }
+
         if (!IsAssignable(target, base.type) && !(IsNumeric(target) && IsNumeric(base.type)))
             Report("cannot cast '" + base.type + "' to '" + target + "'");
         Save(expr, {InvalidSymbolId, target, false});
@@ -341,6 +393,8 @@ namespace Absolute {
         if (!primitive) {
             const auto found = types.find(definitionName);
             if (found != types.end() && found->second.constructor) {
+                RequireAccess(found->second.constructor->access, definitionName,
+                    definitionName, found->second.constructor->symbol);
                 parameters = found->second.constructor->parameterTypes;
                 for (std::string& parameter : parameters)
                     parameter = SubstituteGenericType(parameter, substitutions);
@@ -433,7 +487,8 @@ namespace Absolute {
                 else table.Get(*declared)->isConst = expr->isConst;
             }
             else DeclareMember(currentType, name,
-                {SymbolKind::Field, type, {}, InvalidSymbolId, expr->isConst, expr->isStatic});
+                {SymbolKind::Field, type, {}, InvalidSymbolId, expr->isConst, expr->isStatic,
+                    pendingMemberAccess});
             Save(expr, {InvalidSymbolId, type, false});
             return;
         }
@@ -456,6 +511,12 @@ namespace Absolute {
         else if (const auto definition = types.find(definitionName);
             definition != types.end() && definition->second.kind == TypeKind::Interface)
             Report("interface '" + type + "' must be used through raw or managed pointer");
+        else if (!expr->value) {
+            if (const auto definition = types.find(definitionName);
+                definition != types.end() && definition->second.constructor)
+                RequireAccess(definition->second.constructor->access, definitionName,
+                    definitionName, definition->second.constructor->symbol);
+        }
         Result value;
         if (expr->value) value = Evaluate(expr->value.get());
         if (expr->value && !IsAssignable(type, value.type))

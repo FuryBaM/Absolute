@@ -38,6 +38,7 @@ namespace Absolute {
         currentMethodConst = false;
         currentMethodStatic = false;
         currentConstructor = false;
+        pendingMemberAccess = AccessLevel::Public;
         loopDepth = functionDepth = catchDepth = finallyDepth = deferDepth =
             typeContextDepth = constructorContextDepth = 0;
         usesExceptions = false;
@@ -439,6 +440,63 @@ namespace Absolute {
         return false;
     }
 
+    AccessLevel Analyzer::DeclaredAccess(const Statement& statement) const {
+        if (HasModifier(statement, "private")) return AccessLevel::Private;
+        if (HasModifier(statement, "protected")) return AccessLevel::Protected;
+        return AccessLevel::Public;
+    }
+
+    void Analyzer::ValidateAccessModifiers(const Statement& statement,
+        bool memberDeclaration, const std::string& target) {
+        size_t count = 0;
+        for (const Token& modifier : statement.modifiers)
+            if (modifier.value == "public" || modifier.value == "protected" ||
+                modifier.value == "private" || modifier.value == "internal") ++count;
+        if (!memberDeclaration && count != 0)
+            Report(target + " cannot have an access modifier", "E_ACCESS_NON_MEMBER");
+        if (count > 1)
+            Report(target + " has conflicting access modifiers", "E_ACCESS_CONFLICT");
+        if (HasModifier(statement, "internal"))
+            Report("internal access is not implemented; use public, protected, or private",
+                "E_ACCESS_INTERNAL_UNSUPPORTED");
+    }
+
+    bool Analyzer::CanAccess(AccessLevel access, const std::string& owner) const {
+        if (access == AccessLevel::Public) return true;
+        if (currentType.empty() || owner.empty()) return false;
+        auto definitionName = [](std::string name) {
+            const size_t generic = name.find('<');
+            if (generic != std::string::npos) name.resize(generic);
+            return name;
+        };
+        const std::string current = definitionName(currentType);
+        const std::string declaring = definitionName(owner);
+        if (current == declaring) return true;
+        const auto derivesFrom = [&](auto&& self, const std::string& type) -> bool {
+            const std::string definition = definitionName(type);
+            if (definition == declaring) return true;
+            const auto found = types.find(definition);
+            if (found == types.end()) return false;
+            for (const std::string& parent : found->second.parents)
+                if (self(self, parent)) return true;
+            return false;
+        };
+        return access == AccessLevel::Protected && derivesFrom(derivesFrom, current);
+    }
+
+    void Analyzer::RequireAccess(AccessLevel access, const std::string& owner,
+        const std::string& member, SymbolId symbol) {
+        if (CanAccess(access, owner)) return;
+        const std::string level = access == AccessLevel::Private ? "private" : "protected";
+        const std::string qualified = member.starts_with(owner + ".") ? member : owner + "." + member;
+        Report("member '" + qualified + "' is " + level + " and is not accessible here",
+            access == AccessLevel::Private ? "E_PRIVATE_ACCESS" : "E_PROTECTED_ACCESS", symbol);
+    }
+
+    void Analyzer::RequireAccess(const MemberSignature& member, const std::string& name) {
+        RequireAccess(member.access, member.owner, name, member.symbol);
+    }
+
     std::string Analyzer::CommonType(const std::string& left, const std::string& right) const {
         if (left == right) return left;
         if (left == "error" || right == "error") return "error";
@@ -501,6 +559,34 @@ namespace Absolute {
         const std::string returnType = ResolveType(statement.returnType.get());
         const bool constMethod = HasModifier(statement, "const");
         const bool staticMethod = HasModifier(statement, "static");
+        if (kind == SymbolKind::Method && !staticMethod) {
+            const std::vector<std::string> parameters = ResolveParameterTypes(statement.parameters);
+            for (const MemberSignature& inherited :
+                FindInheritedMembers(currentType, statement.name->value)) {
+                if (inherited.kind != SymbolKind::Method || inherited.isStatic ||
+                    inherited.parameterTypes != parameters) continue;
+                FunctionDeclStmt* inheritedDeclaration = FunctionDeclaration(inherited.symbol);
+                const bool virtualDispatch = inheritedDeclaration &&
+                    (HasModifier(*inheritedDeclaration, "virtual") ||
+                        HasModifier(*inheritedDeclaration, "override"));
+                if (!virtualDispatch) continue;
+                if (inherited.access == AccessLevel::Private) {
+                    Report("method '" + currentType + "." + statement.name->value +
+                        "' cannot replace a private virtual method", "E_PRIVATE_VIRTUAL_OVERRIDE",
+                        inherited.symbol);
+                    continue;
+                }
+                const AccessLevel declared = DeclaredAccess(statement);
+                const bool narrowsPublic = inherited.access == AccessLevel::Public &&
+                    declared != AccessLevel::Public;
+                const bool narrowsProtected = inherited.access == AccessLevel::Protected &&
+                    declared == AccessLevel::Private;
+                if (narrowsPublic || narrowsProtected)
+                    Report("override '" + currentType + "." + statement.name->value +
+                        "' cannot reduce inherited access", "E_OVERRIDE_ACCESS_REDUCTION",
+                        inherited.symbol);
+            }
+        }
         if (constMethod && kind != SymbolKind::Method)
             Report("const callable '" + statement.name->value +
                 "' must be a class or struct method", "E_CONST_NON_METHOD");
@@ -653,9 +739,11 @@ namespace Absolute {
             return;
         }
         signature.symbol = *declared;
+        signature.owner = owner;
         if (Symbol* symbol = table.Get(*declared)) {
             symbol->isConst = signature.isConst;
             symbol->isStatic = signature.isStatic;
+            symbol->access = signature.access;
             symbol->memberOwner = owner;
         }
         overloads.push_back(std::move(signature));
@@ -707,6 +795,22 @@ namespace Absolute {
                 }
                 result.push_back(std::move(declared));
             }
+        }
+        return result;
+    }
+
+    std::vector<Analyzer::MemberSignature> Analyzer::FindInheritedMembers(
+        const std::string& owner, const std::string& name) {
+        std::string definitionName = owner;
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseGenericTypeName(owner, genericBase, genericArguments)) definitionName = genericBase;
+        const auto type = types.find(definitionName);
+        if (type == types.end()) return {};
+        std::vector<MemberSignature> result;
+        for (const std::string& parent : type->second.parents) {
+            auto inherited = FindMembers(parent, name);
+            result.insert(result.end(), inherited.begin(), inherited.end());
         }
         return result;
     }

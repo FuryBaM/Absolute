@@ -44,6 +44,11 @@ namespace Absolute {
                         Report("class method '" + className + "." + methodName +
                             "' does not match the const contract of interface '" + parent + "'");
                     }
+                    else if (implementation->access != AccessLevel::Public) {
+                        Report("class method '" + className + "." + methodName +
+                            "' implements interface '" + parent + "' and must be public",
+                            "E_INTERFACE_IMPLEMENTATION_ACCESS", implementation->symbol);
+                    }
                 }
             }
         }
@@ -82,6 +87,7 @@ namespace Absolute {
                     Symbol* symbol = table.Get(*declared);
                     symbol->isConst = member.isConst;
                     symbol->isStatic = member.isStatic;
+                    symbol->access = member.access;
                     if (const Symbol* original = table.Get(member.symbol))
                         symbol->memberOwner = original->memberOwner;
                 }
@@ -141,6 +147,7 @@ namespace Absolute {
                     Symbol* symbol = table.Get(*declared);
                     symbol->isConst = member.isConst;
                     symbol->isStatic = member.isStatic;
+                    symbol->access = member.access;
                     if (const Symbol* original = table.Get(member.symbol))
                         symbol->memberOwner = original->memberOwner;
                 }
@@ -197,6 +204,7 @@ namespace Absolute {
                     Symbol* symbol = table.Get(*declared);
                     symbol->isConst = member.isConst;
                     symbol->isStatic = member.isStatic;
+                    symbol->access = member.access;
                     if (const Symbol* original = table.Get(member.symbol))
                         symbol->memberOwner = original->memberOwner;
                 }
@@ -213,10 +221,19 @@ namespace Absolute {
         }
         if (phase == Phase::CollectDeclarations) {
             if (types[currentType].constructor) Report("constructor of '" + currentType + "' is already declared");
-            else types[currentType].constructor = MemberSignature{SymbolKind::Constructor, currentType,
-                ResolveParameterTypes(stmt->parameters)};
+            else {
+                MemberSignature constructor{SymbolKind::Constructor, currentType,
+                    ResolveParameterTypes(stmt->parameters)};
+                constructor.access = DeclaredAccess(*stmt);
+                constructor.owner = currentType;
+                types[currentType].constructor = std::move(constructor);
+            }
             return;
         }
+        ValidateAccessModifiers(*stmt, true, "constructor");
+        if (types[currentType].kind == TypeKind::Struct &&
+            DeclaredAccess(*stmt) == AccessLevel::Protected)
+            Report("struct constructor cannot be protected", "E_PROTECTED_STRUCT_MEMBER");
         ValidateAttributes(*stmt, "constructor", true);
         if (HasModifier(*stmt, "const"))
             Report("constructors cannot be const", "E_CONST_CONSTRUCTOR");
@@ -259,6 +276,15 @@ namespace Absolute {
         }
         else if (!baseClass.empty()) {
             const auto declaredParameters = ConstructorParameterTypes(baseClass);
+            std::string baseDefinition = baseClass;
+            std::string genericBase;
+            std::vector<std::string> genericArguments;
+            if (ParseGenericTypeName(baseClass, genericBase, genericArguments))
+                baseDefinition = genericBase;
+            if (const auto base = types.find(baseDefinition);
+                base != types.end() && base->second.constructor)
+                RequireAccess(base->second.constructor->access, baseDefinition,
+                    baseDefinition, base->second.constructor->symbol);
             const std::vector<std::string> expected = declaredParameters.value_or(
                 std::vector<std::string>{});
             if (!stmt->hasExplicitBaseCall && declaredParameters && !expected.empty()) {

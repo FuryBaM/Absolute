@@ -218,6 +218,69 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(CastExpr* expr) {
+        const std::string sourceType = impl->SemanticType(expr->base.get());
+        const std::string declaredTarget = impl->ResolveTypeName(expr->typeName.get());
+        const std::string runtimeTarget = IsPointerTypeName(declaredTarget)
+            ? PointerPointeeName(declaredTarget) : declaredTarget;
+        const bool runtimeOperation = expr->operation == "is" ||
+            (IsPointerTypeName(sourceType) &&
+                (impl->classes.contains(runtimeTarget) || impl->interfaces.contains(runtimeTarget)));
+        if (runtimeOperation) {
+            llvm::Value* reference = impl->Evaluate(expr->base.get());
+            llvm::Value* sourcePointee = impl->valueManagedPointee;
+            const ExpressionInfo* sourceInfo = impl->analyzer
+                ? impl->analyzer->GetExpressionInfo(*expr->base) : nullptr;
+            llvm::Value* matches = impl->EmitRuntimeTypeTest(
+                reference, sourceType, runtimeTarget);
+            if (expr->operation == "is") {
+                impl->value = matches;
+                impl->valueCreatesManagedOwner = false;
+                impl->valueManagedPointee = nullptr;
+                return;
+            }
+
+            llvm::Constant* nullReference = llvm::Constant::getNullValue(reference->getType());
+            const bool temporaryManagedOwner = sourceInfo && sourceInfo->createsManagedOwner;
+            const bool temporaryRawOwner = sourceInfo && sourceInfo->createsRawOwner;
+            if (temporaryManagedOwner || temporaryRawOwner) {
+                llvm::Function* function = impl->CurrentFunction();
+                llvm::BasicBlock* success = llvm::BasicBlock::Create(
+                    impl->context, "safe.cast.success", function);
+                llvm::BasicBlock* failure = llvm::BasicBlock::Create(
+                    impl->context, "safe.cast.failure", function);
+                llvm::BasicBlock* complete = llvm::BasicBlock::Create(
+                    impl->context, "safe.cast.end", function);
+                impl->builder.CreateCondBr(matches, success, failure);
+                impl->builder.SetInsertPoint(success);
+                impl->builder.CreateBr(complete);
+                success = impl->builder.GetInsertBlock();
+                impl->builder.SetInsertPoint(failure);
+                if (temporaryManagedOwner)
+                    impl->builder.CreateCall(impl->ManagedDestroy(), {reference});
+                if (temporaryRawOwner)
+                    impl->builder.CreateCall(impl->Free(), {reference});
+                impl->builder.CreateBr(complete);
+                failure = impl->builder.GetInsertBlock();
+                impl->builder.SetInsertPoint(complete);
+                llvm::PHINode* cast = impl->builder.CreatePHI(
+                    reference->getType(), 2, "safe.cast.result");
+                cast->addIncoming(reference, success);
+                cast->addIncoming(nullReference, failure);
+                impl->value = cast;
+            }
+            else impl->value = impl->builder.CreateSelect(
+                matches, reference, nullReference, "safe.cast.result");
+
+            const ExpressionInfo* resultInfo = impl->analyzer
+                ? impl->analyzer->GetExpressionInfo(*expr) : nullptr;
+            impl->valueCreatesManagedOwner = resultInfo && resultInfo->createsManagedOwner;
+            impl->valueManagedPointee = impl->valueCreatesManagedOwner && sourcePointee
+                ? impl->builder.CreateSelect(matches, sourcePointee,
+                    llvm::ConstantPointerNull::get(impl->builder.getPtrTy()),
+                    "safe.cast.pointee")
+                : nullptr;
+            return;
+        }
         llvm::Type* target = impl->ResolveType(expr->typeName.get());
         impl->value = impl->Coerce(impl->Evaluate(expr->base.get()), target);
     }

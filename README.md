@@ -590,6 +590,33 @@ constructor when their inheritance chain needs one. A base constructor with
 required parameters must always be called explicitly. See
 [docs/base-constructors.md](docs/base-constructors.md) for the complete rules.
 
+## Access control and runtime type checks
+
+Class and struct members may be `public`, `protected`, or `private`. Public is
+the compatibility default when no access modifier is present. Private members
+are visible only inside their declaring type; protected members are visible in
+the declaring class and derived classes. The same checks apply to fields,
+methods, static members, constructors, base-constructor calls, and interface
+implementations. Interface methods and their implementations must be public.
+
+Class and interface pointers support runtime type tests and safe casts:
+
+```absolute
+Node* node = new AddNode(2);
+assert(node is AddNode);
+
+AddNode* add = node as AddNode;
+OtherNode* missing = node as OtherNode;
+assert(add != null);
+assert(missing == null);
+```
+
+`is` returns false for null or an incompatible dynamic type. `as` preserves raw
+or managed ownership mode and returns null on failure. Managed results are
+subscribers to the original owner. Numeric `as` conversions remain available.
+See [docs/access-and-runtime-types.md](docs/access-and-runtime-types.md) for the
+full rules.
+
 ## Interfaces
 
 Interfaces declare method contracts without storage or method bodies. An

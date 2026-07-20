@@ -1,0 +1,19 @@
+class Node {
+}
+
+class Child : Node {
+}
+
+int32 main() {
+    int32 number = 42;
+    bool invalidSource = number is Child;
+    raw Node* rawNode = new raw Child();
+    bool invalidTarget = rawNode is int32;
+    Child* ownershipChange = rawNode as Child*;
+    Node* managedNode = new Child();
+    raw Child* reverseOwnershipChange = managedNode as raw Child*;
+    Node* invalidCast = number as Node;
+    delete rawNode;
+    delete managedNode;
+    return 0;
+}

@@ -4,8 +4,9 @@
 namespace Absolute{
     std::unique_ptr<CastExpr> Parser::ParseCastExpr(std::unique_ptr<Expression> base)
     {
-        Consume(TokenType::KEYWORD, "as");
+        const std::string operation = CurrentToken() ? CurrentToken()->value : std::string{};
+        Consume(TokenType::KEYWORD, operation);
         std::unique_ptr<TypeExpr> type = ParseType();
-        return std::make_unique<CastExpr>(std::move(type), std::move(base));
+        return std::make_unique<CastExpr>(operation, std::move(type), std::move(base));
     }
 }
