@@ -8,6 +8,7 @@ namespace {
     struct Slot {
         void* pointer = nullptr;
         std::uint32_t generation = 1;
+        std::uint64_t type = 0;
     };
 
     std::vector<Slot> slots;
@@ -46,6 +47,7 @@ extern "C" std::uint64_t absolute_managed_create(std::uint64_t size) {
         id = freeSlots.back();
         freeSlots.pop_back();
         slots[id].pointer = allocation;
+        slots[id].type = 0;
     }
     else {
         if (slots.size() >= std::numeric_limits<std::uint32_t>::max()) {
@@ -68,6 +70,15 @@ extern "C" bool absolute_managed_valid(std::uint64_t handle) {
     return absolute_managed_get(handle) != nullptr;
 }
 
+extern "C" void absolute_managed_set_type(std::uint64_t handle, std::uint64_t type) {
+    if (Slot* slot = Find(handle)) slot->type = type;
+}
+
+extern "C" std::uint64_t absolute_managed_type(std::uint64_t handle) {
+    if (Slot* slot = Find(handle)) return slot->type;
+    return 0;
+}
+
 extern "C" void* absolute_managed_require(std::uint64_t handle) {
     if (void* pointer = absolute_managed_get(handle)) return pointer;
     std::cerr << "Absolute runtime error: null or expired managed pointer\n";
@@ -80,6 +91,7 @@ extern "C" void absolute_managed_destroy(std::uint64_t handle) {
     const std::uint32_t id = HandleId(handle);
     std::free(slot->pointer);
     slot->pointer = nullptr;
+    slot->type = 0;
     ++slot->generation;
     if (slot->generation == 0) ++slot->generation;
     freeSlots.push_back(id);

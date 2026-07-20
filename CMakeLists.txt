@@ -252,6 +252,15 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/switch-match-errors.abs"
     )
     set_tests_properties(absolute.switch-match-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.exceptions-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/exceptions.abs"
+    )
+    add_test(
+        NAME absolute.exceptions-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/exceptions-errors.abs"
+    )
+    set_tests_properties(absolute.exceptions-errors PROPERTIES WILL_FAIL TRUE)
     foreach(flow_error IN ITEMS uninitialized-errors pointer-flow-errors)
         add_test(
             NAME "absolute.${flow_error}"
@@ -789,6 +798,34 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-switch-match PROPERTIES
             FIXTURES_REQUIRED absolute-switch-match-executable
             PASS_REGULAR_EXPRESSION "switch-match=ok"
+        )
+        add_test(
+            NAME absolute.build-exceptions
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/exceptions.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/exceptions-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-exceptions PROPERTIES
+            FIXTURES_SETUP absolute-exceptions-executable
+        )
+        add_test(NAME absolute.run-exceptions
+            COMMAND "${CMAKE_BINARY_DIR}/exceptions-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-exceptions PROPERTIES
+            FIXTURES_REQUIRED absolute-exceptions-executable
+            PASS_REGULAR_EXPRESSION "exceptions=ok"
+        )
+        add_test(
+            NAME absolute.build-unhandled-exception
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/unhandled-exception.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/unhandled-exception-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-unhandled-exception PROPERTIES
+            FIXTURES_SETUP absolute-unhandled-exception-executable
+        )
+        add_test(NAME absolute.run-unhandled-exception
+            COMMAND "${CMAKE_BINARY_DIR}/unhandled-exception-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-unhandled-exception PROPERTIES
+            FIXTURES_REQUIRED absolute-unhandled-exception-executable
+            WILL_FAIL TRUE
         )
         add_test(
             NAME absolute.build-async

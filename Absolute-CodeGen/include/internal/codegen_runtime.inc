@@ -87,6 +87,31 @@
 
         llvm::FunctionCallee ManagedDestroy();
 
+        llvm::FunctionCallee ManagedSetType();
+
+        llvm::FunctionCallee ManagedType();
+
+        llvm::FunctionCallee ErrorSet();
+
+        llvm::FunctionCallee ErrorPending();
+
+        llvm::FunctionCallee ErrorType();
+
+        llvm::FunctionCallee ErrorTake();
+
+        llvm::FunctionCallee ErrorReport();
+
+        std::uint64_t ExceptionTypeId(const std::string& name) const;
+
+        bool IsClassDerivedFrom(const std::string& type, const std::string& base) const;
+
+        void EmitActiveFinalizers(size_t destinationScope, bool includeEqual);
+
+        void EmitExceptionPropagation(SymbolId transferredOwner = InvalidSymbolId);
+
+        void EmitExceptionCheck(llvm::Value* temporaryManagedOwner = nullptr,
+            llvm::Value* temporaryRawOwner = nullptr);
+
         std::uint64_t SizeOfTypeName(const std::string& name);
 
         llvm::FunctionCallee Abort();

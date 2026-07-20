@@ -193,6 +193,14 @@ namespace Absolute {
         visitor.Visit(this);
     }
 
+    void ThrowStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
+    void TryStmt::Accept(StatementVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
     void ForStmt::Accept(StatementVisitor& visitor) {
         visitor.Visit(this);
     }

@@ -197,6 +197,14 @@ namespace Absolute {
         }
 
         const Result base = Evaluate(expr->base.get());
+        if (base.pointerValidity == PointerValidity::Deleted ||
+            base.pointerValidity == PointerValidity::Expired) {
+            Report("member access uses an invalid pointer", "E_INVALID_POINTER_ACCESS", base.symbol);
+        }
+        else if (base.pointerValidity == PointerValidity::MaybeInvalid) {
+            Report("member access may use an invalid pointer",
+                "E_MAYBE_INVALID_POINTER_ACCESS", base.symbol);
+        }
         const auto members = FindMembers(base.type, expr->member);
         const auto field = std::find_if(members.begin(), members.end(), [](const MemberSignature& member) {
             return member.kind == SymbolKind::Field;

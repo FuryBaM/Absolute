@@ -3,7 +3,7 @@ project(Absolute-Runtime LANGUAGES CXX)
 
 find_package(Threads REQUIRED)
 
-add_library(Absolute-Runtime STATIC src/pointers.cpp src/tasks.cpp)
+add_library(Absolute-Runtime STATIC src/errors.cpp src/pointers.cpp src/tasks.cpp)
 target_compile_features(Absolute-Runtime PUBLIC cxx_std_20)
 target_link_libraries(Absolute-Runtime PUBLIC Threads::Threads)
 

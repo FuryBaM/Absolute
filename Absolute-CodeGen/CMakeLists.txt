@@ -67,6 +67,7 @@ add_library(Absolute-CodeGen STATIC
     src/codegen_access.cpp
     src/codegen_builtins.cpp
     src/codegen_core.cpp
+    src/codegen_exceptions.cpp
     src/codegen_module.cpp
     src/codegen_operators.cpp
     src/codegen_pch.cpp

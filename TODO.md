@@ -106,8 +106,11 @@
 - [x] Добавить `switch`/`match` и проверку полноты вариантов.
   `match` проверяет полноту `bool` и enum-вариантов; для integer/char требуется `default`.
   Ветки не имеют неявного fallthrough.
-- [ ] Определить модель ошибок языка: exceptions либо типизированный `Result`.
-- [ ] Добавить `try`/`catch`/`finally`, если будет выбрана модель exceptions.
+- [x] Определить модель ошибок языка: typed unchecked exceptions для аварийных ошибок;
+  будущий `Result<T, E>` остаётся обычным generic-типом для ожидаемых ошибок.
+  Portable ABI, ownership, cleanup, async и FFI описаны в `docs/error-model.md`.
+- [x] Добавить `throw`, typed `try`/`catch`/`finally`, portable propagation ABI,
+  cleanup на всех выходах и перенос исключений через `await`.
 - [ ] Добавить `defer` для гарантированного выполнения cleanup-кода.
 - [ ] Добавить атрибуты/аннотации для compiler и plugin metadata.
 - [ ] Спроектировать настоящие generics для функций, структур и классов.

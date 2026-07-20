@@ -232,6 +232,10 @@ namespace Absolute {
         else {
             llvm::Value* handle = impl->builder.CreateCall(
                 impl->ManagedCreate(), {allocationSize}, "managed.handle");
+            if (classAllocation && impl->exceptionsEnabled) {
+                impl->builder.CreateCall(impl->ManagedSetType(), {handle,
+                    impl->builder.getInt64(impl->ExceptionTypeId(pointeeType))});
+            }
             pointer = impl->builder.CreateCall(impl->ManagedGet(true), {handle}, "managed.allocation");
             result = handle;
         }
@@ -252,6 +256,9 @@ namespace Absolute {
                 if (arguments.size() != constructor->arg_size())
                     impl->Fail("invalid constructor argument count for '" + info.name + "'");
                 impl->builder.CreateCall(constructor, arguments);
+                impl->EmitExceptionCheck(
+                    rawAllocation ? nullptr : result,
+                    rawAllocation ? pointer : nullptr);
             }
             else if (!expr->arguments.empty())
                 impl->Fail("class '" + info.name + "' has no constructor");
@@ -277,6 +284,9 @@ namespace Absolute {
                 if (arguments.size() != constructor->arg_size())
                     impl->Fail("invalid constructor argument count for '" + info.name + "'");
                 impl->builder.CreateCall(constructor, arguments);
+                impl->EmitExceptionCheck(
+                    rawAllocation ? nullptr : result,
+                    rawAllocation ? pointer : nullptr);
             }
             else if (!expr->arguments.empty())
                 impl->Fail("struct '" + info.name + "' has no constructor");
@@ -367,6 +377,7 @@ namespace Absolute {
             llvm::Function* constructor = impl->module->getFunction(constructorName);
             if (!constructor) impl->Fail("missing constructor for '" + typeName + "'");
             impl->builder.CreateCall(constructor, {address});
+            impl->EmitExceptionCheck();
         }
         if (!impl->scopes.back().emplace(name,
             Impl::Variable{address, llvmType, typeName, false, false, nullptr, {},

@@ -250,6 +250,8 @@ namespace {
         void Visit(GroupDeclStmt*) override {}
         void Visit(IfStmt*) override {}
         void Visit(SwitchStmt*) override {}
+        void Visit(ThrowStmt*) override {}
+        void Visit(TryStmt*) override {}
         void Visit(ForStmt*) override {}
         void Visit(WhileStmt*) override {}
         void Visit(DoWhileStmt*) override {}
@@ -299,6 +301,11 @@ namespace {
         }
 
         std::vector<std::unique_ptr<Program>> preludePrograms;
+        preludePrograms.push_back(ParseCode(Tokenize(
+            "class Error {\n"
+            "    public string message;\n"
+            "    public Error(string value) { message = value; }\n"
+            "}\n")));
         for (const std::string& prelude : SyntaxPluginPreludes())
             preludePrograms.push_back(ParseCode(Tokenize(prelude)));
 

@@ -61,6 +61,8 @@ namespace Absolute {
 
     void Analyzer::Visit(ReturnStmt* stmt) {
         if (phase == Phase::CollectDeclarations) return;
+        if (finallyDepth > 0)
+            Report("return is not allowed inside finally", "E_FINALLY_CONTROL_TRANSFER");
         if (functionDepth == 0) Report("return statement is outside a function");
         const Result value = EvaluateExpected(stmt->expr.get(), currentReturnType);
         if (!IsAssignable(currentReturnType, value.type))
@@ -251,6 +253,136 @@ namespace Absolute {
         flowTerminated = exhaustive && continuingPaths.empty();
     }
 
+    void Analyzer::Visit(ThrowStmt* stmt) {
+        usesExceptions = true;
+        if (phase == Phase::CollectDeclarations) return;
+        if (finallyDepth > 0)
+            Report("throw is not allowed inside finally", "E_FINALLY_CONTROL_TRANSFER");
+        if (!stmt->value) {
+            if (catchDepth == 0) Report("rethrow is only valid inside catch", "E_RETHROW_OUTSIDE_CATCH");
+        }
+        else {
+            const Result exception = Evaluate(stmt->value.get());
+            const bool managed = IsManagedPointerType(exception.type);
+            const std::string pointee = managed ? PointerPointee(exception.type) : std::string{};
+            if (!managed || !IsDerivedFrom(pointee, "Error"))
+                Report("throw requires a managed pointer to Error or a derived class",
+                    "E_INVALID_THROW_TYPE", exception.symbol);
+            else if (!exception.createsManagedOwner &&
+                (!exception.referencesManagedOwner ||
+                    exception.pointerOwner == InvalidSymbolId ||
+                    exception.pointerOwner != exception.symbol))
+                Report("throw must transfer an owned exception; a subscriber cannot be thrown",
+                    "E_THROW_SUBSCRIBER", exception.symbol);
+            else if (!exception.createsManagedOwner &&
+                exception.pointerOwner != InvalidSymbolId) {
+                for (auto& transferred : exceptionTransferredOwners)
+                    transferred.insert(exception.pointerOwner);
+            }
+        }
+        CheckKeepScopesFrom(0, "throw");
+        CheckTaskScopesFrom(0, "throw");
+        flowTerminated = true;
+    }
+
+    void Analyzer::Visit(TryStmt* stmt) {
+        usesExceptions = true;
+        if (phase == Phase::CollectDeclarations) return;
+        const KeepLifetimeMap base = keepLifetimes;
+        const ValueFlowMap baseValues = valueFlow;
+        std::vector<KeepLifetimeMap> continuingPaths;
+        std::vector<ValueFlowMap> continuingValuePaths;
+        exceptionTransferredOwners.emplace_back();
+
+        keepLifetimes = base;
+        valueFlow = baseValues;
+        flowTerminated = false;
+        AcceptIfPresent(stmt->body, *this);
+        if (!flowTerminated) {
+            continuingPaths.push_back(keepLifetimes);
+            continuingValuePaths.push_back(valueFlow);
+        }
+        const std::unordered_set<SymbolId> transferredOwners =
+            std::move(exceptionTransferredOwners.back());
+        exceptionTransferredOwners.pop_back();
+
+        std::vector<std::string> previousCatchTypes;
+        for (auto& clause : stmt->catches) {
+            keepLifetimes = base;
+            valueFlow = baseValues;
+            for (const SymbolId owner : transferredOwners) {
+                if (auto found = valueFlow.find(owner); found != valueFlow.end())
+                    found->second.pointerValidity = PointerValidity::Expired;
+            }
+            flowTerminated = false;
+            table.EnterScope();
+            PushKeepScope();
+            PushValueFlowScope();
+
+            const std::string type = clause.parameter
+                ? ResolveDeclaredType(*clause.parameter) : "error";
+            const std::string name = clause.parameter
+                ? ExtractIdentifier(clause.parameter->name.get()) : std::string{};
+            const bool managed = IsManagedPointerType(type);
+            const std::string pointee = managed ? PointerPointee(type) : std::string{};
+            if (!managed || !IsDerivedFrom(pointee, "Error"))
+                Report("catch parameter must be a managed pointer to Error or a derived class",
+                    "E_INVALID_CATCH_TYPE");
+            for (const std::string& previous : previousCatchTypes) {
+                if (managed && IsDerivedFrom(pointee, previous)) {
+                    Report("catch for '" + type + "' is unreachable after catch for '" + previous + "*'",
+                        "E_UNREACHABLE_CATCH");
+                    break;
+                }
+            }
+            if (managed) previousCatchTypes.push_back(pointee);
+
+            SymbolId id = InvalidSymbolId;
+            if (name.empty()) Report("catch parameter requires a name", "E_INVALID_CATCH_PARAMETER");
+            else if (const auto declared = table.Declare(SymbolKind::Variable, name, type)) {
+                id = *declared;
+                if (Symbol* symbol = table.Get(id)) symbol->managedOwner = true;
+                RegisterFlowSymbol(id, {InitializationState::Initialized,
+                    PointerValidity::Live, id, TaskState::NotTask});
+            }
+            else Report("catch parameter '" + name + "' is already declared");
+            if (clause.parameter)
+                Save(clause.parameter.get(), {id, type, true, false, true,
+                    InitializationState::Initialized, PointerValidity::Live, id});
+
+            ++catchDepth;
+            AcceptIfPresent(clause.body, *this);
+            --catchDepth;
+            if (!flowTerminated) {
+                continuingPaths.push_back(keepLifetimes);
+                continuingValuePaths.push_back(valueFlow);
+            }
+            PopValueFlowScope();
+            PopKeepScope();
+            table.ExitScope();
+        }
+
+        const bool allPathsTerminate = continuingPaths.empty();
+        if (allPathsTerminate) {
+            keepLifetimes = base;
+            valueFlow = baseValues;
+        }
+        else {
+            MergeKeepPaths(base, continuingPaths);
+            MergeValueFlowPaths(baseValues, continuingValuePaths);
+        }
+        flowTerminated = allPathsTerminate;
+
+        if (stmt->finallyBody) {
+            const bool terminatedBeforeFinally = flowTerminated;
+            flowTerminated = false;
+            ++finallyDepth;
+            AcceptIfPresent(stmt->finallyBody, *this);
+            --finallyDepth;
+            if (!flowTerminated) flowTerminated = terminatedBeforeFinally;
+        }
+    }
+
     void Analyzer::Visit(ForStmt* stmt) {
         if (phase == Phase::CollectDeclarations) return;
         table.EnterScope();
@@ -406,6 +538,8 @@ namespace Absolute {
     void Analyzer::Visit(ContinueStmt* stmt) {
         (void)stmt;
         if (phase != Phase::ResolveBodies) return;
+        if (finallyDepth > 0)
+            Report("continue is not allowed inside finally", "E_FINALLY_CONTROL_TRANSFER");
         if (loopDepth == 0) Report("continue statement is outside a loop");
         else {
             CheckKeepScopesFrom(loopKeepDepths.back(), "continue");
@@ -418,6 +552,8 @@ namespace Absolute {
     void Analyzer::Visit(BreakStmt* stmt) {
         (void)stmt;
         if (phase != Phase::ResolveBodies) return;
+        if (finallyDepth > 0)
+            Report("break is not allowed inside finally", "E_FINALLY_CONTROL_TRANSFER");
         if (loopDepth == 0) Report("break statement is outside a loop");
         else {
             CheckKeepScopesFrom(loopKeepDepths.back(), "break");

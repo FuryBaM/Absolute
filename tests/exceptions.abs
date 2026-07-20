@@ -1,0 +1,139 @@
+class ParseError : Error {
+    public int32 code;
+
+    public ParseError(string text, int32 value) {
+        message = text;
+        code = value;
+    }
+}
+
+int32 fail(bool derived) {
+    if (derived) {
+        throw new ParseError("bad token", 7);
+    }
+    throw new Error("base error");
+}
+
+int32 forwardFailure() {
+    return fail(true);
+}
+
+int32 returnThroughFinally(raw int32* counter) {
+    try {
+        return 5;
+    }
+    finally {
+        *counter += 1;
+    }
+}
+
+async int32 asyncFailure() {
+    throw new ParseError("async", 12);
+}
+
+async int32 main() {
+    int32 state = 0;
+
+    try {
+        forwardFailure();
+        state = -100;
+    }
+    catch (ParseError* error) {
+        assert(error.code == 7, "derived catch value");
+        state += 1;
+    }
+    catch (Error* error) {
+        state = -200;
+    }
+    finally {
+        state += 10;
+    }
+    assert(state == 11, "typed catch and exceptional finally");
+
+    try {
+        fail(false);
+    }
+    catch (Error* error) {
+        state += 20;
+    }
+    assert(state == 31, "base catch");
+
+    int32 dynamicState = 0;
+    try {
+        Error* dynamicError = new ParseError("dynamic", 8);
+        throw dynamicError;
+    }
+    catch (ParseError* error) {
+        assert(error.code == 8, "dynamic exception value");
+        dynamicState = 1;
+    }
+    catch (Error* error) {
+        dynamicState = -1;
+    }
+    assert(dynamicState == 1, "catch must use the dynamic exception type");
+
+    try {
+        state += 100;
+    }
+    finally {
+        state += 1000;
+    }
+    assert(state == 1131, "normal finally");
+
+    try {
+        try {
+            throw new ParseError("rethrow", 9);
+        }
+        catch (ParseError* error) {
+            assert(error.code == 9, "rethrow value");
+            state += 10000;
+            throw;
+        }
+        finally {
+            state += 100000;
+        }
+    }
+    catch (Error* error) {
+        state += 1000000;
+    }
+    assert(state == 1111131, "rethrow and nested finally");
+
+    int32 returns = 0;
+    assert(returnThroughFinally(&returns) == 5, "return through finally value");
+    assert(returns == 1, "return must execute finally");
+
+    int32 loopState = 0;
+    while (loopState < 1) {
+        try {
+            loopState += 1;
+            continue;
+        }
+        finally {
+            loopState += 10;
+        }
+    }
+    while (true) {
+        try {
+            loopState += 100;
+            break;
+        }
+        finally {
+            loopState += 1000;
+        }
+    }
+    assert(loopState == 1111, "loop control must execute finally");
+
+    int32 asyncState = 0;
+    try {
+        task<int32> failedTask = spawn asyncFailure();
+        await failedTask;
+        asyncState = -1;
+    }
+    catch (ParseError* error) {
+        assert(error.code == 12, "async exception value");
+        asyncState = 1;
+    }
+    assert(asyncState == 1, "await must propagate task exception");
+    println("exceptions=ok");
+    return 0;
+}

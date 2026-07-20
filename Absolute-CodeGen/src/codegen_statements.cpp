@@ -29,6 +29,8 @@ namespace Absolute {
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("return outside a function");
         if (function->getReturnType()->isVoidTy()) {
+            impl->EmitActiveFinalizers(0, true);
+            if (impl->builder.GetInsertBlock()->getTerminator()) return;
             impl->EmitCleanupsFrom(0);
             impl->builder.CreateRetVoid();
             return;
@@ -61,6 +63,8 @@ namespace Absolute {
                 if (returned.managedOwner) transferredOwner = returned.symbol;
             }
         }
+        impl->EmitActiveFinalizers(0, true);
+        if (impl->builder.GetInsertBlock()->getTerminator()) return;
         impl->EmitCleanupsFrom(0, transferredOwner);
         impl->builder.CreateRet(result);
     }
@@ -170,6 +174,131 @@ namespace Absolute {
 
         if (stmt->defaultCase) stmt->defaultCase->Accept(*this);
         impl->BranchIfNeeded(endBlock);
+        impl->builder.SetInsertPoint(endBlock);
+    }
+
+    void CodeGenerator::Visit(ThrowStmt* stmt) {
+        if (impl->phase != Impl::Phase::EmitBodies) return;
+        llvm::Value* handle = nullptr;
+        llvm::Value* type = nullptr;
+        SymbolId transferredOwner = InvalidSymbolId;
+        if (stmt->value) {
+            const std::string exceptionType = impl->SemanticType(stmt->value.get());
+            handle = impl->Evaluate(stmt->value.get());
+            llvm::Value* dynamicType = impl->builder.CreateCall(
+                impl->ManagedType(), {handle}, "exception.dynamic.type");
+            llvm::Value* staticType = impl->builder.getInt64(
+                impl->ExceptionTypeId(PointerPointeeName(exceptionType)));
+            type = impl->builder.CreateSelect(
+                impl->builder.CreateICmpNE(dynamicType, impl->builder.getInt64(0)),
+                dynamicType, staticType, "exception.effective.type");
+            transferredOwner = impl->SemanticSymbol(stmt->value.get());
+        }
+        else {
+            if (impl->caughtExceptions.empty()) impl->Fail("rethrow outside catch");
+            const Impl::CaughtException& caught = impl->caughtExceptions.back();
+            handle = impl->builder.CreateLoad(
+                impl->builder.getInt64Ty(), caught.address, "rethrow.handle");
+            type = caught.type;
+            transferredOwner = caught.symbol;
+        }
+        impl->builder.CreateCall(impl->ErrorSet(), {handle, type});
+        impl->EmitExceptionPropagation(transferredOwner);
+    }
+
+    void CodeGenerator::Visit(TryStmt* stmt) {
+        if (impl->phase != Impl::Phase::EmitBodies) return;
+        llvm::Function* function = impl->CurrentFunction();
+        if (!function) impl->Fail("try outside a function");
+
+        llvm::BasicBlock* handlerBlock = llvm::BasicBlock::Create(
+            impl->context, "try.handler", function);
+        llvm::BasicBlock* finallyBlock = stmt->finallyBody
+            ? llvm::BasicBlock::Create(impl->context, "try.finally", function) : nullptr;
+        llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(
+            impl->context, "try.end", function);
+        llvm::BasicBlock* completionBlock = finallyBlock ? finallyBlock : endBlock;
+        const size_t tryScope = impl->scopes.size();
+
+        if (stmt->finallyBody) impl->finallyTargets.push_back({stmt, tryScope});
+        impl->exceptionTargets.push_back({handlerBlock, tryScope});
+        if (stmt->body) stmt->body->Accept(*this);
+        impl->exceptionTargets.pop_back();
+        impl->BranchIfNeeded(completionBlock);
+
+        impl->builder.SetInsertPoint(handlerBlock);
+        llvm::Value* actualType = impl->builder.CreateCall(
+            impl->ErrorType(), {}, "exception.type");
+        for (auto& clause : stmt->catches) {
+            const ExpressionInfo* info = clause.parameter && impl->analyzer
+                ? impl->analyzer->GetExpressionInfo(*clause.parameter) : nullptr;
+            const std::string parameterType = info
+                ? info->type : impl->DeclaredTypeName(*clause.parameter);
+            const std::string catchType = PointerPointeeName(parameterType);
+            llvm::Value* matches = impl->builder.getFalse();
+            bool foundMatchableClass = false;
+            for (const auto& [className, classInfo] : impl->classes) {
+                (void)classInfo;
+                if (!impl->IsClassDerivedFrom(className, catchType)) continue;
+                foundMatchableClass = true;
+                llvm::Value* equal = impl->builder.CreateICmpEQ(actualType,
+                    impl->builder.getInt64(impl->ExceptionTypeId(className)), "catch.type.equal");
+                matches = impl->builder.CreateOr(matches, equal, "catch.matches");
+            }
+            if (!foundMatchableClass) {
+                matches = impl->builder.CreateICmpEQ(actualType,
+                    impl->builder.getInt64(impl->ExceptionTypeId(catchType)), "catch.type.equal");
+            }
+
+            llvm::BasicBlock* catchBlock = llvm::BasicBlock::Create(
+                impl->context, "catch.body", function);
+            llvm::BasicBlock* nextBlock = llvm::BasicBlock::Create(
+                impl->context, "catch.next", function);
+            impl->builder.CreateCondBr(matches, catchBlock, nextBlock);
+            impl->builder.SetInsertPoint(catchBlock);
+
+            impl->PushScope();
+            const std::string name = IdentifierName(clause.parameter->name.get());
+            llvm::AllocaInst* address = impl->CreateEntryAlloca(
+                *function, impl->builder.getInt64Ty(), name);
+            llvm::Value* handle = impl->builder.CreateCall(
+                impl->ErrorTake(), {}, "exception.handle");
+            impl->builder.CreateStore(handle, address);
+            const SymbolId symbol = impl->SemanticSymbol(clause.parameter.get());
+            if (!impl->scopes.back().emplace(name,
+                Impl::Variable{address, impl->builder.getInt64Ty(), parameterType,
+                    true, false, nullptr, {}, nullptr, symbol}).second) {
+                impl->Fail("duplicate catch parameter '" + name + "'");
+            }
+            impl->caughtExceptions.push_back({address, actualType, symbol});
+            if (clause.body) clause.body->Accept(*this);
+            impl->caughtExceptions.pop_back();
+            impl->PopScope(true);
+            impl->BranchIfNeeded(completionBlock);
+            impl->builder.SetInsertPoint(nextBlock);
+        }
+
+        if (stmt->finallyBody) impl->builder.CreateBr(finallyBlock);
+        else impl->EmitExceptionPropagation();
+
+        if (stmt->finallyBody) {
+            impl->builder.SetInsertPoint(finallyBlock);
+            const bool oldEmittingFinally = impl->emittingFinally;
+            impl->emittingFinally = true;
+            stmt->finallyBody->Accept(*this);
+            impl->emittingFinally = oldEmittingFinally;
+            if (impl->builder.GetInsertBlock() &&
+                !impl->builder.GetInsertBlock()->getTerminator()) {
+                llvm::Value* pending = impl->builder.CreateCall(
+                    impl->ErrorPending(), {}, "finally.error.pending");
+                llvm::BasicBlock* propagateBlock = llvm::BasicBlock::Create(
+                    impl->context, "finally.error", function);
+                impl->builder.CreateCondBr(pending, propagateBlock, endBlock);
+                impl->builder.SetInsertPoint(propagateBlock);
+                impl->EmitExceptionPropagation();
+            }
+        }
+        if (stmt->finallyBody) impl->finallyTargets.pop_back();
         impl->builder.SetInsertPoint(endBlock);
     }
 
@@ -307,6 +436,8 @@ namespace Absolute {
         (void)stmt;
         if (impl->phase != Impl::Phase::EmitBodies) return;
         if (impl->loops.empty()) impl->Fail("continue outside a loop");
+        impl->EmitActiveFinalizers(impl->loops.back().scopeCount, true);
+        if (impl->builder.GetInsertBlock()->getTerminator()) return;
         impl->EmitCleanupsFrom(impl->loops.back().scopeCount);
         impl->builder.CreateBr(impl->loops.back().continueBlock);
     }
@@ -315,6 +446,8 @@ namespace Absolute {
         (void)stmt;
         if (impl->phase != Impl::Phase::EmitBodies) return;
         if (impl->loops.empty()) impl->Fail("break outside a loop");
+        impl->EmitActiveFinalizers(impl->loops.back().scopeCount, true);
+        if (impl->builder.GetInsertBlock()->getTerminator()) return;
         impl->EmitCleanupsFrom(impl->loops.back().scopeCount);
         impl->builder.CreateBr(impl->loops.back().breakBlock);
     }

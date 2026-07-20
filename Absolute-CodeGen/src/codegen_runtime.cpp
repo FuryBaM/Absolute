@@ -467,6 +467,16 @@ namespace Absolute {
             builder.CreateStore(llvm::ConstantPointerNull::get(builder.getPtrTy()), task.address);
         }
 
+        llvm::Function* function = CurrentFunction();
+        llvm::Value* pending = builder.CreateCall(ErrorPending(), {}, "await.error.pending");
+        llvm::BasicBlock* errorBlock = llvm::BasicBlock::Create(context, "await.error", function);
+        llvm::BasicBlock* continueBlock = llvm::BasicBlock::Create(context, "await.continue", function);
+        builder.CreateCondBr(pending, errorBlock, continueBlock);
+        builder.SetInsertPoint(errorBlock);
+        builder.CreateCall(Free(), {contextPointer});
+        EmitExceptionPropagation();
+        builder.SetInsertPoint(continueBlock);
+
         const std::string resultTypeName = SemanticType(&expression);
         if (resultTypeName == "void") {
             builder.CreateCall(Free(), {contextPointer});
@@ -483,6 +493,18 @@ namespace Absolute {
         llvm::FunctionType* type = llvm::FunctionType::get(
             builder.getInt64Ty(), {builder.getInt64Ty()}, false);
         return module->getOrInsertFunction("absolute_managed_create", type);
+    }
+
+    llvm::FunctionCallee CodeGenerator::Impl::ManagedSetType() {
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getVoidTy(), {builder.getInt64Ty(), builder.getInt64Ty()}, false);
+        return module->getOrInsertFunction("absolute_managed_set_type", type);
+    }
+
+    llvm::FunctionCallee CodeGenerator::Impl::ManagedType() {
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getInt64Ty(), {builder.getInt64Ty()}, false);
+        return module->getOrInsertFunction("absolute_managed_type", type);
     }
 
     llvm::FunctionCallee CodeGenerator::Impl::ManagedGet(bool requireValid) {

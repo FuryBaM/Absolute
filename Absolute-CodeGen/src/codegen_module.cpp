@@ -338,6 +338,11 @@ namespace Absolute {
         enumConstants.clear();
         interfaceSlotCount = 0;
         loops.clear();
+        exceptionTargets.clear();
+        finallyTargets.clear();
+        caughtExceptions.clear();
+        emittingFinally = false;
+        exceptionsEnabled = analyzer ? analyzer->UsesExceptions() : true;
         currentNamespace.clear();
         functionLinkNames.clear();
         value = nullptr;

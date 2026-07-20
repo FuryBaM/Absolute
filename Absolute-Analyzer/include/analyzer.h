@@ -203,6 +203,9 @@ namespace Absolute {
         int typeContextDepth = 0;
         int loopDepth = 0;
         int functionDepth = 0;
+        int catchDepth = 0;
+        int finallyDepth = 0;
+        bool usesExceptions = false;
         std::string currentType;
         std::string currentReturnType;
         std::string expectedType;
@@ -217,6 +220,7 @@ namespace Absolute {
         ValueFlowMap valueFlow;
         std::vector<std::vector<SymbolId>> valueFlowScopes;
         std::vector<std::vector<ValueFlowMap>> loopBreakValueStates;
+        std::vector<std::unordered_set<SymbolId>> exceptionTransferredOwners;
         AccessMode accessMode = AccessMode::Read;
         bool flowTerminated = false;
         int spawnContextDepth = 0;
@@ -238,6 +242,7 @@ namespace Absolute {
             const std::string& name, const std::vector<std::string>& parameterTypes) const;
         size_t FunctionOverloadCount(const std::string& name) const;
         const ExpressionInfo* GetExpressionInfo(const Expression& expression) const;
+        bool UsesExceptions() const { return usesExceptions; }
         const std::vector<Diagnostic>& Diagnostics() const;
 
         void Visit(PrimitiveTypeExpr* expr) override;
@@ -282,6 +287,8 @@ namespace Absolute {
         void Visit(GroupDeclStmt* stmt) override;
         void Visit(IfStmt* stmt) override;
         void Visit(SwitchStmt* stmt) override;
+        void Visit(ThrowStmt* stmt) override;
+        void Visit(TryStmt* stmt) override;
         void Visit(ForStmt* stmt) override;
         void Visit(WhileStmt* stmt) override;
         void Visit(DoWhileStmt* stmt) override;

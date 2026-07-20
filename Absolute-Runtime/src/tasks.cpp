@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <condition_variable>
+#include <cstdint>
 #include <cstdlib>
 #include <deque>
 #include <iostream>
@@ -8,6 +9,12 @@
 #include <utility>
 #include <vector>
 
+extern "C" bool absolute_error_pending();
+extern "C" std::uint64_t absolute_error_type();
+extern "C" std::uint64_t absolute_error_take();
+extern "C" void absolute_error_set(std::uint64_t handle, std::uint64_t type);
+extern "C" void absolute_managed_destroy(std::uint64_t handle);
+
 namespace {
     using TaskEntry = void (*)(void*);
 
@@ -15,6 +22,8 @@ namespace {
         std::mutex mutex;
         std::condition_variable completed;
         void* context = nullptr;
+        std::uint64_t errorHandle = 0;
+        std::uint64_t errorType = 0;
         bool done = false;
     };
 
@@ -43,6 +52,10 @@ namespace {
 
                 try {
                     work.entry(work.task->context);
+                    if (absolute_error_pending()) {
+                        work.task->errorType = absolute_error_type();
+                        work.task->errorHandle = absolute_error_take();
+                    }
                 }
                 catch (...) {
                     std::cerr << "Absolute runtime error: an async task threw across the runtime boundary\n";
@@ -114,6 +127,8 @@ extern "C" void* absolute_task_await(void* handle) {
     Task* task = static_cast<Task*>(handle);
     Wait(*task);
     void* context = task->context;
+    if (task->errorHandle)
+        absolute_error_set(task->errorHandle, task->errorType);
     delete task;
     return context;
 }
@@ -122,6 +137,7 @@ extern "C" void absolute_task_destroy(void* handle) {
     if (!handle) return;
     Task* task = static_cast<Task*>(handle);
     Wait(*task);
+    if (task->errorHandle) absolute_managed_destroy(task->errorHandle);
     std::free(task->context);
     delete task;
 }

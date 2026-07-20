@@ -15,6 +15,7 @@ namespace Absolute {
             left = impl->Coerce(left, function->getFunctionType()->getParamType(0));
             right = impl->Coerce(right, function->getFunctionType()->getParamType(1));
             impl->value = impl->builder.CreateCall(function, {left, right}, "plugin.operator");
+            impl->EmitExceptionCheck();
             impl->valueCreatesManagedOwner = IsManagedPointerTypeName(pluginOperator->resultType);
             impl->valueManagedPointee = nullptr;
             return;

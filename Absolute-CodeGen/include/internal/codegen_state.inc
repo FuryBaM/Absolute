@@ -89,6 +89,22 @@
             size_t scopeCount = 0;
         };
 
+        struct ExceptionTarget {
+            llvm::BasicBlock* handlerBlock = nullptr;
+            size_t scopeCount = 0;
+        };
+
+        struct FinallyTarget {
+            TryStmt* statement = nullptr;
+            size_t scopeCount = 0;
+        };
+
+        struct CaughtException {
+            llvm::Value* address = nullptr;
+            llvm::Value* type = nullptr;
+            SymbolId symbol = InvalidSymbolId;
+        };
+
         struct PrintableValue {
             std::string specifier;
             llvm::Value* value = nullptr;
@@ -114,6 +130,11 @@
         std::unordered_map<std::string, std::int32_t> enumConstants;
         unsigned interfaceSlotCount = 0;
         std::vector<LoopTarget> loops;
+        std::vector<ExceptionTarget> exceptionTargets;
+        std::vector<FinallyTarget> finallyTargets;
+        std::vector<CaughtException> caughtExceptions;
+        bool emittingFinally = false;
+        bool exceptionsEnabled = false;
         std::string currentNamespace;
         std::unordered_map<std::string, std::string> functionLinkNames;
         bool valueCreatesManagedOwner = false;

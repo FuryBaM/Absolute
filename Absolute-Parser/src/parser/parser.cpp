@@ -219,6 +219,10 @@ namespace Absolute{
                 return ParseSwitchStmt(false);
             case Hash("match"):
                 return ParseSwitchStmt(true);
+            case Hash("throw"):
+                return ParseThrowStmt();
+            case Hash("try"):
+                return ParseTryStmt();
 		    case Hash("for"):
 			    return ParseForStmt();
 		    case Hash("while"):

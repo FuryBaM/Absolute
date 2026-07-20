@@ -21,11 +21,13 @@ namespace Absolute {
         valueFlow.clear();
         valueFlowScopes.clear();
         loopBreakValueStates.clear();
+        exceptionTransferredOwners.clear();
         accessMode = AccessMode::Read;
         flowTerminated = false;
         spawnContextDepth = 0;
         currentFunctionAsync = false;
-        loopDepth = functionDepth = typeContextDepth = constructorContextDepth = 0;
+        loopDepth = functionDepth = catchDepth = finallyDepth = typeContextDepth = constructorContextDepth = 0;
+        usesExceptions = false;
 
         phase = Phase::CollectDeclarations;
         table.Declare(SymbolKind::Function, "print", "void", {"..."});

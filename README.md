@@ -166,6 +166,23 @@ enum matches require every member, and integer/character matches require a
 branch handles values not listed by a case. Case labels must be compile-time
 boolean, integer, character, or enum constants, and duplicates are rejected.
 
+## Error model
+
+Absolute uses typed, unchecked exceptions for exceptional failures. All thrown
+objects derive from the managed `Error` base class; throwing transfers ownership
+to the exception runtime, and a matching catch takes that owner. A future
+`Result<T, E>` is an ordinary generic library type for expected failures, not a
+hidden propagation ABI. Native C++ exceptions may not cross an `extern "C"` or
+plugin boundary. The accepted syntax, cleanup rules, portable LLVM/runtime ABI,
+and async behavior are specified in [docs/error-model.md](docs/error-model.md).
+
+The compiler accepts `throw expression;`, `throw;`, ordered typed `catch`
+clauses, and optional `finally`. `finally` runs on normal completion,
+propagation, `return`, `break`, and `continue`; the first version rejects a new
+control transfer from inside `finally`. Unhandled errors reaching `main` are
+reported and return a non-zero process status. Exceptions raised by an async
+task are restored by `await` and can be caught normally.
+
 ## Syntax plugins
 
 New keywords and syntax that can be expressed using existing Absolute constructs

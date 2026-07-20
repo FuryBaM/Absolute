@@ -1,0 +1,59 @@
+class ParseError : Error {
+    public ParseError(string message) {
+    }
+}
+
+void invalidThrowType() {
+    throw 42;
+}
+
+void invalidRethrow() {
+    throw;
+}
+
+void invalidSubscriberThrow() {
+    Error* owner = new Error("owner");
+    Error* subscriber = owner;
+    throw subscriber;
+}
+
+void invalidUseAfterThrow() {
+    Error* error = new Error("moved");
+    try {
+        throw error;
+    }
+    catch (Error* caught) {
+    }
+    println(error.message);
+}
+
+void invalidCatch() {
+    try {
+        throw new Error("error");
+    }
+    catch (int32 value) {
+    }
+}
+
+void unreachableCatch() {
+    try {
+        throw new ParseError("parse");
+    }
+    catch (Error* error) {
+    }
+    catch (ParseError* error) {
+    }
+}
+
+int32 invalidFinallyControl() {
+    try {
+        return 1;
+    }
+    finally {
+        return 2;
+    }
+}
+
+int32 main() {
+    return 0;
+}

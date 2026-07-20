@@ -68,6 +68,7 @@ namespace Absolute {
                         function->getFunctionType()->getParamType(static_cast<unsigned>(index + 1))));
                 llvm::CallInst* call = impl->builder.CreateCall(function, arguments,
                     function->getReturnType()->isVoidTy() ? "" : member->member + ".extension.result");
+                impl->EmitExceptionCheck();
                 impl->value = function->getReturnType()->isVoidTy() ? nullptr : call;
                 impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
                 return;
@@ -110,6 +111,7 @@ namespace Absolute {
                 }
                 llvm::CallInst* call = impl->builder.CreateCall(methodType, callee, arguments,
                     methodType->getReturnType()->isVoidTy() ? "" : member->member + ".result");
+                impl->EmitExceptionCheck();
                 impl->value = methodType->getReturnType()->isVoidTy() ? nullptr : call;
                 impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
                 return;
@@ -146,6 +148,7 @@ namespace Absolute {
                     impl->builder.getPtrTy(), slot, "interface.method");
                 llvm::CallInst* call = impl->builder.CreateCall(methodType, callee, arguments,
                     methodType->getReturnType()->isVoidTy() ? "" : member->member + ".interface.result");
+                impl->EmitExceptionCheck();
                 impl->value = methodType->getReturnType()->isVoidTy() ? nullptr : call;
                 impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
                 return;
@@ -173,6 +176,7 @@ namespace Absolute {
                 if (!callee) impl->Fail("missing method function '" + method->second.linkName + "'");
                 llvm::CallInst* call = impl->builder.CreateCall(methodType, callee, arguments,
                     methodType->getReturnType()->isVoidTy() ? "" : member->member + ".result");
+                impl->EmitExceptionCheck();
                 impl->value = methodType->getReturnType()->isVoidTy() ? nullptr : call;
                 impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
                 return;
@@ -200,6 +204,7 @@ namespace Absolute {
 
         llvm::CallInst* call = impl->builder.CreateCall(function, arguments,
             function->getReturnType()->isVoidTy() ? "" : name + ".result");
+        if (!selected || !selected->externalFunction) impl->EmitExceptionCheck();
         impl->value = function->getReturnType()->isVoidTy() ? nullptr : call;
         impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
     }
