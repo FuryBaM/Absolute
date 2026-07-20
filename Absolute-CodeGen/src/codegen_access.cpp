@@ -123,8 +123,10 @@ namespace Absolute {
         }
         if (variable->isArray) {
             impl->value = impl->BuildArrayDescriptor({variable->address, variable->arrayElementType,
-                variable->typeName, variable->arrayDimensions});
+                variable->typeName, variable->arrayDimensions, variable->arrayOwner});
             impl->valueCreatesManagedOwner = false;
+            impl->valueCreatesArrayOwner = false;
+            impl->valueArrayOwner = nullptr;
             return;
         }
         impl->value = impl->builder.CreateLoad(variable->type, variable->address, expr->name + ".value");
@@ -139,10 +141,13 @@ namespace Absolute {
             llvm::Function* function = impl->module->getFunction(name);
             if (!function) impl->Fail("unknown static method '" + name + "'");
             std::vector<llvm::Value*> arguments;
+            std::vector<llvm::Value*> temporaryArrayOwners;
             for (const auto& argument : expr->arguments)
-                arguments.push_back(impl->Evaluate(argument.get()));
+                arguments.push_back(impl->EvaluateCallArgument(
+                    argument.get(), temporaryArrayOwners));
             llvm::Value* result = impl->EmitAbiCall(function->getFunctionType(), function,
                 selected->type, {}, selected->parameterTypes, arguments, "static.method.result");
+            impl->ReleaseArrayTemporaries(temporaryArrayOwners);
             impl->EmitExceptionCheck();
             impl->value = result;
             impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
@@ -154,13 +159,17 @@ namespace Absolute {
                 llvm::Function* function = impl->module->getFunction(name);
                 if (!function) impl->Fail("unknown extension method '" + name + "'");
                 std::vector<llvm::Value*> arguments;
+                std::vector<llvm::Value*> temporaryArrayOwners;
                 arguments.reserve(expr->arguments.size() + 1);
-                arguments.push_back(impl->Evaluate(member->base.get()));
+                arguments.push_back(impl->EvaluateCallArgument(
+                    member->base.get(), temporaryArrayOwners));
                 for (const auto& argument : expr->arguments)
-                    arguments.push_back(impl->Evaluate(argument.get()));
+                    arguments.push_back(impl->EvaluateCallArgument(
+                        argument.get(), temporaryArrayOwners));
                 llvm::Value* result = impl->EmitAbiCall(function->getFunctionType(), function,
                     selected->type, {}, selected->parameterTypes, arguments,
                     member->member + ".extension.result");
+                impl->ReleaseArrayTemporaries(temporaryArrayOwners);
                 impl->EmitExceptionCheck();
                 impl->value = result;
                 impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
@@ -179,8 +188,10 @@ namespace Absolute {
                 llvm::Value* object = impl->ObjectPointer(member->base.get(), baseType);
                 llvm::FunctionType* methodType = impl->MethodFunctionType(method->second);
                 std::vector<llvm::Value*> arguments;
+                std::vector<llvm::Value*> temporaryArrayOwners;
                 for (const auto& argument : expr->arguments)
-                    arguments.push_back(impl->Evaluate(argument.get()));
+                    arguments.push_back(impl->EvaluateCallArgument(
+                        argument.get(), temporaryArrayOwners));
 
                 llvm::Value* callee = nullptr;
                 if (method->second.virtualSlot) {
@@ -199,6 +210,7 @@ namespace Absolute {
                 llvm::Value* result = impl->EmitAbiCall(methodType, callee,
                     method->second.returnType, {object}, method->second.parameterTypes,
                     arguments, member->member + ".result");
+                impl->ReleaseArrayTemporaries(temporaryArrayOwners);
                 impl->EmitExceptionCheck();
                 impl->value = result;
                 impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
@@ -219,8 +231,10 @@ namespace Absolute {
                 llvm::Value* object = impl->ObjectPointer(member->base.get(), baseType);
                 llvm::FunctionType* methodType = impl->MethodFunctionType(method->second);
                 std::vector<llvm::Value*> arguments;
+                std::vector<llvm::Value*> temporaryArrayOwners;
                 for (const auto& argument : expr->arguments)
-                    arguments.push_back(impl->Evaluate(argument.get()));
+                    arguments.push_back(impl->EvaluateCallArgument(
+                        argument.get(), temporaryArrayOwners));
                 llvm::Value* vtable = impl->builder.CreateLoad(
                     impl->builder.getPtrTy(), object, "interface.vtable");
                 llvm::Value* slot = impl->builder.CreateGEP(
@@ -231,6 +245,7 @@ namespace Absolute {
                 llvm::Value* result = impl->EmitAbiCall(methodType, callee,
                     method->second.returnType, {object}, method->second.parameterTypes,
                     arguments, member->member + ".interface.result");
+                impl->ReleaseArrayTemporaries(temporaryArrayOwners);
                 impl->EmitExceptionCheck();
                 impl->value = result;
                 impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
@@ -247,13 +262,16 @@ namespace Absolute {
                 llvm::Value* object = impl->ObjectPointer(member->base.get(), baseType);
                 llvm::FunctionType* methodType = impl->MethodFunctionType(method->second);
                 std::vector<llvm::Value*> arguments;
+                std::vector<llvm::Value*> temporaryArrayOwners;
                 for (const auto& argument : expr->arguments)
-                    arguments.push_back(impl->Evaluate(argument.get()));
+                    arguments.push_back(impl->EvaluateCallArgument(
+                        argument.get(), temporaryArrayOwners));
                 llvm::Function* callee = impl->module->getFunction(method->second.linkName);
                 if (!callee) impl->Fail("missing method function '" + method->second.linkName + "'");
                 llvm::Value* result = impl->EmitAbiCall(methodType, callee,
                     method->second.returnType, {object}, method->second.parameterTypes,
                     arguments, member->member + ".result");
+                impl->ReleaseArrayTemporaries(temporaryArrayOwners);
                 impl->EmitExceptionCheck();
                 impl->value = result;
                 impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
@@ -268,10 +286,12 @@ namespace Absolute {
         llvm::Function* function = impl->module->getFunction(name);
         if (!function) impl->Fail("unknown function '" + name + "'");
         std::vector<llvm::Value*> arguments;
+        std::vector<llvm::Value*> temporaryArrayOwners;
         arguments.reserve(expr->arguments.size());
         std::vector<std::string> parameterTypes;
         for (const auto& expression : expr->arguments) {
-            arguments.push_back(impl->Evaluate(expression.get()));
+            arguments.push_back(impl->EvaluateCallArgument(
+                expression.get(), temporaryArrayOwners));
             parameterTypes.push_back(impl->SemanticType(expression.get()));
         }
         if (selected) parameterTypes = selected->parameterTypes;
@@ -280,6 +300,7 @@ namespace Absolute {
             (selected->externalFunction || selected->exportedFunction);
         llvm::Value* result = impl->EmitAbiCall(function->getFunctionType(), function,
             returnType, {}, parameterTypes, arguments, name + ".result", external);
+        impl->ReleaseArrayTemporaries(temporaryArrayOwners);
         if (!selected || !selected->externalFunction) impl->EmitExceptionCheck();
         impl->value = result;
         impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
@@ -304,8 +325,13 @@ namespace Absolute {
         }
         if (expr->indexes.size() == 1 && !expr->indexes.front()) {
             if (impl->addressMode) impl->Fail("a slice is not assignable");
-            impl->value = impl->BuildArrayDescriptor(impl->ViewOfArray(expr->base.get()));
+            Impl::ArrayView view = impl->ViewOfArray(expr->base.get());
+            const bool createsOwner = impl->valueCreatesArrayOwner;
+            llvm::Value* owner = impl->valueArrayOwner;
+            impl->value = impl->BuildArrayDescriptor(view);
             impl->valueCreatesManagedOwner = false;
+            impl->valueCreatesArrayOwner = createsOwner;
+            impl->valueArrayOwner = owner;
             return;
         }
         llvm::Value* address = impl->ArrayElementAddress(*expr);
@@ -321,6 +347,8 @@ namespace Absolute {
     void CodeGenerator::Visit(SliceExpr* expr) {
         if (impl->addressMode) impl->Fail("a slice is not assignable");
         Impl::ArrayView source = impl->ViewOfArray(expr->base.get());
+        const bool createsOwner = impl->valueCreatesArrayOwner;
+        llvm::Value* owner = impl->valueArrayOwner;
         if (source.dimensions.size() != 1) impl->Fail("slices require a one-dimensional array");
         llvm::Value* begin = expr->begin
             ? impl->Coerce(impl->Evaluate(expr->begin.get()), impl->builder.getInt64Ty())
@@ -341,8 +369,11 @@ namespace Absolute {
         slice.elementType = source.elementType;
         slice.typeName = source.typeName;
         slice.dimensions = {impl->builder.CreateSub(end, begin, "slice.length")};
+        slice.owner = source.owner;
         impl->value = impl->BuildArrayDescriptor(slice);
         impl->valueCreatesManagedOwner = false;
+        impl->valueCreatesArrayOwner = createsOwner;
+        impl->valueArrayOwner = owner;
     }
 
 }

@@ -231,9 +231,16 @@ namespace Absolute {
             : explicitTypeName;
         if (ArrayRankName(typeName) > 0) {
             ArrayView view = ArrayViewFromValue(&argument, typeName);
-            if (!scopes.back().emplace(name,
-                Variable{view.address, view.elementType, typeName, false,
-                    true, view.elementType, view.dimensions, nullptr, InvalidSymbolId}).second)
+            Variable variable;
+            variable.address = view.address;
+            variable.type = view.elementType;
+            variable.typeName = typeName;
+            variable.isArray = true;
+            variable.arrayElementType = view.elementType;
+            variable.arrayDimensions = view.dimensions;
+            variable.symbol = SemanticSymbol(&parameter);
+            variable.arrayOwner = view.owner;
+            if (!scopes.back().emplace(name, std::move(variable)).second)
                 Fail("duplicate parameter '" + name + "'");
             return;
         }
@@ -547,6 +554,8 @@ namespace Absolute {
         currentValueType.clear();
         valueCreatesManagedOwner = false;
         valueManagedPointee = nullptr;
+        valueCreatesArrayOwner = false;
+        valueArrayOwner = nullptr;
         addressMode = false;
         addressValue = nullptr;
         taskThunkCounter = 0;

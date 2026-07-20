@@ -154,6 +154,7 @@ namespace Absolute {
             variable.isArray = true;
             variable.arrayElementType = elementType;
             variable.arrayDimensions = dimensions;
+            variable.symbol = impl->SemanticSymbol(expr);
             if (!impl->scopes.back().emplace(name, std::move(variable)).second)
                 impl->Fail("duplicate variable '" + name + "'");
 
@@ -175,15 +176,32 @@ namespace Absolute {
         }
         if (ArrayRankName(declaredTypeName) > 0) {
             if (!expr->value) impl->Fail("array view declaration requires an initializer");
-            Impl::ArrayView view = impl->ArrayViewFromValue(
-                impl->Evaluate(expr->value.get()), declaredTypeName);
-            if (!impl->scopes.back().emplace(name,
-                Impl::Variable{view.address, view.elementType, declaredTypeName, false,
-                    true, view.elementType, view.dimensions, nullptr, InvalidSymbolId}).second) {
+            llvm::Value* descriptor = impl->Evaluate(expr->value.get());
+            const bool ownsStorage = impl->valueCreatesArrayOwner;
+            Impl::ArrayView view = impl->ArrayViewFromValue(descriptor, declaredTypeName);
+            Impl::Variable variable;
+            variable.address = view.address;
+            variable.type = view.elementType;
+            variable.typeName = declaredTypeName;
+            variable.isArray = true;
+            variable.arrayElementType = view.elementType;
+            variable.arrayDimensions = view.dimensions;
+            variable.symbol = impl->SemanticSymbol(expr);
+            variable.arrayOwner = view.owner;
+            variable.ownsArrayStorage = ownsStorage;
+            if (ownsStorage) variable.arrayOwnerSymbol = variable.symbol;
+            else if (Impl::Variable* source = impl->FindVariable(
+                impl->SemanticSymbol(expr->value.get()))) {
+                variable.arrayOwnerSymbol = source->ownsArrayStorage
+                    ? source->symbol : source->arrayOwnerSymbol;
+            }
+            if (!impl->scopes.back().emplace(name, std::move(variable)).second) {
                 impl->Fail("duplicate variable '" + name + "'");
             }
             impl->value = impl->BuildArrayDescriptor(view);
             impl->valueCreatesManagedOwner = false;
+            impl->valueCreatesArrayOwner = false;
+            impl->valueArrayOwner = nullptr;
             return;
         }
         const std::string& typeName = declaredTypeName;
@@ -475,16 +493,32 @@ namespace Absolute {
         if (!impl->classes.contains(typeName) && !impl->structs.contains(typeName)) {
             if (ArrayRankName(typeName) > 0) {
                 if (!expr->value) impl->Fail("array alias variable requires an initializer");
-                Impl::ArrayView view = impl->ArrayViewFromValue(
-                    impl->Evaluate(expr->value.get()), typeName);
-                if (!impl->scopes.back().emplace(name,
-                    Impl::Variable{view.address, view.elementType, typeName, false,
-                        true, view.elementType, view.dimensions, nullptr,
-                        impl->SemanticSymbol(expr)}).second) {
+                llvm::Value* descriptor = impl->Evaluate(expr->value.get());
+                const bool ownsStorage = impl->valueCreatesArrayOwner;
+                Impl::ArrayView view = impl->ArrayViewFromValue(descriptor, typeName);
+                Impl::Variable variable;
+                variable.address = view.address;
+                variable.type = view.elementType;
+                variable.typeName = typeName;
+                variable.isArray = true;
+                variable.arrayElementType = view.elementType;
+                variable.arrayDimensions = view.dimensions;
+                variable.symbol = impl->SemanticSymbol(expr);
+                variable.arrayOwner = view.owner;
+                variable.ownsArrayStorage = ownsStorage;
+                if (ownsStorage) variable.arrayOwnerSymbol = variable.symbol;
+                else if (Impl::Variable* source = impl->FindVariable(
+                    impl->SemanticSymbol(expr->value.get()))) {
+                    variable.arrayOwnerSymbol = source->ownsArrayStorage
+                        ? source->symbol : source->arrayOwnerSymbol;
+                }
+                if (!impl->scopes.back().emplace(name, std::move(variable)).second) {
                     impl->Fail("duplicate array variable '" + name + "'");
                 }
                 impl->value = impl->BuildArrayDescriptor(view);
                 impl->valueCreatesManagedOwner = false;
+                impl->valueCreatesArrayOwner = false;
+                impl->valueArrayOwner = nullptr;
                 return;
             }
             llvm::Type* type = impl->TypeFromName(typeName);

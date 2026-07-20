@@ -32,7 +32,9 @@ namespace Absolute {
             return found->second;
         const size_t rank = ArrayRankName(name);
         if (rank == 0) Fail("array descriptor requires an array type");
-        std::vector<llvm::Type*> fields{builder.getPtrTy()};
+        // The view address may point into an allocation after slicing. Keep the
+        // allocation base separately so ownership can cross function returns.
+        std::vector<llvm::Type*> fields{builder.getPtrTy(), builder.getPtrTy()};
         fields.insert(fields.end(), rank, builder.getInt64Ty());
         llvm::StructType* descriptor = llvm::StructType::create(
             context, fields, "absolute.array." + ArrayElementTypeName(name, rank) + "." + std::to_string(rank));

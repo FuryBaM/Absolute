@@ -18,6 +18,8 @@
 
         Variable* FindVariable(const std::string& name);
 
+        Variable* FindVariable(SymbolId symbol);
+
         Variable& RequireVariable(const std::string& name);
 
         Variable& AddressOf(Expression* expression);
@@ -27,6 +29,11 @@
         bool StaticManagedOwner(SymbolId symbol) const;
 
         llvm::Value* ManagedPointee(Expression* expression, llvm::Value* handle);
+
+        llvm::Value* EvaluateCallArgument(Expression* expression,
+            std::vector<llvm::Value*>& temporaryArrayOwners);
+
+        void ReleaseArrayTemporaries(const std::vector<llvm::Value*>& owners);
 
         llvm::Value* BuildArrayDescriptor(const ArrayView& view);
 

@@ -150,7 +150,13 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(SingleStatement* stmt) {
-        if (impl->phase == Impl::Phase::EmitBodies && stmt->expr) stmt->expr->Accept(*this);
+        if (impl->phase != Impl::Phase::EmitBodies || !stmt->expr) return;
+        impl->valueCreatesArrayOwner = false;
+        impl->valueArrayOwner = nullptr;
+        if (impl->SemanticType(stmt->expr.get()) == "void") stmt->expr->Accept(*this);
+        else impl->Evaluate(stmt->expr.get());
+        if (impl->valueCreatesArrayOwner)
+            impl->builder.CreateCall(impl->Free(), {impl->valueArrayOwner});
     }
 
     void CodeGenerator::Visit(CompoundStmt* stmt) {
@@ -164,7 +170,13 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(FunctionCallStmt* stmt) {
-        if (impl->phase == Impl::Phase::EmitBodies && stmt->value) stmt->value->Accept(*this);
+        if (impl->phase != Impl::Phase::EmitBodies || !stmt->value) return;
+        impl->valueCreatesArrayOwner = false;
+        impl->valueArrayOwner = nullptr;
+        if (impl->SemanticType(stmt->value.get()) == "void") stmt->value->Accept(*this);
+        else impl->Evaluate(stmt->value.get());
+        if (impl->valueCreatesArrayOwner)
+            impl->builder.CreateCall(impl->Free(), {impl->valueArrayOwner});
     }
 
     void CodeGenerator::Visit(FunctionDeclStmt* stmt) {
@@ -199,6 +211,13 @@ namespace Absolute {
             if (returnedIdentifier) {
                 Impl::Variable& returned = impl->RequireVariable(returnedIdentifier->name);
                 if (returned.managedOwner) transferredOwner = returned.symbol;
+            }
+        }
+        else if (ArrayRankName(impl->currentReturnTypeName) > 0) {
+            if (Impl::Variable* returned = impl->FindVariable(
+                impl->SemanticSymbol(stmt->expr.get()))) {
+                transferredOwner = returned->ownsArrayStorage
+                    ? returned->symbol : returned->arrayOwnerSymbol;
             }
         }
         impl->EmitTransferCleanups(0, true, transferredOwner);

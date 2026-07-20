@@ -852,7 +852,8 @@ Use `copy(arrayOrSlice)` when an independent owning buffer is required. The
 result has the same array type and dimensions, but later writes no longer alias
 the source. Elements are copied by value; pointer elements remain references to
 the same pointees rather than recursively cloning an object graph. The backend
-lowers copies of contiguous storage to `memcpy`:
+lowers copies of contiguous storage to `memcpy`. A local variable initialized
+from `copy(...)` owns that buffer and releases it automatically at scope exit:
 
 ```absolute
 int32 values[4] = {10, 20, 30, 40};
@@ -875,8 +876,13 @@ constants. Returning an array descriptor no longer performs an implicit copy.
 A global view may therefore be returned without allocation. A local array or a
 slice borrowed from a parameter must use `copy(...)` before it can escape a
 function; this prevents a dangling reference until explicit slice lifetime
-annotations are implemented. Automatic reclamation of copied buffers is not
-implemented yet.
+annotations are implemented. Returning an owning array transfers its allocation
+to the caller. Slicing never changes ownership: the descriptor keeps the base
+allocation separately from the possibly interior data pointer, so a returned
+`copy(values)[1:3]` is released safely. Array parameters are non-owning borrows;
+temporary owning results passed to a call or discarded as a statement are
+released by the caller after use. See `docs/array-ownership.md` for the detailed
+rules and current limitations.
 
 The backend also supports primitive values, functions, local variables, calls,
 casts, arithmetic/comparison operators, assignments, `return`, `if`, `for`,

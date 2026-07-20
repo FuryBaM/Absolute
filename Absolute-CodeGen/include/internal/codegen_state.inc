@@ -13,6 +13,9 @@
             std::vector<llvm::Value*> arrayDimensions;
             llvm::AllocaInst* managedPointee = nullptr;
             SymbolId symbol = InvalidSymbolId;
+            llvm::Value* arrayOwner = nullptr;
+            bool ownsArrayStorage = false;
+            SymbolId arrayOwnerSymbol = InvalidSymbolId;
         };
 
         struct ArrayView {
@@ -20,6 +23,7 @@
             llvm::Type* elementType = nullptr;
             std::string typeName;
             std::vector<llvm::Value*> dimensions;
+            llvm::Value* owner = nullptr;
         };
 
         struct ClassField {
@@ -169,6 +173,8 @@
         std::unordered_map<std::string, std::string> functionLinkNames;
         bool valueCreatesManagedOwner = false;
         llvm::Value* valueManagedPointee = nullptr;
+        bool valueCreatesArrayOwner = false;
+        llvm::Value* valueArrayOwner = nullptr;
         std::string currentValueType;
         bool addressMode = false;
         llvm::Value* addressValue = nullptr;

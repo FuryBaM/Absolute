@@ -13,6 +13,16 @@ int32[] slicedCopy(int32[] values) {
     return copy(values)[1:3];
 }
 
+int32[] aliasedCopy(int32[] values) {
+    int32[] owner = copy(values);
+    int32[] alias = owner[1:3];
+    return alias;
+}
+
+int32 first(int32[] values) {
+    return values[0];
+}
+
 int32[] globalView() {
     return globalValues[1:4];
 }
@@ -39,6 +49,15 @@ int32 main() {
     int32[] narrowed = slicedCopy(globalValues[]);
     globalValues[1] = 400;
     assert(narrowed[0] == 40, "slice of a copy must keep independent storage");
+
+    int32[] aliased = aliasedCopy(globalValues[]);
+    assert(aliased[0] == 400, "returning an alias must transfer its root owner");
+
+    assert(first(copiedTail(globalValues[])) == 400,
+        "temporary returned arrays must remain alive for the call");
+    int32[] recopied = copy(copiedTail(globalValues[]));
+    assert(recopied[0] == 400, "copy of a temporary returned array");
+    copiedTail(globalValues[]);
 
     int32[] borrowedGlobal = globalView();
     borrowedGlobal[1] = 60;

@@ -702,6 +702,15 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-array-copy-ir
         )
         add_test(
+            NAME absolute.check-array-ownership
+            COMMAND "${CMAKE_COMMAND}"
+                -DIR_FILE=${CMAKE_BINARY_DIR}/array-copy.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-array-ownership.cmake"
+        )
+        set_tests_properties(absolute.check-array-ownership PROPERTIES
+            FIXTURES_REQUIRED absolute-array-copy-ir
+        )
+        add_test(
             NAME absolute.emit-insertion-sort-optimization
             COMMAND Absolute-Compiler
                 "${PROJECT_SOURCE_DIR}/benchmarks/array-suite/absolute/insertion-sort.abs"
