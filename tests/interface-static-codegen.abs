@@ -1,0 +1,43 @@
+interface StaticMath {
+    public const static int64 Base = 40;
+    public static int64 offset = 1;
+
+    public static int64 add(int64 value) {
+        offset += value;
+        return Base + offset;
+    }
+
+    public static int64 choose(int32 value) {
+        return value + Base;
+    }
+
+    public static int64 choose(string value) {
+        return 84;
+    }
+}
+
+interface DerivedStaticMath : StaticMath {
+    public static int64 inherited(int64 value) {
+        return add(value);
+    }
+}
+
+class StaticMathUser : StaticMath {
+}
+
+int32 main() {
+    assert(StaticMath.Base == 40, "interface const static field");
+    assert(DerivedStaticMath.Base == 40, "inherited interface static field");
+    StaticMath.offset = 1;
+    assert(StaticMath.add(1) == 42, "interface static method and mutable field");
+    assert(DerivedStaticMath.inherited(1) == 43,
+        "inherited static method inside child interface");
+    DerivedStaticMath.offset = 5;
+    assert(StaticMath.offset == 5, "child interface shares base static storage");
+    assert(StaticMath.choose(2) == 42, "integer static overload");
+    assert(StaticMath.choose("answer") == 84, "string static overload");
+    assert(DerivedStaticMath.choose(2) == 42, "inherited static method through child type");
+    StaticMathUser user;
+    println("interface-static=ok");
+    return 0;
+}

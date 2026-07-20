@@ -1,0 +1,10 @@
+class DuplicateAccessor {
+    int32 Value {
+        get;
+        get;
+    }
+}
+
+int32 main() {
+    return 0;
+}

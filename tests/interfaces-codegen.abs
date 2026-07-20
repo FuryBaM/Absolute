@@ -14,21 +14,65 @@ interface IScored {
     int64 id();
 }
 
+interface IDefaultMath {
+    int64 doubled(int64 input) {
+        return input * 2;
+    }
+}
+
+interface IDefaultLeft : IDefaultMath {
+}
+
+interface IDefaultRight : IDefaultMath {
+}
+
+interface IDefaultDiamond : IDefaultLeft, IDefaultRight {
+}
+
+interface IFirstChoice {
+    int64 choice() {
+        return 1;
+    }
+}
+
+interface ISecondChoice {
+    int64 choice() {
+        return 2;
+    }
+}
+
+interface ICombinedChoice : IFirstChoice, ISecondChoice {
+}
+
 namespace ContractSpace {
     interface IValue {
-        int32 value();
-    }
-
-    class Value : IValue {
         int32 value() {
             return 42;
         }
+    }
+
+    class Value : IValue {
     }
 }
 
 class BaseNode {
     public virtual int64 evaluate(int64 input) {
         return input;
+    }
+}
+
+class UsesInheritedDefault : IDefaultDiamond {
+}
+
+class OverridesDefault : IDefaultMath {
+    public int64 doubled(int64 input) {
+        return input * 3;
+    }
+}
+
+class ResolvesDefaultConflict : ICombinedChoice {
+    public int64 choice() {
+        return 42;
     }
 }
 
@@ -66,6 +110,25 @@ int64 managedInterfaceScope() {
 }
 
 int32 main() {
+    raw UsesInheritedDefault* defaultConcrete = new raw UsesInheritedDefault();
+    raw IDefaultMath* defaultContract = defaultConcrete;
+    assert(defaultConcrete.doubled(21) == 42, "default method through concrete type");
+    assert(defaultContract.doubled(21) == 42, "default method through interface");
+    delete defaultConcrete;
+
+    raw IDefaultMath* overridden = new raw OverridesDefault();
+    assert(overridden.doubled(14) == 42, "class implementation overrides interface default");
+    delete overridden;
+
+    raw ResolvesDefaultConflict* resolved = new raw ResolvesDefaultConflict();
+    raw ICombinedChoice* combinedChoice = resolved;
+    raw IFirstChoice* firstChoice = combinedChoice;
+    raw ISecondChoice* secondChoice = combinedChoice;
+    assert(combinedChoice.choice() == 42 && firstChoice.choice() == 42 &&
+        secondChoice.choice() == 42,
+        "class method resolves inherited defaults in every interface slot");
+    delete resolved;
+
     raw IAdvanced* unsafe = new raw AddNode(2);
     assert(runRaw(unsafe, 40) == 42, "raw interface dispatch");
     assert(unsafe.twice(19) == 42, "inherited raw interface dispatch");

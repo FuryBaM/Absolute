@@ -116,6 +116,45 @@ namespace Absolute {
         return statement;
     }
 
+    std::unique_ptr<FunctionDeclStmt> Parser::ParseExportFunctionDeclaration()
+    {
+        std::vector<Token> modifiers = this->modifiers;
+        std::vector<Attribute> attributes = this->attributes;
+        Consume(TokenType::KEYWORD, "export");
+        Token* abiToken = Consume(TokenType::STRING);
+        if (!abiToken || abiToken->value != "\"C\"") {
+            ReportSyntaxError(abiToken, "Only export \"C\" is supported");
+            throw std::runtime_error("Unsupported export ABI");
+        }
+
+        std::unique_ptr<TypeExpr> returnType = ParseType();
+        Token* identifier = Consume(TokenType::IDENTIFIER);
+        if (CurrentToken() && CurrentToken()->value == "<") {
+            ReportSyntaxError(CurrentToken(), "Export functions cannot declare generic parameters");
+            throw std::runtime_error("Generic export function");
+        }
+        auto parameters = ParseParameters();
+        for (const auto& parameter : parameters) {
+            if (parameter && parameter->value) {
+                ReportSyntaxError(identifier, "Export function parameters cannot have default values");
+                throw std::runtime_error("Invalid export parameter");
+            }
+        }
+        if (CurrentToken() && IsEndOfStatement(*CurrentToken())) {
+            ReportSyntaxError(CurrentToken(), "An export function requires an Absolute body");
+            throw std::runtime_error("Export function without a body");
+        }
+        std::unique_ptr<Statement> body = ParseStatement();
+
+        auto statement = std::make_unique<FunctionDeclStmt>(
+            std::move(returnType), std::make_unique<Token>(*identifier),
+            std::move(parameters), std::move(body));
+        statement->exportAbi = "C";
+        statement->modifiers = std::move(modifiers);
+        statement->attributes = std::move(attributes);
+        return statement;
+    }
+
     std::unique_ptr<ReturnStmt> Parser::ParseReturnStmt()
     {
 	    Token* token = CurrentToken();

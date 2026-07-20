@@ -1,0 +1,86 @@
+class Leaf {
+    public int32 value;
+
+    public Leaf(int32 initial) {
+        value = initial;
+    }
+}
+
+interface IResourceValue {
+    int32 read();
+}
+
+class ResourceBase : IResourceValue {
+    public Leaf* child;
+    public int32[] values;
+
+    public ResourceBase(int32 seed) {
+        child = new Leaf(seed);
+        values = copy({seed, seed + 1});
+    }
+
+    public virtual int32 read() {
+        return child.value + values[1];
+    }
+
+    public void replace(int32 seed) {
+        child = new Leaf(seed);
+        values = copy({seed, seed + 1});
+    }
+}
+
+class ResourceDerived : ResourceBase {
+    public Leaf* extra;
+
+    public ResourceDerived(int32 seed) {
+        base(seed);
+        extra = new Leaf(1);
+    }
+
+    public override int32 read() {
+        return child.value + values[1] + extra.value;
+    }
+}
+
+struct ResourceBuffer {
+    int32[] values;
+
+    void initialize(int32 seed) {
+        values = copy({seed, seed + 1});
+    }
+
+    int32 read() {
+        return values[0] + values[1];
+    }
+}
+
+int32 automaticManagedCleanup() {
+    IResourceValue* value = new ResourceDerived(20);
+    return value.read();
+}
+
+int32 automaticStructCleanup() {
+    ResourceBuffer buffer;
+    buffer.initialize(20);
+    return buffer.read();
+}
+
+int32 main() {
+    ResourceDerived* managed = new ResourceDerived(20);
+    Leaf* oldChild = managed.child;
+    Leaf* extra = managed.extra;
+    managed.replace(20);
+    assert(oldChild == null, "overwriting an owning field destroys its old value");
+    assert(managed.read() == 42, "managed resource fields");
+    delete managed;
+    assert(extra == null, "delete destroys derived managed fields");
+
+    raw IResourceValue* polymorphic = new raw ResourceDerived(20);
+    assert(polymorphic.read() == 42, "raw polymorphic resource owner");
+    delete polymorphic;
+
+    assert(automaticManagedCleanup() == 42, "managed scope aggregate cleanup");
+    assert(automaticStructCleanup() == 41, "struct array field cleanup");
+    println("resource-fields=ok");
+    return 0;
+}

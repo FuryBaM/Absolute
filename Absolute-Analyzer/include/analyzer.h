@@ -32,6 +32,8 @@ namespace Absolute {
         Function,
         Type,
         Field,
+        Property,
+        Indexer,
         Method,
         Constructor,
         Namespace
@@ -49,10 +51,15 @@ namespace Absolute {
         bool asyncFunction = false;
         bool extensionFunction = false;
         bool externalFunction = false;
+        bool exportedFunction = false;
         bool isConst = false;
         bool isStatic = false;
+        bool canRead = true;
+        bool canWrite = true;
         bool arrayStorageEscapes = false;
         AccessLevel access = AccessLevel::Public;
+        AccessLevel readAccess = AccessLevel::Public;
+        AccessLevel writeAccess = AccessLevel::Public;
         std::string memberOwner;
         std::vector<std::string> genericParameters;
         std::vector<std::string> genericArguments;
@@ -97,6 +104,7 @@ namespace Absolute {
         bool createsTask = false;
         bool asyncCall = false;
         bool createsRawOwner = false;
+        std::vector<std::string> parameterTypes;
     };
 
     struct ANALYZER_API Diagnostic {
@@ -139,7 +147,11 @@ namespace Absolute {
             SymbolId symbol = InvalidSymbolId;
             bool isConst = false;
             bool isStatic = false;
+            bool canRead = true;
+            bool canWrite = true;
             AccessLevel access = AccessLevel::Public;
+            AccessLevel readAccess = AccessLevel::Public;
+            AccessLevel writeAccess = AccessLevel::Public;
             std::string owner;
 
             MemberSignature() = default;
@@ -147,10 +159,12 @@ namespace Absolute {
                 std::vector<std::string> parameters = {},
                 SymbolId memberSymbol = InvalidSymbolId, bool memberConst = false,
                 bool memberStatic = false,
-                AccessLevel memberAccess = AccessLevel::Public)
+                AccessLevel memberAccess = AccessLevel::Public,
+                bool memberCanRead = true, bool memberCanWrite = true)
                 : kind(memberKind), type(std::move(memberType)),
                   parameterTypes(std::move(parameters)), symbol(memberSymbol),
-                  isConst(memberConst), isStatic(memberStatic), access(memberAccess) {
+                  isConst(memberConst), isStatic(memberStatic),
+                  canRead(memberCanRead), canWrite(memberCanWrite), access(memberAccess) {
             }
         };
 
@@ -233,6 +247,7 @@ namespace Absolute {
         std::unordered_map<std::string, TypeAliasDefinition> typeAliases;
         std::unordered_set<std::string> resolvingTypeAliases;
         std::unordered_map<std::string, std::vector<SymbolId>> functionOverloads;
+        std::unordered_map<std::string, std::string> exportedFunctionNames;
         std::unordered_map<std::string, std::vector<SymbolId>> extensionMethods;
         std::unordered_map<SymbolId, FunctionDeclStmt*> functionDeclarations;
         std::unordered_map<std::string, SymbolId> genericFunctionSpecializations;
@@ -335,6 +350,8 @@ namespace Absolute {
         void Visit(CompoundStmt* stmt) override;
         void Visit(FunctionCallStmt* stmt) override;
         void Visit(FunctionDeclStmt* stmt) override;
+        void Visit(PropertyDeclStmt* stmt) override;
+        void Visit(IndexerDeclStmt* stmt) override;
         void Visit(ReturnStmt* stmt) override;
         void Visit(AssignmentStmt* stmt) override;
         void Visit(VarDeclStmt* stmt) override;
@@ -372,6 +389,7 @@ namespace Absolute {
         std::string ResolveDeclaredType(VarDeclExpr& expression);
         void Save(Expression* expression, Result value);
         bool IsKnownType(const std::string& name) const;
+        bool TypeOwnsResources(const std::string& name) const;
         bool IsNumeric(const std::string& name) const;
         bool IsInteger(const std::string& name) const;
         bool IsAssignable(const std::string& target, const std::string& source) const;

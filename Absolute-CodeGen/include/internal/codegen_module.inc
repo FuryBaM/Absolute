@@ -12,7 +12,8 @@
 
         void EmitFunction(FunctionDeclStmt& statement, const Symbol* specialization);
 
-        void BindCallableParameter(llvm::Argument& argument, VarDeclExpr& parameter);
+        void BindCallableParameter(llvm::Argument& argument, VarDeclExpr& parameter,
+            const std::string& typeName = {}, bool external = false);
 
         void FinishClassCallable(llvm::Function& function);
 
@@ -21,6 +22,10 @@
         void EmitConstructor(ClassInfo& info);
 
         void EmitClassBodies(ClassInfo& info);
+
+        void EmitInterfaceMethod(InterfaceInfo& info, const ClassMethod& method);
+
+        void EmitInterfaceBodies(InterfaceInfo& info);
 
         void EmitStructMethod(StructInfo& info, const ClassMethod& method);
 

@@ -173,8 +173,9 @@ objects derive from the managed `Error` base class; throwing transfers ownership
 to the exception runtime, and a matching catch takes that owner. A future
 `Result<T, E>` is an ordinary generic library type for expected failures, not a
 hidden propagation ABI. Native C++ exceptions may not cross an `extern "C"` or
-plugin boundary. The accepted syntax, cleanup rules, portable LLVM/runtime ABI,
-and async behavior are specified in [docs/error-model.md](docs/error-model.md).
+plugin boundary, and an Absolute error must not escape an `export "C"` body.
+The accepted syntax, cleanup rules, portable LLVM/runtime ABI, and async behavior
+are specified in [docs/error-model.md](docs/error-model.md).
 
 The compiler accepts `throw expression;`, `throw;`, ordered typed `catch`
 clauses, and optional `finally`. `finally` runs on normal completion,
@@ -410,6 +411,21 @@ function without a body:
 extern "C" int32 native_add(int32 left, int32 right);
 ```
 
+The opposite direction uses `export "C"`: Absolute supplies the body and emits
+an unmangled symbol that native C or C++ code can call:
+
+```absolute
+export "C" int32 absolute_add(int32 left, int32 right) {
+    return left + right;
+}
+```
+
+On Windows the compiler marks this function `dllexport`; on other targets it
+uses default external visibility. Exported functions cannot be overloaded or
+generic and cannot have default parameters. Both `extern "C"` and `export "C"`
+reject managed pointers and Absolute array descriptors at the boundary; use raw
+pointers plus explicit lengths for native buffers.
+
 C code can define that symbol directly. C++ code must expose a small C wrapper
 to disable C++ name mangling:
 
@@ -440,8 +456,9 @@ Demo.exe
 
 The generated `.obj` is retained next to the executable so it can be inspected
 or linked manually. Current FFI types map primitive scalars directly; `string`
-is passed as a C `char*`. Ownership stays with the caller, and native exceptions
-must not cross the `extern "C"` boundary.
+is passed as a C `char*`. Ownership stays with the caller. Native exceptions
+must not enter `extern "C"`, and Absolute errors must be handled before leaving
+an `export "C"` function.
 
 ## Pointers and lifetime
 
@@ -466,6 +483,13 @@ those roles. An explicit `delete` still works:
 int32* value = new int32(42);
 delete value;
 ```
+
+Managed pointer and array fields are owning resource slots. They accept a fresh
+owner (`new`, `copy(...)`, or an owning function result), destroy their previous
+value on reassignment, and are released automatically with the containing class
+or struct. Class and interface deletion dispatches through a destructor entry in
+vtable slot zero, so derived fields are cleaned even through a base pointer. See
+[docs/resource-ownership.md](docs/resource-ownership.md) for the full rules.
 
 Use `raw T*` only for C interop or C++-style address operations. Raw pointers do
 not participate in generation checks or automatic lifetime management:
@@ -514,10 +538,12 @@ when managed pointers are used.
 
 ## Structs
 
-`struct` declares an inline value type. Assigning it, passing it to a function,
-or returning it copies the complete value. Fields may contain primitives, other
-structs, pointers, and array descriptors; instance constructors and methods use
-the same syntax as class members:
+`struct` declares an inline value type. Resource-free structs use ordinary value
+semantics: assigning, passing, or returning them copies the complete value.
+Structs containing managed pointers, owning array descriptors, or another
+resource-owning aggregate are move-only; implicit assignment, by-value arguments,
+and by-value returns are rejected until explicit `move` syntax is implemented.
+Instance constructors and methods use the same syntax as class members:
 
 ```absolute
 struct Point {
@@ -557,12 +583,24 @@ A struct cannot contain itself by value because that would have infinite size;
 use `raw T*` or `T*` for recursive links. Structs do not have inheritance or
 virtual dispatch and therefore carry no class vtable field.
 
+The generated Absolute ABI passes structs up to 16 bytes directly. Larger
+structs use an isolated caller-side argument copy and a hidden result pointer,
+so mutating a by-value parameter never aliases the source. This applies equally
+to functions, methods, properties, and constructors. `extern "C"` declarations
+continue to use the platform C ABI. The exact lowering and copy-elision rules
+are documented in [docs/value-type-abi.md](docs/value-type-abi.md).
+
 ## Static members
 
-Classes and structs support static fields and methods. Access them through the
-type, for example `Counter.value` and `Counter.advance()`. Static fields are
-LLVM globals and do not increase object size; static methods have no hidden
-`this` parameter. Derived classes see the same inherited static storage.
+Classes, structs, and interfaces support static fields and methods. Access them
+through the type, for example `Counter.value` and `Counter.advance()`. Static
+fields are LLVM globals and do not increase object size; static methods have no
+hidden `this` parameter. Derived types see the same inherited static storage.
+
+Interface static members must be public. Static interface methods require a
+body, are called through the interface name, and do not enter the instance
+vtable or create an implementation requirement for classes. Static abstract
+interface methods are reserved for the future generic-constraint system.
 
 Static field initializers are currently limited to constant primitive, string,
 enum, or raw-pointer values. Managed/array/aggregate static storage, runtime
@@ -619,13 +657,17 @@ full rules.
 
 ## Interfaces
 
-Interfaces declare method contracts without storage or method bodies. An
-interface may inherit other interfaces, and a class may inherit one base class
-plus any number of interfaces:
+Interfaces declare method contracts without storage. A contract may provide a
+default method body. An interface may inherit other interfaces, and a class may
+inherit one base class plus any number of interfaces:
 
 ```absolute
 interface IEvaluable {
     int64 evaluate(int64 input);
+
+    int64 doubled(int64 input) {
+        return input * 2;
+    }
 }
 
 interface INamed {
@@ -655,10 +697,78 @@ assert(tracked.evaluate(40) == 42);
 delete unsafe;
 ```
 
-The analyzer verifies every required overload and its return type. Instantiating
-an interface, declaring it as an inline value, omitting a method, or implementing
-an incompatible signature is rejected. Interface fields, default method bodies,
-properties, and static interface members are not implemented yet.
+The analyzer verifies every required overload and its return type. A class method
+has precedence over an inherited default. The same default inherited through a
+diamond is shared; two different defaults with the same signature require the
+class to declare a resolving implementation. Instantiating an interface,
+declaring it as an inline value, omitting an abstract method/property accessor,
+or implementing an incompatible signature is rejected. Interface instance
+fields are rejected; interfaces may instead own public static fields and
+static methods with bodies.
+
+## Properties
+
+Classes and structs support explicit and automatically stored properties. An
+interface property contributes getter/setter contracts to the same virtual
+dispatch table as methods:
+
+```absolute
+interface IValue {
+    int64 Value {
+        get;
+        set;
+    }
+
+    int64 Answer {
+        get { return 42; }
+    }
+}
+
+class Box : IValue {
+    public int64 Value {
+        get;
+        set;
+    }
+}
+```
+
+An accessor with `;` receives hidden zero-initialized storage in a class or
+struct, but remains an abstract contract in an interface. Accessors with bodies
+are ordinary checked code and setters receive the assigned value as `value`.
+Properties may be read-only or write-only, accessor access may be narrowed (for
+example `private set`), and `virtual`/`override`, generic types, raw/managed
+receivers, compound assignment, and increment operators use normal dispatch.
+Properties are not addressable, so `&object.Value` is rejected.
+
+## Indexers
+
+Classes, structs, and interfaces can expose indexed access with `this[...]`:
+
+```absolute
+interface ITable {
+    int64 this[int32 index] {
+        get;
+        set;
+    }
+}
+
+class Table : ITable {
+    private int64 storage;
+
+    public int64 this[int32 index] {
+        get { return storage + index; }
+        private set { storage = value - index; }
+    }
+}
+```
+
+Indexer parameters participate in overload resolution, so a type may provide,
+for example, both `this[int32]` and `this[string]`. Reads, writes, compound
+assignments, and increment operators call the selected accessors. Indexers use
+normal class/struct, `virtual`/`override`, generic, and raw/managed interface
+dispatch. Interface accessors ending in `;` are contracts; concrete class and
+struct indexers require explicit bodies. Like properties, indexers are not
+addressable.
 
 ## Async tasks and parallel execution
 
@@ -751,7 +861,8 @@ Use `copy(arrayOrSlice)` when an independent owning buffer is required. The
 result has the same array type and dimensions, but later writes no longer alias
 the source. Elements are copied by value; pointer elements remain references to
 the same pointees rather than recursively cloning an object graph. The backend
-lowers copies of contiguous storage to `memcpy`:
+lowers copies of contiguous storage to `memcpy`. A local variable initialized
+from `copy(...)` owns that buffer and releases it automatically at scope exit:
 
 ```absolute
 int32 values[4] = {10, 20, 30, 40};
@@ -774,8 +885,13 @@ constants. Returning an array descriptor no longer performs an implicit copy.
 A global view may therefore be returned without allocation. A local array or a
 slice borrowed from a parameter must use `copy(...)` before it can escape a
 function; this prevents a dangling reference until explicit slice lifetime
-annotations are implemented. Automatic reclamation of copied buffers is not
-implemented yet.
+annotations are implemented. Returning an owning array transfers its allocation
+to the caller. Slicing never changes ownership: the descriptor keeps the base
+allocation separately from the possibly interior data pointer, so a returned
+`copy(values)[1:3]` is released safely. Array parameters are non-owning borrows;
+temporary owning results passed to a call or discarded as a statement are
+released by the caller after use. See `docs/array-ownership.md` for the detailed
+rules and current limitations.
 
 The backend also supports primitive values, functions, local variables, calls,
 casts, arithmetic/comparison operators, assignments, `return`, `if`, `for`,

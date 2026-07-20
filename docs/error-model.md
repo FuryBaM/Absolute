@@ -115,6 +115,10 @@ require target-specific landing pads.
 Calls declared with `extern "C"` are non-throwing from the language's point of
 view. Throwing a C++ exception through them is an ABI violation. Syntax and
 opaque plugins must also catch native exceptions before returning to the host.
+An `export "C"` definition is the reverse boundary: it exposes an Absolute body
+under a native C symbol. The body must handle Absolute errors before returning;
+the C ABI does not carry the thread-local pending-error state or native unwind
+metadata to its caller.
 
 ## Async behavior
 

@@ -344,6 +344,15 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/classes-codegen.abs"
     )
     add_test(
+        NAME absolute.resource-fields-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/resource-fields.abs"
+    )
+    add_test(
+        NAME absolute.resource-field-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/resource-field-errors.abs"
+    )
+    set_tests_properties(absolute.resource-field-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.interfaces-codegen-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interfaces-codegen.abs"
     )
@@ -352,6 +361,58 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-errors.abs"
     )
     set_tests_properties(absolute.interface-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.interface-default-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-default-errors.abs"
+    )
+    set_tests_properties(absolute.interface-default-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.interface-default-body-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-default-body-errors.abs"
+    )
+    set_tests_properties(absolute.interface-default-body-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.properties-codegen-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/properties-codegen.abs"
+    )
+    add_test(
+        NAME absolute.property-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/property-errors.abs"
+    )
+    set_tests_properties(absolute.property-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.property-syntax-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/property-syntax-errors.abs"
+    )
+    set_tests_properties(absolute.property-syntax-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.indexers-codegen-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/indexers-codegen.abs"
+    )
+    add_test(
+        NAME absolute.indexer-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/indexer-errors.abs"
+    )
+    set_tests_properties(absolute.indexer-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.indexer-syntax-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/indexer-syntax-errors.abs"
+    )
+    set_tests_properties(absolute.indexer-syntax-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.interface-static-codegen-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-static-codegen.abs"
+    )
+    add_test(
+        NAME absolute.interface-static-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-static-errors.abs"
+    )
+    set_tests_properties(absolute.interface-static-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.interface-field-syntax-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-field-syntax-errors.abs"
+    )
+    set_tests_properties(absolute.interface-field-syntax-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
         NAME absolute.structs-codegen-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/structs-codegen.abs"
@@ -650,6 +711,15 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-array-copy-ir
         )
         add_test(
+            NAME absolute.check-array-ownership
+            COMMAND "${CMAKE_COMMAND}"
+                -DIR_FILE=${CMAKE_BINARY_DIR}/array-copy.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-array-ownership.cmake"
+        )
+        set_tests_properties(absolute.check-array-ownership PROPERTIES
+            FIXTURES_REQUIRED absolute-array-copy-ir
+        )
+        add_test(
             NAME absolute.emit-insertion-sort-optimization
             COMMAND Absolute-Compiler
                 "${PROJECT_SOURCE_DIR}/benchmarks/array-suite/absolute/insertion-sort.abs"
@@ -666,6 +736,23 @@ if(BUILD_TESTING)
         )
         set_tests_properties(absolute.check-insertion-sort-optimization-ir PROPERTIES
             FIXTURES_REQUIRED absolute-insertion-sort-optimization-ir
+        )
+        add_test(
+            NAME absolute.emit-loop-range-facts
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/loop-range-facts.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/loop-range-facts.ll"
+        )
+        set_tests_properties(absolute.emit-loop-range-facts PROPERTIES
+            FIXTURES_SETUP absolute-loop-range-facts-ir
+        )
+        add_test(
+            NAME absolute.check-loop-range-facts-ir
+            COMMAND "${CMAKE_COMMAND}"
+                -DIR_FILE=${CMAKE_BINARY_DIR}/loop-range-facts.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-loop-range-facts-ir.cmake"
+        )
+        set_tests_properties(absolute.check-loop-range-facts-ir PROPERTIES
+            FIXTURES_REQUIRED absolute-loop-range-facts-ir
         )
         add_test(
             NAME absolute.emit-chess-rules
@@ -693,6 +780,23 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-classes-codegen-ir
         )
         add_test(
+            NAME absolute.emit-resource-fields
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/resource-fields.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/resource-fields.ll"
+        )
+        set_tests_properties(absolute.emit-resource-fields PROPERTIES
+            FIXTURES_SETUP absolute-resource-fields-ir
+        )
+        add_test(
+            NAME absolute.check-resource-fields
+            COMMAND "${CMAKE_COMMAND}"
+                -DIR_FILE=${CMAKE_BINARY_DIR}/resource-fields.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-resource-fields.cmake"
+        )
+        set_tests_properties(absolute.check-resource-fields PROPERTIES
+            FIXTURES_REQUIRED absolute-resource-fields-ir
+        )
+        add_test(
             NAME absolute.emit-interfaces-codegen
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interfaces-codegen.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/interfaces-codegen.ll"
@@ -701,12 +805,45 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-interfaces-codegen-ir
         )
         add_test(
+            NAME absolute.emit-properties-codegen
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/properties-codegen.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/properties-codegen.ll"
+        )
+        set_tests_properties(absolute.emit-properties-codegen PROPERTIES
+            FIXTURES_SETUP absolute-properties-codegen-ir
+        )
+        add_test(
+            NAME absolute.emit-indexers-codegen
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/indexers-codegen.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/indexers-codegen.ll"
+        )
+        set_tests_properties(absolute.emit-indexers-codegen PROPERTIES
+            FIXTURES_SETUP absolute-indexers-codegen-ir
+        )
+        add_test(
+            NAME absolute.emit-interface-static-codegen
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-static-codegen.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/interface-static-codegen.ll"
+        )
+        set_tests_properties(absolute.emit-interface-static-codegen PROPERTIES
+            FIXTURES_SETUP absolute-interface-static-codegen-ir
+        )
+        add_test(
             NAME absolute.emit-structs-codegen
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/structs-codegen.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/structs-codegen.ll"
         )
         set_tests_properties(absolute.emit-structs-codegen PROPERTIES
             FIXTURES_SETUP absolute-structs-codegen-ir
+        )
+        add_test(
+            NAME absolute.check-struct-value-abi
+            COMMAND "${CMAKE_COMMAND}"
+                -DINPUT=${CMAKE_BINARY_DIR}/structs-codegen.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-struct-value-abi.cmake"
+        )
+        set_tests_properties(absolute.check-struct-value-abi PROPERTIES
+            FIXTURES_REQUIRED absolute-structs-codegen-ir
         )
         add_test(
             NAME absolute.emit-managed-fast-path
@@ -863,6 +1000,16 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/invalid-extern-abi.abs" --parse-only
     )
     set_tests_properties(absolute.invalid-extern-abi PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.invalid-export-abi
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/invalid-export-abi.abs" --parse-only
+    )
+    set_tests_properties(absolute.invalid-export-abi PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.export-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-errors.abs"
+    )
+    set_tests_properties(absolute.export-errors PROPERTIES WILL_FAIL TRUE)
 
     if(ABSOLUTE_ENABLE_LLVM)
         add_test(
@@ -872,6 +1019,23 @@ if(BUILD_TESTING)
         )
         set_tests_properties(absolute.emit-native-ffi PROPERTIES
             FIXTURES_SETUP absolute-native-ffi-ir
+        )
+        add_test(
+            NAME absolute.emit-export-c-abi
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-c-abi.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/export-c-abi.ll"
+        )
+        set_tests_properties(absolute.emit-export-c-abi PROPERTIES
+            FIXTURES_SETUP absolute-export-c-abi-ir
+        )
+        add_test(
+            NAME absolute.check-export-c-abi
+            COMMAND "${CMAKE_COMMAND}"
+                -DINPUT=${CMAKE_BINARY_DIR}/export-c-abi.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-export-c-abi.cmake"
+        )
+        set_tests_properties(absolute.check-export-c-abi PROPERTIES
+            FIXTURES_REQUIRED absolute-export-c-abi-ir
         )
         if(ABSOLUTE_LLI_EXECUTABLE)
             add_test(
@@ -885,6 +1049,29 @@ if(BUILD_TESTING)
         endif()
 
         add_library(absolute-native-test STATIC tests/native/native_math.cpp)
+        set(ABSOLUTE_EXPORT_TEST_OBJECT
+            "${CMAKE_BINARY_DIR}/absolute-export-library${CMAKE_CXX_OUTPUT_EXTENSION}")
+        add_custom_command(
+            OUTPUT "${ABSOLUTE_EXPORT_TEST_OBJECT}"
+            COMMAND $<TARGET_FILE:Absolute-Compiler>
+                "${PROJECT_SOURCE_DIR}/tests/export-library.abs"
+                --emit-object -o "${ABSOLUTE_EXPORT_TEST_OBJECT}"
+            DEPENDS Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-library.abs"
+            VERBATIM
+        )
+        set_source_files_properties("${ABSOLUTE_EXPORT_TEST_OBJECT}" PROPERTIES
+            GENERATED TRUE
+            EXTERNAL_OBJECT TRUE
+        )
+        add_executable(absolute-export-consumer
+            tests/native/export_consumer.cpp
+            "${ABSOLUTE_EXPORT_TEST_OBJECT}"
+        )
+        add_test(NAME absolute.run-native-export-consumer
+            COMMAND $<TARGET_FILE:absolute-export-consumer>)
+        set_tests_properties(absolute.run-native-export-consumer PROPERTIES
+            PASS_REGULAR_EXPRESSION "native-export=42"
+        )
         file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/NativeFfi-$<CONFIG>.absproj" CONTENT
 "{
   \"name\": \"NativeFfi\",
@@ -911,6 +1098,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-native PROPERTIES
             FIXTURES_REQUIRED absolute-native-executable
             PASS_REGULAR_EXPRESSION "native=42"
+        )
+        add_test(
+            NAME absolute.build-export-c-abi
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-c-abi.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/export-c-abi-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-export-c-abi PROPERTIES
+            FIXTURES_SETUP absolute-export-c-abi-executable
+        )
+        add_test(NAME absolute.run-export-c-abi
+            COMMAND "${CMAKE_BINARY_DIR}/export-c-abi-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-export-c-abi PROPERTIES
+            FIXTURES_REQUIRED absolute-export-c-abi-executable
+            PASS_REGULAR_EXPRESSION "export=42"
         )
         add_test(
             NAME absolute.build-pointers
@@ -952,6 +1153,20 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "classes=42"
         )
         add_test(
+            NAME absolute.build-resource-fields
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/resource-fields.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/resource-fields-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-resource-fields PROPERTIES
+            FIXTURES_SETUP absolute-resource-fields-executable
+        )
+        add_test(NAME absolute.run-resource-fields
+            COMMAND "${CMAKE_BINARY_DIR}/resource-fields-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-resource-fields PROPERTIES
+            FIXTURES_REQUIRED absolute-resource-fields-executable
+            PASS_REGULAR_EXPRESSION "resource-fields=ok"
+        )
+        add_test(
             NAME absolute.build-interfaces-codegen
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interfaces-codegen.abs"
                 --build-exe -o "${CMAKE_BINARY_DIR}/interfaces-codegen-app${CMAKE_EXECUTABLE_SUFFIX}"
@@ -963,6 +1178,48 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-interfaces-codegen PROPERTIES
             FIXTURES_REQUIRED absolute-interfaces-codegen-executable
             PASS_REGULAR_EXPRESSION "interfaces=ok"
+        )
+        add_test(
+            NAME absolute.build-properties-codegen
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/properties-codegen.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/properties-codegen-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-properties-codegen PROPERTIES
+            FIXTURES_SETUP absolute-properties-codegen-executable
+        )
+        add_test(NAME absolute.run-properties-codegen
+            COMMAND "${CMAKE_BINARY_DIR}/properties-codegen-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-properties-codegen PROPERTIES
+            FIXTURES_REQUIRED absolute-properties-codegen-executable
+            PASS_REGULAR_EXPRESSION "properties=ok"
+        )
+        add_test(
+            NAME absolute.build-indexers-codegen
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/indexers-codegen.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/indexers-codegen-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-indexers-codegen PROPERTIES
+            FIXTURES_SETUP absolute-indexers-codegen-executable
+        )
+        add_test(NAME absolute.run-indexers-codegen
+            COMMAND "${CMAKE_BINARY_DIR}/indexers-codegen-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-indexers-codegen PROPERTIES
+            FIXTURES_REQUIRED absolute-indexers-codegen-executable
+            PASS_REGULAR_EXPRESSION "indexers=ok"
+        )
+        add_test(
+            NAME absolute.build-interface-static-codegen
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-static-codegen.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/interface-static-codegen-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-interface-static-codegen PROPERTIES
+            FIXTURES_SETUP absolute-interface-static-codegen-executable
+        )
+        add_test(NAME absolute.run-interface-static-codegen
+            COMMAND "${CMAKE_BINARY_DIR}/interface-static-codegen-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-interface-static-codegen PROPERTIES
+            FIXTURES_REQUIRED absolute-interface-static-codegen-executable
+            PASS_REGULAR_EXPRESSION "interface-static=ok"
         )
         add_test(
             NAME absolute.build-structs-codegen

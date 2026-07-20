@@ -32,7 +32,9 @@ namespace Absolute {
             return found->second;
         const size_t rank = ArrayRankName(name);
         if (rank == 0) Fail("array descriptor requires an array type");
-        std::vector<llvm::Type*> fields{builder.getPtrTy()};
+        // The view address may point into an allocation after slicing. Keep the
+        // allocation base separately so ownership can cross function returns.
+        std::vector<llvm::Type*> fields{builder.getPtrTy(), builder.getPtrTy()};
         fields.insert(fields.end(), rank, builder.getInt64Ty());
         llvm::StructType* descriptor = llvm::StructType::create(
             context, fields, "absolute.array." + ArrayElementTypeName(name, rank) + "." + std::to_string(rank));
@@ -106,6 +108,15 @@ namespace Absolute {
                     if (instance->isStatic) info.ownStaticObjectFields.push_back(instance);
                     else info.ownObjectFields.push_back(instance);
             }
+            else if (auto* property = dynamic_cast<PropertyDeclStmt*>(member.get())) {
+                info.ownProperties.push_back(property);
+                if (property->getter) info.ownMethods.push_back(property->getter.get());
+                if (property->setter) info.ownMethods.push_back(property->setter.get());
+            }
+            else if (auto* indexer = dynamic_cast<IndexerDeclStmt*>(member.get())) {
+                if (indexer->getter) info.ownMethods.push_back(indexer->getter.get());
+                if (indexer->setter) info.ownMethods.push_back(indexer->setter.get());
+            }
             else if (auto* method = dynamic_cast<FunctionDeclStmt*>(member.get()))
                 info.ownMethods.push_back(method);
             else if (auto* constructor = dynamic_cast<ConstructorDeclStmt*>(member.get())) {
@@ -143,6 +154,15 @@ namespace Absolute {
                     if (instance->isStatic) info.ownStaticObjectFields.push_back(instance);
                     else info.ownObjectFields.push_back(instance);
             }
+            else if (auto* property = dynamic_cast<PropertyDeclStmt*>(member.get())) {
+                info.ownProperties.push_back(property);
+                if (property->getter) info.ownMethods.push_back(property->getter.get());
+                if (property->setter) info.ownMethods.push_back(property->setter.get());
+            }
+            else if (auto* indexer = dynamic_cast<IndexerDeclStmt*>(member.get())) {
+                if (indexer->getter) info.ownMethods.push_back(indexer->getter.get());
+                if (indexer->setter) info.ownMethods.push_back(indexer->setter.get());
+            }
             else if (auto* method = dynamic_cast<FunctionDeclStmt*>(member.get()))
                 info.ownMethods.push_back(method);
             else if (auto* constructor = dynamic_cast<ConstructorDeclStmt*>(member.get())) {
@@ -164,6 +184,12 @@ namespace Absolute {
         info.statement = &statement;
         for (const std::string& parent : statement.parents)
             info.parents.push_back(QualifiedClassName(parent, nameSpace));
+        for (const auto& declaration : statement.staticFields) {
+            if (!declaration || !declaration->expr) continue;
+            VarDeclExpr* field = declaration->expr.get();
+            info.staticFields.push_back({IdentifierName(field->name.get()),
+                DeclaredTypeName(*field), field->value.get(), field->isConst});
+        }
         interfaces.emplace(name, std::move(info));
         interfaceOrder.push_back(name);
     }
@@ -251,17 +277,63 @@ namespace Absolute {
             if (!interfaces.contains(parent))
                 Fail("unknown parent interface '" + parent + "' of '" + name + "'");
             FinalizeInterface(parent);
-            for (const auto& [methodKey, method] : interfaces.at(parent).methods)
-                info.methods.emplace(methodKey, method);
+            const InterfaceInfo& parentInfo = interfaces.at(parent);
+            info.ambiguousDefaults.insert(
+                parentInfo.ambiguousDefaults.begin(), parentInfo.ambiguousDefaults.end());
+            for (const auto& [methodKey, contracts] : parentInfo.methodContracts) {
+                auto& inheritedContracts = info.methodContracts[methodKey];
+                inheritedContracts.insert(
+                    inheritedContracts.end(), contracts.begin(), contracts.end());
+            }
+            for (const auto& [methodKey, method] : parentInfo.methods) {
+                const auto inherited = info.methods.find(methodKey);
+                if (inherited == info.methods.end()) {
+                    info.methods.emplace(methodKey, method);
+                    continue;
+                }
+                if (!SameMethodSignature(*inherited->second.statement, *method.statement))
+                    Fail("inherited interface method signature mismatch for '" + name + "." +
+                        method.statement->name->value + "'");
+                const bool existingDefault = inherited->second.statement->body != nullptr;
+                const bool candidateDefault = method.statement->body != nullptr;
+                if (existingDefault && candidateDefault &&
+                    inherited->second.statement != method.statement) {
+                    info.ambiguousDefaults.insert(methodKey);
+                }
+                else if (!existingDefault && candidateDefault) {
+                    inherited->second = method;
+                }
+            }
         }
 
-        for (const auto& methodStatement : info.statement->methods) {
-            FunctionDeclStmt* statement = methodStatement.get();
+        std::vector<FunctionDeclStmt*> interfaceMethods;
+        for (const auto& method : info.statement->methods) interfaceMethods.push_back(method.get());
+        for (const auto& property : info.statement->properties) {
+            if (property->getter) interfaceMethods.push_back(property->getter.get());
+            if (property->setter) interfaceMethods.push_back(property->setter.get());
+        }
+        for (const auto& indexer : info.statement->indexers) {
+            if (indexer->getter) interfaceMethods.push_back(indexer->getter.get());
+            if (indexer->setter) interfaceMethods.push_back(indexer->setter.get());
+        }
+        for (FunctionDeclStmt* statement : interfaceMethods) {
             if (!statement || !statement->name) continue;
             std::vector<std::string> parameterTypes;
             for (const auto& parameter : statement->parameters)
                 parameterTypes.push_back(DeclaredTypeName(*parameter));
             const std::string methodKey = CallableKey(statement->name->value, parameterTypes);
+            const bool staticMethod = HasModifier(*statement, "static");
+            if (staticMethod) {
+                ClassMethod method{
+                    statement, name,
+                    CallableKey(name + "." + statement->name->value, parameterTypes),
+                    std::nullopt, parameterTypes,
+                    ResolveTypeName(statement->returnType.get()), {}};
+                method.isStatic = true;
+                info.staticMethods[methodKey] = method;
+                if (statement->body) info.declaredMethods[methodKey] = std::move(method);
+                continue;
+            }
             std::optional<unsigned> slot;
             if (const auto inherited = info.methods.find(methodKey); inherited != info.methods.end()) {
                 if (!SameMethodSignature(*inherited->second.statement, *statement))
@@ -270,9 +342,25 @@ namespace Absolute {
                 slot = inherited->second.virtualSlot;
             }
             else slot = interfaceSlotCount++;
-            info.methods[methodKey] = ClassMethod{
-                statement, name, {}, slot, parameterTypes,
+            ClassMethod method{
+                statement, name, CallableKey(name + "." + statement->name->value, parameterTypes),
+                slot, parameterTypes,
                 ResolveTypeName(statement->returnType.get()), {}};
+            auto& contracts = info.methodContracts[methodKey];
+            if (contracts.empty()) {
+                contracts.push_back(method);
+            }
+            else {
+                for (ClassMethod& contract : contracts) {
+                    const std::optional<unsigned> inheritedSlot = contract.virtualSlot;
+                    contract = method;
+                    contract.virtualSlot = inheritedSlot;
+                }
+                method.virtualSlot = contracts.front().virtualSlot;
+            }
+            info.methods[methodKey] = method;
+            info.ambiguousDefaults.erase(methodKey);
+            if (statement->body) info.declaredMethods[methodKey] = std::move(method);
         }
         info.finalizing = false;
         info.finalized = true;
@@ -280,6 +368,14 @@ namespace Absolute {
 
     void CodeGenerator::Impl::FinalizeInterfaces() {
         for (const std::string& name : interfaceOrder) FinalizeInterface(name);
+        for (const std::string& name : interfaceOrder) {
+            InterfaceInfo& info = interfaces.at(name);
+            DeclareStaticFields(info);
+            for (const auto& [methodName, method] : info.staticMethods) {
+                (void)methodName;
+                DeclareMethodFunction(method);
+            }
+        }
     }
 
     void CodeGenerator::Impl::FinalizeStruct(const std::string& name) {
@@ -300,6 +396,10 @@ namespace Absolute {
             info.fields.push_back(field);
             info.fieldByName.emplace(fieldName, std::move(field));
         };
+        for (PropertyDeclStmt* property : info.ownProperties)
+            if (property && property->HasAutoAccessor())
+                addField(PropertyBackingFieldName(property->name),
+                    ResolveTypeName(property->type.get()));
         for (VarDeclExpr* field : info.ownPrimitiveFields)
             addField(IdentifierName(field->name.get()), DeclaredTypeName(*field));
         for (InstanceDeclExpr* field : info.ownObjectFields)
@@ -386,10 +486,16 @@ namespace Absolute {
         info.baseClass = baseClass;
 
         std::unordered_map<std::string, std::vector<ClassMethod>> interfaceRequirements;
+        std::unordered_set<std::string> ambiguousInterfaceDefaults;
         for (const std::string& interfaceName : implementedInterfaces) {
             FinalizeInterface(interfaceName);
-            for (const auto& [methodKey, method] : interfaces.at(interfaceName).methods)
-                interfaceRequirements[methodKey].push_back(method);
+            const InterfaceInfo& interfaceInfo = interfaces.at(interfaceName);
+            ambiguousInterfaceDefaults.insert(interfaceInfo.ambiguousDefaults.begin(),
+                interfaceInfo.ambiguousDefaults.end());
+            for (const auto& [methodKey, contracts] : interfaceInfo.methodContracts) {
+                auto& requirements = interfaceRequirements[methodKey];
+                requirements.insert(requirements.end(), contracts.begin(), contracts.end());
+            }
         }
 
         const auto addField = [&](const std::string& fieldName, const std::string& typeName) {
@@ -399,6 +505,10 @@ namespace Absolute {
             info.fields.push_back(field);
             info.fieldByName.emplace(fieldName, std::move(field));
         };
+        for (PropertyDeclStmt* property : info.ownProperties)
+            if (property && property->HasAutoAccessor())
+                addField(PropertyBackingFieldName(property->name),
+                    ResolveTypeName(property->type.get()));
         for (VarDeclExpr* field : info.ownPrimitiveFields)
             addField(IdentifierName(field->name.get()), DeclaredTypeName(*field));
         for (InstanceDeclExpr* field : info.ownObjectFields)
@@ -441,8 +551,23 @@ namespace Absolute {
 
         for (const auto& [methodKey, requirements] : interfaceRequirements) {
             auto implementation = info.methods.find(methodKey);
-            if (implementation == info.methods.end())
-                Fail("class '" + name + "' does not implement interface method '" + methodKey + "'");
+            if (implementation == info.methods.end()) {
+                if (ambiguousInterfaceDefaults.contains(methodKey))
+                    Fail("class '" + name + "' inherits ambiguous default interface method '" +
+                        methodKey + "'");
+                const ClassMethod* defaultMethod = nullptr;
+                for (const ClassMethod& requirement : requirements) {
+                    if (!requirement.statement->body) continue;
+                    if (defaultMethod && defaultMethod->statement != requirement.statement)
+                        Fail("class '" + name + "' inherits multiple default implementations of '" +
+                            methodKey + "'");
+                    defaultMethod = &requirement;
+                }
+                if (!defaultMethod)
+                    Fail("class '" + name + "' does not implement interface method '" + methodKey + "'");
+                info.methods.emplace(methodKey, *defaultMethod);
+                implementation = info.methods.find(methodKey);
+            }
             for (const ClassMethod& requirement : requirements) {
                 if (!SameMethodSignature(*requirement.statement, *implementation->second.statement))
                     Fail("class method '" + name + "." + methodKey +
@@ -466,10 +591,11 @@ namespace Absolute {
 
     llvm::FunctionType* CodeGenerator::Impl::MethodFunctionType(const ClassMethod& method) {
         std::vector<llvm::Type*> parameters;
+        if (AbiReturnOffset(method.returnType) != 0) parameters.push_back(builder.getPtrTy());
         if (!method.isStatic) parameters.push_back(builder.getPtrTy());
         for (const std::string& parameter : method.parameterTypes)
-            parameters.push_back(TypeFromName(parameter));
-        return llvm::FunctionType::get(TypeFromName(method.returnType), parameters, false);
+            parameters.push_back(AbiParameterType(parameter));
+        return llvm::FunctionType::get(AbiReturnType(method.returnType), parameters, false);
     }
 
     llvm::Function* CodeGenerator::Impl::DeclareMethodFunction(const ClassMethod& method) {
@@ -481,8 +607,9 @@ namespace Absolute {
             Fail("conflicting method declaration '" + method.linkName + "'");
         function->setCallingConv(llvm::CallingConv::C);
         ApplyCallableAttributes(*function, *method.statement);
-        const unsigned offset = method.isStatic ? 0U : 1U;
-        if (!method.isStatic) function->getArg(0)->setName("this");
+        unsigned offset = AbiReturnOffset(method.returnType);
+        if (offset != 0) function->getArg(0)->setName("__result");
+        if (!method.isStatic) function->getArg(offset++)->setName("this");
         for (size_t index = 0; index < method.statement->parameters.size(); ++index)
             function->getArg(static_cast<unsigned>(index) + offset)->setName(
                 IdentifierName(method.statement->parameters[index]->name.get()));
@@ -503,6 +630,19 @@ namespace Absolute {
     }
 
     void CodeGenerator::Impl::DeclareStaticFields(StructInfo& info) {
+        for (const StaticField& field : info.staticFields) {
+            const std::string globalName = info.name + "." + field.name;
+            if (globals.contains(globalName)) Fail("duplicate static field '" + globalName + "'");
+            llvm::Type* type = TypeFromName(field.typeName);
+            llvm::Constant* initializer = GlobalConstant(field.initializer, type);
+            auto* storage = new llvm::GlobalVariable(*module, type, field.isConst,
+                llvm::GlobalValue::ExternalLinkage, initializer, globalName);
+            globals.emplace(globalName, Variable{storage, type, field.typeName, false,
+                false, nullptr, {}, nullptr, InvalidSymbolId});
+        }
+    }
+
+    void CodeGenerator::Impl::DeclareStaticFields(InterfaceInfo& info) {
         for (const StaticField& field : info.staticFields) {
             const std::string globalName = info.name + "." + field.name;
             if (globals.contains(globalName)) Fail("duplicate static field '" + globalName + "'");
@@ -576,7 +716,7 @@ namespace Absolute {
         std::vector<llvm::Type*> parameters{builder.getPtrTy()};
         if (info.constructor)
             for (const auto& parameter : info.constructor->parameters)
-                parameters.push_back(TypeFromName(SubstituteCodegenType(
+                parameters.push_back(AbiParameterType(SubstituteCodegenType(
                     DeclaredTypeName(*parameter), info.substitutions)));
         llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
         const std::string name = info.name + ".__ctor";
@@ -597,7 +737,7 @@ namespace Absolute {
         if (!info.constructor) return nullptr;
         std::vector<llvm::Type*> parameters{builder.getPtrTy()};
         for (const auto& parameter : info.constructor->parameters)
-            parameters.push_back(TypeFromName(SubstituteCodegenType(
+            parameters.push_back(AbiParameterType(SubstituteCodegenType(
                 DeclaredTypeName(*parameter), info.substitutions)));
         llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
         const std::string name = info.name + ".__ctor";
@@ -615,6 +755,32 @@ namespace Absolute {
         return function;
     }
 
+    llvm::Function* CodeGenerator::Impl::DeclareClassDestructor(ClassInfo& info) {
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getVoidTy(), {builder.getPtrTy()}, false);
+        const std::string name = info.name + ".__destroy";
+        llvm::Function* function = module->getFunction(name);
+        if (!function)
+            function = llvm::Function::Create(
+                type, llvm::Function::InternalLinkage, name, *module);
+        function->setCallingConv(llvm::CallingConv::C);
+        function->getArg(0)->setName("this");
+        return function;
+    }
+
+    llvm::Function* CodeGenerator::Impl::DeclareStructDestructor(StructInfo& info) {
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getVoidTy(), {builder.getPtrTy()}, false);
+        const std::string name = info.name + ".__destroy";
+        llvm::Function* function = module->getFunction(name);
+        if (!function)
+            function = llvm::Function::Create(
+                type, llvm::Function::InternalLinkage, name, *module);
+        function->setCallingConv(llvm::CallingConv::C);
+        function->getArg(0)->setName("this");
+        return function;
+    }
+
     void CodeGenerator::Impl::DeclareClasses() {
         for (const std::string& name : classOrder) FinalizeClass(name);
         for (const std::string& name : classOrder) {
@@ -625,11 +791,17 @@ namespace Absolute {
                 DeclareMethodFunction(method);
             }
             DeclareConstructorFunction(info);
+            DeclareClassDestructor(info);
         }
         for (const std::string& name : classOrder) {
             ClassInfo& info = classes.at(name);
             std::vector<llvm::Constant*> entries;
-            for (const std::string& methodName : info.virtualNames) {
+            for (size_t slot = 0; slot < info.virtualNames.size(); ++slot) {
+                if (slot == 0) {
+                    entries.push_back(DeclareClassDestructor(info));
+                    continue;
+                }
+                const std::string& methodName = info.virtualNames[slot];
                 if (methodName.empty()) {
                     entries.push_back(llvm::ConstantPointerNull::get(builder.getPtrTy()));
                     continue;
@@ -656,6 +828,7 @@ namespace Absolute {
                 DeclareMethodFunction(method);
             }
             DeclareConstructorFunction(info);
+            if (TypeNeedsCleanup(info.name)) DeclareStructDestructor(info);
         }
     }
 
@@ -722,5 +895,127 @@ namespace Absolute {
 
     void CodeGenerator::Impl::InitializeObject(llvm::Value* object, StructInfo& info) {
         builder.CreateMemSet(object, builder.getInt8(0), ObjectSize(info), llvm::MaybeAlign(8));
+    }
+
+    bool CodeGenerator::Impl::TypeNeedsCleanup(const std::string& typeName) {
+        std::unordered_set<std::string> visiting;
+        const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
+            if (IsManagedPointerTypeName(candidate) || ArrayRankName(candidate) > 0) return true;
+            if (IsRawPointerTypeName(candidate) || !visiting.insert(candidate).second) return false;
+            const auto release = [&] { visiting.erase(candidate); };
+            if (const auto found = classes.find(candidate); found != classes.end()) {
+                for (const ClassField& field : found->second.fields) {
+                    if (self(self, field.typeName)) {
+                        release();
+                        return true;
+                    }
+                }
+            }
+            else if (const auto found = structs.find(candidate); found != structs.end()) {
+                for (const ClassField& field : found->second.fields) {
+                    if (self(self, field.typeName)) {
+                        release();
+                        return true;
+                    }
+                }
+            }
+            release();
+            return false;
+        };
+        return inspect(inspect, typeName);
+    }
+
+    void CodeGenerator::Impl::EmitPointeeCleanup(
+        llvm::Value* pointer, const std::string& pointerTypeName) {
+        const std::string pointeeName = PointerPointeeName(pointerTypeName);
+        const bool dynamicClass = classes.contains(pointeeName) || interfaces.contains(pointeeName);
+        const bool directStruct = structs.contains(pointeeName) && TypeNeedsCleanup(pointeeName);
+        if (!dynamicClass && !directStruct) return;
+
+        llvm::Function* parent = CurrentFunction();
+        llvm::BasicBlock* cleanup = llvm::BasicBlock::Create(
+            context, "aggregate.cleanup", parent);
+        llvm::BasicBlock* complete = llvm::BasicBlock::Create(
+            context, "aggregate.cleanup.end", parent);
+        builder.CreateCondBr(builder.CreateICmpNE(pointer,
+            llvm::ConstantPointerNull::get(builder.getPtrTy()), "aggregate.present"),
+            cleanup, complete);
+        builder.SetInsertPoint(cleanup);
+        if (dynamicClass) {
+            llvm::Value* vtable = builder.CreateLoad(
+                builder.getPtrTy(), pointer, "aggregate.vtable");
+            llvm::Value* slot = builder.CreateGEP(
+                builder.getPtrTy(), vtable, builder.getInt64(0), "aggregate.destroy.slot");
+            llvm::Value* destructor = builder.CreateLoad(
+                builder.getPtrTy(), slot, "aggregate.destroy");
+            llvm::FunctionType* type = llvm::FunctionType::get(
+                builder.getVoidTy(), {builder.getPtrTy()}, false);
+            builder.CreateCall(type, destructor, {pointer});
+        }
+        else builder.CreateCall(DeclareStructDestructor(structs.at(pointeeName)), {pointer});
+        builder.CreateBr(complete);
+        builder.SetInsertPoint(complete);
+    }
+
+    void CodeGenerator::Impl::EmitValueCleanup(
+        llvm::Value* address, const std::string& typeName) {
+        if (IsManagedPointerTypeName(typeName)) {
+            llvm::Value* handle = builder.CreateLoad(
+                builder.getInt64Ty(), address, "field.cleanup.handle");
+            llvm::Value* pointer = builder.CreateCall(
+                ManagedGet(false), {handle}, "field.cleanup.pointee");
+            EmitPointeeCleanup(pointer, typeName);
+            builder.CreateCall(ManagedDestroy(), {handle});
+            builder.CreateStore(builder.getInt64(0), address);
+            return;
+        }
+        if (ArrayRankName(typeName) > 0) {
+            llvm::Value* descriptor = builder.CreateLoad(
+                ArrayDescriptorType(typeName), address, "field.cleanup.array");
+            llvm::Value* owner = builder.CreateExtractValue(
+                descriptor, {1}, "field.cleanup.array.owner");
+            builder.CreateCall(Free(), {owner});
+            builder.CreateStore(llvm::Constant::getNullValue(
+                ArrayDescriptorType(typeName)), address);
+            return;
+        }
+        if (const auto found = classes.find(typeName); found != classes.end()) {
+            if (TypeNeedsCleanup(typeName))
+                builder.CreateCall(DeclareClassDestructor(found->second), {address});
+            return;
+        }
+        if (const auto found = structs.find(typeName); found != structs.end()) {
+            if (TypeNeedsCleanup(typeName))
+                builder.CreateCall(DeclareStructDestructor(found->second), {address});
+        }
+    }
+
+    void CodeGenerator::Impl::EmitClassDestructor(ClassInfo& info) {
+        llvm::Function* function = DeclareClassDestructor(info);
+        if (!function->empty()) return;
+        llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+        builder.SetInsertPoint(entry);
+        llvm::Value* object = function->getArg(0);
+        for (auto field = info.fields.rbegin(); field != info.fields.rend(); ++field) {
+            if (!TypeNeedsCleanup(field->typeName)) continue;
+            EmitValueCleanup(FieldAddress(object, info, *field), field->typeName);
+        }
+        builder.CreateRetVoid();
+        builder.ClearInsertionPoint();
+    }
+
+    void CodeGenerator::Impl::EmitStructDestructor(StructInfo& info) {
+        if (!TypeNeedsCleanup(info.name)) return;
+        llvm::Function* function = DeclareStructDestructor(info);
+        if (!function->empty()) return;
+        llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+        builder.SetInsertPoint(entry);
+        llvm::Value* object = function->getArg(0);
+        for (auto field = info.fields.rbegin(); field != info.fields.rend(); ++field) {
+            if (!TypeNeedsCleanup(field->typeName)) continue;
+            EmitValueCleanup(FieldAddress(object, info, *field), field->typeName);
+        }
+        builder.CreateRetVoid();
+        builder.ClearInsertionPoint();
     }
 }

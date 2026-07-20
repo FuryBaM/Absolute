@@ -4,8 +4,64 @@ namespace Absolute {
     // Value lowering is isolated; its implementation is intentionally absent from the private PCH.
     void CodeGenerator::Visit(AssignmentExpr* expr) {
         const std::string targetTypeName = impl->SemanticType(expr->target.get());
+        const ExpressionInfo* targetInfo = impl->analyzer
+            ? impl->analyzer->GetExpressionInfo(*expr->target) : nullptr;
+        const Symbol* targetSymbol = targetInfo && impl->analyzer
+            ? impl->analyzer->GetSymbol(targetInfo->symbol) : nullptr;
+        if (targetSymbol && targetSymbol->kind == SymbolKind::Property) {
+            auto* member = dynamic_cast<MemberAccessExpr*>(expr->target.get());
+            Expression* receiver = member ? member->base.get() : nullptr;
+            const std::string receiverType = member
+                ? impl->SemanticType(member->base.get()) : impl->currentClassName;
+            const std::string propertyName = member ? member->member : targetSymbol->name.substr(
+                targetSymbol->name.rfind('.') == std::string::npos
+                    ? 0 : targetSymbol->name.rfind('.') + 1);
+            llvm::Value* assigned = impl->Evaluate(expr->value.get());
+            if (expr->op != "=") {
+                llvm::Value* current = impl->EmitPropertyAccessor(receiver, receiverType,
+                    CallableKey(PropertyGetterName(propertyName), {}), {});
+                assigned = impl->ApplyBinary(
+                    expr->op.substr(0, expr->op.size() - 1), current, assigned);
+            }
+            assigned = impl->Coerce(assigned, impl->TypeFromName(targetTypeName));
+            impl->EmitPropertyAccessor(receiver, receiverType,
+                CallableKey(PropertySetterName(propertyName), {targetTypeName}), {assigned});
+            impl->value = assigned;
+            impl->valueCreatesManagedOwner = false;
+            impl->valueManagedPointee = nullptr;
+            return;
+        }
+        if (targetSymbol && targetSymbol->kind == SymbolKind::Indexer) {
+            auto* indexer = dynamic_cast<ArrayAccessExpr*>(expr->target.get());
+            if (!indexer) impl->Fail("indexer assignment requires an indexed target");
+            const std::string receiverType = impl->SemanticType(indexer->base.get());
+            std::vector<llvm::Value*> arguments;
+            arguments.reserve(indexer->indexes.size() + 1);
+            for (const auto& index : indexer->indexes)
+                arguments.push_back(impl->Evaluate(index.get()));
+            llvm::Value* assigned = impl->Evaluate(expr->value.get());
+            if (expr->op != "=") {
+                llvm::Value* current = impl->EmitPropertyAccessor(
+                    indexer->base.get(), receiverType,
+                    CallableKey(IndexerGetterName(), targetInfo->parameterTypes), arguments);
+                assigned = impl->ApplyBinary(
+                    expr->op.substr(0, expr->op.size() - 1), current, assigned);
+            }
+            assigned = impl->Coerce(assigned, impl->TypeFromName(targetTypeName));
+            std::vector<std::string> setterTypes = targetInfo->parameterTypes;
+            setterTypes.push_back(targetTypeName);
+            arguments.push_back(assigned);
+            impl->EmitPropertyAccessor(indexer->base.get(), receiverType,
+                CallableKey(IndexerSetterName(), setterTypes), arguments);
+            impl->value = assigned;
+            impl->valueCreatesManagedOwner = false;
+            impl->valueManagedPointee = nullptr;
+            return;
+        }
         if (ArrayRankName(targetTypeName) > 0 &&
-            dynamic_cast<MemberAccessExpr*>(expr->target.get()) == nullptr)
+            dynamic_cast<MemberAccessExpr*>(expr->target.get()) == nullptr &&
+            (!targetSymbol || (targetSymbol->kind != SymbolKind::Field &&
+                targetSymbol->kind != SymbolKind::Property)))
             impl->Fail("array variables cannot be reassigned; only array descriptor fields are assignable");
         if (ArrayRankName(targetTypeName) > 0 && expr->op != "=")
             impl->Fail("array fields only support direct '=' assignment");
@@ -22,7 +78,9 @@ namespace Absolute {
 
         if (IsManagedPointerTypeName(targetTypeName)) {
             const std::string name = IdentifierName(expr->target.get());
-            if (!name.empty()) {
+            if (!name.empty() && (!targetSymbol ||
+                targetSymbol->kind == SymbolKind::Variable ||
+                targetSymbol->kind == SymbolKind::Parameter)) {
                 Impl::Variable& variable = impl->RequireVariable(name);
                 if (variable.managedOwner) {
                     llvm::Value* oldHandle = impl->builder.CreateLoad(variable.type, variable.address, "assignment.old.handle");
@@ -39,11 +97,17 @@ namespace Absolute {
                 }
             }
         }
+        if (targetSymbol && targetSymbol->kind == SymbolKind::Field &&
+            impl->TypeNeedsCleanup(targetTypeName)) {
+            impl->EmitValueCleanup(targetAddress, targetTypeName);
+        }
         assigned = impl->Coerce(assigned, targetType);
         impl->builder.CreateStore(assigned, targetAddress);
         impl->value = assigned;
         impl->valueCreatesManagedOwner = false;
         impl->valueManagedPointee = nullptr;
+        impl->valueCreatesArrayOwner = false;
+        impl->valueArrayOwner = nullptr;
     }
 
     void CodeGenerator::Visit(VarDeclExpr* expr) {
@@ -100,6 +164,7 @@ namespace Absolute {
             variable.isArray = true;
             variable.arrayElementType = elementType;
             variable.arrayDimensions = dimensions;
+            variable.symbol = impl->SemanticSymbol(expr);
             if (!impl->scopes.back().emplace(name, std::move(variable)).second)
                 impl->Fail("duplicate variable '" + name + "'");
 
@@ -121,15 +186,32 @@ namespace Absolute {
         }
         if (ArrayRankName(declaredTypeName) > 0) {
             if (!expr->value) impl->Fail("array view declaration requires an initializer");
-            Impl::ArrayView view = impl->ArrayViewFromValue(
-                impl->Evaluate(expr->value.get()), declaredTypeName);
-            if (!impl->scopes.back().emplace(name,
-                Impl::Variable{view.address, view.elementType, declaredTypeName, false,
-                    true, view.elementType, view.dimensions, nullptr, InvalidSymbolId}).second) {
+            llvm::Value* descriptor = impl->Evaluate(expr->value.get());
+            const bool ownsStorage = impl->valueCreatesArrayOwner;
+            Impl::ArrayView view = impl->ArrayViewFromValue(descriptor, declaredTypeName);
+            Impl::Variable variable;
+            variable.address = view.address;
+            variable.type = view.elementType;
+            variable.typeName = declaredTypeName;
+            variable.isArray = true;
+            variable.arrayElementType = view.elementType;
+            variable.arrayDimensions = view.dimensions;
+            variable.symbol = impl->SemanticSymbol(expr);
+            variable.arrayOwner = view.owner;
+            variable.ownsArrayStorage = ownsStorage;
+            if (ownsStorage) variable.arrayOwnerSymbol = variable.symbol;
+            else if (Impl::Variable* source = impl->FindVariable(
+                impl->SemanticSymbol(expr->value.get()))) {
+                variable.arrayOwnerSymbol = source->ownsArrayStorage
+                    ? source->symbol : source->arrayOwnerSymbol;
+            }
+            if (!impl->scopes.back().emplace(name, std::move(variable)).second) {
                 impl->Fail("duplicate variable '" + name + "'");
             }
             impl->value = impl->BuildArrayDescriptor(view);
             impl->valueCreatesManagedOwner = false;
+            impl->valueCreatesArrayOwner = false;
+            impl->valueArrayOwner = nullptr;
             return;
         }
         const std::string& typeName = declaredTypeName;
@@ -165,6 +247,14 @@ namespace Absolute {
         if (impl->analyzer) {
             const ExpressionInfo* info = impl->analyzer->GetExpressionInfo(*expr);
             const Symbol* symbol = info ? impl->analyzer->GetSymbol(info->symbol) : nullptr;
+            if (symbol && symbol->kind == SymbolKind::Property) {
+                if (impl->addressMode) impl->Fail("a property is not addressable");
+                const std::string baseType = impl->SemanticType(expr->base.get());
+                impl->value = impl->EmitPropertyAccessor(expr->base.get(), baseType,
+                    CallableKey(PropertyGetterName(expr->member), {}), {});
+                impl->valueCreatesManagedOwner = false;
+                return;
+            }
             if (symbol && symbol->kind == SymbolKind::Field && symbol->isStatic) {
                 const std::string globalName = symbol->memberOwner + "." + expr->member;
                 auto field = impl->globals.find(globalName);
@@ -321,16 +411,17 @@ namespace Absolute {
             Impl::ClassInfo& info = impl->classes.at(pointeeType);
             impl->InitializeObject(pointer, info);
             if (llvm::Function* constructor = impl->module->getFunction(info.name + ".__ctor")) {
-                std::vector<llvm::Value*> arguments{pointer};
-                for (size_t index = 0; index < expr->arguments.size(); ++index) {
-                    if (index + 1 >= constructor->arg_size())
-                        impl->Fail("too many constructor arguments for '" + info.name + "'");
-                    arguments.push_back(impl->Coerce(impl->Evaluate(expr->arguments[index].get()),
-                        constructor->getFunctionType()->getParamType(static_cast<unsigned>(index + 1))));
+                std::vector<llvm::Value*> arguments;
+                std::vector<std::string> parameterTypes;
+                for (const auto& argument : expr->arguments)
+                    arguments.push_back(impl->Evaluate(argument.get()));
+                if (info.constructor) {
+                    for (const auto& parameter : info.constructor->parameters)
+                        parameterTypes.push_back(SubstituteCodegenType(
+                            impl->DeclaredTypeName(*parameter), info.substitutions));
                 }
-                if (arguments.size() != constructor->arg_size())
-                    impl->Fail("invalid constructor argument count for '" + info.name + "'");
-                impl->builder.CreateCall(constructor, arguments);
+                impl->EmitAbiCall(constructor->getFunctionType(), constructor, "void",
+                    {pointer}, parameterTypes, arguments, "constructor.result");
                 impl->EmitExceptionCheck(
                     rawAllocation ? nullptr : result,
                     rawAllocation ? pointer : nullptr);
@@ -349,16 +440,15 @@ namespace Absolute {
             if (info.constructor) {
                 llvm::Function* constructor = impl->module->getFunction(info.name + ".__ctor");
                 if (!constructor) impl->Fail("missing constructor for '" + info.name + "'");
-                std::vector<llvm::Value*> arguments{pointer};
-                for (size_t index = 0; index < expr->arguments.size(); ++index) {
-                    if (index + 1 >= constructor->arg_size())
-                        impl->Fail("too many constructor arguments for '" + info.name + "'");
-                    arguments.push_back(impl->Coerce(impl->Evaluate(expr->arguments[index].get()),
-                        constructor->getFunctionType()->getParamType(static_cast<unsigned>(index + 1))));
-                }
-                if (arguments.size() != constructor->arg_size())
-                    impl->Fail("invalid constructor argument count for '" + info.name + "'");
-                impl->builder.CreateCall(constructor, arguments);
+                std::vector<llvm::Value*> arguments;
+                std::vector<std::string> parameterTypes;
+                for (const auto& argument : expr->arguments)
+                    arguments.push_back(impl->Evaluate(argument.get()));
+                for (const auto& parameter : info.constructor->parameters)
+                    parameterTypes.push_back(SubstituteCodegenType(
+                        impl->DeclaredTypeName(*parameter), info.substitutions));
+                impl->EmitAbiCall(constructor->getFunctionType(), constructor, "void",
+                    {pointer}, parameterTypes, arguments, "constructor.result");
                 impl->EmitExceptionCheck(
                     rawAllocation ? nullptr : result,
                     rawAllocation ? pointer : nullptr);
@@ -394,10 +484,14 @@ namespace Absolute {
                     impl->builder.CreateStore(
                         llvm::ConstantPointerNull::get(impl->builder.getPtrTy()), variable.managedPointee);
             }
+            llvm::Value* pointee = impl->builder.CreateCall(
+                impl->ManagedGet(false), {pointer}, "delete.pointee");
+            impl->EmitPointeeCleanup(pointee, typeName);
             impl->builder.CreateCall(impl->ManagedDestroy(), {pointer});
             impl->builder.CreateStore(impl->builder.getInt64(0), targetAddress);
         }
         else {
+            impl->EmitPointeeCleanup(pointer, typeName);
             impl->builder.CreateCall(impl->Free(), {pointer});
             impl->builder.CreateStore(llvm::ConstantPointerNull::get(impl->builder.getPtrTy()), targetAddress);
         }
@@ -413,16 +507,32 @@ namespace Absolute {
         if (!impl->classes.contains(typeName) && !impl->structs.contains(typeName)) {
             if (ArrayRankName(typeName) > 0) {
                 if (!expr->value) impl->Fail("array alias variable requires an initializer");
-                Impl::ArrayView view = impl->ArrayViewFromValue(
-                    impl->Evaluate(expr->value.get()), typeName);
-                if (!impl->scopes.back().emplace(name,
-                    Impl::Variable{view.address, view.elementType, typeName, false,
-                        true, view.elementType, view.dimensions, nullptr,
-                        impl->SemanticSymbol(expr)}).second) {
+                llvm::Value* descriptor = impl->Evaluate(expr->value.get());
+                const bool ownsStorage = impl->valueCreatesArrayOwner;
+                Impl::ArrayView view = impl->ArrayViewFromValue(descriptor, typeName);
+                Impl::Variable variable;
+                variable.address = view.address;
+                variable.type = view.elementType;
+                variable.typeName = typeName;
+                variable.isArray = true;
+                variable.arrayElementType = view.elementType;
+                variable.arrayDimensions = view.dimensions;
+                variable.symbol = impl->SemanticSymbol(expr);
+                variable.arrayOwner = view.owner;
+                variable.ownsArrayStorage = ownsStorage;
+                if (ownsStorage) variable.arrayOwnerSymbol = variable.symbol;
+                else if (Impl::Variable* source = impl->FindVariable(
+                    impl->SemanticSymbol(expr->value.get()))) {
+                    variable.arrayOwnerSymbol = source->ownsArrayStorage
+                        ? source->symbol : source->arrayOwnerSymbol;
+                }
+                if (!impl->scopes.back().emplace(name, std::move(variable)).second) {
                     impl->Fail("duplicate array variable '" + name + "'");
                 }
                 impl->value = impl->BuildArrayDescriptor(view);
                 impl->valueCreatesManagedOwner = false;
+                impl->valueCreatesArrayOwner = false;
+                impl->valueArrayOwner = nullptr;
                 return;
             }
             llvm::Type* type = impl->TypeFromName(typeName);
@@ -477,9 +587,10 @@ namespace Absolute {
             impl->builder.CreateCall(constructor, {address});
             impl->EmitExceptionCheck();
         }
-        if (!impl->scopes.back().emplace(name,
-            Impl::Variable{address, llvmType, typeName, false, false, nullptr, {},
-                nullptr, impl->SemanticSymbol(expr)}).second)
+        Impl::Variable variable{address, llvmType, typeName, false, false, nullptr, {},
+            nullptr, impl->SemanticSymbol(expr)};
+        variable.ownsAggregateResources = impl->TypeNeedsCleanup(typeName);
+        if (!impl->scopes.back().emplace(name, std::move(variable)).second)
             impl->Fail("duplicate object '" + name + "'");
         impl->value = impl->builder.CreateLoad(llvmType, address, name + ".value");
         impl->valueCreatesManagedOwner = false;
@@ -524,6 +635,47 @@ namespace Absolute {
             return;
         }
         if (expr->op == "++" || expr->op == "--") {
+            const ExpressionInfo* operandInfo = impl->analyzer
+                ? impl->analyzer->GetExpressionInfo(*expr->operand) : nullptr;
+            const Symbol* operandSymbol = operandInfo && impl->analyzer
+                ? impl->analyzer->GetSymbol(operandInfo->symbol) : nullptr;
+            if (operandSymbol && operandSymbol->kind == SymbolKind::Property) {
+                auto* member = dynamic_cast<MemberAccessExpr*>(expr->operand.get());
+                Expression* receiver = member ? member->base.get() : nullptr;
+                const std::string receiverType = member
+                    ? impl->SemanticType(member->base.get()) : impl->currentClassName;
+                const std::string propertyName = member ? member->member : operandSymbol->name.substr(
+                    operandSymbol->name.rfind('.') == std::string::npos
+                        ? 0 : operandSymbol->name.rfind('.') + 1);
+                llvm::Value* current = impl->EmitPropertyAccessor(receiver, receiverType,
+                    CallableKey(PropertyGetterName(propertyName), {}), {});
+                llvm::Value* updated = impl->ApplyBinary(expr->op == "++" ? "+" : "-",
+                    current, impl->One(current->getType()));
+                impl->EmitPropertyAccessor(receiver, receiverType,
+                    CallableKey(PropertySetterName(propertyName), {operandInfo->type}), {updated});
+                impl->value = updated;
+                return;
+            }
+            if (operandSymbol && operandSymbol->kind == SymbolKind::Indexer) {
+                auto* indexer = dynamic_cast<ArrayAccessExpr*>(expr->operand.get());
+                if (!indexer) impl->Fail("indexer increment requires an indexed operand");
+                std::vector<llvm::Value*> arguments;
+                for (const auto& index : indexer->indexes)
+                    arguments.push_back(impl->Evaluate(index.get()));
+                const std::string receiverType = impl->SemanticType(indexer->base.get());
+                llvm::Value* current = impl->EmitPropertyAccessor(
+                    indexer->base.get(), receiverType,
+                    CallableKey(IndexerGetterName(), operandInfo->parameterTypes), arguments);
+                llvm::Value* updated = impl->ApplyBinary(expr->op == "++" ? "+" : "-",
+                    current, impl->One(current->getType()));
+                std::vector<std::string> setterTypes = operandInfo->parameterTypes;
+                setterTypes.push_back(operandInfo->type);
+                arguments.push_back(updated);
+                impl->EmitPropertyAccessor(indexer->base.get(), receiverType,
+                    CallableKey(IndexerSetterName(), setterTypes), arguments);
+                impl->value = updated;
+                return;
+            }
             Impl::Variable& variable = impl->AddressOf(expr->operand.get());
             llvm::Value* current = impl->builder.CreateLoad(variable.type, variable.address, "prefix.current");
             llvm::Value* updated = impl->ApplyBinary(expr->op == "++" ? "+" : "-", current, impl->One(variable.type));
@@ -547,6 +699,47 @@ namespace Absolute {
     void CodeGenerator::Visit(PostfixUnaryExpr* expr) {
         if (expr->op != "++" && expr->op != "--") {
             impl->Fail("unsupported postfix operator '" + expr->op + "'");
+        }
+        const ExpressionInfo* operandInfo = impl->analyzer
+            ? impl->analyzer->GetExpressionInfo(*expr->operand) : nullptr;
+        const Symbol* operandSymbol = operandInfo && impl->analyzer
+            ? impl->analyzer->GetSymbol(operandInfo->symbol) : nullptr;
+        if (operandSymbol && operandSymbol->kind == SymbolKind::Property) {
+            auto* member = dynamic_cast<MemberAccessExpr*>(expr->operand.get());
+            Expression* receiver = member ? member->base.get() : nullptr;
+            const std::string receiverType = member
+                ? impl->SemanticType(member->base.get()) : impl->currentClassName;
+            const std::string propertyName = member ? member->member : operandSymbol->name.substr(
+                operandSymbol->name.rfind('.') == std::string::npos
+                    ? 0 : operandSymbol->name.rfind('.') + 1);
+            llvm::Value* current = impl->EmitPropertyAccessor(receiver, receiverType,
+                CallableKey(PropertyGetterName(propertyName), {}), {});
+            llvm::Value* updated = impl->ApplyBinary(expr->op == "++" ? "+" : "-",
+                current, impl->One(current->getType()));
+            impl->EmitPropertyAccessor(receiver, receiverType,
+                CallableKey(PropertySetterName(propertyName), {operandInfo->type}), {updated});
+            impl->value = current;
+            return;
+        }
+        if (operandSymbol && operandSymbol->kind == SymbolKind::Indexer) {
+            auto* indexer = dynamic_cast<ArrayAccessExpr*>(expr->operand.get());
+            if (!indexer) impl->Fail("indexer increment requires an indexed operand");
+            std::vector<llvm::Value*> arguments;
+            for (const auto& index : indexer->indexes)
+                arguments.push_back(impl->Evaluate(index.get()));
+            const std::string receiverType = impl->SemanticType(indexer->base.get());
+            llvm::Value* current = impl->EmitPropertyAccessor(
+                indexer->base.get(), receiverType,
+                CallableKey(IndexerGetterName(), operandInfo->parameterTypes), arguments);
+            llvm::Value* updated = impl->ApplyBinary(expr->op == "++" ? "+" : "-",
+                current, impl->One(current->getType()));
+            std::vector<std::string> setterTypes = operandInfo->parameterTypes;
+            setterTypes.push_back(operandInfo->type);
+            arguments.push_back(updated);
+            impl->EmitPropertyAccessor(indexer->base.get(), receiverType,
+                CallableKey(IndexerSetterName(), setterTypes), arguments);
+            impl->value = current;
+            return;
         }
         Impl::Variable& variable = impl->AddressOf(expr->operand.get());
         llvm::Value* current = impl->builder.CreateLoad(variable.type, variable.address, "postfix.current");

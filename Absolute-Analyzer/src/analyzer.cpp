@@ -7,6 +7,7 @@ namespace Absolute {
         typeAliases.clear();
         resolvingTypeAliases.clear();
         functionOverloads.clear();
+        exportedFunctionNames.clear();
         extensionMethods.clear();
         functionDeclarations.clear();
         genericFunctionSpecializations.clear();
@@ -431,6 +432,48 @@ namespace Absolute {
         return source == "null" && !PrimitiveStringToEnum(target).has_value();
     }
 
+    bool Analyzer::TypeOwnsResources(const std::string& name) const {
+        std::unordered_set<std::string> visiting;
+        const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
+            if (IsManagedPointerType(candidate) || ArrayRank(candidate) > 0) return true;
+            if (IsPointerType(candidate)) return false;
+
+            std::string definitionName = candidate;
+            std::string genericBase;
+            std::vector<std::string> genericArguments;
+            if (ParseGenericTypeName(candidate, genericBase, genericArguments))
+                definitionName = genericBase;
+            if (!visiting.insert(definitionName).second) return false;
+            const auto release = [&] { visiting.erase(definitionName); };
+            const auto found = types.find(definitionName);
+            if (found == types.end() || (found->second.kind != TypeKind::Class &&
+                found->second.kind != TypeKind::Struct)) {
+                release();
+                return false;
+            }
+            for (const auto& [memberName, overloads] : found->second.members) {
+                (void)memberName;
+                for (const MemberSignature& member : overloads) {
+                    if (member.isStatic || (member.kind != SymbolKind::Field &&
+                        member.kind != SymbolKind::Property)) continue;
+                    if (self(self, member.type)) {
+                        release();
+                        return true;
+                    }
+                }
+            }
+            for (const std::string& parent : found->second.parents) {
+                if (self(self, parent)) {
+                    release();
+                    return true;
+                }
+            }
+            release();
+            return false;
+        };
+        return inspect(inspect, name);
+    }
+
     bool Analyzer::IsDerivedFrom(const std::string& type, const std::string& base) const {
         if (type == base) return true;
         const auto found = types.find(type);
@@ -524,6 +567,8 @@ namespace Absolute {
         if (!genericScope.empty()) genericTypeScopes.push_back(genericScope);
         const std::string name = Qualify(statement.name->value);
         const std::string returnType = ResolveType(statement.returnType.get());
+        if (statement.IsExported() && name == "main")
+            Report("entry function 'main' cannot be exported", "E_EXPORT_MAIN");
         if (name == "main" && functionOverloads.contains(name))
             Report("entry function 'main' cannot be overloaded", "E_MAIN_OVERLOAD");
         if (statement.IsExternal() && functionOverloads.contains(name) &&
@@ -532,6 +577,21 @@ namespace Absolute {
                 return existing && existing->externalFunction;
             }))
             Report("extern function '" + name + "' cannot be overloaded", "E_EXTERN_OVERLOAD");
+        if (statement.IsExported()) {
+            if (functionOverloads.contains(name))
+                Report("export function '" + name + "' cannot be overloaded", "E_EXPORT_OVERLOAD");
+            const auto [existing, inserted] = exportedFunctionNames.emplace(
+                statement.name->value, name);
+            if (!inserted && existing->second != name)
+                Report("export symbol '" + statement.name->value +
+                    "' is already used by '" + existing->second + "'", "E_EXPORT_NAME_CONFLICT");
+        }
+        else if (functionOverloads.contains(name) &&
+            std::any_of(functionOverloads[name].begin(), functionOverloads[name].end(), [&](SymbolId id) {
+                const Symbol* existing = table.Get(id);
+                return existing && existing->exportedFunction;
+            }))
+            Report("export function '" + name + "' cannot be overloaded", "E_EXPORT_OVERLOAD");
         const auto declared = table.Declare(SymbolKind::Function, name,
             returnType, ResolveParameterTypes(statement.parameters));
         if (!declared) Report("function '" + name + "' already has an overload with this signature");
@@ -539,6 +599,7 @@ namespace Absolute {
             symbol->asyncFunction = HasModifier(statement, "async");
             symbol->extensionFunction = HasModifier(statement, "extension");
             symbol->externalFunction = statement.IsExternal();
+            symbol->exportedFunction = statement.IsExported();
             symbol->isConst = HasModifier(statement, "const");
             for (const Token& parameter : statement.templateParams)
                 symbol->genericParameters.push_back(parameter.value);
@@ -609,13 +670,15 @@ namespace Absolute {
 
         if (statement.IsExternal() && kind == SymbolKind::Method)
             Report("extern functions cannot be class or struct members");
+        if (statement.IsExported() && kind == SymbolKind::Method)
+            Report("export functions cannot be class or struct members", "E_EXPORT_MEMBER");
         if (HasModifier(statement, "extension") && kind != SymbolKind::Function)
             Report("extension methods must be namespace or global functions", "E_EXTENSION_MEMBER");
         if (HasModifier(statement, "extension") && statement.parameters.empty())
             Report("extension method '" + statement.name->value + "' requires a receiver parameter",
                 "E_EXTENSION_RECEIVER");
-        if (HasModifier(statement, "extension") && statement.IsExternal())
-            Report("extern functions cannot be extension methods", "E_EXTENSION_EXTERN");
+        if (HasModifier(statement, "extension") && statement.UsesCAbi())
+            Report("C ABI functions cannot be extension methods", "E_EXTENSION_C_ABI");
         if (HasModifier(statement, "extension") && HasModifier(statement, "async"))
             Report("async extension methods are not implemented", "E_EXTENSION_ASYNC");
         if (HasModifier(statement, "extension") && !statement.parameters.empty()) {
@@ -626,15 +689,17 @@ namespace Absolute {
         }
         if (statement.IsExternal() && HasModifier(statement, "async"))
             Report("extern functions cannot be async", "E_ASYNC_EXTERN");
+        if (statement.IsExported() && HasModifier(statement, "async"))
+            Report("export functions cannot be async", "E_ASYNC_EXPORT");
         if (kind == SymbolKind::Method && HasModifier(statement, "async"))
             Report("async methods are not implemented yet; use a namespace function",
                 "E_ASYNC_METHOD_UNSUPPORTED");
-        if (statement.IsExternal() && (returnType == "auto" || returnType == "dynamic" ||
+        if (statement.UsesCAbi() && (returnType == "auto" || returnType == "dynamic" ||
             IsManagedPointerType(returnType)))
-            Report("extern function '" + statement.name->value +
+            Report("C ABI function '" + statement.name->value +
                 "' requires a concrete C-compatible return type; use raw T* for pointers");
-        if (statement.IsExternal() && returnType.ends_with("[]"))
-            Report("extern function '" + statement.name->value +
+        if (statement.UsesCAbi() && returnType.ends_with("[]"))
+            Report("C ABI function '" + statement.name->value +
                 "' cannot return an Absolute array descriptor");
 
         const std::string oldReturn = currentReturnType;
@@ -662,12 +727,12 @@ namespace Absolute {
             if (!parameter) continue;
             const std::string name = ExtractIdentifier(parameter->name.get());
             std::string type = ResolveDeclaredType(*parameter);
-            if (statement.IsExternal() && (type == "auto" || type == "dynamic" || type == "void"))
-                Report("extern parameter '" + name + "' requires a concrete C-compatible type");
-            if (statement.IsExternal() && IsManagedPointerType(type))
-                Report("extern parameter '" + name + "' must use raw T* instead of a managed pointer");
-            if (statement.IsExternal() && type.ends_with("[]"))
-                Report("extern parameter '" + name + "' cannot use an Absolute array descriptor");
+            if (statement.UsesCAbi() && (type == "auto" || type == "dynamic" || type == "void"))
+                Report("C ABI parameter '" + name + "' requires a concrete C-compatible type");
+            if (statement.UsesCAbi() && IsManagedPointerType(type))
+                Report("C ABI parameter '" + name + "' must use raw T* instead of a managed pointer");
+            if (statement.UsesCAbi() && type.ends_with("[]"))
+                Report("C ABI parameter '" + name + "' cannot use an Absolute array descriptor");
             SymbolId parameterId = InvalidSymbolId;
             if (name.empty()) Report("function parameter requires an identifier");
             else if (const auto declared = table.Declare(SymbolKind::Parameter, name, type)) {
@@ -690,7 +755,8 @@ namespace Absolute {
             }
         }
         if (!statement.IsExternal()) AcceptIfPresent(statement.body, *this);
-        if (!statement.IsExternal() && returnType != "void" && !flowTerminated)
+        if (!statement.IsExternal() && returnType != "void" && !flowTerminated &&
+            !statement.autoPropertyAccessor)
             Report("function '" + statement.name->value + "' does not return a value on every control-flow path",
                 "E_MISSING_RETURN", table.Lookup(Qualify(statement.name->value)));
         PopValueFlowScope();
@@ -723,9 +789,10 @@ namespace Absolute {
     void Analyzer::DeclareMember(const std::string& owner, std::string name, MemberSignature signature) {
         auto& members = types[owner].members;
         auto& overloads = members[name];
-        const bool method = signature.kind == SymbolKind::Method;
+        const bool overloadable = signature.kind == SymbolKind::Method ||
+            signature.kind == SymbolKind::Indexer;
         const bool collision = std::any_of(overloads.begin(), overloads.end(), [&](const MemberSignature& existing) {
-            return !method || existing.kind != SymbolKind::Method ||
+            return !overloadable || existing.kind != signature.kind ||
                 existing.parameterTypes == signature.parameterTypes;
         });
         if (collision) {
@@ -743,7 +810,11 @@ namespace Absolute {
         if (Symbol* symbol = table.Get(*declared)) {
             symbol->isConst = signature.isConst;
             symbol->isStatic = signature.isStatic;
+            symbol->canRead = signature.canRead;
+            symbol->canWrite = signature.canWrite;
             symbol->access = signature.access;
+            symbol->readAccess = signature.readAccess;
+            symbol->writeAccess = signature.writeAccess;
             symbol->memberOwner = owner;
         }
         overloads.push_back(std::move(signature));
@@ -793,6 +864,19 @@ namespace Absolute {
                             inherited.parameterTypes == declared.parameterTypes;
                     }), result.end());
                 }
+                else if (declared.kind == SymbolKind::Property) {
+                    result.erase(std::remove_if(result.begin(), result.end(),
+                        [](const MemberSignature& inherited) {
+                            return inherited.kind == SymbolKind::Property;
+                        }), result.end());
+                }
+                else if (declared.kind == SymbolKind::Indexer) {
+                    result.erase(std::remove_if(result.begin(), result.end(),
+                        [&](const MemberSignature& inherited) {
+                            return inherited.kind == SymbolKind::Indexer &&
+                                inherited.parameterTypes == declared.parameterTypes;
+                        }), result.end());
+                }
                 result.push_back(std::move(declared));
             }
         }
@@ -833,6 +917,21 @@ namespace Absolute {
                         return inherited.kind == SymbolKind::Method &&
                             inherited.parameterTypes == declared.parameterTypes;
                     }), visible.end());
+                }
+                else if (declared.kind == SymbolKind::Property) {
+                    auto& visible = result[name];
+                    visible.erase(std::remove_if(visible.begin(), visible.end(),
+                        [](const MemberSignature& inherited) {
+                            return inherited.kind == SymbolKind::Property;
+                        }), visible.end());
+                }
+                else if (declared.kind == SymbolKind::Indexer) {
+                    auto& visible = result[name];
+                    visible.erase(std::remove_if(visible.begin(), visible.end(),
+                        [&](const MemberSignature& inherited) {
+                            return inherited.kind == SymbolKind::Indexer &&
+                                inherited.parameterTypes == declared.parameterTypes;
+                        }), visible.end());
                 }
                 result[name].push_back(declared);
             }
@@ -1187,7 +1286,9 @@ namespace Absolute {
         if (const Symbol* symbol = table.Get(target.symbol)) {
             if (symbol->isConst && !(currentConstructor && symbol->kind == SymbolKind::Field))
                 return true;
-            if (currentMethodConst && symbol->kind == SymbolKind::Field)
+            if (currentMethodConst &&
+                (symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Property ||
+                    symbol->kind == SymbolKind::Indexer))
                 return true;
         }
 

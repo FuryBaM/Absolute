@@ -72,6 +72,8 @@ namespace Absolute {
             if (rank == 0) Fail("copy expects an array or slice");
 
             ArrayView source = ViewOfArray(argument);
+            const bool releaseTemporarySource = valueCreatesArrayOwner;
+            llvm::Value* temporarySourceOwner = valueArrayOwner;
             llvm::Value* elementCount = builder.getInt64(1);
             for (llvm::Value* dimension : source.dimensions)
                 elementCount = builder.CreateMul(elementCount, dimension, "copy.element.count");
@@ -81,10 +83,15 @@ namespace Absolute {
             llvm::Value* copiedData = builder.CreateCall(Malloc(), {byteCount}, "copy.data");
             builder.CreateMemCpy(copiedData, llvm::MaybeAlign(16),
                 source.address, llvm::MaybeAlign(1), byteCount);
+            if (releaseTemporarySource)
+                builder.CreateCall(Free(), {temporarySourceOwner});
             source.address = copiedData;
+            source.owner = copiedData;
             value = BuildArrayDescriptor(source);
             valueCreatesManagedOwner = false;
             valueManagedPointee = nullptr;
+            valueCreatesArrayOwner = true;
+            valueArrayOwner = copiedData;
             return;
         }
 

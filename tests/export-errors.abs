@@ -1,0 +1,30 @@
+class ExportNode {
+}
+
+export "C" ExportNode* badManagedReturn() {
+    return new ExportNode();
+}
+
+export "C" int32 badManagedParameter(ExportNode* value) {
+    return 0;
+}
+
+export "C" int32 duplicateExport(int32 value) {
+    return value;
+}
+
+export "C" double duplicateExport(double value) {
+    return value;
+}
+
+namespace FirstExports {
+    export "C" int32 sharedNativeName(int32 value) {
+        return value;
+    }
+}
+
+namespace SecondExports {
+    export "C" int32 sharedNativeName(int32 value) {
+        return value;
+    }
+}

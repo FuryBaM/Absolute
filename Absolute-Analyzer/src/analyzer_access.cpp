@@ -47,18 +47,33 @@ namespace Absolute {
             Save(expr, {InvalidSymbolId, "error", false});
             return;
         }
-        if (currentMethodStatic && symbol->kind == SymbolKind::Field && !symbol->isStatic)
-            Report("static method cannot access instance field '" + expr->name + "'",
+        if (currentMethodStatic &&
+            (symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Property) &&
+            !symbol->isStatic)
+            Report("static method cannot access instance member '" + expr->name + "'",
                 "E_STATIC_INSTANCE_ACCESS", id);
-        if ((symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Method) &&
+        if ((symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Property ||
+            symbol->kind == SymbolKind::Method) &&
             !symbol->memberOwner.empty())
-            RequireAccess(symbol->access, symbol->memberOwner, expr->name, id);
+            RequireAccess(symbol->kind == SymbolKind::Property && accessMode == AccessMode::Write
+                ? symbol->writeAccess
+                : (symbol->kind == SymbolKind::Property ? symbol->readAccess : symbol->access),
+                symbol->memberOwner, expr->name, id);
+        if (symbol->kind == SymbolKind::Property) {
+            if (accessMode == AccessMode::Read && !symbol->canRead)
+                Report("property '" + expr->name + "' is write-only", "E_PROPERTY_WRITE_ONLY", id);
+            else if (accessMode == AccessMode::Write && !symbol->canWrite)
+                Report("property '" + expr->name + "' is read-only", "E_PROPERTY_READ_ONLY", id);
+            else if (accessMode == AccessMode::Address || accessMode == AccessMode::Delete)
+                Report("property '" + expr->name + "' has no addressable storage",
+                    "E_PROPERTY_NOT_ADDRESSABLE", id);
+        }
         const bool value = symbol->kind == SymbolKind::Variable || symbol->kind == SymbolKind::Parameter ||
-            symbol->kind == SymbolKind::Field;
+            symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Property;
         if (!value) Report("object '" + expr->name + "' is not a value");
         ValueFlowState flow;
         if (const auto found = valueFlow.find(id); found != valueFlow.end()) flow = found->second;
-        if (value && accessMode == AccessMode::Read) {
+        if (value && symbol->kind != SymbolKind::Property && accessMode == AccessMode::Read) {
             if (flow.initialization == InitializationState::Uninitialized)
                 Report("object '" + expr->name + "' is read before initialization",
                     "E_UNINITIALIZED_READ", id);
@@ -66,7 +81,8 @@ namespace Absolute {
                 Report("object '" + expr->name + "' is not initialized on every control-flow path",
                     "E_MAYBE_UNINITIALIZED_READ", id);
         }
-        Save(expr, {id, symbol->type, value, false,
+        Save(expr, {id, symbol->type,
+            symbol->kind == SymbolKind::Property ? symbol->canWrite : value, false,
             value && IsManagedPointerType(symbol->type) && symbol->managedOwner,
             flow.initialization, flow.pointerValidity, flow.pointerOwner,
             flow.taskState});
@@ -218,9 +234,15 @@ namespace Absolute {
 
             const auto members = FindMembers(typeReceiver ? ownerName : receiver.type, memberCall->member);
             std::vector<SymbolId> methodCandidates;
-            for (const MemberSignature& member : members)
-                if (member.kind == SymbolKind::Method && member.isStatic == typeReceiver)
+            std::vector<std::vector<std::string>> candidateSignatures;
+            for (const MemberSignature& member : members) {
+                if (member.kind == SymbolKind::Method && member.isStatic == typeReceiver &&
+                    std::find(candidateSignatures.begin(), candidateSignatures.end(),
+                        member.parameterTypes) == candidateSignatures.end()) {
                     methodCandidates.push_back(member.symbol);
+                    candidateSignatures.push_back(member.parameterTypes);
+                }
+            }
             if (!methodCandidates.empty()) {
                 symbolId = SelectOverload(
                     methodCandidates, arguments, memberCall->member, explicitTypeArguments);
@@ -275,6 +297,17 @@ namespace Absolute {
         }
         for (size_t i = 0; i < arguments.size(); ++i) {
             const Result& argument = arguments[i];
+            const size_t parameterIndex = i +
+                (selected && selected->extensionFunction && hasReceiver ? 1 : 0);
+            if (selected && parameterIndex < selected->parameterTypes.size()) {
+                const std::string& parameterType = selected->parameterTypes[parameterIndex];
+                if (ArrayRank(parameterType) == 0 && !IsPointerType(parameterType) &&
+                    TypeOwnsResources(parameterType)) {
+                    Report("resource-owning aggregate argument '" + parameterType +
+                        "' cannot be copied by value",
+                        "E_RESOURCE_AGGREGATE_ARGUMENT", argument.symbol);
+                }
+            }
             if (argument.pointerValidity == PointerValidity::Deleted ||
                 argument.pointerValidity == PointerValidity::Expired)
                 Report("argument " + std::to_string(i + 1) + " passes an invalid pointer",
@@ -303,18 +336,76 @@ namespace Absolute {
             Save(expr, {base.symbol, base.type, false});
             return;
         }
+        std::vector<Result> indexes;
+        indexes.reserve(expr->indexes.size());
         for (const auto& index : expr->indexes) {
             if (!index) {
                 Report("array access requires an index");
                 continue;
             }
             const Result indexResult = Evaluate(index.get());
+            indexes.push_back(indexResult);
+            if (rank == 0) continue;
             if (!IsInteger(indexResult.type) && indexResult.type != "error")
                 Report("array index must be an integer, got '" + indexResult.type + "'");
         }
         if (rank == 0) {
-            Report("object of type '" + base.type + "' is not an array");
-            Save(expr, {base.symbol, "error", false});
+            const auto members = FindMembers(base.type, IndexerMemberName());
+            const MemberSignature* selected = nullptr;
+            int bestCost = std::numeric_limits<int>::max();
+            bool ambiguous = false;
+            for (const MemberSignature& member : members) {
+                if (member.kind != SymbolKind::Indexer || member.isStatic ||
+                    member.parameterTypes.size() != indexes.size()) continue;
+                int cost = 0;
+                bool compatible = true;
+                for (size_t index = 0; index < indexes.size(); ++index) {
+                    const int conversion = ConversionCost(
+                        member.parameterTypes[index], indexes[index].type);
+                    if (conversion < 0) {
+                        compatible = false;
+                        break;
+                    }
+                    cost += conversion;
+                }
+                if (!compatible) continue;
+                if (cost < bestCost) {
+                    selected = &member;
+                    bestCost = cost;
+                    ambiguous = false;
+                }
+                else if (cost == bestCost) ambiguous = true;
+            }
+            if (!selected) {
+                Report("object of type '" + base.type +
+                    "' is not an array and has no matching indexer", "E_INDEXER_NOT_FOUND");
+                Save(expr, {base.symbol, "error", false});
+                return;
+            }
+            if (ambiguous) {
+                Report("indexer access on type '" + base.type + "' is ambiguous",
+                    "E_AMBIGUOUS_INDEXER", selected->symbol);
+            }
+            if (accessMode == AccessMode::Read) {
+                if (!selected->canRead)
+                    Report("indexer of type '" + base.type + "' is write-only",
+                        "E_INDEXER_WRITE_ONLY", selected->symbol);
+                else RequireAccess(selected->readAccess, selected->owner,
+                    "this", selected->symbol);
+            }
+            else if (accessMode == AccessMode::Write) {
+                if (!selected->canWrite)
+                    Report("indexer of type '" + base.type + "' is read-only",
+                        "E_INDEXER_READ_ONLY", selected->symbol);
+                else RequireAccess(selected->writeAccess, selected->owner,
+                    "this", selected->symbol);
+            }
+            else if (accessMode == AccessMode::Address || accessMode == AccessMode::Delete) {
+                Report("indexers have no addressable storage",
+                    "E_INDEXER_NOT_ADDRESSABLE", selected->symbol);
+            }
+            Save(expr, {selected->symbol, selected->type, selected->canWrite});
+            expressionInfo[expr].parameterTypes = selected->parameterTypes;
         }
         else if (expr->indexes.size() != rank) {
             Report("array access provides " + std::to_string(expr->indexes.size()) +

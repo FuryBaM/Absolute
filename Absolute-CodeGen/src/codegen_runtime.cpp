@@ -1,4 +1,5 @@
 #include "codegen_internal.h"
+#include <llvm/IR/MDBuilder.h>
 
 namespace Absolute {
     llvm::Value* CodeGenerator::Impl::Evaluate(Expression* expression) {
@@ -6,9 +7,19 @@ namespace Absolute {
         value = nullptr;
         valueCreatesManagedOwner = false;
         valueManagedPointee = nullptr;
+        valueCreatesArrayOwner = false;
+        valueArrayOwner = nullptr;
         expression->Accept(visitor);
         if (!value) Fail("expression does not produce a value");
         currentValueType = SemanticType(expression);
+        if (ArrayRankName(currentValueType) > 0 && !valueCreatesArrayOwner) {
+            bool transfersOwner = dynamic_cast<FunctionCallExpr*>(expression) != nullptr;
+            if (transfersOwner) {
+                ArrayView returned = ArrayViewFromValue(value, currentValueType);
+                valueCreatesArrayOwner = true;
+                valueArrayOwner = returned.owner;
+            }
+        }
         return value;
     }
 
@@ -77,8 +88,19 @@ namespace Absolute {
                 builder.CreateStore(llvm::ConstantPointerNull::get(builder.getPtrTy()), variable.address);
                 continue;
             }
+            if (variable.ownsArrayStorage && variable.symbol != transferredOwner) {
+                builder.CreateCall(Free(), {variable.arrayOwner});
+                continue;
+            }
+            if (variable.ownsAggregateResources) {
+                EmitValueCleanup(variable.address, variable.typeName);
+                continue;
+            }
             if (!variable.managedOwner || variable.symbol == transferredOwner) continue;
             llvm::Value* handle = builder.CreateLoad(variable.type, variable.address, "cleanup.handle");
+            llvm::Value* pointee = builder.CreateCall(
+                ManagedGet(false), {handle}, "cleanup.pointee");
+            EmitPointeeCleanup(pointee, variable.typeName);
             builder.CreateCall(ManagedDestroy(), {handle});
             builder.CreateStore(builder.getInt64(0), variable.address);
             if (variable.managedPointee)
@@ -107,6 +129,21 @@ namespace Absolute {
             return &found->second;
         if (const auto found = globals.find(name); found != globals.end())
             return &found->second;
+        return nullptr;
+    }
+
+    CodeGenerator::Impl::Variable* CodeGenerator::Impl::FindVariable(SymbolId symbol) {
+        if (symbol == InvalidSymbolId) return nullptr;
+        for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+            for (auto& [name, variable] : *scope) {
+                (void)name;
+                if (variable.symbol == symbol) return &variable;
+            }
+        }
+        for (auto& [name, variable] : globals) {
+            (void)name;
+            if (variable.symbol == symbol) return &variable;
+        }
         return nullptr;
     }
 
@@ -147,13 +184,28 @@ namespace Absolute {
         return builder.CreateCall(ManagedGet(true), {handle}, "managed.pointee");
     }
 
+    llvm::Value* CodeGenerator::Impl::EvaluateCallArgument(
+        Expression* expression, std::vector<llvm::Value*>& temporaryArrayOwners) {
+        llvm::Value* argument = Evaluate(expression);
+        if (valueCreatesArrayOwner) temporaryArrayOwners.push_back(valueArrayOwner);
+        return argument;
+    }
+
+    void CodeGenerator::Impl::ReleaseArrayTemporaries(
+        const std::vector<llvm::Value*>& owners) {
+        for (llvm::Value* owner : owners) builder.CreateCall(Free(), {owner});
+    }
+
     llvm::Value* CodeGenerator::Impl::BuildArrayDescriptor(const ArrayView& view) {
         llvm::StructType* type = ArrayDescriptorType(view.typeName);
         llvm::Value* descriptor = llvm::UndefValue::get(type);
         descriptor = builder.CreateInsertValue(descriptor, view.address, {0}, "array.data");
+        llvm::Value* owner = view.owner ? view.owner
+            : llvm::ConstantPointerNull::get(builder.getPtrTy());
+        descriptor = builder.CreateInsertValue(descriptor, owner, {1}, "array.owner");
         for (size_t index = 0; index < view.dimensions.size(); ++index)
             descriptor = builder.CreateInsertValue(
-                descriptor, view.dimensions[index], {static_cast<unsigned>(index + 1)}, "array.dimension");
+                descriptor, view.dimensions[index], {static_cast<unsigned>(index + 2)}, "array.dimension");
         return descriptor;
     }
 
@@ -163,20 +215,22 @@ namespace Absolute {
             Fail("array expression does not produce a descriptor");
         ArrayView view;
         view.address = builder.CreateExtractValue(descriptor, {0}, "array.data");
+        view.owner = builder.CreateExtractValue(descriptor, {1}, "array.owner");
         view.elementType = TypeFromName(ArrayElementTypeName(typeName, rank));
         view.typeName = typeName;
         for (size_t index = 0; index < rank; ++index)
             view.dimensions.push_back(builder.CreateExtractValue(
-                descriptor, {static_cast<unsigned>(index + 1)}, "array.dimension"));
+                descriptor, {static_cast<unsigned>(index + 2)}, "array.dimension"));
         return view;
     }
 
     CodeGenerator::Impl::ArrayView CodeGenerator::Impl::ViewOfArray(Expression* expression) {
         if (auto* identifier = dynamic_cast<IdentifierExpr*>(expression)) {
-            Variable& variable = RequireVariable(identifier->name);
-            if (!variable.isArray) Fail("object is not an array");
-            return {variable.address, variable.arrayElementType,
-                variable.typeName, variable.arrayDimensions};
+            if (Variable* variable = FindVariable(identifier->name)) {
+                if (!variable->isArray) Fail("object is not an array");
+                return {variable->address, variable->arrayElementType,
+                    variable->typeName, variable->arrayDimensions, variable->arrayOwner};
+            }
         }
         const std::string typeName = SemanticType(expression);
         return ArrayViewFromValue(Evaluate(expression), typeName);
@@ -189,7 +243,8 @@ namespace Absolute {
             constant && !constant->isZero()) return;
         llvm::BasicBlock* success = llvm::BasicBlock::Create(context, name + ".success", function);
         llvm::BasicBlock* failure = llvm::BasicBlock::Create(context, name + ".failure", function);
-        builder.CreateCondBr(condition, success, failure);
+        builder.CreateCondBr(condition, success, failure,
+            llvm::MDBuilder(context).createBranchWeights(2000, 1));
         builder.SetInsertPoint(failure);
         const std::string message = name == "array.size"
             ? "Array size must be greater than zero"
@@ -359,9 +414,10 @@ namespace Absolute {
             return CallableKey(symbol.name, symbol.parameterTypes);
         if (symbol.genericOrigin != InvalidSymbolId)
             return CallableKey(symbol.name, symbol.parameterTypes);
-        if (symbol.externalFunction || symbol.name == "main" || !analyzer ||
+        if (symbol.externalFunction || symbol.exportedFunction || symbol.name == "main" || !analyzer ||
             analyzer->FunctionOverloadCount(symbol.name) <= 1)
-            return symbol.externalFunction ? symbol.name.substr(symbol.name.rfind('.') + 1) : symbol.name;
+            return (symbol.externalFunction || symbol.exportedFunction)
+                ? symbol.name.substr(symbol.name.rfind('.') + 1) : symbol.name;
         return CallableKey(symbol.name, symbol.parameterTypes);
     }
 

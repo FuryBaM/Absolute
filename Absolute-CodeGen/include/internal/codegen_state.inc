@@ -13,6 +13,10 @@
             std::vector<llvm::Value*> arrayDimensions;
             llvm::AllocaInst* managedPointee = nullptr;
             SymbolId symbol = InvalidSymbolId;
+            llvm::Value* arrayOwner = nullptr;
+            bool ownsArrayStorage = false;
+            SymbolId arrayOwnerSymbol = InvalidSymbolId;
+            bool ownsAggregateResources = false;
         };
 
         struct ArrayView {
@@ -20,6 +24,7 @@
             llvm::Type* elementType = nullptr;
             std::string typeName;
             std::vector<llvm::Value*> dimensions;
+            llvm::Value* owner = nullptr;
         };
 
         struct ClassField {
@@ -57,6 +62,7 @@
             std::vector<VarDeclExpr*> ownStaticPrimitiveFields;
             std::vector<InstanceDeclExpr*> ownStaticObjectFields;
             std::vector<FunctionDeclStmt*> ownMethods;
+            std::vector<PropertyDeclStmt*> ownProperties;
             ConstructorDeclStmt* constructor = nullptr;
             std::vector<ClassField> fields;
             std::unordered_map<std::string, ClassField> fieldByName;
@@ -81,6 +87,7 @@
             std::vector<VarDeclExpr*> ownStaticPrimitiveFields;
             std::vector<InstanceDeclExpr*> ownStaticObjectFields;
             std::vector<FunctionDeclStmt*> ownMethods;
+            std::vector<PropertyDeclStmt*> ownProperties;
             ConstructorDeclStmt* constructor = nullptr;
             std::vector<ClassField> fields;
             std::unordered_map<std::string, ClassField> fieldByName;
@@ -99,8 +106,14 @@
             InterfaceDeclStmt* statement = nullptr;
             std::vector<std::string> parents;
             std::unordered_map<std::string, ClassMethod> methods;
+            std::unordered_map<std::string, std::vector<ClassMethod>> methodContracts;
+            std::unordered_map<std::string, ClassMethod> declaredMethods;
+            std::unordered_map<std::string, ClassMethod> staticMethods;
+            std::vector<StaticField> staticFields;
+            std::unordered_set<std::string> ambiguousDefaults;
             bool finalizing = false;
             bool finalized = false;
+            bool emitted = false;
         };
 
         struct LoopTarget {
@@ -148,7 +161,8 @@
         std::vector<std::string> interfaceOrder;
         std::unordered_set<std::string> enumTypes;
         std::unordered_map<std::string, std::int32_t> enumConstants;
-        unsigned interfaceSlotCount = 0;
+        // Slot zero is reserved for the generated aggregate destructor.
+        unsigned interfaceSlotCount = 1;
         std::vector<LoopTarget> loops;
         std::vector<ExceptionTarget> exceptionTargets;
         std::vector<FinallyTarget> finallyTargets;
@@ -161,10 +175,13 @@
         std::unordered_map<std::string, std::string> functionLinkNames;
         bool valueCreatesManagedOwner = false;
         llvm::Value* valueManagedPointee = nullptr;
+        bool valueCreatesArrayOwner = false;
+        llvm::Value* valueArrayOwner = nullptr;
         std::string currentValueType;
         bool addressMode = false;
         llvm::Value* addressValue = nullptr;
         std::string currentReturnTypeName;
+        llvm::Value* currentReturnStorage = nullptr;
         std::string currentClassName;
         std::unordered_map<std::string, std::string> currentGenericSubstitutions;
         llvm::Value* currentThis = nullptr;

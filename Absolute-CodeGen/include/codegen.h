@@ -51,6 +51,8 @@ namespace Absolute {
         void Visit(CompoundStmt* stmt) override;
         void Visit(FunctionCallStmt* stmt) override;
         void Visit(FunctionDeclStmt* stmt) override;
+        void Visit(PropertyDeclStmt* stmt) override;
+        void Visit(IndexerDeclStmt* stmt) override;
         void Visit(ReturnStmt* stmt) override;
         void Visit(AssignmentStmt* stmt) override;
         void Visit(VarDeclStmt* stmt) override;

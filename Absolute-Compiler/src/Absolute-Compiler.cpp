@@ -239,6 +239,8 @@ namespace {
         void Visit(CompoundStmt*) override {}
         void Visit(FunctionCallStmt*) override {}
         void Visit(FunctionDeclStmt*) override {}
+        void Visit(PropertyDeclStmt*) override {}
+        void Visit(IndexerDeclStmt*) override {}
         void Visit(ReturnStmt*) override {}
         void Visit(AssignmentStmt*) override {}
         void Visit(VarDeclStmt*) override {}

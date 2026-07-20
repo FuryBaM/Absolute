@@ -48,6 +48,8 @@
 
         void DeclareStaticFields(StructInfo& info);
 
+        void DeclareStaticFields(InterfaceInfo& info);
+
         llvm::Function* DeclareConstructorFunction(ClassInfo& info);
 
         llvm::Function* DeclareConstructorFunction(StructInfo& info);
@@ -62,6 +64,10 @@
 
         llvm::Value* ObjectPointer(Expression* expression, const std::string& typeName);
 
+        llvm::Value* EmitPropertyAccessor(Expression* receiver,
+            const std::string& receiverType, const std::string& methodKey,
+            const std::vector<llvm::Value*>& explicitArguments);
+
         llvm::Value* FieldAddress(llvm::Value* object, ClassInfo& info, const ClassField& field);
 
         llvm::Value* FieldAddress(llvm::Value* object, StructInfo& info, const ClassField& field);
@@ -75,3 +81,17 @@
         void InitializeObject(llvm::Value* object, ClassInfo& info);
 
         void InitializeObject(llvm::Value* object, StructInfo& info);
+
+        bool TypeNeedsCleanup(const std::string& typeName);
+
+        llvm::Function* DeclareClassDestructor(ClassInfo& info);
+
+        llvm::Function* DeclareStructDestructor(StructInfo& info);
+
+        void EmitClassDestructor(ClassInfo& info);
+
+        void EmitStructDestructor(StructInfo& info);
+
+        void EmitValueCleanup(llvm::Value* address, const std::string& typeName);
+
+        void EmitPointeeCleanup(llvm::Value* pointer, const std::string& pointerTypeName);

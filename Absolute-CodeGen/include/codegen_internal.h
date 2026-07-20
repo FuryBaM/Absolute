@@ -206,6 +206,7 @@ namespace Absolute {
     struct CodeGenerator::Impl {
 #include "internal/codegen_state.inc"
 #include "internal/codegen_types.inc"
+#include "internal/codegen_abi.inc"
 #include "internal/codegen_runtime.inc"
 #include "internal/codegen_module.inc"
     };

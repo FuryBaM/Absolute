@@ -16,13 +16,106 @@ namespace Absolute {
             return false;
         }
 
-        void DisableLoopUnrolling(llvm::BranchInst* backEdge) {
+        bool ExpressionMayWriteVariable(const Expression* expression, const std::string& variable) {
+            if (!expression) return false;
+            if (const auto* assignment = dynamic_cast<const AssignmentExpr*>(expression)) {
+                if (IdentifierName(assignment->target.get()) == variable) return true;
+                return ExpressionMayWriteVariable(assignment->target.get(), variable) ||
+                    ExpressionMayWriteVariable(assignment->value.get(), variable);
+            }
+            if (const auto* binary = dynamic_cast<const BinaryExpr*>(expression)) {
+                return ExpressionMayWriteVariable(binary->left.get(), variable) ||
+                    ExpressionMayWriteVariable(binary->right.get(), variable);
+            }
+            if (const auto* access = dynamic_cast<const ArrayAccessExpr*>(expression)) {
+                if (ExpressionMayWriteVariable(access->base.get(), variable)) return true;
+                for (const auto& index : access->indexes) {
+                    if (ExpressionMayWriteVariable(index.get(), variable)) return true;
+                }
+                return false;
+            }
+            if (dynamic_cast<const IdentifierExpr*>(expression) ||
+                dynamic_cast<const NumberLiteralExpr*>(expression) ||
+                dynamic_cast<const BooleanLiteralExpr*>(expression) ||
+                dynamic_cast<const StringLiteralExpr*>(expression) ||
+                dynamic_cast<const CharLiteralExpr*>(expression) ||
+                dynamic_cast<const NullExpr*>(expression)) {
+                return false;
+            }
+            // Reject unfamiliar expressions rather than deriving an unsafe range fact.
+            return true;
+        }
+
+        bool StatementMayWriteVariable(const Statement* statement, const std::string& variable) {
+            if (!statement) return false;
+            if (const auto* assignment = dynamic_cast<const AssignmentStmt*>(statement)) {
+                return ExpressionMayWriteVariable(assignment->expr.get(), variable);
+            }
+            if (const auto* single = dynamic_cast<const SingleStatement*>(statement)) {
+                return ExpressionMayWriteVariable(single->expr.get(), variable);
+            }
+            if (const auto* compound = dynamic_cast<const CompoundStmt*>(statement)) {
+                for (const auto& child : compound->statements) {
+                    if (StatementMayWriteVariable(child.get(), variable)) return true;
+                }
+                return false;
+            }
+            if (const auto* conditional = dynamic_cast<const IfStmt*>(statement)) {
+                for (const IfStmt::Branch& branch : conditional->branches) {
+                    if (ExpressionMayWriteVariable(branch.condition.get(), variable) ||
+                        StatementMayWriteVariable(branch.body.get(), variable)) {
+                        return true;
+                    }
+                }
+                return StatementMayWriteVariable(conditional->elseBranch.get(), variable);
+            }
+            return dynamic_cast<const BreakStmt*>(statement) == nullptr &&
+                dynamic_cast<const ContinueStmt*>(statement) == nullptr;
+        }
+
+        std::optional<std::string> UnitDecrementLoopVariable(const WhileStmt& statement) {
+            const auto* condition = dynamic_cast<const BinaryExpr*>(statement.condition.get());
+            const auto* lowerBound = condition
+                ? dynamic_cast<const NumberLiteralExpr*>(condition->right.get()) : nullptr;
+            const std::string variable = condition
+                ? IdentifierName(condition->left.get()) : std::string{};
+            if (!condition || condition->op != ">=" || variable.empty() ||
+                !lowerBound || lowerBound->value != "0") {
+                return std::nullopt;
+            }
+
+            const auto* body = dynamic_cast<const CompoundStmt*>(statement.body.get());
+            if (!body || body->statements.empty()) return std::nullopt;
+            const Statement* last = body->statements.back().get();
+            const auto* decrement = dynamic_cast<const AssignmentStmt*>(last);
+            const auto* single = dynamic_cast<const SingleStatement*>(last);
+            const AssignmentExpr* expression = decrement
+                ? decrement->expr.get()
+                : (single ? dynamic_cast<const AssignmentExpr*>(single->expr.get()) : nullptr);
+            const auto* amount = expression
+                ? dynamic_cast<const NumberLiteralExpr*>(expression->value.get()) : nullptr;
+            if (!expression || expression->op != "-=" ||
+                IdentifierName(expression->target.get()) != variable ||
+                !amount || amount->value != "1") {
+                return std::nullopt;
+            }
+
+            for (size_t index = 0; index + 1 < body->statements.size(); ++index) {
+                if (StatementMayWriteVariable(body->statements[index].get(), variable))
+                    return std::nullopt;
+            }
+            return variable;
+        }
+
+        void SetNestedLoopUnrollCount(llvm::BranchInst* backEdge) {
             if (!backEdge) return;
             llvm::LLVMContext& context = backEdge->getContext();
             llvm::Metadata* operands[] = {
                 nullptr,
                 llvm::MDNode::get(context,
-                    llvm::MDString::get(context, "llvm.loop.unroll.disable"))
+                    {llvm::MDString::get(context, "llvm.loop.unroll.count"),
+                     llvm::ConstantAsMetadata::get(
+                         llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 4))})
             };
             llvm::MDNode* loopId = llvm::MDNode::getDistinct(context, operands);
             loopId->replaceOperandWith(0, loopId);
@@ -57,7 +150,13 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(SingleStatement* stmt) {
-        if (impl->phase == Impl::Phase::EmitBodies && stmt->expr) stmt->expr->Accept(*this);
+        if (impl->phase != Impl::Phase::EmitBodies || !stmt->expr) return;
+        impl->valueCreatesArrayOwner = false;
+        impl->valueArrayOwner = nullptr;
+        if (impl->SemanticType(stmt->expr.get()) == "void") stmt->expr->Accept(*this);
+        else impl->Evaluate(stmt->expr.get());
+        if (impl->valueCreatesArrayOwner)
+            impl->builder.CreateCall(impl->Free(), {impl->valueArrayOwner});
     }
 
     void CodeGenerator::Visit(CompoundStmt* stmt) {
@@ -71,7 +170,13 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(FunctionCallStmt* stmt) {
-        if (impl->phase == Impl::Phase::EmitBodies && stmt->value) stmt->value->Accept(*this);
+        if (impl->phase != Impl::Phase::EmitBodies || !stmt->value) return;
+        impl->valueCreatesArrayOwner = false;
+        impl->valueArrayOwner = nullptr;
+        if (impl->SemanticType(stmt->value.get()) == "void") stmt->value->Accept(*this);
+        else impl->Evaluate(stmt->value.get());
+        if (impl->valueCreatesArrayOwner)
+            impl->builder.CreateCall(impl->Free(), {impl->valueArrayOwner});
     }
 
     void CodeGenerator::Visit(FunctionDeclStmt* stmt) {
@@ -80,18 +185,26 @@ namespace Absolute {
         else if (!stmt->IsExternal()) impl->EmitFunction(*stmt);
     }
 
+    void CodeGenerator::Visit(PropertyDeclStmt* stmt) {
+        (void)stmt;
+    }
+
+    void CodeGenerator::Visit(IndexerDeclStmt* stmt) {
+        (void)stmt;
+    }
+
     void CodeGenerator::Visit(ReturnStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("return outside a function");
-        if (function->getReturnType()->isVoidTy()) {
+        if (function->getReturnType()->isVoidTy() && !impl->currentReturnStorage) {
             impl->EmitTransferCleanups(0, true);
             if (impl->builder.GetInsertBlock()->getTerminator()) return;
             impl->builder.CreateRetVoid();
             return;
         }
         llvm::Value* result = impl->Coerce(
-            impl->Evaluate(stmt->expr.get()), function->getReturnType());
+            impl->Evaluate(stmt->expr.get()), impl->TypeFromName(impl->currentReturnTypeName));
         SymbolId transferredOwner = InvalidSymbolId;
         if (IsManagedPointerTypeName(impl->currentReturnTypeName)) {
             const auto* returnedIdentifier = dynamic_cast<IdentifierExpr*>(stmt->expr.get());
@@ -100,9 +213,20 @@ namespace Absolute {
                 if (returned.managedOwner) transferredOwner = returned.symbol;
             }
         }
+        else if (ArrayRankName(impl->currentReturnTypeName) > 0) {
+            if (Impl::Variable* returned = impl->FindVariable(
+                impl->SemanticSymbol(stmt->expr.get()))) {
+                transferredOwner = returned->ownsArrayStorage
+                    ? returned->symbol : returned->arrayOwnerSymbol;
+            }
+        }
         impl->EmitTransferCleanups(0, true, transferredOwner);
         if (impl->builder.GetInsertBlock()->getTerminator()) return;
-        impl->builder.CreateRet(result);
+        if (impl->currentReturnStorage) {
+            impl->builder.CreateStore(result, impl->currentReturnStorage);
+            impl->builder.CreateRetVoid();
+        }
+        else impl->builder.CreateRet(result);
     }
 
     void CodeGenerator::Visit(AssignmentStmt* stmt) {
@@ -153,7 +277,11 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(InterfaceDeclStmt* stmt) {
-        (void)stmt;
+        if (impl->phase != Impl::Phase::EmitBodies) return;
+        const std::string name = impl->Qualify(stmt->name);
+        auto found = impl->interfaces.find(name);
+        if (found == impl->interfaces.end()) impl->Fail("unregistered interface '" + name + "'");
+        impl->EmitInterfaceBodies(found->second);
     }
 
     void CodeGenerator::Visit(ConstructorDeclStmt* stmt) {
@@ -398,6 +526,7 @@ namespace Absolute {
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("while outside a function");
 
+        const std::optional<std::string> unitDecrementVariable = UnitDecrementLoopVariable(*stmt);
         llvm::BasicBlock* conditionBlock = llvm::BasicBlock::Create(impl->context, "while.condition", function);
         llvm::BasicBlock* bodyBlock = llvm::BasicBlock::Create(impl->context, "while.body", function);
         llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(impl->context, "while.end", function);
@@ -411,15 +540,25 @@ namespace Absolute {
         if (stmt->body) stmt->body->Accept(*this);
         llvm::BasicBlock* backEdgeBlock = impl->builder.GetInsertBlock();
         impl->BranchIfNeeded(conditionBlock);
-        // Replicating a nested loop bloats its control flow and can duplicate
-        // safety checks. Keep LLVM's normal unrolling policy for simple loops.
+        // Four copies amortize outer-loop control without the code-size and
+        // register-pressure regression caused by unrestricted forced unrolling.
         if (ContainsDirectNestedLoop(stmt->body.get())) {
-            DisableLoopUnrolling(llvm::dyn_cast_or_null<llvm::BranchInst>(
+            SetNestedLoopUnrollCount(llvm::dyn_cast_or_null<llvm::BranchInst>(
                 backEdgeBlock ? backEdgeBlock->getTerminator() : nullptr));
         }
         impl->loops.pop_back();
 
         impl->builder.SetInsertPoint(endBlock);
+        if (unitDecrementVariable) {
+            Impl::Variable& variable = impl->RequireVariable(*unitDecrementVariable);
+            if (variable.type->isIntegerTy() && !variable.typeName.starts_with("uint")) {
+                llvm::Value* afterLoop = impl->builder.CreateLoad(
+                    variable.type, variable.address, *unitDecrementVariable + ".after.loop");
+                llvm::Value* lowerBound = llvm::ConstantInt::getSigned(variable.type, -1);
+                impl->builder.CreateAssumption(impl->builder.CreateICmpSGE(
+                    afterLoop, lowerBound, *unitDecrementVariable + ".after.loop.in.range"));
+            }
+        }
     }
 
     void CodeGenerator::Visit(DoWhileStmt* stmt) {

@@ -1,0 +1,48 @@
+class InvalidIndexers {
+    private int32 storage;
+
+    int32 this[int32 index] {
+        get {
+            return storage + index;
+        }
+    }
+
+    int32 this[string key] {
+        set {
+            storage = value;
+        }
+    }
+
+    int32 this[char key] {
+        get {
+            return storage;
+        }
+        private set {
+            storage = value;
+        }
+    }
+}
+
+interface IRequiredIndexer {
+    int32 this[int64 index] {
+        get;
+        set;
+    }
+}
+
+class MissingIndexerSetter : IRequiredIndexer {
+    public int32 this[int64 index] {
+        get {
+            return 0;
+        }
+    }
+}
+
+int32 main() {
+    InvalidIndexers value;
+    value[1] = 1;
+    int32 missingRead = value["write-only"];
+    value['x'] = 2;
+    raw int32* address = &value[1];
+    return missingRead;
+}

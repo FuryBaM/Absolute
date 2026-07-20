@@ -23,32 +23,80 @@ namespace Absolute {
     void Analyzer::ValidateInterfaceImplementation(const std::string& className) {
         const auto found = types.find(className);
         if (found == types.end()) return;
+
+        struct InterfaceRequirement {
+            std::string contract;
+            std::string methodName;
+            MemberSignature signature;
+        };
+        std::unordered_map<std::string, std::vector<InterfaceRequirement>> requirements;
+        const auto requirementKey = [](const std::string& methodName,
+            const std::vector<std::string>& parameterTypes) {
+            std::string key = methodName;
+            for (const std::string& parameterType : parameterTypes)
+                key += "\x1f" + parameterType;
+            return key;
+        };
         for (const std::string& parent : found->second.parents) {
             const auto contract = types.find(parent);
             if (contract == types.end() || contract->second.kind != TypeKind::Interface) continue;
             for (const auto& [methodName, overloads] : VisibleMembers(parent)) {
                 for (const MemberSignature& requirement : overloads) {
-                    if (requirement.kind != SymbolKind::Method) continue;
-                    const auto implementation = FindConcreteMethod(
-                        className, methodName, requirement.parameterTypes);
-                    if (!implementation) {
-                        Report("class '" + className + "' does not implement interface method '" +
-                            parent + "." + methodName + "'");
+                    if (requirement.kind != SymbolKind::Method || requirement.isStatic) continue;
+                    requirements[requirementKey(methodName, requirement.parameterTypes)]
+                        .push_back({parent, methodName, requirement});
+                }
+            }
+        }
+
+        for (const auto& [key, contracts] : requirements) {
+            (void)key;
+            const InterfaceRequirement& first = contracts.front();
+            const auto implementation = FindConcreteMethod(
+                className, first.methodName, first.signature.parameterTypes);
+            if (!implementation) {
+                std::unordered_set<SymbolId> defaults;
+                for (const InterfaceRequirement& contract : contracts) {
+                    FunctionDeclStmt* declaration = FunctionDeclaration(contract.signature.symbol);
+                    if (declaration && declaration->body) defaults.insert(contract.signature.symbol);
+                }
+                if (defaults.empty()) {
+                    Report("class '" + className + "' does not implement interface method '" +
+                        first.contract + "." + first.methodName + "'");
+                }
+                else if (defaults.size() > 1) {
+                    Report("class '" + className + "' inherits multiple default implementations of '" +
+                        first.methodName + "'; declare an override to resolve the ambiguity",
+                        "E_INTERFACE_DEFAULT_AMBIGUOUS");
+                }
+                else {
+                    const Symbol* defaultSymbol = table.Get(*defaults.begin());
+                    for (const InterfaceRequirement& contract : contracts) {
+                        if (defaultSymbol && (defaultSymbol->type != contract.signature.type ||
+                            defaultSymbol->isConst != contract.signature.isConst)) {
+                            Report("default interface method '" + defaultSymbol->name +
+                                "' does not match the contract of interface '" + contract.contract + "'",
+                                "E_INTERFACE_DEFAULT_CONTRACT");
+                        }
                     }
-                    else if (implementation->type != requirement.type) {
-                        Report("class method '" + className + "." + methodName +
-                            "' returns '" + implementation->type + "', but interface '" + parent +
-                            "' requires '" + requirement.type + "'");
-                    }
-                    else if (implementation->isConst != requirement.isConst) {
-                        Report("class method '" + className + "." + methodName +
-                            "' does not match the const contract of interface '" + parent + "'");
-                    }
-                    else if (implementation->access != AccessLevel::Public) {
-                        Report("class method '" + className + "." + methodName +
-                            "' implements interface '" + parent + "' and must be public",
-                            "E_INTERFACE_IMPLEMENTATION_ACCESS", implementation->symbol);
-                    }
+                }
+                continue;
+            }
+            for (const InterfaceRequirement& contract : contracts) {
+                const MemberSignature& requirement = contract.signature;
+                if (implementation->type != requirement.type) {
+                    Report("class method '" + className + "." + contract.methodName +
+                        "' returns '" + implementation->type + "', but interface '" + contract.contract +
+                        "' requires '" + requirement.type + "'");
+                }
+                else if (implementation->isConst != requirement.isConst) {
+                    Report("class method '" + className + "." + contract.methodName +
+                        "' does not match the const contract of interface '" + contract.contract + "'");
+                }
+                else if (implementation->access != AccessLevel::Public) {
+                    Report("class method '" + className + "." + contract.methodName +
+                        "' implements interface '" + contract.contract + "' and must be public",
+                        "E_INTERFACE_IMPLEMENTATION_ACCESS", implementation->symbol);
                 }
             }
         }
@@ -87,7 +135,11 @@ namespace Absolute {
                     Symbol* symbol = table.Get(*declared);
                     symbol->isConst = member.isConst;
                     symbol->isStatic = member.isStatic;
+                    symbol->canRead = member.canRead;
+                    symbol->canWrite = member.canWrite;
                     symbol->access = member.access;
+                    symbol->readAccess = member.readAccess;
+                    symbol->writeAccess = member.writeAccess;
                     if (const Symbol* original = table.Get(member.symbol))
                         symbol->memberOwner = original->memberOwner;
                 }
@@ -147,7 +199,11 @@ namespace Absolute {
                     Symbol* symbol = table.Get(*declared);
                     symbol->isConst = member.isConst;
                     symbol->isStatic = member.isStatic;
+                    symbol->canRead = member.canRead;
+                    symbol->canWrite = member.canWrite;
                     symbol->access = member.access;
+                    symbol->readAccess = member.readAccess;
+                    symbol->writeAccess = member.writeAccess;
                     if (const Symbol* original = table.Get(member.symbol))
                         symbol->memberOwner = original->memberOwner;
                 }
@@ -181,6 +237,9 @@ namespace Absolute {
             const std::string old = currentType;
             currentType = typeName;
             for (const auto& method : stmt->methods) if (method) method->Accept(*this);
+            for (const auto& property : stmt->properties) if (property) property->Accept(*this);
+            for (const auto& indexer : stmt->indexers) if (indexer) indexer->Accept(*this);
+            for (const auto& field : stmt->staticFields) if (field) field->Accept(*this);
             currentType = old;
             return;
         }
@@ -204,14 +263,128 @@ namespace Absolute {
                     Symbol* symbol = table.Get(*declared);
                     symbol->isConst = member.isConst;
                     symbol->isStatic = member.isStatic;
+                    symbol->canRead = member.canRead;
+                    symbol->canWrite = member.canWrite;
                     symbol->access = member.access;
+                    symbol->readAccess = member.readAccess;
+                    symbol->writeAccess = member.writeAccess;
                     if (const Symbol* original = table.Get(member.symbol))
                         symbol->memberOwner = original->memberOwner;
                 }
             }
         for (const auto& method : stmt->methods) if (method) method->Accept(*this);
+        for (const auto& property : stmt->properties) if (property) property->Accept(*this);
+        for (const auto& indexer : stmt->indexers) if (indexer) indexer->Accept(*this);
+        for (const auto& field : stmt->staticFields) if (field) field->Accept(*this);
         table.ExitScope();
         currentType = old;
+    }
+
+    void Analyzer::Visit(PropertyDeclStmt* stmt) {
+        const std::string type = ResolveType(stmt->type.get());
+        if (phase == Phase::CollectDeclarations) {
+            MemberSignature property{SymbolKind::Property, type, {}, InvalidSymbolId,
+                false, false, DeclaredAccess(*stmt), stmt->getter != nullptr,
+                stmt->setter != nullptr};
+            property.readAccess = stmt->getter ? DeclaredAccess(*stmt->getter) : property.access;
+            property.writeAccess = stmt->setter ? DeclaredAccess(*stmt->setter) : property.access;
+            DeclareMember(currentType, stmt->name, std::move(property));
+            if (stmt->getter) stmt->getter->Accept(*this);
+            if (stmt->setter) stmt->setter->Accept(*this);
+            return;
+        }
+
+        ValidateAccessModifiers(*stmt, true, "property");
+        ValidateAttributes(*stmt, "property", false);
+        if (!IsKnownType(type) || type == "void" || type == "auto" || type == "dynamic")
+            Report("property '" + currentType + "." + stmt->name +
+                "' requires a concrete non-void type", "E_PROPERTY_TYPE");
+        if (HasModifier(*stmt, "static"))
+            Report("static properties are not implemented yet", "E_STATIC_PROPERTY_UNSUPPORTED");
+        if (types[currentType].kind == TypeKind::Struct &&
+            DeclaredAccess(*stmt) == AccessLevel::Protected)
+            Report("struct property cannot be protected", "E_PROTECTED_STRUCT_MEMBER");
+        if (types[currentType].kind == TypeKind::Interface &&
+            DeclaredAccess(*stmt) != AccessLevel::Public)
+            Report("interface property '" + currentType + "." + stmt->name +
+                "' must be public", "E_INTERFACE_PROPERTY_ACCESS");
+        const auto accessRank = [](AccessLevel access) {
+            switch (access) {
+            case AccessLevel::Public: return 0;
+            case AccessLevel::Protected: return 1;
+            case AccessLevel::Private: return 2;
+            }
+            return 2;
+        };
+        for (FunctionDeclStmt* accessor :
+            {stmt->getter.get(), stmt->setter.get()}) {
+            if (accessor && accessRank(DeclaredAccess(*accessor)) <
+                accessRank(DeclaredAccess(*stmt))) {
+                Report("accessor of property '" + currentType + "." + stmt->name +
+                    "' cannot be more accessible than the property",
+                    "E_PROPERTY_ACCESSOR_ACCESS");
+            }
+        }
+        if (stmt->getter) stmt->getter->Accept(*this);
+        if (stmt->setter) stmt->setter->Accept(*this);
+    }
+
+    void Analyzer::Visit(IndexerDeclStmt* stmt) {
+        const std::string type = ResolveType(stmt->type.get());
+        const std::vector<std::string> parameters = ResolveParameterTypes(stmt->parameters);
+        if (phase == Phase::CollectDeclarations) {
+            MemberSignature indexer{SymbolKind::Indexer, type, parameters, InvalidSymbolId,
+                false, false, DeclaredAccess(*stmt), stmt->getter != nullptr,
+                stmt->setter != nullptr};
+            indexer.readAccess = stmt->getter ? DeclaredAccess(*stmt->getter) : indexer.access;
+            indexer.writeAccess = stmt->setter ? DeclaredAccess(*stmt->setter) : indexer.access;
+            DeclareMember(currentType, IndexerMemberName(), std::move(indexer));
+            if (stmt->getter) stmt->getter->Accept(*this);
+            if (stmt->setter) stmt->setter->Accept(*this);
+            return;
+        }
+
+        ValidateAccessModifiers(*stmt, true, "indexer");
+        ValidateAttributes(*stmt, "indexer", false);
+        if (!IsKnownType(type) || type == "void" || type == "auto" || type == "dynamic")
+            Report("indexer of '" + currentType +
+                "' requires a concrete non-void element type", "E_INDEXER_TYPE");
+        if (HasModifier(*stmt, "static"))
+            Report("indexers cannot be static", "E_STATIC_INDEXER");
+        if (types[currentType].kind == TypeKind::Struct &&
+            DeclaredAccess(*stmt) == AccessLevel::Protected)
+            Report("struct indexer cannot be protected", "E_PROTECTED_STRUCT_MEMBER");
+        if (types[currentType].kind == TypeKind::Interface &&
+            DeclaredAccess(*stmt) != AccessLevel::Public)
+            Report("interface indexer of '" + currentType + "' must be public",
+                "E_INTERFACE_INDEXER_ACCESS");
+        std::unordered_set<std::string> parameterNames;
+        for (const auto& parameter : stmt->parameters) {
+            const std::string name = parameter ? ExtractIdentifier(parameter->name.get()) : std::string{};
+            if (name.empty() || !parameterNames.insert(name).second)
+                Report("indexer of '" + currentType +
+                    "' has a duplicate or invalid parameter name", "E_INDEXER_PARAMETER");
+            if (parameter && parameter->value)
+                Report("indexer parameters cannot have default values", "E_INDEXER_DEFAULT_PARAMETER");
+        }
+        const auto accessRank = [](AccessLevel access) {
+            switch (access) {
+            case AccessLevel::Public: return 0;
+            case AccessLevel::Protected: return 1;
+            case AccessLevel::Private: return 2;
+            }
+            return 2;
+        };
+        for (FunctionDeclStmt* accessor : {stmt->getter.get(), stmt->setter.get()}) {
+            if (accessor && accessRank(DeclaredAccess(*accessor)) <
+                accessRank(DeclaredAccess(*stmt))) {
+                Report("accessor of indexer in '" + currentType +
+                    "' cannot be more accessible than the indexer",
+                    "E_INDEXER_ACCESSOR_ACCESS");
+            }
+        }
+        if (stmt->getter) stmt->getter->Accept(*this);
+        if (stmt->setter) stmt->setter->Accept(*this);
     }
 
     void Analyzer::Visit(ConstructorDeclStmt* stmt) {

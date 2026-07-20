@@ -25,13 +25,33 @@ namespace Absolute {
         Consume(TokenType::BRACKET, "{");
         EnterScope(ScopeType::Interface, identifier->value);
         std::vector<std::unique_ptr<FunctionDeclStmt>> methods;
+        std::vector<std::unique_ptr<PropertyDeclStmt>> properties;
+        std::vector<std::unique_ptr<IndexerDeclStmt>> indexers;
+        std::vector<std::unique_ptr<VarDeclStmt>> staticFields;
         try {
             while (CurrentToken() && !(CurrentToken()->type == TokenType::BRACKET &&
                 CurrentToken()->value == "}")) {
                 ParseAttributes();
                 ParseModifiers();
+                if (LooksLikeIndexerDeclaration()) {
+                    indexers.push_back(ParseIndexerDeclaration());
+                    continue;
+                }
+                if (LooksLikePropertyDeclaration()) {
+                    properties.push_back(ParsePropertyDeclaration());
+                    continue;
+                }
+                const bool staticMember = std::any_of(
+                    modifiers.begin(), modifiers.end(), [](const Token& modifier) {
+                        return modifier.value == "static";
+                    });
+                if (staticMember && !LooksLikeFunctionDeclaration()) {
+                    staticFields.push_back(ParseVarDeclaration());
+                    continue;
+                }
                 if (!LooksLikeFunctionDeclaration()) {
-                    ReportSyntaxError(CurrentToken(), "Interfaces may only contain method signatures");
+                    ReportSyntaxError(CurrentToken(),
+                        "Interfaces may only contain methods, properties, indexers, and static fields");
                     throw std::runtime_error("Invalid interface member");
                 }
                 std::vector<Token> methodModifiers = modifiers;
@@ -43,10 +63,23 @@ namespace Absolute {
                     CurrentToken()->value == "const") {
                     methodModifiers.push_back(*Consume(TokenType::KEYWORD, "const"));
                 }
-                Consume(TokenType::DELIMITER, ";");
+                std::unique_ptr<Statement> body;
+                if (CurrentToken() && CurrentToken()->type == TokenType::DELIMITER &&
+                    CurrentToken()->value == ";") {
+                    Consume(TokenType::DELIMITER, ";");
+                }
+                else if (CurrentToken() && CurrentToken()->type == TokenType::BRACKET &&
+                    CurrentToken()->value == "{") {
+                    body = ParseCompoundStatement();
+                }
+                else {
+                    ReportSyntaxError(CurrentToken(),
+                        "Expected ';' or a default interface method body");
+                    throw std::runtime_error("Invalid interface method declaration");
+                }
                 auto method = std::make_unique<FunctionDeclStmt>(
                     std::move(returnType), std::make_unique<Token>(*methodName),
-                    std::move(parameters), nullptr);
+                    std::move(parameters), std::move(body));
                 method->modifiers = std::move(methodModifiers);
                 method->attributes = std::move(methodAttributes);
                 methods.push_back(std::move(method));
@@ -64,7 +97,8 @@ namespace Absolute {
         ExitScope();
 
         auto statement = std::make_unique<InterfaceDeclStmt>(
-            identifier->value, std::move(parents), std::move(methods));
+            identifier->value, std::move(parents), std::move(methods),
+            std::move(properties), std::move(indexers), std::move(staticFields));
         statement->modifiers = std::move(declarationModifiers);
         statement->attributes = std::move(declarationAttributes);
         return statement;

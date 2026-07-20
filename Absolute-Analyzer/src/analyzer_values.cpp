@@ -6,11 +6,21 @@ namespace Absolute {
         accessMode = AccessMode::Write;
         const Result target = Evaluate(expr->target.get());
         accessMode = previousAccess;
+        if (expr->op != "=") {
+            const Symbol* symbol = table.Get(target.symbol);
+            if (symbol && (symbol->kind == SymbolKind::Property ||
+                symbol->kind == SymbolKind::Indexer) && !symbol->canRead)
+                Report("compound assignment requires a readable property or indexer",
+                    "E_PROPERTY_COMPOUND_REQUIRES_GETTER", target.symbol);
+        }
         const Result value = EvaluateExpected(expr->value.get(), target.type);
+        const Symbol* targetSymbol = table.Get(target.symbol);
         if (!target.isLValue) Report("assignment target is not assignable");
         CheckMutableTarget(expr->target.get(), target, "assignment");
         if (ArrayRank(target.type) > 0 &&
-            dynamic_cast<MemberAccessExpr*>(expr->target.get()) == nullptr)
+            dynamic_cast<MemberAccessExpr*>(expr->target.get()) == nullptr &&
+            (!targetSymbol || (targetSymbol->kind != SymbolKind::Field &&
+                targetSymbol->kind != SymbolKind::Property)))
             Report("array variables cannot be reassigned; assign an element or declare a new array view");
         if (ArrayRank(target.type) > 0 && expr->op != "=")
             Report("array fields only support direct '=' assignment");
@@ -18,6 +28,31 @@ namespace Absolute {
             Report("cannot assign '" + value.type + "' to '" + target.type + "'");
         if (IsTaskType(target.type))
             Report("tasks cannot be reassigned or copied", "E_TASK_ASSIGNMENT", target.symbol);
+        const bool owningField = targetSymbol &&
+            (targetSymbol->kind == SymbolKind::Field ||
+             targetSymbol->kind == SymbolKind::Property);
+        if (owningField && IsManagedPointerType(target.type) &&
+            value.type != "null" && !value.createsManagedOwner) {
+            Report("managed resource fields require a fresh owner or null; "
+                "store a copy/owner instead of a subscriber",
+                "E_RESOURCE_FIELD_REQUIRES_OWNER", target.symbol);
+        }
+        if (owningField && ArrayRank(target.type) > 0) {
+            bool transfersOwner = IsExplicitArrayCopy(expr->value.get());
+            if (const Symbol* source = table.Get(value.symbol)) {
+                transfersOwner = transfersOwner || source->scopeDepth == 0 ||
+                    source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;
+            }
+            if (!transfersOwner)
+                Report("array resource fields require copy(...), a returned array, or a global view",
+                    "E_ARRAY_FIELD_REQUIRES_OWNER", target.symbol);
+        }
+        if (ArrayRank(target.type) == 0 && !IsPointerType(target.type) &&
+            TypeOwnsResources(target.type)) {
+            Report("resource-owning aggregate '" + target.type +
+                "' cannot be copied; explicit move semantics are not implemented yet",
+                "E_RESOURCE_AGGREGATE_COPY", target.symbol);
+        }
         if (IsManagedPointerType(target.type)) {
             if (Symbol* symbol = table.Get(target.symbol)) {
                 const bool assignsOwner = value.createsManagedOwner;
@@ -82,7 +117,7 @@ namespace Absolute {
             return;
         }
         if (expr->isStatic && !fieldDeclaration)
-            Report("static field '" + name + "' must be declared inside a class or struct",
+            Report("static field '" + name + "' must be declared inside a class, struct, or interface",
                 "E_STATIC_NON_MEMBER_FIELD");
         if (expr->isStatic && !currentType.empty() &&
             !types[currentType].genericParameters.empty())
@@ -240,7 +275,7 @@ namespace Absolute {
 
         const SymbolId nonFieldQualifiedId = LookupSymbol(qualifiedName);
         if (const Symbol* symbol = table.Get(nonFieldQualifiedId);
-            symbol && symbol->kind != SymbolKind::Field) {
+            symbol && symbol->kind != SymbolKind::Field && symbol->kind != SymbolKind::Property) {
             const bool isValue = symbol->kind == SymbolKind::Variable ||
                 symbol->kind == SymbolKind::Parameter;
             if (!isValue && symbol->kind != SymbolKind::Function && symbol->kind != SymbolKind::Method)
@@ -267,8 +302,10 @@ namespace Absolute {
             }
             if (std::any_of(members.begin(), members.end(), [](const MemberSignature& member) {
                 return member.kind == SymbolKind::Field && !member.isStatic;
+            }) || std::any_of(members.begin(), members.end(), [](const MemberSignature& member) {
+                return member.kind == SymbolKind::Property && !member.isStatic;
             }))
-                Report("instance field '" + expr->member + "' requires an object",
+                Report("instance member '" + expr->member + "' requires an object",
                     "E_INSTANCE_MEMBER_ON_TYPE");
             else
                 Report("type '" + typeReceiverName + "' has no static field '" + expr->member + "'");
@@ -279,12 +316,27 @@ namespace Absolute {
         const SymbolId qualifiedId = LookupSymbol(qualifiedName);
         if (const Symbol* symbol = table.Get(qualifiedId)) {
             const bool isValue = symbol->kind == SymbolKind::Variable || symbol->kind == SymbolKind::Parameter ||
-                symbol->kind == SymbolKind::Field;
+                symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Property;
             if (!isValue && symbol->kind != SymbolKind::Function && symbol->kind != SymbolKind::Method)
                 Report("object '" + qualifiedName + "' is not a value");
             callable = symbol->kind == SymbolKind::Function || symbol->kind == SymbolKind::Method;
             callableParameters = symbol->parameterTypes;
-            Save(expr, {qualifiedId, symbol->type, isValue});
+            if (symbol->kind == SymbolKind::Property) {
+                const AccessLevel accessorAccess = accessMode == AccessMode::Write
+                    ? symbol->writeAccess : symbol->readAccess;
+                RequireAccess(accessorAccess, symbol->memberOwner, expr->member, symbol->id);
+                if (accessMode == AccessMode::Read && !symbol->canRead)
+                    Report("property '" + expr->member + "' is write-only",
+                        "E_PROPERTY_WRITE_ONLY", symbol->id);
+                else if (accessMode == AccessMode::Write && !symbol->canWrite)
+                    Report("property '" + expr->member + "' is read-only",
+                        "E_PROPERTY_READ_ONLY", symbol->id);
+                else if (accessMode == AccessMode::Address || accessMode == AccessMode::Delete)
+                    Report("property '" + expr->member + "' has no addressable storage",
+                        "E_PROPERTY_NOT_ADDRESSABLE", symbol->id);
+            }
+            Save(expr, {qualifiedId, symbol->type,
+                symbol->kind == SymbolKind::Property ? symbol->canWrite : isValue});
             return;
         }
 
@@ -298,6 +350,27 @@ namespace Absolute {
                 "E_MAYBE_INVALID_POINTER_ACCESS", base.symbol);
         }
         const auto members = FindMembers(base.type, expr->member);
+        const auto property = std::find_if(members.begin(), members.end(), [](const MemberSignature& member) {
+            return member.kind == SymbolKind::Property && !member.isStatic;
+        });
+        if (property != members.end()) {
+            RequireAccess(accessMode == AccessMode::Write
+                ? property->writeAccess : property->readAccess, property->owner,
+                expr->member, property->symbol);
+            if (accessMode == AccessMode::Read && !property->canRead)
+                Report("property '" + expr->member + "' is write-only",
+                    "E_PROPERTY_WRITE_ONLY", property->symbol);
+            else if (accessMode == AccessMode::Write && !property->canWrite)
+                Report("property '" + expr->member + "' is read-only",
+                    "E_PROPERTY_READ_ONLY", property->symbol);
+            else if (accessMode == AccessMode::Address || accessMode == AccessMode::Delete)
+                Report("property '" + expr->member + "' has no addressable storage",
+                    "E_PROPERTY_NOT_ADDRESSABLE", property->symbol);
+            callable = false;
+            callableParameters.clear();
+            Save(expr, {property->symbol, property->type, property->canWrite});
+            return;
+        }
         const auto field = std::find_if(members.begin(), members.end(), [](const MemberSignature& member) {
             return member.kind == SymbolKind::Field && !member.isStatic;
         });
@@ -532,6 +605,12 @@ namespace Absolute {
         if (expr->value) value = Evaluate(expr->value.get());
         if (expr->value && !IsAssignable(type, value.type))
             Report("initializer of '" + name + "' has type '" + value.type + "', expected '" + type + "'");
+        if (expr->value && ArrayRank(type) == 0 && !IsPointerType(type) &&
+            TypeOwnsResources(type))
+            Report("resource-owning aggregate '" + type +
+                "' cannot be copied into '" + name +
+                "'; explicit move semantics are not implemented yet",
+                "E_RESOURCE_AGGREGATE_COPY", value.symbol);
         if (expr->isConst && currentType.empty() && !expr->value)
             Report("const variable '" + name + "' requires an initializer",
                 "E_CONST_REQUIRES_INITIALIZER");
@@ -627,6 +706,11 @@ namespace Absolute {
         if (expr->op == "++" || expr->op == "--") {
             if (!operand.isLValue || !IsNumeric(operand.type))
                 Report("operator '" + expr->op + "' requires an assignable numeric operand");
+            const Symbol* symbol = table.Get(operand.symbol);
+            if (symbol && (symbol->kind == SymbolKind::Property ||
+                symbol->kind == SymbolKind::Indexer) && !symbol->canRead)
+                Report("operator '" + expr->op + "' requires a readable property or indexer",
+                    "E_PROPERTY_COMPOUND_REQUIRES_GETTER", operand.symbol);
             CheckMutableTarget(expr->operand.get(), operand, "operator '" + expr->op + "'");
         }
         else if (expr->op == "!" && !IsConditionType(operand.type)) Report("operator '!' requires a boolean-compatible operand");
@@ -642,6 +726,11 @@ namespace Absolute {
         accessMode = previousAccess;
         if (!operand.isLValue || !IsNumeric(operand.type))
             Report("operator '" + expr->op + "' requires an assignable numeric operand");
+        const Symbol* symbol = table.Get(operand.symbol);
+        if (symbol && (symbol->kind == SymbolKind::Property ||
+            symbol->kind == SymbolKind::Indexer) && !symbol->canRead)
+            Report("operator '" + expr->op + "' requires a readable property or indexer",
+                "E_PROPERTY_COMPOUND_REQUIRES_GETTER", operand.symbol);
         CheckMutableTarget(expr->operand.get(), operand, "operator '" + expr->op + "'");
         Save(expr, {operand.symbol, operand.type, false});
     }

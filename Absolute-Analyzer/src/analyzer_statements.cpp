@@ -108,12 +108,17 @@ namespace Absolute {
                 if (parameter->value)
                     Report("interface methods cannot declare default parameter values");
             }
-            if (stmt->body) Report("interface methods cannot have a body");
-            if (HasModifier(*stmt, "static") || HasModifier(*stmt, "extension") ||
-                HasModifier(*stmt, "async") || HasModifier(*stmt, "override") ||
+            const bool staticMethod = HasModifier(*stmt, "static");
+            if (HasModifier(*stmt, "extension") || HasModifier(*stmt, "async") ||
+                HasModifier(*stmt, "override") ||
                 HasModifier(*stmt, "sealed"))
                 Report("interface method '" + currentType + "." + stmt->name->value +
                     "' has an unsupported modifier");
+            if (staticMethod && !stmt->body)
+                Report("static interface method '" + currentType + "." +
+                    stmt->name->value + "' requires a body",
+                    "E_STATIC_INTERFACE_METHOD_BODY");
+            if (stmt->body) ResolveFunction(*stmt, SymbolKind::Method);
         }
         else {
             ValidateAccessModifiers(*stmt, !currentType.empty(),
@@ -139,6 +144,12 @@ namespace Absolute {
         const Result value = EvaluateExpected(stmt->expr.get(), currentReturnType);
         if (!IsAssignable(currentReturnType, value.type))
             Report("return type '" + value.type + "' does not match '" + currentReturnType + "'");
+        if (ArrayRank(currentReturnType) == 0 && !IsPointerType(currentReturnType) &&
+            TypeOwnsResources(currentReturnType)) {
+            Report("resource-owning aggregate '" + currentReturnType +
+                "' cannot be returned by value; explicit move semantics are not implemented yet",
+                "E_RESOURCE_AGGREGATE_RETURN", value.symbol);
+        }
         if (ArrayRank(currentReturnType) > 0 && value.type != "error") {
             bool storageEscapes = IsExplicitArrayCopy(stmt->expr.get());
             if (const Symbol* symbol = table.Get(value.symbol)) {
@@ -174,6 +185,13 @@ namespace Absolute {
             if (memberDeclaration && types[currentType].kind == TypeKind::Struct &&
                 DeclaredAccess(*stmt) == AccessLevel::Protected)
                 Report("struct field cannot be protected", "E_PROTECTED_STRUCT_MEMBER");
+            if (memberDeclaration && types[currentType].kind == TypeKind::Interface) {
+                if (!stmt->expr || !stmt->expr->isStatic)
+                    Report("interface fields must be static", "E_INTERFACE_INSTANCE_FIELD");
+                if (DeclaredAccess(*stmt) != AccessLevel::Public)
+                    Report("interface static fields must be public",
+                        "E_INTERFACE_STATIC_FIELD_ACCESS");
+            }
         }
         const AccessLevel oldAccess = pendingMemberAccess;
         if (memberDeclaration) pendingMemberAccess = DeclaredAccess(*stmt);

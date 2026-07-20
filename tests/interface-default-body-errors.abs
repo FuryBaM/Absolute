@@ -1,0 +1,12 @@
+interface IInvalidDefault {
+    int32 value() {
+        return "not an integer";
+    }
+}
+
+class UsesInvalidDefault : IInvalidDefault {
+}
+
+int32 main() {
+    return 0;
+}
