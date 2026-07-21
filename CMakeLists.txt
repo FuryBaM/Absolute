@@ -335,6 +335,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generics-types.abs"
     )
     add_test(
+        NAME absolute.iterators
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/iterators.abs"
+    )
+    add_test(
         NAME absolute.generics-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generics-errors.abs"
     )

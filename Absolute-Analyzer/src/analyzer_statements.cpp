@@ -669,14 +669,56 @@ namespace Absolute {
         PushKeepScope();
         PushValueFlowScope();
         const Result iterable = Evaluate(stmt->iterable.get());
-        if (!iterable.type.ends_with("[]") && iterable.type != "error") Report("for-each source must be an array");
-        else if (ArrayRank(iterable.type) != 1 && iterable.type != "error")
-            Report("for-each currently requires a one-dimensional array or slice");
+        bool isArray = iterable.type.ends_with("[]");
+        std::string elementType = "error";
+        
+        if (isArray) {
+            if (ArrayRank(iterable.type) != 1 && iterable.type != "error")
+                Report("for-each currently requires a one-dimensional array or slice");
+            else if (iterable.type != "error") elementType = ArrayElementType(iterable.type);
+        } else if (iterable.type != "error") {
+            const auto iterateMembers = FindMembers(iterable.type, "iterate");
+            const auto iterateMethod = std::find_if(iterateMembers.begin(), iterateMembers.end(),
+                [](const MemberSignature& m) { return m.kind == SymbolKind::Method; });
+            
+            if (iterateMethod == iterateMembers.end()) {
+                Report("for-each source '" + iterable.type + "' requires an 'iterate()' method or must be an array");
+            } else {
+                if (iterateMethod->parameterTypes.size() > 0)
+                    Report("'iterate' method on '" + iterable.type + "' must take 0 arguments");
+                std::string iteratorType = iterateMethod->type;
+                
+                const auto nextMembers = FindMembers(iteratorType, "next");
+                const auto nextMethod = std::find_if(nextMembers.begin(), nextMembers.end(),
+                    [](const MemberSignature& m) { return m.kind == SymbolKind::Method; });
+                if (nextMethod == nextMembers.end())
+                    Report("iterator '" + iteratorType + "' requires a 'next()' method");
+                else if (nextMethod->type != "bool")
+                    Report("'next()' method on '" + iteratorType + "' must return bool");
+                else if (nextMethod->parameterTypes.size() > 0)
+                    Report("'next()' method on '" + iteratorType + "' must take 0 arguments");
+                
+                const auto valueMembers = FindMembers(iteratorType, "value");
+                const auto valueProperty = std::find_if(valueMembers.begin(), valueMembers.end(),
+                    [](const MemberSignature& m) { return m.kind == SymbolKind::Property; });
+                const auto valueMethod = std::find_if(valueMembers.begin(), valueMembers.end(),
+                    [](const MemberSignature& m) { return m.kind == SymbolKind::Method; });
+                
+                if (valueProperty != valueMembers.end()) {
+                    elementType = valueProperty->type;
+                } else if (valueMethod != valueMembers.end()) {
+                    if (valueMethod->parameterTypes.size() > 0)
+                        Report("'value()' method on '" + iteratorType + "' must take 0 arguments");
+                    elementType = valueMethod->type;
+                } else {
+                    Report("iterator '" + iteratorType + "' requires a 'value' property or 'value()' method");
+                }
+            }
+        }
+        
         AcceptIfPresent(stmt->var, *this);
         if (stmt->var) {
             if (const ExpressionInfo* variable = GetExpressionInfo(*stmt->var)) {
-                const std::string elementType = ArrayRank(iterable.type) == 1
-                    ? ArrayElementType(iterable.type) : "error";
                 if (!IsAssignable(variable->type, elementType))
                     Report("for-each variable has type '" + variable->type +
                         "', expected '" + elementType + "'");
