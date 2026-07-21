@@ -27,7 +27,13 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="src\analyzer_access.cpp" />
+    <ClCompile Include="src\analyzer_operators.cpp" />
+    <ClCompile Include="src\analyzer_statements.cpp" />
+    <ClCompile Include="src\analyzer_values.cpp" />
+    <ClCompile Include="src\symbol_table.cpp" />
     <ClCompile Include="src\type.cpp" />
+    <ClCompile Include="src\type_declarations.cpp" />
     <ClCompile Include="src\variable.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -118,6 +124,7 @@
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>analyzer_pch.h</PrecompiledHeaderFile>
+      <ForcedIncludeFiles>analyzer_pch.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <AdditionalIncludeDirectories>$(SolutionDir)Absolute-Parser\include;$(ProjectDir)include;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
@@ -141,6 +148,7 @@
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>analyzer_pch.h</PrecompiledHeaderFile>
+      <ForcedIncludeFiles>analyzer_pch.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <AdditionalIncludeDirectories>$(SolutionDir)Absolute-Parser\include;$(ProjectDir)include;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
@@ -164,6 +172,7 @@
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>analyzer_pch.h</PrecompiledHeaderFile>
+      <ForcedIncludeFiles>analyzer_pch.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <AdditionalIncludeDirectories>$(SolutionDir)Absolute-Parser\include;$(ProjectDir)include;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
@@ -187,6 +196,7 @@
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>analyzer_pch.h</PrecompiledHeaderFile>
+      <ForcedIncludeFiles>analyzer_pch.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <AdditionalIncludeDirectories>$(SolutionDir)Absolute-Parser\include;$(ProjectDir)include;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>

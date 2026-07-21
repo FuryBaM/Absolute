@@ -59,21 +59,28 @@
     <ClCompile Include="src\parser\parser_assignment.cpp" />
     <ClCompile Include="src\parser\parser_binary.cpp" />
     <ClCompile Include="src\parser\parser_cast.cpp" />
+    <ClCompile Include="src\parser\parser_alias.cpp" />
     <ClCompile Include="src\parser\parser_class.cpp" />
+    <ClCompile Include="src\parser\parser_cleanup.cpp" />
     <ClCompile Include="src\parser\parser_constructor.cpp" />
     <ClCompile Include="src\parser\parser_destructor.cpp" />
     <ClCompile Include="src\parser\parser_enum.cpp" />
+    <ClCompile Include="src\parser\parser_exceptions.cpp" />
     <ClCompile Include="src\parser\parser_function.cpp" />
     <ClCompile Include="src\parser\parser_identifier.cpp" />
     <ClCompile Include="src\parser\parser_if_else.cpp" />
+    <ClCompile Include="src\parser\parser_indexer.cpp" />
     <ClCompile Include="src\parser\parser_instance.cpp" />
+    <ClCompile Include="src\parser\parser_interface.cpp" />
     <ClCompile Include="src\parser\parser_literals.cpp" />
     <ClCompile Include="src\parser\parser_loops.cpp" />
     <ClCompile Include="src\parser\parser_member.cpp" />
     <ClCompile Include="src\parser\parser_modifiers.cpp" />
     <ClCompile Include="src\parser\parser_module.cpp" />
     <ClCompile Include="src\parser\parser_parameters.cpp" />
+    <ClCompile Include="src\parser\parser_property.cpp" />
     <ClCompile Include="src\parser\parser_struct.cpp" />
+    <ClCompile Include="src\parser\parser_switch.cpp" />
     <ClCompile Include="src\parser\parser_template.cpp" />
     <ClCompile Include="src\parser\parser_ternary.cpp" />
     <ClCompile Include="src\parser\parser_type.cpp" />
@@ -171,6 +178,7 @@
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>parser_pch.h</PrecompiledHeaderFile>
+      <ForcedIncludeFiles>parser_pch.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <AdditionalIncludeDirectories>$(ProjectDir)src\parser;$(ProjectDir)src;$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
@@ -190,6 +198,7 @@
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>parser_pch.h</PrecompiledHeaderFile>
+      <ForcedIncludeFiles>parser_pch.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <BufferSecurityCheck>false</BufferSecurityCheck>
@@ -219,6 +228,7 @@
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>parser_pch.h</PrecompiledHeaderFile>
+      <ForcedIncludeFiles>parser_pch.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <AdditionalIncludeDirectories>$(ProjectDir)src\parser;$(ProjectDir)src;$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
@@ -238,6 +248,7 @@
       <LanguageStandard_C>stdclatest</LanguageStandard_C>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>parser_pch.h</PrecompiledHeaderFile>
+      <ForcedIncludeFiles>parser_pch.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <BufferSecurityCheck>false</BufferSecurityCheck>
