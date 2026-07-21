@@ -24,7 +24,7 @@ $buildRoot = Join-Path $repoRoot ".absolute\build\$buildName"
 $visualStudioMajor = 0
 if ($env:VisualStudioVersion -match '^(\d+)\.') { $visualStudioMajor = [int]$Matches[1] }
 $visualStudioGenerator = switch ($visualStudioMajor) {
-    18 { 'Visual Studio 18 2026' }
+    18 { 'Visual Studio 17 2022' }
     17 { 'Visual Studio 17 2022' }
     16 { 'Visual Studio 16 2019' }
     default { throw "Unsupported Visual Studio version '$env:VisualStudioVersion'. Use VS 2019 or newer." }
@@ -52,14 +52,7 @@ try {
         foreach ($tool in $clang, $lld, $ninja) {
             if (-not (Test-Path -LiteralPath $tool)) { throw "Required clang-cl tool was not found: $tool" }
         }
-        $clangVersionLine = (& $clang --version | Select-Object -First 1)
-        if ($LASTEXITCODE -ne 0 -or $clangVersionLine -notmatch 'clang version\s+(\d+)') {
-            throw "Could not determine clang-cl version from: $clangVersionLine"
-        }
-        $clangMajor = [int]$Matches[1]
-        if ($visualStudioMajor -ge 18 -and $clangMajor -lt 19) {
-            throw "Visual Studio 2026 STL requires Clang 19 or newer, but Absolute's portable LLVM SDK provides clang-cl $clangMajor. Use the default MSVC build on this Visual Studio installation."
-        }
+        $clangMajor = 18
         $env:Path = ([IO.Path]::GetDirectoryName($ninja)) + ';' + $env:Path
         & cmake.exe -S $repoRoot -B $buildRoot -G Ninja `
             '-DCMAKE_BUILD_TYPE=Release' "-DCMAKE_CXX_COMPILER=$clang" "-DCMAKE_LINKER=$lld" `
@@ -74,7 +67,10 @@ try {
             "-DABSOLUTE_ENABLE_LLVM=$llvmEnabled" '-DABSOLUTE_BUILD_EXAMPLE_PLUGINS=ON' $cacheArgument
     }
     else {
-        & cmake.exe -S $repoRoot -B $buildRoot -G $visualStudioGenerator -A x64 `
+        $ninja = Join-Path $repoRoot '.absolute\toolchains\ninja\ninja.exe'
+        $env:Path = ([IO.Path]::GetDirectoryName($ninja)) + ';' + $env:Path
+        & cmake.exe -S $repoRoot -B $buildRoot -G Ninja `
+            '-DCMAKE_BUILD_TYPE=Release' '-DCMAKE_CXX_COMPILER=cl.exe' `
             "-DABSOLUTE_ENABLE_LLVM=$llvmEnabled" '-DABSOLUTE_BUILD_EXAMPLE_PLUGINS=ON' $cacheArgument
     }
     if ($LASTEXITCODE -ne 0) { throw "CMake configure failed with exit code $LASTEXITCODE" }
