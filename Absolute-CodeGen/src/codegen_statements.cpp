@@ -278,6 +278,14 @@ namespace Absolute {
 
     void CodeGenerator::Visit(InterfaceDeclStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        if (!stmt->templateParams.empty()) {
+            for (const std::string& specialization : impl->interfaceOrder) {
+                auto found = impl->interfaces.find(specialization);
+                if (found != impl->interfaces.end() && found->second.statement == stmt)
+                    impl->EmitInterfaceBodies(found->second);
+            }
+            return;
+        }
         const std::string name = impl->Qualify(stmt->name);
         auto found = impl->interfaces.find(name);
         if (found == impl->interfaces.end()) impl->Fail("unregistered interface '" + name + "'");

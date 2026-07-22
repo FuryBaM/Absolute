@@ -885,8 +885,9 @@ namespace Absolute {
             const std::string type = ResolveDeclaredType(*parameter);
             parameterTypes.push_back(type);
             if (name.empty()) Report("lambda parameter requires a name", "E_LAMBDA_PARAMETER");
-            else if (!table.Declare(SymbolKind::Parameter, name, type))
-                Report("duplicate lambda parameter '" + name + "'", "E_LAMBDA_PARAMETER");
+            else if (const auto declared = table.Declare(SymbolKind::Parameter, name, type))
+                expressionInfo[parameter.get()] = {*declared, type, true};
+            else Report("duplicate lambda parameter '" + name + "'", "E_LAMBDA_PARAMETER");
             if (parameter->value)
                 Report("lambda parameters cannot have default values", "E_LAMBDA_DEFAULT_PARAMETER");
         }
