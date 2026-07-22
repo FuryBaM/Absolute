@@ -18,7 +18,9 @@
             const std::string& specializedName = {},
             std::unordered_map<std::string, std::string> substitutions = {});
 
-        void CollectInterface(InterfaceDeclStmt& statement, const std::string& nameSpace);
+        void CollectInterface(InterfaceDeclStmt& statement, const std::string& nameSpace,
+            const std::string& specializedName = {},
+            std::unordered_map<std::string, std::string> substitutions = {});
 
         void CollectClassDeclarations(const std::vector<std::unique_ptr<Statement>>& statements,
             const std::string& nameSpace = {});

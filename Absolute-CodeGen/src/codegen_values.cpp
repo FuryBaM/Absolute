@@ -789,4 +789,88 @@ namespace Absolute {
         impl->Fail("generic specialization is not implemented yet");
     }
 
+    void CodeGenerator::Visit(LambdaExpr* expr) {
+        const std::string lambdaType = impl->SemanticType(expr);
+        std::string returnType;
+        std::vector<std::string> parameterTypes;
+        if (!ParseCodegenFunctionType(lambdaType, returnType, parameterTypes))
+            impl->Fail("invalid lambda type '" + lambdaType + "'");
+
+        std::vector<llvm::Type*> llvmParameters;
+        if (impl->AbiReturnOffset(returnType) != 0)
+            llvmParameters.push_back(impl->builder.getPtrTy());
+        for (const std::string& parameter : parameterTypes)
+            llvmParameters.push_back(impl->AbiParameterType(parameter));
+        llvm::FunctionType* functionType = llvm::FunctionType::get(
+            impl->AbiReturnType(returnType), llvmParameters, false);
+        llvm::Function* lambda = llvm::Function::Create(functionType,
+            llvm::Function::InternalLinkage,
+            "__absolute.lambda." + std::to_string(impl->lambdaCounter++), *impl->module);
+        lambda->setCallingConv(llvm::CallingConv::C);
+
+        const auto savedInsertPoint = impl->builder.saveIP();
+        auto savedScopes = std::move(impl->scopes);
+        auto savedLoops = std::move(impl->loops);
+        auto savedExceptionTargets = std::move(impl->exceptionTargets);
+        auto savedFinallyTargets = std::move(impl->finallyTargets);
+        auto savedCaughtExceptions = std::move(impl->caughtExceptions);
+        auto savedDeferredScopes = std::move(impl->deferredScopes);
+        const std::string savedReturnType = impl->currentReturnTypeName;
+        llvm::Value* savedReturnStorage = impl->currentReturnStorage;
+        const std::string savedClass = impl->currentClassName;
+        llvm::Value* savedThis = impl->currentThis;
+
+        llvm::BasicBlock* entry = llvm::BasicBlock::Create(impl->context, "entry", lambda);
+        impl->builder.SetInsertPoint(entry);
+        impl->scopes.clear();
+        impl->loops.clear();
+        impl->exceptionTargets.clear();
+        impl->finallyTargets.clear();
+        impl->caughtExceptions.clear();
+        impl->deferredScopes.clear();
+        impl->PushScope();
+        impl->currentReturnTypeName = returnType;
+        impl->currentClassName.clear();
+        impl->currentThis = nullptr;
+        unsigned argumentIndex = 0;
+        impl->currentReturnStorage = impl->AbiReturnOffset(returnType) != 0
+            ? lambda->getArg(argumentIndex++) : nullptr;
+        for (size_t index = 0; index < expr->parameters.size(); ++index) {
+            llvm::Argument* argument = lambda->getArg(argumentIndex++);
+            argument->setName(IdentifierName(expr->parameters[index]->name.get()));
+            impl->BindCallableParameter(*argument, *expr->parameters[index],
+                parameterTypes[index]);
+        }
+
+        llvm::Value* result = impl->Coerce(
+            impl->Evaluate(expr->body.get()), impl->TypeFromName(returnType));
+        if (impl->currentReturnStorage) {
+            impl->builder.CreateStore(result, impl->currentReturnStorage);
+            impl->builder.CreateRetVoid();
+        }
+        else impl->builder.CreateRet(result);
+
+        std::string verifierMessage;
+        llvm::raw_string_ostream verifierStream(verifierMessage);
+        if (llvm::verifyFunction(*lambda, &verifierStream)) {
+            verifierStream.flush();
+            impl->Fail("invalid lambda: " + verifierMessage);
+        }
+
+        impl->PopScope();
+        impl->scopes = std::move(savedScopes);
+        impl->loops = std::move(savedLoops);
+        impl->exceptionTargets = std::move(savedExceptionTargets);
+        impl->finallyTargets = std::move(savedFinallyTargets);
+        impl->caughtExceptions = std::move(savedCaughtExceptions);
+        impl->deferredScopes = std::move(savedDeferredScopes);
+        impl->currentReturnTypeName = savedReturnType;
+        impl->currentReturnStorage = savedReturnStorage;
+        impl->currentClassName = savedClass;
+        impl->currentThis = savedThis;
+        impl->builder.restoreIP(savedInsertPoint);
+        impl->value = lambda;
+        impl->valueCreatesManagedOwner = false;
+    }
+
 }

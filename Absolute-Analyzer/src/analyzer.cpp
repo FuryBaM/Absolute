@@ -408,6 +408,16 @@ namespace Absolute {
         std::string genericBase;
         std::vector<std::string> genericArguments;
         if (ParseGenericTypeName(name, genericBase, genericArguments)) {
+            if (genericBase == "func") {
+                if (genericArguments.empty() || genericArguments.front() == "auto" ||
+                    genericArguments.front() == "dynamic") return false;
+                if (!IsKnownType(genericArguments.front())) return false;
+                return std::all_of(genericArguments.begin() + 1, genericArguments.end(),
+                    [&](const std::string& argument) {
+                        return argument != "void" && argument != "auto" &&
+                            argument != "dynamic" && IsKnownType(argument);
+                    });
+            }
             const auto definition = types.find(genericBase);
             return definition != types.end() &&
                 definition->second.genericParameters.size() == genericArguments.size() &&
@@ -491,10 +501,26 @@ namespace Absolute {
 
     bool Analyzer::IsDerivedFrom(const std::string& type, const std::string& base) const {
         if (type == base) return true;
-        const auto found = types.find(type);
+        std::string definitionName = type;
+        std::unordered_map<std::string, std::string> substitutions;
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseGenericTypeName(type, genericBase, genericArguments)) {
+            definitionName = genericBase;
+            const auto definition = types.find(definitionName);
+            if (definition != types.end() &&
+                definition->second.genericParameters.size() == genericArguments.size()) {
+                for (size_t index = 0; index < genericArguments.size(); ++index)
+                    substitutions.emplace(definition->second.genericParameters[index],
+                        genericArguments[index]);
+            }
+        }
+        const auto found = types.find(definitionName);
         if (found == types.end()) return false;
-        for (const std::string& parent : found->second.parents)
+        for (const std::string& declaredParent : found->second.parents) {
+            const std::string parent = SubstituteGenericType(declaredParent, substitutions);
             if (parent == base || IsDerivedFrom(parent, base)) return true;
+        }
         return false;
     }
 
@@ -937,15 +963,34 @@ namespace Absolute {
     std::unordered_map<std::string, std::vector<Analyzer::MemberSignature>> Analyzer::VisibleMembers(
         const std::string& owner) const {
         std::unordered_map<std::string, std::vector<MemberSignature>> result;
-        const auto found = types.find(owner);
+        std::string definitionName = owner;
+        std::unordered_map<std::string, std::string> substitutions;
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseGenericTypeName(owner, genericBase, genericArguments)) {
+            definitionName = genericBase;
+            const auto definition = types.find(definitionName);
+            if (definition != types.end() &&
+                definition->second.genericParameters.size() == genericArguments.size()) {
+                for (size_t index = 0; index < genericArguments.size(); ++index)
+                    substitutions.emplace(definition->second.genericParameters[index],
+                        genericArguments[index]);
+            }
+        }
+        const auto found = types.find(definitionName);
         if (found == types.end()) return result;
-        for (const std::string& parent : found->second.parents) {
+        for (const std::string& declaredParent : found->second.parents) {
+            const std::string parent = SubstituteGenericType(declaredParent, substitutions);
             auto inherited = VisibleMembers(parent);
             for (auto& [name, signatures] : inherited)
                 result[name].insert(result[name].end(), signatures.begin(), signatures.end());
         }
         for (const auto& [name, signatures] : found->second.members) {
-            for (const MemberSignature& declared : signatures) {
+            for (const MemberSignature& original : signatures) {
+                MemberSignature declared = original;
+                declared.type = SubstituteGenericType(declared.type, substitutions);
+                for (std::string& parameter : declared.parameterTypes)
+                    parameter = SubstituteGenericType(parameter, substitutions);
                 if (declared.kind == SymbolKind::Method) {
                     auto& visible = result[name];
                     visible.erase(std::remove_if(visible.begin(), visible.end(), [&](const MemberSignature& inherited) {

@@ -2,6 +2,23 @@
 #include "parser.h"
 
 namespace Absolute {
+    std::string Parser::ParseParentTypeName()
+    {
+        const size_t begin = pos;
+        std::unique_ptr<TypeExpr> type = ParseType();
+        if (!type) {
+            ReportSyntaxError(CurrentToken(), "Expected a parent type");
+            throw std::runtime_error("Invalid parent type");
+        }
+        if (dynamic_cast<PointerTypeExpr*>(type.get()) || dynamic_cast<ArrayTypeExpr*>(type.get())) {
+            ReportSyntaxError(CurrentToken(), "A parent must be a named type");
+            throw std::runtime_error("Invalid parent type");
+        }
+        std::string result;
+        for (size_t index = begin; index < pos; ++index) result += tokens[index].value;
+        return result;
+    }
+
     bool Parser::IsTemplateArgumentList(size_t start, size_t* close) const
     {
         if (start >= tokens.size() || tokens[start].value != "<") return false;

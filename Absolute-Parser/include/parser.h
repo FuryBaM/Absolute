@@ -80,6 +80,7 @@ namespace Absolute {
         std::unique_ptr<Expression> ParseSuffixExpr(std::unique_ptr<Expression> base);
         std::unique_ptr<Expression> ParseTernaryExpr(std::unique_ptr<Expression> condition);
         std::unique_ptr<FunctionCallExpr> ParseFunctionCallExpr(std::unique_ptr<Expression> base);
+        std::unique_ptr<LambdaExpr> ParseLambdaExpr();
         std::unique_ptr<VarDeclExpr> ParseVarDeclExpr();
         std::unique_ptr<ArrayExpr> ParseArrayValues();
         std::unique_ptr<Expression> ParseArrayAccess(std::unique_ptr<Expression> base);
@@ -122,5 +123,6 @@ namespace Absolute {
         std::unique_ptr<NamespaceDeclStmt> ParseNamespace();
         std::string ParseQualifiedName();
         std::unique_ptr<TypeExpr> ParsePointerSuffix(std::unique_ptr<TypeExpr> base, bool raw);
+        std::string ParseParentTypeName();
     };
 }

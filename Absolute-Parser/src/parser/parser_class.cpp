@@ -18,8 +18,7 @@ namespace Absolute {
             Consume(TokenType::OPERATOR, ":"); // :
 
             while (true) {
-                Token* parent = Consume(TokenType::IDENTIFIER);
-                parents.push_back(parent->value);
+                parents.push_back(ParseParentTypeName());
 
                 Token* nextToken = CurrentToken();
                 if (nextToken && nextToken->value == ",") {

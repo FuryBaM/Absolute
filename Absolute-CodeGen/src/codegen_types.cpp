@@ -7,6 +7,10 @@ namespace Absolute {
         if (ArrayRankName(name) > 0) return ArrayDescriptorType(name);
 
         if (IsTaskTypeName(name)) return builder.getPtrTy();
+        std::string functionReturn;
+        std::vector<std::string> functionParameters;
+        if (ParseCodegenFunctionType(name, functionReturn, functionParameters))
+            return builder.getPtrTy();
         if (IsManagedPointerTypeName(name)) return builder.getInt64Ty();
         if (IsRawPointerTypeName(name)) return builder.getPtrTy();
         if (name == "int8" || name == "uint8" || name == "char") return builder.getInt8Ty();
@@ -188,21 +192,27 @@ namespace Absolute {
         structOrder.push_back(name);
     }
 
-    void CodeGenerator::Impl::CollectInterface(InterfaceDeclStmt& statement, const std::string& nameSpace) {
-        const std::string name = QualifiedClassName(statement.name, nameSpace);
+    void CodeGenerator::Impl::CollectInterface(InterfaceDeclStmt& statement,
+        const std::string& nameSpace, const std::string& specializedName,
+        std::unordered_map<std::string, std::string> substitutions) {
+        const std::string name = specializedName.empty()
+            ? QualifiedClassName(statement.name, nameSpace) : specializedName;
         if (interfaces.contains(name) || classes.contains(name) || structs.contains(name) || enumTypes.contains(name))
             Fail("duplicate type '" + name + "'");
         InterfaceInfo info;
         info.name = name;
         info.nameSpace = nameSpace;
         info.statement = &statement;
+        info.substitutions = std::move(substitutions);
         for (const std::string& parent : statement.parents)
-            info.parents.push_back(QualifiedClassName(parent, nameSpace));
+            info.parents.push_back(SubstituteCodegenType(
+                QualifiedClassName(parent, nameSpace), info.substitutions));
         for (const auto& declaration : statement.staticFields) {
             if (!declaration || !declaration->expr) continue;
             VarDeclExpr* field = declaration->expr.get();
             info.staticFields.push_back({IdentifierName(field->name.get()),
-                DeclaredTypeName(*field), field->value.get(), field->isConst});
+                SubstituteCodegenType(DeclaredTypeName(*field), info.substitutions),
+                field->value.get(), field->isConst});
         }
         interfaces.emplace(name, std::move(info));
         interfaceOrder.push_back(name);
@@ -251,8 +261,31 @@ namespace Absolute {
                     }
                 }
             }
-            else if (auto* interfaceDeclaration = dynamic_cast<InterfaceDeclStmt*>(statement.get()))
-                CollectInterface(*interfaceDeclaration, nameSpace);
+            else if (auto* interfaceDeclaration = dynamic_cast<InterfaceDeclStmt*>(statement.get())) {
+                if (interfaceDeclaration->templateParams.empty())
+                    CollectInterface(*interfaceDeclaration, nameSpace);
+                else if (analyzer) {
+                    const std::string baseName = QualifiedClassName(
+                        interfaceDeclaration->name, nameSpace);
+                    std::vector<std::string> specializations(
+                        analyzer->InstantiatedGenericTypes().begin(),
+                        analyzer->InstantiatedGenericTypes().end());
+                    std::sort(specializations.begin(), specializations.end());
+                    for (const std::string& specialization : specializations) {
+                        std::string base;
+                        std::vector<std::string> arguments;
+                        if (!ParseCodegenGenericType(specialization, base, arguments) ||
+                            base != baseName ||
+                            arguments.size() != interfaceDeclaration->templateParams.size()) continue;
+                        std::unordered_map<std::string, std::string> substitutions;
+                        for (size_t index = 0; index < arguments.size(); ++index)
+                            substitutions.emplace(
+                                interfaceDeclaration->templateParams[index].value, arguments[index]);
+                        CollectInterface(*interfaceDeclaration, nameSpace, specialization,
+                            std::move(substitutions));
+                    }
+                }
+            }
             else if (auto* enumDeclaration = dynamic_cast<EnumDeclStmt*>(statement.get())) {
                 const std::string name = QualifiedClassName(enumDeclaration->name, nameSpace);
                 if (classes.contains(name) || structs.contains(name) || interfaces.contains(name) ||
@@ -278,8 +311,11 @@ namespace Absolute {
         if (found == interfaces.end()) Fail("unknown interface '" + name + "'");
         InterfaceInfo& info = found->second;
         if (info.finalized) return;
+        if (!info.statement->templateParams.empty() && info.substitutions.empty()) return;
         if (info.finalizing) Fail("cyclic interface inheritance involving '" + name + "'");
         info.finalizing = true;
+        const auto oldSubstitutions = currentGenericSubstitutions;
+        currentGenericSubstitutions = info.substitutions;
 
         for (std::string& parent : info.parents) {
             if (!interfaces.contains(parent)) {
@@ -305,7 +341,8 @@ namespace Absolute {
                     info.methods.emplace(methodKey, method);
                     continue;
                 }
-                if (!SameMethodSignature(*inherited->second.statement, *method.statement))
+                if (inherited->second.returnType != method.returnType ||
+                    inherited->second.parameterTypes != method.parameterTypes)
                     Fail("inherited interface method signature mismatch for '" + name + "." +
                         method.statement->name->value + "'");
                 const bool existingDefault = inherited->second.statement->body != nullptr;
@@ -334,7 +371,8 @@ namespace Absolute {
             if (!statement || !statement->name) continue;
             std::vector<std::string> parameterTypes;
             for (const auto& parameter : statement->parameters)
-                parameterTypes.push_back(DeclaredTypeName(*parameter));
+                parameterTypes.push_back(SubstituteCodegenType(
+                    DeclaredTypeName(*parameter), info.substitutions));
             const std::string methodKey = CallableKey(statement->name->value, parameterTypes);
             const bool staticMethod = HasModifier(*statement, "static");
             if (staticMethod) {
@@ -342,7 +380,8 @@ namespace Absolute {
                     statement, name,
                     CallableKey(name + "." + statement->name->value, parameterTypes),
                     std::nullopt, parameterTypes,
-                    ResolveTypeName(statement->returnType.get()), {}};
+                    SubstituteCodegenType(ResolveTypeName(statement->returnType.get()),
+                        info.substitutions), info.substitutions};
                 method.isStatic = true;
                 info.staticMethods[methodKey] = method;
                 if (statement->body) info.declaredMethods[methodKey] = std::move(method);
@@ -350,7 +389,10 @@ namespace Absolute {
             }
             std::optional<unsigned> slot;
             if (const auto inherited = info.methods.find(methodKey); inherited != info.methods.end()) {
-                if (!SameMethodSignature(*inherited->second.statement, *statement))
+                const std::string declaredReturn = SubstituteCodegenType(
+                    ResolveTypeName(statement->returnType.get()), info.substitutions);
+                if (inherited->second.returnType != declaredReturn ||
+                    inherited->second.parameterTypes != parameterTypes)
                     Fail("interface method signature mismatch for '" + name + "." +
                         statement->name->value + "'");
                 slot = inherited->second.virtualSlot;
@@ -359,7 +401,8 @@ namespace Absolute {
             ClassMethod method{
                 statement, name, CallableKey(name + "." + statement->name->value, parameterTypes),
                 slot, parameterTypes,
-                ResolveTypeName(statement->returnType.get()), {}};
+                SubstituteCodegenType(ResolveTypeName(statement->returnType.get()),
+                    info.substitutions), info.substitutions};
             auto& contracts = info.methodContracts[methodKey];
             if (contracts.empty()) {
                 contracts.push_back(method);
@@ -378,6 +421,7 @@ namespace Absolute {
         }
         info.finalizing = false;
         info.finalized = true;
+        currentGenericSubstitutions = oldSubstitutions;
     }
 
     void CodeGenerator::Impl::FinalizeInterfaces() {
@@ -592,7 +636,8 @@ namespace Absolute {
                 implementation = info.methods.find(methodKey);
             }
             for (const ClassMethod& requirement : requirements) {
-                if (!SameMethodSignature(*requirement.statement, *implementation->second.statement))
+                if (requirement.returnType != implementation->second.returnType ||
+                    requirement.parameterTypes != implementation->second.parameterTypes)
                     Fail("class method '" + name + "." + methodKey +
                         "' does not match its interface contract");
                 if (!requirement.virtualSlot) Fail("interface method is missing a dispatch slot");
@@ -674,6 +719,8 @@ namespace Absolute {
     }
 
     void CodeGenerator::Impl::DeclareStaticFields(InterfaceInfo& info) {
+        const auto oldSubstitutions = currentGenericSubstitutions;
+        currentGenericSubstitutions = info.substitutions;
         for (const StaticField& field : info.staticFields) {
             const std::string globalName = info.name + "." + field.name;
             if (globals.contains(globalName)) Fail("duplicate static field '" + globalName + "'");
@@ -684,6 +731,7 @@ namespace Absolute {
             globals.emplace(globalName, Variable{storage, type, field.typeName, false,
                 false, nullptr, {}, nullptr, InvalidSymbolId});
         }
+        currentGenericSubstitutions = oldSubstitutions;
     }
 
 

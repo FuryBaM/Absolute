@@ -28,6 +28,7 @@
     <ClInclude Include="include\ast\destructor.h" />
     <ClInclude Include="include\ast\enum.h" />
     <ClInclude Include="include\ast\function.h" />
+    <ClInclude Include="include\ast\lambda.h" />
     <ClInclude Include="include\ast\identifier.h" />
     <ClInclude Include="include\ast\if_else.h" />
     <ClInclude Include="include\ast\instance_declaration.h" />

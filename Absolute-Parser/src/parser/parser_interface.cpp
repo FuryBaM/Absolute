@@ -9,11 +9,12 @@ namespace Absolute {
         std::vector<std::string> parents;
         Consume(TokenType::KEYWORD, "interface");
         Token* identifier = Consume(TokenType::IDENTIFIER);
+        std::vector<Token> templateParams = ParseTemplateParameters();
 
         if (CurrentToken() && CurrentToken()->value == ":") {
             Consume(TokenType::OPERATOR, ":");
             while (true) {
-                parents.push_back(Consume(TokenType::IDENTIFIER)->value);
+                parents.push_back(ParseParentTypeName());
                 if (CurrentToken() && CurrentToken()->value == ",") {
                     Consume(TokenType::DELIMITER, ",");
                     continue;
@@ -97,7 +98,7 @@ namespace Absolute {
         ExitScope();
 
         auto statement = std::make_unique<InterfaceDeclStmt>(
-            identifier->value, std::move(parents), std::move(methods),
+            identifier->value, std::move(templateParams), std::move(parents), std::move(methods),
             std::move(properties), std::move(indexers), std::move(staticFields));
         statement->modifiers = std::move(declarationModifiers);
         statement->attributes = std::move(declarationAttributes);

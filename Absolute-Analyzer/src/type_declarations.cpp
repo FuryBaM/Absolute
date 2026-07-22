@@ -38,7 +38,12 @@ namespace Absolute {
             return key;
         };
         for (const std::string& parent : found->second.parents) {
-            const auto contract = types.find(parent);
+            std::string contractName = parent;
+            std::string genericBase;
+            std::vector<std::string> genericArguments;
+            if (ParseGenericTypeName(parent, genericBase, genericArguments))
+                contractName = genericBase;
+            const auto contract = types.find(contractName);
             if (contract == types.end() || contract->second.kind != TypeKind::Interface) continue;
             for (const auto& [methodName, overloads] : VisibleMembers(parent)) {
                 for (const MemberSignature& requirement : overloads) {
@@ -180,10 +185,15 @@ namespace Absolute {
         size_t classParentCount = 0;
         for (const std::string& parent : stmt->parents) {
             const std::string resolvedParent = ResolveTypeReference(parent);
-            if (!types.contains(resolvedParent))
+            std::string parentDefinition = resolvedParent;
+            std::string genericBase;
+            std::vector<std::string> genericArguments;
+            if (ParseGenericTypeName(resolvedParent, genericBase, genericArguments))
+                parentDefinition = genericBase;
+            if (!types.contains(parentDefinition))
                 Report("unknown parent type '" + parent + "' of class '" + typeName + "'");
-            else if (types[resolvedParent].kind == TypeKind::Class) ++classParentCount;
-            else if (types[resolvedParent].kind != TypeKind::Interface)
+            else if (types[parentDefinition].kind == TypeKind::Class) ++classParentCount;
+            else if (types[parentDefinition].kind != TypeKind::Interface)
                 Report("class '" + typeName + "' cannot inherit non-class type '" + resolvedParent + "'");
         }
         if (classParentCount > 1)
@@ -225,12 +235,18 @@ namespace Absolute {
 
     void Analyzer::Visit(InterfaceDeclStmt* stmt) {
         const std::string typeName = Qualify(stmt->name);
+        std::unordered_map<std::string, std::string> genericScope;
+        for (const Token& parameter : stmt->templateParams)
+            genericScope.emplace(parameter.value, parameter.value);
         if (phase == Phase::CollectTypeNames) {
             DeclareType(stmt->name, TypeKind::Interface);
+            for (const Token& parameter : stmt->templateParams)
+                types[typeName].genericParameters.push_back(parameter.value);
             return;
         }
         if (phase == Phase::CollectDeclarations) {
             auto& definition = types[typeName];
+            if (!genericScope.empty()) genericTypeScopes.push_back(genericScope);
             definition.parents.clear();
             for (const std::string& parent : stmt->parents)
                 definition.parents.push_back(ResolveTypeReference(parent));
@@ -241,12 +257,19 @@ namespace Absolute {
             for (const auto& indexer : stmt->indexers) if (indexer) indexer->Accept(*this);
             for (const auto& field : stmt->staticFields) if (field) field->Accept(*this);
             currentType = old;
+            if (!genericScope.empty()) genericTypeScopes.pop_back();
             return;
         }
         ValidateAttributes(*stmt, "interface declaration", false);
+        if (!genericScope.empty()) genericTypeScopes.push_back(genericScope);
         for (const std::string& parent : stmt->parents) {
             const std::string resolvedParent = ResolveTypeReference(parent);
-            const auto found = types.find(resolvedParent);
+            std::string parentDefinition = resolvedParent;
+            std::string genericBase;
+            std::vector<std::string> genericArguments;
+            if (ParseGenericTypeName(resolvedParent, genericBase, genericArguments))
+                parentDefinition = genericBase;
+            const auto found = types.find(parentDefinition);
             if (found == types.end())
                 Report("unknown parent interface '" + parent + "' of interface '" + typeName + "'");
             else if (found->second.kind != TypeKind::Interface)
@@ -278,6 +301,7 @@ namespace Absolute {
         for (const auto& field : stmt->staticFields) if (field) field->Accept(*this);
         table.ExitScope();
         currentType = old;
+        if (!genericScope.empty()) genericTypeScopes.pop_back();
     }
 
     void Analyzer::Visit(PropertyDeclStmt* stmt) {

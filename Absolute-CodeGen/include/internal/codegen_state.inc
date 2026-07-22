@@ -110,6 +110,7 @@
             std::unordered_map<std::string, ClassMethod> declaredMethods;
             std::unordered_map<std::string, ClassMethod> staticMethods;
             std::vector<StaticField> staticFields;
+            std::unordered_map<std::string, std::string> substitutions;
             std::unordered_set<std::string> ambiguousDefaults;
             bool finalizing = false;
             bool finalized = false;
@@ -186,6 +187,7 @@
         std::unordered_map<std::string, std::string> currentGenericSubstitutions;
         llvm::Value* currentThis = nullptr;
         std::uint64_t taskThunkCounter = 0;
+        std::uint64_t lambdaCounter = 0;
 
         explicit Impl(CodeGenerator& visitor, const Analyzer* analyzer);
 

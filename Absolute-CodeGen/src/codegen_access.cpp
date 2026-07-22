@@ -82,6 +82,15 @@ namespace Absolute {
         if (impl->analyzer) {
             const ExpressionInfo* info = impl->analyzer->GetExpressionInfo(*expr);
             const Symbol* symbol = info ? impl->analyzer->GetSymbol(info->symbol) : nullptr;
+            if (symbol && symbol->kind == SymbolKind::Function) {
+                if (impl->addressMode) impl->Fail("a function value is not assignable");
+                llvm::Function* function = impl->module->getFunction(
+                    impl->FunctionLinkName(*symbol));
+                if (!function) impl->Fail("missing function value '" + symbol->name + "'");
+                impl->value = function;
+                impl->valueCreatesManagedOwner = false;
+                return;
+            }
             if (symbol && symbol->kind == SymbolKind::Property) {
                 if (impl->addressMode) impl->Fail("a property is not addressable");
                 impl->value = impl->EmitPropertyAccessor(nullptr, impl->currentClassName,
@@ -136,6 +145,35 @@ namespace Absolute {
     void CodeGenerator::Visit(FunctionCallExpr* expr) {
         const ExpressionInfo* callInfo = impl->analyzer ? impl->analyzer->GetExpressionInfo(*expr) : nullptr;
         const Symbol* selected = callInfo ? impl->analyzer->GetSymbol(callInfo->symbol) : nullptr;
+        std::string functionValueReturn;
+        std::vector<std::string> functionValueParameters;
+        const std::string baseType = impl->SemanticType(expr->base.get());
+        if (ParseCodegenFunctionType(baseType, functionValueReturn,
+            functionValueParameters)) {
+            std::vector<llvm::Type*> llvmParameters;
+            if (impl->AbiReturnOffset(functionValueReturn) != 0)
+                llvmParameters.push_back(impl->builder.getPtrTy());
+            for (const std::string& parameter : functionValueParameters)
+                llvmParameters.push_back(impl->AbiParameterType(parameter));
+            llvm::FunctionType* functionType = llvm::FunctionType::get(
+                impl->AbiReturnType(functionValueReturn), llvmParameters, false);
+            llvm::Value* callee = impl->Evaluate(expr->base.get());
+            impl->EmitOrExit(impl->builder.CreateICmpNE(callee,
+                llvm::ConstantPointerNull::get(impl->builder.getPtrTy()),
+                "function.value.nonnull"), "function.null");
+            std::vector<llvm::Value*> arguments;
+            std::vector<llvm::Value*> temporaryArrayOwners;
+            for (const auto& argument : expr->arguments)
+                arguments.push_back(impl->EvaluateCallArgument(
+                    argument.get(), temporaryArrayOwners));
+            impl->value = impl->EmitAbiCall(functionType, callee,
+                functionValueReturn, {}, functionValueParameters, arguments,
+                "function.value.result");
+            impl->ReleaseArrayTemporaries(temporaryArrayOwners);
+            impl->EmitExceptionCheck();
+            impl->valueCreatesManagedOwner = IsManagedPointerTypeName(functionValueReturn);
+            return;
+        }
         if (selected && selected->kind == SymbolKind::Method && selected->isStatic) {
             const std::string name = impl->ResolvedName(expr);
             llvm::Function* function = impl->module->getFunction(name);

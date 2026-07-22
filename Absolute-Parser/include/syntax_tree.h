@@ -13,6 +13,7 @@
 #include "ast/type.h"
 #include "ast/var_declaration.h"
 #include "ast/function.h"
+#include "ast/lambda.h"
 #include "ast/property.h"
 #include "ast/indexer.h"
 #include "ast/cast.h"

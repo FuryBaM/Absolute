@@ -131,6 +131,24 @@ namespace Absolute {
             return result + ">";
         }
 
+        inline bool ParseFunctionType(const std::string& type,
+            std::string& returnType, std::vector<std::string>& parameterTypes) {
+            std::string base;
+            std::vector<std::string> arguments;
+            if (!ParseGenericTypeName(type, base, arguments) || base != "func" ||
+                arguments.empty()) return false;
+            returnType = arguments.front();
+            parameterTypes.assign(arguments.begin() + 1, arguments.end());
+            return true;
+        }
+
+        inline std::string FunctionTypeName(const std::string& returnType,
+            const std::vector<std::string>& parameterTypes) {
+            std::string result = "func<" + returnType;
+            for (const std::string& parameter : parameterTypes) result += "," + parameter;
+            return result + ">";
+        }
+
         inline bool UnifyGenericType(const std::string& pattern, const std::string& actual,
             const std::unordered_set<std::string>& parameters,
             std::unordered_map<std::string, std::string>& substitutions) {

@@ -293,6 +293,7 @@ namespace Absolute {
         bool currentMethodConst = false;
         bool currentMethodStatic = false;
         bool currentConstructor = false;
+        std::vector<size_t> lambdaScopeDepths;
         AccessLevel pendingMemberAccess = AccessLevel::Public;
 
     public:
@@ -347,6 +348,7 @@ namespace Absolute {
         void Visit(PrefixUnaryExpr* expr) override;
         void Visit(PostfixUnaryExpr* expr) override;
         void Visit(TemplateExpr* expr) override;
+        void Visit(LambdaExpr* expr) override;
 
         void Visit(SingleStatement* stmt) override;
         void Visit(CompoundStmt* stmt) override;

@@ -177,6 +177,17 @@ namespace Absolute {
             return true;
         }
 
+        inline bool ParseCodegenFunctionType(const std::string& type,
+            std::string& returnType, std::vector<std::string>& parameterTypes) {
+            std::string base;
+            std::vector<std::string> arguments;
+            if (!ParseCodegenGenericType(type, base, arguments) || base != "func" ||
+                arguments.empty()) return false;
+            returnType = arguments.front();
+            parameterTypes.assign(arguments.begin() + 1, arguments.end());
+            return true;
+        }
+
         inline std::optional<std::vector<size_t>> InferArrayShape(const ArrayExpr& array) {
             std::vector<size_t> childShape;
             bool hasChildShape = false;

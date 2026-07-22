@@ -31,6 +31,7 @@ namespace Absolute {
         virtual void Visit(PrefixUnaryExpr* expr) = 0;
         virtual void Visit(PostfixUnaryExpr* expr) = 0;
         virtual void Visit(TemplateExpr* expr) = 0;
+        virtual void Visit(LambdaExpr* expr) { (void)expr; }
     };
 
     class BaseIdentifierVisitor : public ExpressionVisitor {
@@ -148,6 +149,10 @@ namespace Absolute {
 
         void Visit(TemplateExpr* expr) override {
             expr->base->Accept(*this);
+        }
+
+        void Visit(LambdaExpr* expr) override {
+            (void)expr;
         }
     };
 }

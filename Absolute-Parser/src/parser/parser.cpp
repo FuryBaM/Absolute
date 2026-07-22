@@ -72,6 +72,9 @@ namespace Absolute{
         }
 
         if (token->type == TokenType::KEYWORD) {
+            if (token->value == "fn") {
+                return ParseLambdaExpr();
+            }
             if ((token->value == "true" || token->value == "false")) {
                 return ParseBooleanLiteralExpr();
             }

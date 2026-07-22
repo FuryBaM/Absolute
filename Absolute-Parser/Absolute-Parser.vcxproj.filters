@@ -87,6 +87,9 @@
     <ClInclude Include="include\ast\function.h">
       <Filter>Файлы заголовков\ast</Filter>
     </ClInclude>
+    <ClInclude Include="include\ast\lambda.h">
+      <Filter>Файлы заголовков\ast</Filter>
+    </ClInclude>
     <ClInclude Include="include\ast\identifier.h">
       <Filter>Файлы заголовков\ast</Filter>
     </ClInclude>

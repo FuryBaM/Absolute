@@ -800,6 +800,26 @@ namespace Absolute {
             Save(expr, {InvalidSymbolId, "task<" + valueType + ">", false});
             return;
         }
+        if (typeContext && templateName == "func") {
+            if (expr->types.empty()) {
+                Report("func requires a return type", "E_FUNCTION_TYPE_ARITY");
+                Save(expr, {InvalidSymbolId, "error", false});
+                return;
+            }
+            std::vector<std::string> types;
+            types.reserve(expr->types.size());
+            for (const auto& type : expr->types) types.push_back(ResolveType(type.get()));
+            if (types.front() == "auto" || types.front() == "dynamic")
+                Report("func return type must be concrete", "E_FUNCTION_TYPE_RETURN");
+            for (size_t index = 1; index < types.size(); ++index)
+                if (types[index] == "void" || types[index] == "auto" || types[index] == "dynamic")
+                    Report("func parameter types must be concrete non-void types",
+                        "E_FUNCTION_TYPE_PARAMETER");
+            Save(expr, {InvalidSymbolId,
+                FunctionTypeName(types.front(), std::vector<std::string>(types.begin() + 1, types.end())),
+                false});
+            return;
+        }
         if (typeContext) {
             const std::string base = ResolveTypeReference(ExtractQualifiedName(expr->base.get()));
             std::vector<std::string> arguments;
@@ -834,6 +854,43 @@ namespace Absolute {
             for (const auto& type : expr->types) ResolveType(type.get());
             Save(expr, {baseResult.symbol, baseResult.type, false});
         }
+    }
+
+    void Analyzer::Visit(LambdaExpr* expr) {
+        std::vector<std::string> parameterTypes;
+        parameterTypes.reserve(expr->parameters.size());
+        table.EnterScope();
+        lambdaScopeDepths.push_back(table.ScopeDepth());
+        ++functionDepth;
+        for (const auto& parameter : expr->parameters) {
+            if (!parameter) continue;
+            const std::string name = ExtractIdentifier(parameter->name.get());
+            const std::string type = ResolveDeclaredType(*parameter);
+            parameterTypes.push_back(type);
+            if (name.empty()) Report("lambda parameter requires a name", "E_LAMBDA_PARAMETER");
+            else if (!table.Declare(SymbolKind::Parameter, name, type))
+                Report("duplicate lambda parameter '" + name + "'", "E_LAMBDA_PARAMETER");
+            if (parameter->value)
+                Report("lambda parameters cannot have default values", "E_LAMBDA_DEFAULT_PARAMETER");
+        }
+        const Result body = Evaluate(expr->body.get());
+        --functionDepth;
+        lambdaScopeDepths.pop_back();
+        table.ExitScope();
+        if (body.type == "void")
+            Report("an expression lambda cannot return void", "E_LAMBDA_VOID_EXPRESSION");
+        const std::string type = FunctionTypeName(body.type, parameterTypes);
+        std::string expectedReturn;
+        std::vector<std::string> expectedParameters;
+        if (ParseFunctionType(expectedType, expectedReturn, expectedParameters)) {
+            if (expectedParameters != parameterTypes)
+                Report("lambda parameter types do not match expected type '" + expectedType + "'",
+                    "E_LAMBDA_SIGNATURE");
+            if (!IsAssignable(expectedReturn, body.type))
+                Report("lambda returns '" + body.type + "', expected '" + expectedReturn + "'",
+                    "E_LAMBDA_RETURN");
+        }
+        Save(expr, {InvalidSymbolId, type, false});
     }
 
 }

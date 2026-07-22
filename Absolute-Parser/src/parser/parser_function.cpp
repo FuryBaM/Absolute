@@ -2,6 +2,19 @@
 #include "parser.h"
 
 namespace Absolute {
+    std::unique_ptr<LambdaExpr> Parser::ParseLambdaExpr()
+    {
+        Consume(TokenType::KEYWORD, "fn");
+        auto parameters = ParseParameters();
+        Consume(TokenType::OPERATOR, "=>");
+        auto body = ParseExpression();
+        if (!body) {
+            ReportSyntaxError(CurrentToken(), "A lambda requires an expression body");
+            throw std::runtime_error("Invalid lambda body");
+        }
+        return std::make_unique<LambdaExpr>(std::move(parameters), std::move(body));
+    }
+
     bool Parser::LooksLikeFunctionDeclaration() const
     {
         size_t index = pos;

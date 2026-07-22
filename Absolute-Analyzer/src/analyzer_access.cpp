@@ -40,8 +40,32 @@ namespace Absolute {
             }
             return;
         }
-        const SymbolId id = LookupSymbol(expr->name);
+        SymbolId id = LookupSymbol(expr->name);
         const Symbol* symbol = table.Get(id);
+        std::string expectedReturn;
+        std::vector<std::string> expectedParameters;
+        if (ParseFunctionType(expectedType, expectedReturn, expectedParameters)) {
+            const std::vector<SymbolId> candidates = FindFunctionCandidates(expr->name);
+            SymbolId matching = InvalidSymbolId;
+            for (SymbolId candidateId : candidates) {
+                const Symbol* candidate = table.Get(candidateId);
+                if (!candidate || candidate->kind != SymbolKind::Function ||
+                    !candidate->genericParameters.empty() ||
+                    candidate->type != expectedReturn ||
+                    candidate->parameterTypes != expectedParameters) continue;
+                if (matching != InvalidSymbolId) {
+                    Report("function value '" + expr->name + "' is ambiguous",
+                        "E_FUNCTION_VALUE_AMBIGUOUS");
+                    matching = InvalidSymbolId;
+                    break;
+                }
+                matching = candidateId;
+            }
+            if (matching != InvalidSymbolId) {
+                id = matching;
+                symbol = table.Get(id);
+            }
+        }
         if (!symbol) {
             Report("unknown object '" + expr->name + "'");
             Save(expr, {InvalidSymbolId, "error", false});
@@ -68,7 +92,21 @@ namespace Absolute {
                 Report("property '" + expr->name + "' has no addressable storage",
                     "E_PROPERTY_NOT_ADDRESSABLE", id);
         }
-        const bool value = symbol->kind == SymbolKind::Variable || symbol->kind == SymbolKind::Parameter ||
+        if (!lambdaScopeDepths.empty() && symbol->scopeDepth > 0 &&
+            symbol->scopeDepth < lambdaScopeDepths.back() &&
+            (symbol->kind == SymbolKind::Variable || symbol->kind == SymbolKind::Parameter ||
+                symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Property)) {
+            Report("lambda cannot capture local value '" + expr->name +
+                "'; closure captures are not implemented yet", "E_LAMBDA_CAPTURE_UNSUPPORTED", id);
+        }
+        const bool functionValue = symbol->kind == SymbolKind::Function &&
+            symbol->genericParameters.empty() && !symbol->externalFunction &&
+            !symbol->exportedFunction;
+        if (symbol->kind == SymbolKind::Function &&
+            (symbol->externalFunction || symbol->exportedFunction))
+            Report("C ABI function '" + expr->name +
+                "' cannot be stored in an Absolute func value", "E_FUNCTION_VALUE_C_ABI", id);
+        const bool value = functionValue || symbol->kind == SymbolKind::Variable || symbol->kind == SymbolKind::Parameter ||
             symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Property;
         if (!value) Report("object '" + expr->name + "' is not a value");
         ValueFlowState flow;
@@ -81,8 +119,11 @@ namespace Absolute {
                 Report("object '" + expr->name + "' is not initialized on every control-flow path",
                     "E_MAYBE_UNINITIALIZED_READ", id);
         }
-        Save(expr, {id, symbol->type,
-            symbol->kind == SymbolKind::Property ? symbol->canWrite : value, false,
+        const std::string resolvedType = functionValue
+            ? FunctionTypeName(symbol->type, symbol->parameterTypes) : symbol->type;
+        Save(expr, {id, resolvedType,
+            functionValue ? false :
+                (symbol->kind == SymbolKind::Property ? symbol->canWrite : value), false,
             value && IsManagedPointerType(symbol->type) && symbol->managedOwner,
             flow.initialization, flow.pointerValidity, flow.pointerOwner,
             flow.taskState});
@@ -123,6 +164,41 @@ namespace Absolute {
         if (expr->base) expr->base->Accept(probe);
         const std::string callName = probe.identifierExpr ? probe.identifierExpr->name : std::string{};
         const std::string qualifiedCallName = ExtractQualifiedName(expr->base.get());
+
+        const Symbol* valueSymbol = nullptr;
+        if (probe.identifierExpr) {
+            const Symbol* candidate = table.Get(LookupSymbol(probe.identifierExpr->name));
+            if (candidate && (candidate->kind == SymbolKind::Variable ||
+                candidate->kind == SymbolKind::Parameter)) valueSymbol = candidate;
+        }
+        if (!probe.isMember && (valueSymbol || dynamic_cast<LambdaExpr*>(expr->base.get()))) {
+            const Result callableValue = Evaluate(expr->base.get());
+            std::string returnType;
+            std::vector<std::string> parameterTypes;
+            if (!ParseFunctionType(callableValue.type, returnType, parameterTypes)) {
+                Report("expression of type '" + callableValue.type + "' is not callable",
+                    "E_NOT_CALLABLE");
+                Save(expr, {InvalidSymbolId, "error", false});
+                return;
+            }
+            if (expr->arguments.size() != parameterTypes.size())
+                Report("function value expects " + std::to_string(parameterTypes.size()) +
+                    " argument(s), got " + std::to_string(expr->arguments.size()),
+                    "E_FUNCTION_VALUE_ARITY");
+            for (size_t index = 0; index < expr->arguments.size(); ++index) {
+                const std::string expected = index < parameterTypes.size()
+                    ? parameterTypes[index] : std::string{};
+                const Result argument = EvaluateExpected(expr->arguments[index].get(), expected);
+                if (!expected.empty() && !IsAssignable(expected, argument.type))
+                    Report("function value argument " + std::to_string(index + 1) +
+                        " has type '" + argument.type + "', expected '" + expected + "'",
+                        "E_FUNCTION_VALUE_ARGUMENT");
+            }
+            Save(expr, {callableValue.symbol, returnType, false,
+                IsManagedPointerType(returnType), false});
+            expressionInfo[expr].parameterTypes = parameterTypes;
+            return;
+        }
 
         if (!probe.isMember && callName == "base") {
             for (const auto& argument : expr->arguments) Evaluate(argument.get());

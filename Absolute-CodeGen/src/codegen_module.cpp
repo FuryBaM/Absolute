@@ -427,8 +427,10 @@ namespace Absolute {
         llvm::Value* oldThis = currentThis;
         const std::string oldReturn = currentReturnTypeName;
         llvm::Value* oldReturnStorage = currentReturnStorage;
+        const auto oldSubstitutions = currentGenericSubstitutions;
+        currentGenericSubstitutions = method.substitutions;
         currentClassName = info.name;
-        currentReturnTypeName = ResolveTypeName(method.statement->returnType.get());
+        currentReturnTypeName = method.returnType;
         const unsigned returnOffset = AbiReturnOffset(method.returnType);
         currentReturnStorage = returnOffset != 0 ? function->getArg(0) : nullptr;
         currentThis = method.isStatic ? nullptr : function->getArg(returnOffset);
@@ -443,6 +445,7 @@ namespace Absolute {
         currentThis = oldThis;
         currentReturnTypeName = oldReturn;
         currentReturnStorage = oldReturnStorage;
+        currentGenericSubstitutions = oldSubstitutions;
         builder.ClearInsertionPoint();
     }
 

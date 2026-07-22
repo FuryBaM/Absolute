@@ -1423,6 +1423,34 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "generic-types=ok"
         )
         add_test(
+            NAME absolute.build-generic-interfaces
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generics-interfaces.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/generic-interfaces-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-generic-interfaces PROPERTIES
+            FIXTURES_SETUP absolute-generic-interfaces-executable
+        )
+        add_test(NAME absolute.run-generic-interfaces
+            COMMAND "${CMAKE_BINARY_DIR}/generic-interfaces-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-generic-interfaces PROPERTIES
+            FIXTURES_REQUIRED absolute-generic-interfaces-executable
+            PASS_REGULAR_EXPRESSION "generic-interfaces=ok"
+        )
+        add_test(
+            NAME absolute.build-function-values
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/function-values.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/function-values-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-function-values PROPERTIES
+            FIXTURES_SETUP absolute-function-values-executable
+        )
+        add_test(NAME absolute.run-function-values
+            COMMAND "${CMAKE_BINARY_DIR}/function-values-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-function-values PROPERTIES
+            FIXTURES_REQUIRED absolute-function-values-executable
+            PASS_REGULAR_EXPRESSION "function-values=ok"
+        )
+        add_test(
             NAME absolute.build-unhandled-exception
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/unhandled-exception.abs"
                 --build-exe -o "${CMAKE_BINARY_DIR}/unhandled-exception-app${CMAKE_EXECUTABLE_SUFFIX}"

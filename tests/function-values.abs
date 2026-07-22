@@ -1,0 +1,14 @@
+int32 add(int32 left, int32 right) {
+    return left + right;
+}
+
+int32 main() {
+    func<int32, int32, int32> operation = add;
+    assert(operation(20, 22) == 42, "named function value");
+
+    func<int32, int32, int32> lambda = fn(int32 left, int32 right) => left + right;
+    assert(lambda(40, 2) == 42, "captureless lambda");
+
+    println("function-values=ok");
+    return 0;
+}
