@@ -1,0 +1,58 @@
+class Node {
+}
+
+struct Pair {
+    int32 left;
+    int32 right;
+}
+
+async int32 managedCapture(Node* value) {
+    return 1;
+}
+
+async int32 rawCapture(raw Node* value) {
+    return 2;
+}
+
+async int32 sliceCapture(int32[] values) {
+    return 3;
+}
+
+async int32 stringCapture(string value) {
+    return 4;
+}
+
+async int32 aggregateCapture(Pair value) {
+    return value.left + value.right;
+}
+
+async int32 functionCapture(func<int32, int32> callback) {
+    return callback(5);
+}
+
+async int32 taskCapture(task<int32> pending) {
+    return 5;
+}
+
+async Node* managedResult() {
+    return new Node();
+}
+
+async int32[] sliceResult() {
+    return copy({1, 2});
+}
+
+async Pair aggregateResult() {
+    Pair value;
+    value.left = 20;
+    value.right = 22;
+    return value;
+}
+
+async string stringResult() {
+    return "unsafe";
+}
+
+int32 main() {
+    return 0;
+}

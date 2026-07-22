@@ -173,7 +173,8 @@ namespace Absolute {
         if (IsManagedPointerType(currentReturnType) && value.type != "error" &&
             value.type != "null" &&
             !value.createsManagedOwner && !value.referencesManagedOwner)
-            Report("a managed pointer return must transfer an owner; subscribers cannot escape their owner");
+            Report("a managed pointer return must transfer an owner; subscribers and aggregate fields cannot escape their owner",
+                "E_MANAGED_RETURN_REQUIRES_OWNER", value.symbol);
         if (IsRawPointerType(currentReturnType) && value.type != "error" && value.type != "null") {
             if (const Symbol* owner = table.Get(value.pointerOwner)) {
                 if (owner->scopeDepth > 0)

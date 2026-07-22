@@ -44,6 +44,9 @@ field. A local array or slice cannot escape into a field because its backing
 storage may disappear before the aggregate. Reassignment frees the old non-null
 owner, and the aggregate destructor frees the final value.
 
-The remaining boundaries are plugin-defined resources, async captures, and
-stronger lifetime diagnostics for temporary borrows. See
-`docs/resource-ownership.md` and `TODO.md`.
+The analyzer rejects local or borrowed views that escape through a return or an
+aggregate field unless an explicit `copy(...)`, returned owner, or global view
+makes the backing storage long-lived. Async task payloads cannot contain arrays
+or slices because the current task context stores only lifetime-independent
+scalar and enum values. Plugin-defined resource boundaries remain future work;
+see `docs/resource-ownership.md` and `TODO.md`.

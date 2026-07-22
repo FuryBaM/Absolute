@@ -101,6 +101,10 @@
 - [x] `if`, `for`, `while`, `do-while`, `foreach`, `break` и `continue`.
 - [x] Перегрузка функций и методов.
 - [x] Методы расширения.
+- [x] Функциональные значения и лямбды.
+  Поддерживаются captureless-функции, expression/block-body, вывод и явное
+  указание возвращаемого типа, immutable capture-by-value, копирование closure,
+  переназначение и вложенные escaping-замыкания.
 - [x] Пространства имён, файловые и namespace-импорты (включая точечный `std.collections`, относительный `./std/collections` и FQN `std.collections.Vector`).
 - [x] Строковые шаблоны, форматирование, `print` и `println`.
 - [x] Добавить `switch`/`match` и проверку полноты вариантов.
@@ -115,7 +119,7 @@
   `return`, `break`, `continue` и распространении исключения.
 - [x] Добавить атрибуты/аннотации для compiler и plugin metadata.
 - [x] Спроектировать и реализовать мономорфизируемые generics для функций,
-  структур и классов; constraints/traits остаются следующим слоем.
+  структур, классов и интерфейсов; constraints/traits остаются следующим слоем.
 - [x] Добавить type aliases в ядро, не зависящие от plugin prelude.
   `using Alias = Type;` прозрачно разрешает primitive, aggregate, concrete generic,
   array, task и pointer-типы, поддерживает namespaces и выявляет циклы.
@@ -192,9 +196,17 @@
 - [x] Не вводить отдельный тип/ключевое слово `borrow`: managed-параметры уже являются
   безопасными non-owning заимствованиями, slices всегда остаются zero-copy views, а
   `raw` используется только для явно небезопасного доступа.
-- [ ] Усилить compile-time lifetime-проверки для slices, временных managed-ссылок и
-  async-captures без добавления нового runtime-вида указателя; для больших value-типов
-  отдельно рассмотреть `ref`/`const ref`.
+- [x] Усилить compile-time escape-проверки без нового runtime-вида указателя:
+  локальные массивы и borrowed slices нельзя вернуть или сохранить в поле без
+  `copy(...)`, а managed subscriber и managed-поле агрегата нельзя вернуть как
+  передаваемого владельца — в том числе через метод временного объекта.
+- [x] Закрыть lifetime/ABI-границу async-captures и результатов: текущий task-context
+  принимает только независимые от lifetime скаляры и enum; managed/raw pointers,
+  arrays/slices, string, func/task и aggregate value-типы отклоняются Analyzer до
+  CodeGen. Новый runtime-вид указателя не добавлялся.
+- [ ] Исследовать `ref`/`const ref` для больших resource-free value-типов отдельно
+  от lifetime correctness: определить ABI, правила escape и выигрыш на benchmark до
+  добавления синтаксиса.
 - [ ] Определить weak/non-owning managed references.
 - [ ] Проверить циклические графы объектов и выбрать стратегию их очистки.
 - [ ] Добавить sanitizer-набор тестов на use-after-free, double-free и утечки.
@@ -220,6 +232,8 @@
 
 - [x] `async`-функции, `spawn`, `await` и runtime worker pool.
 - [x] Проверка незавершённых локальных tasks анализатором.
+- [x] Compile-time проверка task payload/result: только scalar/enum ABI без
+  заимствованных pointers, slices, строк и агрегатов.
 - [ ] Добавить async-методы классов и структур.
 - [ ] Добавить cancellation tokens и timeout.
 - [ ] Добавить channels и безопасные concurrent queues.
@@ -355,13 +369,21 @@
 - [x] Базовый console I/O и форматирование.
 - [x] Async task runtime.
 - [x] Math-типы и функции как пример плагина.
+- [x] Добавить `std.time` для Unix wall clock, монотонных измерений, sleep и
+  benchmark. Единица выбирается через `Unit` (`Nanoseconds`, `Microseconds`,
+  `Milliseconds`, `Seconds`); основной API — `now`, `mono`, `elapsed`, `sleep`,
+  `measure`, `bench`, старый `Time.*` сохранён совместимыми обёртками.
+- [x] Добавить базовые collections: `Vector`, `Map` и `Set`.
 - [ ] Определить стабильную структуру standard library и правила версионирования.
 - [ ] Добавить полноценные String/StringBuilder и Unicode API.
 - [ ] Добавить filesystem, paths и streams.
-- [ ] Добавить date/time, timers и random.
+- [ ] Добавить календарные Date/DateTime, UTC/local formatting и time zones.
+- [ ] **Следующее: добавить `std.random`** с явным seed, воспроизводимым PRNG,
+  integer/range/float API и отдельным источником системной энтропии.
 - [ ] Добавить JSON и binary serialization.
 - [ ] Добавить networking: sockets, HTTP client/server и URI.
-- [ ] Добавить collections и algorithms.
+- [ ] Довести стандартные algorithms: существующие sort/search/reverse дополнить
+  transform, reduce и filter и подключить весь набор к CTest.
 - [ ] Добавить logging, assertions и test framework.
 
 ### Desktop, игры и графика

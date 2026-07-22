@@ -167,7 +167,8 @@ namespace Absolute {
             functionValue ? false :
                 (capturedByCurrentLambda ? false :
                     (symbol->kind == SymbolKind::Property ? symbol->canWrite : value)), false,
-            value && IsManagedPointerType(symbol->type) && symbol->managedOwner,
+            value && symbol->kind == SymbolKind::Variable &&
+                IsManagedPointerType(symbol->type) && symbol->managedOwner,
             flow.initialization, flow.pointerValidity, flow.pointerOwner,
             flow.taskState});
     }

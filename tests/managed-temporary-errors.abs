@@ -1,0 +1,15 @@
+class ManagedOwner {
+    int32* value;
+
+    public ManagedOwner(int32 initial) {
+        value = new int32(initial);
+    }
+
+    public int32* exposeField() {
+        return value;
+    }
+}
+
+int32 main() {
+    return 0;
+}

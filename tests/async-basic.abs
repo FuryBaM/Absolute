@@ -6,10 +6,22 @@ async int32 increment(int32 value) {
     return value + 1;
 }
 
+enum ResultCode {
+    Ready,
+    Done
+}
+
+async ResultCode finish(ResultCode value) {
+    return value;
+}
+
 async int32 main() {
     task<int32> first = spawn doubleValue(20);
     task<int32> second = spawn increment(1);
+    task<ResultCode> state = spawn finish(ResultCode.Done);
     int32 result = await first + await second;
+    ResultCode completed = await state;
+    assert(completed == ResultCode.Done, "async enum task value");
     println(format("async={}", result));
     return 0;
 }

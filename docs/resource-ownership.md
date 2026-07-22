@@ -8,6 +8,9 @@ no `keep` or `borrow` marker is stored in the object at runtime.
 
 - A managed `T*` field owns the fresh handle assigned by `new` or an owning
   function result. Assigning an arbitrary subscriber is rejected.
+- Reading a managed field borrows it from the containing aggregate. Returning
+  that field as if it were a transferable owner is rejected, including from a
+  method invoked on a temporary aggregate.
 - An array field owns a non-null descriptor owner produced by `copy(...)` or an
   owning function result. A global array descriptor is safe because its owner is
   null. A local array or slice cannot escape into a field.

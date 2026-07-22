@@ -509,6 +509,18 @@ namespace Absolute {
         return inspect(inspect, name);
     }
 
+    bool Analyzer::IsAsyncTaskValueType(const std::string& name) const {
+        if (name == "error" || name == "void") return true;
+        if (name == "int8" || name == "uint8" || name == "char" ||
+            name == "int16" || name == "uint16" ||
+            name == "int32" || name == "uint32" ||
+            name == "int64" || name == "uint64" ||
+            name == "bool" || name == "float" || name == "double")
+            return true;
+        const auto found = types.find(name);
+        return found != types.end() && found->second.kind == TypeKind::Enum;
+    }
+
     bool Analyzer::IsDerivedFrom(const std::string& type, const std::string& base) const {
         if (type == base) return true;
         std::string definitionName = type;
@@ -669,6 +681,7 @@ namespace Absolute {
             genericScope.emplace(parameter.value, parameter.value);
         if (!genericScope.empty()) genericTypeScopes.push_back(genericScope);
         const std::string returnType = ResolveType(statement.returnType.get());
+        const bool asyncFunction = HasModifier(statement, "async");
         const bool constMethod = HasModifier(statement, "const");
         const bool staticMethod = HasModifier(statement, "static");
         if (kind == SymbolKind::Method && !staticMethod) {
@@ -718,6 +731,10 @@ namespace Absolute {
                 "E_STATIC_GENERIC_UNSUPPORTED");
         if (!IsKnownType(returnType))
             Report("unknown return type '" + returnType + "' of function '" + statement.name->value + "'");
+        if (asyncFunction && !IsAsyncTaskValueType(returnType))
+            Report("async function '" + statement.name->value + "' cannot return '" +
+                returnType + "': the task ABI only owns lifetime-independent scalar and enum values",
+                "E_ASYNC_RESULT_LIFETIME");
 
         if (statement.IsExternal() && kind == SymbolKind::Method)
             Report("extern functions cannot be class or struct members");
@@ -730,7 +747,7 @@ namespace Absolute {
                 "E_EXTENSION_RECEIVER");
         if (HasModifier(statement, "extension") && statement.UsesCAbi())
             Report("C ABI functions cannot be extension methods", "E_EXTENSION_C_ABI");
-        if (HasModifier(statement, "extension") && HasModifier(statement, "async"))
+        if (HasModifier(statement, "extension") && asyncFunction)
             Report("async extension methods are not implemented", "E_EXTENSION_ASYNC");
         if (HasModifier(statement, "extension") && !statement.parameters.empty()) {
             const std::string receiverType = ResolveDeclaredType(*statement.parameters.front());
@@ -738,11 +755,11 @@ namespace Absolute {
                 receiverType == "error")
                 Report("extension method receiver requires a concrete type", "E_EXTENSION_RECEIVER_TYPE");
         }
-        if (statement.IsExternal() && HasModifier(statement, "async"))
+        if (statement.IsExternal() && asyncFunction)
             Report("extern functions cannot be async", "E_ASYNC_EXTERN");
-        if (statement.IsExported() && HasModifier(statement, "async"))
+        if (statement.IsExported() && asyncFunction)
             Report("export functions cannot be async", "E_ASYNC_EXPORT");
-        if (kind == SymbolKind::Method && HasModifier(statement, "async"))
+        if (kind == SymbolKind::Method && asyncFunction)
             Report("async methods are not implemented yet; use a namespace function",
                 "E_ASYNC_METHOD_UNSUPPORTED");
         if (statement.UsesCAbi() && (returnType == "auto" || returnType == "dynamic" ||
@@ -758,7 +775,7 @@ namespace Absolute {
         const bool oldConstMethod = currentMethodConst;
         const bool oldStaticMethod = currentMethodStatic;
         currentReturnType = returnType;
-        currentFunctionAsync = HasModifier(statement, "async");
+        currentFunctionAsync = asyncFunction;
         currentMethodConst = constMethod && kind == SymbolKind::Method;
         currentMethodStatic = staticMethod && kind == SymbolKind::Method;
         ++functionDepth;
@@ -798,6 +815,10 @@ namespace Absolute {
             if (!parameter) continue;
             const std::string name = ExtractIdentifier(parameter->name.get());
             std::string type = ResolveDeclaredType(*parameter);
+            if (asyncFunction && !IsAsyncTaskValueType(type))
+                Report("async parameter '" + name + "' cannot capture '" + type +
+                    "': the task context cannot own its lifetime safely",
+                    "E_ASYNC_CAPTURE_LIFETIME");
             if (statement.UsesCAbi() && (type == "auto" || type == "dynamic" || type == "void"))
                 Report("C ABI parameter '" + name + "' requires a concrete C-compatible type");
             if (statement.UsesCAbi() && IsManagedPointerType(type))

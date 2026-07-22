@@ -413,6 +413,7 @@ namespace Absolute {
         void Save(Expression* expression, Result value);
         bool IsKnownType(const std::string& name) const;
         bool TypeOwnsResources(const std::string& name) const;
+        bool IsAsyncTaskValueType(const std::string& name) const;
         bool IsNumeric(const std::string& name) const;
         bool IsInteger(const std::string& name) const;
         bool IsAssignable(const std::string& target, const std::string& source) const;

@@ -373,6 +373,11 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.async-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
+        NAME absolute.async-lifetime-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/async-lifetime-errors.abs"
+    )
+    set_tests_properties(absolute.async-lifetime-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.array-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-errors.abs"
     )
@@ -407,6 +412,11 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/resource-field-errors.abs"
     )
     set_tests_properties(absolute.resource-field-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.managed-temporary-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-temporary-errors.abs"
+    )
+    set_tests_properties(absolute.managed-temporary-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
         NAME absolute.interfaces-codegen-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interfaces-codegen.abs"
