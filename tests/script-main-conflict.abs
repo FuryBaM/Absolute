@@ -1,0 +1,7 @@
+int32 globalValue = 42;
+
+println(format("top-level={}", globalValue));
+
+int32 main() {
+    return 0;
+}

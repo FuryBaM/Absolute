@@ -101,6 +101,9 @@
 - [x] `if`, `for`, `while`, `do-while`, `foreach`, `break` и `continue`.
 - [x] Перегрузка функций и методов.
 - [x] Методы расширения.
+- [x] Script-style top-level code без явного `main`: executable statements и
+  локальные script-переменные заворачиваются в скрытый `int32 main()` с
+  автоматическим `return 0`; смешение top-level кода с explicit `main` запрещено.
 - [x] Функциональные значения и лямбды.
   Поддерживаются captureless-функции, expression/block-body, вывод и явное
   указание возвращаемого типа, immutable capture-by-value, копирование closure,

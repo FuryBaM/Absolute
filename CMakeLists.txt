@@ -343,6 +343,15 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-random.abs"
     )
     add_test(
+        NAME absolute.script-main-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/script-main.abs"
+    )
+    add_test(
+        NAME absolute.script-main-conflict
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/script-main-conflict.abs"
+    )
+    set_tests_properties(absolute.script-main-conflict PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.iterators
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/iterators.abs"
     )
@@ -1543,6 +1552,21 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-std-random PROPERTIES
             FIXTURES_REQUIRED absolute-std-random-executable
             PASS_REGULAR_EXPRESSION "std-random=ok"
+        )
+
+        add_test(
+            NAME absolute.build-script-main
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/script-main.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/script-main-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-script-main PROPERTIES
+            FIXTURES_SETUP absolute-script-main-executable
+        )
+        add_test(NAME absolute.run-script-main
+            COMMAND "${CMAKE_BINARY_DIR}/script-main-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-script-main PROPERTIES
+            FIXTURES_REQUIRED absolute-script-main-executable
+            PASS_REGULAR_EXPRESSION "script-main=42"
         )
 
         add_test(

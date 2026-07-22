@@ -67,6 +67,22 @@ The native Windows backend is the default. Use
 ./build/Debug/absolutec code.abs --parse-only
 ```
 
+Application files may use script-style top-level code without declaring
+`main` explicitly:
+
+```absolute
+int32 value = 40;
+value += 2;
+println(format("value={}", value));
+```
+
+The compiler moves top-level executable statements and their variable
+declarations into a hidden `int32 main()` and appends `return 0`. Functions,
+types, namespaces, imports, and plugin declarations remain at module scope. An
+explicit `main` keeps the traditional mode; combining it with executable
+top-level statements is a compile-time error instead of creating a second
+entry point. Module-level declarations may still accompany an explicit `main`.
+
 Create and build a project:
 
 ```bash

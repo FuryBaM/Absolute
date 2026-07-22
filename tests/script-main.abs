@@ -1,0 +1,12 @@
+int32 twice(int32 value) {
+    return value * 2;
+}
+
+int32 value = twice(20);
+value += 2;
+
+if (value != 42) {
+    throw new Error("hidden main did not execute top-level statements");
+}
+
+println(format("script-main={}", value));

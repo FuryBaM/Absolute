@@ -374,6 +374,62 @@ namespace {
         }
     }
 
+    bool IsHardTopLevelDeclaration(const Statement& statement) {
+        return dynamic_cast<const FunctionDeclStmt*>(&statement) ||
+            dynamic_cast<const ClassDeclStmt*>(&statement) ||
+            dynamic_cast<const StructDeclStmt*>(&statement) ||
+            dynamic_cast<const InterfaceDeclStmt*>(&statement) ||
+            dynamic_cast<const EnumDeclStmt*>(&statement) ||
+            dynamic_cast<const GroupDeclStmt*>(&statement) ||
+            dynamic_cast<const NamespaceDeclStmt*>(&statement) ||
+            dynamic_cast<const TypeAliasStmt*>(&statement) ||
+            dynamic_cast<const ImportStmt*>(&statement) ||
+            dynamic_cast<const OpaquePluginStmt*>(&statement);
+    }
+
+    bool IsExplicitMain(const Statement& statement) {
+        const auto* function = dynamic_cast<const FunctionDeclStmt*>(&statement);
+        return function && function->name && function->name->value == "main";
+    }
+
+    void AddScriptEntryPoint(std::vector<std::unique_ptr<Statement>>& statements) {
+        const bool explicitMain = std::any_of(statements.begin(), statements.end(),
+            [](const std::unique_ptr<Statement>& statement) {
+                return statement && IsExplicitMain(*statement);
+            });
+        const bool executableTopLevel = std::any_of(statements.begin(), statements.end(),
+            [](const std::unique_ptr<Statement>& statement) {
+                return statement && !IsHardTopLevelDeclaration(*statement) &&
+                    dynamic_cast<const VarDeclStmt*>(statement.get()) == nullptr;
+            });
+        if (!executableTopLevel) return;
+        if (explicitMain) {
+            throw std::runtime_error(
+                "Top-level executable statements cannot be combined with an explicit main function");
+        }
+
+        std::vector<std::unique_ptr<Statement>> declarations;
+        std::vector<std::unique_ptr<Statement>> scriptBody;
+        declarations.reserve(statements.size() + 1);
+        scriptBody.reserve(statements.size() + 1);
+        for (auto& statement : statements) {
+            if (!statement) continue;
+            if (IsHardTopLevelDeclaration(*statement))
+                declarations.push_back(std::move(statement));
+            else
+                scriptBody.push_back(std::move(statement));
+        }
+        scriptBody.push_back(std::make_unique<ReturnStmt>(
+            std::make_unique<NumberLiteralExpr>("0")));
+        auto hiddenMain = std::make_unique<FunctionDeclStmt>(
+            std::make_unique<PrimitiveTypeExpr>("int32"),
+            std::make_unique<Token>(TokenType::IDENTIFIER, "main", 0, 0),
+            std::vector<std::unique_ptr<VarDeclExpr>>{},
+            std::make_unique<CompoundStmt>(std::move(scriptBody)));
+        declarations.push_back(std::move(hiddenMain));
+        statements = std::move(declarations);
+    }
+
     Compilation LoadCompilation(const fs::path& input, PluginManager& plugins) {
         std::vector<std::unique_ptr<Program>> programs;
         std::unordered_set<std::string> loaded;
@@ -432,6 +488,7 @@ namespace {
         for (auto& program : programs) {
             for (auto& statement : program->statements) statements.push_back(std::move(statement));
         }
+        AddScriptEntryPoint(statements);
         return {std::make_unique<Program>(std::move(statements)), std::move(moduleName),
             std::move(nativeLibraries), std::move(nativeSearchPaths)};
     }
