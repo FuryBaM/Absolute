@@ -523,7 +523,8 @@ namespace {
 #else
         object.replace_extension(".o");
 #endif
-        generator.GenerateObject(program, compilation.moduleName, object.string());
+        generator.GenerateObject(program, compilation.moduleName, object.string(),
+            compilation.sanitizeAddress);
 
         fs::path response = executable;
         response += ".absolute-link.rsp";
@@ -558,6 +559,7 @@ namespace {
             arguments << QuoteResponseArgument(library) << '\n';
         for (const fs::path& path : compilation.nativeSearchPaths)
             arguments << "-L" << QuoteResponseArgument(path) << '\n';
+        if (compilation.sanitizeAddress) arguments << "-fsanitize=address\n";
         arguments << "-o\n" << QuoteResponseArgument(executable) << '\n';
 #endif
         WriteFile(response, arguments.str());
@@ -603,6 +605,7 @@ int main(int argc, char* argv[]) {
         for (const fs::path& path : commandLine.pluginSearchPaths) plugins.AddSearchPath(path);
         for (const fs::path& plugin : commandLine.plugins) plugins.Load(plugin);
         Compilation compilation = LoadCompilation(commandLine.input, plugins);
+        compilation.sanitizeAddress = commandLine.sanitizeAddress;
         Analyzer analyzer({compilation.program.get()});
         if (!commandLine.parseOnly && !analyzer.Analyze()) {
             analyzer.PrintDiagnostics(std::cout);
@@ -627,7 +630,8 @@ int main(int argc, char* argv[]) {
                     output.replace_extension(".o");
 #endif
                 }
-                generator.GenerateObject(*compilation.program, compilation.moduleName, output.string());
+                generator.GenerateObject(*compilation.program, compilation.moduleName,
+                    output.string(), compilation.sanitizeAddress);
             }
             else {
                 fs::path output = commandLine.output;

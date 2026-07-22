@@ -10,7 +10,16 @@ int64 managedFastPath() {
     return result;
 }
 
+int64 checkedBorrowedDeref(int64* value) {
+    return *value;
+}
+
 int32 main() {
-    println(format("managed-fast-path={}", managedFastPath()));
+    int64 fastResult = managedFastPath();
+    int64* borrowedSource = new int64(42);
+    assert(checkedBorrowedDeref(borrowedSource) == 42,
+        "borrowed managed dereference remains generation checked");
+    delete borrowedSource;
+    println(format("managed-fast-path={}", fastResult));
     return 0;
 }

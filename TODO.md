@@ -230,8 +230,16 @@
   parent/peer/cross-link рёбра используют `weak T*` и не участвуют в cleanup.
   Явные strong back-edges отклоняются как `E_MANAGED_OWNERSHIP_CYCLE`; новый GC,
   refcount, cycle collector или runtime-вид указателя не добавлялся.
-- [ ] Добавить sanitizer-набор тестов на use-after-free, double-free и утечки.
-- [ ] Оптимизировать managed dereference и доказать корректность удаления bounds/lifetime checks в Release.
+- [x] Добавить sanitizer-набор тестов на use-after-free, double-free и утечки:
+  compile-time flow diagnostics дополнены настоящими `--sanitize=address`
+  executables; ASan подтверждает heap-use-after-free/double-free, а managed runtime
+  аварийно завершает процесс при оставшемся generation-slot. Флаг sanitizer
+  передаётся в LLVM object pipeline и native linker на Windows/Linux.
+- [x] Оптимизировать managed dereference и доказать корректность удаления
+  bounds/lifetime checks в Release: локальный неизменённый managed owner хранит
+  cached pointee после единственной проверки allocation; в hot loop отсутствуют
+  slot bounds/generation calls. Borrowed/subscriber/weak доступ сохраняет checked
+  fast path, `delete` зануляет cache, а dereference после delete отклоняется Analyzer.
 
 ### Массивы, slices и коллекции
 

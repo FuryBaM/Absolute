@@ -682,6 +682,12 @@ namespace Absolute {
         if (!targetMachine) Fail("cannot create target machine for '" + triple + "'");
         const std::string dataLayout = targetMachine->createDataLayout().getStringRepresentation();
         llvm::Module& generatedModule = BuildModule(program, moduleName, triple, dataLayout);
+        if (sanitizeAddress) {
+            for (llvm::Function& function : generatedModule) {
+                if (!function.isDeclaration())
+                    function.addFnAttr(llvm::Attribute::SanitizeAddress);
+            }
+        }
 
         llvm::LoopAnalysisManager loopAnalyses;
         llvm::FunctionAnalysisManager functionAnalyses;

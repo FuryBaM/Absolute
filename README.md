@@ -526,6 +526,15 @@ int32* value = new int32(42);
 delete value;
 ```
 
+The native Release backend caches the pointee of a proven local managed owner
+after the allocation's initial generation check. Dereferences of that unchanged
+owner use the cached address directly, so hot loops contain no slot bounds or
+generation/lifetime checks. This elimination is limited to analyzer-proven owners:
+borrowed parameters, subscribers, and weak pointers continue through the
+generation-checked fast path. `delete`, ownership transfer, and reassignment
+invalidate or replace the cache, while dereference after `delete`/`move` is
+rejected before code generation.
+
 Use `weak T*` for an explicit non-owning handle that may be stored in fields or
 returned from an API:
 
@@ -595,6 +604,11 @@ produce stable diagnostic codes (`E_RAW_DELETE_REQUIRED`, `E_RAW_OVERWRITE`, and
 `E_RAW_DOUBLE_DELETE`) through the analyzer API for IDE integrations. Borrowed raw
 addresses and raw values returned by external/native functions remain explicitly
 unsafe and are not automatically reclaimed.
+
+Use `--sanitize=address` with `--emit-object` or `--build-exe` to instrument unsafe
+raw memory accesses with AddressSanitizer. The native test suite runs real
+heap-use-after-free and double-free executables through ASan; managed allocation
+leaks are additionally detected by the generation-slot runtime at process exit.
 
 The analyzer also performs control-flow dataflow for definite assignment and
 pointer validity. Branch and loop states are merged by `SymbolId`; managed

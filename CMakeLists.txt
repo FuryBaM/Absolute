@@ -238,6 +238,11 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-fast-path.abs"
     )
     add_test(
+        NAME absolute.managed-deref-after-delete
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-deref-after-delete.abs"
+    )
+    set_tests_properties(absolute.managed-deref-after-delete PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.managed-role-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-role-errors.abs"
     )
@@ -271,6 +276,11 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/sanitizer-leak.abs" --sanitize=address
     )
     set_tests_properties(absolute.sanitizer-leak PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.sanitizer-double-free
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/sanitizer-double-free.abs" --sanitize=address
+    )
+    set_tests_properties(absolute.sanitizer-double-free PROPERTIES WILL_FAIL TRUE)
     add_test(
         NAME absolute.raw-missing-delete
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/raw-missing-delete.abs"
@@ -1279,6 +1289,90 @@ if(BUILD_TESTING)
   \"nativeSearchPaths\": []
 }
 ")
+        file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/SanitizerUaf-$<CONFIG>.absproj" CONTENT
+"{
+  \"name\": \"SanitizerUaf\",
+  \"entry\": \"${PROJECT_SOURCE_DIR}/tests/projects/sanitizer-uaf/src/main.abs\",
+  \"sources\": [\"${PROJECT_SOURCE_DIR}/tests/projects/sanitizer-uaf/src\"],
+  \"nativeLibraries\": [\"$<TARGET_FILE:absolute-native-test>\"],
+  \"nativeSearchPaths\": []
+}
+")
+        file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/SanitizerDoubleFree-$<CONFIG>.absproj" CONTENT
+"{
+  \"name\": \"SanitizerDoubleFree\",
+  \"entry\": \"${PROJECT_SOURCE_DIR}/tests/projects/sanitizer-double-free/src/main.abs\",
+  \"sources\": [\"${PROJECT_SOURCE_DIR}/tests/projects/sanitizer-double-free/src\"],
+  \"nativeLibraries\": [\"$<TARGET_FILE:absolute-native-test>\"],
+  \"nativeSearchPaths\": []
+}
+")
+        file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/SanitizerLeak-$<CONFIG>.absproj" CONTENT
+"{
+  \"name\": \"SanitizerLeak\",
+  \"entry\": \"${PROJECT_SOURCE_DIR}/tests/projects/sanitizer-leak/src/main.abs\",
+  \"sources\": [\"${PROJECT_SOURCE_DIR}/tests/projects/sanitizer-leak/src\"],
+  \"nativeLibraries\": [\"$<TARGET_FILE:absolute-native-test>\"],
+  \"nativeSearchPaths\": []
+}
+")
+        add_test(
+            NAME absolute.build-sanitizer-uaf
+            COMMAND Absolute-Compiler build "${CMAKE_BINARY_DIR}/SanitizerUaf-$<CONFIG>.absproj"
+                --sanitize=address --build-exe
+                -o "${CMAKE_BINARY_DIR}/sanitizer-uaf-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-sanitizer-uaf PROPERTIES
+            FIXTURES_SETUP absolute-sanitizer-uaf-executable
+        )
+        add_test(
+            NAME absolute.run-sanitizer-uaf
+            COMMAND "${CMAKE_COMMAND}"
+                -DEXECUTABLE=${CMAKE_BINARY_DIR}/sanitizer-uaf-app${CMAKE_EXECUTABLE_SUFFIX}
+                -DEXPECT=heap-use-after-free
+                -P "${PROJECT_SOURCE_DIR}/tests/run-sanitizer-case.cmake"
+        )
+        set_tests_properties(absolute.run-sanitizer-uaf PROPERTIES
+            FIXTURES_REQUIRED absolute-sanitizer-uaf-executable
+        )
+        add_test(
+            NAME absolute.build-sanitizer-double-free
+            COMMAND Absolute-Compiler build "${CMAKE_BINARY_DIR}/SanitizerDoubleFree-$<CONFIG>.absproj"
+                --sanitize=address --build-exe
+                -o "${CMAKE_BINARY_DIR}/sanitizer-double-free-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-sanitizer-double-free PROPERTIES
+            FIXTURES_SETUP absolute-sanitizer-double-free-executable
+        )
+        add_test(
+            NAME absolute.run-sanitizer-double-free
+            COMMAND "${CMAKE_COMMAND}"
+                -DEXECUTABLE=${CMAKE_BINARY_DIR}/sanitizer-double-free-app${CMAKE_EXECUTABLE_SUFFIX}
+                -DEXPECT=double-free
+                -P "${PROJECT_SOURCE_DIR}/tests/run-sanitizer-case.cmake"
+        )
+        set_tests_properties(absolute.run-sanitizer-double-free PROPERTIES
+            FIXTURES_REQUIRED absolute-sanitizer-double-free-executable
+        )
+        add_test(
+            NAME absolute.build-sanitizer-leak
+            COMMAND Absolute-Compiler build "${CMAKE_BINARY_DIR}/SanitizerLeak-$<CONFIG>.absproj"
+                --sanitize=address --build-exe
+                -o "${CMAKE_BINARY_DIR}/sanitizer-leak-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-sanitizer-leak PROPERTIES
+            FIXTURES_SETUP absolute-sanitizer-leak-executable
+        )
+        add_test(
+            NAME absolute.run-sanitizer-leak
+            COMMAND "${CMAKE_COMMAND}"
+                -DEXECUTABLE=${CMAKE_BINARY_DIR}/sanitizer-leak-app${CMAKE_EXECUTABLE_SUFFIX}
+                -DEXPECT=memory.leak.detected
+                -P "${PROJECT_SOURCE_DIR}/tests/run-sanitizer-case.cmake"
+        )
+        set_tests_properties(absolute.run-sanitizer-leak PROPERTIES
+            FIXTURES_REQUIRED absolute-sanitizer-leak-executable
+        )
         add_test(
             NAME absolute.emit-object
             COMMAND Absolute-Compiler build "${CMAKE_BINARY_DIR}/NativeFfi-$<CONFIG>.absproj"
