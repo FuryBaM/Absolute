@@ -188,6 +188,12 @@ namespace Absolute {
             return true;
         }
 
+        inline bool IsCodegenFunctionType(const std::string& type) {
+            std::string returnType;
+            std::vector<std::string> parameterTypes;
+            return ParseCodegenFunctionType(type, returnType, parameterTypes);
+        }
+
         inline std::optional<std::vector<size_t>> InferArrayShape(const ArrayExpr& array) {
             std::vector<size_t> childShape;
             bool hasChildShape = false;

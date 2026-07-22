@@ -114,6 +114,12 @@ namespace Absolute {
         SymbolId symbol = InvalidSymbolId;
     };
 
+    struct ANALYZER_API LambdaCapture {
+        SymbolId symbol = InvalidSymbolId;
+        std::string name;
+        std::string type;
+    };
+
     class ANALYZER_API SymbolTable {
         std::vector<Symbol> symbols;
         std::vector<std::unordered_map<std::string, SymbolId>> scopes;
@@ -293,7 +299,19 @@ namespace Absolute {
         bool currentMethodConst = false;
         bool currentMethodStatic = false;
         bool currentConstructor = false;
-        std::vector<size_t> lambdaScopeDepths;
+        struct LambdaContext {
+            LambdaExpr* expression = nullptr;
+            size_t scopeDepth = 0;
+            std::vector<LambdaCapture> captures;
+            std::unordered_set<SymbolId> capturedSymbols;
+        };
+        struct LambdaFunctionBoundary {
+            size_t keepScopeDepth = 0;
+            size_t valueFlowScopeDepth = 0;
+        };
+        std::vector<LambdaContext> lambdaContexts;
+        std::vector<LambdaFunctionBoundary> lambdaFunctionBoundaries;
+        std::unordered_map<const LambdaExpr*, std::vector<LambdaCapture>> lambdaCaptures;
         AccessLevel pendingMemberAccess = AccessLevel::Public;
 
     public:
@@ -321,6 +339,7 @@ namespace Absolute {
         const std::unordered_set<std::string>& InstantiatedGenericTypes() const {
             return instantiatedGenericTypes;
         }
+        const std::vector<LambdaCapture>& LambdaCaptures(const LambdaExpr& expression) const;
 
         void Visit(PrimitiveTypeExpr* expr) override;
         void Visit(UserTypeExpr* expr) override;

@@ -33,6 +33,9 @@ namespace Absolute {
         deferredTaskScopes.clear();
         loopBreakValueStates.clear();
         exceptionTransferredOwners.clear();
+        lambdaContexts.clear();
+        lambdaFunctionBoundaries.clear();
+        lambdaCaptures.clear();
         accessMode = AccessMode::Read;
         flowTerminated = false;
         spawnContextDepth = 0;
@@ -60,6 +63,13 @@ namespace Absolute {
     }
 
     bool Analyzer::HasErrors() const { return !diagnostics.empty(); }
+
+    const std::vector<LambdaCapture>& Analyzer::LambdaCaptures(
+        const LambdaExpr& expression) const {
+        static const std::vector<LambdaCapture> empty;
+        const auto found = lambdaCaptures.find(&expression);
+        return found == lambdaCaptures.end() ? empty : found->second;
+    }
 
     void Analyzer::PrintVariables(std::ostream& output) const {
         for (const Symbol& symbol : table.All()) {

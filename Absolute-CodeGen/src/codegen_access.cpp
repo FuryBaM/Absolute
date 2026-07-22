@@ -84,11 +84,9 @@ namespace Absolute {
             const Symbol* symbol = info ? impl->analyzer->GetSymbol(info->symbol) : nullptr;
             if (symbol && symbol->kind == SymbolKind::Function) {
                 if (impl->addressMode) impl->Fail("a function value is not assignable");
-                llvm::Function* function = impl->module->getFunction(
-                    impl->FunctionLinkName(*symbol));
-                if (!function) impl->Fail("missing function value '" + symbol->name + "'");
-                impl->value = function;
+                impl->value = impl->FunctionClosure(*symbol);
                 impl->valueCreatesManagedOwner = false;
+                impl->valueCreatesClosureOwner = false;
                 return;
             }
             if (symbol && symbol->kind == SymbolKind::Property) {
@@ -150,28 +148,37 @@ namespace Absolute {
         const std::string baseType = impl->SemanticType(expr->base.get());
         if (ParseCodegenFunctionType(baseType, functionValueReturn,
             functionValueParameters)) {
-            std::vector<llvm::Type*> llvmParameters;
-            if (impl->AbiReturnOffset(functionValueReturn) != 0)
-                llvmParameters.push_back(impl->builder.getPtrTy());
-            for (const std::string& parameter : functionValueParameters)
-                llvmParameters.push_back(impl->AbiParameterType(parameter));
-            llvm::FunctionType* functionType = llvm::FunctionType::get(
-                impl->AbiReturnType(functionValueReturn), llvmParameters, false);
-            llvm::Value* callee = impl->Evaluate(expr->base.get());
-            impl->EmitOrExit(impl->builder.CreateICmpNE(callee,
+            llvm::FunctionType* functionType = impl->ClosureInvokeType(
+                functionValueReturn, functionValueParameters);
+            llvm::Value* closure = impl->Evaluate(expr->base.get());
+            const bool temporaryClosure = impl->valueCreatesClosureOwner;
+            impl->EmitOrExit(impl->builder.CreateICmpNE(closure,
                 llvm::ConstantPointerNull::get(impl->builder.getPtrTy()),
                 "function.value.nonnull"), "function.null");
+            llvm::Value* invokeAddress = impl->builder.CreateStructGEP(
+                impl->ClosureObjectType(), closure, 1, "closure.invoke.address");
+            llvm::Value* callee = impl->builder.CreateLoad(
+                impl->builder.getPtrTy(), invokeAddress, "closure.invoke");
+            llvm::Value* environmentAddress = impl->builder.CreateStructGEP(
+                impl->ClosureObjectType(), closure, 2, "closure.environment.address");
+            llvm::Value* environment = impl->builder.CreateLoad(
+                impl->builder.getPtrTy(), environmentAddress, "closure.environment");
             std::vector<llvm::Value*> arguments;
             std::vector<llvm::Value*> temporaryArrayOwners;
+            std::vector<llvm::Value*> temporaryClosureOwners;
             for (const auto& argument : expr->arguments)
                 arguments.push_back(impl->EvaluateCallArgument(
-                    argument.get(), temporaryArrayOwners));
+                    argument.get(), temporaryArrayOwners, temporaryClosureOwners));
             impl->value = impl->EmitAbiCall(functionType, callee,
-                functionValueReturn, {}, functionValueParameters, arguments,
+                functionValueReturn, {environment}, functionValueParameters, arguments,
                 "function.value.result");
             impl->ReleaseArrayTemporaries(temporaryArrayOwners);
+            impl->ReleaseClosureTemporaries(temporaryClosureOwners);
+            if (temporaryClosure) impl->builder.CreateCall(
+                impl->ClosureRelease(), {closure});
             impl->EmitExceptionCheck();
             impl->valueCreatesManagedOwner = IsManagedPointerTypeName(functionValueReturn);
+            impl->valueCreatesClosureOwner = IsCodegenFunctionType(functionValueReturn);
             return;
         }
         if (selected && selected->kind == SymbolKind::Method && selected->isStatic) {
@@ -180,15 +187,18 @@ namespace Absolute {
             if (!function) impl->Fail("unknown static method '" + name + "'");
             std::vector<llvm::Value*> arguments;
             std::vector<llvm::Value*> temporaryArrayOwners;
+            std::vector<llvm::Value*> temporaryClosureOwners;
             for (const auto& argument : expr->arguments)
                 arguments.push_back(impl->EvaluateCallArgument(
-                    argument.get(), temporaryArrayOwners));
+                    argument.get(), temporaryArrayOwners, temporaryClosureOwners));
             llvm::Value* result = impl->EmitAbiCall(function->getFunctionType(), function,
                 selected->type, {}, selected->parameterTypes, arguments, "static.method.result");
             impl->ReleaseArrayTemporaries(temporaryArrayOwners);
+            impl->ReleaseClosureTemporaries(temporaryClosureOwners);
             impl->EmitExceptionCheck();
             impl->value = result;
             impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
+            impl->valueCreatesClosureOwner = IsCodegenFunctionType(impl->SemanticType(expr));
             return;
         }
         if (auto* member = dynamic_cast<MemberAccessExpr*>(expr->base.get())) {
@@ -198,19 +208,22 @@ namespace Absolute {
                 if (!function) impl->Fail("unknown extension method '" + name + "'");
                 std::vector<llvm::Value*> arguments;
                 std::vector<llvm::Value*> temporaryArrayOwners;
+                std::vector<llvm::Value*> temporaryClosureOwners;
                 arguments.reserve(expr->arguments.size() + 1);
                 arguments.push_back(impl->EvaluateCallArgument(
-                    member->base.get(), temporaryArrayOwners));
+                    member->base.get(), temporaryArrayOwners, temporaryClosureOwners));
                 for (const auto& argument : expr->arguments)
                     arguments.push_back(impl->EvaluateCallArgument(
-                        argument.get(), temporaryArrayOwners));
+                        argument.get(), temporaryArrayOwners, temporaryClosureOwners));
                 llvm::Value* result = impl->EmitAbiCall(function->getFunctionType(), function,
                     selected->type, {}, selected->parameterTypes, arguments,
                     member->member + ".extension.result");
                 impl->ReleaseArrayTemporaries(temporaryArrayOwners);
+                impl->ReleaseClosureTemporaries(temporaryClosureOwners);
                 impl->EmitExceptionCheck();
                 impl->value = result;
                 impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
+                impl->valueCreatesClosureOwner = IsCodegenFunctionType(impl->SemanticType(expr));
                 return;
             }
             const std::string baseType = impl->SemanticType(member->base.get());
@@ -227,9 +240,10 @@ namespace Absolute {
                 llvm::FunctionType* methodType = impl->MethodFunctionType(method->second);
                 std::vector<llvm::Value*> arguments;
                 std::vector<llvm::Value*> temporaryArrayOwners;
+                std::vector<llvm::Value*> temporaryClosureOwners;
                 for (const auto& argument : expr->arguments)
                     arguments.push_back(impl->EvaluateCallArgument(
-                        argument.get(), temporaryArrayOwners));
+                        argument.get(), temporaryArrayOwners, temporaryClosureOwners));
 
                 llvm::Value* callee = nullptr;
                 if (method->second.virtualSlot) {
@@ -249,9 +263,11 @@ namespace Absolute {
                     method->second.returnType, {object}, method->second.parameterTypes,
                     arguments, member->member + ".result");
                 impl->ReleaseArrayTemporaries(temporaryArrayOwners);
+                impl->ReleaseClosureTemporaries(temporaryClosureOwners);
                 impl->EmitExceptionCheck();
                 impl->value = result;
                 impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
+                impl->valueCreatesClosureOwner = IsCodegenFunctionType(impl->SemanticType(expr));
                 return;
             }
             auto interfaceIterator = impl->interfaces.find(className);
@@ -270,9 +286,10 @@ namespace Absolute {
                 llvm::FunctionType* methodType = impl->MethodFunctionType(method->second);
                 std::vector<llvm::Value*> arguments;
                 std::vector<llvm::Value*> temporaryArrayOwners;
+                std::vector<llvm::Value*> temporaryClosureOwners;
                 for (const auto& argument : expr->arguments)
                     arguments.push_back(impl->EvaluateCallArgument(
-                        argument.get(), temporaryArrayOwners));
+                        argument.get(), temporaryArrayOwners, temporaryClosureOwners));
                 llvm::Value* vtable = impl->builder.CreateLoad(
                     impl->builder.getPtrTy(), object, "interface.vtable");
                 llvm::Value* slot = impl->builder.CreateGEP(
@@ -284,9 +301,11 @@ namespace Absolute {
                     method->second.returnType, {object}, method->second.parameterTypes,
                     arguments, member->member + ".interface.result");
                 impl->ReleaseArrayTemporaries(temporaryArrayOwners);
+                impl->ReleaseClosureTemporaries(temporaryClosureOwners);
                 impl->EmitExceptionCheck();
                 impl->value = result;
                 impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
+                impl->valueCreatesClosureOwner = IsCodegenFunctionType(impl->SemanticType(expr));
                 return;
             }
             auto structIterator = impl->structs.find(className);
@@ -301,18 +320,21 @@ namespace Absolute {
                 llvm::FunctionType* methodType = impl->MethodFunctionType(method->second);
                 std::vector<llvm::Value*> arguments;
                 std::vector<llvm::Value*> temporaryArrayOwners;
+                std::vector<llvm::Value*> temporaryClosureOwners;
                 for (const auto& argument : expr->arguments)
                     arguments.push_back(impl->EvaluateCallArgument(
-                        argument.get(), temporaryArrayOwners));
+                        argument.get(), temporaryArrayOwners, temporaryClosureOwners));
                 llvm::Function* callee = impl->module->getFunction(method->second.linkName);
                 if (!callee) impl->Fail("missing method function '" + method->second.linkName + "'");
                 llvm::Value* result = impl->EmitAbiCall(methodType, callee,
                     method->second.returnType, {object}, method->second.parameterTypes,
                     arguments, member->member + ".result");
                 impl->ReleaseArrayTemporaries(temporaryArrayOwners);
+                impl->ReleaseClosureTemporaries(temporaryClosureOwners);
                 impl->EmitExceptionCheck();
                 impl->value = result;
                 impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
+                impl->valueCreatesClosureOwner = IsCodegenFunctionType(impl->SemanticType(expr));
                 return;
             }
         }
@@ -325,11 +347,12 @@ namespace Absolute {
         if (!function) impl->Fail("unknown function '" + name + "'");
         std::vector<llvm::Value*> arguments;
         std::vector<llvm::Value*> temporaryArrayOwners;
+        std::vector<llvm::Value*> temporaryClosureOwners;
         arguments.reserve(expr->arguments.size());
         std::vector<std::string> parameterTypes;
         for (const auto& expression : expr->arguments) {
             arguments.push_back(impl->EvaluateCallArgument(
-                expression.get(), temporaryArrayOwners));
+                expression.get(), temporaryArrayOwners, temporaryClosureOwners));
             parameterTypes.push_back(impl->SemanticType(expression.get()));
         }
         if (selected) parameterTypes = selected->parameterTypes;
@@ -339,9 +362,11 @@ namespace Absolute {
         llvm::Value* result = impl->EmitAbiCall(function->getFunctionType(), function,
             returnType, {}, parameterTypes, arguments, name + ".result", external);
         impl->ReleaseArrayTemporaries(temporaryArrayOwners);
+        impl->ReleaseClosureTemporaries(temporaryClosureOwners);
         if (!selected || !selected->externalFunction) impl->EmitExceptionCheck();
         impl->value = result;
         impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
+        impl->valueCreatesClosureOwner = IsCodegenFunctionType(returnType);
     }
 
     void CodeGenerator::Visit(ArrayAccessExpr* expr) {

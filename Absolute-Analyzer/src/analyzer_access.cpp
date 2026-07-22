@@ -92,13 +92,55 @@ namespace Absolute {
                 Report("property '" + expr->name + "' has no addressable storage",
                     "E_PROPERTY_NOT_ADDRESSABLE", id);
         }
-        if (!lambdaScopeDepths.empty() && symbol->scopeDepth > 0 &&
-            symbol->scopeDepth < lambdaScopeDepths.back() &&
-            (symbol->kind == SymbolKind::Variable || symbol->kind == SymbolKind::Parameter ||
-                symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Property)) {
-            Report("lambda cannot capture local value '" + expr->name +
-                "'; closure captures are not implemented yet", "E_LAMBDA_CAPTURE_UNSUPPORTED", id);
+        bool capturedByCurrentLambda = false;
+        const auto recordCapture = [&](LambdaContext& context, SymbolId captureId,
+            const Symbol& captured) {
+            if (captured.scopeDepth == 0 || captured.scopeDepth >= context.scopeDepth)
+                return false;
+            if (context.capturedSymbols.contains(captureId)) return true;
+
+            std::string closureReturn;
+            std::vector<std::string> closureParameters;
+            const bool nestedFunction = ParseFunctionType(
+                captured.type, closureReturn, closureParameters);
+            if (!nestedFunction && (IsPointerType(captured.type) ||
+                IsTaskType(captured.type) || ArrayRank(captured.type) > 0 ||
+                TypeOwnsResources(captured.type))) {
+                Report("lambda cannot safely capture resource value '" + captured.name +
+                    "' of type '" + captured.type + "' by value",
+                    "E_LAMBDA_CAPTURE_RESOURCE", captureId);
+                context.capturedSymbols.insert(captureId);
+                return true;
+            }
+            context.capturedSymbols.insert(captureId);
+            context.captures.push_back({captureId, captured.name, captured.type});
+            return true;
+        };
+
+        if (!lambdaContexts.empty()) {
+            if (symbol->kind == SymbolKind::Variable ||
+                symbol->kind == SymbolKind::Parameter) {
+                for (LambdaContext& context : lambdaContexts)
+                    if (recordCapture(context, id, *symbol) &&
+                        &context == &lambdaContexts.back())
+                        capturedByCurrentLambda = true;
+            }
+            else if ((symbol->kind == SymbolKind::Field ||
+                symbol->kind == SymbolKind::Property) && !symbol->isStatic) {
+                const SymbolId thisId = table.Lookup("this");
+                const Symbol* thisSymbol = table.Get(thisId);
+                if (thisSymbol) {
+                    for (LambdaContext& context : lambdaContexts)
+                        if (recordCapture(context, thisId, *thisSymbol) &&
+                            &context == &lambdaContexts.back())
+                            capturedByCurrentLambda = true;
+                }
+            }
         }
+        if (capturedByCurrentLambda && accessMode != AccessMode::Read)
+            Report("captured value '" + expr->name +
+                "' is immutable; captures use by-value semantics",
+                "E_LAMBDA_CAPTURE_MUTATION", id);
         const bool functionValue = symbol->kind == SymbolKind::Function &&
             symbol->genericParameters.empty() && !symbol->externalFunction &&
             !symbol->exportedFunction;
@@ -123,7 +165,8 @@ namespace Absolute {
             ? FunctionTypeName(symbol->type, symbol->parameterTypes) : symbol->type;
         Save(expr, {id, resolvedType,
             functionValue ? false :
-                (symbol->kind == SymbolKind::Property ? symbol->canWrite : value), false,
+                (capturedByCurrentLambda ? false :
+                    (symbol->kind == SymbolKind::Property ? symbol->canWrite : value)), false,
             value && IsManagedPointerType(symbol->type) && symbol->managedOwner,
             flow.initialization, flow.pointerValidity, flow.pointerOwner,
             flow.taskState});

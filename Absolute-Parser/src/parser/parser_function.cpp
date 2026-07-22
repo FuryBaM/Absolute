@@ -6,13 +6,32 @@ namespace Absolute {
     {
         Consume(TokenType::KEYWORD, "fn");
         auto parameters = ParseParameters();
-        Consume(TokenType::OPERATOR, "=>");
-        auto body = ParseExpression();
-        if (!body) {
-            ReportSyntaxError(CurrentToken(), "A lambda requires an expression body");
+        if (CurrentToken() && CurrentToken()->type == TokenType::OPERATOR &&
+            CurrentToken()->value == "=>") {
+            Consume(TokenType::OPERATOR, "=>");
+            auto body = ParseExpression();
+            if (!body) {
+                ReportSyntaxError(CurrentToken(), "A lambda requires an expression body");
+                throw std::runtime_error("Invalid lambda body");
+            }
+            return std::make_unique<LambdaExpr>(std::move(parameters), std::move(body));
+        }
+
+        std::unique_ptr<TypeExpr> returnType;
+        if (CurrentToken() && CurrentToken()->type == TokenType::OPERATOR &&
+            CurrentToken()->value == "->") {
+            Consume(TokenType::OPERATOR, "->");
+            returnType = ParseType();
+        }
+        if (!CurrentToken() || CurrentToken()->type != TokenType::BRACKET ||
+            CurrentToken()->value != "{") {
+            ReportSyntaxError(CurrentToken(),
+                "Expected '=>' expression or a lambda statement body");
             throw std::runtime_error("Invalid lambda body");
         }
-        return std::make_unique<LambdaExpr>(std::move(parameters), std::move(body));
+        auto body = ParseStatement();
+        return std::make_unique<LambdaExpr>(std::move(parameters),
+            std::move(returnType), std::move(body));
     }
 
     bool Parser::LooksLikeFunctionDeclaration() const

@@ -986,6 +986,9 @@ namespace Absolute {
     }
 
     bool CodeGenerator::Impl::TypeNeedsCleanup(const std::string& typeName) {
+        std::string closureReturn;
+        std::vector<std::string> closureParameters;
+        if (ParseCodegenFunctionType(typeName, closureReturn, closureParameters)) return true;
         std::unordered_set<std::string> visiting;
         const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
             if (IsManagedPointerTypeName(candidate) || ArrayRankName(candidate) > 0) return true;
@@ -1060,6 +1063,16 @@ namespace Absolute {
 
     void CodeGenerator::Impl::EmitValueCleanup(
         llvm::Value* address, const std::string& typeName) {
+        std::string closureReturn;
+        std::vector<std::string> closureParameters;
+        if (ParseCodegenFunctionType(typeName, closureReturn, closureParameters)) {
+            llvm::Value* closure = builder.CreateLoad(
+                builder.getPtrTy(), address, "closure.cleanup.value");
+            builder.CreateCall(ClosureRelease(), {closure});
+            builder.CreateStore(
+                llvm::ConstantPointerNull::get(builder.getPtrTy()), address);
+            return;
+        }
         if (IsManagedPointerTypeName(typeName)) {
             llvm::Value* handle = builder.CreateLoad(
                 builder.getInt64Ty(), address, "field.cleanup.handle");

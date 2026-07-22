@@ -180,8 +180,12 @@ namespace Absolute {
                     Report("cannot return a raw pointer to a local variable", "E_RAW_RETURN_LOCAL", value.symbol);
             }
         }
-        CheckKeepScopesFrom(0, "return");
-        CheckTaskScopesFrom(0, "return");
+        const size_t keepBoundary = lambdaFunctionBoundaries.empty()
+            ? 0 : lambdaFunctionBoundaries.back().keepScopeDepth;
+        const size_t valueBoundary = lambdaFunctionBoundaries.empty()
+            ? 0 : lambdaFunctionBoundaries.back().valueFlowScopeDepth;
+        CheckKeepScopesFrom(keepBoundary, "return");
+        CheckTaskScopesFrom(valueBoundary, "return");
         flowTerminated = true;
     }
 
@@ -407,8 +411,12 @@ namespace Absolute {
                     transferred.insert(exception.pointerOwner);
             }
         }
-        CheckKeepScopesFrom(0, "throw");
-        CheckTaskScopesFrom(0, "throw");
+        const size_t keepBoundary = lambdaFunctionBoundaries.empty()
+            ? 0 : lambdaFunctionBoundaries.back().keepScopeDepth;
+        const size_t valueBoundary = lambdaFunctionBoundaries.empty()
+            ? 0 : lambdaFunctionBoundaries.back().valueFlowScopeDepth;
+        CheckKeepScopesFrom(keepBoundary, "throw");
+        CheckTaskScopesFrom(valueBoundary, "throw");
         flowTerminated = true;
     }
 

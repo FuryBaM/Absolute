@@ -70,6 +70,11 @@ namespace Absolute {
         llvm::Value* assigned = impl->Evaluate(expr->value.get());
         const bool createsOwner = impl->valueCreatesManagedOwner;
         llvm::Value* assignedPointee = impl->valueManagedPointee;
+        const bool createsClosureOwner = impl->valueCreatesClosureOwner;
+        std::string closureReturn;
+        std::vector<std::string> closureParameters;
+        const bool functionValue = ParseCodegenFunctionType(
+            targetTypeName, closureReturn, closureParameters);
 
         if (expr->op != "=") {
             llvm::Value* current = impl->builder.CreateLoad(targetType, targetAddress, "assignment.current");
@@ -98,7 +103,12 @@ namespace Absolute {
             }
         }
         if (targetSymbol && targetSymbol->kind == SymbolKind::Field &&
-            impl->TypeNeedsCleanup(targetTypeName)) {
+            impl->TypeNeedsCleanup(targetTypeName) && !functionValue) {
+            impl->EmitValueCleanup(targetAddress, targetTypeName);
+        }
+        if (functionValue) {
+            if (!createsClosureOwner)
+                impl->builder.CreateCall(impl->ClosureRetain(), {assigned});
             impl->EmitValueCleanup(targetAddress, targetTypeName);
         }
         assigned = impl->Coerce(assigned, targetType);
@@ -108,6 +118,7 @@ namespace Absolute {
         impl->valueManagedPointee = nullptr;
         impl->valueCreatesArrayOwner = false;
         impl->valueArrayOwner = nullptr;
+        impl->valueCreatesClosureOwner = false;
     }
 
     void CodeGenerator::Visit(VarDeclExpr* expr) {
@@ -230,8 +241,17 @@ namespace Absolute {
         llvm::Value* initial = expr->value ? impl->Evaluate(expr->value.get()) : llvm::Constant::getNullValue(type);
         const bool createsOwner = impl->valueCreatesManagedOwner;
         llvm::Value* managedPointee = impl->valueManagedPointee;
+        const bool createsClosureOwner = impl->valueCreatesClosureOwner;
+        std::string closureReturn;
+        std::vector<std::string> closureParameters;
+        const bool functionValue = ParseCodegenFunctionType(
+            typeName, closureReturn, closureParameters);
+        if (functionValue && !createsClosureOwner)
+            impl->builder.CreateCall(impl->ClosureRetain(), {initial});
         initial = impl->Coerce(initial, type);
         impl->builder.CreateStore(initial, address);
+        if (functionValue)
+            impl->RequireVariable(name).ownsAggregateResources = true;
         if (staticOwner && createsOwner && managedPointee) {
             Impl::Variable& variable = impl->RequireVariable(name);
             variable.managedPointee = impl->CreateEntryAlloca(
@@ -241,6 +261,7 @@ namespace Absolute {
         impl->value = initial;
         impl->valueCreatesManagedOwner = false;
         impl->valueManagedPointee = nullptr;
+        impl->valueCreatesClosureOwner = false;
     }
 
     void CodeGenerator::Visit(MemberAccessExpr* expr) {
@@ -578,8 +599,16 @@ namespace Absolute {
             const bool staticOwner = IsManagedPointerTypeName(typeName) &&
                 impl->StaticManagedOwner(symbol);
             llvm::Value* initial = expr->value
-                ? impl->Coerce(impl->Evaluate(expr->value.get()), type)
+                ? impl->Evaluate(expr->value.get())
                 : llvm::Constant::getNullValue(type);
+            const bool createsClosureOwner = impl->valueCreatesClosureOwner;
+            std::string closureReturn;
+            std::vector<std::string> closureParameters;
+            const bool functionValue = ParseCodegenFunctionType(
+                typeName, closureReturn, closureParameters);
+            if (functionValue && !createsClosureOwner)
+                impl->builder.CreateCall(impl->ClosureRetain(), {initial});
+            initial = impl->Coerce(initial, type);
             const bool createsOwner = impl->valueCreatesManagedOwner;
             llvm::Value* managedPointee = impl->valueManagedPointee;
             impl->builder.CreateStore(initial, address);
@@ -587,6 +616,8 @@ namespace Absolute {
                 Impl::Variable{address, type, typeName, staticOwner, false, nullptr, {},
                     nullptr, symbol}).second)
                 impl->Fail("duplicate variable '" + name + "'");
+            if (functionValue)
+                impl->RequireVariable(name).ownsAggregateResources = true;
             if (staticOwner && createsOwner && managedPointee) {
                 Impl::Variable& variable = impl->RequireVariable(name);
                 variable.managedPointee = impl->CreateEntryAlloca(
@@ -596,6 +627,7 @@ namespace Absolute {
             impl->value = initial;
             impl->valueCreatesManagedOwner = false;
             impl->valueManagedPointee = nullptr;
+            impl->valueCreatesClosureOwner = false;
             return;
         }
         llvm::StructType* llvmType = nullptr;
@@ -796,16 +828,23 @@ namespace Absolute {
         if (!ParseCodegenFunctionType(lambdaType, returnType, parameterTypes))
             impl->Fail("invalid lambda type '" + lambdaType + "'");
 
-        std::vector<llvm::Type*> llvmParameters;
-        if (impl->AbiReturnOffset(returnType) != 0)
-            llvmParameters.push_back(impl->builder.getPtrTy());
-        for (const std::string& parameter : parameterTypes)
-            llvmParameters.push_back(impl->AbiParameterType(parameter));
-        llvm::FunctionType* functionType = llvm::FunctionType::get(
-            impl->AbiReturnType(returnType), llvmParameters, false);
+        const std::uint64_t lambdaId = impl->lambdaCounter++;
+        const std::vector<LambdaCapture>& captures = impl->analyzer
+            ? impl->analyzer->LambdaCaptures(*expr)
+            : std::vector<LambdaCapture>{};
+        std::vector<llvm::Type*> captureTypes;
+        captureTypes.reserve(captures.size());
+        for (const LambdaCapture& capture : captures)
+            captureTypes.push_back(impl->TypeFromName(capture.type));
+        llvm::StructType* environmentType = captures.empty() ? nullptr
+            : llvm::StructType::create(impl->context, captureTypes,
+                "absolute.lambda.environment." + std::to_string(lambdaId));
+
+        llvm::FunctionType* functionType = impl->ClosureInvokeType(
+            returnType, parameterTypes);
         llvm::Function* lambda = llvm::Function::Create(functionType,
             llvm::Function::InternalLinkage,
-            "__absolute.lambda." + std::to_string(impl->lambdaCounter++), *impl->module);
+            "__absolute.lambda." + std::to_string(lambdaId), *impl->module);
         lambda->setCallingConv(llvm::CallingConv::C);
 
         const auto savedInsertPoint = impl->builder.saveIP();
@@ -819,6 +858,7 @@ namespace Absolute {
         llvm::Value* savedReturnStorage = impl->currentReturnStorage;
         const std::string savedClass = impl->currentClassName;
         llvm::Value* savedThis = impl->currentThis;
+        const auto savedSubstitutions = impl->currentGenericSubstitutions;
 
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(impl->context, "entry", lambda);
         impl->builder.SetInsertPoint(entry);
@@ -835,6 +875,26 @@ namespace Absolute {
         unsigned argumentIndex = 0;
         impl->currentReturnStorage = impl->AbiReturnOffset(returnType) != 0
             ? lambda->getArg(argumentIndex++) : nullptr;
+        llvm::Argument* environment = lambda->getArg(argumentIndex++);
+        environment->setName("environment");
+        for (size_t index = 0; index < captures.size(); ++index) {
+            llvm::Value* address = impl->builder.CreateStructGEP(
+                environmentType, environment, static_cast<unsigned>(index),
+                captures[index].name + ".capture.address");
+            Impl::Variable variable;
+            variable.address = address;
+            variable.type = captureTypes[index];
+            variable.typeName = captures[index].type;
+            variable.symbol = captures[index].symbol;
+            if (!impl->scopes.back().emplace(captures[index].name,
+                std::move(variable)).second)
+                impl->Fail("duplicate lambda capture '" + captures[index].name + "'");
+            if (captures[index].name == "this") {
+                impl->currentThis = impl->builder.CreateLoad(
+                    captureTypes[index], address, "lambda.this");
+                impl->currentClassName = PointerPointeeName(captures[index].type);
+            }
+        }
         for (size_t index = 0; index < expr->parameters.size(); ++index) {
             llvm::Argument* argument = lambda->getArg(argumentIndex++);
             argument->setName(IdentifierName(expr->parameters[index]->name.get()));
@@ -842,13 +902,29 @@ namespace Absolute {
                 parameterTypes[index]);
         }
 
-        llvm::Value* result = impl->Coerce(
-            impl->Evaluate(expr->body.get()), impl->TypeFromName(returnType));
-        if (impl->currentReturnStorage) {
-            impl->builder.CreateStore(result, impl->currentReturnStorage);
-            impl->builder.CreateRetVoid();
+        if (expr->expressionBody) {
+            llvm::Value* result = impl->Evaluate(expr->expressionBody.get());
+            const bool createsClosureOwner = impl->valueCreatesClosureOwner;
+            std::string nestedReturn;
+            std::vector<std::string> nestedParameters;
+            if (ParseCodegenFunctionType(returnType, nestedReturn, nestedParameters) &&
+                !createsClosureOwner)
+                impl->builder.CreateCall(impl->ClosureRetain(), {result});
+            result = impl->Coerce(result, impl->TypeFromName(returnType));
+            if (impl->currentReturnStorage) {
+                impl->builder.CreateStore(result, impl->currentReturnStorage);
+                impl->builder.CreateRetVoid();
+            }
+            else impl->builder.CreateRet(result);
         }
-        else impl->builder.CreateRet(result);
+        else if (expr->statementBody) {
+            expr->statementBody->Accept(*this);
+            if (impl->builder.GetInsertBlock() &&
+                !impl->builder.GetInsertBlock()->getTerminator()) {
+                if (returnType == "void") impl->builder.CreateRetVoid();
+                else impl->Fail("lambda body reached code generation without a return");
+            }
+        }
 
         std::string verifierMessage;
         llvm::raw_string_ostream verifierStream(verifierMessage);
@@ -868,8 +944,91 @@ namespace Absolute {
         impl->currentReturnStorage = savedReturnStorage;
         impl->currentClassName = savedClass;
         impl->currentThis = savedThis;
+        impl->currentGenericSubstitutions = savedSubstitutions;
         impl->builder.restoreIP(savedInsertPoint);
-        impl->value = lambda;
+
+        llvm::Value* environmentValue = llvm::ConstantPointerNull::get(
+            impl->builder.getPtrTy());
+        llvm::Function* destroyEnvironment = nullptr;
+        if (!captures.empty()) {
+            llvm::Value* environmentSize = impl->Coerce(
+                llvm::ConstantExpr::getSizeOf(environmentType),
+                impl->builder.getInt64Ty());
+            environmentValue = impl->builder.CreateCall(
+                impl->Malloc(), {environmentSize}, "lambda.environment");
+            for (size_t index = 0; index < captures.size(); ++index) {
+                Impl::Variable* source = impl->FindVariable(captures[index].symbol);
+                if (!source)
+                    impl->Fail("missing captured value '" + captures[index].name + "'");
+                llvm::Value* captured = impl->builder.CreateLoad(
+                    source->type, source->address, captures[index].name + ".captured");
+                std::string capturedReturn;
+                std::vector<std::string> capturedParameters;
+                if (ParseCodegenFunctionType(captures[index].type,
+                    capturedReturn, capturedParameters))
+                    impl->builder.CreateCall(impl->ClosureRetain(), {captured});
+                llvm::Value* destination = impl->builder.CreateStructGEP(
+                    environmentType, environmentValue, static_cast<unsigned>(index),
+                    captures[index].name + ".environment.address");
+                impl->builder.CreateStore(captured, destination);
+            }
+
+            llvm::FunctionType* destroyType = llvm::FunctionType::get(
+                impl->builder.getVoidTy(), {impl->builder.getPtrTy()}, false);
+            destroyEnvironment = llvm::Function::Create(destroyType,
+                llvm::Function::InternalLinkage,
+                "__absolute.lambda.destroy." + std::to_string(lambdaId), *impl->module);
+            const auto destroySaved = impl->builder.saveIP();
+            llvm::BasicBlock* destroyEntry = llvm::BasicBlock::Create(
+                impl->context, "entry", destroyEnvironment);
+            impl->builder.SetInsertPoint(destroyEntry);
+            llvm::Value* destroyedEnvironment = destroyEnvironment->getArg(0);
+            for (size_t index = 0; index < captures.size(); ++index) {
+                std::string capturedReturn;
+                std::vector<std::string> capturedParameters;
+                if (!ParseCodegenFunctionType(captures[index].type,
+                    capturedReturn, capturedParameters)) continue;
+                llvm::Value* address = impl->builder.CreateStructGEP(
+                    environmentType, destroyedEnvironment, static_cast<unsigned>(index),
+                    "captured.closure.address");
+                llvm::Value* captured = impl->builder.CreateLoad(
+                    impl->builder.getPtrTy(), address, "captured.closure");
+                impl->builder.CreateCall(impl->ClosureRelease(), {captured});
+            }
+            impl->builder.CreateCall(impl->Free(), {destroyedEnvironment});
+            impl->builder.CreateRetVoid();
+            impl->builder.restoreIP(destroySaved);
+        }
+
+        if (captures.empty()) {
+            llvm::Constant* initializer = llvm::ConstantStruct::get(
+                impl->ClosureObjectType(), {
+                    llvm::ConstantInt::getSigned(impl->builder.getInt64Ty(), -1), lambda,
+                    llvm::ConstantPointerNull::get(impl->builder.getPtrTy()),
+                    llvm::ConstantPointerNull::get(impl->builder.getPtrTy())});
+            impl->value = new llvm::GlobalVariable(*impl->module,
+                impl->ClosureObjectType(), true, llvm::GlobalValue::InternalLinkage,
+                initializer, "__absolute.lambda.value." + std::to_string(lambdaId));
+            impl->valueCreatesClosureOwner = false;
+        }
+        else {
+            llvm::Value* closureSize = impl->Coerce(
+                llvm::ConstantExpr::getSizeOf(impl->ClosureObjectType()),
+                impl->builder.getInt64Ty());
+            llvm::Value* closure = impl->builder.CreateCall(
+                impl->Malloc(), {closureSize}, "lambda.closure");
+            impl->builder.CreateStore(impl->builder.getInt64(1),
+                impl->builder.CreateStructGEP(
+                    impl->ClosureObjectType(), closure, 0, "closure.count.address"));
+            impl->builder.CreateStore(lambda, impl->builder.CreateStructGEP(
+                impl->ClosureObjectType(), closure, 1, "closure.invoke.address"));
+            impl->builder.CreateStore(environmentValue, impl->builder.CreateStructGEP(
+                impl->ClosureObjectType(), closure, 2, "closure.environment.address"));
+            impl->builder.CreateStore(destroyEnvironment, impl->builder.CreateStructGEP(
+                impl->ClosureObjectType(), closure, 3, "closure.destroy.address"));
+            impl->value = closure;
+            impl->valueCreatesClosureOwner = true;
+        }
         impl->valueCreatesManagedOwner = false;
     }
 

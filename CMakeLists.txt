@@ -1450,6 +1450,26 @@ if(BUILD_TESTING)
             FIXTURES_REQUIRED absolute-function-values-executable
             PASS_REGULAR_EXPRESSION "function-values=ok"
         )
+
+        add_test(
+            NAME absolute.build-lambda-closures
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/lambda-closures.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/lambda-closures-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-lambda-closures PROPERTIES
+            FIXTURES_SETUP absolute-lambda-closures-executable
+        )
+        add_test(NAME absolute.run-lambda-closures
+            COMMAND "${CMAKE_BINARY_DIR}/lambda-closures-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-lambda-closures PROPERTIES
+            FIXTURES_REQUIRED absolute-lambda-closures-executable
+            PASS_REGULAR_EXPRESSION "lambda-closures=ok"
+        )
+        add_test(
+            NAME absolute.lambda-closure-errors
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/lambda-closure-errors.abs"
+        )
+        set_tests_properties(absolute.lambda-closure-errors PROPERTIES WILL_FAIL TRUE)
         add_test(
             NAME absolute.build-unhandled-exception
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/unhandled-exception.abs"

@@ -857,11 +857,28 @@ namespace Absolute {
     }
 
     void Analyzer::Visit(LambdaExpr* expr) {
+        std::string expectedReturn;
+        std::vector<std::string> expectedParameters;
+        const bool hasExpectedSignature = ParseFunctionType(
+            expectedType, expectedReturn, expectedParameters);
+        const std::string savedExpectedType = expectedType;
+        expectedType.clear();
+
         std::vector<std::string> parameterTypes;
         parameterTypes.reserve(expr->parameters.size());
         table.EnterScope();
-        lambdaScopeDepths.push_back(table.ScopeDepth());
+        lambdaContexts.push_back({expr, table.ScopeDepth()});
         ++functionDepth;
+        const int savedLoopDepth = loopDepth;
+        const int savedCatchDepth = catchDepth;
+        const int savedFinallyDepth = finallyDepth;
+        const int savedDeferDepth = deferDepth;
+        const bool savedAsync = currentFunctionAsync;
+        const bool savedFlowTerminated = flowTerminated;
+        const std::string savedReturnType = currentReturnType;
+        loopDepth = catchDepth = finallyDepth = deferDepth = 0;
+        currentFunctionAsync = false;
+        flowTerminated = false;
         for (const auto& parameter : expr->parameters) {
             if (!parameter) continue;
             const std::string name = ExtractIdentifier(parameter->name.get());
@@ -873,20 +890,62 @@ namespace Absolute {
             if (parameter->value)
                 Report("lambda parameters cannot have default values", "E_LAMBDA_DEFAULT_PARAMETER");
         }
-        const Result body = Evaluate(expr->body.get());
+
+        std::string lambdaReturnType;
+        Result body;
+        bool returnsEverywhere = true;
+        if (expr->expressionBody) {
+            body = hasExpectedSignature
+                ? EvaluateExpected(expr->expressionBody.get(), expectedReturn)
+                : Evaluate(expr->expressionBody.get());
+            lambdaReturnType = hasExpectedSignature ? expectedReturn : body.type;
+            if (body.type == "void")
+                Report("an expression lambda cannot return void", "E_LAMBDA_VOID_EXPRESSION");
+        }
+        else {
+            const std::string explicitReturn = expr->returnType
+                ? ResolveType(expr->returnType.get()) : std::string{};
+            if (!explicitReturn.empty() && hasExpectedSignature &&
+                explicitReturn != expectedReturn)
+                Report("lambda declares return type '" + explicitReturn +
+                    "', expected '" + expectedReturn + "'", "E_LAMBDA_RETURN");
+            lambdaReturnType = !explicitReturn.empty() ? explicitReturn : expectedReturn;
+            if (lambdaReturnType.empty()) {
+                Report("a statement lambda needs '-> ReturnType' when its func type is not known",
+                    "E_LAMBDA_RETURN_TYPE");
+                lambdaReturnType = "error";
+            }
+            currentReturnType = lambdaReturnType;
+            lambdaFunctionBoundaries.push_back(
+                {keepScopes.size(), valueFlowScopes.size()});
+            AcceptIfPresent(expr->statementBody, *this);
+            returnsEverywhere = flowTerminated;
+            lambdaFunctionBoundaries.pop_back();
+            if (lambdaReturnType != "void" && lambdaReturnType != "error" &&
+                !returnsEverywhere)
+                Report("lambda does not return a value on every control-flow path",
+                    "E_LAMBDA_MISSING_RETURN");
+        }
+
+        lambdaCaptures[expr] = std::move(lambdaContexts.back().captures);
+        lambdaContexts.pop_back();
         --functionDepth;
-        lambdaScopeDepths.pop_back();
         table.ExitScope();
-        if (body.type == "void")
-            Report("an expression lambda cannot return void", "E_LAMBDA_VOID_EXPRESSION");
-        const std::string type = FunctionTypeName(body.type, parameterTypes);
-        std::string expectedReturn;
-        std::vector<std::string> expectedParameters;
-        if (ParseFunctionType(expectedType, expectedReturn, expectedParameters)) {
+        loopDepth = savedLoopDepth;
+        catchDepth = savedCatchDepth;
+        finallyDepth = savedFinallyDepth;
+        deferDepth = savedDeferDepth;
+        currentFunctionAsync = savedAsync;
+        flowTerminated = savedFlowTerminated;
+        currentReturnType = savedReturnType;
+        expectedType = savedExpectedType;
+
+        const std::string type = FunctionTypeName(lambdaReturnType, parameterTypes);
+        if (hasExpectedSignature) {
             if (expectedParameters != parameterTypes)
-                Report("lambda parameter types do not match expected type '" + expectedType + "'",
+                Report("lambda parameter types do not match expected type '" + savedExpectedType + "'",
                     "E_LAMBDA_SIGNATURE");
-            if (!IsAssignable(expectedReturn, body.type))
+            if (expr->expressionBody && !IsAssignable(expectedReturn, body.type))
                 Report("lambda returns '" + body.type + "', expected '" + expectedReturn + "'",
                     "E_LAMBDA_RETURN");
         }

@@ -9,6 +9,7 @@ namespace Absolute {
         valueManagedPointee = nullptr;
         valueCreatesArrayOwner = false;
         valueArrayOwner = nullptr;
+        valueCreatesClosureOwner = false;
         expression->Accept(visitor);
         if (!value) Fail("expression does not produce a value");
         currentValueType = SemanticType(expression);
@@ -184,15 +185,164 @@ namespace Absolute {
     }
 
     llvm::Value* CodeGenerator::Impl::EvaluateCallArgument(
-        Expression* expression, std::vector<llvm::Value*>& temporaryArrayOwners) {
+        Expression* expression, std::vector<llvm::Value*>& temporaryArrayOwners,
+        std::vector<llvm::Value*>& temporaryClosureOwners) {
         llvm::Value* argument = Evaluate(expression);
         if (valueCreatesArrayOwner) temporaryArrayOwners.push_back(valueArrayOwner);
+        if (valueCreatesClosureOwner) temporaryClosureOwners.push_back(argument);
         return argument;
     }
 
     void CodeGenerator::Impl::ReleaseArrayTemporaries(
         const std::vector<llvm::Value*>& owners) {
         for (llvm::Value* owner : owners) builder.CreateCall(Free(), {owner});
+    }
+
+    void CodeGenerator::Impl::ReleaseClosureTemporaries(
+        const std::vector<llvm::Value*>& owners) {
+        for (llvm::Value* owner : owners) builder.CreateCall(ClosureRelease(), {owner});
+    }
+
+    llvm::StructType* CodeGenerator::Impl::ClosureObjectType() {
+        if (closureObjectType) return closureObjectType;
+        closureObjectType = llvm::StructType::create(context, "absolute.closure");
+        closureObjectType->setBody({builder.getInt64Ty(), builder.getPtrTy(),
+            builder.getPtrTy(), builder.getPtrTy()});
+        return closureObjectType;
+    }
+
+    llvm::FunctionType* CodeGenerator::Impl::ClosureInvokeType(
+        const std::string& returnType,
+        const std::vector<std::string>& parameterTypes) {
+        std::vector<llvm::Type*> parameters;
+        if (AbiReturnOffset(returnType) != 0) parameters.push_back(builder.getPtrTy());
+        parameters.push_back(builder.getPtrTy());
+        for (const std::string& parameter : parameterTypes)
+            parameters.push_back(AbiParameterType(parameter));
+        return llvm::FunctionType::get(AbiReturnType(returnType), parameters, false);
+    }
+
+    llvm::Function* CodeGenerator::Impl::ClosureRetain() {
+        if (llvm::Function* existing = module->getFunction("__absolute.closure.retain"))
+            return existing;
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getVoidTy(), {builder.getPtrTy()}, false);
+        llvm::Function* function = llvm::Function::Create(type,
+            llvm::Function::InternalLinkage, "__absolute.closure.retain", *module);
+        const auto saved = builder.saveIP();
+        llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+        llvm::BasicBlock* update = llvm::BasicBlock::Create(context, "update", function);
+        llvm::BasicBlock* complete = llvm::BasicBlock::Create(context, "complete", function);
+        builder.SetInsertPoint(entry);
+        llvm::Value* closure = function->getArg(0);
+        builder.CreateCondBr(builder.CreateICmpNE(closure,
+            llvm::ConstantPointerNull::get(builder.getPtrTy())), update, complete);
+        builder.SetInsertPoint(update);
+        llvm::Value* countAddress = builder.CreateStructGEP(
+            ClosureObjectType(), closure, 0, "closure.count.address");
+        llvm::Value* count = builder.CreateLoad(
+            builder.getInt64Ty(), countAddress, "closure.count");
+        llvm::BasicBlock* increment = llvm::BasicBlock::Create(
+            context, "increment", function);
+        builder.CreateCondBr(builder.CreateICmpSGE(count, builder.getInt64(0)),
+            increment, complete);
+        builder.SetInsertPoint(increment);
+        builder.CreateStore(builder.CreateAdd(count, builder.getInt64(1)), countAddress);
+        builder.CreateBr(complete);
+        builder.SetInsertPoint(complete);
+        builder.CreateRetVoid();
+        builder.restoreIP(saved);
+        return function;
+    }
+
+    llvm::Function* CodeGenerator::Impl::ClosureRelease() {
+        if (llvm::Function* existing = module->getFunction("__absolute.closure.release"))
+            return existing;
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getVoidTy(), {builder.getPtrTy()}, false);
+        llvm::Function* function = llvm::Function::Create(type,
+            llvm::Function::InternalLinkage, "__absolute.closure.release", *module);
+        const auto saved = builder.saveIP();
+        llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+        llvm::BasicBlock* update = llvm::BasicBlock::Create(context, "update", function);
+        llvm::BasicBlock* decrement = llvm::BasicBlock::Create(context, "decrement", function);
+        llvm::BasicBlock* destroy = llvm::BasicBlock::Create(context, "destroy", function);
+        llvm::BasicBlock* callDestroy = llvm::BasicBlock::Create(context, "destroy.env", function);
+        llvm::BasicBlock* freeClosure = llvm::BasicBlock::Create(context, "free", function);
+        llvm::BasicBlock* complete = llvm::BasicBlock::Create(context, "complete", function);
+        builder.SetInsertPoint(entry);
+        llvm::Value* closure = function->getArg(0);
+        builder.CreateCondBr(builder.CreateICmpNE(closure,
+            llvm::ConstantPointerNull::get(builder.getPtrTy())), update, complete);
+        builder.SetInsertPoint(update);
+        llvm::Value* countAddress = builder.CreateStructGEP(
+            ClosureObjectType(), closure, 0, "closure.count.address");
+        llvm::Value* count = builder.CreateLoad(
+            builder.getInt64Ty(), countAddress, "closure.count");
+        builder.CreateCondBr(builder.CreateICmpSGE(count, builder.getInt64(0)),
+            decrement, complete);
+        builder.SetInsertPoint(decrement);
+        llvm::Value* next = builder.CreateSub(count, builder.getInt64(1), "closure.count.next");
+        builder.CreateStore(next, countAddress);
+        builder.CreateCondBr(builder.CreateICmpEQ(next, builder.getInt64(0)), destroy, complete);
+        builder.SetInsertPoint(destroy);
+        llvm::Value* destroyAddress = builder.CreateStructGEP(
+            ClosureObjectType(), closure, 3, "closure.destroy.address");
+        llvm::Value* destroyFunction = builder.CreateLoad(
+            builder.getPtrTy(), destroyAddress, "closure.destroy");
+        builder.CreateCondBr(builder.CreateICmpNE(destroyFunction,
+            llvm::ConstantPointerNull::get(builder.getPtrTy())), callDestroy, freeClosure);
+        builder.SetInsertPoint(callDestroy);
+        llvm::Value* environmentAddress = builder.CreateStructGEP(
+            ClosureObjectType(), closure, 2, "closure.environment.address");
+        llvm::Value* environment = builder.CreateLoad(
+            builder.getPtrTy(), environmentAddress, "closure.environment");
+        llvm::FunctionType* destroyType = llvm::FunctionType::get(
+            builder.getVoidTy(), {builder.getPtrTy()}, false);
+        builder.CreateCall(destroyType, destroyFunction, {environment});
+        builder.CreateBr(freeClosure);
+        builder.SetInsertPoint(freeClosure);
+        builder.CreateCall(Free(), {closure});
+        builder.CreateBr(complete);
+        builder.SetInsertPoint(complete);
+        builder.CreateRetVoid();
+        builder.restoreIP(saved);
+        return function;
+    }
+
+    llvm::Value* CodeGenerator::Impl::FunctionClosure(const Symbol& symbol) {
+        if (const auto found = functionClosures.find(symbol.id);
+            found != functionClosures.end()) return found->second;
+        llvm::Function* target = module->getFunction(FunctionLinkName(symbol));
+        if (!target) Fail("missing function value '" + symbol.name + "'");
+        llvm::FunctionType* wrapperType = ClosureInvokeType(symbol.type, symbol.parameterTypes);
+        const std::string wrapperName = "__absolute.closure.invoke." +
+            EncodeLinkComponent(FunctionLinkName(symbol));
+        llvm::Function* wrapper = llvm::Function::Create(wrapperType,
+            llvm::Function::InternalLinkage, wrapperName, *module);
+        wrapper->setCallingConv(llvm::CallingConv::C);
+        const auto saved = builder.saveIP();
+        llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", wrapper);
+        builder.SetInsertPoint(entry);
+        const unsigned returnOffset = AbiReturnOffset(symbol.type);
+        std::vector<llvm::Value*> arguments;
+        if (returnOffset != 0) arguments.push_back(wrapper->getArg(0));
+        for (unsigned index = returnOffset + 1; index < wrapper->arg_size(); ++index)
+            arguments.push_back(wrapper->getArg(index));
+        llvm::CallInst* call = builder.CreateCall(target->getFunctionType(), target, arguments);
+        if (target->getReturnType()->isVoidTy()) builder.CreateRetVoid();
+        else builder.CreateRet(call);
+        builder.restoreIP(saved);
+
+        llvm::Constant* initializer = llvm::ConstantStruct::get(ClosureObjectType(), {
+            llvm::ConstantInt::getSigned(builder.getInt64Ty(), -1), wrapper,
+            llvm::ConstantPointerNull::get(builder.getPtrTy()),
+            llvm::ConstantPointerNull::get(builder.getPtrTy())});
+        auto* closure = new llvm::GlobalVariable(*module, ClosureObjectType(), true,
+            llvm::GlobalValue::InternalLinkage, initializer,
+            "__absolute.closure.value." + EncodeLinkComponent(FunctionLinkName(symbol)));
+        functionClosures.emplace(symbol.id, closure);
+        return closure;
     }
 
     llvm::Value* CodeGenerator::Impl::BuildArrayDescriptor(const ArrayView& view) {

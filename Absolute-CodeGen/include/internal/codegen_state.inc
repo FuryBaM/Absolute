@@ -154,6 +154,8 @@
         std::vector<std::unordered_map<std::string, Variable>> scopes;
         std::unordered_map<std::string, Variable> globals;
         std::unordered_map<std::string, llvm::StructType*> arrayDescriptorTypes;
+        llvm::StructType* closureObjectType = nullptr;
+        std::unordered_map<SymbolId, llvm::GlobalVariable*> functionClosures;
         std::unordered_map<std::string, ClassInfo> classes;
         std::vector<std::string> classOrder;
         std::unordered_map<std::string, StructInfo> structs;
@@ -178,6 +180,7 @@
         llvm::Value* valueManagedPointee = nullptr;
         bool valueCreatesArrayOwner = false;
         llvm::Value* valueArrayOwner = nullptr;
+        bool valueCreatesClosureOwner = false;
         std::string currentValueType;
         bool addressMode = false;
         llvm::Value* addressValue = nullptr;

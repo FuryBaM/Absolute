@@ -31,9 +31,23 @@
         llvm::Value* ManagedPointee(Expression* expression, llvm::Value* handle);
 
         llvm::Value* EvaluateCallArgument(Expression* expression,
-            std::vector<llvm::Value*>& temporaryArrayOwners);
+            std::vector<llvm::Value*>& temporaryArrayOwners,
+            std::vector<llvm::Value*>& temporaryClosureOwners);
 
         void ReleaseArrayTemporaries(const std::vector<llvm::Value*>& owners);
+
+        void ReleaseClosureTemporaries(const std::vector<llvm::Value*>& owners);
+
+        llvm::StructType* ClosureObjectType();
+
+        llvm::FunctionType* ClosureInvokeType(const std::string& returnType,
+            const std::vector<std::string>& parameterTypes);
+
+        llvm::Function* ClosureRetain();
+
+        llvm::Function* ClosureRelease();
+
+        llvm::Value* FunctionClosure(const Symbol& symbol);
 
         llvm::Value* BuildArrayDescriptor(const ArrayView& view);
 
