@@ -1118,7 +1118,7 @@ namespace Absolute {
         builder.SetInsertPoint(entry);
         llvm::Value* object = function->getArg(0);
 
-        auto destroyMethod = info.methods.find("destroy()");
+        auto destroyMethod = info.methods.find(CallableKey("destroy", {}));
         if (destroyMethod != info.methods.end()) {
             llvm::FunctionCallee callee = module->getOrInsertFunction(
                 destroyMethod->second.linkName, MethodFunctionType(destroyMethod->second));
@@ -1149,7 +1149,7 @@ namespace Absolute {
         builder.SetInsertPoint(entry);
         llvm::Value* object = function->getArg(0);
 
-        auto destroyMethod = info.methods.find("destroy()");
+        auto destroyMethod = info.methods.find(CallableKey("destroy", {}));
         if (destroyMethod != info.methods.end()) {
             llvm::FunctionCallee callee = module->getOrInsertFunction(
                 destroyMethod->second.linkName, MethodFunctionType(destroyMethod->second));

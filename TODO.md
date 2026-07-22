@@ -374,12 +374,14 @@
   `Milliseconds`, `Seconds`); основной API — `now`, `mono`, `elapsed`, `sleep`,
   `measure`, `bench`, старый `Time.*` сохранён совместимыми обёртками.
 - [x] Добавить базовые collections: `Vector`, `Map` и `Set`.
-- [ ] Определить стабильную структуру standard library и правила версионирования.
+- [ ] **Следующее: определить стабильную структуру standard library и правила
+  версионирования.**
 - [ ] Добавить полноценные String/StringBuilder и Unicode API.
 - [ ] Добавить filesystem, paths и streams.
 - [ ] Добавить календарные Date/DateTime, UTC/local formatting и time zones.
-- [ ] **Следующее: добавить `std.random`** с явным seed, воспроизводимым PRNG,
-  integer/range/float API и отдельным источником системной энтропии.
+- [x] Добавить `std.random`: `Rng` использует воспроизводимый xoshiro256** с
+  явным seed и коротким API `u64`/`i32`/`range`/`real`/`boolean`; `entropy()` и
+  `create()` отделяют системный источник seed от детерминированного PRNG.
 - [ ] Добавить JSON и binary serialization.
 - [ ] Добавить networking: sockets, HTTP client/server и URI.
 - [ ] Довести стандартные algorithms: существующие sort/search/reverse дополнить

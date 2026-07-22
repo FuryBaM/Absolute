@@ -7,6 +7,7 @@ add_library(Absolute-Runtime STATIC
     src/errors.cpp
     src/libraries.cpp
     src/pointers.cpp
+    src/random.cpp
     src/tasks.cpp
     src/time.cpp
 )

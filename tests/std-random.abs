@@ -1,0 +1,41 @@
+import "../std/random.abs";
+
+int32 main() {
+    std.random.Rng* first = new std.random.Rng(42);
+    std.random.Rng* second = new std.random.Rng(42);
+    std.random.Rng* different = new std.random.Rng(43);
+    std.random.Rng* sample = new std.random.Rng(100);
+    std.random.Rng* golden = new std.random.Rng(42);
+
+    uint64 firstValue = first.u64();
+    assert(firstValue == second.u64(), "equal seeds must reproduce u64 values");
+    assert(firstValue != different.u64(), "different seeds must change the sequence");
+    assert(golden.i32() == 360188718, "seed 42 must preserve the xoshiro256** sequence");
+
+    int32 iteration = 0;
+    while (iteration < 256) {
+        assert(first.u64() == second.u64(), "equal seeds must reproduce the full sequence");
+        int32 ranged = sample.range(-20, 23);
+        assert(ranged >= -20 && ranged < 23, "range must remain half-open");
+        double real = sample.real();
+        assert(real >= 0.0 && real < 1.0, "real must stay in [0, 1)");
+        sample.i32();
+        sample.boolean();
+        iteration += 1;
+    }
+
+    bool invalidRangeRejected = false;
+    try {
+        sample.range(5, 5);
+    }
+    catch (Error* error) {
+        invalidRangeRejected = true;
+    }
+    assert(invalidRangeRejected, "empty random ranges must be rejected");
+
+    uint64 systemSeed = std.random.entropy();
+    std.random.Rng* system = std.random.create();
+    system.u64();
+    println(format("std-random=ok seed={}", systemSeed));
+    return 0;
+}
