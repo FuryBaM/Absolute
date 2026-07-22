@@ -1,20 +1,22 @@
 namespace std.collections {
-    struct SetIterator<T> {
-        private raw Set<T>* source;
+    class SetIterator<T> {
+        private T[] snapshot;
+        private int32 length;
         private int32 index;
 
-        public void initialize(raw Set<T>* targetSet) {
-            source = targetSet;
+        public SetIterator(T[] source, int32 sourceLength) {
+            snapshot = copy(source[0:sourceLength]);
+            length = sourceLength;
             index = -1;
         }
 
         public bool next() {
             index = index + 1;
-            return index < source.count;
+            return index < length;
         }
 
         public T value {
-            get { return source.itemAt(index); }
+            get { return snapshot[index]; }
         }
     }
 
@@ -95,10 +97,8 @@ namespace std.collections {
             _count = 0;
         }
 
-        public SetIterator<T> iterate() {
-            SetIterator<T> it;
-            it.initialize(this);
-            return it;
+        public SetIterator<T>* iterate() {
+            return new SetIterator<T>(items, _count);
         }
     }
 }

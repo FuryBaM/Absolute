@@ -705,9 +705,32 @@ namespace Absolute {
             llvm::AllocaInst* iteratorAddress = impl->CreateEntryAlloca(*function, iteratorLlvmType, "foreach.iterator");
             impl->builder.CreateStore(impl->Coerce(iteratorValue, iteratorLlvmType), iteratorAddress);
 
-            llvm::Value* iteratorObjPtr = (impl->classes.contains(impl->ClassNameFromType(iteratorType)) || 
-                                           impl->interfaces.contains(impl->ClassNameFromType(iteratorType))) 
-                ? iteratorValue : iteratorAddress;
+            llvm::Value* iteratorObjPtr = iteratorAddress;
+            const bool managedIterator = IsStrongManagedPointerTypeName(iteratorType);
+            if (managedIterator) {
+                iteratorObjPtr = impl->EmitManagedGet(iteratorValue, true);
+                Impl::Variable owner;
+                owner.address = iteratorAddress;
+                owner.type = iteratorLlvmType;
+                owner.typeName = iteratorType;
+                owner.managedOwner = true;
+                impl->scopes.back().emplace(
+                    "__foreach.iterator." + std::to_string(impl->scopes.back().size()),
+                    std::move(owner));
+            }
+            else if (IsRawPointerTypeName(iteratorType)) {
+                iteratorObjPtr = iteratorValue;
+            }
+            else if (impl->TypeNeedsCleanup(iteratorType)) {
+                Impl::Variable owner;
+                owner.address = iteratorAddress;
+                owner.type = iteratorLlvmType;
+                owner.typeName = iteratorType;
+                owner.ownsAggregateResources = true;
+                impl->scopes.back().emplace(
+                    "__foreach.iterator." + std::to_string(impl->scopes.back().size()),
+                    std::move(owner));
+            }
 
             impl->builder.CreateBr(conditionBlock);
             

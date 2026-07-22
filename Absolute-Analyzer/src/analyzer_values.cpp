@@ -913,7 +913,7 @@ namespace Absolute {
                 specialized += arguments[index];
             }
             specialized += ">";
-            instantiatedGenericTypes.insert(specialized);
+            specialized = ResolveTypeReference(specialized);
             Save(expr, {InvalidSymbolId, specialized, false});
             return;
         }

@@ -1,0 +1,64 @@
+import "../std/collections/vector.abs";
+import "../std/collections/map.abs";
+import "../std/collections/set.abs";
+
+int32 firstWithBreak(Vector<int32>* vector) {
+    int32 result = -1;
+    foreach (int32 value in vector) {
+        result = value;
+        break;
+    }
+    return result;
+}
+
+int32 firstWithReturn(Vector<int32>* vector) {
+    foreach (int32 value in vector) {
+        return value;
+    }
+    return -1;
+}
+
+int32 main() {
+    Vector<int32>* vector = new Vector<int32>();
+    vector.push(10);
+    vector.push(20);
+    int32 vectorSum = 0;
+    foreach (int32 value in vector) {
+        vectorSum = vectorSum + value;
+        vector.push(30);
+        vector[0] = 99;
+    }
+    assert(vectorSum == 30, "vector iterator sees its immutable snapshot");
+    assert(vector.count == 4, "vector mutation remains available during iteration");
+    assert(firstWithBreak(vector) == 99, "break cleans up its snapshot iterator");
+    assert(firstWithReturn(vector) == 99, "return cleans up its snapshot iterator");
+
+    Map<int32, int32>* map = new Map<int32, int32>();
+    map.put(1, 10);
+    map.put(2, 20);
+    int32 mapSum = 0;
+    foreach (KeyValuePair<int32, int32> entry in map) {
+        mapSum = mapSum + entry.value;
+        map.put(3, 30);
+        map.remove(1);
+    }
+    assert(mapSum == 30, "map iterator sees its immutable snapshot");
+
+    Set<int32>* collectionSet = new Set<int32>();
+    collectionSet.add(10);
+    collectionSet.add(20);
+    int32 setSum = 0;
+    foreach (int32 value in collectionSet) {
+        setSum = setSum + value;
+        collectionSet.add(30);
+        collectionSet.remove(10);
+    }
+    assert(setSum == 30, "set iterator sees its immutable snapshot");
+
+    delete collectionSet;
+    delete map;
+    delete vector;
+
+    println("collection-snapshot=ok");
+    return 0;
+}

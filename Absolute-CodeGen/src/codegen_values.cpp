@@ -419,7 +419,8 @@ namespace Absolute {
             llvm::Type* elemType = impl->TypeFromName(elemTypeName);
             llvm::Value* count = expr->arguments.empty()
                 ? impl->builder.getInt64(0)
-                : impl->Evaluate(expr->arguments[0].get());
+                : impl->Coerce(impl->Evaluate(expr->arguments[0].get()),
+                    impl->builder.getInt64Ty());
             llvm::Value* elemSize = impl->builder.getInt64(impl->SizeOfTypeName(elemTypeName));
             llvm::Value* allocBytes = impl->builder.CreateMul(count, elemSize, "array.alloc.bytes");
             llvm::Value* dataPtr = impl->builder.CreateCall(

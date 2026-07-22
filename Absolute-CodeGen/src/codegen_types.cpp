@@ -2,6 +2,27 @@
 
 namespace Absolute {
     std::string g_last_context = "none";
+
+    namespace {
+        bool ContainsOpenGenericParameter(const std::string& typeName,
+            const std::vector<Token>& parameters) {
+            for (const Token& parameter : parameters) {
+                size_t position = typeName.find(parameter.value);
+                while (position != std::string::npos) {
+                    const auto identifier = [](char value) {
+                        return std::isalnum(static_cast<unsigned char>(value)) || value == '_';
+                    };
+                    const bool leftBoundary = position == 0 || !identifier(typeName[position - 1]);
+                    const size_t end = position + parameter.value.size();
+                    const bool rightBoundary = end == typeName.size() || !identifier(typeName[end]);
+                    if (leftBoundary && rightBoundary) return true;
+                    position = typeName.find(parameter.value, position + 1);
+                }
+            }
+            return false;
+        }
+    }
+
     llvm::Type* CodeGenerator::Impl::TypeFromName(const std::string& rawName) {
         const std::string name = ValueReferenceBaseTypeName(
             SubstituteCodegenType(rawName, currentGenericSubstitutions));
@@ -240,6 +261,9 @@ namespace Absolute {
                         std::vector<std::string> arguments;
                         if (!ParseCodegenGenericType(specialization, base, arguments) ||
                             base != baseName || arguments.size() != classDeclaration->templateParams.size()) continue;
+                        if (std::any_of(arguments.begin(), arguments.end(), [&](const std::string& argument) {
+                            return ContainsOpenGenericParameter(argument, classDeclaration->templateParams);
+                        })) continue;
                         std::unordered_map<std::string, std::string> substitutions;
                         for (size_t index = 0; index < arguments.size(); ++index)
                             substitutions.emplace(classDeclaration->templateParams[index].value, arguments[index]);
@@ -260,6 +284,9 @@ namespace Absolute {
                         std::vector<std::string> arguments;
                         if (!ParseCodegenGenericType(specialization, base, arguments) ||
                             base != baseName || arguments.size() != structDeclaration->templateParams.size()) continue;
+                        if (std::any_of(arguments.begin(), arguments.end(), [&](const std::string& argument) {
+                            return ContainsOpenGenericParameter(argument, structDeclaration->templateParams);
+                        })) continue;
                         std::unordered_map<std::string, std::string> substitutions;
                         for (size_t index = 0; index < arguments.size(); ++index)
                             substitutions.emplace(structDeclaration->templateParams[index].value, arguments[index]);
@@ -283,6 +310,9 @@ namespace Absolute {
                         if (!ParseCodegenGenericType(specialization, base, arguments) ||
                             base != baseName ||
                             arguments.size() != interfaceDeclaration->templateParams.size()) continue;
+                        if (std::any_of(arguments.begin(), arguments.end(), [&](const std::string& argument) {
+                            return ContainsOpenGenericParameter(argument, interfaceDeclaration->templateParams);
+                        })) continue;
                         std::unordered_map<std::string, std::string> substitutions;
                         for (size_t index = 0; index < arguments.size(); ++index)
                             substitutions.emplace(

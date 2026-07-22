@@ -1,20 +1,22 @@
 namespace std.collections {
-    struct VectorIterator<T> {
-        private raw Vector<T>* source;
+    class VectorIterator<T> {
+        private T[] snapshot;
+        private int32 length;
         private int32 index;
 
-        public void initialize(raw Vector<T>* vec) {
-            source = vec;
+        public VectorIterator(T[] source, int32 sourceLength) {
+            snapshot = copy(source[0:sourceLength]);
+            length = sourceLength;
             index = -1;
         }
 
         public bool next() {
             index = index + 1;
-            return index < source.count;
+            return index < length;
         }
 
         public T value {
-            get { return source[index]; }
+            get { return snapshot[index]; }
         }
     }
 
@@ -92,10 +94,8 @@ namespace std.collections {
             }
         }
 
-        public VectorIterator<T> iterate() {
-            VectorIterator<T> it;
-            it.initialize(this);
-            return it;
+        public VectorIterator<T>* iterate() {
+            return new VectorIterator<T>(items, _count);
         }
     }
 }

@@ -11,7 +11,12 @@ namespace Absolute {
         valueArrayOwner = nullptr;
         valueCreatesClosureOwner = false;
         expression->Accept(visitor);
-        if (!value) Fail("expression does not produce a value");
+        if (!value) {
+            llvm::Function* function = CurrentFunction();
+            Fail("expression does not produce a value in '" +
+                (function ? function->getName().str() : std::string("<module>")) +
+                "': " + expression->ToString());
+        }
         currentValueType = SemanticType(expression);
         if (ArrayRankName(currentValueType) > 0 && !valueCreatesArrayOwner) {
             bool transfersOwner = dynamic_cast<FunctionCallExpr*>(expression) != nullptr;
@@ -90,7 +95,9 @@ namespace Absolute {
                 builder.CreateStore(llvm::ConstantPointerNull::get(builder.getPtrTy()), variable.address);
                 continue;
             }
-            if (variable.ownsArrayStorage && variable.symbol != transferredOwner) {
+            const bool transfersThisOwner = transferredOwner != InvalidSymbolId &&
+                variable.symbol == transferredOwner;
+            if (variable.ownsArrayStorage && !transfersThisOwner) {
                 builder.CreateCall(Free(), {variable.arrayOwner});
                 continue;
             }
@@ -98,7 +105,7 @@ namespace Absolute {
                 EmitValueCleanup(variable.address, variable.typeName);
                 continue;
             }
-            if (!variable.managedOwner || variable.symbol == transferredOwner) continue;
+            if (!variable.managedOwner || transfersThisOwner) continue;
             llvm::Value* handle = builder.CreateLoad(variable.type, variable.address, "cleanup.handle");
             llvm::Value* pointee = EmitManagedGet(handle, false);
             EmitPointeeCleanup(pointee, variable.typeName);
@@ -397,7 +404,11 @@ namespace Absolute {
             }
         }
         const std::string typeName = SemanticType(expression);
-        return ArrayViewFromValue(Evaluate(expression), typeName);
+        const bool outerAddressMode = addressMode;
+        addressMode = false;
+        llvm::Value* descriptor = Evaluate(expression);
+        addressMode = outerAddressMode;
+        return ArrayViewFromValue(descriptor, typeName);
     }
 
     void CodeGenerator::Impl::EmitOrExit(llvm::Value* condition, const std::string& name) {

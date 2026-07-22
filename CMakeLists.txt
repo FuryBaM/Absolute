@@ -356,6 +356,11 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/iterators.abs"
     )
     add_test(
+        NAME absolute.collection-snapshot-iteration-semantic
+        COMMAND Absolute-Compiler
+            "${PROJECT_SOURCE_DIR}/tests/collection-snapshot-iteration.abs"
+    )
+    add_test(
         NAME absolute.generics-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generics-errors.abs"
     )
@@ -1358,6 +1363,25 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-resource-fields PROPERTIES
             FIXTURES_REQUIRED absolute-resource-fields-executable
             PASS_REGULAR_EXPRESSION "resource-fields=ok"
+        )
+        add_test(
+            NAME absolute.build-collection-snapshot-iteration
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/tests/collection-snapshot-iteration.abs"
+                --build-exe
+                -o "${CMAKE_BINARY_DIR}/collection-snapshot-iteration-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-collection-snapshot-iteration PROPERTIES
+            FIXTURES_SETUP absolute-collection-snapshot-iteration-executable
+        )
+        add_test(
+            NAME absolute.run-collection-snapshot-iteration
+            COMMAND
+                "${CMAKE_BINARY_DIR}/collection-snapshot-iteration-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-collection-snapshot-iteration PROPERTIES
+            FIXTURES_REQUIRED absolute-collection-snapshot-iteration-executable
+            PASS_REGULAR_EXPRESSION "collection-snapshot=ok"
         )
         add_test(
             NAME absolute.build-interfaces-codegen

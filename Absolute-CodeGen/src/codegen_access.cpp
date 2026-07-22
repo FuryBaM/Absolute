@@ -205,6 +205,67 @@ namespace Absolute {
             impl->valueCreatesClosureOwner = IsCodegenFunctionType(impl->SemanticType(expr));
             return;
         }
+        if (selected && selected->kind == SymbolKind::Method && !selected->isStatic &&
+            dynamic_cast<MemberAccessExpr*>(expr->base.get()) == nullptr && impl->currentThis) {
+            std::vector<std::string> parameterTypes = selected->parameterTypes;
+            for (std::string& parameter : parameterTypes)
+                parameter = SubstituteCodegenType(
+                    parameter, impl->currentGenericSubstitutions);
+            const std::string methodName = IdentifierName(expr->base.get());
+            const std::string methodKey = CallableKey(methodName, parameterTypes);
+            const Impl::ClassMethod* method = nullptr;
+            llvm::Value* callee = nullptr;
+            if (auto owner = impl->classes.find(impl->currentClassName);
+                owner != impl->classes.end()) {
+                const auto found = owner->second.methods.find(methodKey);
+                if (found == owner->second.methods.end())
+                    impl->Fail("class '" + impl->currentClassName +
+                        "' has no method '" + methodName + "'");
+                method = &found->second;
+                if (method->virtualSlot) {
+                    llvm::Value* vtableAddress = impl->builder.CreateStructGEP(
+                        owner->second.llvmType, impl->currentThis, 0, "vtable.address");
+                    llvm::Value* vtable = impl->builder.CreateLoad(
+                        impl->builder.getPtrTy(), vtableAddress, "vtable");
+                    llvm::Value* slot = impl->builder.CreateGEP(
+                        impl->builder.getPtrTy(), vtable,
+                        impl->builder.getInt64(*method->virtualSlot), "virtual.slot");
+                    callee = impl->builder.CreateLoad(
+                        impl->builder.getPtrTy(), slot, "virtual.method");
+                }
+                else callee = impl->module->getFunction(method->linkName);
+            }
+            else if (auto owner = impl->structs.find(impl->currentClassName);
+                owner != impl->structs.end()) {
+                const auto found = owner->second.methods.find(methodKey);
+                if (found == owner->second.methods.end())
+                    impl->Fail("struct '" + impl->currentClassName +
+                        "' has no method '" + methodName + "'");
+                method = &found->second;
+                callee = impl->module->getFunction(method->linkName);
+            }
+            if (!method || !callee)
+                impl->Fail("missing implicit instance method '" + methodName + "'");
+            std::vector<llvm::Value*> arguments;
+            std::vector<llvm::Value*> temporaryArrayOwners;
+            std::vector<llvm::Value*> temporaryClosureOwners;
+            for (size_t index = 0; index < expr->arguments.size(); ++index)
+                arguments.push_back(impl->EvaluateCallArgument(
+                    expr->arguments[index].get(), temporaryArrayOwners,
+                    temporaryClosureOwners, index < method->parameterTypes.size()
+                        ? method->parameterTypes[index] : std::string{}));
+            impl->value = impl->EmitAbiCall(impl->MethodFunctionType(*method), callee,
+                method->returnType, {impl->currentThis}, method->parameterTypes,
+                arguments, methodName + ".result");
+            impl->ReleaseArrayTemporaries(temporaryArrayOwners);
+            impl->ReleaseClosureTemporaries(temporaryClosureOwners);
+            impl->EmitExceptionCheck();
+            impl->valueCreatesManagedOwner =
+                IsStrongManagedPointerTypeName(impl->SemanticType(expr));
+            impl->valueCreatesClosureOwner =
+                IsCodegenFunctionType(impl->SemanticType(expr));
+            return;
+        }
         if (auto* member = dynamic_cast<MemberAccessExpr*>(expr->base.get())) {
             if (selected && selected->extensionFunction) {
                 const std::string name = impl->ResolvedName(expr);
@@ -237,11 +298,16 @@ namespace Absolute {
             }
             const std::string baseType = impl->SemanticType(member->base.get());
             const std::string className = impl->ClassNameFromType(baseType);
+            std::vector<std::string> selectedParameterTypes = selected
+                ? selected->parameterTypes : std::vector<std::string>{};
+            for (std::string& parameter : selectedParameterTypes)
+                parameter = SubstituteCodegenType(
+                    parameter, impl->currentGenericSubstitutions);
             auto classIterator = impl->classes.find(className);
             if (classIterator != impl->classes.end() && (!selected || selected->kind == SymbolKind::Method)) {
                 Impl::ClassInfo& info = classIterator->second;
                 const std::string methodKey = CallableKey(member->member,
-                    selected ? selected->parameterTypes : std::vector<std::string>{});
+                    selectedParameterTypes);
                 const auto method = info.methods.find(methodKey);
                 if (method == info.methods.end())
                     impl->Fail("class '" + info.name + "' has no method '" + member->member + "'");
@@ -286,7 +352,7 @@ namespace Absolute {
                 (!selected || selected->kind == SymbolKind::Method)) {
                 Impl::InterfaceInfo& info = interfaceIterator->second;
                 const std::string methodKey = CallableKey(member->member,
-                    selected ? selected->parameterTypes : std::vector<std::string>{});
+                    selectedParameterTypes);
                 const auto method = info.methods.find(methodKey);
                 if (method == info.methods.end())
                     impl->Fail("interface '" + info.name + "' has no method '" + member->member + "'");
@@ -325,7 +391,7 @@ namespace Absolute {
             if (structIterator != impl->structs.end() && (!selected || selected->kind == SymbolKind::Method)) {
                 Impl::StructInfo& info = structIterator->second;
                 const std::string methodKey = CallableKey(member->member,
-                    selected ? selected->parameterTypes : std::vector<std::string>{});
+                    selectedParameterTypes);
                 const auto method = info.methods.find(methodKey);
                 if (method == info.methods.end())
                     impl->Fail("struct '" + info.name + "' has no method '" + member->member + "'");

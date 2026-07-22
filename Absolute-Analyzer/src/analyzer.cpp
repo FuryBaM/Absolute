@@ -1052,6 +1052,24 @@ namespace Absolute {
 
     std::vector<Analyzer::MemberSignature> Analyzer::FindMembers(
         const std::string& owner, const std::string& name) {
+        const auto trackConcreteGenericTypes = [&](const auto& self,
+            std::string candidate) -> void {
+            while (ArrayRank(candidate) > 0) candidate = ArrayElementType(candidate);
+            if (IsPointerType(candidate)) candidate = PointerPointee(candidate);
+            std::string base;
+            std::vector<std::string> arguments;
+            if (!ParseGenericTypeName(candidate, base, arguments)) return;
+            const auto definition = types.find(base);
+            if (definition == types.end() || definition->second.genericParameters.size() != arguments.size())
+                return;
+            const bool open = std::any_of(arguments.begin(), arguments.end(), [&](const std::string& argument) {
+                return std::find(definition->second.genericParameters.begin(),
+                    definition->second.genericParameters.end(), argument) !=
+                    definition->second.genericParameters.end();
+            });
+            if (!open) instantiatedGenericTypes.insert(candidate);
+            for (const std::string& argument : arguments) self(self, argument);
+        };
         const std::string objectType = IsPointerType(owner) ? PointerPointee(owner) : owner;
         std::string definitionName = objectType;
         std::unordered_map<std::string, std::string> substitutions;
@@ -1079,6 +1097,9 @@ namespace Absolute {
                 declared.type = SubstituteGenericType(declared.type, substitutions);
                 for (std::string& parameter : declared.parameterTypes)
                     parameter = SubstituteGenericType(parameter, substitutions);
+                trackConcreteGenericTypes(trackConcreteGenericTypes, declared.type);
+                for (const std::string& parameter : declared.parameterTypes)
+                    trackConcreteGenericTypes(trackConcreteGenericTypes, parameter);
                 if (declared.kind == SymbolKind::Method && !substitutions.empty()) {
                     const Symbol* method = table.Get(declared.symbol);
                     if (method && method->genericParameters.size() == substitutions.size()) {
@@ -1490,7 +1511,31 @@ namespace Absolute {
                 result += genericArguments[index];
             }
             result += ">";
-            instantiatedGenericTypes.insert(result);
+            const bool open = std::any_of(genericArguments.begin(), genericArguments.end(),
+                [&](const std::string& argument) {
+                    return std::any_of(genericTypeScopes.begin(), genericTypeScopes.end(),
+                        [&](const auto& scope) {
+                            const auto parameter = scope.find(argument);
+                            return parameter != scope.end() && parameter->second == argument;
+                        });
+                });
+            const bool inserted = instantiatedGenericTypes.insert(result).second;
+            if (inserted && !open) {
+                std::unordered_map<std::string, std::string> substitutions;
+                for (size_t index = 0; index < genericArguments.size(); ++index)
+                    substitutions.emplace(
+                        definition->second.genericParameters[index], genericArguments[index]);
+                for (const std::string& parent : definition->second.parents)
+                    ResolveTypeReference(SubstituteGenericType(parent, substitutions));
+                for (const auto& [memberName, overloads] : definition->second.members) {
+                    (void)memberName;
+                    for (const MemberSignature& member : overloads) {
+                        ResolveTypeReference(SubstituteGenericType(member.type, substitutions));
+                        for (const std::string& parameter : member.parameterTypes)
+                            ResolveTypeReference(SubstituteGenericType(parameter, substitutions));
+                    }
+                }
+            }
             return result;
         }
         if (PrimitiveStringToEnum(name).has_value() || name == "null" || name == "error") return name;

@@ -235,6 +235,9 @@
 
 ### Массивы, slices и коллекции
 
+Архитектурная модель snapshot/COW и transient builder/cursor описана в
+`docs/isolation-model.md`; generation-check не является её гарантией safety.
+
 - [x] Одномерные и многомерные прямоугольные массивы.
 - [x] Локальные и глобальные массивы, литералы и runtime-размеры.
 - [x] Параметры и возврат массивов.
@@ -243,13 +246,32 @@
 - [x] `foreach` по массивам и slices.
 - [x] Проверка выхода за границы.
 - [ ] Добавить многомерные slices.
-- [x] Добавить безопасные iterators и пользовательский протокол iteration.
+- [x] Добавить пользовательский протокол iteration и lowering `foreach`.
+- [x] Сделать iterators `Vector`/`Map`/`Set` безопасными через immutable snapshot:
+  `iterate()` создаёт независимую копию видимой части backing storage, поэтому
+  push/remove/clear и замена элементов исходной коллекции физически не могут
+  инвалидировать iterator. Lowering `foreach` владеет managed iterator и очищает
+  его snapshot на normal exit, `break` и `return`; generation panic не нужен.
+- [ ] Заменить eager copy при `iterate()` на разделяемую immutable-версию backing
+  storage с copy-on-write. Это оптимизация времени и памяти без изменения уже
+  реализованной snapshot-семантики: iterator продолжает видеть версию на момент
+  `iterate()` и не требует lexical borrow checker.
+- [ ] Скрыть mutable backing стандартных коллекций за private runtime capability:
+  safe API не возвращает адрес элемента или storage. Для изменяющего обхода дать
+  transient builder/cursor, который форкается от immutable snapshot и публикует
+  новую collection только через `finish()`; старые aliases остаются корректными и
+  видят старую версию. `move` может разрешить reuse уникального storage только как
+  оптимизация, но не как условие safety. Unsafe raw/FFI export всегда создаёт
+  отдельную копию или явно выходит из safe-модели.
 - [x] Добавить динамические коллекции: `Vector`, `Map`, `Set` (queue/deque остаются следующим шагом).
 - [ ] Добавить стандартные алгоритмы: sort, search, transform, reduce и filter.
 - [ ] Реализовать Release-elimination доказуемо лишних bounds checks.
 - [ ] Добавить SIMD/vectorization-тесты для числовых массивов.
 
 ### Async и параллельность
+
+Task-isolate, закрытый message envelope и transfer capsule описаны в
+`docs/isolation-model.md`; общий mutable object graph между tasks не допускается.
 
 - [x] `async`-функции, `spawn`, `await` и runtime worker pool.
 - [x] Проверка незавершённых локальных tasks анализатором.
@@ -261,13 +283,38 @@
 - [x] Добавить async-методы классов и структур: static-методы используют обычный
   task ABI; instance-методы требуют `const` и стабильный именованный receiver без
   собственных ресурсов; virtual class dispatch выполняется внутри task thunk,
-  а mutable/raw/subscriber/temporary receivers отсекаются анализатором.
+  а mutable/raw/subscriber/temporary receivers отсекаются анализатором. Это
+  закрывает текущую lifetime-границу, но ещё не является полной гарантией
+  отсутствия data races для будущих pointer/aggregate payloads.
+- [ ] До расширения task payload ABI ввести task-isolates: у каждой task свой
+  object/handle domain, а `spawn` не захватывает произвольное окружение и принимает
+  только закрытый message envelope. Обычный managed/raw/weak pointer не имеет
+  представления в envelope и потому архитектурно не может сослаться на mutable
+  объект другой task; это ограничение ABI/runtime capability, а не соглашение и
+  не borrow checker.
+- [ ] Разрешить ровно два способа пересечь isolate boundary: immutable value/blob
+  копируется или разделяет read-only backing; уникальный object graph передаётся
+  только внутри sealed transfer capsule. Capsule не создаётся из произвольного
+  `move(pointer)`: его storage изначально создаётся opaque, не выдаёт обычных
+  pointer aliases и при отправке атомарно rehome-ится в domain получателя. Старый
+  capability после отправки непригоден независимо от Analyzer; одноразовый `await`
+  возвращает результат тем же envelope ABI.
 - [ ] Добавить cancellation tokens и timeout.
-- [ ] Добавить channels и безопасные concurrent queues.
+- [ ] Добавить channels и concurrent queues поверх того же message envelope:
+  channel не принимает произвольные адреса/объекты, а только immutable message или
+  consuming transfer capsule, поэтому не создаёт shared mutable alias.
 - [ ] Добавить async file/network I/O.
 - [ ] Добавить `select`/`whenAny` для ожидания нескольких tasks.
-- [ ] Добавить mutex, semaphore и atomic API в стандартную библиотеку.
-- [ ] Формализовать thread-safety managed pointers и объектов.
+- [ ] Общий mutable state предоставлять только как opaque concurrent capability
+  (`Atomic`, `MutexCell`, semaphore или actor/service): внутреннее `T` нельзя
+  извлечь как pointer/reference, все операции capability синхронизированы, а lock
+  guard task-local и runtime не позволяет пронести его через `await`/channel.
+- [ ] Сделать managed runtime domain-aware для transfer capsule (atomic detach,
+  publication, rehome и destroy). Обычный managed handle остаётся task-local и не
+  становится способом совместного доступа между domains.
+- [ ] Расширить plugin resource descriptor операциями `copy_message`,
+  `make_immutable` или `detach/rehome`; без них plugin resource является task-local
+  и message ABI его не принимает.
 
 ### Модули, проекты и пакеты
 

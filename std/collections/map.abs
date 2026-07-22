@@ -9,22 +9,24 @@ namespace std.collections {
         }
     }
 
-    struct MapIterator<K, V> {
-        private raw Map<K, V>* source;
+    class MapIterator<K, V> {
+        private KeyValuePair<K, V>[] snapshot;
+        private int32 length;
         private int32 index;
 
-        public void initialize(raw Map<K, V>* map) {
-            source = map;
+        public MapIterator(KeyValuePair<K, V>[] source, int32 sourceLength) {
+            snapshot = copy(source[0:sourceLength]);
+            length = sourceLength;
             index = -1;
         }
 
         public bool next() {
             index = index + 1;
-            return index < source.count;
+            return index < length;
         }
 
         public KeyValuePair<K, V> value {
-            get { return source.entryAt(index); }
+            get { return snapshot[index]; }
         }
     }
 
@@ -125,10 +127,8 @@ namespace std.collections {
             _count = 0;
         }
 
-        public MapIterator<K, V> iterate() {
-            MapIterator<K, V> it;
-            it.initialize(this);
-            return it;
+        public MapIterator<K, V>* iterate() {
+            return new MapIterator<K, V>(entries, _count);
         }
     }
 }
