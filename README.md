@@ -546,6 +546,26 @@ pointers convert to weak; conversion back, direct `new` into weak, `move`, and
 `delete` are rejected. See
 [docs/weak-managed-references.md](docs/weak-managed-references.md).
 
+For cyclic domain models, strong fields are containment edges and form a
+unique-ownership forest; parent, peer, and cross-links must be `weak`. Deleting a
+root recursively destroys strong children, while weak cycles own nothing and
+expire through the existing handle generation checks. Explicit strong
+back-edges are rejected at compile time. See
+[docs/managed-object-graphs.md](docs/managed-object-graphs.md).
+
+Ownership of a strong managed pointer can be transferred explicitly:
+
+```absolute
+Node* a = new Node();
+Node* b = move(a);
+```
+
+`b` becomes the owner; `a` is zeroed at runtime and treated as compile-time
+moved-from until assigned a fresh owner. Existing subscribers follow the new
+owner for lifetime analysis. Moving a subscriber/weak/const source, discarding
+the result, or moving into an ordinary borrowed pointer parameter is rejected.
+See [docs/managed-pointer-move.md](docs/managed-pointer-move.md).
+
 Managed pointer and array fields are owning resource slots. They accept a fresh
 owner (`new`, `copy(...)`, or an owning function result), destroy their previous
 value on reassignment, and are released automatically with the containing class

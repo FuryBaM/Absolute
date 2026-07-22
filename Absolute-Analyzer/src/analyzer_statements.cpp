@@ -41,6 +41,12 @@ namespace Absolute {
         if (memberDeclaration) pendingMemberAccess = DeclaredAccess(*stmt);
         AcceptIfPresent(stmt->expr, *this);
         pendingMemberAccess = oldAccess;
+        if (phase == Phase::ResolveBodies && stmt->expr) {
+            const ExpressionInfo* info = GetExpressionInfo(*stmt->expr);
+            if (info && info->isMoveResult)
+                Report("move result must be consumed by an assignment, field store, "
+                    "argument, or return", "E_MOVE_RESULT_UNUSED", info->symbol);
+        }
     }
 
     void Analyzer::Visit(CompoundStmt* stmt) {

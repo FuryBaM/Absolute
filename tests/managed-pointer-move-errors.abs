@@ -1,0 +1,56 @@
+class MoveErrorNode {
+    public int32 value;
+
+    public MoveErrorNode(int32 initial) {
+        value = initial;
+    }
+
+    public int32 read() {
+        return value;
+    }
+}
+
+void borrowedParameter(MoveErrorNode* value) {
+    value.read();
+}
+
+void moveSubscriber() {
+    MoveErrorNode* owner = new MoveErrorNode(1);
+    MoveErrorNode* subscriber = owner;
+    MoveErrorNode* invalidOwner = move(subscriber);
+    delete owner;
+}
+
+void readMovedSource() {
+    MoveErrorNode* source = new MoveErrorNode(2);
+    MoveErrorNode* destination = move(source);
+    source.read();
+    delete destination;
+}
+
+void useSubscriberAfterTransferredOwnerDelete() {
+    MoveErrorNode* owner = new MoveErrorNode(6);
+    MoveErrorNode* subscriber = owner;
+    MoveErrorNode* destination = move(owner);
+    delete destination;
+    subscriber.read();
+}
+
+void moveIntoBorrowedParameter() {
+    MoveErrorNode* owner = new MoveErrorNode(3);
+    borrowedParameter(move(owner));
+}
+
+void discardMoveResult() {
+    MoveErrorNode* owner = new MoveErrorNode(4);
+    move(owner);
+}
+
+void moveConstSource() {
+    const MoveErrorNode* owner = new MoveErrorNode(5);
+    MoveErrorNode* destination = move(owner);
+}
+
+int32 main() {
+    return 0;
+}

@@ -214,6 +214,7 @@ namespace Absolute {
                 if (i < expected.size() && !IsAssignable(expectedValueType, argument.type))
                     Report("constructor argument " + std::to_string(i + 1) + " has type '" + argument.type +
                         "', expected '" + expectedValueType + "'");
+                CheckManagedMoveArgument(argument, expectedValueType, i, "constructor");
                 if (IsValueReferenceType(expectedType) &&
                     !IsConstValueReferenceType(expectedType)) {
                     if (!argument.isLValue)
@@ -261,6 +262,7 @@ namespace Absolute {
                     Report("function value argument " + std::to_string(index + 1) +
                         " has type '" + argument.type + "', expected '" + expected + "'",
                         "E_FUNCTION_VALUE_ARGUMENT");
+                CheckManagedMoveArgument(argument, expected, index, "function value");
             }
             Save(expr, {callableValue.symbol, returnType, false,
                 IsStrongManagedPointerType(returnType), false});
@@ -354,16 +356,46 @@ namespace Absolute {
                 if (!argument.isLValue && argument.type != "error") {
                     Report("move expects an lvalue argument");
                 }
-                if (IsWeakPointerType(argument.type))
+                const bool constSource = argument.isLValue &&
+                    IsConstMutationTarget(expr->arguments.front().get(), argument);
+                if (constSource)
+                    Report("move cannot invalidate a const source",
+                        "E_MOVE_CONST_SOURCE", argument.symbol);
+
+                const Symbol* source = table.Get(argument.symbol);
+                const bool strongManaged = IsStrongManagedPointerType(argument.type);
+                const bool managedOwner = strongManaged && source &&
+                    (source->kind == SymbolKind::Field || source->managedOwner);
+                if (IsWeakPointerType(argument.type)) {
                     Report("weak managed pointers do not own a resource and cannot be moved",
                         "E_WEAK_MOVE", argument.symbol);
-                if (argument.symbol != InvalidSymbolId) {
+                }
+                else if (strongManaged && !managedOwner) {
+                    Report("managed subscriber cannot be moved; move requires an owner",
+                        "E_MANAGED_MOVE_REQUIRES_OWNER", argument.symbol);
+                }
+                if (argument.pointerValidity == PointerValidity::Deleted ||
+                    argument.pointerValidity == PointerValidity::Expired ||
+                    argument.pointerValidity == PointerValidity::MaybeInvalid) {
+                    Report("move source is an invalid pointer",
+                        "E_MOVE_INVALID_SOURCE", argument.symbol);
+                }
+
+                const bool validSource = argument.isLValue && !constSource &&
+                    !IsWeakPointerType(argument.type) && (!strongManaged || managedOwner);
+                if (validSource && argument.symbol != InvalidSymbolId) {
                     if (auto flow = valueFlow.find(argument.symbol); flow != valueFlow.end()) {
                         flow->second.initialization = InitializationState::Uninitialized;
                         flow->second.pointerValidity = PointerValidity::MaybeNull;
                     }
                 }
                 Result result = {table.Lookup(callName), argument.type, false};
+                result.createsManagedOwner = managedOwner;
+                result.initialization = InitializationState::Initialized;
+                result.pointerValidity = IsPointerType(argument.type)
+                    ? argument.pointerValidity : PointerValidity::NotPointer;
+                result.pointerOwner = managedOwner
+                    ? argument.symbol : argument.pointerOwner;
                 result.isMoveResult = true;
                 Save(expr, result);
                 return;
@@ -536,6 +568,7 @@ namespace Absolute {
                         "' cannot be copied by value; use move(...) for lvalues",
                         "E_RESOURCE_AGGREGATE_ARGUMENT", argument.symbol);
                 }
+                CheckManagedMoveArgument(argument, parameterValueType, i, "function");
             }
             if (argument.pointerValidity == PointerValidity::Deleted ||
                 argument.pointerValidity == PointerValidity::Expired)

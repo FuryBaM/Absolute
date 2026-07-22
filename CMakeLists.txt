@@ -442,6 +442,24 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.weak-managed-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
+        NAME absolute.managed-object-graphs-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-object-graphs.abs"
+    )
+    add_test(
+        NAME absolute.managed-object-graph-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-object-graph-errors.abs"
+    )
+    set_tests_properties(absolute.managed-object-graph-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.managed-pointer-move-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-pointer-move.abs"
+    )
+    add_test(
+        NAME absolute.managed-pointer-move-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-pointer-move-errors.abs"
+    )
+    set_tests_properties(absolute.managed-pointer-move-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.array-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-errors.abs"
     )
@@ -1755,6 +1773,70 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-weak-managed PROPERTIES
             FIXTURES_REQUIRED absolute-weak-managed-executable
             PASS_REGULAR_EXPRESSION "weak-managed=ok"
+        )
+        add_test(
+            NAME absolute.emit-managed-object-graphs
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-object-graphs.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/managed-object-graphs.ll"
+        )
+        set_tests_properties(absolute.emit-managed-object-graphs PROPERTIES
+            FIXTURES_SETUP absolute-managed-object-graphs-ir
+        )
+        add_test(
+            NAME absolute.check-managed-object-graphs-ir
+            COMMAND ${CMAKE_COMMAND}
+                -DIR_FILE=${CMAKE_BINARY_DIR}/managed-object-graphs.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-managed-object-graphs-ir.cmake"
+        )
+        set_tests_properties(absolute.check-managed-object-graphs-ir PROPERTIES
+            FIXTURES_REQUIRED absolute-managed-object-graphs-ir
+        )
+        add_test(
+            NAME absolute.build-managed-object-graphs
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-object-graphs.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/managed-object-graphs-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-managed-object-graphs PROPERTIES
+            FIXTURES_SETUP absolute-managed-object-graphs-executable
+        )
+        add_test(NAME absolute.run-managed-object-graphs
+            COMMAND "${CMAKE_BINARY_DIR}/managed-object-graphs-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-managed-object-graphs PROPERTIES
+            FIXTURES_REQUIRED absolute-managed-object-graphs-executable
+            PASS_REGULAR_EXPRESSION "managed-graphs=ok"
+            FAIL_REGULAR_EXPRESSION "managed pointer\\(s\\) leaked;memory leak detected"
+        )
+        add_test(
+            NAME absolute.emit-managed-pointer-move
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-pointer-move.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/managed-pointer-move.ll"
+        )
+        set_tests_properties(absolute.emit-managed-pointer-move PROPERTIES
+            FIXTURES_SETUP absolute-managed-pointer-move-ir
+        )
+        add_test(
+            NAME absolute.check-managed-pointer-move-ir
+            COMMAND ${CMAKE_COMMAND}
+                -DIR_FILE=${CMAKE_BINARY_DIR}/managed-pointer-move.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-managed-pointer-move-ir.cmake"
+        )
+        set_tests_properties(absolute.check-managed-pointer-move-ir PROPERTIES
+            FIXTURES_REQUIRED absolute-managed-pointer-move-ir
+        )
+        add_test(
+            NAME absolute.build-managed-pointer-move
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-pointer-move.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/managed-pointer-move-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-managed-pointer-move PROPERTIES
+            FIXTURES_SETUP absolute-managed-pointer-move-executable
+        )
+        add_test(NAME absolute.run-managed-pointer-move
+            COMMAND "${CMAKE_BINARY_DIR}/managed-pointer-move-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-managed-pointer-move PROPERTIES
+            FIXTURES_REQUIRED absolute-managed-pointer-move-executable
+            PASS_REGULAR_EXPRESSION "managed-move=ok"
+            FAIL_REGULAR_EXPRESSION "managed pointer\\(s\\) leaked;memory leak detected"
         )
     endif()
 endif()

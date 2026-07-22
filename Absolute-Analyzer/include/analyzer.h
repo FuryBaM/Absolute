@@ -474,6 +474,10 @@ namespace Absolute {
         void PopValueFlowScope();
         void MergeValueFlowPaths(const ValueFlowMap& base, const std::vector<ValueFlowMap>& paths);
         void RegisterFlowSymbol(SymbolId id, ValueFlowState state);
+        void TransferManagedAliases(SymbolId previousOwner, SymbolId nextOwner);
+        void CheckManagedMoveArgument(const Result& argument,
+            const std::string& parameterType, size_t index,
+            const std::string& context);
         void CheckTaskScopesFrom(size_t firstScope, const std::string& exitKind);
     };
 }

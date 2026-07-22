@@ -220,7 +220,16 @@
   используется существующий generation-checked handle без нового runtime-вида;
   strong-to-weak разрешён, обратное преобразование/`new`/`move`/`delete` запрещены,
   weak-поля не очищают pointee и позволяют безопасные graph back-edges.
-- [ ] Проверить циклические графы объектов и выбрать стратегию их очистки.
+- [x] Доделать `move(owner)` для managed `T*`: destination получает owner-роль,
+  source зануляется и становится compile-time moved-from до новой инициализации,
+  lifetime существующих subscriber/weak алиасов переносится на нового владельца.
+  Move subscriber/weak/const/invalid, потерянный результат и передача ownership в
+  обычный borrowed-параметр отклоняются Analyzer; runtime handle не менялся.
+- [x] Проверить циклические графы объектов и выбрать стратегию их очистки:
+  strong managed-поля образуют лес уникального владения и рекурсивно очищаются;
+  parent/peer/cross-link рёбра используют `weak T*` и не участвуют в cleanup.
+  Явные strong back-edges отклоняются как `E_MANAGED_OWNERSHIP_CYCLE`; новый GC,
+  refcount, cycle collector или runtime-вид указателя не добавлялся.
 - [ ] Добавить sanitizer-набор тестов на use-after-free, double-free и утечки.
 - [ ] Оптимизировать managed dereference и доказать корректность удаления bounds/lifetime checks в Release.
 

@@ -366,6 +366,28 @@ namespace Absolute {
         valueFlowScopes.back().push_back(id);
     }
 
+    void Analyzer::TransferManagedAliases(SymbolId previousOwner, SymbolId nextOwner) {
+        if (previousOwner == InvalidSymbolId || nextOwner == InvalidSymbolId ||
+            previousOwner == nextOwner)
+            return;
+        for (auto& [id, state] : valueFlow) {
+            if (id != previousOwner && state.pointerOwner == previousOwner)
+                state.pointerOwner = nextOwner;
+        }
+    }
+
+    void Analyzer::CheckManagedMoveArgument(
+        const Result& argument, const std::string& parameterType,
+        size_t index, const std::string& context) {
+        if (!argument.isMoveResult || !argument.createsManagedOwner ||
+            !IsStrongManagedPointerType(ValueReferenceBaseType(parameterType)))
+            return;
+        Report(context + " argument " + std::to_string(index + 1) +
+            " cannot consume a managed owner: managed pointer parameters borrow; "
+            "pass the owner without move(...) instead",
+            "E_MANAGED_MOVE_TO_BORROWED_PARAMETER", argument.pointerOwner);
+    }
+
     void Analyzer::MergeValueFlowPaths(const ValueFlowMap& base, const std::vector<ValueFlowMap>& paths) {
         valueFlow = base;
         if (paths.empty()) return;
@@ -469,7 +491,7 @@ namespace Absolute {
             result.createsManagedOwner, result.referencesManagedOwner,
             result.initialization, result.pointerValidity, result.pointerOwner,
             result.taskState, result.createsTask, result.asyncCall,
-            result.createsRawOwner};
+            result.createsRawOwner, result.isMoveResult};
     }
 
     bool Analyzer::IsKnownType(const std::string& name) const {

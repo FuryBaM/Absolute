@@ -1,0 +1,22 @@
+class CycleNode {
+    public CycleNode* child;
+
+    public CycleNode() {
+        child = null;
+    }
+}
+
+int32 main() {
+    CycleNode* root = new CycleNode();
+    root.child = root;
+
+    root.child = new CycleNode();
+    root.child.child = root;
+
+    CycleNode* other = new CycleNode();
+    root.child = other;
+
+    delete root;
+    delete other;
+    return 0;
+}

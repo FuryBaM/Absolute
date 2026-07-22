@@ -33,9 +33,26 @@ namespace Absolute {
              targetSymbol->kind == SymbolKind::Property);
         if (owningField && IsStrongManagedPointerType(target.type) &&
             value.type != "null" && !value.createsManagedOwner) {
-            Report("managed resource fields require a fresh owner or null; "
-                "store a copy/owner instead of a subscriber",
-                "E_RESOURCE_FIELD_REQUIRES_OWNER", target.symbol);
+            bool createsOwnershipCycle = false;
+            if (auto* member = dynamic_cast<MemberAccessExpr*>(expr->target.get())) {
+                const SymbolId root = LookupSymbol(ExtractIdentifier(member->base.get()));
+                SymbolId targetOwner = root;
+                if (const auto flow = valueFlow.find(root);
+                    flow != valueFlow.end() && flow->second.pointerOwner != InvalidSymbolId)
+                    targetOwner = flow->second.pointerOwner;
+                createsOwnershipCycle = targetOwner != InvalidSymbolId &&
+                    (value.pointerOwner == targetOwner || value.symbol == targetOwner);
+            }
+            if (createsOwnershipCycle) {
+                Report("owning field assignment would create a strong managed ownership cycle; "
+                    "use weak T* for the back-edge",
+                    "E_MANAGED_OWNERSHIP_CYCLE", target.symbol);
+            }
+            else {
+                Report("managed resource fields require a fresh owner or null; "
+                    "store a copy/owner instead of a subscriber",
+                    "E_RESOURCE_FIELD_REQUIRES_OWNER", target.symbol);
+            }
         }
         if (IsWeakPointerType(target.type) && value.createsManagedOwner) {
             Report("weak pointer cannot take ownership of a fresh managed allocation; "
@@ -94,6 +111,19 @@ namespace Absolute {
                 symbol->managedOwner = symbol->managedOwner || assignsOwner;
                 symbol->managedBorrower = symbol->managedBorrower || assignsBorrower;
             }
+        }
+        if (value.isMoveResult && value.createsManagedOwner) {
+            SymbolId nextOwner = owningField ? InvalidSymbolId : target.symbol;
+            if (owningField) {
+                if (auto* member = dynamic_cast<MemberAccessExpr*>(expr->target.get())) {
+                    const SymbolId root = LookupSymbol(ExtractIdentifier(member->base.get()));
+                    nextOwner = root;
+                    if (const auto flow = valueFlow.find(root);
+                        flow != valueFlow.end() && flow->second.pointerOwner != InvalidSymbolId)
+                        nextOwner = flow->second.pointerOwner;
+                }
+            }
+            TransferManagedAliases(value.pointerOwner, nextOwner);
         }
         if (const auto keep = keepLifetimes.find(target.symbol); keep != keepLifetimes.end()) {
             if (keep->second.state != KeepState::Deleted)
@@ -278,6 +308,8 @@ namespace Absolute {
             }
         }
         else if (Symbol* symbol = table.Get(id)) symbol->type = type;
+        if (value.isMoveResult && value.createsManagedOwner)
+            TransferManagedAliases(value.pointerOwner, id);
         ValueFlowState flow;
         std::string defName = type;
         std::string genBase;
@@ -557,6 +589,7 @@ namespace Absolute {
             if (!expected.empty() && !IsAssignable(expected, value.type))
                 Report("constructor argument " + std::to_string(index + 1) + " has type '" +
                     value.type + "', expected '" + expected + "'");
+            CheckManagedMoveArgument(value, expected, index, "constructor");
         }
         Result allocation{InvalidSymbolId,
             (rawAllocation ? "raw " : "") + constructedType + "*", false,

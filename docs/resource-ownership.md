@@ -35,6 +35,31 @@ releasing a class through a base-class or interface managed/raw pointer loads
 that slot from the dynamic object, so the most-derived fields are destroyed.
 Struct cleanup is a direct call because structs have no dynamic dispatch.
 
+## Object graphs and cycles
+
+Strong managed fields form a unique-ownership forest: every field accepts only
+a fresh owner or `null`, so an allocation cannot acquire a second strong parent.
+The analyzer rejects explicit strong back-edges with
+`E_MANAGED_OWNERSHIP_CYCLE`. Parent, peer, observer, and other cross-links use
+`weak T*`; generated destructors skip those fields, and their generation-checked
+handles expire when the strong owner recursively destroys the graph.
+
+This strategy needs no reference counting, tracing GC, or runtime cycle
+collector. See [managed-object-graphs.md](managed-object-graphs.md) for the graph
+model, diagnostics, and cleanup contract.
+
+## Managed pointer moves
+
+`move(owner)` transfers a strong managed handle to a variable, owning field, or
+return value. The destination becomes the unique owner, the source storage is
+zeroed and becomes compile-time moved-from, and existing subscriber/weak
+lifetime tracking follows the destination. A moved-from binding cannot be read
+or deleted until it is initialized with a fresh owner.
+
+Moving subscribers, weak or const references, invalid pointers, discarded move
+results, and moves into ordinary borrowed managed parameters are rejected. See
+[managed-pointer-move.md](managed-pointer-move.md) for the exact contract.
+
 ## Value semantics boundary
 
 A struct or class value that recursively contains an owning resource cannot be

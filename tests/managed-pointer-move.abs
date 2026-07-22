@@ -1,0 +1,62 @@
+class MoveNode {
+    public int32 value;
+
+    public MoveNode(int32 initial) {
+        value = initial;
+    }
+
+    public int32 read() {
+        return value;
+    }
+}
+
+class MoveBox {
+    public MoveNode* child;
+
+    public MoveBox() {
+        child = null;
+    }
+}
+
+MoveNode* makeMovedNode(int32 initial) {
+    MoveNode* local = new MoveNode(initial);
+    return move(local);
+}
+
+int32 main() {
+    MoveNode* a = new MoveNode(42);
+    MoveNode* subscriber = a;
+    weak MoveNode* observer = a;
+
+    MoveNode* b = move(a);
+    assert(b.read() == 42, "destination receives the managed owner");
+    assert(subscriber.read() == 42, "subscriber follows the transferred owner");
+    delete b;
+    assert(!subscriber, "subscriber expires with the new owner");
+    assert(!observer, "weak observer expires with the new owner");
+
+    a = new MoveNode(7);
+    assert(a.read() == 7, "moved-from binding can receive a fresh owner");
+    delete a;
+
+    MoveNode* source = new MoveNode(11);
+    MoveNode* destination = null;
+    destination = move(source);
+    assert(destination.read() == 11, "assignment transfers ownership");
+    delete destination;
+
+    MoveBox* box = new MoveBox();
+    MoveNode* fieldSource = new MoveNode(21);
+    weak MoveNode* fieldObserver = fieldSource;
+    box.child = move(fieldSource);
+    assert(box.child.read() == 21, "field store consumes the owner");
+    delete box;
+    assert(!fieldObserver, "field observer follows the aggregate owner");
+
+    MoveNode* returned = makeMovedNode(31);
+    assert(returned.read() == 31, "return transfers a moved owner");
+    delete returned;
+
+    println("managed-move=ok");
+    return 0;
+}
