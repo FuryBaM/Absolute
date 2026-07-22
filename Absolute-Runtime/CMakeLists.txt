@@ -5,7 +5,9 @@ find_package(Threads REQUIRED)
 
 add_library(Absolute-Runtime STATIC
     src/errors.cpp
+    src/filesystem.cpp
     src/libraries.cpp
+    src/network.cpp
     src/pointers.cpp
     src/random.cpp
     src/tasks.cpp
@@ -13,6 +15,9 @@ add_library(Absolute-Runtime STATIC
 )
 target_compile_features(Absolute-Runtime PUBLIC cxx_std_20)
 target_link_libraries(Absolute-Runtime PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
+if(WIN32)
+    target_link_libraries(Absolute-Runtime PUBLIC ws2_32)
+endif()
 
 if(MSVC)
     target_compile_options(Absolute-Runtime PRIVATE /W4 /permissive-)

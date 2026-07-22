@@ -1,0 +1,132 @@
+// std.net - blocking TCP sockets. Text operations use UTF-8/null-terminated strings.
+
+extern "C" raw uint8* absolute_net_tcp_connect(string host, int32 port);
+extern "C" raw uint8* absolute_net_tcp_listen(string host, int32 port, int32 backlog);
+extern "C" raw uint8* absolute_net_tcp_accept(raw uint8* handle);
+extern "C" int32 absolute_net_tcp_send(raw uint8* handle, string text);
+extern "C" string absolute_net_tcp_receive(raw uint8* handle, int32 maximumBytes);
+extern "C" int32 absolute_net_tcp_set_timeout(raw uint8* handle, int32 milliseconds);
+extern "C" int32 absolute_net_tcp_port(raw uint8* handle);
+extern "C" void absolute_net_tcp_shutdown(raw uint8* handle);
+extern "C" void absolute_net_tcp_close(raw uint8* handle);
+extern "C" string absolute_net_error();
+
+namespace std.net {
+    string error() {
+        return absolute_net_error();
+    }
+
+    class TcpSocket {
+        private raw uint8* handle;
+
+        public TcpSocket(raw uint8* nativeHandle) {
+            handle = nativeHandle;
+            if (handle == null) {
+                throw new Error(format("invalid TCP socket: {}", error()));
+            }
+        }
+
+        public void destroy() {
+            if (handle != null) {
+                absolute_net_tcp_close(handle);
+                handle = null;
+            }
+        }
+
+        public bool isOpen() {
+            return handle != null;
+        }
+
+        public int32 send(string text) {
+            int32 result = absolute_net_tcp_send(handle, text);
+            if (result < 0) {
+                throw new Error(format("TCP send failed: {}", error()));
+            }
+            return result;
+        }
+
+        public string receive(int32 maximumBytes) {
+            string result = absolute_net_tcp_receive(handle, maximumBytes);
+            if (error() != "") {
+                throw new Error(format("TCP receive failed: {}", error()));
+            }
+            return result;
+        }
+
+        public void setTimeout(int32 milliseconds) {
+            if (absolute_net_tcp_set_timeout(handle, milliseconds) == 0) {
+                throw new Error(format("TCP timeout failed: {}", error()));
+            }
+        }
+
+        public int32 localPort() {
+            int32 result = absolute_net_tcp_port(handle);
+            if (result < 0) {
+                throw new Error(format("TCP local port failed: {}", error()));
+            }
+            return result;
+        }
+
+        public void shutdown() {
+            absolute_net_tcp_shutdown(handle);
+        }
+    }
+
+    class TcpListener {
+        private raw uint8* handle;
+
+        public TcpListener(raw uint8* nativeHandle) {
+            handle = nativeHandle;
+            if (handle == null) {
+                throw new Error(format("invalid TCP listener: {}", error()));
+            }
+        }
+
+        public void destroy() {
+            if (handle != null) {
+                absolute_net_tcp_close(handle);
+                handle = null;
+            }
+        }
+
+        public bool isOpen() {
+            return handle != null;
+        }
+
+        public int32 port() {
+            int32 result = absolute_net_tcp_port(handle);
+            if (result < 0) {
+                throw new Error(format("TCP listener port failed: {}", error()));
+            }
+            return result;
+        }
+
+        public TcpSocket* accept() {
+            raw uint8* accepted = absolute_net_tcp_accept(handle);
+            if (accepted == null) {
+                throw new Error(format("TCP accept failed: {}", error()));
+            }
+            return new TcpSocket(accepted);
+        }
+    }
+
+    TcpSocket* connect(string host, int32 port) {
+        raw uint8* handle = absolute_net_tcp_connect(host, port);
+        if (handle == null) {
+            throw new Error(format("TCP connect failed: {}", error()));
+        }
+        return new TcpSocket(handle);
+    }
+
+    TcpListener* listen(string host, int32 port, int32 backlog) {
+        raw uint8* handle = absolute_net_tcp_listen(host, port, backlog);
+        if (handle == null) {
+            throw new Error(format("TCP listen failed: {}", error()));
+        }
+        return new TcpListener(handle);
+    }
+
+    TcpListener* listenLocal(int32 port) {
+        return listen("127.0.0.1", port, 16);
+    }
+}

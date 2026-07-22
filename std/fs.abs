@@ -1,0 +1,166 @@
+// std.fs - UTF-8 filesystem paths, whole-file helpers, and streaming text files.
+
+extern "C" int32 absolute_fs_exists(string path);
+extern "C" int32 absolute_fs_is_file(string path);
+extern "C" int32 absolute_fs_is_directory(string path);
+extern "C" int64 absolute_fs_file_size(string path);
+extern "C" int32 absolute_fs_create_directories(string path);
+extern "C" int32 absolute_fs_remove(string path);
+extern "C" int32 absolute_fs_rename(string source, string destination);
+extern "C" int32 absolute_fs_copy_file(string source, string destination, int32 overwrite);
+extern "C" string absolute_fs_current_directory();
+extern "C" string absolute_fs_absolute(string path);
+extern "C" string absolute_fs_read_text(string path);
+extern "C" int32 absolute_fs_write_text(string path, string text, int32 append);
+extern "C" raw uint8* absolute_fs_file_open(string path, string mode);
+extern "C" void absolute_fs_file_close(raw uint8* handle);
+extern "C" string absolute_fs_file_read_line(raw uint8* handle);
+extern "C" string absolute_fs_file_read_all(raw uint8* handle);
+extern "C" int32 absolute_fs_file_write(raw uint8* handle, string text);
+extern "C" int32 absolute_fs_file_flush(raw uint8* handle);
+extern "C" int32 absolute_fs_file_eof(raw uint8* handle);
+extern "C" string absolute_fs_error();
+
+namespace std.fs {
+    string error() {
+        return absolute_fs_error();
+    }
+
+    bool exists(string path) {
+        return absolute_fs_exists(path) != 0;
+    }
+
+    bool isFile(string path) {
+        return absolute_fs_is_file(path) != 0;
+    }
+
+    bool isDirectory(string path) {
+        return absolute_fs_is_directory(path) != 0;
+    }
+
+    int64 size(string path) {
+        int64 result = absolute_fs_file_size(path);
+        if (result < 0) {
+            throw new Error(format("file size failed: {}", error()));
+        }
+        return result;
+    }
+
+    void createDirectories(string path) {
+        if (absolute_fs_create_directories(path) == 0) {
+            throw new Error(format("create directories failed: {}", error()));
+        }
+    }
+
+    void remove(string path) {
+        if (absolute_fs_remove(path) == 0) {
+            throw new Error(format("remove failed: {}", error()));
+        }
+    }
+
+    void rename(string source, string destination) {
+        if (absolute_fs_rename(source, destination) == 0) {
+            throw new Error(format("rename failed: {}", error()));
+        }
+    }
+
+    void copyFile(string source, string destination, bool overwrite) {
+        if (absolute_fs_copy_file(source, destination, overwrite ? 1 : 0) == 0) {
+            throw new Error(format("copy file failed: {}", error()));
+        }
+    }
+
+    string currentDirectory() {
+        string result = absolute_fs_current_directory();
+        if (error() != "") {
+            throw new Error(format("current directory failed: {}", error()));
+        }
+        return result;
+    }
+
+    string absolute(string path) {
+        string result = absolute_fs_absolute(path);
+        if (error() != "") {
+            throw new Error(format("absolute path failed: {}", error()));
+        }
+        return result;
+    }
+
+    string readText(string path) {
+        string result = absolute_fs_read_text(path);
+        if (error() != "") {
+            throw new Error(format("read text failed: {}", error()));
+        }
+        return result;
+    }
+
+    void writeText(string path, string text) {
+        if (absolute_fs_write_text(path, text, 0) == 0) {
+            throw new Error(format("write text failed: {}", error()));
+        }
+    }
+
+    void appendText(string path, string text) {
+        if (absolute_fs_write_text(path, text, 1) == 0) {
+            throw new Error(format("append text failed: {}", error()));
+        }
+    }
+
+    class File {
+        private raw uint8* handle;
+
+        public File(string path, string mode) {
+            handle = absolute_fs_file_open(path, mode);
+            if (handle == null) {
+                throw new Error(format("open file failed: {}", error()));
+            }
+        }
+
+        public void destroy() {
+            if (handle != null) {
+                absolute_fs_file_close(handle);
+                handle = null;
+            }
+        }
+
+        public bool isOpen() {
+            return handle != null;
+        }
+
+        public string readLine() {
+            string result = absolute_fs_file_read_line(handle);
+            if (error() != "") {
+                throw new Error(format("read line failed: {}", error()));
+            }
+            return result;
+        }
+
+        public string readAll() {
+            string result = absolute_fs_file_read_all(handle);
+            if (error() != "") {
+                throw new Error(format("read file failed: {}", error()));
+            }
+            return result;
+        }
+
+        public void write(string text) {
+            if (absolute_fs_file_write(handle, text) == 0) {
+                throw new Error(format("write file failed: {}", error()));
+            }
+        }
+
+        public void flush() {
+            if (absolute_fs_file_flush(handle) == 0) {
+                throw new Error(format("flush file failed: {}", error()));
+            }
+        }
+
+        public bool eof() {
+            return absolute_fs_file_eof(handle) != 0;
+        }
+    }
+
+    File* open(string path, string mode) {
+        return new File(path, mode);
+    }
+}

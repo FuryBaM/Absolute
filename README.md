@@ -1060,6 +1060,45 @@ assert(tracked.evaluate(40) == 42);
 delete unsafe;
 ```
 
+## Filesystem and TCP
+
+`std/fs.abs` provides UTF-8 path helpers, whole-file text operations, directory
+creation, copy/rename/remove, and the resource-owning `std.fs.File` stream:
+
+```absolute
+import "std/fs.abs";
+
+std.fs.writeText("hello.txt", "hello");
+std.fs.appendText("hello.txt", " world");
+println(std.fs.readText("hello.txt"));
+
+std.fs.File* file = std.fs.open("hello.txt", "rb");
+println(file.readLine());
+delete file;
+```
+
+`std/net.abs` provides blocking cross-platform TCP sockets. Listener port `0`
+requests an ephemeral OS-assigned port:
+
+```absolute
+import "std/net.abs";
+
+std.net.TcpListener* listener = std.net.listenLocal(0);
+std.net.TcpSocket* client = std.net.connect("127.0.0.1", listener.port());
+std.net.TcpSocket* server = listener.accept();
+client.send("ping");
+println(server.receive(4096));
+delete server;
+delete client;
+delete listener;
+```
+
+`File` and TCP objects own opaque native handles and close them from `destroy()`.
+Text returned by a stream/socket read is a borrowed UTF-8 view valid until the
+next read on that same object; top-level filesystem result strings are valid
+until the next top-level result-producing filesystem call on the current thread.
+UDP, HTTP/URI, and async I/O are intentionally separate follow-up layers.
+
 For a Release build, replace `Debug` with `Release`.
 
 ## Test

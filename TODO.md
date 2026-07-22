@@ -459,13 +459,19 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [ ] **Следующее: определить стабильную структуру standard library и правила
   версионирования.**
 - [ ] Добавить полноценные String/StringBuilder и Unicode API.
-- [ ] Добавить filesystem, paths и streams.
+- [x] Добавить `std.fs`: UTF-8 paths, exists/type/size, create/remove/rename/copy,
+  whole-file read/write/append и ресурсный streaming `File`; Win32/Linux runtime
+  использует native Unicode paths и автоматически закрывает opaque handle.
 - [ ] Добавить календарные Date/DateTime, UTC/local formatting и time zones.
 - [x] Добавить `std.random`: `Rng` использует воспроизводимый xoshiro256** с
   явным seed и коротким API `u64`/`i32`/`range`/`real`/`boolean`; `entropy()` и
   `create()` отделяют системный источник seed от детерминированного PRNG.
 - [ ] Добавить JSON и binary serialization.
-- [ ] Добавить networking: sockets, HTTP client/server и URI.
+- [x] Добавить `std.net` blocking TCP: connect/listen/accept, ephemeral/local port,
+  send/receive, timeout, shutdown и автоматическое закрытие opaque socket handle;
+  Windows использует Winsock 2, Linux — POSIX sockets.
+- [ ] Добавить UDP, DNS API верхнего уровня, URI и HTTP client/server поверх
+  готового transport-слоя `std.net`; async file/network I/O остаётся отдельным P1.
 - [ ] Довести стандартные algorithms: существующие sort/search/reverse дополнить
   transform, reduce и filter и подключить весь набор к CTest.
 - [ ] Добавить logging, assertions и test framework.

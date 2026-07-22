@@ -1,0 +1,38 @@
+import "../std/fs.abs";
+
+int32 main() {
+    string directory = "absolute-std-fs-test";
+    string source = "absolute-std-fs-test/source.txt";
+    string copied = "absolute-std-fs-test/copied.txt";
+    string renamed = "absolute-std-fs-test/renamed.txt";
+
+    if (std.fs.exists(renamed)) { std.fs.remove(renamed); }
+    if (std.fs.exists(copied)) { std.fs.remove(copied); }
+    if (std.fs.exists(source)) { std.fs.remove(source); }
+    if (!std.fs.exists(directory)) { std.fs.createDirectories(directory); }
+
+    assert(std.fs.isDirectory(directory), "created path must be a directory");
+    std.fs.writeText(source, "alpha");
+    std.fs.appendText(source, "\nbeta");
+    assert(std.fs.exists(source) && std.fs.isFile(source),
+        "written file must exist");
+    assert(std.fs.size(source) == 10, "file size must include appended text");
+    assert(std.fs.readText(source) == "alpha\nbeta", "whole-file read must round-trip");
+
+    std.fs.File* reader = std.fs.open(source, "rb");
+    assert(reader.readLine() == "alpha", "stream must read the first line");
+    assert(reader.readLine() == "beta", "stream must read the second line");
+    delete reader;
+
+    std.fs.copyFile(source, copied, false);
+    std.fs.rename(copied, renamed);
+    assert(std.fs.readText(renamed) == "alpha\nbeta", "copy and rename must preserve data");
+    assert(std.fs.currentDirectory() != "", "current directory must be available");
+    assert(std.fs.absolute(source) != "", "absolute path must be available");
+
+    std.fs.remove(renamed);
+    std.fs.remove(source);
+    std.fs.remove(directory);
+    println("std-fs=ok");
+    return 0;
+}

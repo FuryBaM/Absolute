@@ -353,6 +353,14 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-random.abs"
     )
     add_test(
+        NAME absolute.std-fs-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-fs.abs"
+    )
+    add_test(
+        NAME absolute.std-net-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-net.abs"
+    )
+    add_test(
         NAME absolute.script-main-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/script-main.abs"
     )
@@ -1739,6 +1747,36 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-std-random PROPERTIES
             FIXTURES_REQUIRED absolute-std-random-executable
             PASS_REGULAR_EXPRESSION "std-random=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-fs
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-fs.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-fs-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-fs PROPERTIES
+            FIXTURES_SETUP absolute-std-fs-executable
+        )
+        add_test(NAME absolute.run-std-fs
+            COMMAND "${CMAKE_BINARY_DIR}/std-fs-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-fs PROPERTIES
+            FIXTURES_REQUIRED absolute-std-fs-executable
+            PASS_REGULAR_EXPRESSION "std-fs=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-net
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-net.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-net-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-net PROPERTIES
+            FIXTURES_SETUP absolute-std-net-executable
+        )
+        add_test(NAME absolute.run-std-net
+            COMMAND "${CMAKE_BINARY_DIR}/std-net-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-net PROPERTIES
+            FIXTURES_REQUIRED absolute-std-net-executable
+            PASS_REGULAR_EXPRESSION "std-net=ok"
         )
 
         add_test(

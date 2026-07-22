@@ -27,6 +27,21 @@ namespace Absolute {
         const bool rightManaged = IsManagedPointerTypeName(rightType);
         const bool equality = expr->op == "==" || expr->op == "!=";
 
+        if (equality && leftType == "string" && rightType == "string") {
+            llvm::FunctionType* compareType = llvm::FunctionType::get(
+                impl->builder.getInt32Ty(),
+                {impl->builder.getPtrTy(), impl->builder.getPtrTy()}, false);
+            llvm::Value* comparison = impl->builder.CreateCall(
+                impl->module->getOrInsertFunction("strcmp", compareType),
+                {left, right}, "string.compare");
+            llvm::Value* equal = impl->builder.CreateICmpEQ(
+                comparison, impl->builder.getInt32(0), "string.equal");
+            impl->value = expr->op == "=="
+                ? equal : impl->builder.CreateNot(equal, "string.not.equal");
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
+
         if ((leftRaw || rightRaw) && (expr->op == "+" || expr->op == "-")) {
             if (leftRaw && rightRaw && expr->op == "-") {
                 llvm::Value* leftAddress = impl->builder.CreatePtrToInt(left, impl->builder.getInt64Ty());
