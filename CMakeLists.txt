@@ -335,6 +335,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generics-types.abs"
     )
     add_test(
+        NAME absolute.std-time-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-time.abs"
+    )
+    add_test(
         NAME absolute.iterators
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/iterators.abs"
     )
@@ -1449,6 +1453,21 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-function-values PROPERTIES
             FIXTURES_REQUIRED absolute-function-values-executable
             PASS_REGULAR_EXPRESSION "function-values=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-time
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-time.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-time-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-time PROPERTIES
+            FIXTURES_SETUP absolute-std-time-executable
+        )
+        add_test(NAME absolute.run-std-time
+            COMMAND "${CMAKE_BINARY_DIR}/std-time-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-time PROPERTIES
+            FIXTURES_REQUIRED absolute-std-time-executable
+            PASS_REGULAR_EXPRESSION "std-time=ok"
         )
 
         add_test(

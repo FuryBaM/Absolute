@@ -1,46 +1,145 @@
-// std.time — Date, time, and benchmarking utilities for the Absolute standard library.
+// std.time - wall-clock, monotonic-clock, sleeping, and measurement utilities.
 //
-// Usage:
-//   import std.time;
-//   import "std/time.abs";
-//
-// Example:
-//   int64 start = Time.monotonic();
-//   // ... work ...
-//   int64 elapsed = Time.monotonic() - start;
-//   println("Elapsed ms: " + toString(elapsed / 1000000));
+// Wall-clock values are Unix timestamps and may jump when the system clock is
+// adjusted. Use mono(Unit.*) for elapsed-time measurements.
 
-extern "C" int64 absolute_time_unix_seconds();
-extern "C" int64 absolute_time_unix_millis();
+extern "C" int64 absolute_time_unix_nanos();
 extern "C" int64 absolute_time_monotonic_nanos();
-extern "C" void  absolute_time_sleep(int32 milliseconds);
+extern "C" void absolute_time_sleep_nanos(int64 nanoseconds);
+extern "C" void absolute_time_sleep_micros(int64 microseconds);
+extern "C" void absolute_time_sleep_millis(int64 milliseconds);
+extern "C" void absolute_time_sleep_seconds(int64 seconds);
 
-namespace Time {
-    // Unix timestamp in whole seconds since 1970-01-01 00:00:00 UTC.
+namespace std.time {
+    enum Unit {
+        Nanoseconds,
+        Microseconds,
+        Milliseconds,
+        Seconds
+    }
+
+    int64 convert(int64 nanoseconds, Unit unit) {
+        match (unit) {
+        case Unit.Nanoseconds:
+            return nanoseconds;
+        case Unit.Microseconds:
+            return nanoseconds / 1000;
+        case Unit.Milliseconds:
+            return nanoseconds / 1000000;
+        case Unit.Seconds:
+            return nanoseconds / 1000000000;
+        }
+    }
+
+    // Unix timestamp in the selected unit.
+    int64 now(Unit unit) {
+        return convert(absolute_time_unix_nanos(), unit);
+    }
+
+    // Monotonic clock in the selected unit. Its epoch is unspecified.
+    int64 mono(Unit unit) {
+        return convert(absolute_time_monotonic_nanos(), unit);
+    }
+
+    int64 elapsed(int64 startedAt, Unit unit) {
+        return mono(unit) - startedAt;
+    }
+
+    // Non-positive durations return immediately.
+    void sleep(int64 value, Unit unit) {
+        match (unit) {
+        case Unit.Nanoseconds:
+            absolute_time_sleep_nanos(value);
+            return;
+        case Unit.Microseconds:
+            absolute_time_sleep_micros(value);
+            return;
+        case Unit.Milliseconds:
+            absolute_time_sleep_millis(value);
+            return;
+        case Unit.Seconds:
+            absolute_time_sleep_seconds(value);
+            return;
+        }
+    }
+
+    int64 measure(Unit unit, func<void> action) {
+        int64 startedAt = mono(unit);
+        action();
+        return elapsed(startedAt, unit);
+    }
+
+    // Runs action exactly iterations times and returns total time in unit.
+    // A non-positive iteration count performs no work and returns zero.
+    int64 bench(int32 iterations, Unit unit, func<void> action) {
+        if (iterations <= 0) {
+            return 0;
+        }
+
+        int64 startedAt = mono(unit);
+        int32 iteration = 0;
+        while (iteration < iterations) {
+            action();
+            iteration += 1;
+        }
+        return elapsed(startedAt, unit);
+    }
+
+    // Unit-explicit compatibility helpers for code written against the first
+    // std.time revision.
     int64 unixSeconds() {
-        return absolute_time_unix_seconds();
+        return now(Unit.Seconds);
     }
 
-    // Unix timestamp in milliseconds since 1970-01-01 00:00:00 UTC.
+    int64 unixMilliseconds() {
+        return now(Unit.Milliseconds);
+    }
+
+    int64 unixNanoseconds() {
+        return now(Unit.Nanoseconds);
+    }
+
+    int64 monotonicNanoseconds() {
+        return mono(Unit.Nanoseconds);
+    }
+
+    int64 elapsedNanoseconds(int64 startedAt) {
+        return elapsed(startedAt, Unit.Nanoseconds);
+    }
+
+    void sleepNanoseconds(int64 nanoseconds) {
+        sleep(nanoseconds, Unit.Nanoseconds);
+    }
+
+    void sleepMilliseconds(int64 milliseconds) {
+        sleep(milliseconds, Unit.Milliseconds);
+    }
+
+    int64 measureNanoseconds(func<void> action) {
+        return measure(Unit.Nanoseconds, action);
+    }
+
+    int64 benchmarkNanoseconds(int32 iterations, func<void> action) {
+        return bench(iterations, Unit.Nanoseconds, action);
+    }
+}
+
+// Compatibility wrappers for the original std.time API. New code should use
+// std.time and unit-explicit function names.
+namespace Time {
+    int64 unixSeconds() {
+        return std.time.unixSeconds();
+    }
+
     int64 unixMillis() {
-        return absolute_time_unix_millis();
+        return std.time.unixMilliseconds();
     }
 
-    // High-resolution monotonic clock in nanoseconds.
-    // Use this for benchmarking: the difference between two calls gives
-    // elapsed nanoseconds independent of wall-clock changes.
     int64 monotonic() {
-        return absolute_time_monotonic_nanos();
+        return std.time.monotonicNanoseconds();
     }
 
-    // Suspend the current thread for the given number of milliseconds.
     void sleep(int32 milliseconds) {
-        absolute_time_sleep(milliseconds);
+        std.time.sleepMilliseconds(milliseconds);
     }
-
-    // Measure how many nanoseconds a block takes.
-    // Returns elapsed nanoseconds.
-    // Usage:
-    //   int64 ns = Time.benchmark(1000, fn);
-    //   println("per-iter ns: " + toString(ns / 1000));
 }
