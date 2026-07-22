@@ -25,10 +25,14 @@ class BinaryNode : Node {
     public int64 bias;
 
     public override void destroy() {
-        left.destroy();
-        right.destroy();
-        delete left;
-        delete right;
+        if (left != null) {
+            delete left;
+            left = null;
+        }
+        if (right != null) {
+            delete right;
+            right = null;
+        }
     }
 }
 
@@ -79,7 +83,6 @@ int64 objectTree() {
         checksum = (checksum + root.evaluate(round)) & 2147483647;
         round += 1;
     }
-    root.destroy();
     delete root;
     return checksum;
 }
