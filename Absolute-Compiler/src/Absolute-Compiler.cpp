@@ -505,11 +505,11 @@ int main(int argc, char* argv[]) {
     }
     catch (const std::invalid_argument& error) {
         PrintUsage();
-        std::cout << "Error: " << error.what() << std::endl;
+        std::cerr << "Error: " << error.what() << std::endl;
         return 2;
     }
     catch (const std::exception& error) {
-        std::cout << "Error: " << error.what() << std::endl;
+        std::cerr << "Error: " << error.what() << std::endl;
         return 1;
     }
 }

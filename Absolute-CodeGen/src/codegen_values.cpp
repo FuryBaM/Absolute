@@ -383,6 +383,7 @@ namespace Absolute {
         if (ArrayRankName(arrayTypeName) > 0) {
             const size_t rank = ArrayRankName(arrayTypeName);
             const std::string elemTypeName = ArrayElementTypeName(arrayTypeName, rank);
+            llvm::Type* elemType = impl->TypeFromName(elemTypeName);
             llvm::Value* count = expr->arguments.empty()
                 ? impl->builder.getInt64(0)
                 : impl->Evaluate(expr->arguments[0].get());
@@ -390,7 +391,13 @@ namespace Absolute {
             llvm::Value* allocBytes = impl->builder.CreateMul(count, elemSize, "array.alloc.bytes");
             llvm::Value* dataPtr = impl->builder.CreateCall(
                 impl->Malloc(), {allocBytes}, "array.data.alloc");
-            impl->value = impl->BuildArrayDescriptor({dataPtr, dataPtr, arrayTypeName, {count}});
+            Impl::ArrayView view;
+            view.address = dataPtr;
+            view.elementType = elemType;
+            view.typeName = arrayTypeName;
+            view.dimensions = {count};
+            view.owner = dataPtr;
+            impl->value = impl->BuildArrayDescriptor(view);
             impl->valueCreatesManagedOwner = false;
             impl->valueManagedPointee = nullptr;
             return;
