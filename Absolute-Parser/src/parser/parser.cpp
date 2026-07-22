@@ -170,6 +170,7 @@ namespace Absolute{
         if (!attributes.empty() && token->type != TokenType::IDENTIFIER &&
             !(token->type == TokenType::KEYWORD &&
                 (IsPrimitiveType(token->value) || token->value == "raw" ||
+                    token->value == "weak" ||
                     token->value == "class" || token->value == "struct" ||
                     token->value == "interface" || token->value == "enum" ||
                     token->value == "group" || token->value == "extern" ||
@@ -279,6 +280,7 @@ namespace Absolute{
             case Hash("export"):
                 return ParseExportFunctionDeclaration();
             case Hash("raw"):
+            case Hash("weak"):
                 return ParseVarDeclaration();
             default:
                 break;

@@ -41,12 +41,15 @@ namespace Absolute {
     struct PointerTypeExpr : public TypeExpr {
         std::unique_ptr<TypeExpr> pointee;
         bool raw = false;
+        bool weak = false;
 
-        PointerTypeExpr(std::unique_ptr<TypeExpr> pointee, bool raw)
-            : pointee(std::move(pointee)), raw(raw) {}
+        PointerTypeExpr(std::unique_ptr<TypeExpr> pointee, bool raw, bool weak = false)
+            : pointee(std::move(pointee)), raw(raw), weak(weak) {}
 
         std::string ToString(int indent = 0) const override {
-            return std::string(indent, ' ') + (raw ? "Raw pointer type:\n" : "Managed pointer type:\n") +
+            const std::string kind = raw ? "Raw pointer type:\n" :
+                (weak ? "Weak managed pointer type:\n" : "Managed pointer type:\n");
+            return std::string(indent, ' ') + kind +
                 (pointee ? pointee->ToString(indent + 1) : std::string(indent + 1, ' ') + "<missing>");
         }
 

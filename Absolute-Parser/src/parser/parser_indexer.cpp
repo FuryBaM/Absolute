@@ -12,7 +12,7 @@ namespace Absolute {
                 return std::make_unique<UserTypeExpr>(CloneIndexerTypeExpression(*user->typeExpr));
             if (const auto* pointer = dynamic_cast<const PointerTypeExpr*>(&type))
                 return std::make_unique<PointerTypeExpr>(
-                    CloneIndexerType(*pointer->pointee), pointer->raw);
+                    CloneIndexerType(*pointer->pointee), pointer->raw, pointer->weak);
             if (const auto* array = dynamic_cast<const ArrayTypeExpr*>(&type))
                 return std::make_unique<ArrayTypeExpr>(CloneIndexerType(*array->element));
             throw std::runtime_error("Unsupported indexer type expression");

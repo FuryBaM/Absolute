@@ -5,9 +5,12 @@ namespace Absolute{
     std::unique_ptr<TypeExpr> Parser::ParseType()
     {
         bool raw = false;
-        if (CurrentToken() && CurrentToken()->type == TokenType::KEYWORD && CurrentToken()->value == "raw") {
-            Consume(TokenType::KEYWORD, "raw");
-            raw = true;
+        bool weak = false;
+        if (CurrentToken() && CurrentToken()->type == TokenType::KEYWORD &&
+            (CurrentToken()->value == "raw" || CurrentToken()->value == "weak")) {
+            raw = CurrentToken()->value == "raw";
+            weak = CurrentToken()->value == "weak";
+            Consume(TokenType::KEYWORD, raw ? "raw" : "weak");
         }
         Token* current = RequireCurrent("a type");
         std::unique_ptr<TypeExpr> base;
@@ -27,7 +30,7 @@ namespace Absolute{
             base = ParsePrimitiveType();
         }
         if (!base) return nullptr;
-        base = ParsePointerSuffix(std::move(base), raw);
+        base = ParsePointerSuffix(std::move(base), raw, weak);
         while (CurrentToken() && CurrentToken()->type == TokenType::BRACKET &&
             CurrentToken()->value == "[" && PeekToken() &&
             PeekToken()->type == TokenType::BRACKET && PeekToken()->value == "]") {
@@ -38,18 +41,21 @@ namespace Absolute{
         return base;
     }
 
-    std::unique_ptr<TypeExpr> Parser::ParsePointerSuffix(std::unique_ptr<TypeExpr> base, bool raw)
+    std::unique_ptr<TypeExpr> Parser::ParsePointerSuffix(
+        std::unique_ptr<TypeExpr> base, bool raw, bool weak)
     {
         bool foundPointer = false;
         while (CurrentToken() && CurrentToken()->type == TokenType::OPERATOR && CurrentToken()->value == "*") {
             Consume(TokenType::OPERATOR, "*");
-            base = std::make_unique<PointerTypeExpr>(std::move(base), raw);
+            base = std::make_unique<PointerTypeExpr>(std::move(base), raw, weak);
             raw = false;
+            weak = false;
             foundPointer = true;
         }
-        if (raw && !foundPointer) {
-            ReportSyntaxError(CurrentToken(), "'raw' must qualify a pointer type");
-            throw std::runtime_error("Invalid raw type");
+        if ((raw || weak) && !foundPointer) {
+            ReportSyntaxError(CurrentToken(), std::string("'") +
+                (raw ? "raw" : "weak") + "' must qualify a pointer type");
+            throw std::runtime_error("Invalid pointer qualifier");
         }
         return base;
     }

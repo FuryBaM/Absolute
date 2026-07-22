@@ -44,8 +44,16 @@ namespace Absolute {
             return type.starts_with("raw ") && type.ends_with("*");
         }
 
+        inline bool IsWeakPointerType(const std::string& type) {
+            return type.starts_with("weak ") && type.ends_with("*");
+        }
+
         inline bool IsManagedPointerType(const std::string& type) {
             return !IsRawPointerType(type) && type.ends_with("*");
+        }
+
+        inline bool IsStrongManagedPointerType(const std::string& type) {
+            return IsManagedPointerType(type) && !IsWeakPointerType(type);
         }
 
         inline bool IsPointerType(const std::string& type) {
@@ -54,6 +62,7 @@ namespace Absolute {
 
         inline std::string PointerPointee(std::string type) {
             if (IsRawPointerType(type)) type.erase(0, 4);
+            else if (IsWeakPointerType(type)) type.erase(0, 5);
             if (!type.empty() && type.back() == '*') type.pop_back();
             return type;
         }
@@ -140,7 +149,8 @@ namespace Absolute {
             if (type.ends_with("[]"))
                 return SubstituteGenericType(type.substr(0, type.size() - 2), substitutions) + "[]";
             if (IsPointerType(type)) {
-                const std::string prefix = IsRawPointerType(type) ? "raw " : "";
+                const std::string prefix = IsRawPointerType(type) ? "raw " :
+                    (IsWeakPointerType(type) ? "weak " : "");
                 return prefix + SubstituteGenericType(PointerPointee(type), substitutions) + "*";
             }
             std::string base;
@@ -187,7 +197,8 @@ namespace Absolute {
                 return UnifyGenericType(pattern.substr(0, pattern.size() - 2),
                     actual.substr(0, actual.size() - 2), parameters, substitutions);
             if (IsPointerType(pattern) && IsPointerType(actual) &&
-                IsRawPointerType(pattern) == IsRawPointerType(actual))
+                IsRawPointerType(pattern) == IsRawPointerType(actual) &&
+                IsWeakPointerType(pattern) == IsWeakPointerType(actual))
                 return UnifyGenericType(PointerPointee(pattern), PointerPointee(actual),
                     parameters, substitutions);
             std::string patternBase;

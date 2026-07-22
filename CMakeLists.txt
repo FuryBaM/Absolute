@@ -433,6 +433,15 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.value-reference-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
+        NAME absolute.weak-managed-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/weak-managed-references.abs"
+    )
+    add_test(
+        NAME absolute.weak-managed-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/weak-managed-reference-errors.abs"
+    )
+    set_tests_properties(absolute.weak-managed-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.array-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-errors.abs"
     )
@@ -1715,6 +1724,37 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-value-references PROPERTIES
             FIXTURES_REQUIRED absolute-value-references-executable
             PASS_REGULAR_EXPRESSION "value-references=ok"
+        )
+        add_test(
+            NAME absolute.emit-weak-managed
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/weak-managed-references.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/weak-managed.ll"
+        )
+        set_tests_properties(absolute.emit-weak-managed PROPERTIES
+            FIXTURES_SETUP absolute-weak-managed-ir
+        )
+        add_test(
+            NAME absolute.check-weak-managed-ir
+            COMMAND ${CMAKE_COMMAND}
+                -DIR_FILE=${CMAKE_BINARY_DIR}/weak-managed.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-weak-managed-ir.cmake"
+        )
+        set_tests_properties(absolute.check-weak-managed-ir PROPERTIES
+            FIXTURES_REQUIRED absolute-weak-managed-ir
+        )
+        add_test(
+            NAME absolute.build-weak-managed
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/weak-managed-references.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/weak-managed-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-weak-managed PROPERTIES
+            FIXTURES_SETUP absolute-weak-managed-executable
+        )
+        add_test(NAME absolute.run-weak-managed
+            COMMAND "${CMAKE_BINARY_DIR}/weak-managed-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-weak-managed PROPERTIES
+            FIXTURES_REQUIRED absolute-weak-managed-executable
+            PASS_REGULAR_EXPRESSION "weak-managed=ok"
         )
     endif()
 endif()

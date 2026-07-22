@@ -179,7 +179,7 @@ namespace Absolute {
             if (temporaryClosure) impl->builder.CreateCall(
                 impl->ClosureRelease(), {closure});
             impl->EmitExceptionCheck();
-            impl->valueCreatesManagedOwner = IsManagedPointerTypeName(functionValueReturn);
+            impl->valueCreatesManagedOwner = IsStrongManagedPointerTypeName(functionValueReturn);
             impl->valueCreatesClosureOwner = IsCodegenFunctionType(functionValueReturn);
             return;
         }
@@ -201,7 +201,7 @@ namespace Absolute {
             impl->ReleaseClosureTemporaries(temporaryClosureOwners);
             impl->EmitExceptionCheck();
             impl->value = result;
-            impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
+            impl->valueCreatesManagedOwner = IsStrongManagedPointerTypeName(impl->SemanticType(expr));
             impl->valueCreatesClosureOwner = IsCodegenFunctionType(impl->SemanticType(expr));
             return;
         }
@@ -231,7 +231,7 @@ namespace Absolute {
                 impl->ReleaseClosureTemporaries(temporaryClosureOwners);
                 impl->EmitExceptionCheck();
                 impl->value = result;
-                impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
+                impl->valueCreatesManagedOwner = IsStrongManagedPointerTypeName(impl->SemanticType(expr));
                 impl->valueCreatesClosureOwner = IsCodegenFunctionType(impl->SemanticType(expr));
                 return;
             }
@@ -277,7 +277,7 @@ namespace Absolute {
                 impl->ReleaseClosureTemporaries(temporaryClosureOwners);
                 impl->EmitExceptionCheck();
                 impl->value = result;
-                impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
+                impl->valueCreatesManagedOwner = IsStrongManagedPointerTypeName(impl->SemanticType(expr));
                 impl->valueCreatesClosureOwner = IsCodegenFunctionType(impl->SemanticType(expr));
                 return;
             }
@@ -317,7 +317,7 @@ namespace Absolute {
                 impl->ReleaseClosureTemporaries(temporaryClosureOwners);
                 impl->EmitExceptionCheck();
                 impl->value = result;
-                impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
+                impl->valueCreatesManagedOwner = IsStrongManagedPointerTypeName(impl->SemanticType(expr));
                 impl->valueCreatesClosureOwner = IsCodegenFunctionType(impl->SemanticType(expr));
                 return;
             }
@@ -348,7 +348,7 @@ namespace Absolute {
                 impl->ReleaseClosureTemporaries(temporaryClosureOwners);
                 impl->EmitExceptionCheck();
                 impl->value = result;
-                impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
+                impl->valueCreatesManagedOwner = IsStrongManagedPointerTypeName(impl->SemanticType(expr));
                 impl->valueCreatesClosureOwner = IsCodegenFunctionType(impl->SemanticType(expr));
                 return;
             }
@@ -383,7 +383,7 @@ namespace Absolute {
         impl->ReleaseClosureTemporaries(temporaryClosureOwners);
         if (!selected || !selected->externalFunction) impl->EmitExceptionCheck();
         impl->value = result;
-        impl->valueCreatesManagedOwner = IsManagedPointerTypeName(impl->SemanticType(expr));
+        impl->valueCreatesManagedOwner = IsStrongManagedPointerTypeName(impl->SemanticType(expr));
         impl->valueCreatesClosureOwner = IsCodegenFunctionType(returnType);
     }
 

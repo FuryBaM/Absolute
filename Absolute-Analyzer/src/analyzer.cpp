@@ -518,9 +518,14 @@ namespace Absolute {
         if (target.ends_with("[]") && source.ends_with("[]"))
             return IsAssignable(ArrayElementType(target), ArrayElementType(source));
         if (IsPointerType(target) && source == "null") return true;
-        if (IsPointerType(target) && IsPointerType(source) &&
-            IsRawPointerType(target) == IsRawPointerType(source))
-            return IsDerivedFrom(PointerPointee(source), PointerPointee(target));
+        if (IsPointerType(target) && IsPointerType(source)) {
+            const bool compatibleMode =
+                (IsRawPointerType(target) && IsRawPointerType(source)) ||
+                (IsWeakPointerType(target) && IsManagedPointerType(source)) ||
+                (IsStrongManagedPointerType(target) && IsStrongManagedPointerType(source));
+            if (compatibleMode)
+                return IsDerivedFrom(PointerPointee(source), PointerPointee(target));
+        }
         if (IsNumeric(target) && IsNumeric(source)) return true;
         return source == "null" && !PrimitiveStringToEnum(target).has_value();
     }
@@ -529,7 +534,7 @@ namespace Absolute {
         if (IsValueReferenceType(name)) return TypeOwnsResources(ValueReferenceBaseType(name));
         std::unordered_set<std::string> visiting;
         const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
-            if (IsManagedPointerType(candidate) || ArrayRank(candidate) > 0) return true;
+            if (IsStrongManagedPointerType(candidate) || ArrayRank(candidate) > 0) return true;
             if (IsPointerType(candidate)) return false;
 
             if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(candidate)) {
@@ -1433,7 +1438,8 @@ namespace Absolute {
         if (name.ends_with("[]"))
             return ResolveTypeReference(name.substr(0, name.size() - 2)) + "[]";
         if (IsPointerType(name)) {
-            const std::string prefix = IsRawPointerType(name) ? "raw " : "";
+            const std::string prefix = IsRawPointerType(name) ? "raw " :
+                (IsWeakPointerType(name) ? "weak " : "");
             return prefix + ResolveTypeReference(PointerPointee(name)) + "*";
         }
         for (auto scope = genericTypeScopes.rbegin(); scope != genericTypeScopes.rend(); ++scope)

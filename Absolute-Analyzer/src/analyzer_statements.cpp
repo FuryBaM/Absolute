@@ -173,11 +173,19 @@ namespace Absolute {
             Report("return expression contains an invalid pointer", "E_RETURN_INVALID_POINTER", value.symbol);
         else if (value.pointerValidity == PointerValidity::MaybeInvalid)
             Report("return expression may contain an invalid pointer", "E_RETURN_MAYBE_INVALID_POINTER", value.symbol);
-        if (IsManagedPointerType(currentReturnType) && value.type != "error" &&
+        if (IsStrongManagedPointerType(currentReturnType) && value.type != "error" &&
             value.type != "null" &&
             !value.createsManagedOwner && !value.referencesManagedOwner)
             Report("a managed pointer return must transfer an owner; subscribers and aggregate fields cannot escape their owner",
                 "E_MANAGED_RETURN_REQUIRES_OWNER", value.symbol);
+        if (IsWeakPointerType(currentReturnType) && value.type != "error" &&
+            value.type != "null") {
+            const Symbol* owner = table.Get(value.pointerOwner);
+            if (value.createsManagedOwner ||
+                (owner && owner->managedOwner && owner->scopeDepth > 0))
+                Report("returning a weak reference to a local owner would produce an immediately expired handle",
+                    "E_WEAK_RETURN_LOCAL_OWNER", value.symbol);
+        }
         if (IsRawPointerType(currentReturnType) && value.type != "error" && value.type != "null") {
             if (const Symbol* owner = table.Get(value.pointerOwner)) {
                 if (owner->scopeDepth > 0)

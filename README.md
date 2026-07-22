@@ -526,6 +526,26 @@ int32* value = new int32(42);
 delete value;
 ```
 
+Use `weak T*` for an explicit non-owning handle that may be stored in fields or
+returned from an API:
+
+```absolute
+class Node {
+    public weak Node* parent;
+}
+
+Node* owner = new Node();
+weak Node* observer = owner;
+delete owner;
+assert(!observer);
+```
+
+Weak references reuse the same generation-checked managed handle, do not keep
+the object alive, and never participate in generated cleanup. Strong managed
+pointers convert to weak; conversion back, direct `new` into weak, `move`, and
+`delete` are rejected. See
+[docs/weak-managed-references.md](docs/weak-managed-references.md).
+
 Managed pointer and array fields are owning resource slots. They accept a fresh
 owner (`new`, `copy(...)`, or an owning function result), destroy their previous
 value on reassignment, and are released automatically with the containing class

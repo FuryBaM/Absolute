@@ -95,7 +95,7 @@ namespace Absolute {
             llvm::Value* address = EvaluateAddress(argument);
             llvm::Type* type = TypeFromName(SemanticType(argument));
             value = builder.CreateLoad(type, address, "move.value");
-            valueCreatesManagedOwner = IsManagedPointerTypeName(SemanticType(argument));
+            valueCreatesManagedOwner = IsStrongManagedPointerTypeName(SemanticType(argument));
             if (ArrayRankName(SemanticType(argument)) > 0) {
                 valueCreatesArrayOwner = true;
                 valueArrayOwner = builder.CreateExtractValue(value, {1}, "move.array.owner");

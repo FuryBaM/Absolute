@@ -14,7 +14,8 @@ namespace Absolute {
     void Analyzer::Visit(PointerTypeExpr* expr) {
         const std::string pointee = ResolveType(expr->pointee.get());
         if (pointee == "void" && !expr->raw) Report("managed pointers cannot point to void");
-        Save(expr, {InvalidSymbolId, (expr->raw ? "raw " : "") + pointee + "*", false});
+        const std::string prefix = expr->raw ? "raw " : (expr->weak ? "weak " : "");
+        Save(expr, {InvalidSymbolId, prefix + pointee + "*", false});
     }
 
     void Analyzer::Visit(ArrayTypeExpr* expr) {
@@ -262,7 +263,7 @@ namespace Absolute {
                         "E_FUNCTION_VALUE_ARGUMENT");
             }
             Save(expr, {callableValue.symbol, returnType, false,
-                IsManagedPointerType(returnType), false});
+                IsStrongManagedPointerType(returnType), false});
             expressionInfo[expr].parameterTypes = parameterTypes;
             return;
         }
@@ -353,6 +354,9 @@ namespace Absolute {
                 if (!argument.isLValue && argument.type != "error") {
                     Report("move expects an lvalue argument");
                 }
+                if (IsWeakPointerType(argument.type))
+                    Report("weak managed pointers do not own a resource and cannot be moved",
+                        "E_WEAK_MOVE", argument.symbol);
                 if (argument.symbol != InvalidSymbolId) {
                     if (auto flow = valueFlow.find(argument.symbol); flow != valueFlow.end()) {
                         flow->second.initialization = InitializationState::Uninitialized;
@@ -592,7 +596,7 @@ namespace Absolute {
         }
         if (asyncCall && spawnContextDepth == 0)
             Report("async function must be started with spawn", "E_ASYNC_CALL_REQUIRES_SPAWN", symbolId);
-        Save(expr, {symbolId, returnType, false, IsManagedPointerType(returnType), false,
+        Save(expr, {symbolId, returnType, false, IsStrongManagedPointerType(returnType), false,
             InitializationState::Initialized,
             IsPointerType(returnType) ? PointerValidity::Unknown : PointerValidity::NotPointer,
             InvalidSymbolId, TaskState::NotTask, false, asyncCall});

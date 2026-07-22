@@ -31,11 +31,16 @@ namespace Absolute {
         const bool owningField = targetSymbol &&
             (targetSymbol->kind == SymbolKind::Field ||
              targetSymbol->kind == SymbolKind::Property);
-        if (owningField && IsManagedPointerType(target.type) &&
+        if (owningField && IsStrongManagedPointerType(target.type) &&
             value.type != "null" && !value.createsManagedOwner) {
             Report("managed resource fields require a fresh owner or null; "
                 "store a copy/owner instead of a subscriber",
                 "E_RESOURCE_FIELD_REQUIRES_OWNER", target.symbol);
+        }
+        if (IsWeakPointerType(target.type) && value.createsManagedOwner) {
+            Report("weak pointer cannot take ownership of a fresh managed allocation; "
+                "bind the allocation to a managed owner first",
+                "E_WEAK_REQUIRES_EXISTING_OWNER", target.symbol);
         }
         if (owningField && ArrayRank(target.type) > 0) {
             bool transfersOwner = IsExplicitArrayCopy(expr->value.get());
@@ -73,7 +78,7 @@ namespace Absolute {
                 }
             }
         }
-        if (IsManagedPointerType(target.type)) {
+        if (IsStrongManagedPointerType(target.type)) {
             if (Symbol* symbol = table.Get(target.symbol)) {
                 const bool assignsOwner = value.createsManagedOwner;
                 const bool assignsBorrower = value.type != "null" && !assignsOwner &&
@@ -259,11 +264,17 @@ namespace Absolute {
                 symbol->arrayStorageEscapes = storageEscapes;
             }
         }
+        if (IsWeakPointerType(type) && value.createsManagedOwner) {
+            Report("weak pointer '" + name +
+                "' cannot own a fresh managed allocation; declare a managed owner first",
+                "E_WEAK_REQUIRES_EXISTING_OWNER", id);
+        }
         if (IsManagedPointerType(type)) {
             if (Symbol* symbol = table.Get(id)) {
-                symbol->managedOwner = value.createsManagedOwner;
-                symbol->managedBorrower = expr->value && value.type != "null" &&
-                    !value.createsManagedOwner && value.pointerOwner != InvalidSymbolId;
+                symbol->managedOwner = IsStrongManagedPointerType(type) && value.createsManagedOwner;
+                symbol->managedBorrower = IsWeakPointerType(type) ||
+                    (expr->value && value.type != "null" &&
+                        !value.createsManagedOwner && value.pointerOwner != InvalidSymbolId);
             }
         }
         else if (Symbol* symbol = table.Get(id)) symbol->type = type;
@@ -464,8 +475,12 @@ namespace Absolute {
             }
             std::string resultType = target;
             if (!IsPointerType(resultType))
-                resultType = (IsRawPointerType(base.type) ? "raw " : "") + target + "*";
-            else if (IsRawPointerType(resultType) != IsRawPointerType(base.type))
+                resultType = (IsRawPointerType(base.type) ? "raw " :
+                    (IsWeakPointerType(base.type) ? "weak " : "")) + target + "*";
+            else if (!((IsRawPointerType(resultType) && IsRawPointerType(base.type)) ||
+                (IsWeakPointerType(resultType) && IsManagedPointerType(base.type)) ||
+                (IsStrongManagedPointerType(resultType) &&
+                    IsStrongManagedPointerType(base.type))))
                 Report("safe cast cannot change pointer ownership mode from '" + base.type +
                     "' to '" + resultType + "'", "E_SAFE_CAST_OWNERSHIP");
             Result cast{InvalidSymbolId, resultType, false,
@@ -579,6 +594,9 @@ namespace Absolute {
         else if (target.pointerValidity == PointerValidity::MaybeInvalid)
             Report("pointer may already be invalid when deleted", "E_DELETE_MAYBE_INVALID", target.symbol);
 
+        if (IsWeakPointerType(target.type))
+            Report("weak managed pointer cannot be deleted; delete its owner instead",
+                "E_WEAK_DELETE", target.symbol);
         if (IsManagedPointerType(target.type) && target.pointerValidity != PointerValidity::Null &&
             target.pointerOwner != target.symbol)
             Report("managed subscriber cannot be deleted; delete its owner instead",

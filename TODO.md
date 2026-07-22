@@ -215,7 +215,10 @@
   parser и signature contracts, conservative mutable-alias checking, temporary
   lifetime для `const ref`, virtual/interface/constructor ABI и LLVM
   `nonnull`/`nocapture`/`readonly`; async/C ABI/closures/resources отсекаются.
-- [ ] Определить weak/non-owning managed references.
+- [x] Определить и реализовать `weak T*` для явных non-owning managed references:
+  используется существующий generation-checked handle без нового runtime-вида;
+  strong-to-weak разрешён, обратное преобразование/`new`/`move`/`delete` запрещены,
+  weak-поля не очищают pointee и позволяют безопасные graph back-edges.
 - [ ] Проверить циклические графы объектов и выбрать стратегию их очистки.
 - [ ] Добавить sanitizer-набор тестов на use-after-free, double-free и утечки.
 - [ ] Оптимизировать managed dereference и доказать корректность удаления bounds/lifetime checks в Release.

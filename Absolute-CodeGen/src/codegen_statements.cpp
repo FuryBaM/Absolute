@@ -206,7 +206,7 @@ namespace Absolute {
         llvm::Value* result = impl->Coerce(
             impl->Evaluate(stmt->expr.get()), impl->TypeFromName(impl->currentReturnTypeName));
         SymbolId transferredOwner = InvalidSymbolId;
-        if (IsManagedPointerTypeName(impl->currentReturnTypeName)) {
+        if (IsStrongManagedPointerTypeName(impl->currentReturnTypeName)) {
             const auto* returnedIdentifier = dynamic_cast<IdentifierExpr*>(stmt->expr.get());
             if (returnedIdentifier) {
                 Impl::Variable& returned = impl->RequireVariable(returnedIdentifier->name);

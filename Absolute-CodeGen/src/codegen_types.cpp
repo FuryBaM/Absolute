@@ -1013,7 +1013,7 @@ namespace Absolute {
         if (ParseCodegenFunctionType(typeName, closureReturn, closureParameters)) return true;
         std::unordered_set<std::string> visiting;
         const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
-            if (IsManagedPointerTypeName(candidate) || ArrayRankName(candidate) > 0) return true;
+            if (IsStrongManagedPointerTypeName(candidate) || ArrayRankName(candidate) > 0) return true;
             if (IsRawPointerTypeName(candidate) || !visiting.insert(candidate).second) return false;
             
             if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(candidate)) {
@@ -1095,7 +1095,7 @@ namespace Absolute {
                 llvm::ConstantPointerNull::get(builder.getPtrTy()), address);
             return;
         }
-        if (IsManagedPointerTypeName(typeName)) {
+        if (IsStrongManagedPointerTypeName(typeName)) {
             llvm::Value* handle = builder.CreateLoad(
                 builder.getInt64Ty(), address, "field.cleanup.handle");
             llvm::Value* pointee = EmitManagedGet(handle, false);

@@ -24,7 +24,8 @@ namespace Absolute {
             void Visit(PointerTypeExpr* expr) override {
                 name.clear();
                 if (expr->pointee) expr->pointee->Accept(*this);
-                if (!name.empty()) name = (expr->raw ? "raw " : "") + name + "*";
+                if (!name.empty()) name = (expr->raw ? "raw " :
+                    (expr->weak ? "weak " : "")) + name + "*";
             }
 
             void Visit(ArrayTypeExpr* expr) override {
@@ -52,8 +53,16 @@ namespace Absolute {
             return name.starts_with("raw ") && name.ends_with("*");
         }
 
+        inline bool IsWeakPointerTypeName(const std::string& name) {
+            return name.starts_with("weak ") && name.ends_with("*");
+        }
+
         inline bool IsManagedPointerTypeName(const std::string& name) {
             return !IsRawPointerTypeName(name) && name.ends_with("*");
+        }
+
+        inline bool IsStrongManagedPointerTypeName(const std::string& name) {
+            return IsManagedPointerTypeName(name) && !IsWeakPointerTypeName(name);
         }
 
         inline bool IsPointerTypeName(const std::string& name) {
@@ -62,6 +71,7 @@ namespace Absolute {
 
         inline std::string PointerPointeeName(std::string name) {
             if (IsRawPointerTypeName(name)) name.erase(0, 4);
+            else if (IsWeakPointerTypeName(name)) name.erase(0, 5);
             if (!name.empty() && name.back() == '*') name.pop_back();
             return name;
         }
@@ -172,7 +182,8 @@ namespace Absolute {
             if (type.ends_with("[]"))
                 return SubstituteCodegenType(type.substr(0, type.size() - 2), substitutions) + "[]";
             if (IsPointerTypeName(type)) {
-                const std::string prefix = IsRawPointerTypeName(type) ? "raw " : "";
+                const std::string prefix = IsRawPointerTypeName(type) ? "raw " :
+                    (IsWeakPointerTypeName(type) ? "weak " : "");
                 return prefix + SubstituteCodegenType(PointerPointeeName(type), substitutions) + "*";
             }
             const size_t open = type.find('<');
