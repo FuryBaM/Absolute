@@ -257,7 +257,8 @@ namespace Absolute {
 
         inline bool IsBuiltinFunction(const std::string& name) {
             return name == "print" || name == "println" || name == "format" ||
-                name == "toString" || name == "assert" || name == "copy" || name == "move";
+                name == "toString" || name == "assert" || name == "copy" || name == "move" ||
+                name == "load";
         }
 
         inline bool IsPrintableType(const std::string& type) {

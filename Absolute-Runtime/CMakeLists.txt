@@ -3,9 +3,15 @@ project(Absolute-Runtime LANGUAGES CXX)
 
 find_package(Threads REQUIRED)
 
-add_library(Absolute-Runtime STATIC src/errors.cpp src/pointers.cpp src/tasks.cpp src/time.cpp)
+add_library(Absolute-Runtime STATIC
+    src/errors.cpp
+    src/libraries.cpp
+    src/pointers.cpp
+    src/tasks.cpp
+    src/time.cpp
+)
 target_compile_features(Absolute-Runtime PUBLIC cxx_std_20)
-target_link_libraries(Absolute-Runtime PUBLIC Threads::Threads)
+target_link_libraries(Absolute-Runtime PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
 
 if(MSVC)
     target_compile_options(Absolute-Runtime PRIVATE /W4 /permissive-)

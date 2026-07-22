@@ -494,6 +494,9 @@ namespace {
 #ifdef ABSOLUTE_RUNTIME_LIBRARY
         arguments << QuoteResponseArgument(ABSOLUTE_RUNTIME_LIBRARY) << '\n';
 #endif
+#ifdef ABSOLUTE_RUNTIME_DL_LIBRARY
+        arguments << "-l" ABSOLUTE_RUNTIME_DL_LIBRARY "\n";
+#endif
         for (const fs::path& library : compilation.nativeLibraries)
             arguments << QuoteResponseArgument(library) << '\n';
         for (const fs::path& path : compilation.nativeSearchPaths)

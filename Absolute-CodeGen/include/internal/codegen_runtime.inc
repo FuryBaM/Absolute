@@ -91,6 +91,8 @@
 
         llvm::FunctionCallee Free();
 
+        llvm::FunctionCallee LoadDynamicLibrary();
+
         llvm::Value* EncodeTaskSlot(llvm::IRBuilder<>& targetBuilder, llvm::Value* source);
 
         llvm::Value* DecodeTaskSlot(

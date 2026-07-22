@@ -1066,6 +1066,11 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.invalid-extern-abi PROPERTIES WILL_FAIL TRUE)
     add_test(
+        NAME absolute.load-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/load-errors.abs"
+    )
+    set_tests_properties(absolute.load-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.invalid-export-abi
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/invalid-export-abi.abs" --parse-only
     )
@@ -1114,6 +1119,44 @@ if(BUILD_TESTING)
         endif()
 
         add_library(absolute-native-test STATIC tests/native/native_math.cpp)
+        add_library(absolute-load-test-library SHARED tests/native/load_library.cpp)
+        set_target_properties(absolute-load-test-library PROPERTIES
+            OUTPUT_NAME "absolute-load-test"
+        )
+        file(GENERATE
+            OUTPUT "${CMAKE_BINARY_DIR}/dynamic-load-$<CONFIG>.abs"
+            CONTENT
+"int32 main() {
+    string path = \"./$<TARGET_FILE_NAME:absolute-load-test-library>\";
+    assert(load(path), \"existing dynamic library must load\");
+    assert(load(path), \"loading the same library must be idempotent\");
+    assert(!load(\"./absolute-load-test-missing\"), \"missing library must return false\");
+    println(\"dynamic-load=ok\");
+    return 0;
+}
+"
+        )
+        add_test(
+            NAME absolute.dynamic-load-semantic
+            COMMAND Absolute-Compiler "${CMAKE_BINARY_DIR}/dynamic-load-$<CONFIG>.abs"
+        )
+        add_test(
+            NAME absolute.build-dynamic-load
+            COMMAND Absolute-Compiler "${CMAKE_BINARY_DIR}/dynamic-load-$<CONFIG>.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/dynamic-load-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-dynamic-load PROPERTIES
+            FIXTURES_SETUP absolute-dynamic-load-executable
+        )
+        add_test(
+            NAME absolute.run-dynamic-load
+            COMMAND "${CMAKE_BINARY_DIR}/dynamic-load-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-dynamic-load PROPERTIES
+            FIXTURES_REQUIRED absolute-dynamic-load-executable
+            WORKING_DIRECTORY "$<TARGET_FILE_DIR:absolute-load-test-library>"
+            PASS_REGULAR_EXPRESSION "dynamic-load=ok"
+        )
         set(ABSOLUTE_EXPORT_TEST_OBJECT
             "${CMAKE_BINARY_DIR}/absolute-export-library${CMAKE_CXX_OUTPUT_EXTENSION}")
         add_custom_command(

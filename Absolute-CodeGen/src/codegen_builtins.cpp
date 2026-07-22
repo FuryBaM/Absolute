@@ -63,6 +63,16 @@ namespace Absolute {
             return;
         }
 
+        if (name == "load") {
+            if (expression.arguments.size() != 1)
+                Fail("load expects exactly one library path");
+            llvm::Value* path = Evaluate(expression.arguments.front().get());
+            llvm::Value* status = builder.CreateCall(
+                LoadDynamicLibrary(), {path}, "load.library.status");
+            value = builder.CreateICmpNE(status, builder.getInt32(0), "load.library.success");
+            return;
+        }
+
         if (name == "move") {
             if (expression.arguments.size() != 1) Fail("move expects exactly one argument");
             Expression* argument = expression.arguments.front().get();

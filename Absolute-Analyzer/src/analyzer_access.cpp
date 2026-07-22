@@ -288,6 +288,18 @@ namespace Absolute {
                 return;
             }
 
+            if (callName == "load") {
+                if (arguments.size() != 1) {
+                    Report("load expects exactly one library path", "E_LOAD_ARGUMENT_COUNT");
+                }
+                else if (arguments.front().type != "string" && arguments.front().type != "error") {
+                    Report("load library path must be a string, got '" +
+                        arguments.front().type + "'", "E_LOAD_ARGUMENT_TYPE");
+                }
+                Save(expr, {table.Lookup(callName), "bool", false});
+                return;
+            }
+
             if (callName == "move") {
                 if (arguments.size() != 1) {
                     Report("move expects exactly one argument");

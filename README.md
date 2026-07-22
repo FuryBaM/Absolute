@@ -460,6 +460,22 @@ is passed as a C `char*`. Ownership stays with the caller. Native exceptions
 must not enter `extern "C"`, and Absolute errors must be handled before leaving
 an `export "C"` function.
 
+External shared libraries that register functionality at runtime can be loaded
+without adding them to the project link list:
+
+```absolute
+if (!load("./extensions/physics.dll")) {
+    println("physics library was not loaded");
+}
+```
+
+`load(string)` returns `true` when the `.dll`/`.so` was loaded or had already
+been loaded through the same path, and `false` on failure. Loaded libraries stay
+resident until process exit. On POSIX their symbols are made globally visible
+with `RTLD_NOW | RTLD_GLOBAL`. Calls to ordinary `extern "C"` imports still need
+`nativeLibraries` when their symbols must be resolved while the executable is
+linked or started.
+
 ## Pointers and lifetime
 
 `T*` is a managed pointer. A value created with `new` owns a generation-checked

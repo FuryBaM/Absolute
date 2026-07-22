@@ -25,7 +25,7 @@ class ParseError : Error {
     }
 }
 
-string load(string source) {
+string parseSource(string source) {
     if (source == "") {
         throw new ParseError("source is empty");
     }
@@ -33,7 +33,7 @@ string load(string source) {
 }
 
 try {
-    println(load(""));
+    println(parseSource(""));
 }
 catch (ParseError* error) {
     println(error.message);

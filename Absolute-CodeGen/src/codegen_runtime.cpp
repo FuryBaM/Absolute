@@ -585,7 +585,8 @@ namespace Absolute {
 
     bool CodeGenerator::Impl::IsBuiltinFunction(const std::string& name) const {
         return name == "print" || name == "println" || name == "format" ||
-            name == "toString" || name == "assert" || name == "copy" || name == "move";
+            name == "toString" || name == "assert" || name == "copy" || name == "move" ||
+            name == "load";
     }
 
 
@@ -611,6 +612,12 @@ namespace Absolute {
         llvm::FunctionType* type = llvm::FunctionType::get(
             builder.getVoidTy(), {builder.getPtrTy()}, false);
         return module->getOrInsertFunction("free", type);
+    }
+
+    llvm::FunctionCallee CodeGenerator::Impl::LoadDynamicLibrary() {
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getInt32Ty(), {builder.getPtrTy()}, false);
+        return module->getOrInsertFunction("absolute_load_library", type);
     }
 
     llvm::Value* CodeGenerator::Impl::EncodeTaskSlot(llvm::IRBuilder<>& targetBuilder, llvm::Value* source) {

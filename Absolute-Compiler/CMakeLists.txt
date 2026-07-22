@@ -37,6 +37,11 @@ if(TARGET Absolute-CodeGen)
         ABSOLUTE_HOST_LINKER="${CMAKE_LINKER}"
         ABSOLUTE_RUNTIME_LIBRARY="$<TARGET_FILE:Absolute-Runtime>"
     )
+    if(CMAKE_DL_LIBS)
+        target_compile_definitions(Absolute-Compiler PRIVATE
+            ABSOLUTE_RUNTIME_DL_LIBRARY="${CMAKE_DL_LIBS}"
+        )
+    endif()
     add_dependencies(Absolute-Compiler Absolute-Runtime)
 endif()
 
