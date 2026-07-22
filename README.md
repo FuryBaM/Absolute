@@ -853,6 +853,12 @@ role creates a named scheduling lane whose label is visible through
 [`docs/task-scheduling.md`](docs/task-scheduling.md) for inheritance, runtime,
 and validation details.
 
+Classes and structs support static async methods and `const` instance async
+methods. Instance spawns capture a stable named `const` receiver; managed
+subscribers, raw pointers, temporaries, mutable bindings, and resource-owning
+receiver types are rejected. Virtual class methods keep normal vtable dispatch
+inside the task thunk. See [`docs/async-methods.md`](docs/async-methods.md).
+
 `await` is only valid inside an `async` function. Every local task must be
 awaited on every control-flow path before its scope is left, including through
 `return`, `break`, and `continue`; a task cannot be copied, reassigned, or
@@ -862,9 +868,9 @@ stable `E_TASK_*` diagnostics for IDE integrations.
 The LLVM backend packs scalar/enum arguments into an owned task context and emits
 a private thunk for each spawn site. `Absolute-Runtime` executes these thunks
 on a shared native thread pool, and `await` suspends the calling OS thread until
-the result is ready. This first concurrency milestone supports primitive and
-pointer-shaped ABI values; cancellation, channels, async I/O, methods, and
-compile-time data-race checking are planned separately.
+the result is ready. Task arguments and results support only lifetime-independent
+scalar and enum values; cancellation, channels, async I/O,
+and broader compile-time data-race checking are planned separately.
 
 ## Arrays
 

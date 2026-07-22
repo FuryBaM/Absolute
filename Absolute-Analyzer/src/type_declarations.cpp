@@ -145,8 +145,10 @@ namespace Absolute {
                     symbol->access = member.access;
                     symbol->readAccess = member.readAccess;
                     symbol->writeAccess = member.writeAccess;
-                    if (const Symbol* original = table.Get(member.symbol))
+                    if (const Symbol* original = table.Get(member.symbol)) {
                         symbol->memberOwner = original->memberOwner;
+                        symbol->asyncFunction = original->asyncFunction;
+                    }
                 }
             }
         for (const auto& member : stmt->members) if (member) member->Accept(*this);
@@ -214,8 +216,10 @@ namespace Absolute {
                     symbol->access = member.access;
                     symbol->readAccess = member.readAccess;
                     symbol->writeAccess = member.writeAccess;
-                    if (const Symbol* original = table.Get(member.symbol))
+                    if (const Symbol* original = table.Get(member.symbol)) {
                         symbol->memberOwner = original->memberOwner;
+                        symbol->asyncFunction = original->asyncFunction;
+                    }
                 }
             }
         if (stmt->body) stmt->body->Accept(*this);
@@ -291,8 +295,10 @@ namespace Absolute {
                     symbol->access = member.access;
                     symbol->readAccess = member.readAccess;
                     symbol->writeAccess = member.writeAccess;
-                    if (const Symbol* original = table.Get(member.symbol))
+                    if (const Symbol* original = table.Get(member.symbol)) {
                         symbol->memberOwner = original->memberOwner;
+                        symbol->asyncFunction = original->asyncFunction;
+                    }
                 }
             }
         for (const auto& method : stmt->methods) if (method) method->Accept(*this);

@@ -499,6 +499,51 @@ namespace Absolute {
             receiver.pointerValidity == PointerValidity::Expired))
             Report("extension or method receiver is an invalid pointer",
                 "E_INVALID_POINTER_ARGUMENT", receiver.symbol);
+        if (asyncCall && selected && selected->kind == SymbolKind::Method && !selected->isStatic) {
+            auto* memberCall = dynamic_cast<MemberAccessExpr*>(expr->base.get());
+            const bool implicitThis = !memberCall;
+            if (implicitThis) {
+                const SymbolId thisId = table.Lookup("this");
+                const Symbol* thisSymbol = table.Get(thisId);
+                if (!thisSymbol || !currentMethodConst) {
+                    Report("an async instance method without an explicit receiver can only be spawned "
+                        "inside a const method", "E_ASYNC_RECEIVER_NOT_STABLE", symbolId);
+                }
+                else {
+                    receiver.symbol = thisId;
+                    receiver.type = thisSymbol->type;
+                    hasReceiver = true;
+                }
+            }
+
+            const auto* receiverIdentifier = memberCall
+                ? dynamic_cast<IdentifierExpr*>(memberCall->base.get()) : nullptr;
+            const Symbol* receiverSymbol = table.Get(receiver.symbol);
+            const bool namedReceiver = implicitThis || receiverIdentifier != nullptr;
+            const bool thisReceiver = receiverSymbol && receiverSymbol->name == "this";
+            if (!namedReceiver || !receiverSymbol)
+                Report("async instance method receiver must be a named const variable",
+                    "E_ASYNC_RECEIVER_NOT_STABLE", receiver.symbol);
+            else if (!receiverSymbol->isConst)
+                Report("async instance method receiver '" + receiverSymbol->name +
+                    "' must be const until the task is awaited",
+                    "E_ASYNC_RECEIVER_NOT_CONST", receiver.symbol);
+
+            if (IsRawPointerType(receiver.type) && !thisReceiver)
+                Report("async instance methods cannot borrow a raw pointer receiver",
+                    "E_ASYNC_RECEIVER_RAW", receiver.symbol);
+            if (IsManagedPointerType(receiver.type) &&
+                (!receiver.referencesManagedOwner || !receiverSymbol || !receiverSymbol->managedOwner))
+                Report("async instance method receiver must be a managed owner, not a subscriber",
+                    "E_ASYNC_RECEIVER_OWNER", receiver.symbol);
+
+            const std::string receiverValueType = IsPointerType(receiver.type)
+                ? PointerPointee(receiver.type) : receiver.type;
+            if (TypeOwnsResources(receiverValueType))
+                Report("async instance method receiver type '" + receiverValueType +
+                    "' owns resources and cannot cross the task lifetime boundary",
+                    "E_ASYNC_RECEIVER_RESOURCES", receiver.symbol);
+        }
         if (asyncCall && spawnContextDepth == 0)
             Report("async function must be started with spawn", "E_ASYNC_CALL_REQUIRES_SPAWN", symbolId);
         Save(expr, {symbolId, returnType, false, IsManagedPointerType(returnType), false,

@@ -665,20 +665,69 @@ namespace Absolute {
 
     llvm::Value* CodeGenerator::Impl::EmitSpawn(FunctionCallExpr& call) {
         const std::string name = ResolvedName(&call);
-        llvm::Function* target = module->getFunction(name);
-        if (!target) Fail("unknown async function '" + name + "'");
-        if (target->arg_size() != call.arguments.size())
+        const ExpressionInfo* callInfo = analyzer ? analyzer->GetExpressionInfo(call) : nullptr;
+        const Symbol* selected = callInfo ? analyzer->GetSymbol(callInfo->symbol) : nullptr;
+        const bool instanceMethod = selected && selected->kind == SymbolKind::Method &&
+            !selected->isStatic;
+        llvm::Function* target = nullptr;
+        llvm::FunctionType* targetType = nullptr;
+        llvm::Value* receiver = nullptr;
+        llvm::StructType* virtualOwnerType = nullptr;
+        std::optional<unsigned> virtualSlot;
+
+        if (instanceMethod) {
+            auto* member = dynamic_cast<MemberAccessExpr*>(call.base.get());
+            const std::string receiverType = member
+                ? SemanticType(member->base.get()) : currentClassName;
+            const std::string ownerName = ClassNameFromType(receiverType);
+            receiver = member ? ObjectPointer(member->base.get(), receiverType) : currentThis;
+            if (!receiver) Fail("async instance method requires a receiver");
+            const std::string methodName = member
+                ? member->member : IdentifierName(call.base.get());
+            const std::string methodKey = CallableKey(methodName, selected->parameterTypes);
+            if (auto found = classes.find(ownerName); found != classes.end()) {
+                const auto method = found->second.methods.find(methodKey);
+                if (method == found->second.methods.end())
+                    Fail("class '" + ownerName + "' has no async method '" + methodName + "'");
+                targetType = MethodFunctionType(method->second);
+                target = module->getFunction(method->second.linkName);
+                virtualSlot = method->second.virtualSlot;
+                virtualOwnerType = found->second.llvmType;
+            }
+            else if (auto found = structs.find(ownerName); found != structs.end()) {
+                const auto method = found->second.methods.find(methodKey);
+                if (method == found->second.methods.end())
+                    Fail("struct '" + ownerName + "' has no async method '" + methodName + "'");
+                targetType = MethodFunctionType(method->second);
+                target = module->getFunction(method->second.linkName);
+            }
+            else Fail("async receiver type '" + ownerName + "' is not a class or struct");
+        }
+        else {
+            target = module->getFunction(name);
+            if (target) targetType = target->getFunctionType();
+        }
+        if (!target || !targetType) Fail("unknown async callable '" + name + "'");
+
+        const size_t capturedCount = call.arguments.size() + (instanceMethod ? 1U : 0U);
+        if (targetType->getNumParams() != capturedCount)
             Fail("invalid async argument count for '" + name + "'");
 
-        const std::uint64_t slotCount = static_cast<std::uint64_t>(call.arguments.size()) + 1;
+        const std::uint64_t slotCount = static_cast<std::uint64_t>(capturedCount) + 1;
         llvm::Value* contextPointer = builder.CreateCall(
             Malloc(), {builder.getInt64(slotCount * 8)}, "task.context");
 
         size_t argumentIndex = 0;
+        if (instanceMethod) {
+            llvm::Value* slot = builder.CreateGEP(
+                builder.getInt64Ty(), contextPointer, builder.getInt64(1), "task.receiver.slot");
+            builder.CreateStore(EncodeTaskSlot(builder, receiver), slot);
+            argumentIndex = 1;
+        }
         for (const auto& argument : call.arguments) {
             llvm::Value* argumentValue = Evaluate(argument.get());
             argumentValue = Coerce(argumentValue,
-                target->getFunctionType()->getParamType(static_cast<unsigned>(argumentIndex)));
+                targetType->getParamType(static_cast<unsigned>(argumentIndex)));
             llvm::Value* slot = builder.CreateGEP(
                 builder.getInt64Ty(), contextPointer,
                 builder.getInt64(static_cast<std::uint64_t>(argumentIndex + 1)), "task.argument.slot");
@@ -696,19 +745,31 @@ namespace Absolute {
         llvm::Value* thunkContext = thunk->getArg(0);
 
         std::vector<llvm::Value*> thunkArguments;
-        thunkArguments.reserve(call.arguments.size());
-        for (size_t index = 0; index < call.arguments.size(); ++index) {
+        thunkArguments.reserve(capturedCount);
+        for (size_t index = 0; index < capturedCount; ++index) {
             llvm::Value* slot = thunkBuilder.CreateGEP(
                 thunkBuilder.getInt64Ty(), thunkContext,
                 thunkBuilder.getInt64(static_cast<std::uint64_t>(index + 1)), "task.argument.slot");
             llvm::Value* encoded = thunkBuilder.CreateLoad(
                 thunkBuilder.getInt64Ty(), slot, "task.argument");
             thunkArguments.push_back(DecodeTaskSlot(
-                thunkBuilder, encoded, target->getFunctionType()->getParamType(static_cast<unsigned>(index))));
+                thunkBuilder, encoded, targetType->getParamType(static_cast<unsigned>(index))));
         }
-        llvm::CallInst* result = thunkBuilder.CreateCall(target, thunkArguments,
-            target->getReturnType()->isVoidTy() ? "" : "task.result");
-        if (!target->getReturnType()->isVoidTy()) {
+        llvm::Value* callee = target;
+        if (virtualSlot) {
+            llvm::Value* vtableAddress = thunkBuilder.CreateStructGEP(
+                virtualOwnerType, thunkArguments.front(), 0, "task.vtable.address");
+            llvm::Value* vtable = thunkBuilder.CreateLoad(
+                thunkBuilder.getPtrTy(), vtableAddress, "task.vtable");
+            llvm::Value* slot = thunkBuilder.CreateGEP(
+                thunkBuilder.getPtrTy(), vtable, thunkBuilder.getInt64(*virtualSlot),
+                "task.virtual.slot");
+            callee = thunkBuilder.CreateLoad(
+                thunkBuilder.getPtrTy(), slot, "task.virtual.method");
+        }
+        llvm::CallInst* result = thunkBuilder.CreateCall(targetType, callee, thunkArguments,
+            targetType->getReturnType()->isVoidTy() ? "" : "task.result");
+        if (!targetType->getReturnType()->isVoidTy()) {
             llvm::Value* resultSlot = thunkBuilder.CreateGEP(
                 thunkBuilder.getInt64Ty(), thunkContext, thunkBuilder.getInt64(0), "task.result.slot");
             thunkBuilder.CreateStore(EncodeTaskSlot(thunkBuilder, result), resultSlot);

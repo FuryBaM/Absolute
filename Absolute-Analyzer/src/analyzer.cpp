@@ -757,6 +757,11 @@ namespace Absolute {
                     (HasModifier(*inheritedDeclaration, "virtual") ||
                         HasModifier(*inheritedDeclaration, "override"));
                 if (!virtualDispatch) continue;
+                const Symbol* inheritedSymbol = table.Get(inherited.symbol);
+                if (inheritedSymbol && inheritedSymbol->asyncFunction != asyncFunction)
+                    Report("override '" + currentType + "." + statement.name->value +
+                        "' must match the async contract of the inherited method",
+                        "E_OVERRIDE_ASYNC_MISMATCH", inherited.symbol);
                 if (inherited.access == AccessLevel::Private) {
                     Report("method '" + currentType + "." + statement.name->value +
                         "' cannot replace a private virtual method", "E_PRIVATE_VIRTUAL_OVERRIDE",
@@ -821,9 +826,10 @@ namespace Absolute {
             Report("extern functions cannot be async", "E_ASYNC_EXTERN");
         if (statement.IsExported() && asyncFunction)
             Report("export functions cannot be async", "E_ASYNC_EXPORT");
-        if (kind == SymbolKind::Method && asyncFunction)
-            Report("async methods are not implemented yet; use a namespace function",
-                "E_ASYNC_METHOD_UNSUPPORTED");
+        if (kind == SymbolKind::Method && asyncFunction && !staticMethod && !constMethod)
+            Report("async instance method '" + currentType + "." + statement.name->value +
+                "' must be const so its receiver cannot be mutated by the task",
+                "E_ASYNC_METHOD_REQUIRES_CONST");
         if (statement.UsesCAbi() && (returnType == "auto" || returnType == "dynamic" ||
             IsManagedPointerType(returnType)))
             Report("C ABI function '" + statement.name->value +
@@ -866,6 +872,7 @@ namespace Absolute {
             }
             const std::string thisType = "raw " + fullType + "*";
             if (const auto declared = table.Declare(SymbolKind::Parameter, "this", thisType)) {
+                if (Symbol* symbol = table.Get(*declared)) symbol->isConst = currentMethodConst;
                 RegisterFlowSymbol(*declared, {
                     InitializationState::Initialized,
                     PointerValidity::Live,

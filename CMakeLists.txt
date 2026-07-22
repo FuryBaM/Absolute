@@ -400,6 +400,20 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.task-scheduling-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
+        NAME absolute.async-methods-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/async-methods.abs"
+    )
+    add_test(
+        NAME absolute.async-method-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/async-method-errors.abs"
+    )
+    set_tests_properties(absolute.async-method-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.async-method-override-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/async-method-override-errors.abs"
+    )
+    set_tests_properties(absolute.async-method-override-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.array-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-errors.abs"
     )
@@ -1637,6 +1651,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-task-scheduling PROPERTIES
             FIXTURES_REQUIRED absolute-task-scheduling-executable
             PASS_REGULAR_EXPRESSION "task-scheduling=ok"
+        )
+        add_test(
+            NAME absolute.build-async-methods
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/async-methods.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/async-methods-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-async-methods PROPERTIES
+            FIXTURES_SETUP absolute-async-methods-executable
+        )
+        add_test(NAME absolute.run-async-methods
+            COMMAND "${CMAKE_BINARY_DIR}/async-methods-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-async-methods PROPERTIES
+            FIXTURES_REQUIRED absolute-async-methods-executable
+            PASS_REGULAR_EXPRESSION "async-methods=ok"
         )
     endif()
 endif()

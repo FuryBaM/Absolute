@@ -1,0 +1,65 @@
+class AsyncBase {
+    public virtual async const int32 evaluate(int32 input) {
+        return input;
+    }
+
+    public static async int32 staticValue(int32 input) {
+        return input + 2;
+    }
+
+    public async const int32 nested(int32 input) {
+        task<int32> result = spawn evaluate(input);
+        return await result;
+    }
+}
+
+class AsyncDerived : AsyncBase {
+    public int32 bias;
+
+    public AsyncDerived(int32 initialBias) {
+        bias = initialBias;
+    }
+
+    @task(priority = 1, role = "class-method")
+    public override async const int32 evaluate(int32 input) {
+        return input + bias;
+    }
+}
+
+struct AsyncPair {
+    int32 left;
+    int32 right;
+
+    AsyncPair(int32 initialLeft, int32 initialRight) {
+        left = initialLeft;
+        right = initialRight;
+    }
+
+    public async const int32 sum(int32 extra) {
+        return left + right + extra;
+    }
+
+    public static async int32 staticSum(int32 left, int32 right) {
+        return left + right;
+    }
+}
+
+async int32 main() {
+    const AsyncBase* object = new AsyncDerived(2);
+    const AsyncPair* pair = new AsyncPair(19, 20);
+
+    @spawn(priority = 2, role = "method-spawn")
+    task<int32> virtualMethod = spawn object.evaluate(40);
+    task<int32> classStatic = spawn AsyncBase.staticValue(40);
+    task<int32> implicitReceiver = spawn object.nested(40);
+    task<int32> structMethod = spawn pair.sum(3);
+    task<int32> structStatic = spawn AsyncPair.staticSum(20, 22);
+
+    assert(await virtualMethod == 42, "virtual async class method");
+    assert(await classStatic == 42, "static async class method");
+    assert(await implicitReceiver == 42, "implicit this async method");
+    assert(await structMethod == 42, "async struct method");
+    assert(await structStatic == 42, "static async struct method");
+    println("async-methods=ok");
+    return 0;
+}

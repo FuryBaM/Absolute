@@ -240,7 +240,10 @@
 - [x] Добавить scheduling-атрибуты для tasks: `@task(core, priority, role)` задаёт
   defaults async-функции, `@spawn(...)` переопределяет отдельный запуск; runtime
   использует priority-очередь, временную CPU affinity и доступную через `std.task` роль.
-- [ ] Добавить async-методы классов и структур.
+- [x] Добавить async-методы классов и структур: static-методы используют обычный
+  task ABI; instance-методы требуют `const` и стабильный именованный receiver без
+  собственных ресурсов; virtual class dispatch выполняется внутри task thunk,
+  а mutable/raw/subscriber/temporary receivers отсекаются анализатором.
 - [ ] Добавить cancellation tokens и timeout.
 - [ ] Добавить channels и безопасные concurrent queues.
 - [ ] Добавить async file/network I/O.
