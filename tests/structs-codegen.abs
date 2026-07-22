@@ -80,8 +80,8 @@ int64 mutateLargeCopy(LargeValue value) {
 
 int32 main() {
     Pair value = makePair(20, 22);
-    Pair copy = value;
-    copy.x = 40;
+    Pair pairCopy = value;
+    pairCopy.x = 40;
     assert(value.x == 20, "struct assignment must copy by value");
     assert(sumPair(value) == 42, "struct parameter and return value");
 

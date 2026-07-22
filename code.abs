@@ -7,36 +7,44 @@ int32 main(int32 argc = 0, string argv) {
             board[x][y] = x + y;
         }
     }
+
+    int32 i = 0;
+    while (i < size) {
+        if (element < 0) {
+            element += elements.size();
+        }
+        ++i;
+        break;
+    }
+
+    do {
+        if (element < 0) {
+            element += elements.size();
+        }
+        ++i;
+        continue;
+    } while (i < size);
+
+    for (int32 i = 0; i < size; ++i){
+        if (element < 0) {
+            element += elements.size();
+        }
+    }
+
+    foreach(int32 element in elements){
+        if (element < 0) {
+            element += elements.size();
+        }
+    }
+    delete target;
+    if (!!target) {
+        ++target;
+    }
+    namespace1.namespace2.MyClass instance = new MyClass(7, "test", 'c', new Player("player"));
+    MyClass<int32, MyClass<int32, string>> x = new MyClass<int32, MyClass<int32, string>>();
+    int32 b = x ? true ? null ? 1 : 2 : 3 : 4;
+    int32 val = 3.14 as int32;
     return 0;
-}
-
-int32 i = 0;
-while (i < size) {
-    if (element < 0) {
-        element += elements.size();
-    }
-    ++i;
-    break;
-}
-
-do {
-    if (element < 0) {
-        element += elements.size();
-    }
-    ++i;
-    continue;
-} while (i < size);
-
-for (int32 i = 0; i < size; ++i){
-    if (element < 0) {
-        element += elements.size();
-    }
-}
-
-foreach(int32 element in elements){
-    if (element < 0) {
-        element += elements.size();
-    }
 }
 
 internal class TestClass<T, U> : BaseClass, ITestinterface {
@@ -63,14 +71,3 @@ group GameSettings {
         enum Effects { Off, On }
     }
 }
-
-namespace1.namespace2.MyClass instance = new MyClass(7, "test", 'c', new Player("player"));
-static TestClass &instance = new Class();
-const int32 *ptr = 3 * *(testptr);
-delete target;
-if (!!target) {
-    ++target;
-}
-MyClass<int32, MyClass<int32, string>> x = new MyClass<int32, MyClass<int32, string>>();
-int32 b = x ? true ? null ? 1 : 2 : 3 : 4;
-int32 val = 3.14 as int32;

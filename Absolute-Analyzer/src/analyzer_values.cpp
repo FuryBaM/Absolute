@@ -151,11 +151,20 @@ namespace Absolute {
     }
 
     void Analyzer::Visit(VarDeclExpr* expr) {
-        const std::string name = ExtractIdentifier(expr->name.get());
+        Expression* baseDeclarator = expr->name.get();
+        std::vector<Expression*> declaratorIndexes;
+        while (auto* access = dynamic_cast<ArrayAccessExpr*>(baseDeclarator)) {
+            for (const auto& index : access->indexes) {
+                declaratorIndexes.push_back(index.get());
+            }
+            baseDeclarator = access->base.get();
+        }
+        std::reverse(declaratorIndexes.begin(), declaratorIndexes.end());
+
+        const std::string name = ExtractIdentifier(baseDeclarator);
         const std::string declarationName = currentType.empty() && functionDepth == 0 ? Qualify(name) : name;
         std::string type = ResolveType(expr->type.get());
-        auto* arrayDeclarator = dynamic_cast<ArrayAccessExpr*>(expr->name.get());
-        const size_t arrayRank = arrayDeclarator ? arrayDeclarator->indexes.size() : 0;
+        const size_t arrayRank = declaratorIndexes.size();
         if (arrayRank > 0) type = ArrayType(std::move(type), arrayRank);
         const bool fieldDeclaration = !currentType.empty() && functionDepth == 0;
         if (phase == Phase::CollectDeclarations) {
@@ -180,17 +189,16 @@ namespace Absolute {
                 "E_STATIC_GENERIC_UNSUPPORTED");
         if (!IsKnownType(type)) Report("unknown type '" + type + "' of variable '" + name + "'");
         std::optional<std::vector<size_t>> initializerShape;
-        if (arrayDeclarator) {
-            if (arrayDeclarator->indexes.empty()) Report("array variable '" + name + "' requires a dimension");
-            for (const auto& size : arrayDeclarator->indexes) {
+        if (arrayRank > 0) {
+            for (Expression* size : declaratorIndexes) {
                 if (!size) continue;
-                const Result resolved = Evaluate(size.get());
+                const Result resolved = Evaluate(size);
                 if (!IsInteger(resolved.type) && resolved.type != "error")
                     Report("array size must be an integer, got '" + resolved.type + "'");
                 if (currentType.empty() && functionDepth == 0 &&
-                    !dynamic_cast<const NumberLiteralExpr*>(size.get()))
+                    !dynamic_cast<const NumberLiteralExpr*>(size))
                     Report("global array dimensions must be constant integer literals");
-                if (const auto* literal = dynamic_cast<const NumberLiteralExpr*>(size.get())) {
+                if (const auto* literal = dynamic_cast<const NumberLiteralExpr*>(size)) {
                     try {
                         if (std::stoll(literal->value) <= 0) Report("array size must be greater than zero");
                     }
@@ -206,8 +214,8 @@ namespace Absolute {
                     Report("array initializer has " + std::to_string(initializerShape->size()) +
                         " dimension(s), expected " + std::to_string(arrayRank));
             }
-            for (size_t dimension = 0; dimension < arrayDeclarator->indexes.size(); ++dimension) {
-                const auto& size = arrayDeclarator->indexes[dimension];
+            for (size_t dimension = 0; dimension < declaratorIndexes.size(); ++dimension) {
+                Expression* size = declaratorIndexes[dimension];
                 if (!size) {
                     if (!initializerShape || dimension >= initializerShape->size())
                         Report("array dimension " + std::to_string(dimension + 1) +
@@ -215,7 +223,7 @@ namespace Absolute {
                     continue;
                 }
                 if (initializerShape && dimension < initializerShape->size()) {
-                    if (const auto* literal = dynamic_cast<const NumberLiteralExpr*>(size.get())) {
+                    if (const auto* literal = dynamic_cast<const NumberLiteralExpr*>(size)) {
                         try {
                             if (static_cast<size_t>(std::stoull(literal->value)) != (*initializerShape)[dimension])
                                 Report("array initializer size does not match dimension " +

@@ -481,6 +481,25 @@ namespace Absolute {
             impl->valueArrayOwner = owner;
             return;
         }
+        Impl::ArrayView view = impl->ViewOfArray(expr->base.get());
+        if (expr->indexes.size() < view.dimensions.size()) {
+            if (impl->addressMode) impl->Fail("sub-array slice is not assignable");
+            llvm::Value* address = impl->ArrayElementAddress(*expr);
+            std::vector<llvm::Value*> subDims;
+            for (size_t d = expr->indexes.size(); d < view.dimensions.size(); ++d) {
+                subDims.push_back(view.dimensions[d]);
+            }
+            Impl::ArrayView subView;
+            subView.address = address;
+            subView.elementType = view.elementType;
+            subView.typeName = impl->SemanticType(expr);
+            subView.dimensions = std::move(subDims);
+            subView.owner = view.owner;
+            impl->value = impl->BuildArrayDescriptor(subView);
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
+
         llvm::Value* address = impl->ArrayElementAddress(*expr);
         if (impl->addressMode) {
             impl->addressValue = address;
@@ -496,31 +515,155 @@ namespace Absolute {
         Impl::ArrayView source = impl->ViewOfArray(expr->base.get());
         const bool createsOwner = impl->valueCreatesArrayOwner;
         llvm::Value* owner = impl->valueArrayOwner;
-        if (source.dimensions.size() != 1) impl->Fail("slices require a one-dimensional array");
-        llvm::Value* begin = expr->begin
-            ? impl->Coerce(impl->Evaluate(expr->begin.get()), impl->builder.getInt64Ty())
-            : impl->builder.getInt64(0);
-        llvm::Value* end = expr->end
-            ? impl->Coerce(impl->Evaluate(expr->end.get()), impl->builder.getInt64Ty())
-            : source.dimensions.front();
-        llvm::Value* valid = impl->builder.CreateAnd(
-            impl->builder.CreateICmpSGE(begin, impl->builder.getInt64(0), "slice.begin.nonnegative"),
-            impl->builder.CreateICmpSGE(end, begin, "slice.order.valid"), "slice.lower.valid");
-        valid = impl->builder.CreateAnd(valid,
-            impl->builder.CreateICmpSLE(end, source.dimensions.front(), "slice.end.below.size"),
-            "slice.valid");
-        impl->EmitOrExit(valid, "array.bounds");
+
+        const size_t sourceRank = source.dimensions.size();
+        if (sourceRank == 0) impl->Fail("slice target is not an array");
+        if (expr->ranges.size() > sourceRank)
+            impl->Fail("slice range count exceeds array rank");
+
+        std::vector<llvm::Value*> newDimensions = source.dimensions;
+        std::vector<llvm::Value*> begins;
+        std::vector<llvm::Value*> ends;
+        begins.reserve(sourceRank);
+        ends.reserve(sourceRank);
+
+        bool isInnerSliced = false;
+        for (size_t d = 0; d < sourceRank; ++d) {
+            llvm::Value* begin = impl->builder.getInt64(0);
+            llvm::Value* end = source.dimensions[d];
+
+            if (d < expr->ranges.size()) {
+                const auto& range = expr->ranges[d];
+                if (range.hasColon) {
+                    if (range.begin)
+                        begin = impl->Coerce(impl->Evaluate(range.begin.get()), impl->builder.getInt64Ty());
+                    if (range.end)
+                        end = impl->Coerce(impl->Evaluate(range.end.get()), impl->builder.getInt64Ty());
+                } else {
+                    if (range.begin) {
+                        begin = impl->Coerce(impl->Evaluate(range.begin.get()), impl->builder.getInt64Ty());
+                        end = impl->builder.CreateAdd(begin, impl->builder.getInt64(1), "slice.single.end");
+                    }
+                }
+            }
+
+            llvm::Value* valid = impl->builder.CreateAnd(
+                impl->builder.CreateICmpSGE(begin, impl->builder.getInt64(0), "slice.begin.nonnegative"),
+                impl->builder.CreateICmpSGE(end, begin, "slice.order.valid"), "slice.lower.valid");
+            valid = impl->builder.CreateAnd(valid,
+                impl->builder.CreateICmpSLE(end, source.dimensions[d], "slice.end.below.size"),
+                "slice.valid");
+            impl->EmitOrExit(valid, "array.bounds");
+
+            newDimensions[d] = impl->builder.CreateSub(end, begin, "slice.dim.length");
+            begins.push_back(begin);
+            ends.push_back(end);
+
+            if (d > 0 && d < expr->ranges.size()) {
+                isInnerSliced = true;
+            }
+        }
+
+        if (!isInnerSliced) {
+            llvm::Value* stride = impl->builder.getInt64(1);
+            for (size_t k = 1; k < sourceRank; ++k) {
+                stride = impl->builder.CreateMul(stride, source.dimensions[k], "slice.stride");
+            }
+            llvm::Value* offset = impl->builder.CreateMul(begins[0], stride, "slice.offset");
+
+            Impl::ArrayView slice;
+            slice.address = impl->builder.CreateInBoundsGEP(
+                source.elementType, source.address, offset, "slice.data");
+            slice.elementType = source.elementType;
+            slice.typeName = source.typeName;
+            slice.dimensions = std::move(newDimensions);
+            slice.owner = source.owner;
+
+            impl->value = impl->BuildArrayDescriptor(slice);
+            impl->valueCreatesManagedOwner = false;
+            impl->valueCreatesArrayOwner = createsOwner;
+            impl->valueArrayOwner = owner;
+            return;
+        }
+
+        llvm::Value* totalElements = impl->builder.getInt64(1);
+        for (llvm::Value* dim : newDimensions) {
+            totalElements = impl->builder.CreateMul(totalElements, dim, "slice.total.elements");
+        }
+
+        llvm::AllocaInst* storage = impl->builder.CreateAlloca(
+            source.elementType, totalElements, "slice.storage");
+        storage->setAlignment(llvm::Align(16));
+
         Impl::ArrayView slice;
-        slice.address = impl->builder.CreateInBoundsGEP(
-            source.elementType, source.address, begin, "slice.data");
+        slice.address = storage;
         slice.elementType = source.elementType;
         slice.typeName = source.typeName;
-        slice.dimensions = {impl->builder.CreateSub(end, begin, "slice.length")};
-        slice.owner = source.owner;
+        slice.dimensions = newDimensions;
+        slice.owner = nullptr;
+
+        if (sourceRank == 2) {
+            llvm::Value* rBegin = begins[0];
+            llvm::Value* rEnd = ends[0];
+            llvm::Value* cBegin = begins[1];
+            llvm::Value* cEnd = ends[1];
+            llvm::Value* srcCols = source.dimensions[1];
+            llvm::Value* dstCols = newDimensions[1];
+
+            llvm::Function* function = impl->CurrentFunction();
+            llvm::BasicBlock* preheader = impl->builder.GetInsertBlock();
+            llvm::BasicBlock* rHeader = llvm::BasicBlock::Create(impl->context, "slice.r.header", function);
+            llvm::BasicBlock* cHeader = llvm::BasicBlock::Create(impl->context, "slice.c.header", function);
+            llvm::BasicBlock* body = llvm::BasicBlock::Create(impl->context, "slice.body", function);
+            llvm::BasicBlock* cLatch = llvm::BasicBlock::Create(impl->context, "slice.c.latch", function);
+            llvm::BasicBlock* rLatch = llvm::BasicBlock::Create(impl->context, "slice.r.latch", function);
+            llvm::BasicBlock* exit = llvm::BasicBlock::Create(impl->context, "slice.exit", function);
+
+            impl->builder.CreateBr(rHeader);
+
+            impl->builder.SetInsertPoint(rHeader);
+            llvm::PHINode* r = impl->builder.CreatePHI(impl->builder.getInt64Ty(), 2, "r");
+            r->addIncoming(rBegin, preheader);
+            llvm::Value* rCond = impl->builder.CreateICmpSLT(r, rEnd, "r.cond");
+            impl->builder.CreateCondBr(rCond, cHeader, exit);
+
+            impl->builder.SetInsertPoint(cHeader);
+            llvm::PHINode* c = impl->builder.CreatePHI(impl->builder.getInt64Ty(), 2, "c");
+            c->addIncoming(cBegin, rHeader);
+            llvm::Value* cCond = impl->builder.CreateICmpSLT(c, cEnd, "c.cond");
+            impl->builder.CreateCondBr(cCond, body, rLatch);
+
+            impl->builder.SetInsertPoint(body);
+            llvm::Value* srcIdx = impl->builder.CreateAdd(
+                impl->builder.CreateMul(r, srcCols), c);
+            llvm::Value* dstR = impl->builder.CreateSub(r, rBegin);
+            llvm::Value* dstC = impl->builder.CreateSub(c, cBegin);
+            llvm::Value* dstIdx = impl->builder.CreateAdd(
+                impl->builder.CreateMul(dstR, dstCols), dstC);
+
+            llvm::Value* srcPtr = impl->builder.CreateInBoundsGEP(source.elementType, source.address, srcIdx);
+            llvm::Value* dstPtr = impl->builder.CreateInBoundsGEP(slice.elementType, slice.address, dstIdx);
+            llvm::Value* elem = impl->builder.CreateLoad(source.elementType, srcPtr);
+            impl->builder.CreateStore(elem, dstPtr);
+            impl->builder.CreateBr(cLatch);
+
+            impl->builder.SetInsertPoint(cLatch);
+            llvm::Value* nextC = impl->builder.CreateAdd(c, impl->builder.getInt64(1));
+            c->addIncoming(nextC, cLatch);
+            impl->builder.CreateBr(cHeader);
+
+            impl->builder.SetInsertPoint(rLatch);
+            llvm::Value* nextR = impl->builder.CreateAdd(r, impl->builder.getInt64(1));
+            r->addIncoming(nextR, rLatch);
+            impl->builder.CreateBr(rHeader);
+
+            impl->builder.SetInsertPoint(exit);
+        }
+
         impl->value = impl->BuildArrayDescriptor(slice);
         impl->valueCreatesManagedOwner = false;
-        impl->valueCreatesArrayOwner = createsOwner;
-        impl->valueArrayOwner = owner;
+        impl->valueCreatesArrayOwner = false;
+        impl->valueArrayOwner = nullptr;
     }
 
 }

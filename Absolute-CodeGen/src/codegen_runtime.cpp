@@ -432,8 +432,8 @@ namespace Absolute {
 
     llvm::Value* CodeGenerator::Impl::ArrayElementAddress(ArrayAccessExpr& expression) {
         ArrayView view = ViewOfArray(expression.base.get());
-        if (expression.indexes.size() != view.dimensions.size())
-            Fail("array access must provide all dimensions");
+        if (expression.indexes.size() > view.dimensions.size())
+            Fail("array access provides too many dimensions");
 
         llvm::Value* offset = builder.getInt64(0);
         llvm::Value* oneDimensionalIndex = nullptr;
@@ -458,12 +458,15 @@ namespace Absolute {
                 ? builder.CreateICmpULT(wideIndex, view.dimensions[dimension], "array.index.below.size")
                 : builder.CreateICmpSLT(wideIndex, view.dimensions[dimension], "array.index.below.size");
             EmitOrExit(builder.CreateAnd(nonNegative, belowSize, "array.index.valid"), "array.bounds");
-            if (expression.indexes.size() == 1) oneDimensionalIndex = index;
+            if (expression.indexes.size() == 1 && view.dimensions.size() == 1) oneDimensionalIndex = index;
             if (dimension == 0) offset = wideIndex;
             else {
                 offset = builder.CreateMul(offset, view.dimensions[dimension], "array.row.offset");
                 offset = builder.CreateAdd(offset, wideIndex, "array.linear.offset");
             }
+        }
+        for (size_t dimension = expression.indexes.size(); dimension < view.dimensions.size(); ++dimension) {
+            offset = builder.CreateMul(offset, view.dimensions[dimension], "array.sub.stride");
         }
         return builder.CreateInBoundsGEP(
             view.elementType, view.address,

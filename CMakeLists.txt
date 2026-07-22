@@ -496,6 +496,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-copy.abs"
     )
     add_test(
+        NAME absolute.multidimensional-slices-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/multidimensional-slices.abs"
+    )
+    add_test(
         NAME absolute.array-copy-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-copy-errors.abs"
     )
@@ -881,6 +885,14 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-array-copy-ir
         )
         add_test(
+            NAME absolute.emit-multidimensional-slices
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/multidimensional-slices.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/multidimensional-slices.ll"
+        )
+        set_tests_properties(absolute.emit-multidimensional-slices PROPERTIES
+            FIXTURES_SETUP absolute-multidimensional-slices-ir
+        )
+        add_test(
             NAME absolute.check-array-ownership
             COMMAND "${CMAKE_COMMAND}"
                 -DIR_FILE=${CMAKE_BINARY_DIR}/array-copy.ll
@@ -1100,6 +1112,14 @@ if(BUILD_TESTING)
             set_tests_properties(absolute.run-array-copy PROPERTIES
                 FIXTURES_REQUIRED absolute-array-copy-ir
                 PASS_REGULAR_EXPRESSION "array-copy=ok"
+            )
+            add_test(
+                NAME absolute.run-multidimensional-slices
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/multidimensional-slices.ll"
+            )
+            set_tests_properties(absolute.run-multidimensional-slices PROPERTIES
+                FIXTURES_REQUIRED absolute-multidimensional-slices-ir
+                PASS_REGULAR_EXPRESSION "multidimensional-slices=ok"
             )
             add_test(
                 NAME absolute.run-chess-rules

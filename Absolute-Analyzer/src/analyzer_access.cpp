@@ -714,25 +714,34 @@ namespace Absolute {
             Save(expr, {selected->symbol, selected->type, selected->canWrite});
             expressionInfo[expr].parameterTypes = selected->parameterTypes;
         }
-        else if (expr->indexes.size() != rank) {
+        else if (expr->indexes.size() > rank) {
             Report("array access provides " + std::to_string(expr->indexes.size()) +
                 " index(es), but the array has " + std::to_string(rank) + " dimension(s)");
             Save(expr, {base.symbol, "error", false});
         }
-        else Save(expr, {base.symbol, ArrayElementType(base.type, rank), base.isLValue});
+        else {
+            Save(expr, {base.symbol, ArrayElementType(base.type, expr->indexes.size()), true});
+        }
     }
 
     void Analyzer::Visit(SliceExpr* expr) {
         const Result base = Evaluate(expr->base.get());
-        if (ArrayRank(base.type) != 1 && base.type != "error")
-            Report("slices are supported only for one-dimensional arrays");
-        for (Expression* bound : {expr->begin.get(), expr->end.get()}) {
-            if (!bound) continue;
-            const Result resolved = Evaluate(bound);
-            if (!IsInteger(resolved.type) && resolved.type != "error")
-                Report("slice bounds must be integers");
+        const size_t rank = ArrayRank(base.type);
+        if (rank == 0 && base.type != "error") {
+            Report("slice operation requires an array type");
         }
-        Save(expr, {base.symbol, ArrayRank(base.type) == 1 ? base.type : "error", false});
+        if (expr->ranges.size() > rank && base.type != "error") {
+            Report("slice specifies " + std::to_string(expr->ranges.size()) +
+                " range(s), but array has rank " + std::to_string(rank));
+        }
+        for (const auto& range : expr->ranges) {
+            for (Expression* bound : {range.begin.get(), range.end.get()}) {
+                if (!bound) continue;
+                const Result resolved = Evaluate(bound);
+                if (!IsInteger(resolved.type) && resolved.type != "error")
+                    Report("slice bounds must be integers");
+            }
+        }
+        Save(expr, {base.symbol, rank > 0 ? base.type : "error", false});
     }
-
 }
