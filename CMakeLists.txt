@@ -1128,9 +1128,12 @@ if(BUILD_TESTING)
             CONTENT
 "int32 main() {
     string path = \"./$<TARGET_FILE_NAME:absolute-load-test-library>\";
+    assert(!isLoaded(path), \"library must not start in the loader cache\");
     assert(load(path), \"existing dynamic library must load\");
+    assert(isLoaded(path), \"loaded library must be visible in the cache\");
     assert(load(path), \"loading the same library must be idempotent\");
     assert(!load(\"./absolute-load-test-missing\"), \"missing library must return false\");
+    println(format(\"load-error={}\", loadError()));
     println(\"dynamic-load=ok\");
     return 0;
 }
@@ -1155,7 +1158,7 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-dynamic-load PROPERTIES
             FIXTURES_REQUIRED absolute-dynamic-load-executable
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:absolute-load-test-library>"
-            PASS_REGULAR_EXPRESSION "dynamic-load=ok"
+            PASS_REGULAR_EXPRESSION "load-error=.+"
         )
         set(ABSOLUTE_EXPORT_TEST_OBJECT
             "${CMAKE_BINARY_DIR}/absolute-export-library${CMAKE_CXX_OUTPUT_EXTENSION}")

@@ -300,6 +300,26 @@ namespace Absolute {
                 return;
             }
 
+            if (callName == "isLoaded") {
+                if (arguments.size() != 1) {
+                    Report("isLoaded expects exactly one library path",
+                        "E_IS_LOADED_ARGUMENT_COUNT");
+                }
+                else if (arguments.front().type != "string" && arguments.front().type != "error") {
+                    Report("isLoaded library path must be a string, got '" +
+                        arguments.front().type + "'", "E_IS_LOADED_ARGUMENT_TYPE");
+                }
+                Save(expr, {table.Lookup(callName), "bool", false});
+                return;
+            }
+
+            if (callName == "loadError") {
+                if (!arguments.empty())
+                    Report("loadError expects no arguments", "E_LOAD_ERROR_ARGUMENT_COUNT");
+                Save(expr, {table.Lookup(callName), "string", false});
+                return;
+            }
+
             if (callName == "move") {
                 if (arguments.size() != 1) {
                     Report("move expects exactly one argument");

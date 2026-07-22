@@ -476,6 +476,16 @@ with `RTLD_NOW | RTLD_GLOBAL`. Calls to ordinary `extern "C"` imports still need
 `nativeLibraries` when their symbols must be resolved while the executable is
 linked or started.
 
+Use `isLoaded(path)` to query the process-local loader cache. After a failed
+`load`, `loadError()` returns the thread-local platform diagnostic; a successful
+load clears it:
+
+```absolute
+if (!load("./extensions/audio.so")) {
+    println(loadError());
+}
+```
+
 ## Pointers and lifetime
 
 `T*` is a managed pointer. A value created with `new` owns a generation-checked

@@ -93,6 +93,10 @@
 
         llvm::FunctionCallee LoadDynamicLibrary();
 
+        llvm::FunctionCallee IsDynamicLibraryLoaded();
+
+        llvm::FunctionCallee DynamicLibraryError();
+
         llvm::Value* EncodeTaskSlot(llvm::IRBuilder<>& targetBuilder, llvm::Value* source);
 
         llvm::Value* DecodeTaskSlot(

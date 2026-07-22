@@ -406,7 +406,8 @@
 - [x] C ABI imports и native FFI.
 - [x] Runtime-загрузка внешних `.dll`/`.so` через `bool load(string path)`:
   UTF-8 пути на Windows, `RTLD_NOW | RTLD_GLOBAL` на POSIX, идемпотентная загрузка
-  и `false` вместо аварии для отсутствующей или несовместимой библиотеки.
+  и `false` вместо аварии для отсутствующей или несовместимой библиотеки;
+  `isLoaded(path)` проверяет кэш, `loadError()` возвращает thread-local ошибку ОС.
 - [x] C ABI exports через `export "C"` с неманглированным символом, Windows
   `dllexport`, проверкой ABI-safe сигнатур и запретом overload/generics/default
   parameters; PE export table и вызов из Absolute покрыты native/LLVM тестами.
