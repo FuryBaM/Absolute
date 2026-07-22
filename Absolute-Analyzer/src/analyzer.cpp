@@ -473,6 +473,7 @@ namespace Absolute {
     }
 
     bool Analyzer::IsKnownType(const std::string& name) const {
+        if (IsValueReferenceType(name)) return IsKnownType(ValueReferenceBaseType(name));
         if (IsPointerType(name)) return IsKnownType(PointerPointee(name));
         if (IsTaskType(name)) return IsKnownType(TaskValueType(name));
         for (auto scope = genericTypeScopes.rbegin(); scope != genericTypeScopes.rend(); ++scope)
@@ -510,6 +511,8 @@ namespace Absolute {
     }
 
     bool Analyzer::IsAssignable(const std::string& target, const std::string& source) const {
+        if (IsValueReferenceType(target))
+            return IsAssignable(ValueReferenceBaseType(target), source);
         if (target == "error" || source == "error" || target == "dynamic" || source == "dynamic") return true;
         if (target == source) return true;
         if (target.ends_with("[]") && source.ends_with("[]"))
@@ -523,6 +526,7 @@ namespace Absolute {
     }
 
     bool Analyzer::TypeOwnsResources(const std::string& name) const {
+        if (IsValueReferenceType(name)) return TypeOwnsResources(ValueReferenceBaseType(name));
         std::unordered_set<std::string> visiting;
         const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
             if (IsManagedPointerType(candidate) || ArrayRank(candidate) > 0) return true;
@@ -680,8 +684,42 @@ namespace Absolute {
         std::vector<std::string> resolved;
         resolved.reserve(parameters.size());
         for (const auto& parameter : parameters)
-            resolved.push_back(parameter ? ResolveDeclaredType(*parameter) : "error");
+            resolved.push_back(parameter
+                ? ValueReferenceType(ResolveDeclaredType(*parameter),
+                    parameter->isConst, parameter->isReference)
+                : "error");
         return resolved;
+    }
+
+    void Analyzer::ValidateValueReferenceParameter(
+        VarDeclExpr& parameter, const std::string& type,
+        const std::string& callable, bool asyncCallable, bool cAbi) {
+        if (!parameter.isReference) return;
+        const std::string name = ExtractIdentifier(parameter.name.get());
+        std::string definitionName = type;
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseGenericTypeName(type, genericBase, genericArguments))
+            definitionName = genericBase;
+        const auto definition = types.find(definitionName);
+        if (definition == types.end() || definition->second.kind != TypeKind::Struct ||
+            !genericArguments.empty()) {
+            Report("value-reference parameter '" + name + "' of '" + callable +
+                "' requires a concrete struct type", "E_VALUE_REF_TYPE");
+        }
+        else if (TypeOwnsResources(type)) {
+            Report("value-reference parameter '" + name + "' cannot borrow resource-owning type '" +
+                type + "'", "E_VALUE_REF_RESOURCES");
+        }
+        if (parameter.value)
+            Report("value-reference parameter '" + name + "' cannot have a default value",
+                "E_VALUE_REF_DEFAULT");
+        if (asyncCallable)
+            Report("async callable '" + callable + "' cannot declare value-reference parameters",
+                "E_VALUE_REF_ASYNC");
+        if (cAbi)
+            Report("C ABI callable '" + callable + "' cannot declare Absolute value references",
+                "E_VALUE_REF_C_ABI");
     }
 
     void Analyzer::DeclareGlobalFunction(FunctionDeclStmt& statement) {
@@ -884,6 +922,8 @@ namespace Absolute {
             if (!parameter) continue;
             const std::string name = ExtractIdentifier(parameter->name.get());
             std::string type = ResolveDeclaredType(*parameter);
+            ValidateValueReferenceParameter(*parameter, type,
+                statement.name->value, asyncFunction, statement.UsesCAbi());
             if (asyncFunction && !IsAsyncTaskValueType(type))
                 Report("async parameter '" + name + "' cannot capture '" + type +
                     "': the task context cannot own its lifetime safely",
@@ -900,6 +940,8 @@ namespace Absolute {
                 parameterId = *declared;
                 if (Symbol* symbol = table.Get(parameterId)) {
                     symbol->isConst = parameter->isConst;
+                    symbol->valueReference = parameter->isReference;
+                    symbol->constValueReference = parameter->isReference && parameter->isConst;
                     if (IsManagedPointerType(type)) symbol->managedBorrower = true;
                 }
             }
@@ -1253,6 +1295,8 @@ namespace Absolute {
     }
 
     int Analyzer::ConversionCost(const std::string& target, const std::string& source) const {
+        if (IsValueReferenceType(target))
+            return ConversionCost(ValueReferenceBaseType(target), source);
         if (target == source) return 0;
         if (!IsAssignable(target, source)) return -1;
         if (target == "dynamic") return 4;
@@ -1315,7 +1359,8 @@ namespace Absolute {
                     substitutions.emplace(candidate->genericParameters[index], explicitTypeArguments[index]);
                 bool unified = true;
                 for (size_t index = 0; index < arguments.size(); ++index)
-                    if (!UnifyGenericType(candidate->parameterTypes[index], arguments[index].type,
+                    if (!UnifyGenericType(ValueReferenceBaseType(candidate->parameterTypes[index]),
+                        arguments[index].type,
                         parameterNames, substitutions)) {
                         unified = false;
                         break;
@@ -1337,7 +1382,8 @@ namespace Absolute {
             int cost = 0;
             bool applicable = true;
             for (size_t index = 0; index < arguments.size(); ++index) {
-                const int conversion = ConversionCost(concreteParameters[index], arguments[index].type);
+                const int conversion = ConversionCost(
+                    ValueReferenceBaseType(concreteParameters[index]), arguments[index].type);
                 if (conversion < 0) {
                     applicable = false;
                     break;

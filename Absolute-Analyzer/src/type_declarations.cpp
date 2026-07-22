@@ -462,8 +462,13 @@ namespace Absolute {
         for (const auto& parameter : stmt->parameters) {
             const std::string name = parameter ? ExtractIdentifier(parameter->name.get()) : std::string{};
             const std::string type = parameter ? ResolveDeclaredType(*parameter) : "error";
+            if (parameter)
+                ValidateValueReferenceParameter(*parameter, type, currentType + ".__ctor");
             if (const auto declared = table.Declare(SymbolKind::Parameter, name, type)) {
-                table.Get(*declared)->isConst = parameter && parameter->isConst;
+                Symbol* symbol = table.Get(*declared);
+                symbol->isConst = parameter && parameter->isConst;
+                symbol->valueReference = parameter && parameter->isReference;
+                symbol->constValueReference = parameter && parameter->isReference && parameter->isConst;
                 RegisterFlowSymbol(*declared, {InitializationState::Initialized,
                     IsPointerType(type) ? PointerValidity::Unknown : PointerValidity::NotPointer,
                     InvalidSymbolId,
@@ -501,12 +506,25 @@ namespace Absolute {
                         std::to_string(stmt->baseArguments.size()), "E_BASE_ARGUMENT_COUNT");
                 for (size_t index = 0; index < stmt->baseArguments.size(); ++index) {
                     const std::string expectedType = index < expected.size() ? expected[index] : std::string{};
+                    const std::string expectedValueType = ValueReferenceBaseType(expectedType);
                     const Result argument = EvaluateExpected(
-                        stmt->baseArguments[index].get(), expectedType);
-                    if (!expectedType.empty() && !IsAssignable(expectedType, argument.type))
+                        stmt->baseArguments[index].get(), expectedValueType);
+                    if (!expectedType.empty() && !IsAssignable(expectedValueType, argument.type))
                         Report("base constructor argument " + std::to_string(index + 1) +
-                            " has type '" + argument.type + "', expected '" + expectedType + "'",
+                            " has type '" + argument.type + "', expected '" + expectedValueType + "'",
                             "E_BASE_ARGUMENT_TYPE", argument.symbol);
+                    if (IsValueReferenceType(expectedType) &&
+                        !IsConstValueReferenceType(expectedType)) {
+                        if (!argument.isLValue)
+                            Report("mutable ref base constructor argument " +
+                                std::to_string(index + 1) + " requires an lvalue",
+                                "E_VALUE_REF_REQUIRES_LVALUE", argument.symbol);
+                        else if (IsConstMutationTarget(
+                            stmt->baseArguments[index].get(), argument))
+                            Report("mutable ref base constructor argument " +
+                                std::to_string(index + 1) + " cannot borrow a const value",
+                                "E_VALUE_REF_CONST_ARGUMENT", argument.symbol);
+                    }
                 }
             }
         }

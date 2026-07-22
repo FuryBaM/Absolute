@@ -32,7 +32,8 @@
 
         llvm::Value* EvaluateCallArgument(Expression* expression,
             std::vector<llvm::Value*>& temporaryArrayOwners,
-            std::vector<llvm::Value*>& temporaryClosureOwners);
+            std::vector<llvm::Value*>& temporaryClosureOwners,
+            const std::string& parameterType = {});
 
         void ReleaseArrayTemporaries(const std::vector<llvm::Value*>& owners);
 

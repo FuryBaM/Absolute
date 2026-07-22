@@ -103,6 +103,8 @@ namespace Absolute {
                     currentType + "." + stmt->name->value + "'");
             for (const auto& parameter : stmt->parameters) {
                 const std::string parameterType = ResolveDeclaredType(*parameter);
+                ValidateValueReferenceParameter(*parameter, parameterType,
+                    currentType + "." + stmt->name->value);
                 if (!IsKnownType(parameterType))
                     Report("unknown parameter type '" + parameterType + "' of interface method '" +
                         currentType + "." + stmt->name->value + "'");

@@ -43,6 +43,7 @@ namespace Absolute {
                 std::make_unique<IdentifierExpr>(identifier ? identifier->name : std::string{}),
                 nullptr);
             result->isConst = parameter.isConst;
+            result->isReference = parameter.isReference;
             return result;
         }
 

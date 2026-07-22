@@ -16,6 +16,9 @@ namespace Absolute{
             const bool isConst = CurrentToken()->type == TokenType::KEYWORD &&
                 CurrentToken()->value == "const";
             if (isConst) Consume(TokenType::KEYWORD, "const");
+            const bool isReference = CurrentToken() &&
+                CurrentToken()->type == TokenType::KEYWORD && CurrentToken()->value == "ref";
+            if (isReference) Consume(TokenType::KEYWORD, "ref");
             std::unique_ptr<TypeExpr> type = ParseType();
             std::unique_ptr<Expression> nameExpr = ParsePrimaryExpr();
 
@@ -26,12 +29,14 @@ namespace Absolute{
                 auto parameter = std::make_unique<VarDeclExpr>(
                     std::move(type), std::move(nameExpr), std::move(value));
                 parameter->isConst = isConst;
+                parameter->isReference = isReference;
                 parameters.push_back(std::move(parameter));
             }
             else {
                 auto parameter = std::make_unique<VarDeclExpr>(
                     std::move(type), std::move(nameExpr), nullptr);
                 parameter->isConst = isConst;
+                parameter->isReference = isReference;
                 parameters.push_back(std::move(parameter));
             }
 

@@ -207,9 +207,14 @@
   принимает только независимые от lifetime скаляры и enum; managed/raw pointers,
   arrays/slices, string, func/task и aggregate value-типы отклоняются Analyzer до
   CodeGen. Новый runtime-вид указателя не добавлялся.
-- [ ] Исследовать `ref`/`const ref` для больших resource-free value-типов отдельно
-  от lifetime correctness: определить ABI, правила escape и выигрыш на benchmark до
-  добавления синтаксиса.
+- [x] Исследовать `ref`/`const ref` для больших resource-free value-типов отдельно
+  от lifetime correctness: parameter-only borrow по ABI является `nonnull nocapture`
+  pointer без нового runtime pointer kind; escape/alias/async-границы зафиксированы,
+  benchmark 128-байтного struct показал 1.19x на 20 млн opaque-вызовов.
+- [x] Реализовать parameter-only `const ref`/`ref` по `docs/value-references.md`:
+  parser и signature contracts, conservative mutable-alias checking, temporary
+  lifetime для `const ref`, virtual/interface/constructor ABI и LLVM
+  `nonnull`/`nocapture`/`readonly`; async/C ABI/closures/resources отсекаются.
 - [ ] Определить weak/non-owning managed references.
 - [ ] Проверить циклические графы объектов и выбрать стратегию их очистки.
 - [ ] Добавить sanitizer-набор тестов на use-after-free, double-free и утечки.

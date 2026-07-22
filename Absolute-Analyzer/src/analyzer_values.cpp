@@ -730,6 +730,23 @@ namespace Absolute {
         accessMode = previousAccess;
         if (expr->op == "&") {
             if (!operand.isLValue) Report("operator '&' requires an assignable value");
+            Expression* root = expr->operand.get();
+            while (root) {
+                if (auto* member = dynamic_cast<MemberAccessExpr*>(root)) {
+                    root = member->base.get();
+                    continue;
+                }
+                if (auto* array = dynamic_cast<ArrayAccessExpr*>(root)) {
+                    root = array->base.get();
+                    continue;
+                }
+                break;
+            }
+            const ExpressionInfo* rootInfo = root ? GetExpressionInfo(*root) : nullptr;
+            const Symbol* rootSymbol = rootInfo ? table.Get(rootInfo->symbol) : nullptr;
+            if (rootSymbol && rootSymbol->valueReference)
+                Report("a value-reference parameter cannot be converted to a raw pointer",
+                    "E_VALUE_REF_ADDRESS_ESCAPE", rootSymbol->id);
             CheckMutableTarget(expr->operand.get(), operand, "taking a mutable address");
             Save(expr, {InvalidSymbolId, "raw " + operand.type + "*", false, false, false,
                 InitializationState::Initialized, PointerValidity::Live, operand.symbol});
@@ -883,6 +900,9 @@ namespace Absolute {
             if (!parameter) continue;
             const std::string name = ExtractIdentifier(parameter->name.get());
             const std::string type = ResolveDeclaredType(*parameter);
+            if (parameter->isReference)
+                Report("lambda parameters cannot be value references",
+                    "E_VALUE_REF_LAMBDA");
             parameterTypes.push_back(type);
             if (name.empty()) Report("lambda parameter requires a name", "E_LAMBDA_PARAMETER");
             else if (const auto declared = table.Declare(SymbolKind::Parameter, name, type))

@@ -54,6 +54,8 @@ namespace Absolute {
         bool exportedFunction = false;
         bool isConst = false;
         bool isStatic = false;
+        bool valueReference = false;
+        bool constValueReference = false;
         bool canRead = true;
         bool canWrite = true;
         bool arrayStorageEscapes = false;
@@ -426,6 +428,9 @@ namespace Absolute {
             const std::string& member, SymbolId symbol = InvalidSymbolId);
         void RequireAccess(const MemberSignature& member, const std::string& name);
         std::string CommonType(const std::string& left, const std::string& right) const;
+        void ValidateValueReferenceParameter(VarDeclExpr& parameter,
+            const std::string& type, const std::string& callable,
+            bool asyncCallable = false, bool cAbi = false);
         std::vector<std::string> ResolveParameterTypes(const std::vector<std::unique_ptr<VarDeclExpr>>& parameters);
         void DeclareGlobalFunction(FunctionDeclStmt& statement);
         void ResolveFunction(FunctionDeclStmt& statement, SymbolKind kind);

@@ -2,9 +2,11 @@
 
 namespace Absolute {
     bool CodeGenerator::Impl::IsIndirectValueType(const std::string& name) {
-        if (!structs.contains(name)) return false;
-        FinalizeStruct(name);
-        return module->getDataLayout().getTypeAllocSize(structs.at(name).llvmType).getFixedValue() >
+        const std::string valueType = ValueReferenceBaseTypeName(name);
+        if (!structs.contains(valueType)) return false;
+        FinalizeStruct(valueType);
+        return module->getDataLayout().getTypeAllocSize(
+            structs.at(valueType).llvmType).getFixedValue() >
             DirectValueAbiLimit;
     }
 
@@ -15,6 +17,7 @@ namespace Absolute {
 
     llvm::Type* CodeGenerator::Impl::AbiParameterType(
         const std::string& name, bool external) {
+        if (!external && IsValueReferenceTypeName(name)) return builder.getPtrTy();
         return !external && IsIndirectValueType(name) ? builder.getPtrTy() : TypeFromName(name);
     }
 
@@ -58,8 +61,13 @@ namespace Absolute {
             if (loweredIndex >= functionType->getNumParams())
                 Fail("too many ABI arguments");
             const std::string& typeName = parameterTypeNames[index];
-            if (!external && IsIndirectValueType(typeName)) {
-                llvm::Type* valueType = TypeFromName(typeName);
+            const std::string valueTypeName = ValueReferenceBaseTypeName(typeName);
+            if (!external && IsValueReferenceTypeName(typeName)) {
+                loweredArguments.push_back(Coerce(argumentValues[index],
+                    functionType->getParamType(loweredIndex++)));
+            }
+            else if (!external && IsIndirectValueType(valueTypeName)) {
+                llvm::Type* valueType = TypeFromName(valueTypeName);
                 llvm::AllocaInst* copy = CreateEntryAlloca(
                     *caller, valueType, "value.argument.copy");
                 builder.CreateStore(Coerce(argumentValues[index], valueType), copy);

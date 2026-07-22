@@ -8,6 +8,8 @@
 
         std::string DeclaredTypeName(VarDeclExpr& expression);
 
+        std::string CallableParameterTypeName(VarDeclExpr& expression);
+
         std::string QualifiedClassName(const std::string& name, const std::string& nameSpace) const;
 
         void CollectClass(ClassDeclStmt& statement, const std::string& nameSpace,

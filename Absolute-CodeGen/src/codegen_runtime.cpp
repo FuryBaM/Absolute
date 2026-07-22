@@ -187,7 +187,21 @@ namespace Absolute {
 
     llvm::Value* CodeGenerator::Impl::EvaluateCallArgument(
         Expression* expression, std::vector<llvm::Value*>& temporaryArrayOwners,
-        std::vector<llvm::Value*>& temporaryClosureOwners) {
+        std::vector<llvm::Value*>& temporaryClosureOwners,
+        const std::string& parameterType) {
+        if (IsValueReferenceTypeName(parameterType)) {
+            const ExpressionInfo* info = analyzer && expression
+                ? analyzer->GetExpressionInfo(*expression) : nullptr;
+            if (info && info->isLValue) return EvaluateAddress(expression);
+            if (!IsConstValueReferenceTypeName(parameterType))
+                Fail("mutable ref argument requires an addressable lvalue");
+            llvm::Value* value = Evaluate(expression);
+            llvm::Type* valueType = TypeFromName(ValueReferenceBaseTypeName(parameterType));
+            llvm::AllocaInst* temporary = CreateEntryAlloca(
+                *CurrentFunction(), valueType, "const.ref.temporary");
+            builder.CreateStore(Coerce(value, valueType), temporary);
+            return temporary;
+        }
         llvm::Value* argument = Evaluate(expression);
         if (valueCreatesArrayOwner) temporaryArrayOwners.push_back(valueArrayOwner);
         if (valueCreatesClosureOwner) temporaryClosureOwners.push_back(argument);

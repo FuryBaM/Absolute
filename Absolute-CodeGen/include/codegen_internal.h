@@ -90,6 +90,26 @@ namespace Absolute {
             return name.size() > 6 && name.starts_with("task<") && name.ends_with(">");
         }
 
+        inline bool IsValueReferenceTypeName(const std::string& type) {
+            return type.starts_with("ref ") || type.starts_with("const ref ");
+        }
+
+        inline bool IsConstValueReferenceTypeName(const std::string& type) {
+            return type.starts_with("const ref ");
+        }
+
+        inline std::string ValueReferenceBaseTypeName(const std::string& type) {
+            if (type.starts_with("const ref ")) return type.substr(10);
+            if (type.starts_with("ref ")) return type.substr(4);
+            return type;
+        }
+
+        inline std::string ValueReferenceTypeName(
+            const std::string& type, bool isConst, bool isReference) {
+            if (!isReference) return type;
+            return std::string(isConst ? "const ref " : "ref ") + type;
+        }
+
         inline bool HasModifier(const Statement& statement, const std::string& name) {
             return std::any_of(statement.modifiers.begin(), statement.modifiers.end(),
                 [&](const Token& modifier) { return modifier.value == name; });
@@ -100,6 +120,21 @@ namespace Absolute {
                 function.addFnAttr(llvm::Attribute::AlwaysInline);
             if (statement.FindAttribute("noinline"))
                 function.addFnAttr(llvm::Attribute::NoInline);
+        }
+
+        inline void ApplyValueReferenceParameterAttributes(
+            llvm::Function& function, unsigned offset,
+            const std::vector<std::string>& parameterTypes) {
+            for (size_t index = 0; index < parameterTypes.size(); ++index) {
+                const std::string& type = parameterTypes[index];
+                if (!IsValueReferenceTypeName(type)) continue;
+                llvm::Argument* argument = function.getArg(
+                    offset + static_cast<unsigned>(index));
+                argument->addAttr(llvm::Attribute::NonNull);
+                argument->addAttr(llvm::Attribute::NoCapture);
+                if (IsConstValueReferenceTypeName(type))
+                    argument->addAttr(llvm::Attribute::ReadOnly);
+            }
         }
 
         inline size_t ArrayRankName(std::string type) {
@@ -127,6 +162,10 @@ namespace Absolute {
                 size_t endPos = type.find_last_not_of(" \t");
                 type = type.substr(startPos, endPos - startPos + 1);
             }
+            if (IsValueReferenceTypeName(type))
+                return ValueReferenceTypeName(
+                    SubstituteCodegenType(ValueReferenceBaseTypeName(type), substitutions),
+                    IsConstValueReferenceTypeName(type), true);
             if (const auto found = substitutions.find(type); found != substitutions.end())
                 return found->second;
 

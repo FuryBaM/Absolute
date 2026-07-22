@@ -1,0 +1,18 @@
+if(NOT DEFINED IR_FILE OR NOT EXISTS "${IR_FILE}")
+    message(FATAL_ERROR "Value-reference LLVM IR file is missing: ${IR_FILE}")
+endif()
+
+file(READ "${IR_FILE}" IR)
+
+if(NOT IR MATCHES "define i64 @inspect\\(ptr nocapture nonnull readonly %value\\)")
+    message(FATAL_ERROR "const ref parameter is missing nonnull/nocapture/readonly attributes")
+endif()
+if(NOT IR MATCHES "define void @add\\(ptr nocapture nonnull %value, i64 %amount\\)")
+    message(FATAL_ERROR "mutable ref parameter is missing nonnull/nocapture attributes")
+endif()
+if(NOT IR MATCHES "const\\.ref\\.temporary")
+    message(FATAL_ERROR "const ref temporary lifetime storage was not emitted")
+endif()
+if(IR MATCHES "value\\.argument\\.copy")
+    message(FATAL_ERROR "value-reference call unexpectedly materializes a by-value copy")
+endif()

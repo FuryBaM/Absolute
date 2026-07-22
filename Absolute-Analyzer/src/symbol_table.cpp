@@ -30,11 +30,22 @@ namespace Absolute {
                 (existing->kind == SymbolKind::Function || existing->kind == SymbolKind::Method ||
                     existing->kind == SymbolKind::Indexer);
             if (!callable || !existingCallable) return std::nullopt;
+            const auto sameParameterStorage = [](const std::string& left,
+                const std::string& right) {
+                const auto base = [](const std::string& type) {
+                    if (type.starts_with("const ref ")) return type.substr(10);
+                    if (type.starts_with("ref ")) return type.substr(4);
+                    return type;
+                };
+                return base(left) == base(right);
+            };
             for (const Symbol& symbol : symbols) {
                 if (symbol.scopeDepth == ScopeDepth() && symbol.name == name &&
                     (symbol.kind == SymbolKind::Function || symbol.kind == SymbolKind::Method ||
                         symbol.kind == SymbolKind::Indexer) &&
-                    symbol.parameterTypes == parameterTypes)
+                    symbol.parameterTypes.size() == parameterTypes.size() &&
+                    std::equal(symbol.parameterTypes.begin(), symbol.parameterTypes.end(),
+                        parameterTypes.begin(), sameParameterStorage))
                     return std::nullopt;
             }
         }

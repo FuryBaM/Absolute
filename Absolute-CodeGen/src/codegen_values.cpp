@@ -471,13 +471,17 @@ namespace Absolute {
             if (llvm::Function* constructor = impl->module->getFunction(info.name + ".__ctor")) {
                 std::vector<llvm::Value*> arguments;
                 std::vector<std::string> parameterTypes;
-                for (const auto& argument : expr->arguments)
-                    arguments.push_back(impl->Evaluate(argument.get()));
                 if (info.constructor) {
                     for (const auto& parameter : info.constructor->parameters)
                         parameterTypes.push_back(SubstituteCodegenType(
-                            impl->DeclaredTypeName(*parameter), info.substitutions));
+                            impl->CallableParameterTypeName(*parameter), info.substitutions));
                 }
+                std::vector<llvm::Value*> temporaryArrays;
+                std::vector<llvm::Value*> temporaryClosures;
+                for (size_t index = 0; index < expr->arguments.size(); ++index)
+                    arguments.push_back(impl->EvaluateCallArgument(
+                        expr->arguments[index].get(), temporaryArrays, temporaryClosures,
+                        index < parameterTypes.size() ? parameterTypes[index] : std::string{}));
                 impl->EmitAbiCall(constructor->getFunctionType(), constructor, "void",
                     {pointer}, parameterTypes, arguments, "constructor.result");
                 impl->EmitExceptionCheck(
@@ -500,11 +504,15 @@ namespace Absolute {
                 if (!constructor) impl->Fail("missing constructor for '" + info.name + "'");
                 std::vector<llvm::Value*> arguments;
                 std::vector<std::string> parameterTypes;
-                for (const auto& argument : expr->arguments)
-                    arguments.push_back(impl->Evaluate(argument.get()));
                 for (const auto& parameter : info.constructor->parameters)
                     parameterTypes.push_back(SubstituteCodegenType(
-                        impl->DeclaredTypeName(*parameter), info.substitutions));
+                        impl->CallableParameterTypeName(*parameter), info.substitutions));
+                std::vector<llvm::Value*> temporaryArrays;
+                std::vector<llvm::Value*> temporaryClosures;
+                for (size_t index = 0; index < expr->arguments.size(); ++index)
+                    arguments.push_back(impl->EvaluateCallArgument(
+                        expr->arguments[index].get(), temporaryArrays, temporaryClosures,
+                        index < parameterTypes.size() ? parameterTypes[index] : std::string{}));
                 impl->EmitAbiCall(constructor->getFunctionType(), constructor, "void",
                     {pointer}, parameterTypes, arguments, "constructor.result");
                 impl->EmitExceptionCheck(

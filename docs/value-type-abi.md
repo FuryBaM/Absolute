@@ -42,12 +42,17 @@ define void @consume(ptr %value)
 
 ## Copy and move rules
 
-The language currently exposes no destructive `move` expression. A compiler
-may forward return storage, remove aggregate load/store pairs, or reuse a
-temporary only under the normal as-if rule: the optimization must not introduce
-aliasing and must not change observable pointer, cleanup, or mutation behavior.
-Consequently, returning a local value is eligible for copy elision but does not
-invalidate that local at the language level.
+The explicit `move(...)` operation transfers a resource-owning aggregate and
+invalidates its source binding. Resource-free values retain normal copy
+semantics. A compiler may forward return storage, remove aggregate load/store
+pairs, or reuse a temporary only under the normal as-if rule: the optimization
+must not introduce aliasing and must not change observable pointer, cleanup, or
+mutation behavior.
+
+Parameter-only `ref`/`const ref` borrows are designed separately from ownership
+and are not part of the implemented ABI yet. Their proposed lowering, escape
+rules, and benchmark evidence are documented in
+[`value-references.md`](value-references.md).
 
 All objects linked through this internal ABI must be rebuilt with the same
 compiler ABI revision. `extern "C"` declarations and `export "C"` definitions

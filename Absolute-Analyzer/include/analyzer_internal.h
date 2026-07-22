@@ -5,6 +5,25 @@
 #include "syntax_plugins.h"
 
 namespace Absolute {
+    inline bool IsValueReferenceType(const std::string& type) {
+        return type.starts_with("ref ") || type.starts_with("const ref ");
+    }
+
+    inline bool IsConstValueReferenceType(const std::string& type) {
+        return type.starts_with("const ref ");
+    }
+
+    inline std::string ValueReferenceBaseType(const std::string& type) {
+        if (type.starts_with("const ref ")) return type.substr(10);
+        if (type.starts_with("ref ")) return type.substr(4);
+        return type;
+    }
+
+    inline std::string ValueReferenceType(
+        const std::string& type, bool isConst, bool isReference) {
+        if (!isReference) return type;
+        return std::string(isConst ? "const ref " : "ref ") + type;
+    }
     namespace {
         template <typename T, typename Visitor>
         void AcceptIfPresent(const std::unique_ptr<T>& node, Visitor& visitor) {
@@ -112,6 +131,10 @@ namespace Absolute {
 
         inline std::string SubstituteGenericType(const std::string& type,
             const std::unordered_map<std::string, std::string>& substitutions) {
+            if (IsValueReferenceType(type))
+                return ValueReferenceType(
+                    SubstituteGenericType(ValueReferenceBaseType(type), substitutions),
+                    IsConstValueReferenceType(type), true);
             if (const auto found = substitutions.find(type); found != substitutions.end())
                 return found->second;
             if (type.ends_with("[]"))

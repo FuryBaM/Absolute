@@ -3,7 +3,8 @@
 namespace Absolute {
     std::string g_last_context = "none";
     llvm::Type* CodeGenerator::Impl::TypeFromName(const std::string& rawName) {
-        const std::string name = SubstituteCodegenType(rawName, currentGenericSubstitutions);
+        const std::string name = ValueReferenceBaseTypeName(
+            SubstituteCodegenType(rawName, currentGenericSubstitutions));
         if (ArrayRankName(name) > 0) return ArrayDescriptorType(name);
 
         if (IsTaskTypeName(name)) return builder.getPtrTy();
@@ -86,6 +87,11 @@ namespace Absolute {
         if (const auto* declarator = dynamic_cast<const ArrayAccessExpr*>(expression.name.get()))
             for (size_t index = 0; index < declarator->indexes.size(); ++index) type += "[]";
         return type;
+    }
+
+    std::string CodeGenerator::Impl::CallableParameterTypeName(VarDeclExpr& expression) {
+        return ValueReferenceTypeName(
+            DeclaredTypeName(expression), expression.isConst, expression.isReference);
     }
 
 
@@ -372,7 +378,7 @@ namespace Absolute {
             std::vector<std::string> parameterTypes;
             for (const auto& parameter : statement->parameters)
                 parameterTypes.push_back(SubstituteCodegenType(
-                    DeclaredTypeName(*parameter), info.substitutions));
+                    CallableParameterTypeName(*parameter), info.substitutions));
             const std::string methodKey = CallableKey(statement->name->value, parameterTypes);
             const bool staticMethod = HasModifier(*statement, "static");
             if (staticMethod) {
@@ -480,7 +486,8 @@ namespace Absolute {
             std::vector<std::string> parameterTypes;
             parameterTypes.reserve(statement->parameters.size());
             for (const auto& parameter : statement->parameters)
-                parameterTypes.push_back(SubstituteCodegenType(DeclaredTypeName(*parameter), info.substitutions));
+                parameterTypes.push_back(SubstituteCodegenType(
+                    CallableParameterTypeName(*parameter), info.substitutions));
             const std::string methodName = statement->name->value;
             const std::string methodKey = CallableKey(methodName, parameterTypes);
             if (info.methods.contains(methodKey))
@@ -593,7 +600,7 @@ namespace Absolute {
             std::vector<std::string> parameterTypes;
             parameterTypes.reserve(statement->parameters.size());
             for (const auto& parameter : statement->parameters)
-                parameterTypes.push_back(DeclaredTypeName(*parameter));
+                parameterTypes.push_back(CallableParameterTypeName(*parameter));
             const std::string methodKey = CallableKey(methodName, parameterTypes);
             const auto inherited = info.methods.find(methodKey);
             std::optional<unsigned> slot;
@@ -680,6 +687,7 @@ namespace Absolute {
         unsigned offset = AbiReturnOffset(method.returnType);
         if (offset != 0) function->getArg(0)->setName("__result");
         if (!method.isStatic) function->getArg(offset++)->setName("this");
+        ApplyValueReferenceParameterAttributes(*function, offset, method.parameterTypes);
         for (size_t index = 0; index < method.statement->parameters.size(); ++index)
             function->getArg(static_cast<unsigned>(index) + offset)->setName(
                 IdentifierName(method.statement->parameters[index]->name.get()));
@@ -798,7 +806,7 @@ namespace Absolute {
         if (info.constructor)
             for (const auto& parameter : info.constructor->parameters)
                 parameters.push_back(AbiParameterType(SubstituteCodegenType(
-                    DeclaredTypeName(*parameter), info.substitutions)));
+                    CallableParameterTypeName(*parameter), info.substitutions)));
         llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
         const std::string name = info.name + ".__ctor";
         llvm::Function* function = module->getFunction(name);
@@ -806,6 +814,13 @@ namespace Absolute {
             function = llvm::Function::Create(type, llvm::Function::ExternalLinkage, name, *module);
         function->setCallingConv(llvm::CallingConv::C);
         if (info.constructor) ApplyCallableAttributes(*function, *info.constructor);
+        if (info.constructor) {
+            std::vector<std::string> parameterTypes;
+            for (const auto& parameter : info.constructor->parameters)
+                parameterTypes.push_back(SubstituteCodegenType(
+                    CallableParameterTypeName(*parameter), info.substitutions));
+            ApplyValueReferenceParameterAttributes(*function, 1, parameterTypes);
+        }
         function->getArg(0)->setName("this");
         if (info.constructor)
             for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
@@ -819,7 +834,7 @@ namespace Absolute {
         std::vector<llvm::Type*> parameters{builder.getPtrTy()};
         for (const auto& parameter : info.constructor->parameters)
             parameters.push_back(AbiParameterType(SubstituteCodegenType(
-                DeclaredTypeName(*parameter), info.substitutions)));
+                CallableParameterTypeName(*parameter), info.substitutions)));
         llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
         const std::string name = info.name + ".__ctor";
         llvm::Function* function = module->getFunction(name);
@@ -829,6 +844,13 @@ namespace Absolute {
             Fail("conflicting constructor declaration '" + name + "'");
         function->setCallingConv(llvm::CallingConv::C);
         ApplyCallableAttributes(*function, *info.constructor);
+        {
+            std::vector<std::string> parameterTypes;
+            for (const auto& parameter : info.constructor->parameters)
+                parameterTypes.push_back(SubstituteCodegenType(
+                    CallableParameterTypeName(*parameter), info.substitutions));
+            ApplyValueReferenceParameterAttributes(*function, 1, parameterTypes);
+        }
         function->getArg(0)->setName("this");
         for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
             function->getArg(static_cast<unsigned>(index + 1))->setName(

@@ -166,9 +166,11 @@ namespace Absolute {
             std::vector<llvm::Value*> arguments;
             std::vector<llvm::Value*> temporaryArrayOwners;
             std::vector<llvm::Value*> temporaryClosureOwners;
-            for (const auto& argument : expr->arguments)
+            for (size_t index = 0; index < expr->arguments.size(); ++index)
                 arguments.push_back(impl->EvaluateCallArgument(
-                    argument.get(), temporaryArrayOwners, temporaryClosureOwners));
+                    expr->arguments[index].get(), temporaryArrayOwners,
+                    temporaryClosureOwners, selected && index < selected->parameterTypes.size()
+                        ? selected->parameterTypes[index] : std::string{}));
             impl->value = impl->EmitAbiCall(functionType, callee,
                 functionValueReturn, {environment}, functionValueParameters, arguments,
                 "function.value.result");
@@ -188,9 +190,11 @@ namespace Absolute {
             std::vector<llvm::Value*> arguments;
             std::vector<llvm::Value*> temporaryArrayOwners;
             std::vector<llvm::Value*> temporaryClosureOwners;
-            for (const auto& argument : expr->arguments)
+            for (size_t index = 0; index < expr->arguments.size(); ++index)
                 arguments.push_back(impl->EvaluateCallArgument(
-                    argument.get(), temporaryArrayOwners, temporaryClosureOwners));
+                    expr->arguments[index].get(), temporaryArrayOwners,
+                    temporaryClosureOwners, index < selected->parameterTypes.size()
+                        ? selected->parameterTypes[index] : std::string{}));
             llvm::Value* result = impl->EmitAbiCall(function->getFunctionType(), function,
                 selected->type, {}, selected->parameterTypes, arguments, "static.method.result");
             impl->ReleaseArrayTemporaries(temporaryArrayOwners);
@@ -211,10 +215,15 @@ namespace Absolute {
                 std::vector<llvm::Value*> temporaryClosureOwners;
                 arguments.reserve(expr->arguments.size() + 1);
                 arguments.push_back(impl->EvaluateCallArgument(
-                    member->base.get(), temporaryArrayOwners, temporaryClosureOwners));
-                for (const auto& argument : expr->arguments)
+                    member->base.get(), temporaryArrayOwners, temporaryClosureOwners,
+                    selected->parameterTypes.empty()
+                        ? std::string{} : selected->parameterTypes.front()));
+                for (size_t index = 0; index < expr->arguments.size(); ++index)
                     arguments.push_back(impl->EvaluateCallArgument(
-                        argument.get(), temporaryArrayOwners, temporaryClosureOwners));
+                        expr->arguments[index].get(), temporaryArrayOwners,
+                        temporaryClosureOwners,
+                        index + 1 < selected->parameterTypes.size()
+                            ? selected->parameterTypes[index + 1] : std::string{}));
                 llvm::Value* result = impl->EmitAbiCall(function->getFunctionType(), function,
                     selected->type, {}, selected->parameterTypes, arguments,
                     member->member + ".extension.result");
@@ -241,9 +250,11 @@ namespace Absolute {
                 std::vector<llvm::Value*> arguments;
                 std::vector<llvm::Value*> temporaryArrayOwners;
                 std::vector<llvm::Value*> temporaryClosureOwners;
-                for (const auto& argument : expr->arguments)
+                for (size_t index = 0; index < expr->arguments.size(); ++index)
                     arguments.push_back(impl->EvaluateCallArgument(
-                        argument.get(), temporaryArrayOwners, temporaryClosureOwners));
+                        expr->arguments[index].get(), temporaryArrayOwners,
+                        temporaryClosureOwners, index < method->second.parameterTypes.size()
+                            ? method->second.parameterTypes[index] : std::string{}));
 
                 llvm::Value* callee = nullptr;
                 if (method->second.virtualSlot) {
@@ -287,9 +298,11 @@ namespace Absolute {
                 std::vector<llvm::Value*> arguments;
                 std::vector<llvm::Value*> temporaryArrayOwners;
                 std::vector<llvm::Value*> temporaryClosureOwners;
-                for (const auto& argument : expr->arguments)
+                for (size_t index = 0; index < expr->arguments.size(); ++index)
                     arguments.push_back(impl->EvaluateCallArgument(
-                        argument.get(), temporaryArrayOwners, temporaryClosureOwners));
+                        expr->arguments[index].get(), temporaryArrayOwners,
+                        temporaryClosureOwners, index < method->second.parameterTypes.size()
+                            ? method->second.parameterTypes[index] : std::string{}));
                 llvm::Value* vtable = impl->builder.CreateLoad(
                     impl->builder.getPtrTy(), object, "interface.vtable");
                 llvm::Value* slot = impl->builder.CreateGEP(
@@ -321,9 +334,11 @@ namespace Absolute {
                 std::vector<llvm::Value*> arguments;
                 std::vector<llvm::Value*> temporaryArrayOwners;
                 std::vector<llvm::Value*> temporaryClosureOwners;
-                for (const auto& argument : expr->arguments)
+                for (size_t index = 0; index < expr->arguments.size(); ++index)
                     arguments.push_back(impl->EvaluateCallArgument(
-                        argument.get(), temporaryArrayOwners, temporaryClosureOwners));
+                        expr->arguments[index].get(), temporaryArrayOwners,
+                        temporaryClosureOwners, index < method->second.parameterTypes.size()
+                            ? method->second.parameterTypes[index] : std::string{}));
                 llvm::Function* callee = impl->module->getFunction(method->second.linkName);
                 if (!callee) impl->Fail("missing method function '" + method->second.linkName + "'");
                 llvm::Value* result = impl->EmitAbiCall(methodType, callee,
@@ -350,9 +365,12 @@ namespace Absolute {
         std::vector<llvm::Value*> temporaryClosureOwners;
         arguments.reserve(expr->arguments.size());
         std::vector<std::string> parameterTypes;
-        for (const auto& expression : expr->arguments) {
+        for (size_t index = 0; index < expr->arguments.size(); ++index) {
+            const auto& expression = expr->arguments[index];
+            const std::string parameterType = selected && index < selected->parameterTypes.size()
+                ? selected->parameterTypes[index] : std::string{};
             arguments.push_back(impl->EvaluateCallArgument(
-                expression.get(), temporaryArrayOwners, temporaryClosureOwners));
+                expression.get(), temporaryArrayOwners, temporaryClosureOwners, parameterType));
             parameterTypes.push_back(impl->SemanticType(expression.get()));
         }
         if (selected) parameterTypes = selected->parameterTypes;

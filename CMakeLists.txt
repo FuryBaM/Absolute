@@ -414,6 +414,25 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.async-method-override-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
+        NAME absolute.value-ref-by-value-semantic
+        COMMAND Absolute-Compiler
+            "${PROJECT_SOURCE_DIR}/benchmarks/value-ref-suite/absolute/by-value.abs"
+    )
+    add_test(
+        NAME absolute.value-ref-raw-borrow-semantic
+        COMMAND Absolute-Compiler
+            "${PROJECT_SOURCE_DIR}/benchmarks/value-ref-suite/absolute/raw-borrow.abs"
+    )
+    add_test(
+        NAME absolute.value-references-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/value-references.abs"
+    )
+    add_test(
+        NAME absolute.value-reference-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/value-reference-errors.abs"
+    )
+    set_tests_properties(absolute.value-reference-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.array-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-errors.abs"
     )
@@ -1665,6 +1684,37 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-async-methods PROPERTIES
             FIXTURES_REQUIRED absolute-async-methods-executable
             PASS_REGULAR_EXPRESSION "async-methods=ok"
+        )
+        add_test(
+            NAME absolute.emit-value-references
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/value-references.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/value-references.ll"
+        )
+        set_tests_properties(absolute.emit-value-references PROPERTIES
+            FIXTURES_SETUP absolute-value-references-ir
+        )
+        add_test(
+            NAME absolute.check-value-references-ir
+            COMMAND ${CMAKE_COMMAND}
+                -DIR_FILE=${CMAKE_BINARY_DIR}/value-references.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-value-references-ir.cmake"
+        )
+        set_tests_properties(absolute.check-value-references-ir PROPERTIES
+            FIXTURES_REQUIRED absolute-value-references-ir
+        )
+        add_test(
+            NAME absolute.build-value-references
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/value-references.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/value-references-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-value-references PROPERTIES
+            FIXTURES_SETUP absolute-value-references-executable
+        )
+        add_test(NAME absolute.run-value-references
+            COMMAND "${CMAKE_BINARY_DIR}/value-references-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-value-references PROPERTIES
+            FIXTURES_REQUIRED absolute-value-references-executable
+            PASS_REGULAR_EXPRESSION "value-references=ok"
         )
     endif()
 endif()

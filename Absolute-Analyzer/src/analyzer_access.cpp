@@ -99,6 +99,13 @@ namespace Absolute {
                 return false;
             if (context.capturedSymbols.contains(captureId)) return true;
 
+            if (captured.valueReference) {
+                Report("lambda cannot capture value-reference parameter '" + captured.name + "'",
+                    "E_VALUE_REF_CAPTURE", captureId);
+                context.capturedSymbols.insert(captureId);
+                return true;
+            }
+
             std::string closureReturn;
             std::vector<std::string> closureParameters;
             const bool nestedFunction = ParseFunctionType(
@@ -144,6 +151,10 @@ namespace Absolute {
         const bool functionValue = symbol->kind == SymbolKind::Function &&
             symbol->genericParameters.empty() && !symbol->externalFunction &&
             !symbol->exportedFunction;
+        if (functionValue && std::any_of(symbol->parameterTypes.begin(),
+            symbol->parameterTypes.end(), IsValueReferenceType))
+            Report("function with value-reference parameters cannot be stored in a func value",
+                "E_VALUE_REF_FUNCTION_VALUE", id);
         if (symbol->kind == SymbolKind::Function &&
             (symbol->externalFunction || symbol->exportedFunction))
             Report("C ABI function '" + expr->name +
@@ -194,11 +205,23 @@ namespace Absolute {
                 Report("constructor of '" + typeName + "' expects " + std::to_string(expected.size()) +
                     " argument(s), got " + std::to_string(expr->arguments.size()));
             for (size_t i = 0; i < expr->arguments.size(); ++i) {
-                const Result argument = EvaluateExpected(expr->arguments[i].get(),
-                    i < expected.size() ? expected[i] : std::string{});
-                if (i < expected.size() && !IsAssignable(expected[i], argument.type))
+                const std::string expectedType = i < expected.size()
+                    ? expected[i] : std::string{};
+                const std::string expectedValueType = ValueReferenceBaseType(expectedType);
+                const Result argument = EvaluateExpected(
+                    expr->arguments[i].get(), expectedValueType);
+                if (i < expected.size() && !IsAssignable(expectedValueType, argument.type))
                     Report("constructor argument " + std::to_string(i + 1) + " has type '" + argument.type +
-                        "', expected '" + expected[i] + "'");
+                        "', expected '" + expectedValueType + "'");
+                if (IsValueReferenceType(expectedType) &&
+                    !IsConstValueReferenceType(expectedType)) {
+                    if (!argument.isLValue)
+                        Report("mutable ref constructor argument " + std::to_string(i + 1) +
+                            " requires an lvalue", "E_VALUE_REF_REQUIRES_LVALUE", argument.symbol);
+                    else if (IsConstMutationTarget(expr->arguments[i].get(), argument))
+                        Report("mutable ref constructor argument " + std::to_string(i + 1) +
+                            " cannot borrow a const value", "E_VALUE_REF_CONST_ARGUMENT", argument.symbol);
+                }
             }
             Save(expr, {InvalidSymbolId, typeName.empty() ? "error" : typeName, false});
             return;
@@ -475,14 +498,37 @@ namespace Absolute {
                 (selected && selected->extensionFunction && hasReceiver ? 1 : 0);
             if (selected && parameterIndex < selected->parameterTypes.size()) {
                 const std::string& parameterType = selected->parameterTypes[parameterIndex];
+                const std::string parameterValueType = ValueReferenceBaseType(parameterType);
+                if (IsValueReferenceType(parameterType)) {
+                    if (!IsConstValueReferenceType(parameterType)) {
+                        if (!argument.isLValue)
+                            Report("mutable ref argument " + std::to_string(i + 1) +
+                                " requires an lvalue", "E_VALUE_REF_REQUIRES_LVALUE",
+                                argument.symbol);
+                        else if (IsConstMutationTarget(expr->arguments[i].get(), argument))
+                            Report("mutable ref argument " + std::to_string(i + 1) +
+                                " cannot borrow a const value", "E_VALUE_REF_CONST_ARGUMENT",
+                                argument.symbol);
+                        for (size_t other = 0; other < arguments.size(); ++other) {
+                            if (other != i && argument.symbol != InvalidSymbolId &&
+                                arguments[other].symbol == argument.symbol) {
+                                Report("mutable ref argument " + std::to_string(i + 1) +
+                                    " overlaps another argument", "E_VALUE_REF_ALIAS",
+                                    argument.symbol);
+                                break;
+                            }
+                        }
+                    }
+                }
                 bool transfersAggregateOwner = argument.isMoveResult;
                 if (const Symbol* source = table.Get(argument.symbol)) {
                     transfersAggregateOwner = transfersAggregateOwner ||
                         source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;
                 }
-                if (ArrayRank(parameterType) == 0 && !IsPointerType(parameterType) &&
-                    TypeOwnsResources(parameterType) && !transfersAggregateOwner) {
-                    Report("resource-owning aggregate argument '" + parameterType +
+                if (!IsValueReferenceType(parameterType) &&
+                    ArrayRank(parameterValueType) == 0 && !IsPointerType(parameterValueType) &&
+                    TypeOwnsResources(parameterValueType) && !transfersAggregateOwner) {
+                    Report("resource-owning aggregate argument '" + parameterValueType +
                         "' cannot be copied by value; use move(...) for lvalues",
                         "E_RESOURCE_AGGREGATE_ARGUMENT", argument.symbol);
                 }

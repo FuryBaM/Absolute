@@ -584,7 +584,7 @@ when managed pointers are used.
 semantics: assigning, passing, or returning them copies the complete value.
 Structs containing managed pointers, owning array descriptors, or another
 resource-owning aggregate are move-only; implicit assignment, by-value arguments,
-and by-value returns are rejected until explicit `move` syntax is implemented.
+and by-value returns are rejected unless ownership is transferred with `move(...)`.
 Instance constructors and methods use the same syntax as class members:
 
 ```absolute
@@ -631,6 +631,25 @@ so mutating a by-value parameter never aliases the source. This applies equally
 to functions, methods, properties, and constructors. `extern "C"` declarations
 continue to use the platform C ABI. The exact lowering and copy-elision rules
 are documented in [docs/value-type-abi.md](docs/value-type-abi.md).
+
+Large resource-free structs may instead use parameter-only value references:
+
+```absolute
+int64 inspect(const ref LargeValue value) {
+    return value.first;
+}
+
+void normalize(ref LargeValue value) {
+    value.first = 0;
+}
+```
+
+`const ref` borrows read-only storage and accepts lvalues or a temporary valid
+through the call. `ref` requires a mutable lvalue and mutates caller storage.
+Both lower to a non-null, non-capturing LLVM pointer without creating a managed
+or raw pointer value. They cannot cross async/C-ABI/closure boundaries or borrow
+resource-owning aggregates; overlapping mutable arguments are rejected. See
+[docs/value-references.md](docs/value-references.md).
 
 ## Static members
 

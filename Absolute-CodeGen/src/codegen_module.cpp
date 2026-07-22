@@ -128,7 +128,7 @@ namespace Absolute {
         for (size_t index = 0; index < statement.parameters.size(); ++index) {
             const auto& parameter = statement.parameters[index];
             parameterTypeNames.push_back(specialization
-                ? specialization->parameterTypes[index] : DeclaredTypeName(*parameter));
+                ? specialization->parameterTypes[index] : CallableParameterTypeName(*parameter));
             parameterTypes.push_back(AbiParameterType(parameterTypeNames.back(), external));
         }
 
@@ -151,6 +151,8 @@ namespace Absolute {
                     existing->setDLLStorageClass(llvm::GlobalValue::DLLExportStorageClass);
             }
             ApplyCallableAttributes(*existing, statement);
+            ApplyValueReferenceParameterAttributes(*existing,
+                AbiReturnOffset(returnTypeName, external), parameterTypeNames);
             currentGenericSubstitutions = oldSubstitutions;
             return existing;
         }
@@ -167,6 +169,7 @@ namespace Absolute {
         unsigned argumentIndex = 0;
         if (AbiReturnOffset(returnTypeName, external) != 0)
             function->getArg(argumentIndex++)->setName("__result");
+        ApplyValueReferenceParameterAttributes(*function, argumentIndex, parameterTypeNames);
         for (const auto& parameter : statement.parameters)
             function->getArg(argumentIndex++)->setName(IdentifierName(parameter->name.get()));
         currentGenericSubstitutions = oldSubstitutions;
@@ -215,7 +218,7 @@ namespace Absolute {
         for (size_t index = 0; index < statement.parameters.size(); ++index) {
             const auto& parameter = statement.parameters[index];
             const std::string typeName = specialization
-                ? specialization->parameterTypes[index] : DeclaredTypeName(*parameter);
+                ? specialization->parameterTypes[index] : CallableParameterTypeName(*parameter);
             BindCallableParameter(*function->getArg(argumentIndex++), *parameter,
                 typeName, statement.UsesCAbi());
         }
@@ -248,9 +251,11 @@ namespace Absolute {
         llvm::Argument& argument, VarDeclExpr& parameter,
         const std::string& explicitTypeName, bool external) {
         const std::string name = IdentifierName(parameter.name.get());
-        const std::string typeName = explicitTypeName.empty()
-            ? SubstituteCodegenType(DeclaredTypeName(parameter), currentGenericSubstitutions)
+        const std::string declaredTypeName = explicitTypeName.empty()
+            ? SubstituteCodegenType(CallableParameterTypeName(parameter), currentGenericSubstitutions)
             : explicitTypeName;
+        const bool valueReference = IsValueReferenceTypeName(declaredTypeName);
+        const std::string typeName = ValueReferenceBaseTypeName(declaredTypeName);
         if (ArrayRankName(typeName) > 0) {
             ArrayView view = ArrayViewFromValue(&argument, typeName);
             Variable variable;
@@ -266,7 +271,7 @@ namespace Absolute {
                 Fail("duplicate parameter '" + name + "'");
             return;
         }
-        if (!external && IsIndirectValueType(typeName)) {
+        if (!external && (valueReference || IsIndirectValueType(typeName))) {
             if (!scopes.back().emplace(name,
                 Variable{&argument, TypeFromName(typeName), typeName, false, false, nullptr, {},
                     nullptr, SemanticSymbol(&parameter)}).second)
@@ -381,14 +386,22 @@ namespace Absolute {
                 if (!baseConstructor) Fail("missing base constructor for '" + info.baseClass + "'");
                 std::vector<llvm::Value*> arguments;
                 std::vector<std::string> parameterTypes;
-                if (info.constructor && info.constructor->hasExplicitBaseCall) {
-                    for (const auto& argument : info.constructor->baseArguments)
-                        arguments.push_back(Evaluate(argument.get()));
-                }
                 if (base->second.constructor) {
                     for (const auto& parameter : base->second.constructor->parameters)
                         parameterTypes.push_back(SubstituteCodegenType(
-                            DeclaredTypeName(*parameter), base->second.substitutions));
+                            CallableParameterTypeName(*parameter), base->second.substitutions));
+                }
+                if (info.constructor && info.constructor->hasExplicitBaseCall) {
+                    for (size_t index = 0;
+                        index < info.constructor->baseArguments.size(); ++index) {
+                        const std::string parameterType = index < parameterTypes.size()
+                            ? parameterTypes[index] : std::string{};
+                        std::vector<llvm::Value*> temporaryArrays;
+                        std::vector<llvm::Value*> temporaryClosures;
+                        arguments.push_back(EvaluateCallArgument(
+                            info.constructor->baseArguments[index].get(),
+                            temporaryArrays, temporaryClosures, parameterType));
+                    }
                 }
                 EmitAbiCall(baseConstructor->getFunctionType(), baseConstructor, "void",
                     {currentThis}, parameterTypes, arguments, "base.constructor.result");
