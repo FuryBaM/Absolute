@@ -1,8 +1,14 @@
+import std.time;
 import std.collections.vector;
 import std.collections.algorithms;
 
 int32 main() {
-    // 1. Test Array sort, binarySearch, reverse, indexOf, contains
+    println("=== test_algorithms.abs ===");
+    println("Date/time: 2026-07-22");
+
+    // --- Array tests ---
+    int64 t0 = Time.monotonic();
+
     int32[] arr = {5, 2, 8, 1, 9};
     assert(contains<int32>(arr, 8), "arr contains 8");
     assert(indexOf<int32>(arr, 8) == 2, "arr indexOf 8");
@@ -21,7 +27,12 @@ int32 main() {
     assert(arr[0] == 9, "reversed arr 0");
     assert(arr[4] == 1, "reversed arr 4");
 
-    // 2. Test Vector sort, binarySearch, reverse, indexOf
+    int64 t1 = Time.monotonic();
+    int64 arrayNs = t1 - t0;
+
+    // --- Vector tests ---
+    int64 tv0 = Time.monotonic();
+
     Vector<int32>* vec = new Vector<int32>();
     vec.push(40);
     vec.push(10);
@@ -43,6 +54,11 @@ int32 main() {
     assert(vec[0] == 40, "vec reversed 0");
     assert(vec[3] == 10, "vec reversed 3");
 
+    int64 tv1 = Time.monotonic();
+    int64 vectorNs = tv1 - tv0;
+
     println("All std.collections.algorithms tests passed successfully!");
+    println("  Array tests:  " + toString(arrayNs)  + " ns");
+    println("  Vector tests: " + toString(vectorNs) + " ns");
     return 0;
 }

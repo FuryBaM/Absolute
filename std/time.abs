@@ -1,0 +1,46 @@
+// std.time — Date, time, and benchmarking utilities for the Absolute standard library.
+//
+// Usage:
+//   import std.time;
+//   import "std/time.abs";
+//
+// Example:
+//   int64 start = Time.monotonic();
+//   // ... work ...
+//   int64 elapsed = Time.monotonic() - start;
+//   println("Elapsed ms: " + toString(elapsed / 1000000));
+
+extern "C" int64 absolute_time_unix_seconds();
+extern "C" int64 absolute_time_unix_millis();
+extern "C" int64 absolute_time_monotonic_nanos();
+extern "C" void  absolute_time_sleep(int32 milliseconds);
+
+namespace Time {
+    // Unix timestamp in whole seconds since 1970-01-01 00:00:00 UTC.
+    int64 unixSeconds() {
+        return absolute_time_unix_seconds();
+    }
+
+    // Unix timestamp in milliseconds since 1970-01-01 00:00:00 UTC.
+    int64 unixMillis() {
+        return absolute_time_unix_millis();
+    }
+
+    // High-resolution monotonic clock in nanoseconds.
+    // Use this for benchmarking: the difference between two calls gives
+    // elapsed nanoseconds independent of wall-clock changes.
+    int64 monotonic() {
+        return absolute_time_monotonic_nanos();
+    }
+
+    // Suspend the current thread for the given number of milliseconds.
+    void sleep(int32 milliseconds) {
+        absolute_time_sleep(milliseconds);
+    }
+
+    // Measure how many nanoseconds a block takes.
+    // Returns elapsed nanoseconds.
+    // Usage:
+    //   int64 ns = Time.benchmark(1000, fn);
+    //   println("per-iter ns: " + toString(ns / 1000));
+}
