@@ -464,7 +464,10 @@ namespace Absolute {
                 return false;
             }
             for (const auto& [memberName, overloads] : found->second.members) {
-                (void)memberName;
+                if (memberName == "destroy()") {
+                    release();
+                    return true;
+                }
                 for (const MemberSignature& member : overloads) {
                     if (member.isStatic || (member.kind != SymbolKind::Field &&
                         member.kind != SymbolKind::Property)) continue;

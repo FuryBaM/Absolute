@@ -909,6 +909,10 @@ namespace Absolute {
             
             const auto release = [&] { visiting.erase(candidate); };
             if (const auto found = classes.find(candidate); found != classes.end()) {
+                if (found->second.methods.contains("destroy()")) {
+                    release();
+                    return true;
+                }
                 for (const ClassField& field : found->second.fields) {
                     if (self(self, field.typeName)) {
                         release();
@@ -917,6 +921,10 @@ namespace Absolute {
                 }
             }
             else if (const auto found = structs.find(candidate); found != structs.end()) {
+                if (found->second.methods.contains("destroy()")) {
+                    release();
+                    return true;
+                }
                 for (const ClassField& field : found->second.fields) {
                     if (self(self, field.typeName)) {
                         release();
@@ -1008,6 +1016,15 @@ namespace Absolute {
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
         builder.SetInsertPoint(entry);
         llvm::Value* object = function->getArg(0);
+
+        auto destroyMethod = info.methods.find("destroy()");
+        if (destroyMethod != info.methods.end()) {
+            llvm::FunctionCallee callee = module->getOrInsertFunction(
+                destroyMethod->second.linkName, MethodFunctionType(destroyMethod->second));
+            EmitAbiCall(MethodFunctionType(destroyMethod->second), callee.getCallee(),
+                destroyMethod->second.returnType, {object}, destroyMethod->second.parameterTypes, {}, "class.destroy.user");
+        }
+
         for (auto field = info.fields.rbegin(); field != info.fields.rend(); ++field) {
             if (!TypeNeedsCleanup(field->typeName)) continue;
             EmitValueCleanup(FieldAddress(object, info, *field), field->typeName);
@@ -1030,6 +1047,15 @@ namespace Absolute {
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
         builder.SetInsertPoint(entry);
         llvm::Value* object = function->getArg(0);
+
+        auto destroyMethod = info.methods.find("destroy()");
+        if (destroyMethod != info.methods.end()) {
+            llvm::FunctionCallee callee = module->getOrInsertFunction(
+                destroyMethod->second.linkName, MethodFunctionType(destroyMethod->second));
+            EmitAbiCall(MethodFunctionType(destroyMethod->second), callee.getCallee(),
+                destroyMethod->second.returnType, {object}, destroyMethod->second.parameterTypes, {}, "struct.destroy.user");
+        }
+
         for (auto field = info.fields.rbegin(); field != info.fields.rend(); ++field) {
             if (!TypeNeedsCleanup(field->typeName)) continue;
             EmitValueCleanup(FieldAddress(object, info, *field), field->typeName);
@@ -1044,4 +1070,6 @@ namespace Absolute {
         builder.CreateRetVoid();
         builder.ClearInsertionPoint();
     }
+
+
 }
