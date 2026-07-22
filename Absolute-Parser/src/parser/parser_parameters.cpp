@@ -16,10 +16,19 @@ namespace Absolute{
             const bool isConst = CurrentToken()->type == TokenType::KEYWORD &&
                 CurrentToken()->value == "const";
             if (isConst) Consume(TokenType::KEYWORD, "const");
-            const bool isReference = CurrentToken() &&
+            const bool refAlias = CurrentToken() &&
                 CurrentToken()->type == TokenType::KEYWORD && CurrentToken()->value == "ref";
-            if (isReference) Consume(TokenType::KEYWORD, "ref");
+            if (refAlias) Consume(TokenType::KEYWORD, "ref");
             std::unique_ptr<TypeExpr> type = ParseType();
+            const bool ampersandReference = CurrentToken() &&
+                CurrentToken()->type == TokenType::OPERATOR && CurrentToken()->value == "&";
+            if (ampersandReference) Consume(TokenType::OPERATOR, "&");
+            if (refAlias && ampersandReference) {
+                ReportSyntaxError(CurrentToken(),
+                    "A parameter reference must use either '&' or the 'ref' alias, not both");
+                throw std::runtime_error("Duplicate parameter reference marker");
+            }
+            const bool isReference = refAlias || ampersandReference;
             std::unique_ptr<Expression> nameExpr = ParsePrimaryExpr();
 
             Token* current = RequireCurrent("'=', ',' or ')'");

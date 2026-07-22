@@ -5,6 +5,11 @@ namespace Absolute {
     std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclExpr()
     {
         std::unique_ptr<TypeExpr> type = ParseType();
+        if (CurrentToken() && CurrentToken()->type == TokenType::OPERATOR &&
+            CurrentToken()->value == "&") {
+            ReportSyntaxError(CurrentToken(), "'&' references are only supported for parameters");
+            throw std::runtime_error("Value reference outside parameter list");
+        }
 
         // Обрабатываем `*` и `&` перед именем переменной
         std::unique_ptr<Expression> nameExpr = ParsePrimaryExpr();

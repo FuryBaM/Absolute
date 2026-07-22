@@ -516,12 +516,12 @@ namespace Absolute {
                     if (IsValueReferenceType(expectedType) &&
                         !IsConstValueReferenceType(expectedType)) {
                         if (!argument.isLValue)
-                            Report("mutable ref base constructor argument " +
+                            Report("mutable reference base constructor argument " +
                                 std::to_string(index + 1) + " requires an lvalue",
                                 "E_VALUE_REF_REQUIRES_LVALUE", argument.symbol);
                         else if (IsConstMutationTarget(
                             stmt->baseArguments[index].get(), argument))
-                            Report("mutable ref base constructor argument " +
+                            Report("mutable reference base constructor argument " +
                                 std::to_string(index + 1) + " cannot borrow a const value",
                                 "E_VALUE_REF_CONST_ARGUMENT", argument.symbol);
                     }

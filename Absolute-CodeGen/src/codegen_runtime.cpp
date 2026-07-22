@@ -194,7 +194,7 @@ namespace Absolute {
                 ? analyzer->GetExpressionInfo(*expression) : nullptr;
             if (info && info->isLValue) return EvaluateAddress(expression);
             if (!IsConstValueReferenceTypeName(parameterType))
-                Fail("mutable ref argument requires an addressable lvalue");
+                Fail("mutable reference argument requires an addressable lvalue");
             llvm::Value* value = Evaluate(expression);
             llvm::Type* valueType = TypeFromName(ValueReferenceBaseTypeName(parameterType));
             llvm::AllocaInst* temporary = CreateEntryAlloca(

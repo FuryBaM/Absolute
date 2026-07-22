@@ -1,5 +1,6 @@
 #include "analyzer_build_pch.h"
 #include "analyzer.h"
+#include "type_names.h"
 
 namespace Absolute {
     SymbolTable::SymbolTable() { Reset(); }
@@ -32,12 +33,8 @@ namespace Absolute {
             if (!callable || !existingCallable) return std::nullopt;
             const auto sameParameterStorage = [](const std::string& left,
                 const std::string& right) {
-                const auto base = [](const std::string& type) {
-                    if (type.starts_with("const ref ")) return type.substr(10);
-                    if (type.starts_with("ref ")) return type.substr(4);
-                    return type;
-                };
-                return base(left) == base(right);
+                return CanonicalValueReferenceBaseType(left) ==
+                    CanonicalValueReferenceBaseType(right);
             };
             for (const Symbol& symbol : symbols) {
                 if (symbol.scopeDepth == ScopeDepth() && symbol.name == name &&

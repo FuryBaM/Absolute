@@ -655,17 +655,19 @@ are documented in [docs/value-type-abi.md](docs/value-type-abi.md).
 Large resource-free structs may instead use parameter-only value references:
 
 ```absolute
-int64 inspect(const ref LargeValue value) {
+int64 inspect(const LargeValue& value) {
     return value.first;
 }
 
-void normalize(ref LargeValue value) {
+void normalize(LargeValue& value) {
     value.first = 0;
 }
 ```
 
-`const ref` borrows read-only storage and accepts lvalues or a temporary valid
-through the call. `ref` requires a mutable lvalue and mutates caller storage.
+`const T&` borrows read-only storage and accepts lvalues or a temporary valid
+through the call. `T&` requires a mutable lvalue and mutates caller storage.
+The spellings `const ref T` and `ref T` are source aliases normalized to the
+canonical ampersand form.
 Both lower to a non-null, non-capturing LLVM pointer without creating a managed
 or raw pointer value. They cannot cross async/C-ABI/closure boundaries or borrow
 resource-owning aggregates; overlapping mutable arguments are rejected. See

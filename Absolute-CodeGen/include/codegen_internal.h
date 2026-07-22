@@ -4,6 +4,7 @@
 #include "analyzer.h"
 #include "codegen.h"
 #include "syntax_plugins.h"
+#include "type_names.h"
 
 namespace Absolute {
     extern std::string g_last_context;
@@ -101,23 +102,20 @@ namespace Absolute {
         }
 
         inline bool IsValueReferenceTypeName(const std::string& type) {
-            return type.starts_with("ref ") || type.starts_with("const ref ");
+            return IsCanonicalValueReferenceType(type);
         }
 
         inline bool IsConstValueReferenceTypeName(const std::string& type) {
-            return type.starts_with("const ref ");
+            return IsCanonicalConstValueReferenceType(type);
         }
 
         inline std::string ValueReferenceBaseTypeName(const std::string& type) {
-            if (type.starts_with("const ref ")) return type.substr(10);
-            if (type.starts_with("ref ")) return type.substr(4);
-            return type;
+            return CanonicalValueReferenceBaseType(type);
         }
 
         inline std::string ValueReferenceTypeName(
             const std::string& type, bool isConst, bool isReference) {
-            if (!isReference) return type;
-            return std::string(isConst ? "const ref " : "ref ") + type;
+            return CanonicalValueReferenceType(type, isConst, isReference);
         }
 
         inline bool HasModifier(const Statement& statement, const std::string& name) {

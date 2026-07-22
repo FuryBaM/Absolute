@@ -3,26 +3,24 @@
 #include "analyzer_pch.h"
 #include "expression_visitor.h"
 #include "syntax_plugins.h"
+#include "type_names.h"
 
 namespace Absolute {
     inline bool IsValueReferenceType(const std::string& type) {
-        return type.starts_with("ref ") || type.starts_with("const ref ");
+        return IsCanonicalValueReferenceType(type);
     }
 
     inline bool IsConstValueReferenceType(const std::string& type) {
-        return type.starts_with("const ref ");
+        return IsCanonicalConstValueReferenceType(type);
     }
 
     inline std::string ValueReferenceBaseType(const std::string& type) {
-        if (type.starts_with("const ref ")) return type.substr(10);
-        if (type.starts_with("ref ")) return type.substr(4);
-        return type;
+        return CanonicalValueReferenceBaseType(type);
     }
 
     inline std::string ValueReferenceType(
         const std::string& type, bool isConst, bool isReference) {
-        if (!isReference) return type;
-        return std::string(isConst ? "const ref " : "ref ") + type;
+        return CanonicalValueReferenceType(type, isConst, isReference);
     }
     namespace {
         template <typename T, typename Visitor>

@@ -2,8 +2,10 @@
 
 ## Decision
 
-Absolute supports parameter-only `const ref T` and `ref T` borrows for large,
-resource-free value types. They are an ABI and aliasing feature, not a new
+Absolute supports parameter-only `const T&` and `T&` borrows for large,
+resource-free value types. `const ref T` and `ref T` are accepted as source
+aliases for C#-style code, but both are normalized immediately to the canonical
+ampersand form. Value references are an ABI and aliasing feature, not a new
 runtime pointer kind and not an alternative ownership model.
 
 The first implementation is intentionally narrow:
@@ -24,16 +26,16 @@ Its lifetime is exactly one synchronous call.
 
 ## Source and ABI rules
 
-`const ref T` accepts an initialized value and grants shared read-only access.
+`const T&` accepts an initialized value and grants shared read-only access.
 It may also accept a temporary whose lifetime is extended through the call.
-`ref T` accepts only an initialized mutable lvalue and grants exclusive mutable
+`T&` accepts only an initialized mutable lvalue and grants exclusive mutable
 access for the call. Neither form may be rebound by the callee.
 
 Both forms lower to one non-null pointer to caller-owned storage:
 
 ```absolute
-int64 inspect(const ref WideValue value);
-void normalize(ref WideValue value);
+int64 inspect(const WideValue& value);
+void normalize(WideValue& value);
 ```
 
 ```llvm
@@ -42,13 +44,20 @@ define void @normalize(ptr nonnull nocapture %value)
 ```
 
 The caller does not create the isolated aggregate copy required by the current
-large by-value ABI. `const ref` may be reborrowed as `const ref`; `ref` may be
+large by-value ABI. `const T&` may be reborrowed as `const T&`; `T&` may be
 reborrowed as either mode. Conversion to raw or managed pointers is rejected.
 
-At one call site, an lvalue passed as `ref` must not overlap any other argument
-that can read or write the same storage. Multiple `const ref` arguments may
+At one call site, an lvalue passed as `T&` must not overlap any other argument
+that can read or write the same storage. Multiple `const T&` arguments may
 alias. Initially, overlap should be diagnosed conservatively by root symbol;
 field-sensitive disjointness can be added later.
+
+The aliases have no distinct AST, signature, overload, or ABI identity:
+
+```absolute
+void normalize(ref WideValue value);          // canonical: WideValue&
+int64 inspect(const ref WideValue value);     // canonical: const WideValue&
+```
 
 All escapes are compile-time errors: converting the borrow to `raw`, capturing
 it in a closure, scheduling it with `spawn`, or otherwise retaining it beyond
@@ -59,7 +68,7 @@ classes, primitives, and generic aggregates reject it explicitly.
 ## Benchmark evidence
 
 `benchmarks/value-ref-suite` compares the existing by-value ABI with a raw
-pointer used strictly as a physical-ABI proxy for future `const ref`. The
+pointer used strictly as a physical-ABI proxy for `const T&`. The
 workload passes a 128-byte resource-free struct to an `@noinline` read-only
 function 20 million times. Both variants produce checksum `1518646656`.
 

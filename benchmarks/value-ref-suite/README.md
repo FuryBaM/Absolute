@@ -2,7 +2,7 @@
 
 This suite compares the existing by-value ABI for a 128-byte resource-free
 struct with a raw pointer used only as a benchmark proxy for a future
-`const ref` parameter. Both workloads perform 20 million calls to an identical
+`const T&` parameter. Both workloads perform 20 million calls to an identical
 `@noinline` read-only function and validate the same checksum.
 
 The raw-pointer source is deliberately not proposed as user-facing safe syntax:

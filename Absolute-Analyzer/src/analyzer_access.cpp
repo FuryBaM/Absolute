@@ -217,10 +217,10 @@ namespace Absolute {
                 if (IsValueReferenceType(expectedType) &&
                     !IsConstValueReferenceType(expectedType)) {
                     if (!argument.isLValue)
-                        Report("mutable ref constructor argument " + std::to_string(i + 1) +
+                        Report("mutable reference constructor argument " + std::to_string(i + 1) +
                             " requires an lvalue", "E_VALUE_REF_REQUIRES_LVALUE", argument.symbol);
                     else if (IsConstMutationTarget(expr->arguments[i].get(), argument))
-                        Report("mutable ref constructor argument " + std::to_string(i + 1) +
+                        Report("mutable reference constructor argument " + std::to_string(i + 1) +
                             " cannot borrow a const value", "E_VALUE_REF_CONST_ARGUMENT", argument.symbol);
                 }
             }
@@ -506,17 +506,17 @@ namespace Absolute {
                 if (IsValueReferenceType(parameterType)) {
                     if (!IsConstValueReferenceType(parameterType)) {
                         if (!argument.isLValue)
-                            Report("mutable ref argument " + std::to_string(i + 1) +
+                            Report("mutable reference argument " + std::to_string(i + 1) +
                                 " requires an lvalue", "E_VALUE_REF_REQUIRES_LVALUE",
                                 argument.symbol);
                         else if (IsConstMutationTarget(expr->arguments[i].get(), argument))
-                            Report("mutable ref argument " + std::to_string(i + 1) +
+                            Report("mutable reference argument " + std::to_string(i + 1) +
                                 " cannot borrow a const value", "E_VALUE_REF_CONST_ARGUMENT",
                                 argument.symbol);
                         for (size_t other = 0; other < arguments.size(); ++other) {
                             if (other != i && argument.symbol != InvalidSymbolId &&
                                 arguments[other].symbol == argument.symbol) {
-                                Report("mutable ref argument " + std::to_string(i + 1) +
+                                Report("mutable reference argument " + std::to_string(i + 1) +
                                     " overlaps another argument", "E_VALUE_REF_ALIAS",
                                     argument.symbol);
                                 break;

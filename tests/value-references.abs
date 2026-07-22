@@ -14,31 +14,31 @@ WideValue makeWide(int64 seed) {
     return value;
 }
 
-int64 inspect(const ref WideValue value) {
+int64 inspect(const WideValue& value) {
     return value.first + value.second + value.third + value.fourth;
 }
 
-void add(ref WideValue value, int64 amount) {
+void add(WideValue& value, int64 amount) {
     value.first += amount;
 }
 
-void addDistinct(ref WideValue left, ref WideValue right) {
+void addDistinct(WideValue& left, WideValue& right) {
     left.first += 1;
     right.first += 2;
 }
 
 interface WideReader {
-    int64 read(const ref WideValue value);
+    int64 read(const WideValue& value);
 }
 
 class DefaultReader : WideReader {
-    public int64 read(const ref WideValue value) {
+    public int64 read(const WideValue& value) {
         return inspect(value);
     }
 }
 
 class OffsetReader : DefaultReader {
-    public override int64 read(const ref WideValue value) {
+    public override int64 read(const WideValue& value) {
         return inspect(value) + 2;
     }
 }
@@ -46,7 +46,7 @@ class OffsetReader : DefaultReader {
 struct Holder {
     WideValue stored;
 
-    Holder(const ref WideValue initial) {
+    Holder(const WideValue& initial) {
         stored = initial;
     }
 
@@ -55,24 +55,29 @@ struct Holder {
     }
 }
 
+int64 inspectAlias(const ref WideValue value) {
+    return inspect(value);
+}
+
 int32 main() {
     WideValue value = makeWide(8);
     add(value, 2);
-    assert(inspect(value) == 40, "mutable ref updates caller storage");
+    assert(inspect(value) == 40, "mutable T& updates caller storage");
 
     const WideValue immutable = makeWide(9);
-    assert(inspect(immutable) == 42, "const ref accepts const lvalue");
-    assert(inspect(makeWide(9)) == 42, "const ref extends temporary through call");
+    assert(inspect(immutable) == 42, "const T& accepts const lvalue");
+    assert(inspect(makeWide(9)) == 42, "const T& extends temporary through call");
+    assert(inspectAlias(immutable) == 42, "ref spelling aliases canonical ampersand ABI");
 
     WideValue other = makeWide(1);
     addDistinct(value, other);
-    assert(value.first == 11 && other.first == 3, "distinct mutable refs");
+    assert(value.first == 11 && other.first == 3, "distinct mutable references");
 
     raw WideReader* reader = new raw OffsetReader();
-    assert(reader.read(immutable) == 44, "virtual const ref ABI");
+    assert(reader.read(immutable) == 44, "virtual const T& ABI");
 
     raw Holder* holder = new raw Holder(immutable);
-    assert(holder.sum() == 42, "constructor const ref ABI");
+    assert(holder.sum() == 42, "constructor const T& ABI");
 
     delete reader;
     delete holder;
