@@ -831,13 +831,35 @@ async int32 main() {
 }
 ```
 
+Scheduling defaults can be attached to an async function, then selectively
+overridden for one spawn site:
+
+```absolute
+@task(core = 2, priority = 1, role = "worker")
+async int32 calculate(int32 value) {
+    return value * 2;
+}
+
+async int32 main() {
+    @spawn(priority = 3, role = "urgent")
+    task<int32> result = spawn calculate(21);
+    return await result;
+}
+```
+
+`core = -1` means no affinity, priority uses the portable `-3..3` range, and
+role creates a named scheduling lane whose label is visible through
+`std/task.abs`. See
+[`docs/task-scheduling.md`](docs/task-scheduling.md) for inheritance, runtime,
+and validation details.
+
 `await` is only valid inside an `async` function. Every local task must be
 awaited on every control-flow path before its scope is left, including through
 `return`, `break`, and `continue`; a task cannot be copied, reassigned, or
 awaited twice. The analyzer exposes `TaskState` in `ExpressionInfo` and emits
 stable `E_TASK_*` diagnostics for IDE integrations.
 
-The LLVM backend packs primitive arguments into an owned task context and emits
+The LLVM backend packs scalar/enum arguments into an owned task context and emits
 a private thunk for each spawn site. `Absolute-Runtime` executes these thunks
 on a shared native thread pool, and `await` suspends the calling OS thread until
 the result is ready. This first concurrency milestone supports primitive and

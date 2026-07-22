@@ -47,8 +47,9 @@ namespace Absolute {
         llvm::FunctionType* entryType = llvm::FunctionType::get(
             builder.getVoidTy(), {builder.getPtrTy()}, false);
         llvm::FunctionType* type = llvm::FunctionType::get(
-            builder.getPtrTy(), {entryType->getPointerTo(), builder.getPtrTy()}, false);
-        return module->getOrInsertFunction("absolute_task_spawn", type);
+            builder.getPtrTy(), {entryType->getPointerTo(), builder.getPtrTy(),
+                builder.getInt32Ty(), builder.getInt32Ty(), builder.getPtrTy()}, false);
+        return module->getOrInsertFunction("absolute_task_spawn_config", type);
     }
 
     llvm::FunctionCallee CodeGenerator::Impl::TaskAwait() {
@@ -714,7 +715,35 @@ namespace Absolute {
         }
         thunkBuilder.CreateRetVoid();
 
-        return builder.CreateCall(TaskSpawn(), {thunk, contextPointer}, "task.handle");
+        std::int32_t core = -1;
+        std::int32_t priority = 0;
+        std::string role;
+        const auto applyOptions = [&](const Attribute* attribute) {
+            if (!attribute) return;
+            for (const AttributeArgument& argument : attribute->arguments) {
+                if (argument.name == "core") core = static_cast<std::int32_t>(
+                    std::stoll(argument.value.text));
+                else if (argument.name == "priority") priority = static_cast<std::int32_t>(
+                    std::stoll(argument.value.text));
+                else if (argument.name == "role") {
+                    role = argument.value.text;
+                    if (role.size() >= 2 && role.front() == '"' && role.back() == '"')
+                        role = role.substr(1, role.size() - 2);
+                }
+            }
+        };
+        if (analyzer) {
+            const ExpressionInfo* info = analyzer->GetExpressionInfo(call);
+            FunctionDeclStmt* declaration = info
+                ? analyzer->FunctionDeclaration(info->symbol) : nullptr;
+            if (declaration) applyOptions(declaration->FindAttribute("task"));
+        }
+        applyOptions(currentSpawnAttribute);
+        llvm::Value* roleValue = role.empty()
+            ? static_cast<llvm::Value*>(llvm::ConstantPointerNull::get(builder.getPtrTy()))
+            : builder.CreateGlobalStringPtr(role, "task.role");
+        return builder.CreateCall(TaskSpawn(), {thunk, contextPointer,
+            builder.getInt32(core), builder.getInt32(priority), roleValue}, "task.handle");
     }
 
     llvm::Value* CodeGenerator::Impl::EmitAwait(PrefixUnaryExpr& expression) {

@@ -590,6 +590,7 @@ namespace Absolute {
         addressMode = false;
         addressValue = nullptr;
         taskThunkCounter = 0;
+        currentSpawnAttribute = nullptr;
         currentClassName.clear();
         currentThis = nullptr;
         currentReturnStorage = nullptr;

@@ -192,6 +192,65 @@ namespace Absolute {
                 }
                 continue;
             }
+            if (attribute.name == "task" || attribute.name == "spawn") {
+                const bool taskAttribute = attribute.name == "task";
+                const auto* function = dynamic_cast<const FunctionDeclStmt*>(&statement);
+                const auto* variable = dynamic_cast<const VarDeclStmt*>(&statement);
+                const auto* spawn = variable && variable->expr
+                    ? dynamic_cast<const PrefixUnaryExpr*>(variable->expr->value.get()) : nullptr;
+                if (taskAttribute) {
+                    if (!function || !HasModifier(*function, "async"))
+                        Report("attribute '@task' is only valid on async functions and methods",
+                            "E_ATTRIBUTE_TARGET");
+                }
+                else if (target != "local declaration" || !spawn || spawn->op != "spawn" ||
+                    !dynamic_cast<const FunctionCallExpr*>(spawn->operand.get())) {
+                    Report("attribute '@spawn' requires a variable initialized by a direct spawn call",
+                        "E_ATTRIBUTE_TARGET");
+                }
+
+                for (const AttributeArgument& argument : attribute.arguments) {
+                    if (argument.name.empty()) {
+                        Report("attribute '@" + attribute.name +
+                            "' only accepts named arguments", "E_ATTRIBUTE_ARGUMENTS");
+                        continue;
+                    }
+                    if (argument.name != "core" && argument.name != "priority" &&
+                        argument.name != "role") {
+                        Report("unknown scheduling argument '" + argument.name + "' in '@" +
+                            attribute.name + "'", "E_ATTRIBUTE_ARGUMENTS");
+                        continue;
+                    }
+                    if (argument.name == "role") {
+                        if (argument.value.kind != AttributeValueKind::String)
+                            Report("scheduling argument 'role' must be a string literal",
+                                "E_ATTRIBUTE_ARGUMENTS");
+                        continue;
+                    }
+                    if (argument.value.kind != AttributeValueKind::Number) {
+                        Report("scheduling argument '" + argument.name +
+                            "' must be an integer literal", "E_ATTRIBUTE_ARGUMENTS");
+                        continue;
+                    }
+                    try {
+                        size_t consumed = 0;
+                        const long long value = std::stoll(argument.value.text, &consumed, 10);
+                        if (consumed != argument.value.text.size()) throw std::invalid_argument("integer");
+                        if (argument.name == "core" &&
+                            (value < -1 || value > std::numeric_limits<std::int32_t>::max()))
+                            Report("scheduling core must be -1 or a non-negative 32-bit processor index",
+                                "E_TASK_CORE_RANGE");
+                        if (argument.name == "priority" && (value < -3 || value > 3))
+                            Report("task priority must be in the portable range -3..3",
+                                "E_TASK_PRIORITY_RANGE");
+                    }
+                    catch (const std::exception&) {
+                        Report("scheduling argument '" + argument.name +
+                            "' is outside the supported integer range", "E_ATTRIBUTE_ARGUMENTS");
+                    }
+                }
+                continue;
+            }
             if (attribute.name.find('.') == std::string::npos)
                 Report("unknown compiler attribute '@" + attribute.name +
                     "'; plugin attributes must use a qualified name such as '@vendor.name'",

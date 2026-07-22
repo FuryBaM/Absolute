@@ -241,7 +241,10 @@ namespace Absolute {
             return;
         }
         if (!impl->CurrentFunction()) return;
+        const Attribute* previousSpawnAttribute = impl->currentSpawnAttribute;
+        impl->currentSpawnAttribute = stmt->FindAttribute("spawn");
         stmt->expr->Accept(*this);
+        impl->currentSpawnAttribute = previousSpawnAttribute;
     }
 
     void CodeGenerator::Visit(StructDeclStmt* stmt) {

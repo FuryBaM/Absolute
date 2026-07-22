@@ -52,6 +52,12 @@ namespace Absolute {
                         argument.value.kind = AttributeValueKind::Number;
                         argument.value.text = Consume(TokenType::NUMBER)->value;
                     }
+                    else if (value->type == TokenType::OPERATOR && value->value == "-" &&
+                        PeekToken() && PeekToken()->type == TokenType::NUMBER) {
+                        Consume(TokenType::OPERATOR, "-");
+                        argument.value.kind = AttributeValueKind::Number;
+                        argument.value.text = "-" + Consume(TokenType::NUMBER)->value;
+                    }
                     else if (value->type == TokenType::CHAR) {
                         argument.value.kind = AttributeValueKind::Character;
                         argument.value.text = Consume(TokenType::CHAR)->value;

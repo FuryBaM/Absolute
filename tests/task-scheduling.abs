@@ -1,0 +1,31 @@
+import "../std/task.abs";
+
+@task(core = 0, priority = 1, role = "worker")
+async int32 inheritedOptions(int32 value) {
+    if (std.task.core() != 0) { return -1; }
+    if (std.task.priority() != 1) { return -2; }
+    if (!std.task.hasRole("worker")) { return -3; }
+    return value + 1;
+}
+
+@task(core = -1, priority = -2, role = "background")
+async int32 overriddenOptions(int32 value) {
+    if (std.task.core() != 0) { return -4; }
+    if (std.task.priority() != 3) { return -5; }
+    if (!std.task.hasRole("urgent")) { return -6; }
+    return value * 2;
+}
+
+async int32 main() {
+    task<int32> inherited = spawn inheritedOptions(41);
+
+    @spawn(core = 0, priority = 3, role = "urgent")
+    task<int32> overridden = spawn overriddenOptions(21);
+
+    int32 inheritedResult = await inherited;
+    int32 overriddenResult = await overridden;
+    assert(inheritedResult == 42, "task attributes result");
+    assert(overriddenResult == 42, "spawn attributes result");
+    println("task-scheduling=ok");
+    return 0;
+}

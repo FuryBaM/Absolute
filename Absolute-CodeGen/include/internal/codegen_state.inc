@@ -190,6 +190,7 @@
         std::unordered_map<std::string, std::string> currentGenericSubstitutions;
         llvm::Value* currentThis = nullptr;
         std::uint64_t taskThunkCounter = 0;
+        const Attribute* currentSpawnAttribute = nullptr;
         std::uint64_t lambdaCounter = 0;
 
         explicit Impl(CodeGenerator& visitor, const Analyzer* analyzer);

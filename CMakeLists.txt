@@ -391,6 +391,15 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.async-lifetime-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
+        NAME absolute.task-scheduling-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/task-scheduling.abs"
+    )
+    add_test(
+        NAME absolute.task-scheduling-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/task-scheduling-errors.abs"
+    )
+    set_tests_properties(absolute.task-scheduling-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.array-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-errors.abs"
     )
@@ -1614,6 +1623,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-async PROPERTIES
             FIXTURES_REQUIRED absolute-async-executable
             PASS_REGULAR_EXPRESSION "async=42"
+        )
+        add_test(
+            NAME absolute.build-task-scheduling
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/task-scheduling.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/task-scheduling-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-task-scheduling PROPERTIES
+            FIXTURES_SETUP absolute-task-scheduling-executable
+        )
+        add_test(NAME absolute.run-task-scheduling
+            COMMAND "${CMAKE_BINARY_DIR}/task-scheduling-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-task-scheduling PROPERTIES
+            FIXTURES_REQUIRED absolute-task-scheduling-executable
+            PASS_REGULAR_EXPRESSION "task-scheduling=ok"
         )
     endif()
 endif()

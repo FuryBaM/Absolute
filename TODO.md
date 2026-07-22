@@ -237,6 +237,9 @@
 - [x] Проверка незавершённых локальных tasks анализатором.
 - [x] Compile-time проверка task payload/result: только scalar/enum ABI без
   заимствованных pointers, slices, строк и агрегатов.
+- [x] Добавить scheduling-атрибуты для tasks: `@task(core, priority, role)` задаёт
+  defaults async-функции, `@spawn(...)` переопределяет отдельный запуск; runtime
+  использует priority-очередь, временную CPU affinity и доступную через `std.task` роль.
 - [ ] Добавить async-методы классов и структур.
 - [ ] Добавить cancellation tokens и timeout.
 - [ ] Добавить channels и безопасные concurrent queues.
