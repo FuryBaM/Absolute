@@ -1,0 +1,48 @@
+import std.collections.vector;
+import std.collections.algorithms;
+
+int32 main() {
+    // 1. Test Array sort, binarySearch, reverse, indexOf, contains
+    int32[] arr = {5, 2, 8, 1, 9};
+    assert(contains<int32>(arr, 8), "arr contains 8");
+    assert(indexOf<int32>(arr, 8) == 2, "arr indexOf 8");
+
+    sort<int32>(arr);
+    assert(arr[0] == 1, "arr sorted 0");
+    assert(arr[1] == 2, "arr sorted 1");
+    assert(arr[2] == 5, "arr sorted 2");
+    assert(arr[3] == 8, "arr sorted 3");
+    assert(arr[4] == 9, "arr sorted 4");
+
+    int32 idx = binarySearch<int32>(arr, 8);
+    assert(idx == 3, "binarySearch arr 8");
+
+    reverse<int32>(arr);
+    assert(arr[0] == 9, "reversed arr 0");
+    assert(arr[4] == 1, "reversed arr 4");
+
+    // 2. Test Vector sort, binarySearch, reverse, indexOf
+    Vector<int32>* vec = new Vector<int32>();
+    vec.push(40);
+    vec.push(10);
+    vec.push(30);
+    vec.push(20);
+
+    assert(indexOf<int32>(vec, 30) == 2, "vec indexOf 30");
+
+    sort<int32>(vec);
+    assert(vec[0] == 10, "vec sorted 0");
+    assert(vec[1] == 20, "vec sorted 1");
+    assert(vec[2] == 30, "vec sorted 2");
+    assert(vec[3] == 40, "vec sorted 3");
+
+    int32 vecIdx = binarySearch<int32>(vec, 30);
+    assert(vecIdx == 2, "vec binarySearch 30");
+
+    reverse<int32>(vec);
+    assert(vec[0] == 40, "vec reversed 0");
+    assert(vec[3] == 10, "vec reversed 3");
+
+    println("All std.collections.algorithms tests passed successfully!");
+    return 0;
+}

@@ -96,15 +96,31 @@ namespace Absolute {
 
     llvm::Function* CodeGenerator::Impl::DeclareFunction(
         FunctionDeclStmt& statement, const Symbol* specialization) {
+        if (!specialization && statement.IsGeneric()) return nullptr;
         if (!statement.name || !statement.returnType) Fail("invalid function declaration");
+
+        const auto oldSubstitutions = currentGenericSubstitutions;
+        if (specialization) {
+            const Symbol* origin = analyzer ? analyzer->GetSymbol(specialization->genericOrigin) : nullptr;
+            if (origin && origin->genericParameters.size() == specialization->genericArguments.size()) {
+                currentGenericSubstitutions.clear();
+                for (size_t index = 0; index < origin->genericParameters.size(); ++index)
+                    currentGenericSubstitutions.emplace(
+                        origin->genericParameters[index], specialization->genericArguments[index]);
+            }
+        }
+
         const std::string sourceName = specialization
             ? specialization->name : Qualify(statement.name->value);
+        g_last_context = "DeclareFunction:" + sourceName;
+
 
         std::vector<llvm::Type*> parameterTypes;
         std::vector<std::string> parameterTypeNames;
         const bool external = statement.UsesCAbi();
         const std::string returnTypeName = specialization
             ? specialization->type : ResolveTypeName(statement.returnType.get());
+
         parameterTypes.reserve(statement.parameters.size() + AbiReturnOffset(returnTypeName, external));
         parameterTypeNames.reserve(statement.parameters.size());
         if (AbiReturnOffset(returnTypeName, external) != 0)
@@ -135,6 +151,7 @@ namespace Absolute {
                     existing->setDLLStorageClass(llvm::GlobalValue::DLLExportStorageClass);
             }
             ApplyCallableAttributes(*existing, statement);
+            currentGenericSubstitutions = oldSubstitutions;
             return existing;
         }
         llvm::Function* function = llvm::Function::Create(
@@ -152,8 +169,10 @@ namespace Absolute {
             function->getArg(argumentIndex++)->setName("__result");
         for (const auto& parameter : statement.parameters)
             function->getArg(argumentIndex++)->setName(IdentifierName(parameter->name.get()));
+        currentGenericSubstitutions = oldSubstitutions;
         return function;
     }
+
 
     void CodeGenerator::Impl::EmitFunction(FunctionDeclStmt& statement) {
         EmitFunction(statement, nullptr);
@@ -161,7 +180,10 @@ namespace Absolute {
 
     void CodeGenerator::Impl::EmitFunction(
         FunctionDeclStmt& statement, const Symbol* specialization) {
+        if (!specialization && statement.IsGeneric()) return;
         const auto oldSubstitutions = currentGenericSubstitutions;
+
+
         const std::string oldNamespace = currentNamespace;
         if (specialization) {
             const Symbol* origin = analyzer ? analyzer->GetSymbol(specialization->genericOrigin) : nullptr;

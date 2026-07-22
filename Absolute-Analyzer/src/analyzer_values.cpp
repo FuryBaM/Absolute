@@ -366,8 +366,20 @@ namespace Absolute {
         }
 
         const Result base = Evaluate(expr->base.get());
+        if (ArrayRank(base.type) > 0) {
+            if (expr->member == "length" || expr->member == "count") {
+                if (accessMode == AccessMode::Write || accessMode == AccessMode::Address || accessMode == AccessMode::Delete) {
+                    Report("array property '" + expr->member + "' is read-only", "E_PROPERTY_READ_ONLY");
+                }
+                callable = false;
+                callableParameters.clear();
+                Save(expr, {InvalidSymbolId, "int32", false});
+                return;
+            }
+        }
         if (base.pointerValidity == PointerValidity::Deleted ||
             base.pointerValidity == PointerValidity::Expired) {
+
             Report("member access uses an invalid pointer", "E_INVALID_POINTER_ACCESS", base.symbol);
         }
         else if (base.pointerValidity == PointerValidity::MaybeInvalid) {

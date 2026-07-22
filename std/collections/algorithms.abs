@@ -1,0 +1,120 @@
+import "vector.abs";
+
+namespace std.collections {
+
+    void sort<T>(T[] items) {
+        int32 len = items.length;
+        int32 i = 1;
+        while (i < len) {
+            T key = items[i];
+            int32 j = i - 1;
+            while (j >= 0 && items[j] > key) {
+                items[j + 1] = items[j];
+                j = j - 1;
+            }
+            items[j + 1] = key;
+            i = i + 1;
+        }
+    }
+
+    void sort<T>(Vector<T>* vec) {
+        int32 len = vec.count;
+        int32 i = 1;
+        while (i < len) {
+            T key = vec[i];
+            int32 j = i - 1;
+            while (j >= 0 && vec[j] > key) {
+                vec[j + 1] = vec[j];
+                j = j - 1;
+            }
+            vec[j + 1] = key;
+            i = i + 1;
+        }
+    }
+
+    int32 binarySearch<T>(T[] items, T target) {
+        int32 low = 0;
+        int32 high = items.length - 1;
+        while (low <= high) {
+            int32 mid = low + (high - low) / 2;
+            if (items[mid] == target) {
+                return mid;
+            }
+            if (items[mid] < target) {
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+        return -1;
+    }
+
+    int32 binarySearch<T>(Vector<T>* vec, T target) {
+        int32 low = 0;
+        int32 high = vec.count - 1;
+        while (low <= high) {
+            int32 mid = low + (high - low) / 2;
+            if (vec[mid] == target) {
+                return mid;
+            }
+            if (vec[mid] < target) {
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+        return -1;
+    }
+
+    void reverse<T>(T[] items) {
+        int32 i = 0;
+        int32 j = items.length - 1;
+        while (i < j) {
+            T temp = items[i];
+            items[i] = items[j];
+            items[j] = temp;
+            i = i + 1;
+            j = j - 1;
+        }
+    }
+
+    void reverse<T>(Vector<T>* vec) {
+        int32 i = 0;
+        int32 j = vec.count - 1;
+        while (i < j) {
+            T temp = vec[i];
+            vec[i] = vec[j];
+            vec[j] = temp;
+            i = i + 1;
+            j = j - 1;
+        }
+    }
+
+    int32 indexOf<T>(T[] items, T target) {
+        int32 i = 0;
+        int32 len = items.length;
+        while (i < len) {
+            if (items[i] == target) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    int32 indexOf<T>(Vector<T>* vec, T target) {
+        int32 i = 0;
+        int32 len = vec.count;
+        while (i < len) {
+            if (vec[i] == target) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    bool contains<T>(T[] items, T target) {
+        return indexOf<T>(items, target) != -1;
+    }
+}

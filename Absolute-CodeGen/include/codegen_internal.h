@@ -6,7 +6,9 @@
 #include "syntax_plugins.h"
 
 namespace Absolute {
+    extern std::string g_last_context;
     namespace {
+
         class PrimitiveTypeNameVisitor final : public BaseIdentifierVisitor {
         public:
             std::string name;
@@ -118,10 +120,16 @@ namespace Absolute {
             return IsTaskTypeName(name) ? name.substr(5, name.size() - 6) : std::string{};
         }
 
-        inline std::string SubstituteCodegenType(const std::string& type,
+        inline std::string SubstituteCodegenType(std::string type,
             const std::unordered_map<std::string, std::string>& substitutions) {
+            size_t startPos = type.find_first_not_of(" \t");
+            if (startPos != std::string::npos) {
+                size_t endPos = type.find_last_not_of(" \t");
+                type = type.substr(startPos, endPos - startPos + 1);
+            }
             if (const auto found = substitutions.find(type); found != substitutions.end())
                 return found->second;
+
             if (type.ends_with("[]"))
                 return SubstituteCodegenType(type.substr(0, type.size() - 2), substitutions) + "[]";
             if (IsPointerTypeName(type)) {

@@ -278,7 +278,19 @@ namespace Absolute {
             }
         }
         const std::string baseType = impl->SemanticType(expr->base.get());
+        if (ArrayRankName(baseType) > 0 && (expr->member == "length" || expr->member == "count")) {
+            if (impl->addressMode) impl->Fail("array length property is not assignable");
+            llvm::Value* descriptorAddress = impl->EvaluateAddress(expr->base.get());
+            llvm::Value* descriptor = impl->builder.CreateLoad(
+                impl->ArrayDescriptorType(baseType), descriptorAddress, "array.descriptor");
+            llvm::Value* length64 = impl->builder.CreateExtractValue(descriptor, {2}, "array.length.i64");
+            impl->value = impl->builder.CreateTrunc(length64, impl->builder.getInt32Ty(), "array.length");
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
+
         const std::string aggregateName = impl->ClassNameFromType(baseType);
+
         llvm::Value* fieldAddress = nullptr;
         std::string fieldTypeName;
         if (auto found = impl->classes.find(aggregateName); found != impl->classes.end()) {
