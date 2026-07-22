@@ -1,116 +1,134 @@
-struct KeyValuePair<K, V> {
-    public K key;
-    public V value;
+namespace std.collections {
+    struct KeyValuePair<K, V> {
+        public K key;
+        public V value;
 
-    public void initialize(K k, V v) {
-        key = k;
-        value = v;
-    }
-}
-
-struct MapIterator<K, V> {
-    private raw Map<K, V>* source;
-    private int32 index;
-
-    public void initialize(raw Map<K, V>* map) {
-        source = map;
-        index = -1;
-    }
-
-    public bool next() {
-        index = index + 1;
-        return index < source.count;
-    }
-
-    public KeyValuePair<K, V> value {
-        get { return source.entryAt(index); }
-    }
-}
-
-class Map<K, V> {
-    private KeyValuePair<K, V>[] entries;
-    private int32 _count;
-    private int32 _capacity;
-
-    public Map() {
-        _count = 0;
-        _capacity = 4;
-        entries = new KeyValuePair<K, V>[4];
-    }
-
-    public int32 count {
-        get { return _count; }
-    }
-
-    public int32 capacity {
-        get { return _capacity; }
-    }
-
-    public KeyValuePair<K, V> entryAt(int32 index) {
-        return entries[index];
-    }
-
-    public bool containsKey(K key) {
-        int32 i = 0;
-        while (i < _count) {
-            if (entries[i].key == key) {
-                return true;
-            }
-            i = i + 1;
+        public void initialize(K k, V v) {
+            key = k;
+            value = v;
         }
-        return false;
     }
 
-    public void put(K key, V value) {
-        int32 i = 0;
-        while (i < _count) {
-            if (entries[i].key == key) {
-                entries[i].value = value;
-                return;
-            }
-            i = i + 1;
+    struct MapIterator<K, V> {
+        private raw Map<K, V>* source;
+        private int32 index;
+
+        public void initialize(raw Map<K, V>* map) {
+            source = map;
+            index = -1;
         }
 
-        if (_count == _capacity) {
-            int32 newCap = _capacity * 2;
-            KeyValuePair<K, V>[] newEntries = new KeyValuePair<K, V>[newCap];
-            int32 j = 0;
-            while (j < _count) {
-                newEntries[j] = entries[j];
-                j = j + 1;
-            }
-            entries = copy(newEntries);
-            _capacity = newCap;
+        public bool next() {
+            index = index + 1;
+            return index < source.count;
         }
 
-        entries[_count].initialize(key, value);
-        _count = _count + 1;
+        public KeyValuePair<K, V> value {
+            get { return source.entryAt(index); }
+        }
     }
 
-    public bool remove(K key) {
-        int32 i = 0;
-        while (i < _count) {
-            if (entries[i].key == key) {
-                int32 j = i;
-                while (j < _count - 1) {
-                    entries[j] = entries[j + 1];
+    class Map<K, V> {
+        private KeyValuePair<K, V>[] entries;
+        private int32 _count;
+        private int32 _capacity;
+
+        public Map() {
+            _count = 0;
+            _capacity = 4;
+            entries = new KeyValuePair<K, V>[4];
+        }
+
+        public int32 count {
+            get { return _count; }
+        }
+
+        public int32 capacity {
+            get { return _capacity; }
+        }
+
+        public KeyValuePair<K, V> entryAt(int32 index) {
+            return entries[index];
+        }
+
+        public bool containsKey(K key) {
+            int32 i = 0;
+            while (i < _count) {
+                if (entries[i].key == key) {
+                    return true;
+                }
+                i = i + 1;
+            }
+            return false;
+        }
+
+        public void put(K key, V value) {
+            int32 i = 0;
+            while (i < _count) {
+                if (entries[i].key == key) {
+                    entries[i].value = value;
+                    return;
+                }
+                i = i + 1;
+            }
+
+            if (_count == _capacity) {
+                int32 newCap = _capacity * 2;
+                KeyValuePair<K, V>[] newEntries = new KeyValuePair<K, V>[newCap];
+                int32 j = 0;
+                while (j < _count) {
+                    newEntries[j] = entries[j];
                     j = j + 1;
                 }
-                _count = _count - 1;
-                return true;
+                entries = copy(newEntries);
+                _capacity = newCap;
             }
-            i = i + 1;
+
+            entries[_count].initialize(key, value);
+            _count = _count + 1;
         }
-        return false;
-    }
 
-    public void clear() {
-        _count = 0;
-    }
+        public bool remove(K key) {
+            int32 i = 0;
+            while (i < _count) {
+                if (entries[i].key == key) {
+                    int32 j = i;
+                    while (j < _count - 1) {
+                        entries[j] = entries[j + 1];
+                        j = j + 1;
+                    }
+                    _count = _count - 1;
+                    return true;
+                }
+                i = i + 1;
+            }
+            return false;
+        }
 
-    public MapIterator<K, V> iterate() {
-        MapIterator<K, V> it;
-        it.initialize(this);
-        return it;
+        public V this[K key] {
+            get {
+                int32 i = 0;
+                while (i < _count) {
+                    if (entries[i].key == key) {
+                        return entries[i].value;
+                    }
+                    i = i + 1;
+                }
+                throw new Error("Key not found");
+            }
+            set {
+                put(key, value);
+            }
+        }
+
+        public void clear() {
+            _count = 0;
+        }
+
+        public MapIterator<K, V> iterate() {
+            MapIterator<K, V> it;
+            it.initialize(this);
+            return it;
+        }
     }
 }

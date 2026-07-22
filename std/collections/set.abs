@@ -1,102 +1,105 @@
-struct SetIterator<T> {
-    private raw Set<T>* source;
-    private int32 index;
+namespace std.collections {
+    struct SetIterator<T> {
+        private raw Set<T>* source;
+        private int32 index;
 
-    public void initialize(raw Set<T>* targetSet) {
-        source = targetSet;
-        index = -1;
-    }
-
-    public bool next() {
-        index = index + 1;
-        return index < source.count;
-    }
-
-    public T value {
-        get { return source.itemAt(index); }
-    }
-}
-
-class Set<T> {
-    private T[] items;
-    private int32 _count;
-    private int32 _capacity;
-
-    public Set() {
-        _count = 0;
-        _capacity = 4;
-        items = new T[4];
-    }
-
-    public int32 count {
-        get { return _count; }
-    }
-
-    public int32 capacity {
-        get { return _capacity; }
-    }
-
-    public T itemAt(int32 index) {
-        return items[index];
-    }
-
-    public bool contains(T item) {
-        int32 i = 0;
-        while (i < _count) {
-            if (items[i] == item) {
-                return true;
-            }
-            i = i + 1;
+        public void initialize(raw Set<T>* targetSet) {
+            source = targetSet;
+            index = -1;
         }
-        return false;
+
+        public bool next() {
+            index = index + 1;
+            return index < source.count;
+        }
+
+        public T value {
+            get { return source.itemAt(index); }
+        }
     }
 
-    public bool add(T item) {
-        if (contains(item)) {
+    class Set<T> {
+        private T[] items;
+        private int32 _count;
+        private int32 _capacity;
+
+        public Set() {
+            _count = 0;
+            _capacity = 4;
+            items = new T[4];
+        }
+
+        public int32 count {
+            get { return _count; }
+        }
+
+        public int32 capacity {
+            get { return _capacity; }
+        }
+
+        public T itemAt(int32 index) {
+            return items[index];
+        }
+
+        public bool contains(T item) {
+            int32 i = 0;
+            while (i < _count) {
+                if (items[i] == item) {
+                    return true;
+                }
+                i = i + 1;
+            }
             return false;
         }
 
-        if (_count == _capacity) {
-            int32 newCap = _capacity * 2;
-            T[] newItems = new T[newCap];
-            int32 j = 0;
-            while (j < _count) {
-                newItems[j] = items[j];
-                j = j + 1;
+        public bool add(T item) {
+            if (contains(item)) {
+                return false;
             }
-            items = copy(newItems);
-            _capacity = newCap;
-        }
 
-        items[_count] = item;
-        _count = _count + 1;
-        return true;
-    }
-
-    public bool remove(T item) {
-        int32 i = 0;
-        while (i < _count) {
-            if (items[i] == item) {
-                int32 j = i;
-                while (j < _count - 1) {
-                    items[j] = items[j + 1];
+            if (_count == _capacity) {
+                int32 newCap = _capacity * 2;
+                T[] newItems = new T[newCap];
+                int32 j = 0;
+                while (j < _count) {
+                    newItems[j] = items[j];
                     j = j + 1;
                 }
-                _count = _count - 1;
-                return true;
+                items = copy(newItems);
+                _capacity = newCap;
             }
-            i = i + 1;
+
+            items[_count] = item;
+            _count = _count + 1;
+            return true;
         }
-        return false;
-    }
 
-    public void clear() {
-        _count = 0;
-    }
+        public bool remove(T item) {
+            int32 i = 0;
+            while (i < _count) {
+                if (items[i] == item) {
+                    int32 j = i;
+                    while (j < _count - 1) {
+                        items[j] = items[j + 1];
+                        j = j + 1;
+                    }
+                    _count = _count - 1;
+                    return true;
+                }
+                i = i + 1;
+            }
+            return false;
+        }
 
-    public SetIterator<T> iterate() {
-        SetIterator<T> it;
-        it.initialize(this);
-        return it;
+        public void clear() {
+            _count = 0;
+        }
+
+        public SetIterator<T> iterate() {
+            SetIterator<T> it;
+            it.initialize(this);
+            return it;
+        }
     }
 }
+

@@ -815,10 +815,44 @@ namespace Absolute {
     void Analyzer::Visit(ImportStmt* stmt) {
         if (phase == Phase::ResolveBodies && !stmt->attributes.empty())
             ValidateAttributes(*stmt, "import declaration", false);
-        if (stmt->isFile) return;
-        importedNamespaces.insert(stmt->target);
-        if (phase == Phase::ResolveBodies && !namespaces.contains(stmt->target))
-            Report("unknown imported namespace '" + stmt->target + "'");
+
+        std::string clean = stmt->target;
+        if (stmt->isFile) {
+            if (clean.starts_with("./")) clean = clean.substr(2);
+            while (clean.starts_with("../")) clean = clean.substr(3);
+            if (clean.ends_with(".abs")) clean = clean.substr(0, clean.size() - 4);
+            std::replace(clean.begin(), clean.end(), '/', '.');
+            std::replace(clean.begin(), clean.end(), '\\', '.');
+        }
+
+        std::vector<std::string> candidates;
+        candidates.push_back(clean);
+        std::string curr = clean;
+        while (true) {
+            size_t dotPos = curr.rfind('.');
+            if (dotPos == std::string::npos) break;
+            curr = curr.substr(0, dotPos);
+            if (!curr.empty()) candidates.push_back(curr);
+        }
+
+        for (const std::string& ns : candidates) {
+            importedNamespaces.insert(ns);
+        }
+
+        if (phase == Phase::ResolveBodies) {
+            bool foundAny = stmt->isFile;
+            if (!foundAny) {
+                for (const std::string& ns : candidates) {
+                    if (namespaces.contains(ns)) {
+                        foundAny = true;
+                        break;
+                    }
+                }
+            }
+            if (!foundAny) {
+                Report("unknown imported namespace '" + stmt->target + "'");
+            }
+        }
     }
 
     void Analyzer::Visit(NamespaceDeclStmt* stmt) {

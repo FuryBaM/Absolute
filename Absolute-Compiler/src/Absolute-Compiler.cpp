@@ -229,11 +229,16 @@ namespace {
             (root / (commandLine.projectName + ".absproj")).string() << "\"\n";
     }
 
+    struct CollectedImport {
+        std::string target;
+        bool isFile;
+    };
+
     class ImportCollector final : public StatementVisitor {
     public:
-        std::vector<std::string> files;
+        std::vector<CollectedImport> imports;
 
-        void Visit(ImportStmt* stmt) override { if (stmt->isFile) files.push_back(stmt->target); }
+        void Visit(ImportStmt* stmt) override { imports.push_back({stmt->target, stmt->isFile}); }
         void Visit(NamespaceDeclStmt* stmt) override {
             if (!stmt->body) return;
             for (const auto& statement : stmt->body->statements) if (statement) statement->Accept(*this);
@@ -268,9 +273,80 @@ namespace {
         void Visit(OpaquePluginStmt*) override {}
     };
 
+    std::vector<fs::path> ResolveImportPath(const fs::path& baseDirectory,
+        const std::string& target,
+        const ProjectConfig* project) {
+        std::vector<std::string> candidateSubpaths;
+
+        std::string cleanTarget = target;
+        if (cleanTarget.starts_with("./")) cleanTarget = cleanTarget.substr(2);
+
+        candidateSubpaths.push_back(cleanTarget);
+        if (!cleanTarget.ends_with(".abs")) {
+            candidateSubpaths.push_back(cleanTarget + ".abs");
+        }
+
+        if (cleanTarget.find('.') != std::string::npos &&
+            cleanTarget.find('/') == std::string::npos &&
+            cleanTarget.find('\\') == std::string::npos) {
+            std::string dotAsPath = cleanTarget;
+            std::replace(dotAsPath.begin(), dotAsPath.end(), '.', '/');
+            candidateSubpaths.push_back(dotAsPath);
+            candidateSubpaths.push_back(dotAsPath + ".abs");
+        }
+
+        std::vector<fs::path> basePaths;
+        basePaths.push_back(baseDirectory);
+        basePaths.push_back(baseDirectory / "std");
+        if (baseDirectory.has_parent_path()) {
+            basePaths.push_back(baseDirectory.parent_path());
+            basePaths.push_back(baseDirectory.parent_path() / "std");
+        }
+
+        if (project) {
+            basePaths.push_back(project->root);
+            basePaths.push_back(project->root / "std");
+            for (const fs::path& dir : project->sourceDirectories) {
+                basePaths.push_back(dir);
+                basePaths.push_back(dir / "std");
+            }
+            for (const fs::path& dir : project->nativeSearchPaths) {
+                basePaths.push_back(dir);
+                basePaths.push_back(dir / "std");
+            }
+        }
+
+        fs::path currentDir = fs::current_path();
+        basePaths.push_back(currentDir);
+        basePaths.push_back(currentDir / "std");
+
+        for (const fs::path& basePath : basePaths) {
+            for (const std::string& subpath : candidateSubpaths) {
+                fs::path candidate = basePath / subpath;
+                if (fs::exists(candidate)) {
+                    if (fs::is_regular_file(candidate)) {
+                        return { fs::weakly_canonical(candidate) };
+                    }
+                    if (fs::is_directory(candidate)) {
+                        std::vector<fs::path> dirFiles;
+                        for (const auto& entry : fs::recursive_directory_iterator(candidate)) {
+                            if (entry.is_regular_file() && entry.path().extension() == ".abs") {
+                                dirFiles.push_back(fs::weakly_canonical(entry.path()));
+                            }
+                        }
+                        std::sort(dirFiles.begin(), dirFiles.end());
+                        if (!dirFiles.empty()) return dirFiles;
+                    }
+                }
+            }
+        }
+        return {};
+    }
+
     void LoadSource(const fs::path& sourcePath,
         std::vector<std::unique_ptr<Program>>& programs,
-        std::unordered_set<std::string>& loaded) {
+        std::unordered_set<std::string>& loaded,
+        const ProjectConfig* project = nullptr) {
         if (!fs::exists(sourcePath)) throw std::runtime_error("Imported source does not exist: " + sourcePath.string());
         const fs::path canonical = fs::weakly_canonical(sourcePath);
         const std::string key = canonical.generic_string();
@@ -283,8 +359,19 @@ namespace {
         ImportCollector imports;
         for (const auto& statement : program->statements) if (statement) statement->Accept(imports);
         programs.push_back(std::move(program));
-        for (const std::string& imported : imports.files)
-            LoadSource(canonical.parent_path() / fs::path(imported), programs, loaded);
+        for (const CollectedImport& imported : imports.imports) {
+            std::vector<fs::path> resolved = ResolveImportPath(canonical.parent_path(), imported.target, project);
+            if (resolved.empty()) {
+                if (imported.isFile) {
+                    throw std::runtime_error("Imported source does not exist: " + imported.target);
+                }
+            }
+            else {
+                for (const fs::path& path : resolved) {
+                    LoadSource(path, programs, loaded, project);
+                }
+            }
+        }
     }
 
     Compilation LoadCompilation(const fs::path& input, PluginManager& plugins) {
@@ -317,7 +404,7 @@ namespace {
             preludePrograms.push_back(ParseCode(Tokenize(prelude)));
 
         if (project) {
-            LoadSource(project->entry, programs, loaded);
+            LoadSource(project->entry, programs, loaded, project.get());
             std::vector<fs::path> sources;
             for (const fs::path& directory : project->sourceDirectories) {
                 if (!fs::exists(directory))
@@ -327,10 +414,10 @@ namespace {
                 }
             }
             std::sort(sources.begin(), sources.end());
-            for (const fs::path& source : sources) LoadSource(source, programs, loaded);
+            for (const fs::path& source : sources) LoadSource(source, programs, loaded, project.get());
         }
         else {
-            LoadSource(input, programs, loaded);
+            LoadSource(input, programs, loaded, nullptr);
         }
 
         for (const fs::path& library : plugins.NativeLibraries()) {

@@ -16,11 +16,20 @@ foreach ($command in 'cmake.exe', 'cl.exe') {
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "$command was not found." }
 }
 if ($env:VisualStudioVersion -notmatch '^(\d+)\.') { throw 'Visual Studio environment is not initialized.' }
-$generator = switch ([int]$Matches[1]) {
-    18 { 'Visual Studio 18 2026' }
-    17 { 'Visual Studio 17 2022' }
-    16 { 'Visual Studio 16 2019' }
-    default { throw "Unsupported Visual Studio version $env:VisualStudioVersion" }
+$ninja = Join-Path $repoRoot '.absolute\toolchains\ninja\ninja.exe'
+if (Test-Path -LiteralPath $ninja) {
+    $env:Path = ([IO.Path]::GetDirectoryName($ninja)) + ';' + $env:Path
+}
+$useNinja = (Get-Command ninja.exe -ErrorAction SilentlyContinue) -ne $null
+if ($useNinja) {
+    $generator = 'Ninja'
+} else {
+    $generator = switch ([int]$Matches[1]) {
+        18 { 'Visual Studio 17 2022' }
+        17 { 'Visual Studio 17 2022' }
+        16 { 'Visual Studio 16 2019' }
+        default { throw "Unsupported Visual Studio version $env:VisualStudioVersion" }
+    }
 }
 
 $allowed = [IO.Path]::GetFullPath((Join-Path $suiteRoot '.benchmark-build')).TrimEnd('\') + '\'
@@ -55,8 +64,13 @@ function Measure-Command([string]$Scenario, [scriptblock]$Command) {
 }
 
 Measure-Command 'configure-clean-release' {
-    & cmake.exe -S $repoRoot -B $buildRoot -G $generator -A x64 `
-        -DABSOLUTE_ENABLE_LLVM=ON -DABSOLUTE_BUILD_EXAMPLE_PLUGINS=ON
+    if ($useNinja) {
+        & cmake.exe -S $repoRoot -B $buildRoot -G Ninja -DCMAKE_BUILD_TYPE=Release `
+            -DABSOLUTE_ENABLE_LLVM=ON -DABSOLUTE_BUILD_EXAMPLE_PLUGINS=ON
+    } else {
+        & cmake.exe -S $repoRoot -B $buildRoot -G $generator -A x64 `
+            -DABSOLUTE_ENABLE_LLVM=ON -DABSOLUTE_BUILD_EXAMPLE_PLUGINS=ON
+    }
 }
 $buildArguments = @('--build', $buildRoot, '--config', 'Release', '--target', 'Absolute-Compiler', '--parallel', $Jobs)
 Measure-Command 'clean-release' { & cmake.exe @buildArguments }
