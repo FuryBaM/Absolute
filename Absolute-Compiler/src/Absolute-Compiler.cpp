@@ -458,7 +458,7 @@ int main(int argc, char* argv[]) {
         Compilation compilation = LoadCompilation(commandLine.input, plugins);
         Analyzer analyzer({compilation.program.get()});
         if (!commandLine.parseOnly && !analyzer.Analyze()) {
-            analyzer.PrintDiagnostics();
+            analyzer.PrintDiagnostics(std::cout);
             return 1;
         }
 
@@ -505,11 +505,11 @@ int main(int argc, char* argv[]) {
     }
     catch (const std::invalid_argument& error) {
         PrintUsage();
-        std::cerr << "Error: " << error.what() << '\n';
+        std::cout << "Error: " << error.what() << std::endl;
         return 2;
     }
     catch (const std::exception& error) {
-        std::cerr << "Error: " << error.what() << '\n';
+        std::cout << "Error: " << error.what() << std::endl;
         return 1;
     }
 }

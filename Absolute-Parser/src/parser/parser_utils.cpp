@@ -86,7 +86,7 @@ namespace Absolute {
             std::string errorMsg = "Unexpected token: " + (token ? token->value : "EOF");
             errorMsg += ", expected: '" + TokenTypeToString(tokenType) + "'";
             ReportSyntaxError(token, errorMsg);
-            std::exit(EXIT_FAILURE);
+            throw std::runtime_error(errorMsg);
         }
         return token;
     }
@@ -107,7 +107,7 @@ namespace Absolute {
             std::string errorMsg = "Unexpected token: " + (token ? token->value : "EOF");
             errorMsg += ", expected: '" + expectedValue + "'";
             ReportSyntaxError(token, errorMsg);
-            std::exit(EXIT_FAILURE);
+            throw std::runtime_error(errorMsg);
         }
         return token;
     }

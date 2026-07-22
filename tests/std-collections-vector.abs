@@ -1,0 +1,36 @@
+import "../std/collections/vector.abs";
+
+int32 main() {
+    Vector<int32>* vec = new Vector<int32>();
+    vec.push(10);
+    vec.push(20);
+    vec.push(30);
+
+    if (vec.count != 3) {
+        return 1;
+    }
+    if (vec[0] != 10) {
+        return 2;
+    }
+    if (vec[1] != 20) {
+        return 3;
+    }
+    if (vec[2] != 30) {
+        return 4;
+    }
+
+    vec[1] = 25;
+    if (vec[1] != 25) {
+        return 5;
+    }
+
+    int32 val = vec.pop();
+    if (val != 30) {
+        return 6;
+    }
+    if (vec.count != 2) {
+        return 7;
+    }
+
+    return 0;
+}

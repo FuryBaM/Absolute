@@ -72,7 +72,7 @@ namespace Absolute {
 
     void Analyzer::PrintDiagnostics(std::ostream& output) const {
         for (const Diagnostic& diagnostic : diagnostics)
-            output << "Semantic error: " << diagnostic.message << '\n';
+            output << "Semantic error: " << diagnostic.message << std::endl;
     }
 
     const SymbolTable& Analyzer::Symbols() const { return table; }
@@ -735,6 +735,26 @@ namespace Absolute {
         flowTerminated = false;
         PushKeepScope();
         PushValueFlowScope();
+        if (kind == SymbolKind::Method && !currentMethodStatic && !currentType.empty()) {
+            std::string fullType = currentType;
+            if (types.contains(currentType) && !types.at(currentType).genericParameters.empty()) {
+                fullType += "<";
+                const auto& gparams = types.at(currentType).genericParameters;
+                for (size_t i = 0; i < gparams.size(); ++i) {
+                    if (i > 0) fullType += ",";
+                    fullType += gparams[i];
+                }
+                fullType += ">";
+            }
+            const std::string thisType = "raw " + fullType + "*";
+            if (const auto declared = table.Declare(SymbolKind::Parameter, "this", thisType)) {
+                RegisterFlowSymbol(*declared, {
+                    InitializationState::Initialized,
+                    PointerValidity::Live,
+                    InvalidSymbolId
+                });
+            }
+        }
         for (const auto& parameter : statement.parameters) {
             if (!parameter) continue;
             const std::string name = ExtractIdentifier(parameter->name.get());

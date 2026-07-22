@@ -1,6 +1,7 @@
 #pragma once
 #include "analyzer_build_pch.h"
 #include "analyzer_pch.h"
+#include "expression_visitor.h"
 #include "syntax_plugins.h"
 
 namespace Absolute {
@@ -192,6 +193,7 @@ namespace Absolute {
                 }
                 break;
             }
+            if (dynamic_cast<ConstructorCallExpr*>(expression)) return true;
             auto* call = dynamic_cast<FunctionCallExpr*>(expression);
             if (!call || !call->base) return false;
             CallTargetProbe probe;

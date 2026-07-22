@@ -92,6 +92,11 @@ namespace Absolute{
             return ParseIdentifierExpr();
         }
 
+        if (token->value == "this") {
+            Consume(TokenType::KEYWORD, "this");
+            return std::make_unique<IdentifierExpr>("this");
+        }
+
         if (token->value == "new") {
             return ParseConstructorCall();
         }
@@ -281,34 +286,32 @@ namespace Absolute{
         {
             if (token->value == "task" && PeekToken() && PeekToken()->value == "<")
                 return ParseVarDeclaration();
-            Token* next = PeekToken(1);
             Token* afterIdentifiers = PeekTokenAfterIdentifiers();
             const auto isDeclaratorPrefix = [](const Token* candidate) {
                 return candidate && candidate->type == TokenType::OPERATOR &&
                     (candidate->value == "*" || candidate->value == "&");
             };
-            bool templateType = false;
-            bool templatePointer = false;
+            const Token* afterTypeToken = afterIdentifiers;
             if (afterIdentifiers && afterIdentifiers->value == "<") {
                 const size_t templateStart = static_cast<size_t>(afterIdentifiers - tokens.data());
                 size_t templateClose = 0;
                 if (IsTemplateArgumentList(templateStart, &templateClose)) {
-                    Token* afterTemplate = templateClose + 1 < tokens.size() ? &tokens[templateClose + 1] : nullptr;
-                    templateType = afterTemplate &&
-                        (afterTemplate->type == TokenType::IDENTIFIER || isDeclaratorPrefix(afterTemplate));
-                    templatePointer = isDeclaratorPrefix(afterTemplate);
+                    afterTypeToken = templateClose + 1 < tokens.size() ? &tokens[templateClose + 1] : nullptr;
                 }
             }
 
-            if ((next && next->type == TokenType::OPERATOR && next->value == "*") ||
-                (afterIdentifiers && afterIdentifiers->type == TokenType::OPERATOR &&
-                    afterIdentifiers->value == "*") || templatePointer) {
-                return ParseVarDeclaration();
+            const Token* candidate = afterTypeToken;
+            bool hasArraySuffix = false;
+            while (candidate && candidate->type == TokenType::BRACKET && candidate->value == "[" &&
+                (candidate + 1 < tokens.data() + tokens.size()) && (candidate + 1)->type == TokenType::BRACKET && (candidate + 1)->value == "]") {
+                candidate += 2;
+                hasArraySuffix = true;
             }
 
-            if ((next && (next->type == TokenType::IDENTIFIER || isDeclaratorPrefix(next))) ||
-                (afterIdentifiers && (afterIdentifiers->type == TokenType::IDENTIFIER || isDeclaratorPrefix(afterIdentifiers))) ||
-                templateType) {
+            if (candidate && (candidate->type == TokenType::IDENTIFIER || isDeclaratorPrefix(candidate))) {
+                if (hasArraySuffix || isDeclaratorPrefix(candidate) || (afterIdentifiers && afterIdentifiers->value == "<")) {
+                    return ParseVarDeclaration();
+                }
                 return ParseInstanceDeclStmt();
             }
             return ParseIdentifier(); // Обрабатываем идентификатор

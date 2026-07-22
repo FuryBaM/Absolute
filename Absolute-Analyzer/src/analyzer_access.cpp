@@ -238,13 +238,7 @@ namespace Absolute {
         Result receiver;
         bool hasReceiver = false;
 
-        const std::vector<SymbolId> qualifiedCandidates = FindFunctionCandidates(qualifiedCallName);
-        if (!qualifiedCandidates.empty()) {
-            for (const auto& argument : expr->arguments) arguments.push_back(Evaluate(argument.get()));
-            symbolId = SelectOverload(
-                qualifiedCandidates, arguments, qualifiedCallName, explicitTypeArguments);
-        }
-        else if (auto* memberCall = dynamic_cast<MemberAccessExpr*>(expr->base.get())) {
+        if (auto* memberCall = dynamic_cast<MemberAccessExpr*>(expr->base.get())) {
             const std::string ownerName = ResolveTypeReference(
                 ExtractQualifiedName(memberCall->base.get()));
             const bool typeReceiver = types.contains(ownerName);
@@ -254,7 +248,13 @@ namespace Absolute {
             }
             for (const auto& argument : expr->arguments) arguments.push_back(Evaluate(argument.get()));
 
-            const auto members = FindMembers(typeReceiver ? ownerName : receiver.type, memberCall->member);
+            const std::vector<SymbolId> qualifiedCandidates = typeReceiver ? FindFunctionCandidates(qualifiedCallName) : std::vector<SymbolId>{};
+            if (!qualifiedCandidates.empty()) {
+                symbolId = SelectOverload(
+                    qualifiedCandidates, arguments, qualifiedCallName, explicitTypeArguments);
+            }
+            else {
+                const auto members = FindMembers(typeReceiver ? ownerName : receiver.type, memberCall->member);
             std::vector<SymbolId> methodCandidates;
             std::vector<std::vector<std::string>> candidateSignatures;
             for (const MemberSignature& member : members) {
@@ -294,12 +294,13 @@ namespace Absolute {
                 }
             }
         }
+        }
         else {
             for (const auto& argument : expr->arguments) arguments.push_back(Evaluate(argument.get()));
             std::vector<SymbolId> candidates = FindFunctionCandidates(callName);
             if (candidates.empty() && !currentType.empty()) {
                 for (const MemberSignature& member : FindMembers(currentType, callName))
-                    if (member.kind == SymbolKind::Method && member.isStatic)
+                    if (member.kind == SymbolKind::Method && (member.isStatic || !currentMethodStatic))
                         candidates.push_back(member.symbol);
             }
             if (candidates.empty()) Report("unknown function '" + callName + "'");

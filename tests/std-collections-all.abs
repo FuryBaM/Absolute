@@ -1,0 +1,23 @@
+import "../std/collections/vector.abs";
+import "../std/collections/map.abs";
+import "../std/collections/set.abs";
+
+int32 main() {
+    Vector<int32>* vec = new Vector<int32>();
+    vec.push(100);
+    vec.push(200);
+
+    Map<int32, int32>* map = new Map<int32, int32>();
+    map.put(1, 10);
+    map.put(2, 20);
+
+    Set<int32>* mySet = new Set<int32>();
+    mySet.add(5);
+    mySet.add(10);
+
+    assert(vec.count == 2, "vector count");
+    assert(map.containsKey(1), "map contains key");
+    assert(mySet.contains(5), "set contains item");
+
+    return 0;
+}

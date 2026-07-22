@@ -268,7 +268,12 @@ namespace Absolute {
         }
         else if (Symbol* symbol = table.Get(id)) symbol->type = type;
         ValueFlowState flow;
-        flow.initialization = (expr->value || arrayRank > 0)
+        std::string defName = type;
+        std::string genBase;
+        std::vector<std::string> genArgs;
+        if (ParseGenericTypeName(type, genBase, genArgs)) defName = genBase;
+        const bool isStructType = types.contains(defName) && types.at(defName).kind == TypeKind::Struct;
+        flow.initialization = (expr->value || arrayRank > 0 || isStructType)
             ? InitializationState::Initialized : InitializationState::Uninitialized;
         flow.pointerValidity = IsPointerType(type)
             ? (expr->value ? value.pointerValidity : PointerValidity::Unknown)
@@ -469,6 +474,16 @@ namespace Absolute {
 
     void Analyzer::Visit(ConstructorCallExpr* expr) {
         const std::string constructedType = ResolveType(expr->constructName.get());
+        if (ArrayRank(constructedType) > 0) {
+            if (!expr->arguments.empty()) {
+                EvaluateExpected(expr->arguments[0].get(), "int64");
+            }
+            Result allocation{InvalidSymbolId, constructedType, false,
+                true, false, InitializationState::Initialized,
+                PointerValidity::Live, InvalidSymbolId};
+            Save(expr, std::move(allocation));
+            return;
+        }
         const bool rawAllocation = expr->raw ||
             (IsRawPointerType(expectedType) && PointerPointee(expectedType) == constructedType);
         if (!IsKnownType(constructedType) || constructedType == "void" || constructedType == "auto" ||

@@ -1,5 +1,6 @@
 #pragma once
 #include "codegen_pch.h"
+#include "expression_visitor.h"
 #include "analyzer.h"
 #include "codegen.h"
 #include "syntax_plugins.h"

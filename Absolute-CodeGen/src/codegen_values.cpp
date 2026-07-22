@@ -377,6 +377,24 @@ namespace Absolute {
 
     void CodeGenerator::Visit(ConstructorCallExpr* expr) {
         const std::string allocationType = impl->SemanticType(expr);
+        const std::string arrayTypeName = allocationType.empty()
+            ? impl->ResolveTypeName(expr->constructName.get())
+            : allocationType;
+        if (ArrayRankName(arrayTypeName) > 0) {
+            const size_t rank = ArrayRankName(arrayTypeName);
+            const std::string elemTypeName = ArrayElementTypeName(arrayTypeName, rank);
+            llvm::Value* count = expr->arguments.empty()
+                ? impl->builder.getInt64(0)
+                : impl->Evaluate(expr->arguments[0].get());
+            llvm::Value* elemSize = impl->builder.getInt64(impl->SizeOfTypeName(elemTypeName));
+            llvm::Value* allocBytes = impl->builder.CreateMul(count, elemSize, "array.alloc.bytes");
+            llvm::Value* dataPtr = impl->builder.CreateCall(
+                impl->Malloc(), {allocBytes}, "array.data.alloc");
+            impl->value = impl->BuildArrayDescriptor({dataPtr, dataPtr, arrayTypeName, {count}});
+            impl->valueCreatesManagedOwner = false;
+            impl->valueManagedPointee = nullptr;
+            return;
+        }
         const std::string pointeeType = allocationType.empty()
             ? impl->ResolveTypeName(expr->constructName.get())
             : PointerPointeeName(allocationType);

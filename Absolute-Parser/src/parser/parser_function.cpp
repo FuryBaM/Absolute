@@ -13,8 +13,18 @@ namespace Absolute {
         }
         else if (tokens[index].type == TokenType::IDENTIFIER) {
             ++index;
-            while (index + 1 < tokens.size() && tokens[index].value == "." &&
-                tokens[index + 1].type == TokenType::IDENTIFIER) index += 2;
+            while (index < tokens.size()) {
+                if (index + 1 < tokens.size() && tokens[index].value == "." &&
+                    tokens[index + 1].type == TokenType::IDENTIFIER) {
+                    index += 2;
+                }
+                else if (tokens[index].value == "<") {
+                    size_t close = 0;
+                    if (!IsTemplateArgumentList(index, &close)) return false;
+                    index = close + 1;
+                }
+                else break;
+            }
         }
         else return false;
         while (index < tokens.size() && tokens[index].type == TokenType::OPERATOR && tokens[index].value == "*")
@@ -157,12 +167,15 @@ namespace Absolute {
 
     std::unique_ptr<ReturnStmt> Parser::ParseReturnStmt()
     {
-	    Token* token = CurrentToken();
-	    if (token && token->type == TokenType::KEYWORD && token->value == "return") {
-		    Consume(TokenType::KEYWORD);
-		    std::unique_ptr<Expression> expr = ParseExpression();
-		    Consume(TokenType::DELIMITER);
-		    return std::make_unique<ReturnStmt>(std::move(expr));
+        Token* token = CurrentToken();
+        if (token && token->type == TokenType::KEYWORD && token->value == "return") {
+            Consume(TokenType::KEYWORD, "return");
+            std::unique_ptr<Expression> expr = nullptr;
+            if (CurrentToken() && !IsEndOfStatement(*CurrentToken())) {
+                expr = ParseExpression();
+            }
+            Consume(TokenType::DELIMITER, ";");
+            return std::make_unique<ReturnStmt>(std::move(expr));
         }
         return nullptr;
     }

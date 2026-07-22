@@ -1,0 +1,99 @@
+struct VectorIterator<T> {
+    private raw Vector<T>* source;
+    private int32 index;
+
+    public void initialize(raw Vector<T>* vec) {
+        source = vec;
+        index = -1;
+    }
+
+    public bool next() {
+        index = index + 1;
+        return index < source.count;
+    }
+
+    public T value {
+        get { return source[index]; }
+    }
+}
+
+class Vector<T> {
+    private T[] items;
+    private int32 _count;
+    private int32 _capacity;
+
+    public Vector() {
+        _count = 0;
+        _capacity = 4;
+        items = new T[4];
+    }
+
+    public int32 count {
+        get { return _count; }
+    }
+
+    public int32 capacity {
+        get { return _capacity; }
+    }
+
+    public void push(T element) {
+        if (_count == _capacity) {
+            int32 newCap = _capacity * 2;
+            T[] newItems = new T[newCap];
+            int32 i = 0;
+            while (i < _count) {
+                newItems[i] = items[i];
+                i = i + 1;
+            }
+            items = copy(newItems);
+            _capacity = newCap;
+        }
+        items[_count] = element;
+        _count = _count + 1;
+    }
+
+    public T pop() {
+        if (_count == 0) {
+            throw new Error("Vector is empty");
+        }
+        _count = _count - 1;
+        return items[_count];
+    }
+
+    public void clear() {
+        _count = 0;
+    }
+
+    public void removeAt(int32 index) {
+        if (index < 0 || index >= _count) {
+            throw new Error("Index out of bounds");
+        }
+        int32 i = index;
+        while (i < _count - 1) {
+            items[i] = items[i + 1];
+            i = i + 1;
+        }
+        _count = _count - 1;
+    }
+
+    public T this[int32 index] {
+        get {
+            if (index < 0 || index >= _count) {
+                throw new Error("Index out of bounds");
+            }
+            return items[index];
+        }
+        set {
+            if (index < 0 || index >= _count) {
+                throw new Error("Index out of bounds");
+            }
+            items[index] = value;
+        }
+    }
+
+    public VectorIterator<T> iterate() {
+        VectorIterator<T> it;
+        it.initialize(this);
+        return it;
+    }
+}
