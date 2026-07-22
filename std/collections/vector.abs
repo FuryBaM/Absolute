@@ -24,11 +24,20 @@ namespace std.collections {
         private T[] items;
         private int32 _count;
         private int32 _capacity;
+        private bool _isShared;
 
         public Vector() {
             _count = 0;
             _capacity = 4;
             items = new T[4];
+            _isShared = false;
+        }
+
+        public void ensureUnshared() {
+            if (_isShared) {
+                items = copy(items);
+                _isShared = false;
+            }
         }
 
         public int32 count {
@@ -40,6 +49,7 @@ namespace std.collections {
         }
 
         public void push(T element) {
+            ensureUnshared();
             if (_count == _capacity) {
                 int32 newCap = _capacity * 2;
                 T[] newItems = new T[newCap];
@@ -59,11 +69,13 @@ namespace std.collections {
             if (_count == 0) {
                 throw new Error("Vector is empty");
             }
+            ensureUnshared();
             _count = _count - 1;
             return items[_count];
         }
 
         public void clear() {
+            ensureUnshared();
             _count = 0;
         }
 
@@ -71,6 +83,7 @@ namespace std.collections {
             if (index < 0 || index >= _count) {
                 throw new Error("Index out of bounds");
             }
+            ensureUnshared();
             int32 i = index;
             while (i < _count - 1) {
                 items[i] = items[i + 1];
@@ -90,11 +103,13 @@ namespace std.collections {
                 if (index < 0 || index >= _count) {
                     throw new Error("Index out of bounds");
                 }
+                ensureUnshared();
                 items[index] = value;
             }
         }
 
         public VectorIterator<T>* iterate() {
+            _isShared = true;
             return new VectorIterator<T>(items, _count);
         }
     }

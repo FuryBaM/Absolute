@@ -1384,9 +1384,15 @@ namespace Absolute {
         return id;
     }
 
-    SymbolId Analyzer::SelectOverload(const std::vector<SymbolId>& candidates,
+    SymbolId Analyzer::SelectOverload(const std::vector<SymbolId>& inputCandidates,
         const std::vector<Result>& arguments, const std::string& displayName,
         const std::vector<std::string>& explicitTypeArguments) {
+        std::vector<SymbolId> candidates;
+        candidates.reserve(inputCandidates.size());
+        for (SymbolId id : inputCandidates) {
+            if (std::find(candidates.begin(), candidates.end(), id) == candidates.end())
+                candidates.push_back(id);
+        }
         SymbolId best = InvalidSymbolId;
         std::vector<std::string> bestGenericArguments;
         int bestCost = std::numeric_limits<int>::max();
@@ -1415,7 +1421,24 @@ namespace Absolute {
                     }
                 if (!unified) continue;
                 for (const std::string& parameter : candidate->genericParameters) {
-                    const auto found = substitutions.find(parameter);
+                    auto found = substitutions.find(parameter);
+                    if (found == substitutions.end()) {
+                        const std::string owner = !candidate->memberOwner.empty() ? candidate->memberOwner : currentType;
+                        std::string baseOwner = owner;
+                        std::vector<std::string> ownerArgs;
+                        ParseGenericTypeName(owner, baseOwner, ownerArgs);
+                        const auto typeIt = types.find(baseOwner);
+                        if (typeIt != types.end()) {
+                            const auto& classGenParams = typeIt->second.genericParameters;
+                            auto classParamIt = std::find(classGenParams.begin(), classGenParams.end(), parameter);
+                            if (classParamIt != classGenParams.end()) {
+                                size_t idx = static_cast<size_t>(std::distance(classGenParams.begin(), classParamIt));
+                                std::string substType = (idx < ownerArgs.size()) ? ownerArgs[idx] : parameter;
+                                substitutions.emplace(parameter, substType);
+                                found = substitutions.find(parameter);
+                            }
+                        }
+                    }
                     if (found == substitutions.end()) {
                         unified = false;
                         break;
@@ -1448,6 +1471,14 @@ namespace Absolute {
                 ambiguous = false;
             }
             else if (cost == bestCost) {
+                if (best != InvalidSymbolId) {
+                    const Symbol* bestSymbol = table.Get(best);
+                    if (bestSymbol && candidate &&
+                        bestSymbol->name == candidate->name &&
+                        bestSymbol->memberOwner == candidate->memberOwner) {
+                        continue;
+                    }
+                }
                 if (bestWasGeneric && !candidateIsGeneric) {
                     best = id;
                     bestGenericArguments.clear();

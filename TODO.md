@@ -253,14 +253,14 @@
 - [x] Явное независимое копирование массивов и slices через `copy(...)`; скрытое копирование при `return` удалено.
 - [x] `foreach` по массивам и slices.
 - [x] Проверка выхода за границы.
-- [ ] Добавить многомерные slices.
+- [x] Добавить многомерные slices.
 - [x] Добавить пользовательский протокол iteration и lowering `foreach`.
 - [x] Сделать iterators `Vector`/`Map`/`Set` безопасными через immutable snapshot:
   `iterate()` создаёт независимую копию видимой части backing storage, поэтому
   push/remove/clear и замена элементов исходной коллекции физически не могут
   инвалидировать iterator. Lowering `foreach` владеет managed iterator и очищает
   его snapshot на normal exit, `break` и `return`; generation panic не нужен.
-- [ ] Заменить eager copy при `iterate()` на разделяемую immutable-версию backing
+- [x] Заменить eager copy при `iterate()` на разделяемую immutable-версию backing
   storage с copy-on-write. Это оптимизация времени и памяти без изменения уже
   реализованной snapshot-семантики: iterator продолжает видеть версию на момент
   `iterate()` и не требует lexical borrow checker.
