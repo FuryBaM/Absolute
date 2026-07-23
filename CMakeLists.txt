@@ -1441,6 +1441,15 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "native=42"
         )
         add_test(
+            NAME absolute.run-package-manager-plugins-native
+            COMMAND "${CMAKE_COMMAND}"
+                -DCOMPILER=$<TARGET_FILE:Absolute-Compiler>
+                -DMATH_PLUGIN=$<TARGET_FILE:Absolute-Math-Plugin>
+                -DNATIVE_LIBRARY=$<TARGET_FILE:absolute-native-test>
+                -DWORK_DIR=${CMAKE_BINARY_DIR}/tests/package-manager-plugins-native
+                -P "${PROJECT_SOURCE_DIR}/tests/run-package-manager-plugins-native.cmake"
+        )
+        add_test(
             NAME absolute.build-export-c-abi
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-c-abi.abs"
                 --build-exe -o "${CMAKE_BINARY_DIR}/export-c-abi-app${CMAKE_EXECUTABLE_SUFFIX}"

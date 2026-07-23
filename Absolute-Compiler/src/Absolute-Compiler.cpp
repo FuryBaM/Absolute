@@ -449,7 +449,7 @@ namespace {
 
             PackageManifest pkgManifest = PackageManager::LoadManifest(input);
             PackageLockfile lockfile = PackageManager::LoadLockfile(input.parent_path() / "abspackage.lock");
-            PackageLockfile resolvedLock = PackageManager::ResolveDependencies(pkgManifest, input.parent_path() / "packages", lockfile);
+            PackageLockfile resolvedLock = PackageManager::ResolveDependencies(pkgManifest, pkgManifest.registries, lockfile);
             PackageManager::SaveLockfile(resolvedLock, input.parent_path() / "abspackage.lock");
         }
         else {

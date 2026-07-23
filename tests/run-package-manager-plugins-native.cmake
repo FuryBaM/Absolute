@@ -1,41 +1,33 @@
-if(NOT DEFINED COMPILER OR NOT DEFINED WORK_DIR)
-    message(FATAL_ERROR "COMPILER and WORK_DIR are required")
+if(NOT DEFINED COMPILER OR NOT DEFINED MATH_PLUGIN OR NOT DEFINED NATIVE_LIBRARY OR NOT DEFINED WORK_DIR)
+    message(FATAL_ERROR "COMPILER, MATH_PLUGIN, NATIVE_LIBRARY, and WORK_DIR are required")
 endif()
 
 file(REMOVE_RECURSE "${WORK_DIR}")
 file(MAKE_DIRECTORY "${WORK_DIR}")
 file(MAKE_DIRECTORY "${WORK_DIR}/packages/depA")
-file(MAKE_DIRECTORY "${WORK_DIR}/packages/depSub")
+
+file(TO_CMAKE_PATH "${MATH_PLUGIN}" MATH_PLUGIN_PATH)
+file(TO_CMAKE_PATH "${NATIVE_LIBRARY}" NATIVE_LIB_PATH)
 
 file(WRITE "${WORK_DIR}/package.abs" [=[
 {
-  "name": "AppProject",
+  "name": "PackageWithPluginsAndNative",
   "version": "1.0.0",
   "type": "app",
   "entry": "src/main.abs",
   "registries": ["packages"],
+  "plugins": ["]=] "${MATH_PLUGIN_PATH}" [=["],
+  "nativeLibraries": ["]=] "${NATIVE_LIB_PATH}" [=["],
   "dependencies": {
     "depA": "^1.0.0"
   }
 }
 ]=])
 
-# depA transitively depends on depSub
 file(WRITE "${WORK_DIR}/packages/depA/package.abs" [=[
 {
   "name": "depA",
-  "version": "1.2.3",
-  "type": "lib",
-  "dependencies": {
-    "depSub": "~2.1.0"
-  }
-}
-]=])
-
-file(WRITE "${WORK_DIR}/packages/depSub/package.abs" [=[
-{
-  "name": "depSub",
-  "version": "2.1.5",
+  "version": "1.2.0",
   "type": "lib",
   "dependencies": {}
 }
@@ -43,8 +35,11 @@ file(WRITE "${WORK_DIR}/packages/depSub/package.abs" [=[
 
 file(MAKE_DIRECTORY "${WORK_DIR}/src")
 file(WRITE "${WORK_DIR}/src/main.abs" [=[
+extern "C" int32 native_add(int32 a, int32 b);
+
 int32 main() {
-    println("package-manifest-transitive=ok");
+    int32 nativeSum = native_add(20, 22);
+    println(format("package-plugins-native=ok, sum={}", nativeSum));
     return 0;
 }
 ]=])
@@ -63,16 +58,11 @@ if(NOT EXISTS "${WORK_DIR}/abspackage.lock")
     message(FATAL_ERROR "Package lockfile abspackage.lock was not generated!")
 endif()
 
-file(READ "${WORK_DIR}/abspackage.lock" LOCKFILE_CONTENT)
-if(NOT LOCKFILE_CONTENT MATCHES "depSub" OR NOT LOCKFILE_CONTENT MATCHES "2.1.5")
-    message(FATAL_ERROR "Transitive dependency depSub version 2.1.5 not found in lockfile:\n${LOCKFILE_CONTENT}")
-endif()
-
 execute_process(
     COMMAND "${WORK_DIR}/app.exe"
     RESULT_VARIABLE RUN_STATUS
     OUTPUT_VARIABLE RUN_OUTPUT
 )
-if(NOT RUN_STATUS EQUAL 0 OR NOT RUN_OUTPUT MATCHES "package-manifest-transitive=ok")
+if(NOT RUN_STATUS EQUAL 0 OR NOT RUN_OUTPUT MATCHES "package-plugins-native=ok, sum=42")
     message(FATAL_ERROR "Package app execution failed (${RUN_STATUS})\n${RUN_OUTPUT}")
 endif()
