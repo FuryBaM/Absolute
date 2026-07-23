@@ -127,3 +127,37 @@ extern "C" void absolute_managed_destroy(std::uint64_t handle) {
     if (slot->generation == 0) ++slot->generation;
     freeSlots.push_back(id);
 }
+
+namespace {
+    struct CapsuleImpl {
+        std::uint64_t handle = 0;
+        std::atomic<bool> transferred{false};
+    };
+}
+
+extern "C" void* absolute_capsule_create(std::uint64_t handle) {
+    CapsuleImpl* capsule = new CapsuleImpl;
+    capsule->handle = handle;
+    return capsule;
+}
+
+extern "C" std::uint64_t absolute_capsule_unwrap(void* capsulePtr) {
+    if (!capsulePtr) return 0;
+    CapsuleImpl* capsule = static_cast<CapsuleImpl*>(capsulePtr);
+    if (capsule->transferred.exchange(true)) {
+        std::cerr << "Absolute runtime error: transfer capsule already unwrapped or transferred\n";
+        std::abort();
+    }
+    std::uint64_t handle = capsule->handle;
+    delete capsule;
+    return handle;
+}
+
+extern "C" void absolute_capsule_destroy(void* capsulePtr) {
+    if (!capsulePtr) return;
+    CapsuleImpl* capsule = static_cast<CapsuleImpl*>(capsulePtr);
+    if (!capsule->transferred.load() && capsule->handle != 0) {
+        absolute_managed_destroy(capsule->handle);
+    }
+    delete capsule;
+}

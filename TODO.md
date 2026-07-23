@@ -294,13 +294,13 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   а mutable/raw/subscriber/temporary receivers отсекаются анализатором. Это
   закрывает текущую lifetime-границу, но ещё не является полной гарантией
   отсутствия data races для будущих pointer/aggregate payloads.
-- [ ] До расширения task payload ABI ввести task-isolates: у каждой task свой
+- [x] До расширения task payload ABI ввести task-isolates: у каждой task свой
   object/handle domain, а `spawn` не захватывает произвольное окружение и принимает
   только закрытый message envelope. Обычный managed/raw/weak pointer не имеет
   представления в envelope и потому архитектурно не может сослаться на mutable
   объект другой task; это ограничение ABI/runtime capability, а не соглашение и
   не borrow checker.
-- [ ] Разрешить ровно два способа пересечь isolate boundary: immutable value/blob
+- [x] Разрешить ровно два способа пересечь isolate boundary: immutable value/blob
   копируется или разделяет read-only backing; уникальный object graph передаётся
   только внутри sealed transfer capsule. Capsule не создаётся из произвольного
   `move(pointer)`: его storage изначально создаётся opaque, не выдаёт обычных
@@ -317,7 +317,7 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   (`Atomic`, `MutexCell`, semaphore или actor/service): внутреннее `T` нельзя
   извлечь как pointer/reference, все операции capability синхронизированы, а lock
   guard task-local и runtime не позволяет пронести его через `await`/channel.
-- [ ] Сделать managed runtime domain-aware для transfer capsule (atomic detach,
+- [x] Сделать managed runtime domain-aware для transfer capsule (atomic detach,
   publication, rehome и destroy). Обычный managed handle остаётся task-local и не
   становится способом совместного доступа между domains.
 - [ ] Расширить plugin resource descriptor операциями `copy_message`,
