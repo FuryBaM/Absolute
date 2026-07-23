@@ -221,7 +221,7 @@ namespace Absolute {
         
         for (size_t index = 0; index < resources->descriptor_count; ++index) {
             const AbsoluteResourceDescriptorV1& descriptor = resources->descriptors[index];
-            if (descriptor.struct_size < sizeof(AbsoluteResourceDescriptorV1))
+            if (descriptor.struct_size < offsetof(AbsoluteResourceDescriptorV1, copy_message_function))
                 throw std::runtime_error("Plugin '" + pluginName + "' uses incompatible AbsoluteResourceDescriptorV1");
             const std::string typeName = descriptor.type_name ? descriptor.type_name : "";
             if (!IsIdentifier(typeName))
@@ -229,12 +229,22 @@ namespace Absolute {
             if (resourcesByTypeName.contains(typeName))
                 throw std::runtime_error("Plugin resource type '" + typeName + "' is already registered");
                 
+            const std::string copyMsg = (descriptor.struct_size >= offsetof(AbsoluteResourceDescriptorV1, copy_message_function) + sizeof(descriptor.copy_message_function) && descriptor.copy_message_function)
+                ? descriptor.copy_message_function : "";
+            const std::string makeImm = (descriptor.struct_size >= offsetof(AbsoluteResourceDescriptorV1, make_immutable_function) + sizeof(descriptor.make_immutable_function) && descriptor.make_immutable_function)
+                ? descriptor.make_immutable_function : "";
+            const std::string rehome = (descriptor.struct_size >= offsetof(AbsoluteResourceDescriptorV1, rehome_function) + sizeof(descriptor.rehome_function) && descriptor.rehome_function)
+                ? descriptor.rehome_function : "";
+
             resourcesByTypeName[typeName] = {
                 pluginName,
                 typeName,
                 descriptor.is_resource,
                 descriptor.destroy_function ? descriptor.destroy_function : "",
-                descriptor.move_into_function ? descriptor.move_into_function : ""
+                descriptor.move_into_function ? descriptor.move_into_function : "",
+                copyMsg,
+                makeImm,
+                rehome
             };
         }
     }

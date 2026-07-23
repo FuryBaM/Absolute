@@ -28,6 +28,15 @@ namespace Absolute {
         bool isResource;
         std::string destroyFunction;
         std::string moveIntoFunction;
+        std::string copyMessageFunction;
+        std::string makeImmutableFunction;
+        std::string rehomeFunction;
+
+        bool canCrossIsolateBoundary() const {
+            return !copyMessageFunction.empty() ||
+                   !makeImmutableFunction.empty() ||
+                   !rehomeFunction.empty();
+        }
     };
 
     PARSER_API void RegisterSyntaxPlugin(const AbsoluteSyntaxPluginV1* plugin);

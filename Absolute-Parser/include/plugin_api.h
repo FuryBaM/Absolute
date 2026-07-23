@@ -200,6 +200,9 @@ typedef struct AbsoluteResourceDescriptorV1 {
     bool is_resource;
     const char* destroy_function;
     const char* move_into_function;
+    const char* copy_message_function;
+    const char* make_immutable_function;
+    const char* rehome_function;
 } AbsoluteResourceDescriptorV1;
 
 typedef struct AbsoluteResourceTableV1 {

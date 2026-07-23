@@ -320,7 +320,7 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Сделать managed runtime domain-aware для transfer capsule (atomic detach,
   publication, rehome и destroy). Обычный managed handle остаётся task-local и не
   становится способом совместного доступа между domains.
-- [ ] Расширить plugin resource descriptor операциями `copy_message`,
+- [x] Расширить plugin resource descriptor операциями `copy_message`,
   `make_immutable` или `detach/rehome`; без них plugin resource является task-local
   и message ABI его не принимает.
 

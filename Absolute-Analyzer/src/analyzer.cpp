@@ -635,6 +635,8 @@ namespace Absolute {
             name == "int64" || name == "uint64" ||
             name == "bool" || name == "float" || name == "double")
             return true;
+        if (const auto* descriptor = GetPluginResourceDescriptor(name))
+            return descriptor->canCrossIsolateBoundary();
         const auto found = types.find(name);
         return found != types.end() && found->second.kind == TypeKind::Enum;
     }

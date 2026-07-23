@@ -117,11 +117,12 @@ namespace {
     };
 
     const AbsoluteResourceDescriptorV1 resources[] = {
-        {sizeof(AbsoluteResourceDescriptorV1), "TestResource", true, "test_resource_destroy", nullptr}
+        {sizeof(AbsoluteResourceDescriptorV1), "TestResource", true, "test_resource_destroy", nullptr, nullptr, nullptr, nullptr},
+        {sizeof(AbsoluteResourceDescriptorV1), "TransferrableResource", true, "test_resource_destroy", nullptr, "test_resource_copy", nullptr, nullptr}
     };
     
     const AbsoluteResourceTableV1 resourceTable = {
-        1,
+        2,
         resources
     };
 }
