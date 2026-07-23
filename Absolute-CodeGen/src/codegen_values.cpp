@@ -303,8 +303,10 @@ namespace Absolute {
             if (impl->addressMode) impl->Fail("array length property is not assignable");
             llvm::Value* descriptor = impl->Evaluate(expr->base.get());
             if (descriptor->getType()->isPointerTy()) {
-                descriptor = impl->builder.CreateLoad(
+                llvm::LoadInst* load = impl->builder.CreateLoad(
                     impl->ArrayDescriptorType(baseType), descriptor, "array.descriptor");
+                load->setMetadata(llvm::LLVMContext::MD_invariant_load, llvm::MDNode::get(impl->context, {}));
+                descriptor = load;
             }
             llvm::Value* length64 = impl->builder.CreateExtractValue(descriptor, {2}, "array.length.i64");
             impl->value = impl->builder.CreateTrunc(length64, impl->builder.getInt32Ty(), "array.length");

@@ -385,7 +385,9 @@ namespace Absolute {
         if (rank == 0)
             Fail("array expression does not produce a descriptor");
         if (descriptor->getType()->isPointerTy()) {
-            descriptor = builder.CreateLoad(ArrayDescriptorType(typeName), descriptor, "array.descriptor.loaded");
+            llvm::LoadInst* load = builder.CreateLoad(ArrayDescriptorType(typeName), descriptor, "array.descriptor.loaded");
+            load->setMetadata(llvm::LLVMContext::MD_invariant_load, llvm::MDNode::get(context, {}));
+            descriptor = load;
         }
         if (!descriptor->getType()->isStructTy())
             Fail("array expression does not produce a descriptor");
@@ -452,17 +454,11 @@ namespace Absolute {
 
             const std::string indexTypeName = SemanticType(expression.indexes[dimension].get());
             const bool unsignedIndex = indexTypeName.starts_with("uint") || indexTypeName == "char";
-            llvm::Value* nonNegative = unsignedIndex
-                ? builder.getTrue()
-                : builder.CreateICmpSGE(
-                    index, llvm::ConstantInt::get(index->getType(), 0), "array.index.nonnegative");
             llvm::Value* wideIndex = index->getType()->isIntegerTy(64)
                 ? index
                 : builder.CreateIntCast(index, builder.getInt64Ty(), !unsignedIndex, "array.index.wide");
-            llvm::Value* belowSize = unsignedIndex
-                ? builder.CreateICmpULT(wideIndex, view.dimensions[dimension], "array.index.below.size")
-                : builder.CreateICmpSLT(wideIndex, view.dimensions[dimension], "array.index.below.size");
-            EmitOrExit(builder.CreateAnd(nonNegative, belowSize, "array.index.valid"), "array.bounds");
+            llvm::Value* valid = builder.CreateICmpULT(wideIndex, view.dimensions[dimension], "array.index.valid");
+            EmitOrExit(valid, "array.bounds");
             if (expression.indexes.size() == 1 && view.dimensions.size() == 1) oneDimensionalIndex = index;
             if (dimension == 0) offset = wideIndex;
             else {
@@ -1018,7 +1014,12 @@ namespace Absolute {
     llvm::FunctionCallee CodeGenerator::Impl::ExitFailure() {
         llvm::FunctionType* type = llvm::FunctionType::get(
             builder.getVoidTy(), {builder.getInt32Ty()}, false);
-        return module->getOrInsertFunction("exit", type);
+        llvm::FunctionCallee callee = module->getOrInsertFunction("exit", type);
+        if (auto* exitFunc = llvm::dyn_cast<llvm::Function>(callee.getCallee())) {
+            exitFunc->addFnAttr(llvm::Attribute::NoReturn);
+            exitFunc->addFnAttr(llvm::Attribute::Cold);
+        }
+        return callee;
     }
 
     std::string CodeGenerator::Impl::SemanticType(Expression* expression) const {
