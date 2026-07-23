@@ -452,26 +452,52 @@ namespace Absolute {
         }
         initialize = reinterpret_cast<InitFunction>(FindSymbol(handle, "absolute_syntax_plugin_init_v1"));
 #endif
-        if (!initialize) {
+        const auto compilerPluginInit = reinterpret_cast<AbsoluteCompilerPluginInitV1>(
+            FindSymbol(handle, "absolute_compiler_plugin_v1"));
+        const auto languagePluginInit = reinterpret_cast<AbsoluteLanguagePluginInitV1>(
+            FindSymbol(handle, "absolute_language_plugin_v1"));
+
+        if (!initialize && !compilerPluginInit && !languagePluginInit) {
             CloseLibrary(handle);
             throw std::runtime_error("Syntax plugin '" + canonical.string() +
-                "' does not export absolute_syntax_plugin_init_v1");
+                "' does not export any valid Absolute plugin ABI v1 entry point");
         }
 
         try {
-            const AbsoluteSyntaxPluginV1* descriptor = initialize();
-            if (!descriptor || !descriptor->name || !*descriptor->name)
-                throw std::runtime_error("Syntax plugin returned an invalid descriptor: " + canonical.string());
-            if (!expectedName.empty() && expectedName != descriptor->name)
+            std::string pluginName;
+            if (initialize) {
+                const AbsoluteSyntaxPluginV1* descriptor = initialize();
+                if (!descriptor || !descriptor->name || !*descriptor->name)
+                    throw std::runtime_error("Syntax plugin returned an invalid descriptor: " + canonical.string());
+                pluginName = descriptor->name;
+                RegisterSyntaxPlugin(descriptor);
+            }
+            else if (compilerPluginInit) {
+                const AbsoluteCompilerPluginV1* compilerDesc = compilerPluginInit();
+                if (!compilerDesc || !compilerDesc->name || !*compilerDesc->name)
+                    throw std::runtime_error("Compiler plugin returned an invalid descriptor: " + canonical.string());
+                pluginName = compilerDesc->name;
+                if (compilerDesc->initialize) compilerDesc->initialize(nullptr);
+            }
+            else if (languagePluginInit) {
+                const AbsoluteLanguagePluginV1* langDesc = languagePluginInit();
+                if (!langDesc)
+                    throw std::runtime_error("Language plugin returned an invalid descriptor: " + canonical.string());
+                pluginName = expectedName.empty() ? "language_plugin" : expectedName;
+                if (langDesc->binary_operator_table) RegisterPluginBinaryOperators(pluginName, langDesc->binary_operator_table);
+                if (langDesc->resource_table) RegisterPluginResources(pluginName, langDesc->resource_table);
+            }
+
+            if (!expectedName.empty() && expectedName != pluginName)
                 throw std::runtime_error("Plugin manifest declares '" + expectedName +
-                    "' but library descriptor declares '" + descriptor->name + "'");
-            if (const auto duplicate = loadedPlugins.find(descriptor->name); duplicate != loadedPlugins.end())
-                throw std::runtime_error("Plugin name '" + std::string(descriptor->name) +
+                    "' but library descriptor declares '" + pluginName + "'");
+            if (const auto duplicate = loadedPlugins.find(pluginName); duplicate != loadedPlugins.end())
+                throw std::runtime_error("Plugin name '" + pluginName +
                     "' is already provided by " + duplicate->second.library.string());
             for (const std::string& capability : capabilities) {
                 if (const auto provider = capabilityProviders.find(capability); provider != capabilityProviders.end())
                     throw std::runtime_error("Plugin capability '" + capability + "' is provided by both '" +
-                        provider->second + "' and '" + descriptor->name + "'");
+                        provider->second + "' and '" + pluginName + "'");
             }
             const auto prelude = reinterpret_cast<AbsoluteSyntaxPluginPreludeV1>(
                 FindSymbol(handle, "absolute_syntax_plugin_prelude_v1"));
@@ -485,18 +511,17 @@ namespace Absolute {
             const auto pluginResources = reinterpret_cast<AbsoluteSyntaxPluginResourcesV1>(
                 FindSymbol(handle, "absolute_syntax_plugin_resources_v1"));
             const AbsoluteResourceTableV1* resourceTable = pluginResources ? pluginResources() : nullptr;
-            RegisterSyntaxPlugin(descriptor);
-            if (prelude) RegisterSyntaxPluginPrelude(descriptor->name, preludeSource);
-            if (binaryOperators) RegisterPluginBinaryOperators(descriptor->name, operatorTable);
-            if (opaqueRules) RegisterOpaqueSyntaxRules(descriptor->name, opaqueTable);
-            if (pluginResources) RegisterPluginResources(descriptor->name, resourceTable);
+            if (prelude) RegisterSyntaxPluginPrelude(pluginName, preludeSource);
+            if (binaryOperators) RegisterPluginBinaryOperators(pluginName, operatorTable);
+            if (opaqueRules) RegisterOpaqueSyntaxRules(pluginName, opaqueTable);
+            if (pluginResources) RegisterPluginResources(pluginName, resourceTable);
             handles.push_back(handle);
-            loadedLibraries.emplace(key, descriptor->name);
-            loadedPlugins.emplace(descriptor->name,
+            loadedLibraries.emplace(key, pluginName);
+            loadedPlugins.emplace(pluginName,
                 LoadedPlugin{version, canonical, manifest, capabilities});
             for (const std::string& capability : capabilities)
-                capabilityProviders.emplace(capability, descriptor->name);
-            std::cout << "Loaded syntax plugin " << descriptor->name;
+                capabilityProviders.emplace(capability, pluginName);
+            std::cout << "Loaded syntax plugin " << pluginName;
             if (!version.empty()) std::cout << " v" << version;
             std::cout << " from " << canonical.string() << '\n';
         }

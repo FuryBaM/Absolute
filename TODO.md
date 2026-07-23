@@ -351,35 +351,35 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 
 #### P0 — стабильный ABI и безопасное расширение парсера
 
-- [ ] Разделить capability-интерфейсы на `AbsoluteCompilerPluginV1`,
+- [x] Разделить capability-интерфейсы на `AbsoluteCompilerPluginV1`,
   `AbsoluteLanguagePluginV1`, `AbsoluteEditorPluginV1` и
   `AbsoluteRuntimePluginV1`; один package может предоставлять несколько
   независимых интерфейсов.
-- [ ] Добавить `struct_size`, capability bitset/table, reserved fields и
+- [x] Добавить `struct_size`, capability bitset/table, reserved fields и
   `required_host_version` во все расширяемые C ABI descriptors; использовать
   только ABI-safe типы, opaque handles и пары `pointer + length`.
-- [ ] Реализовать capability/version negotiation между host и plugin с
+- [x] Реализовать capability/version negotiation между host и plugin с
   диагностикой недостающих `parser.*`, `semantic.*`, `ir.*`, `backend.*`,
   `ide.*` возможностей до вызова plugin-кода.
-- [ ] Зафиксировать lifecycle `load -> initialize -> begin_compilation ->
+- [x] Зафиксировать lifecycle `load -> initialize -> begin_compilation ->
   begin_module -> end_module -> end_compilation -> shutdown -> unload`,
   правила thread safety, параллельных вызовов, владения памятью и времени жизни
   строк/AST handles.
-- [ ] Добавить ABI compatibility matrix и тесты старого/нового host и plugin на
+- [x] Добавить ABI compatibility matrix и тесты старого/нового host и plugin на
   Windows и Linux, включая неизвестные поля, урезанный `struct_size` и
   отсутствующие optional capabilities.
-- [ ] Дать parser plugin доступ к сырому исходнику и точным span через
+- [x] Дать parser plugin доступ к сырому исходнику и точным span через
   `source_slice`, `source_location`, `capture_raw_block` и `capture_until`,
   чтобы embedded HLSL/GLSL/SQL не проходили через lexer Absolute.
-- [ ] Расширить parser cursor транзакциями `checkpoint`, `restore`, `commit`,
+- [x] Расширить parser cursor транзакциями `checkpoint`, `restore`, `commit`,
   атомарным rollback при отказе plugin rule и гарантией progress.
-- [ ] Открыть безопасную базовую грамматику host через `parse_expression`,
+- [x] Открыть безопасную базовую грамматику host через `parse_expression`,
   `parse_statement`, `parse_type`, `parse_declaration`, `parse_block`,
   `parse_parameter_list` и `parse_function_body`.
-- [ ] Ввести структурированные plugin diagnostics: severity, code, primary и
+- [x] Ввести структурированные plugin diagnostics: severity, code, primary и
   secondary spans, notes, fixits и mapping ошибок внешнего компилятора обратно
   в embedded-блок `.abs`.
-- [ ] Расширить opaque AST vtable операциями `clone`, `visit_children`,
+- [x] Расширить opaque AST vtable операциями `clone`, `visit_children`,
   `serialize`, `deserialize`, `compute_hash`, `validate` и `lower`; сохранить
   прямой `emit` только как optional backend capability.
 - [ ] Добавить source mapping для expansion/foreign/generated code и IR:

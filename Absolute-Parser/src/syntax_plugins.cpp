@@ -78,6 +78,7 @@ namespace Absolute {
         struct ParserCursorContext {
             std::vector<AbsoluteSyntaxTokenV1> views;
             size_t index = 0;
+            std::string sliceBuffer;
         };
 
         size_t CursorRemaining(void* context) {
@@ -99,6 +100,58 @@ namespace Absolute {
             if (expectedText && std::string_view(token.text, token.text_length) != expectedText) return 0;
             ++cursor.index;
             return 1;
+        }
+
+        size_t CursorCheckpoint(void* context) {
+            auto& cursor = *static_cast<ParserCursorContext*>(context);
+            return cursor.index;
+        }
+
+        int32_t CursorRestore(void* context, size_t checkpointId) {
+            auto& cursor = *static_cast<ParserCursorContext*>(context);
+            if (checkpointId > cursor.views.size()) return 0;
+            cursor.index = checkpointId;
+            return 1;
+        }
+
+        int32_t CursorCommit(void* context, size_t checkpointId) {
+            (void)context;
+            (void)checkpointId;
+            return 1;
+        }
+
+        const char* CursorSourceSlice(void* context, size_t startToken, size_t endToken) {
+            auto& cursor = *static_cast<ParserCursorContext*>(context);
+            if (startToken >= cursor.views.size() || endToken > cursor.views.size() || startToken > endToken)
+                return "";
+            cursor.sliceBuffer.clear();
+            for (size_t i = startToken; i < endToken; ++i) {
+                cursor.sliceBuffer.append(cursor.views[i].text, cursor.views[i].text_length);
+                if (i + 1 < endToken) cursor.sliceBuffer.push_back(' ');
+            }
+            return cursor.sliceBuffer.c_str();
+        }
+
+        const char* CursorCaptureUntil(void* context, const char* endDelimiter, size_t* outConsumed) {
+            auto& cursor = *static_cast<ParserCursorContext*>(context);
+            if (!endDelimiter || cursor.index >= cursor.views.size()) {
+                if (outConsumed) *outConsumed = 0;
+                return "";
+            }
+            const std::string delimiter(endDelimiter);
+            size_t count = 0;
+            cursor.sliceBuffer.clear();
+            while (cursor.index < cursor.views.size()) {
+                const auto& tok = cursor.views[cursor.index];
+                std::string_view tokText(tok.text, tok.text_length);
+                if (tokText == delimiter) break;
+                cursor.sliceBuffer.append(tok.text, tok.text_length);
+                cursor.sliceBuffer.push_back(' ');
+                ++cursor.index;
+                ++count;
+            }
+            if (outConsumed) *outConsumed = count;
+            return cursor.sliceBuffer.c_str();
         }
 
         void DestroyOpaqueNode(AbsoluteOpaqueAstNodeV1& node) {
@@ -279,7 +332,9 @@ namespace Absolute {
         ParserCursorContext context{MakeTokenViews(tokens, position), 0};
         AbsoluteParserCursorV1 cursor{
             ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION, &context,
-            &CursorRemaining, &CursorPeek, &CursorConsume
+            &CursorRemaining, &CursorPeek, &CursorConsume,
+            &CursorCheckpoint, &CursorRestore, &CursorCommit,
+            &CursorSourceSlice, &CursorCaptureUntil
         };
         AbsoluteOpaqueParseResultV1 result{};
         int32_t succeeded = 0;

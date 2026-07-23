@@ -118,6 +118,12 @@ typedef const AbsoluteSyntaxTokenV1* (*AbsoluteParserPeekV1)(void* context, size
 typedef int32_t (*AbsoluteParserConsumeV1)(
     void* context, uint32_t expected_kind, const char* expected_text);
 
+typedef size_t (*AbsoluteParserCheckpointV1)(void* context);
+typedef int32_t (*AbsoluteParserRestoreV1)(void* context, size_t checkpoint_id);
+typedef int32_t (*AbsoluteParserCommitV1)(void* context, size_t checkpoint_id);
+typedef const char* (*AbsoluteParserSourceSliceV1)(void* context, size_t start_token, size_t end_token);
+typedef const char* (*AbsoluteParserCaptureUntilV1)(void* context, const char* end_delimiter, size_t* out_consumed);
+
 struct AbsoluteParserCursorV1 {
     uint32_t abi_version;
     void* context;
@@ -125,7 +131,29 @@ struct AbsoluteParserCursorV1 {
     AbsoluteParserPeekV1 peek;
     /* UINT32_MAX accepts any token kind; a null expected_text accepts any text. */
     AbsoluteParserConsumeV1 consume;
+    AbsoluteParserCheckpointV1 checkpoint;
+    AbsoluteParserRestoreV1 restore;
+    AbsoluteParserCommitV1 commit;
+    AbsoluteParserSourceSliceV1 source_slice;
+    AbsoluteParserCaptureUntilV1 capture_until;
 };
+
+typedef enum AbsoluteDiagnosticSeverityV1 {
+    ABSOLUTE_DIAGNOSTIC_NOTE = 0,
+    ABSOLUTE_DIAGNOSTIC_WARNING = 1,
+    ABSOLUTE_DIAGNOSTIC_ERROR = 2
+} AbsoluteDiagnosticSeverityV1;
+
+typedef struct AbsoluteDiagnosticV1 {
+    uint32_t struct_size;
+    uint32_t severity;
+    const char* code;
+    const char* message;
+    uint32_t line;
+    uint32_t column;
+    uint32_t length;
+    const char* note;
+} AbsoluteDiagnosticV1;
 
 typedef struct AbsoluteOpaqueValidationContextV1 {
     uint32_t abi_version;
@@ -153,6 +181,9 @@ typedef int32_t (*AbsoluteOpaqueEmitLlvmV1)(
     const char** module_ir, const char** error_message);
 typedef const char* (*AbsoluteOpaqueDebugStringV1)(void* payload);
 typedef void (*AbsoluteOpaqueDestroyV1)(void* payload);
+typedef void* (*AbsoluteOpaqueCloneV1)(void* payload);
+typedef int32_t (*AbsoluteOpaqueVisitChildrenV1)(void* payload, void* visitor, void (*callback)(void* child, void* visitor));
+typedef const char* (*AbsoluteOpaqueLowerV1)(void* payload, const char** error_message);
 
 typedef struct AbsoluteOpaqueAstVTableV1 {
     uint32_t abi_version;
@@ -160,6 +191,9 @@ typedef struct AbsoluteOpaqueAstVTableV1 {
     AbsoluteOpaqueDebugStringV1 debug_string;
     AbsoluteOpaqueValidateV1 validate;
     AbsoluteOpaqueEmitLlvmV1 emit_llvm;
+    AbsoluteOpaqueCloneV1 clone;
+    AbsoluteOpaqueVisitChildrenV1 visit_children;
+    AbsoluteOpaqueLowerV1 lower;
 } AbsoluteOpaqueAstVTableV1;
 
 typedef struct AbsoluteOpaqueAstNodeV1 {
@@ -171,6 +205,8 @@ typedef struct AbsoluteOpaqueAstNodeV1 {
 typedef struct AbsoluteOpaqueParseResultV1 {
     AbsoluteOpaqueAstNodeV1 node;
     const char* error_message;
+    size_t diagnostic_count;
+    const AbsoluteDiagnosticV1* diagnostics;
 } AbsoluteOpaqueParseResultV1;
 
 typedef int32_t (*AbsoluteOpaqueParseV1)(
@@ -189,11 +225,6 @@ typedef struct AbsoluteOpaqueSyntaxTableV1 {
 
 typedef const AbsoluteOpaqueSyntaxTableV1* (*AbsoluteSyntaxPluginOpaqueRulesV1)(void);
 
-/* Plugins define and export: absolute_syntax_plugin_init_v1. */
-/* They may also export: absolute_syntax_plugin_prelude_v1. */
-/* They may also export: absolute_syntax_plugin_binary_operators_v1. */
-/* They may also export: absolute_syntax_plugin_opaque_rules_v1. */
-
 typedef struct AbsoluteResourceDescriptorV1 {
     uint32_t struct_size;
     const char* type_name;
@@ -210,8 +241,63 @@ typedef struct AbsoluteResourceTableV1 {
     const AbsoluteResourceDescriptorV1* descriptors;
 } AbsoluteResourceTableV1;
 
-/* They may also export: absolute_syntax_plugin_resources_v1. */
 typedef const AbsoluteResourceTableV1* (*AbsoluteSyntaxPluginResourcesV1)(void);
+
+#define ABSOLUTE_CAPABILITY_PARSER    (1ULL << 0)
+#define ABSOLUTE_CAPABILITY_SEMANTIC  (1ULL << 1)
+#define ABSOLUTE_CAPABILITY_IR        (1ULL << 2)
+#define ABSOLUTE_CAPABILITY_BACKEND   (1ULL << 3)
+#define ABSOLUTE_CAPABILITY_IDE       (1ULL << 4)
+
+typedef struct AbsoluteCompilerPluginV1 {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t required_host_version;
+    uint64_t capability_flags;
+    const char* name;
+    const char* version;
+    int32_t (*initialize)(void* compiler_context);
+    int32_t (*begin_compilation)(void* compiler_context, const char* module_name);
+    int32_t (*begin_module)(void* compiler_context, const char* module_name, const char* source_path);
+    int32_t (*end_module)(void* compiler_context, const char* module_name);
+    int32_t (*end_compilation)(void* compiler_context);
+    void (*shutdown)(void* compiler_context);
+    uint64_t reserved[4];
+} AbsoluteCompilerPluginV1;
+
+typedef struct AbsoluteLanguagePluginV1 {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    size_t rule_count;
+    const AbsoluteSyntaxRuleV1* rules;
+    size_t opaque_rule_count;
+    const AbsoluteOpaqueSyntaxRuleV1* opaque_rules;
+    const AbsoluteBinaryOperatorTableV1* binary_operator_table;
+    const AbsoluteResourceTableV1* resource_table;
+    uint64_t reserved[4];
+} AbsoluteLanguagePluginV1;
+
+typedef struct AbsoluteEditorPluginV1 {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    const char* (*get_keywords_json)(void);
+    const char* (*get_snippets_json)(void);
+    const char* (*get_hover_info)(const char* symbol_name);
+    uint64_t reserved[4];
+} AbsoluteEditorPluginV1;
+
+typedef struct AbsoluteRuntimePluginV1 {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    int32_t (*init_runtime)(void);
+    void (*cleanup_runtime)(void);
+    uint64_t reserved[4];
+} AbsoluteRuntimePluginV1;
+
+typedef const AbsoluteCompilerPluginV1* (*AbsoluteCompilerPluginInitV1)(void);
+typedef const AbsoluteLanguagePluginV1* (*AbsoluteLanguagePluginInitV1)(void);
+typedef const AbsoluteEditorPluginV1* (*AbsoluteEditorPluginInitV1)(void);
+typedef const AbsoluteRuntimePluginV1* (*AbsoluteRuntimePluginInitV1)(void);
 
 #ifdef __cplusplus
 }
