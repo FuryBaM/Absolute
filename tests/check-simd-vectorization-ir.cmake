@@ -1,0 +1,15 @@
+if(NOT DEFINED IR_FILE OR NOT EXISTS "${IR_FILE}")
+    message(FATAL_ERROR "SIMD Vectorization LLVM IR file is missing: ${IR_FILE}")
+endif()
+
+file(READ "${IR_FILE}" IR)
+
+if(NOT IR MATCHES "array\\.index\\.valid")
+    message(FATAL_ERROR "Array bounds check valid indicator was not emitted")
+endif()
+if(NOT IR MATCHES "icmp ult")
+    message(FATAL_ERROR "Canonical unsigned ICmpULT bounds check was not emitted")
+endif()
+if(NOT IR MATCHES "array\\.dimension")
+    message(FATAL_ERROR "Array dimension extraction for vectorization was not emitted")
+endif()

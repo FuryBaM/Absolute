@@ -505,6 +505,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/multidimensional-slices.abs"
     )
     add_test(
+        NAME absolute.simd-vectorization-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/simd-vectorization.abs"
+    )
+    add_test(
         NAME absolute.array-copy-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-copy-errors.abs"
     )
@@ -2036,6 +2040,37 @@ if(BUILD_TESTING)
             FIXTURES_REQUIRED absolute-managed-pointer-move-executable
             PASS_REGULAR_EXPRESSION "managed-move=ok"
             FAIL_REGULAR_EXPRESSION "managed pointer\\(s\\) leaked;memory leak detected"
+        )
+        add_test(
+            NAME absolute.emit-simd-vectorization
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/simd-vectorization.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/simd-vectorization.ll"
+        )
+        set_tests_properties(absolute.emit-simd-vectorization PROPERTIES
+            FIXTURES_SETUP absolute-simd-vectorization-ir
+        )
+        add_test(
+            NAME absolute.check-simd-vectorization-ir
+            COMMAND ${CMAKE_COMMAND}
+                -DIR_FILE=${CMAKE_BINARY_DIR}/simd-vectorization.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-simd-vectorization-ir.cmake"
+        )
+        set_tests_properties(absolute.check-simd-vectorization-ir PROPERTIES
+            FIXTURES_REQUIRED absolute-simd-vectorization-ir
+        )
+        add_test(
+            NAME absolute.build-simd-vectorization
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/simd-vectorization.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/simd-vectorization-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-simd-vectorization PROPERTIES
+            FIXTURES_SETUP absolute-simd-vectorization-executable
+        )
+        add_test(NAME absolute.run-simd-vectorization
+            COMMAND "${CMAKE_BINARY_DIR}/simd-vectorization-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-simd-vectorization PROPERTIES
+            FIXTURES_REQUIRED absolute-simd-vectorization-executable
+            PASS_REGULAR_EXPRESSION "simd-vectorization=ok"
         )
     endif()
 endif()

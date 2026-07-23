@@ -274,7 +274,7 @@
 - [x] Добавить динамические коллекции: `Vector`, `Map`, `Set` (queue/deque остаются следующим шагом).
 - [x] Добавить стандартные алгоритмы: sort, search, transform, reduce и filter.
 - [x] Реализовать Release-elimination доказуемо лишних bounds checks.
-- [ ] Добавить SIMD/vectorization-тесты для числовых массивов.
+- [x] Добавить SIMD/vectorization-тесты для числовых массивов.
 
 ### Async и параллельность
 
