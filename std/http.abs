@@ -1,3 +1,7 @@
+import "string.abs";
+import "net.abs";
+import "uri.abs";
+
 namespace std.http {
     class HttpRequest {
         public string method;
@@ -5,11 +9,11 @@ namespace std.http {
         public string headers;
         public string body;
 
-        public HttpRequest() {
-            method = "GET";
-            url = "/";
+        public HttpRequest(string methodVal, string urlVal, string bodyVal) {
+            method = methodVal;
+            url = urlVal;
             headers = "";
-            body = "";
+            body = bodyVal;
         }
     }
 
@@ -31,9 +35,22 @@ namespace std.http {
         }
     }
 
-    HttpResponse* get(string urlStr) {
+    HttpResponse* fetch(string urlStr) {
         std.uri.Uri* uri = std.uri.parse(urlStr);
-        std.net.TcpSocket* socket = std.net.connect(uri.host, uri.port);
+        defer delete uri;
+
+        std.net.TcpSocket* socket = null;
+        int32 attempts = 0;
+        while (socket == null && attempts < 10) {
+            try {
+                socket = std.net.connect(uri.host, uri.port);
+            } catch (Error* e) {
+                attempts = attempts + 1;
+            }
+        }
+        if (socket == null) {
+            throw new Error(format("HTTP fetch failed to connect to {}:{}", uri.host, uri.port));
+        }
         defer socket.close();
 
         string reqStr = format("GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n", uri.path, uri.host);
@@ -64,7 +81,20 @@ namespace std.http {
 
     HttpResponse* post(string urlStr, string bodyText, string contentType) {
         std.uri.Uri* uri = std.uri.parse(urlStr);
-        std.net.TcpSocket* socket = std.net.connect(uri.host, uri.port);
+        defer delete uri;
+
+        std.net.TcpSocket* socket = null;
+        int32 attempts = 0;
+        while (socket == null && attempts < 10) {
+            try {
+                socket = std.net.connect(uri.host, uri.port);
+            } catch (Error* e) {
+                attempts = attempts + 1;
+            }
+        }
+        if (socket == null) {
+            throw new Error(format("HTTP post failed to connect to {}:{}", uri.host, uri.port));
+        }
         defer socket.close();
 
         int32 bodyLen = std.text.codePointCount(bodyText);
@@ -87,23 +117,37 @@ namespace std.http {
     }
 
     class HttpContext {
-        public HttpRequest* request;
-        public std.net.TcpSocket* socket;
+        public raw HttpRequest* request;
+        public raw uint8* socketHandle;
 
-        public HttpContext(std.net.TcpSocket* clientSocket, HttpRequest* req) {
-            socket = clientSocket;
+        public HttpContext(raw HttpRequest* req, raw uint8* nativeSock) {
             request = req;
+            socketHandle = nativeSock;
         }
 
         public void send(int32 statusCode, string contentType, string bodyText) {
-            defer socket.close();
-            string statusMsg = "OK";
-            if (statusCode == 404) { statusMsg = "Not Found"; }
-            if (statusCode == 500) { statusMsg = "Internal Error"; }
+            if (socketHandle != null) {
+                string statusMsg = "OK";
+                if (statusCode == 404) { statusMsg = "Not Found"; }
+                if (statusCode == 500) { statusMsg = "Internal Error"; }
 
-            int32 bodyLen = std.text.codePointCount(bodyText);
-            string respStr = format("HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", statusCode, statusMsg, contentType, bodyLen, bodyText);
-            socket.send(respStr);
+                int32 bodyLen = std.text.codePointCount(bodyText);
+                string respStr = format("HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", statusCode, statusMsg, contentType, bodyLen, bodyText);
+                absolute_net_tcp_send(socketHandle, respStr);
+                absolute_net_tcp_close(socketHandle);
+                socketHandle = null;
+            }
+        }
+
+        public void dispose() {
+            if (request != null) {
+                delete request;
+                request = null;
+            }
+            if (socketHandle != null) {
+                absolute_net_tcp_close(socketHandle);
+                socketHandle = null;
+            }
         }
     }
 
@@ -128,26 +172,31 @@ namespace std.http {
 
         public HttpContext* accept() {
             if (listener == null) { return null; }
-            std.net.TcpSocket* clientSocket = listener.accept();
-            string rawReq = clientSocket.receive(16384);
+            raw uint8* nativeSock = absolute_net_tcp_accept(listener.getHandle());
+            if (nativeSock == null) { return null; }
 
-            HttpRequest* req = new HttpRequest();
+            string rawReq = absolute_net_tcp_receive(nativeSock, 16384);
+
+            string reqMethod = "GET";
+            string reqUrl = "/";
+            string reqBody = "";
+
             int32 space1 = std.text.indexOf(rawReq, " ");
             if (space1 >= 0) {
-                req.method = std.text.substring(rawReq, 0, space1);
+                reqMethod = std.text.substring(rawReq, 0, space1);
                 string rest = std.text.substring(rawReq, space1 + 1, std.text.codePointCount(rawReq) - (space1 + 1));
                 int32 space2 = std.text.indexOf(rest, " ");
                 if (space2 >= 0) {
-                    req.url = std.text.substring(rest, 0, space2);
+                    reqUrl = std.text.substring(rest, 0, space2);
                 }
             }
 
             int32 bodyStart = std.text.indexOf(rawReq, "\r\n\r\n");
             if (bodyStart >= 0) {
-                req.body = std.text.substring(rawReq, bodyStart + 4, std.text.codePointCount(rawReq) - (bodyStart + 4));
+                reqBody = std.text.substring(rawReq, bodyStart + 4, std.text.codePointCount(rawReq) - (bodyStart + 4));
             }
 
-            return new HttpContext(clientSocket, req);
+            return new HttpContext(new raw HttpRequest(reqMethod, reqUrl, reqBody), nativeSock);
         }
 
         public void close() {

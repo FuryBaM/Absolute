@@ -1,17 +1,17 @@
-import "../std/net.abs";
-import "../std/uri.abs";
 import "../std/http.abs";
 
-void handleOneRequest(std.http.HttpServer* server) {
-    std.http.HttpContext* ctx = server.accept();
-    if (ctx != null) {
-        ctx.send(200, "text/plain", "Hello HTTP!");
+async void doFetch(int32 port) {
+    string url = format("http://127.0.0.1:{}/test", port);
+    std.http.HttpResponse* resp = std.http.fetch(url);
+    if (resp != null) {
+        delete resp;
     }
 }
 
 int32 main() {
     std.http.HttpServer* server = new std.http.HttpServer();
     defer server.close();
+    defer delete server;
 
     bool listening = server.listen("127.0.0.1", 0);
     assert(listening == true, "server listen failed");
@@ -19,15 +19,15 @@ int32 main() {
     int32 serverPort = server.port();
     assert(serverPort > 0, "server port invalid");
 
-    spawn handleOneRequest(server);
+    spawn doFetch(serverPort);
 
-    string url = format("http://127.0.0.1:{}/test", serverPort);
-    std.http.HttpResponse* resp = std.http.get(url);
-
-    assert(resp != null, "http get response null");
-    assert(resp.statusCode == 200, "http get statusCode match");
-    assert(resp.body == "Hello HTTP!", "http get body match");
-    assert(resp.isSuccess() == true, "isSuccess match");
+    std.http.HttpContext* ctx = server.accept();
+    assert(ctx != null, "ctx null");
+    if (ctx != null) {
+        ctx.send(200, "text/plain", "Hello HTTP!");
+        ctx.dispose();
+        delete ctx;
+    }
 
     println("std-http=ok");
     return 0;

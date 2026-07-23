@@ -1,3 +1,5 @@
+import "string.abs";
+
 namespace std.uri {
     class Uri {
         public string scheme;

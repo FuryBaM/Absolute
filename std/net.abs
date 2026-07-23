@@ -44,6 +44,10 @@ namespace std.net {
             }
         }
 
+        public raw uint8* getHandle() {
+            return handle;
+        }
+
         public bool isOpen() {
             return handle != null;
         }
@@ -102,6 +106,10 @@ namespace std.net {
                 absolute_net_tcp_close(handle);
                 handle = null;
             }
+        }
+
+        public raw uint8* getHandle() {
+            return handle;
         }
 
         public bool isOpen() {
