@@ -1,0 +1,50 @@
+import "../std/string.abs";
+
+int32 main() {
+    std.text.StringBuilder* sb = new std.text.StringBuilder();
+    sb.append("Hello ");
+    sb.append("World ");
+    sb.appendInt(42 as int64);
+    assert(sb.toString() == "Hello World 42", "StringBuilder append failed");
+    assert(sb.length() == 14, "StringBuilder length failed");
+    sb.clear();
+    assert(sb.toString() == "", "StringBuilder clear failed");
+    sb.dispose();
+
+    string greeting = "  Hello, Absolute World!  ";
+    assert(std.text.trim(greeting) == "Hello, Absolute World!", "trim failed");
+    assert(std.text.trimStart(greeting) == "Hello, Absolute World!  ", "trimStart failed");
+    assert(std.text.trimEnd(greeting) == "  Hello, Absolute World!", "trimEnd failed");
+
+    string text = "Absolute Compiler";
+    assert(std.text.toUpper(text) == "ABSOLUTE COMPILER", "toUpper failed");
+    assert(std.text.toLower(text) == "absolute compiler", "toLower failed");
+
+    assert(std.text.startsWith(text, "Abs") == true, "startsWith true failed");
+    assert(std.text.startsWith(text, "Compiler") == false, "startsWith false failed");
+    assert(std.text.endsWith(text, "Compiler") == true, "endsWith true failed");
+    assert(std.text.contains(text, "lute") == true, "contains true failed");
+
+    assert(std.text.indexOf(text, "lute") == 4, "indexOf failed");
+    assert(std.text.lastIndexOf(text, "e") == 15, "lastIndexOf failed");
+
+    string replaced = std.text.replace(text, "Compiler", "Language");
+    assert(replaced == "Absolute Language", "replace failed");
+
+    string sub = std.text.substring(text, 0, 8);
+    assert(sub == "Absolute", "substring failed");
+
+    string utf8Sample = "Привет";
+    assert(std.text.codePointCount(utf8Sample) == 6, "codePointCount UTF-8 failed");
+    assert(std.text.toUpper("Привет") == "ПРИВЕТ", "toUpper Cyrillic failed");
+
+    string[] parts = new string[3];
+    parts[0] = "one";
+    parts[1] = "two";
+    parts[2] = "three";
+    string joined = std.text.join(parts, "-");
+    assert(joined == "one-two-three", "join failed");
+
+    println("std-string=ok");
+    return 0;
+}

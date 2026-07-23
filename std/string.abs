@@ -1,0 +1,153 @@
+// std.string / std.text - StringBuilder and Unicode UTF-8 string manipulation utilities
+
+extern "C" int32 absolute_string_code_point_count(string text);
+extern "C" int32 absolute_string_code_point_at(string text, int32 index);
+extern "C" string absolute_string_from_code_point(int32 codePoint);
+extern "C" string absolute_string_to_upper(string text);
+extern "C" string absolute_string_to_lower(string text);
+extern "C" string absolute_string_trim(string text);
+extern "C" string absolute_string_trim_start(string text);
+extern "C" string absolute_string_trim_end(string text);
+extern "C" int32 absolute_string_starts_with(string text, string prefix);
+extern "C" int32 absolute_string_ends_with(string text, string suffix);
+extern "C" int32 absolute_string_contains(string text, string sub);
+extern "C" int32 absolute_string_index_of(string text, string sub);
+extern "C" int32 absolute_string_last_index_of(string text, string sub);
+extern "C" string absolute_string_replace(string text, string fromText, string toText);
+extern "C" string absolute_string_substring(string text, int32 start, int32 length);
+
+extern "C" raw void* absolute_string_builder_create();
+extern "C" void absolute_string_builder_free(raw void* handle);
+extern "C" void absolute_string_builder_append(raw void* handle, string text);
+extern "C" void absolute_string_builder_append_char(raw void* handle, int32 codePoint);
+extern "C" void absolute_string_builder_append_int(raw void* handle, int64 value);
+extern "C" void absolute_string_builder_append_double(raw void* handle, double value);
+extern "C" void absolute_string_builder_append_bool(raw void* handle, int32 value);
+extern "C" void absolute_string_builder_clear(raw void* handle);
+extern "C" int32 absolute_string_builder_length(raw void* handle);
+extern "C" string absolute_string_builder_to_string(raw void* handle);
+
+namespace std.text {
+    class StringBuilder {
+        private raw void* handle;
+
+        public StringBuilder() {
+            handle = absolute_string_builder_create();
+        }
+
+        public void dispose() {
+            if (handle != null) {
+                absolute_string_builder_free(handle);
+                handle = null;
+            }
+        }
+
+        public void append(string text) {
+            absolute_string_builder_append(handle, text);
+        }
+
+        public void appendChar(int32 codePoint) {
+            absolute_string_builder_append_char(handle, codePoint);
+        }
+
+        public void appendInt(int64 value) {
+            absolute_string_builder_append_int(handle, value);
+        }
+
+        public void appendReal(double value) {
+            absolute_string_builder_append_double(handle, value);
+        }
+
+        public void appendBool(bool value) {
+            absolute_string_builder_append_bool(handle, value ? 1 : 0);
+        }
+
+        public void clear() {
+            absolute_string_builder_clear(handle);
+        }
+
+        public int32 length() {
+            return absolute_string_builder_length(handle);
+        }
+
+        public string toString() {
+            return absolute_string_builder_to_string(handle);
+        }
+    }
+
+    int32 codePointCount(string text) {
+        return absolute_string_code_point_count(text);
+    }
+
+    int32 codePointAt(string text, int32 index) {
+        return absolute_string_code_point_at(text, index);
+    }
+
+    string fromCodePoint(int32 codePoint) {
+        return absolute_string_from_code_point(codePoint);
+    }
+
+    string toUpper(string text) {
+        return absolute_string_to_upper(text);
+    }
+
+    string toLower(string text) {
+        return absolute_string_to_lower(text);
+    }
+
+    string trim(string text) {
+        return absolute_string_trim(text);
+    }
+
+    string trimStart(string text) {
+        return absolute_string_trim_start(text);
+    }
+
+    string trimEnd(string text) {
+        return absolute_string_trim_end(text);
+    }
+
+    bool startsWith(string text, string prefix) {
+        return absolute_string_starts_with(text, prefix) != 0;
+    }
+
+    bool endsWith(string text, string suffix) {
+        return absolute_string_ends_with(text, suffix) != 0;
+    }
+
+    bool contains(string text, string sub) {
+        return absolute_string_contains(text, sub) != 0;
+    }
+
+    int32 indexOf(string text, string sub) {
+        return absolute_string_index_of(text, sub);
+    }
+
+    int32 lastIndexOf(string text, string sub) {
+        return absolute_string_last_index_of(text, sub);
+    }
+
+    string replace(string text, string fromText, string toText) {
+        return absolute_string_replace(text, fromText, toText);
+    }
+
+    string substring(string text, int32 start, int32 length) {
+        return absolute_string_substring(text, start, length);
+    }
+
+    string join(string[] parts, string delimiter) {
+        if (parts.length == 0) { return ""; }
+        StringBuilder* builder = new StringBuilder();
+        builder.append(parts[0]);
+        int32 i = 1;
+        while (i < parts.length) {
+            builder.append(delimiter);
+            builder.append(parts[i]);
+            i = i + 1;
+        }
+        string result = builder.toString();
+        builder.dispose();
+        delete builder;
+        return result;
+    }
+}

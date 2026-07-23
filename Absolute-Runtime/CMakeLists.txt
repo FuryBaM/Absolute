@@ -13,6 +13,7 @@ add_library(Absolute-Runtime STATIC
     src/pointers.cpp
     src/process.cpp
     src/random.cpp
+    src/string.cpp
     src/tasks.cpp
     src/time.cpp
 )
