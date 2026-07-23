@@ -1,0 +1,39 @@
+import "../std/json.abs";
+
+int32 main() {
+    string sample = "{\"name\":\"Absolute\",\"version\":2,\"active\":true,\"tags\":[\"fast\",\"compiled\"]}";
+    std.json.JsonValue* root = std.json.parse(sample);
+    assert(root != null, "json.parse failed");
+    assert(root.isObject() == true, "root is object");
+    assert(root.hasProp("name") == true, "hasProp name");
+
+    std.json.JsonValue* nameProp = root.getProp("name");
+    assert(nameProp != null, "getProp name null");
+    assert(nameProp.asString() == "Absolute", "name value match");
+
+    std.json.JsonValue* verProp = root.getProp("version");
+    assert(verProp != null, "getProp version null");
+    assert(verProp.asInt() == 2, "version value match");
+
+    std.json.JsonValue* tagsProp = root.getProp("tags");
+    assert(tagsProp != null, "getProp tags null");
+    assert(tagsProp.isArray() == true, "tags is array");
+    assert(tagsProp.size() == 2, "tags size match");
+
+    std.json.JsonValue* tag0 = tagsProp.getAt(0);
+    assert(tag0 != null, "tag0 null");
+    assert(tag0.asString() == "fast", "tag0 value match");
+
+    root.dispose();
+
+    std.json.JsonValue* obj = std.json.createObject();
+    obj.setNumber("score", 100.0);
+    obj.setString("status", "ok");
+
+    string jsonStr = obj.stringify();
+    assert(jsonStr == "{\"score\":100,\"status\":\"ok\"}", "stringify match");
+    obj.dispose();
+
+    println("std-json=ok");
+    return 0;
+}

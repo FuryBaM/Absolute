@@ -469,7 +469,7 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Добавить `std.random`: `Rng` использует воспроизводимый xoshiro256** с
   явным seed и коротким API `u64`/`i32`/`range`/`real`/`boolean`; `entropy()` и
   `create()` отделяют системный источник seed от детерминированного PRNG.
-- [ ] Добавить JSON и binary serialization.
+- [x] Добавить JSON (`std.json`) и binary serialization (`std.binary`: `BinaryReader` / `BinaryWriter`).
 - [x] Добавить `std.net` blocking TCP: connect/listen/accept, ephemeral/local port,
   send/receive, timeout, shutdown и автоматическое закрытие opaque socket handle;
   Windows использует Winsock 2, Linux — POSIX sockets.

@@ -411,6 +411,14 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/string-interpolation.abs"
     )
     add_test(
+        NAME absolute.std-json-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-json.abs"
+    )
+    add_test(
+        NAME absolute.std-binary-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-binary.abs"
+    )
+    add_test(
         NAME absolute.script-main-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/script-main.abs"
     )
@@ -1995,6 +2003,36 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-string-interpolation PROPERTIES
             FIXTURES_REQUIRED absolute-string-interpolation-executable
             PASS_REGULAR_EXPRESSION "string-interpolation=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-json
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-json.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-json-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-json PROPERTIES
+            FIXTURES_SETUP absolute-std-json-executable
+        )
+        add_test(NAME absolute.run-std-json
+            COMMAND "${CMAKE_BINARY_DIR}/std-json-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-json PROPERTIES
+            FIXTURES_REQUIRED absolute-std-json-executable
+            PASS_REGULAR_EXPRESSION "std-json=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-binary
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-binary.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-binary-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-binary PROPERTIES
+            FIXTURES_SETUP absolute-std-binary-executable
+        )
+        add_test(NAME absolute.run-std-binary
+            COMMAND "${CMAKE_BINARY_DIR}/std-binary-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-binary PROPERTIES
+            FIXTURES_REQUIRED absolute-std-binary-executable
+            PASS_REGULAR_EXPRESSION "std-binary=ok"
         )
 
         add_test(
