@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "plugin_loader.h"
+#include "package_manager.h"
 #include "syntax_plugins.h"
 
 #include <algorithm>
@@ -165,8 +166,8 @@ namespace {
     }
 
     ProjectConfig LoadProjectConfig(const fs::path& projectFile) {
-        if (projectFile.extension() != ".absproj")
-            throw std::runtime_error("Project file must use the .absproj extension");
+        if (projectFile.extension() != ".absproj" && projectFile.filename() != "package.abs" && projectFile.filename() != "abspackage.json")
+            throw std::runtime_error("Project file must use .absproj, package.abs or abspackage.json extension");
         ProjectConfig result;
         result.root = fs::absolute(projectFile).parent_path();
         const std::string document = ReadFile(projectFile);
@@ -438,13 +439,18 @@ namespace {
         std::vector<fs::path> nativeSearchPaths;
         std::unique_ptr<ProjectConfig> project;
 
-        if (input.extension() == ".absproj") {
+        if (input.extension() == ".absproj" || input.filename() == "package.abs" || input.filename() == "abspackage.json") {
             project = std::make_unique<ProjectConfig>(LoadProjectConfig(input));
             for (const fs::path& path : project->pluginSearchPaths) plugins.AddSearchPath(path);
             for (const fs::path& plugin : project->plugins) plugins.Load(plugin);
             moduleName = project->name;
             nativeLibraries = project->nativeLibraries;
             nativeSearchPaths = project->nativeSearchPaths;
+
+            PackageManifest pkgManifest = PackageManager::LoadManifest(input);
+            PackageLockfile lockfile = PackageManager::LoadLockfile(input.parent_path() / "abspackage.lock");
+            PackageLockfile resolvedLock = PackageManager::ResolveDependencies(pkgManifest, input.parent_path() / "packages", lockfile);
+            PackageManager::SaveLockfile(resolvedLock, input.parent_path() / "abspackage.lock");
         }
         else {
             moduleName = input.filename().string();

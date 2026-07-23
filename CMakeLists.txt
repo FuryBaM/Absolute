@@ -1183,6 +1183,14 @@ if(BUILD_TESTING)
         endif()
     endif()
     add_test(
+        NAME absolute.run-package-manifest-dependencies
+        COMMAND "${CMAKE_COMMAND}"
+            -DCOMPILER=$<TARGET_FILE:Absolute-Compiler>
+            -DWORK_DIR=${CMAKE_BINARY_DIR}/tests/package-manifest-deps
+            -P "${PROJECT_SOURCE_DIR}/tests/run-package-manifest-dependencies.cmake"
+    )
+
+    add_test(
         NAME absolute.invalid-character
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/invalid-character.abs"
     )

@@ -17,6 +17,7 @@ endif()
 add_executable(Absolute-Compiler 
     src/Absolute-Compiler.cpp
     src/plugin_loader.cpp
+    src/package_manager.cpp
     src/pch.cpp
 )
 

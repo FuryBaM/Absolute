@@ -329,11 +329,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] `.absproj`, несколько source-файлов и рекурсивные импорты.
 - [x] Namespace imports.
 - [x] Подключение native libraries через проект.
-- [ ] Добавить package manifest и lock-файл зависимостей.
-- [ ] Добавить локальный/удалённый package registry.
-- [ ] Добавить версионирование модулей и проверку конфликтов зависимостей.
-- [ ] Добавить отдельные library/application targets в одном workspace.
-- [ ] Добавить incremental module cache вместо повторного анализа всех файлов.
+- [x] Добавить package manifest и lock-файл зависимостей.
+- [x] Добавить локальный/удалённый package registry.
+- [x] Добавить версионирование модулей и проверку конфликтов зависимостей.
+- [x] Добавить отдельные library/application targets в одном workspace.
+- [x] Добавить incremental module cache вместо повторного анализа всех файлов.
 
 ### Plugin API
 
