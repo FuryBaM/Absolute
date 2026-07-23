@@ -391,6 +391,14 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-net.abs"
     )
     add_test(
+        NAME absolute.std-env-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-env.abs"
+    )
+    add_test(
+        NAME absolute.std-process-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-process.abs"
+    )
+    add_test(
         NAME absolute.script-main-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/script-main.abs"
     )
@@ -1900,6 +1908,36 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-std-net PROPERTIES
             FIXTURES_REQUIRED absolute-std-net-executable
             PASS_REGULAR_EXPRESSION "std-net=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-env
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-env.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-env-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-env PROPERTIES
+            FIXTURES_SETUP absolute-std-env-executable
+        )
+        add_test(NAME absolute.run-std-env
+            COMMAND "${CMAKE_BINARY_DIR}/std-env-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-env PROPERTIES
+            FIXTURES_REQUIRED absolute-std-env-executable
+            PASS_REGULAR_EXPRESSION "std-env=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-process
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-process.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-process-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-process PROPERTIES
+            FIXTURES_SETUP absolute-std-process-executable
+        )
+        add_test(NAME absolute.run-std-process
+            COMMAND "${CMAKE_BINARY_DIR}/std-process-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-process PROPERTIES
+            FIXTURES_REQUIRED absolute-std-process-executable
+            PASS_REGULAR_EXPRESSION "std-process=ok"
         )
 
         add_test(

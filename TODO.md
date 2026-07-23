@@ -458,7 +458,8 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Добавить базовые collections: `Vector`, `Map` и `Set`.
 - [ ] **Следующее: определить стабильную структуру standard library и правила
   версионирования.**
-- [ ] Добавить полноценные String/StringBuilder и Unicode API.
+- [x] Добавить `std.env`: чтение, запись, удаление и проверка переменных окружения UTF-8 с диагностикой ошибок.
+- [x] Добавить `std.process`: PID процесса, аргументы командной строки, путь к исполняемому файлу, имя хоста, `exit`/`abort`, смену рабочей директории и запуск команд (`run`, `runCapture`).
 - [x] Добавить `std.fs`: UTF-8 paths, exists/type/size, create/remove/rename/copy,
   whole-file read/write/append и ресурсный streaming `File`; Win32/Linux runtime
   использует native Unicode paths и автоматически закрывает opaque handle.

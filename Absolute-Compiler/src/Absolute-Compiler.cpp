@@ -553,7 +553,7 @@ namespace {
         // Release dynamic CRT explicitly so mainCRTStartup and C builtins are
         // available even when the runtime archive contributes no object file.
         arguments << "msvcrt.lib\nvcruntime.lib\nucrt.lib\noldnames.lib\n"
-            "legacy_stdio_definitions.lib\nws2_32.lib\n";
+            "legacy_stdio_definitions.lib\nws2_32.lib\nshell32.lib\n";
         if (compilation.sanitizeAddress) {
             arguments << "clang_rt.asan_dynamic-x86_64.lib\nclang_rt.asan_dynamic_runtime_thunk-x86_64.lib\n";
         }

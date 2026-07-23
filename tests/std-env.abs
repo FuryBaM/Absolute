@@ -1,0 +1,22 @@
+import "../std/env.abs";
+
+int32 main() {
+    string varName = "ABSOLUTE_TEST_ENV_VAR";
+    string varValue = "hello_env_123";
+
+    if (std.env.has(varName)) {
+        std.env.removeVar(varName);
+    }
+    assert(!std.env.has(varName), "var must not exist initially");
+    assert(std.env.getOrDefault(varName, "fallback") == "fallback", "getOrDefault must return fallback");
+
+    std.env.setVar(varName, varValue);
+    assert(std.env.has(varName), "var must exist after set");
+    assert(std.env.getVar(varName) == varValue, "getVar must return set value");
+
+    std.env.removeVar(varName);
+    assert(!std.env.has(varName), "var must not exist after remove");
+
+    println("std-env=ok");
+    return 0;
+}
