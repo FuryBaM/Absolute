@@ -39,6 +39,7 @@ namespace Absolute {
         std::unordered_map<std::string, size_t> binaryOperatorsBySignature;
 
         std::unordered_map<std::string, PluginResourceDescriptor> resourcesByTypeName;
+        std::unordered_map<std::string, std::string> virtualModulesByName;
 
         bool IsIdentifier(const std::string& value) {
             if (value.empty()) return false;
@@ -205,6 +206,7 @@ namespace Absolute {
         binaryOperatorsBySignature.clear();
         binaryOperators.clear();
         resourcesByTypeName.clear();
+        virtualModulesByName.clear();
     }
 
     void RegisterSyntaxPluginPrelude(const std::string& pluginName, const char* source) {
@@ -307,6 +309,22 @@ namespace Absolute {
                 rehome
             };
         }
+    }
+
+    void RegisterPluginVirtualModules(const std::string& pluginName, const AbsoluteVirtualModuleTableV1* modules) {
+        (void)pluginName;
+        if (!modules) return;
+        for (size_t i = 0; i < modules->module_count; ++i) {
+            const auto& mod = modules->modules[i];
+            if (mod.module_name && mod.module_source) {
+                virtualModulesByName[mod.module_name] = mod.module_source;
+            }
+        }
+    }
+
+    const std::string* FindPluginVirtualModule(const std::string& moduleName) {
+        const auto found = virtualModulesByName.find(moduleName);
+        return found == virtualModulesByName.end() ? nullptr : &found->second;
     }
 
     bool IsSyntaxPluginKeyword(const std::string& value) {

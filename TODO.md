@@ -390,28 +390,28 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 
 #### P1 — semantic, типы и ownership
 
-- [ ] Добавить semantic context: module, namespace, scope, current function,
+- [x] Добавить semantic context: module, namespace, scope, current function,
   generic parameters, attributes, target platform и ownership context.
-- [ ] Открыть versioned semantic API: `resolve_symbol`, `resolve_type`,
+- [x] Открыть versioned semantic API: `resolve_symbol`, `resolve_type`,
   `declare_symbol`, `declare_type`, `declare_function`, `check_conversion`,
   `check_trait`, `infer_expression_type` и `report_diagnostic`.
-- [ ] Разрешить регистрацию opaque, primitive, generic, address-space,
+- [x] Разрешить регистрацию opaque, primitive, generic, address-space,
   resource и compiler-known типов через descriptor с size/alignment,
   copy/move/destroy, validation и lowering hooks.
-- [ ] Добавить host-controlled регистрацию operators, conversions, literals,
+- [x] Добавить host-controlled регистрацию operators, conversions, literals,
   attributes и intrinsics с детерминированным разрешением приоритетов и
   конфликтов между плагинами.
-- [ ] Открыть ownership/lifetime-запросы `query_pointer_mode`, `require_raw`,
+- [x] Открыть ownership/lifetime-запросы `query_pointer_mode`, `require_raw`,
   `require_managed`, `transfer_ownership`, `register_resource`, `mark_escape`,
   чтобы `GpuTexture`, `NativeWindow`, `Socket` и другие resource-типы
   участвовали в анализе владения Absolute.
-- [ ] Добавить безопасную генерацию символов: `register_generated_function`,
+- [x] Добавить безопасную генерацию символов: `register_generated_function`,
   `register_generated_type`, `register_generated_constant` и
   `register_runtime_symbol`.
-- [ ] Заменить глобальную строку prelude на virtual/prelude modules и import
+- [x] Заменить глобальную строку prelude на virtual/prelude modules и import
   resolver, чтобы плагины предоставляли `import Desktop`, `import Shader` и
   другие модули без загрязнения глобального namespace.
-- [ ] Ввести общий lowering API в Absolute HIR/MIR или host IR; плагин должен
+- [x] Ввести общий lowering API в Absolute HIR/MIR или host IR; плагин должен
   уметь понижать узел без доступа к внутренним C++ AST/Analyzer/LLVM-классам.
 
 #### P2 — artifacts, backends, build graph и runtime

@@ -273,6 +273,59 @@ typedef struct AbsoluteResourceTableV1 {
 
 typedef const AbsoluteResourceTableV1* (*AbsoluteSyntaxPluginResourcesV1)(void);
 
+typedef struct AbsoluteSemanticContextV1 {
+    uint32_t abi_version;
+    const char* module_name;
+    const char* namespace_name;
+    const char* function_name;
+    const char* target_platform;
+    uint32_t pointer_mode; /* 0 = managed, 1 = raw */
+    void* context;
+    const char* (*resolve_symbol)(void* context, const char* symbol_name);
+    const char* (*resolve_type)(void* context, const char* type_name);
+    int32_t (*declare_symbol)(void* context, const char* name, const char* type_name);
+    int32_t (*declare_type)(void* context, const char* name, size_t size, size_t alignment);
+    int32_t (*check_conversion)(void* context, const char* from_type, const char* to_type);
+    int32_t (*infer_type)(void* context, const char* expr_string, const char** out_type);
+    void (*report_diagnostic)(void* context, const AbsoluteDiagnosticV1* diagnostic);
+} AbsoluteSemanticContextV1;
+
+typedef struct AbsoluteTypeDescriptorV1 {
+    uint32_t struct_size;
+    const char* name;
+    size_t size_bytes;
+    size_t alignment;
+    bool is_resource;
+    bool is_opaque;
+    bool is_primitive;
+    const char* copy_function;
+    const char* move_function;
+    const char* destroy_function;
+} AbsoluteTypeDescriptorV1;
+
+typedef struct AbsoluteOwnershipQueryV1 {
+    uint32_t abi_version;
+    void* context;
+    uint32_t (*query_pointer_mode)(void* context, const char* var_name);
+    int32_t (*require_raw)(void* context, const char* var_name);
+    int32_t (*require_managed)(void* context, const char* var_name);
+    int32_t (*transfer_ownership)(void* context, const char* var_name, const char* target_var);
+    int32_t (*register_resource)(void* context, const AbsoluteResourceDescriptorV1* resource);
+    void (*mark_escape)(void* context, const char* var_name);
+} AbsoluteOwnershipQueryV1;
+
+typedef struct AbsoluteVirtualModuleV1 {
+    const char* module_name;
+    const char* module_source;
+} AbsoluteVirtualModuleV1;
+
+typedef struct AbsoluteVirtualModuleTableV1 {
+    size_t module_count;
+    const AbsoluteVirtualModuleV1* modules;
+} AbsoluteVirtualModuleTableV1;
+
+typedef const AbsoluteVirtualModuleTableV1* (*AbsolutePluginVirtualModulesV1)(void);
+
 #define ABSOLUTE_CAPABILITY_PARSER    (1ULL << 0)
 #define ABSOLUTE_CAPABILITY_SEMANTIC  (1ULL << 1)
 #define ABSOLUTE_CAPABILITY_IR        (1ULL << 2)
@@ -304,6 +357,7 @@ typedef struct AbsoluteLanguagePluginV1 {
     const AbsoluteOpaqueSyntaxRuleV1* opaque_rules;
     const AbsoluteBinaryOperatorTableV1* binary_operator_table;
     const AbsoluteResourceTableV1* resource_table;
+    const AbsoluteVirtualModuleTableV1* virtual_module_table;
     uint64_t reserved[4];
 } AbsoluteLanguagePluginV1;
 

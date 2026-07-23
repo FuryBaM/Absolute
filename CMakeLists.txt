@@ -1450,6 +1450,23 @@ if(BUILD_TESTING)
                 -P "${PROJECT_SOURCE_DIR}/tests/run-package-manager-plugins-native.cmake"
         )
         add_test(
+            NAME absolute.run-plugin-p0-p1-features
+            COMMAND "${CMAKE_COMMAND}"
+                -DCOMPILER=$<TARGET_FILE:Absolute-Compiler>
+                -DMATH_PLUGIN=$<TARGET_FILE:Absolute-Math-Plugin>
+                -DWORK_DIR=${CMAKE_BINARY_DIR}/tests/plugin-p0-p1-features
+                -P "${PROJECT_SOURCE_DIR}/tests/run-plugin-p0-p1-features.cmake"
+        )
+        add_executable(plugin-api-unit-tests tests/native/plugin_api_unit_tests.cpp Absolute-Compiler/src/package_manager.cpp)
+        target_include_directories(plugin-api-unit-tests PRIVATE
+            Absolute-Compiler/include
+            Absolute-Parser/include
+            Absolute-Analyzer/include
+            Absolute-CodeGen/include
+        )
+        target_link_libraries(plugin-api-unit-tests PRIVATE Absolute-Parser Absolute-Analyzer Absolute-CodeGen Absolute-Runtime)
+        add_test(NAME absolute.plugin-api-unit-tests COMMAND plugin-api-unit-tests)
+        add_test(
             NAME absolute.build-export-c-abi
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-c-abi.abs"
                 --build-exe -o "${CMAKE_BINARY_DIR}/export-c-abi-app${CMAKE_EXECUTABLE_SUFFIX}"

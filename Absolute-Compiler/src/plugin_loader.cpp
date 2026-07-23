@@ -549,10 +549,18 @@ namespace Absolute {
             const auto pluginResources = reinterpret_cast<AbsoluteSyntaxPluginResourcesV1>(
                 FindSymbol(handle, "absolute_syntax_plugin_resources_v1"));
             const AbsoluteResourceTableV1* resourceTable = pluginResources ? pluginResources() : nullptr;
+            const auto virtualModules = reinterpret_cast<AbsolutePluginVirtualModulesV1>(
+                FindSymbol(handle, "absolute_plugin_virtual_modules_v1"));
+            const AbsoluteVirtualModuleTableV1* vmoduleTable = virtualModules ? virtualModules() : nullptr;
             if (prelude) RegisterSyntaxPluginPrelude(pluginName, preludeSource);
             if (binaryOperators) RegisterPluginBinaryOperators(pluginName, operatorTable);
             if (opaqueRules) RegisterOpaqueSyntaxRules(pluginName, opaqueTable);
             if (pluginResources) RegisterPluginResources(pluginName, resourceTable);
+            if (virtualModules) RegisterPluginVirtualModules(pluginName, vmoduleTable);
+            if (languagePluginInit) {
+                const AbsoluteLanguagePluginV1* langDesc = languagePluginInit();
+                if (langDesc && langDesc->virtual_module_table) RegisterPluginVirtualModules(pluginName, langDesc->virtual_module_table);
+            }
             handles.push_back(handle);
             loadedLibraries.emplace(key, pluginName);
             loadedPlugins.emplace(pluginName,
