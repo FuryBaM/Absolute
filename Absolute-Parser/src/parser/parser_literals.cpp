@@ -66,6 +66,7 @@ namespace Absolute {
             case '\\': result.push_back('\\'); break;
             case '"': result.push_back('"'); break;
             case '\'': result.push_back('\''); break;
+            case '$': result.push_back('$'); break;
             default:
                 throw std::runtime_error(
                     "Unsupported escape sequence: \\" + std::string(1, value[index]));
@@ -74,13 +75,102 @@ namespace Absolute {
         return result;
     }
 
-    std::unique_ptr<StringLiteralExpr> Parser::ParseStringLiteralExpr() {
+    std::unique_ptr<Expression> Parser::ParseStringLiteralExpr() {
         Token* token = CurrentToken();
         if (token && token->type == TokenType::STRING) {
-            std::string value = token->value.substr(1, token->value.size() - 2); // Убираем кавычки
-            value = UnescapeString(value);
+            std::string rawContent = token->value.substr(1, token->value.size() - 2); // Unquote
+
+            bool hasInterpolation = false;
+            for (size_t i = 0; i < rawContent.size(); ++i) {
+                if (rawContent[i] == '\\' && i + 1 < rawContent.size()) {
+                    i++;
+                    continue;
+                }
+                if (rawContent[i] == '$' && i + 1 < rawContent.size() && rawContent[i + 1] == '{') {
+                    hasInterpolation = true;
+                    break;
+                }
+            }
+
+            if (!hasInterpolation) {
+                std::string value = UnescapeString(rawContent);
+                Consume(TokenType::STRING);
+                return std::make_unique<StringLiteralExpr>(value);
+            }
+
+            // String interpolation desugaring to format(...)
+            std::string formatTemplate;
+            std::vector<std::string> exprStrings;
+            std::string currentSegment;
+
+            size_t i = 0;
+            while (i < rawContent.size()) {
+                if (rawContent[i] == '\\' && i + 1 < rawContent.size()) {
+                    if (rawContent[i + 1] == '$') {
+                        currentSegment += '$';
+                        i += 2;
+                        continue;
+                    }
+                    currentSegment += '\\';
+                    currentSegment += rawContent[i + 1];
+                    i += 2;
+                    continue;
+                }
+                if (rawContent[i] == '$' && i + 1 < rawContent.size() && rawContent[i + 1] == '{') {
+                    formatTemplate += UnescapeString(currentSegment);
+                    currentSegment.clear();
+                    formatTemplate += "{}";
+
+                    i += 2; // Skip ${
+                    size_t startExpr = i;
+                    int braceDepth = 1;
+                    while (i < rawContent.size() && braceDepth > 0) {
+                        if (rawContent[i] == '{') {
+                            braceDepth++;
+                        } else if (rawContent[i] == '}') {
+                            braceDepth--;
+                            if (braceDepth == 0) break;
+                        }
+                        i++;
+                    }
+                    if (braceDepth != 0) {
+                        ReportSyntaxError(token, "Unmatched '{' in string interpolation");
+                        std::exit(EXIT_FAILURE);
+                    }
+                    std::string exprCode = rawContent.substr(startExpr, i - startExpr);
+                    exprStrings.push_back(exprCode);
+                    i++; // Skip closing }
+                    continue;
+                }
+                currentSegment += rawContent[i];
+                i++;
+            }
+            if (!currentSegment.empty()) {
+                formatTemplate += UnescapeString(currentSegment);
+            }
+
             Consume(TokenType::STRING);
-            return std::make_unique<StringLiteralExpr>(value);
+
+            std::vector<std::unique_ptr<Expression>> formatCallArgs;
+            formatCallArgs.push_back(std::make_unique<StringLiteralExpr>(formatTemplate));
+
+            for (const std::string& exprCode : exprStrings) {
+                std::vector<Token> exprTokens = lexer(exprCode);
+                if (exprTokens.empty()) {
+                    ReportSyntaxError(token, "Empty expression in string interpolation");
+                    std::exit(EXIT_FAILURE);
+                }
+                Parser exprParser(std::move(exprTokens));
+                std::unique_ptr<Expression> parsedExpr = exprParser.ParseExpression();
+                if (!parsedExpr) {
+                    ReportSyntaxError(token, "Failed to parse expression in string interpolation");
+                    std::exit(EXIT_FAILURE);
+                }
+                formatCallArgs.push_back(std::move(parsedExpr));
+            }
+
+            auto formatCallee = std::make_unique<IdentifierExpr>("format");
+            return std::make_unique<FunctionCallExpr>(std::move(formatCallee), std::move(formatCallArgs));
         }
         ReportSyntaxError(token, "Expected string literal");
         std::exit(EXIT_FAILURE);

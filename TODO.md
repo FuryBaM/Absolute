@@ -458,6 +458,7 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Добавить базовые collections: `Vector`, `Map` и `Set`.
 - [ ] **Следующее: определить стабильную структуру standard library и правила
   версионирования.**
+- [x] Добавить интерполяцию строк `"${var}"`: каноничное обессахаривание (desugaring) строк с выражениями `${...}` на этапе парсера в вызовы встроенной функции `format(...)` с экранированием `\$`.
 - [x] Добавить `std.string`: `StringBuilder` для эффективного накопления строк, UTF-8 и декодирование/кодирование Unicode кодовых точек, изменение регистра (ASCII + Unicode basic plane), `trim`/`trimStart`/`trimEnd`, `startsWith`/`endsWith`/`contains`, `indexOf`/`lastIndexOf`, `replace`, `substring` и `join`.
 - [x] Добавить `std.env`: чтение, запись, удаление и проверка переменных окружения UTF-8 с диагностикой ошибок.
 - [x] Добавить `std.process`: PID процесса, аргументы командной строки, путь к исполняемому файлу, имя хоста, `exit`/`abort`, смену рабочей директории и запуск команд (`run`, `runCapture`).

@@ -407,6 +407,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-string.abs"
     )
     add_test(
+        NAME absolute.string-interpolation-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/string-interpolation.abs"
+    )
+    add_test(
         NAME absolute.script-main-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/script-main.abs"
     )
@@ -1976,6 +1980,21 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-std-string PROPERTIES
             FIXTURES_REQUIRED absolute-std-string-executable
             PASS_REGULAR_EXPRESSION "std-string=ok"
+        )
+
+        add_test(
+            NAME absolute.build-string-interpolation
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/string-interpolation.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/string-interpolation-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-string-interpolation PROPERTIES
+            FIXTURES_SETUP absolute-string-interpolation-executable
+        )
+        add_test(NAME absolute.run-string-interpolation
+            COMMAND "${CMAKE_BINARY_DIR}/string-interpolation-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-string-interpolation PROPERTIES
+            FIXTURES_REQUIRED absolute-string-interpolation-executable
+            PASS_REGULAR_EXPRESSION "string-interpolation=ok"
         )
 
         add_test(

@@ -72,7 +72,7 @@ namespace Absolute {
         std::unique_ptr<Expression> ParseLiteralExpr();
         std::unique_ptr<BooleanLiteralExpr> ParseBooleanLiteralExpr();
         std::unique_ptr<NumberLiteralExpr> ParseNumberLiteralExpr();
-        std::unique_ptr<StringLiteralExpr> ParseStringLiteralExpr();
+        std::unique_ptr<Expression> ParseStringLiteralExpr();
         std::unique_ptr<CharLiteralExpr> ParseCharLiteralExpr();
         std::unique_ptr<Expression> ParseBinaryExpr(int minPrecedence, std::unique_ptr<Expression> left);
         std::unique_ptr<Expression> ParsePrimaryExpr();
