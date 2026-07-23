@@ -509,6 +509,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/simd-vectorization.abs"
     )
     add_test(
+        NAME absolute.async-concurrency-advanced-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/async-concurrency-advanced.abs"
+    )
+    add_test(
         NAME absolute.array-copy-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-copy-errors.abs"
     )
@@ -2071,6 +2075,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-simd-vectorization PROPERTIES
             FIXTURES_REQUIRED absolute-simd-vectorization-executable
             PASS_REGULAR_EXPRESSION "simd-vectorization=ok"
+        )
+        add_test(
+            NAME absolute.build-async-concurrency-advanced
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/async-concurrency-advanced.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/async-concurrency-advanced-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-async-concurrency-advanced PROPERTIES
+            FIXTURES_SETUP absolute-async-concurrency-advanced-executable
+        )
+        add_test(NAME absolute.run-async-concurrency-advanced
+            COMMAND "${CMAKE_BINARY_DIR}/async-concurrency-advanced-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-async-concurrency-advanced PROPERTIES
+            FIXTURES_REQUIRED absolute-async-concurrency-advanced-executable
+            PASS_REGULAR_EXPRESSION "async-concurrency-advanced=ok"
         )
     endif()
 endif()

@@ -1,0 +1,79 @@
+extern "C" raw void* absolute_atomic_create(int64 initialValue);
+extern "C" int64 absolute_atomic_fetch_add(raw void* atomic, int64 val);
+extern "C" int64 absolute_atomic_fetch_sub(raw void* atomic, int64 val);
+extern "C" int64 absolute_atomic_load(raw void* atomic);
+extern "C" void absolute_atomic_store(raw void* atomic, int64 val);
+extern "C" bool absolute_atomic_compare_exchange(raw void* atomic, int64 expected, int64 desired);
+extern "C" void absolute_atomic_destroy(raw void* atomic);
+
+extern "C" raw void* absolute_mutex_create();
+extern "C" void absolute_mutex_lock(raw void* mutex);
+extern "C" void absolute_mutex_unlock(raw void* mutex);
+extern "C" bool absolute_mutex_try_lock(raw void* mutex);
+extern "C" void absolute_mutex_destroy(raw void* mutex);
+
+namespace std.concurrent {
+
+    class AtomicInt {
+        private raw void* handle;
+
+        public AtomicInt(int64 initialValue = 0) {
+            handle = absolute_atomic_create(initialValue);
+        }
+
+        public int64 fetchAdd(int64 val) {
+            return absolute_atomic_fetch_add(handle, val);
+        }
+
+        public int64 fetchSub(int64 val) {
+            return absolute_atomic_fetch_sub(handle, val);
+        }
+
+        public int64 load() {
+            return absolute_atomic_load(handle);
+        }
+
+        public void store(int64 val) {
+            absolute_atomic_store(handle, val);
+        }
+
+        public bool compareExchange(int64 expected, int64 desired) {
+            return absolute_atomic_compare_exchange(handle, expected, desired);
+        }
+
+        public void destroy() {
+            if (handle != null) {
+                absolute_atomic_destroy(handle);
+                handle = null;
+            }
+        }
+    }
+
+    class Mutex {
+        private raw void* handle;
+
+        public Mutex() {
+            handle = absolute_mutex_create();
+        }
+
+        public void lock() {
+            absolute_mutex_lock(handle);
+        }
+
+        public void unlock() {
+            absolute_mutex_unlock(handle);
+        }
+
+        public bool tryLock() {
+            return absolute_mutex_try_lock(handle);
+        }
+
+        public void destroy() {
+            if (handle != null) {
+                absolute_mutex_destroy(handle);
+                handle = null;
+            }
+        }
+    }
+
+}

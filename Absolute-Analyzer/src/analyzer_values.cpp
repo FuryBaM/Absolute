@@ -534,7 +534,9 @@ namespace Absolute {
             return;
         }
 
-        if (!IsAssignable(target, base.type) && !(IsNumeric(target) && IsNumeric(base.type)))
+        const bool pointerToInt = IsInteger(target) && IsRawPointerType(base.type);
+        const bool intToPointer = IsRawPointerType(target) && IsInteger(base.type);
+        if (!IsAssignable(target, base.type) && !(IsNumeric(target) && IsNumeric(base.type)) && !pointerToInt && !intToPointer)
             Report("cannot cast '" + base.type + "' to '" + target + "'");
         Save(expr, {InvalidSymbolId, target, false});
     }

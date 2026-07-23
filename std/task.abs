@@ -1,9 +1,12 @@
-// std.task - scheduling metadata for the currently executing async task.
-
 extern "C" int32 absolute_task_current_core();
 extern "C" int32 absolute_task_current_priority();
 extern "C" string absolute_task_current_role();
 extern "C" bool absolute_task_current_role_is(string role);
+extern "C" void absolute_task_delay(int32 ms);
+extern "C" raw void* absolute_cancellation_token_create();
+extern "C" void absolute_cancellation_token_cancel(raw void* token);
+extern "C" bool absolute_cancellation_token_is_cancelled(raw void* token);
+extern "C" void absolute_cancellation_token_destroy(raw void* token);
 
 namespace std.task {
     int32 core() {
@@ -20,5 +23,36 @@ namespace std.task {
 
     bool hasRole(string expected) {
         return absolute_task_current_role_is(expected);
+    }
+
+    void delay(int32 ms) {
+        absolute_task_delay(ms);
+    }
+
+    void sleep(int32 ms) {
+        absolute_task_delay(ms);
+    }
+
+    class CancellationToken {
+        private raw void* handle;
+
+        public CancellationToken() {
+            handle = absolute_cancellation_token_create();
+        }
+
+        public void cancel() {
+            absolute_cancellation_token_cancel(handle);
+        }
+
+        public bool isCancelled() {
+            return absolute_cancellation_token_is_cancelled(handle);
+        }
+
+        public void destroy() {
+            if (handle != null) {
+                absolute_cancellation_token_destroy(handle);
+                handle = null;
+            }
+        }
     }
 }

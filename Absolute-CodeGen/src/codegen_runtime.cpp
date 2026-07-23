@@ -502,6 +502,12 @@ namespace Absolute {
         if (sourceType->isPointerTy() && target->isPointerTy()) {
             return builder.CreatePointerCast(source, target, "ptr.cast");
         }
+        if (sourceType->isPointerTy() && target->isIntegerTy()) {
+            return builder.CreatePtrToInt(source, target, "ptr.to.int");
+        }
+        if (sourceType->isIntegerTy() && target->isPointerTy()) {
+            return builder.CreateIntToPtr(source, target, "int.to.ptr");
+        }
         Fail("incompatible value conversion");
     }
 

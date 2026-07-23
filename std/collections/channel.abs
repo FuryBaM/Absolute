@@ -1,0 +1,47 @@
+extern "C" raw void* absolute_channel_create(int32 capacity);
+extern "C" bool absolute_channel_send(raw void* ch, int64 val);
+extern "C" bool absolute_channel_try_send(raw void* ch, int64 val);
+extern "C" int64 absolute_channel_receive(raw void* ch);
+extern "C" bool absolute_channel_try_receive(raw void* ch, raw int64* outVal);
+extern "C" void absolute_channel_close(raw void* ch);
+extern "C" bool absolute_channel_is_closed(raw void* ch);
+extern "C" void absolute_channel_destroy(raw void* ch);
+
+namespace std.collections {
+
+    class Channel {
+        private raw void* handle;
+
+        public Channel(int32 capacity = 0) {
+            handle = absolute_channel_create(capacity);
+        }
+
+        public bool send(int64 val) {
+            return absolute_channel_send(handle, val);
+        }
+
+        public bool trySend(int64 val) {
+            return absolute_channel_try_send(handle, val);
+        }
+
+        public int64 receive() {
+            return absolute_channel_receive(handle);
+        }
+
+        public void close() {
+            absolute_channel_close(handle);
+        }
+
+        public bool isClosed() {
+            return absolute_channel_is_closed(handle);
+        }
+
+        public void destroy() {
+            if (handle != null) {
+                absolute_channel_destroy(handle);
+                handle = null;
+            }
+        }
+    }
+
+}

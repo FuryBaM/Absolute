@@ -1,5 +1,7 @@
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
@@ -242,3 +244,216 @@ extern "C" void absolute_task_destroy(void* handle) {
     std::free(task->context);
     delete task;
 }
+
+namespace {
+    struct CancellationTokenImpl {
+        std::atomic<bool> cancelled{false};
+    };
+
+    struct ChannelImpl {
+        std::mutex mutex;
+        std::condition_variable cv_send;
+        std::condition_variable cv_recv;
+        std::deque<std::int64_t> queue;
+        std::int32_t capacity = 0;
+        bool closed = false;
+    };
+}
+
+extern "C" void absolute_task_delay(std::int32_t ms) {
+    if (ms > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+    }
+}
+
+extern "C" bool absolute_task_await_timeout(void* handle, std::int32_t ms) {
+    if (!handle) return false;
+    Task* task = static_cast<Task*>(handle);
+    std::unique_lock lock(task->mutex);
+    if (ms <= 0) {
+        return task->done;
+    }
+    return task->completed.wait_for(lock, std::chrono::milliseconds(ms), [&] { return task->done; });
+}
+
+extern "C" std::int32_t absolute_task_when_any(void** handles, std::int32_t count) {
+    if (!handles || count <= 0) return -1;
+    while (true) {
+        for (std::int32_t i = 0; i < count; ++i) {
+            if (handles[i]) {
+                Task* task = static_cast<Task*>(handles[i]);
+                std::lock_guard lock(task->mutex);
+                if (task->done) return i;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
+extern "C" void absolute_task_when_all(void** handles, std::int32_t count) {
+    if (!handles || count <= 0) return;
+    for (std::int32_t i = 0; i < count; ++i) {
+        if (handles[i]) {
+            Task* task = static_cast<Task*>(handles[i]);
+            Wait(*task);
+        }
+    }
+}
+
+extern "C" void* absolute_cancellation_token_create() {
+    return new CancellationTokenImpl();
+}
+
+extern "C" void absolute_cancellation_token_cancel(void* token) {
+    if (!token) return;
+    static_cast<CancellationTokenImpl*>(token)->cancelled.store(true);
+}
+
+extern "C" bool absolute_cancellation_token_is_cancelled(void* token) {
+    if (!token) return false;
+    return static_cast<CancellationTokenImpl*>(token)->cancelled.load();
+}
+
+extern "C" void absolute_cancellation_token_destroy(void* token) {
+    if (!token) return;
+    delete static_cast<CancellationTokenImpl*>(token);
+}
+
+extern "C" void* absolute_channel_create(std::int32_t capacity) {
+    ChannelImpl* ch = new ChannelImpl();
+    ch->capacity = capacity > 0 ? capacity : 0;
+    return ch;
+}
+
+extern "C" bool absolute_channel_send(void* ch, std::int64_t val) {
+    if (!ch) return false;
+    ChannelImpl* channel = static_cast<ChannelImpl*>(ch);
+    std::unique_lock lock(channel->mutex);
+    channel->cv_send.wait(lock, [&] {
+        return channel->closed || channel->capacity == 0 || static_cast<std::int32_t>(channel->queue.size()) < channel->capacity;
+    });
+    if (channel->closed) return false;
+    channel->queue.push_back(val);
+    channel->cv_recv.notify_one();
+    return true;
+}
+
+extern "C" bool absolute_channel_try_send(void* ch, std::int64_t val) {
+    if (!ch) return false;
+    ChannelImpl* channel = static_cast<ChannelImpl*>(ch);
+    std::lock_guard lock(channel->mutex);
+    if (channel->closed) return false;
+    if (channel->capacity > 0 && static_cast<std::int32_t>(channel->queue.size()) >= channel->capacity)
+        return false;
+    channel->queue.push_back(val);
+    channel->cv_recv.notify_one();
+    return true;
+}
+
+extern "C" std::int64_t absolute_channel_receive(void* ch) {
+    if (!ch) return 0;
+    ChannelImpl* channel = static_cast<ChannelImpl*>(ch);
+    std::unique_lock lock(channel->mutex);
+    channel->cv_recv.wait(lock, [&] {
+        return channel->closed || !channel->queue.empty();
+    });
+    if (channel->queue.empty()) return 0;
+    std::int64_t val = channel->queue.front();
+    channel->queue.pop_front();
+    channel->cv_send.notify_one();
+    return val;
+}
+
+extern "C" bool absolute_channel_try_receive(void* ch, std::int64_t* outVal) {
+    if (!ch || !outVal) return false;
+    ChannelImpl* channel = static_cast<ChannelImpl*>(ch);
+    std::lock_guard lock(channel->mutex);
+    if (channel->queue.empty()) return false;
+    *outVal = channel->queue.front();
+    channel->queue.pop_front();
+    channel->cv_send.notify_one();
+    return true;
+}
+
+extern "C" void absolute_channel_close(void* ch) {
+    if (!ch) return;
+    ChannelImpl* channel = static_cast<ChannelImpl*>(ch);
+    {
+        std::lock_guard lock(channel->mutex);
+        channel->closed = true;
+    }
+    channel->cv_recv.notify_all();
+    channel->cv_send.notify_all();
+}
+
+extern "C" bool absolute_channel_is_closed(void* ch) {
+    if (!ch) return true;
+    ChannelImpl* channel = static_cast<ChannelImpl*>(ch);
+    std::lock_guard lock(channel->mutex);
+    return channel->closed;
+}
+
+extern "C" void absolute_channel_destroy(void* ch) {
+    if (!ch) return;
+    delete static_cast<ChannelImpl*>(ch);
+}
+
+extern "C" void* absolute_atomic_create(std::int64_t initialValue) {
+    return new std::atomic<std::int64_t>(initialValue);
+}
+
+extern "C" std::int64_t absolute_atomic_fetch_add(void* atomic, std::int64_t val) {
+    if (!atomic) return 0;
+    return static_cast<std::atomic<std::int64_t>*>(atomic)->fetch_add(val);
+}
+
+extern "C" std::int64_t absolute_atomic_fetch_sub(void* atomic, std::int64_t val) {
+    if (!atomic) return 0;
+    return static_cast<std::atomic<std::int64_t>*>(atomic)->fetch_sub(val);
+}
+
+extern "C" std::int64_t absolute_atomic_load(void* atomic) {
+    if (!atomic) return 0;
+    return static_cast<std::atomic<std::int64_t>*>(atomic)->load();
+}
+
+extern "C" void absolute_atomic_store(void* atomic, std::int64_t val) {
+    if (!atomic) return;
+    static_cast<std::atomic<std::int64_t>*>(atomic)->store(val);
+}
+
+extern "C" bool absolute_atomic_compare_exchange(void* atomic, std::int64_t expected, std::int64_t desired) {
+    if (!atomic) return false;
+    std::int64_t exp = expected;
+    return static_cast<std::atomic<std::int64_t>*>(atomic)->compare_exchange_strong(exp, desired);
+}
+
+extern "C" void absolute_atomic_destroy(void* atomic) {
+    if (!atomic) return;
+    delete static_cast<std::atomic<std::int64_t>*>(atomic);
+}
+
+extern "C" void* absolute_mutex_create() {
+    return new std::mutex();
+}
+
+extern "C" void absolute_mutex_lock(void* mutex) {
+    if (!mutex) return;
+    static_cast<std::mutex*>(mutex)->lock();
+}
+
+extern "C" void absolute_mutex_unlock(void* mutex) {
+    if (!mutex) return;
+    static_cast<std::mutex*>(mutex)->unlock();
+}
+
+extern "C" bool absolute_mutex_try_lock(void* mutex) {
+    if (!mutex) return false;
+    return static_cast<std::mutex*>(mutex)->try_lock();
+}
+
+extern "C" void absolute_mutex_destroy(void* mutex) {
+    if (!mutex) return;
+    delete static_cast<std::mutex*>(mutex);
+}
+

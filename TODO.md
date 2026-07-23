@@ -307,13 +307,13 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   pointer aliases и при отправке атомарно rehome-ится в domain получателя. Старый
   capability после отправки непригоден независимо от Analyzer; одноразовый `await`
   возвращает результат тем же envelope ABI.
-- [ ] Добавить cancellation tokens и timeout.
-- [ ] Добавить channels и concurrent queues поверх того же message envelope:
+- [x] Добавить cancellation tokens и timeout.
+- [x] Добавить channels и concurrent queues поверх того же message envelope:
   channel не принимает произвольные адреса/объекты, а только immutable message или
   consuming transfer capsule, поэтому не создаёт shared mutable alias.
-- [ ] Добавить async file/network I/O.
-- [ ] Добавить `select`/`whenAny` для ожидания нескольких tasks.
-- [ ] Общий mutable state предоставлять только как opaque concurrent capability
+- [x] Добавить async file/network I/O.
+- [x] Добавить `select`/`whenAny` для ожидания нескольких tasks.
+- [x] Общий mutable state предоставлять только как opaque concurrent capability
   (`Atomic`, `MutexCell`, semaphore или actor/service): внутреннее `T` нельзя
   извлечь как pointer/reference, все операции capability синхронизированы, а lock
   guard task-local и runtime не позволяет пронести его через `await`/channel.
