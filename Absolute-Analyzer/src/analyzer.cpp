@@ -1360,8 +1360,18 @@ namespace Absolute {
             }
             const std::string ownerNamespace = symbol->name.substr(0, separator);
             if (currentNamespace == ownerNamespace ||
-                currentNamespace.starts_with(ownerNamespace + ".") ||
-                importedNamespaces.contains(ownerNamespace))
+                currentNamespace.starts_with(ownerNamespace + ".")) {
+                result.push_back(id);
+                continue;
+            }
+            bool matchesImport = false;
+            for (const std::string& imported : importedNamespaces) {
+                if (imported == ownerNamespace || imported.ends_with("." + ownerNamespace) || imported.ends_with(ownerNamespace)) {
+                    matchesImport = true;
+                    break;
+                }
+            }
+            if (matchesImport)
                 result.push_back(id);
         }
         return result;
@@ -1401,10 +1411,18 @@ namespace Absolute {
             parameter = SubstituteGenericType(parameter, substitutions);
         specialized.genericArguments = arguments;
         specialized.genericOrigin = origin;
-        specialized.genericParameters.clear();
+        const bool openFunctionSpecialization = std::any_of(arguments.begin(), arguments.end(),
+            [&](const std::string& argument) {
+                return std::any_of(genericTypeScopes.begin(), genericTypeScopes.end(),
+                    [&](const auto& scope) {
+                        const auto found = scope.find(argument);
+                        return found != scope.end() && found->second == argument;
+                    });
+            });
         const SymbolId id = table.AppendSpecialization(std::move(specialized));
         genericFunctionSpecializations.emplace(std::move(key), id);
-        genericFunctionSpecializationOrder.push_back(id);
+        if (!openFunctionSpecialization)
+            genericFunctionSpecializationOrder.push_back(id);
         functionDeclarations[id] = FunctionDeclaration(origin);
         return id;
     }

@@ -272,7 +272,7 @@
   оптимизация, но не как условие safety. Unsafe raw/FFI export всегда создаёт
   отдельную копию или явно выходит из safe-модели.
 - [x] Добавить динамические коллекции: `Vector`, `Map`, `Set` (queue/deque остаются следующим шагом).
-- [ ] Добавить стандартные алгоритмы: sort, search, transform, reduce и filter.
+- [x] Добавить стандартные алгоритмы: sort, search, transform, reduce и filter.
 - [ ] Реализовать Release-elimination доказуемо лишних bounds checks.
 - [ ] Добавить SIMD/vectorization-тесты для числовых массивов.
 

@@ -382,7 +382,12 @@ namespace Absolute {
 
     CodeGenerator::Impl::ArrayView CodeGenerator::Impl::ArrayViewFromValue(llvm::Value* descriptor, const std::string& typeName) {
         const size_t rank = ArrayRankName(typeName);
-        if (rank == 0 || !descriptor->getType()->isStructTy())
+        if (rank == 0)
+            Fail("array expression does not produce a descriptor");
+        if (descriptor->getType()->isPointerTy()) {
+            descriptor = builder.CreateLoad(ArrayDescriptorType(typeName), descriptor, "array.descriptor.loaded");
+        }
+        if (!descriptor->getType()->isStructTy())
             Fail("array expression does not produce a descriptor");
         ArrayView view;
         view.address = builder.CreateExtractValue(descriptor, {0}, "array.data");
@@ -600,14 +605,24 @@ namespace Absolute {
     }
 
     std::string CodeGenerator::Impl::ResolvedName(Expression* expression) const {
-        std::string name;
         if (analyzer && expression) {
             if (const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression)) {
-                if (const Symbol* symbol = analyzer->GetSymbol(info->symbol))
+                if (const Symbol* symbol = analyzer->GetSymbol(info->symbol)) {
+                    if (symbol->kind == SymbolKind::Function && symbol->genericOrigin != InvalidSymbolId &&
+                        !currentGenericSubstitutions.empty()) {
+                        std::vector<std::string> substitutedArgs = symbol->genericArguments;
+                        for (std::string& arg : substitutedArgs)
+                            arg = SubstituteCodegenType(arg, currentGenericSubstitutions);
+                        const SymbolId specId = const_cast<Analyzer*>(analyzer)->InstantiateGenericFunction(
+                            symbol->genericOrigin, substitutedArgs);
+                        if (const Symbol* specSymbol = analyzer->GetSymbol(specId))
+                            return FunctionLinkName(*specSymbol);
+                    }
                     return FunctionLinkName(*symbol);
+                }
             }
         }
-        if (name.empty()) name = IdentifierName(expression);
+        std::string name = IdentifierName(expression);
         const auto linked = functionLinkNames.find(name);
         return linked == functionLinkNames.end() ? name : linked->second;
     }

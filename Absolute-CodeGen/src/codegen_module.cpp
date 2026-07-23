@@ -315,7 +315,8 @@ namespace Absolute {
         const auto oldSubstitutions = currentGenericSubstitutions;
         currentGenericSubstitutions = method.substitutions;
         currentClassName = info.name;
-        currentReturnTypeName = ResolveTypeName(method.statement->returnType.get());
+        currentReturnTypeName = SubstituteCodegenType(
+            ResolveTypeName(method.statement->returnType.get()), currentGenericSubstitutions);
         const unsigned returnOffset = AbiReturnOffset(method.returnType);
         currentReturnStorage = returnOffset != 0 ? function->getArg(0) : nullptr;
         currentThis = method.isStatic ? nullptr : function->getArg(returnOffset);
@@ -484,7 +485,8 @@ namespace Absolute {
         const auto oldSubstitutions = currentGenericSubstitutions;
         currentGenericSubstitutions = method.substitutions;
         currentClassName = info.name;
-        currentReturnTypeName = ResolveTypeName(method.statement->returnType.get());
+        currentReturnTypeName = SubstituteCodegenType(
+            ResolveTypeName(method.statement->returnType.get()), currentGenericSubstitutions);
         const unsigned returnOffset = AbiReturnOffset(method.returnType);
         currentReturnStorage = returnOffset != 0 ? function->getArg(0) : nullptr;
         currentThis = method.isStatic ? nullptr : function->getArg(returnOffset);

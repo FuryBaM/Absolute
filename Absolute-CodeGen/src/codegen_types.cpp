@@ -5,7 +5,7 @@ namespace Absolute {
 
     namespace {
         bool ContainsOpenGenericParameter(const std::string& typeName,
-            const std::vector<Token>& parameters) {
+            const std::vector<Token>& parameters, const Analyzer* analyzer = nullptr) {
             for (const Token& parameter : parameters) {
                 size_t position = typeName.find(parameter.value);
                 while (position != std::string::npos) {
@@ -17,6 +17,28 @@ namespace Absolute {
                     const bool rightBoundary = end == typeName.size() || !identifier(typeName[end]);
                     if (leftBoundary && rightBoundary) return true;
                     position = typeName.find(parameter.value, position + 1);
+                }
+            }
+            std::string base;
+            std::vector<std::string> arguments;
+            if (ParseCodegenGenericType(typeName, base, arguments)) {
+                for (const std::string& arg : arguments) {
+                    if (ContainsOpenGenericParameter(arg, parameters, analyzer)) return true;
+                }
+            } else {
+                std::string baseName = ValueReferenceBaseTypeName(typeName);
+                if (baseName.ends_with("[]")) baseName = baseName.substr(0, baseName.size() - 2);
+                if (IsManagedPointerTypeName(baseName)) baseName = PointerPointeeName(baseName);
+                if (IsRawPointerTypeName(baseName)) baseName = PointerPointeeName(baseName);
+                if (baseName != "int8" && baseName != "uint8" && baseName != "int16" && baseName != "uint16" &&
+                    baseName != "int32" && baseName != "uint32" && baseName != "int64" && baseName != "uint64" &&
+                    baseName != "float" && baseName != "double" && baseName != "bool" && baseName != "char" &&
+                    baseName != "string" && baseName != "void") {
+                    if (analyzer) {
+                        const SymbolId symId = analyzer->Symbols().Lookup(baseName);
+                        const Symbol* sym = analyzer->Symbols().Get(symId);
+                        if (!sym || sym->kind != SymbolKind::Type) return true;
+                    }
                 }
             }
             return false;
@@ -80,7 +102,7 @@ namespace Absolute {
                 return structs.at(strName).llvmType;
             }
         }
-        llvm::Function* curFn = CurrentFunction();
+        llvm::Function* curFn = builder.GetInsertBlock() ? builder.GetInsertBlock()->getParent() : nullptr;
         std::string subsStr = "{";
         for (const auto& [k, v] : currentGenericSubstitutions) subsStr += k + ":" + v + " ";
         subsStr += "}";
@@ -291,7 +313,7 @@ namespace Absolute {
                         if (base != baseName && base != classDeclaration->name &&
                             baseName != QualifiedClassName(base, nameSpace)) continue;
                         if (std::any_of(arguments.begin(), arguments.end(), [&](const std::string& argument) {
-                            return ContainsOpenGenericParameter(argument, classDeclaration->templateParams);
+                            return ContainsOpenGenericParameter(argument, classDeclaration->templateParams, analyzer);
                         })) continue;
                         std::unordered_map<std::string, std::string> substitutions;
                         for (size_t index = 0; index < arguments.size(); ++index)
@@ -317,7 +339,7 @@ namespace Absolute {
                         if (base != baseName && base != structDeclaration->name &&
                             baseName != QualifiedClassName(base, nameSpace)) continue;
                         if (std::any_of(arguments.begin(), arguments.end(), [&](const std::string& argument) {
-                            return ContainsOpenGenericParameter(argument, structDeclaration->templateParams);
+                            return ContainsOpenGenericParameter(argument, structDeclaration->templateParams, analyzer);
                         })) continue;
                         std::unordered_map<std::string, std::string> substitutions;
                         for (size_t index = 0; index < arguments.size(); ++index)
@@ -344,7 +366,7 @@ namespace Absolute {
                             base != baseName ||
                             arguments.size() != interfaceDeclaration->templateParams.size()) continue;
                         if (std::any_of(arguments.begin(), arguments.end(), [&](const std::string& argument) {
-                            return ContainsOpenGenericParameter(argument, interfaceDeclaration->templateParams);
+                            return ContainsOpenGenericParameter(argument, interfaceDeclaration->templateParams, analyzer);
                         })) continue;
                         std::unordered_map<std::string, std::string> substitutions;
                         for (size_t index = 0; index < arguments.size(); ++index)

@@ -341,6 +341,8 @@ namespace Absolute {
         const std::unordered_set<std::string>& InstantiatedGenericTypes() const {
             return instantiatedGenericTypes;
         }
+        SymbolId InstantiateGenericFunction(
+            SymbolId origin, const std::vector<std::string>& arguments);
         const std::vector<LambdaCapture>& LambdaCaptures(const LambdaExpr& expression) const;
 
         void Visit(PrimitiveTypeExpr* expr) override;
@@ -453,8 +455,6 @@ namespace Absolute {
         SymbolId SelectOverload(const std::vector<SymbolId>& candidates,
             const std::vector<Result>& arguments, const std::string& displayName,
             const std::vector<std::string>& explicitTypeArguments = {});
-        SymbolId InstantiateGenericFunction(
-            SymbolId origin, const std::vector<std::string>& arguments);
         int ConversionCost(const std::string& target, const std::string& source) const;
         std::string ExtractIdentifier(Expression* expression) const;
         std::string ExtractQualifiedName(Expression* expression) const;

@@ -54,9 +54,11 @@ namespace Absolute {
                 continue;
             }
 
-            if (token.value == ".") {
-                if (expectType) return false;
-                expectType = true;
+            if (token.value == "." || token.value == "*" || token.value == "[" || token.value == "]") {
+                if (token.value == ".") {
+                    if (expectType) return false;
+                    expectType = true;
+                }
                 continue;
             }
 

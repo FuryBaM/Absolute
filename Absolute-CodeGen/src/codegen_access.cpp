@@ -267,8 +267,8 @@ namespace Absolute {
             return;
         }
         if (auto* member = dynamic_cast<MemberAccessExpr*>(expr->base.get())) {
-            if (selected && selected->extensionFunction) {
-                const std::string name = impl->ResolvedName(expr);
+            if (selected && selected->extensionFunction && expr->arguments.size() < selected->parameterTypes.size()) {
+                const std::string name = impl->FunctionLinkName(*selected);
                 llvm::Function* function = impl->module->getFunction(name);
                 if (!function) impl->Fail("unknown extension method '" + name + "'");
                 std::vector<llvm::Value*> arguments;

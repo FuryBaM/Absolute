@@ -1,0 +1,90 @@
+import "../std/collections/algorithms.abs";
+import "../std/collections/vector.abs";
+
+int32 main() {
+    // 1. Testing sort on array and vector (namespace call)
+    int32[] arr1 = {5, 2, 8, 1, 9, 3};
+    std.collections.sort(arr1);
+    assert(arr1[0] == 1, "array sort min");
+    assert(arr1[5] == 9, "array sort max");
+
+    std.collections.Vector<int32>* vec1 = new std.collections.Vector<int32>();
+    vec1.push(5);
+    vec1.push(2);
+    vec1.push(8);
+    vec1.push(1);
+    vec1.push(9);
+    vec1.push(3);
+    std.collections.sort(vec1);
+    assert(vec1[0] == 1, "vector sort min");
+    assert(vec1[5] == 9, "vector sort max");
+
+    // Custom comparator sort (descending order) via Extension Method syntax
+    func<int32, int32, int32> descComp = fn(int32 a, int32 b) => b - a;
+    arr1.sort(descComp);
+    assert(arr1[0] == 9, "array custom sort max first");
+    assert(arr1[5] == 1, "array custom sort min last");
+
+    vec1.sort(descComp);
+    assert(vec1[0] == 9, "vector custom sort max first");
+    assert(vec1[5] == 1, "vector custom sort min last");
+
+    // Re-sort ascending for search tests via Extension Method syntax
+    arr1.sort();
+    vec1.sort();
+
+    // 2. Testing search algorithms (Extension Method syntax)
+    assert(arr1.indexOf(8) == 4, "array indexOf match extension");
+    assert(arr1.indexOf(42) == -1, "array indexOf missing extension");
+    assert(vec1.indexOf(8) == 4, "vector indexOf match extension");
+    assert(vec1.indexOf(42) == -1, "vector indexOf missing extension");
+
+    assert(arr1.binarySearch(8) == 4, "array binarySearch match extension");
+    assert(arr1.binarySearch(42) == -1, "array binarySearch missing extension");
+    assert(vec1.binarySearch(8) == 4, "vector binarySearch match extension");
+    assert(vec1.binarySearch(42) == -1, "vector binarySearch missing extension");
+
+    assert(arr1.contains(8), "array contains true extension");
+    assert(!arr1.contains(42), "array contains false extension");
+    assert(vec1.contains(8), "vector contains true extension");
+    assert(!vec1.contains(42), "vector contains false extension");
+
+    func<bool, int32> isGreaterThan5 = fn(int32 val) => val > 5;
+    assert(arr1.find(isGreaterThan5) == 4, "array find > 5 extension");
+    assert(vec1.find(isGreaterThan5) == 4, "vector find > 5 extension");
+
+    // 3. Testing transform (Extension Method syntax)
+    func<int32, int32> doubleVal = fn(int32 x) => x * 2;
+    int32[] doubledArr = arr1.transform(doubleVal);
+    assert(doubledArr.length == 6, "transform array length extension");
+    assert(doubledArr[0] == 2, "transform array elem 0 extension");
+    assert(doubledArr[5] == 18, "transform array elem 5 extension");
+
+    std.collections.Vector<int32>* doubledVec = vec1.transform(doubleVal);
+    assert(doubledVec.count == 6, "transform vector count extension");
+    assert(doubledVec[0] == 2, "transform vector elem 0 extension");
+    assert(doubledVec[5] == 18, "transform vector elem 5 extension");
+
+    // 4. Testing filter (Extension Method syntax)
+    func<bool, int32> isEven = fn(int32 x) => x % 2 == 0;
+    int32[] filteredArr = arr1.filter(isEven);
+    assert(filteredArr.length == 2, "filter array length extension");
+    assert(filteredArr[0] == 2, "filter array elem 0 extension");
+    assert(filteredArr[1] == 8, "filter array elem 1 extension");
+
+    std.collections.Vector<int32>* filteredVec = vec1.filter(isEven);
+    assert(filteredVec.count == 2, "filter vector count extension");
+    assert(filteredVec[0] == 2, "filter vector elem 0 extension");
+    assert(filteredVec[1] == 8, "filter vector elem 1 extension");
+
+    // 5. Testing reduce (Extension Method syntax)
+    func<int32, int32, int32> sumReducer = fn(int32 acc, int32 x) => acc + x;
+    int32 arraySum = arr1.reduce(0, sumReducer);
+    assert(arraySum == 28, "reduce array sum extension");
+
+    int32 vectorSum = vec1.reduce(0, sumReducer);
+    assert(vectorSum == 28, "reduce vector sum extension");
+
+    println("collection-algorithms=ok");
+    return 0;
+}
