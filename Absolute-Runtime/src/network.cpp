@@ -335,6 +335,107 @@ extern "C" void absolute_net_tcp_close(void* handle) {
     delete state;
 }
 
+extern "C" const char* absolute_net_resolve_host(const char* hostname) {
+    if (!EnsureSockets() || !hostname || !*hostname) {
+        lastNetworkError = "hostname is empty";
+        return "";
+    }
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    addrinfo* result = nullptr;
+    int status = getaddrinfo(hostname, nullptr, &hints, &result);
+    if (status != 0 || !result) {
+        lastNetworkError = "Failed to resolve hostname: " + std::string(hostname);
+        return "";
+    }
+    char ipBuffer[INET_ADDRSTRLEN] = {0};
+    sockaddr_in* ipv4 = reinterpret_cast<sockaddr_in*>(result->ai_addr);
+    inet_ntop(AF_INET, &(ipv4->sin_addr), ipBuffer, sizeof(ipBuffer));
+    freeaddrinfo(result);
+    static thread_local std::string lastResolvedIp;
+    lastResolvedIp = ipBuffer;
+    return lastResolvedIp.c_str();
+}
+
+extern "C" void* absolute_net_udp_bind(const char* host, std::int32_t port) {
+    if (!EnsureSockets()) return nullptr;
+    NativeSocket sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock == InvalidSocket) {
+        CaptureSocketError("udp socket creation");
+        return nullptr;
+    }
+    SetReuseAddress(sock);
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(static_cast<uint16_t>(port));
+    if (host && *host && std::strcmp(host, "0.0.0.0") != 0 && std::strcmp(host, "*") != 0) {
+        inet_pton(AF_INET, host, &addr.sin_addr);
+    } else {
+        addr.sin_addr.s_addr = INADDR_ANY;
+    }
+
+    if (bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        CaptureSocketError("udp bind");
+        CloseNative(sock);
+        return nullptr;
+    }
+    return NewState(sock);
+}
+
+extern "C" std::int32_t absolute_net_udp_send_to(void* handle, const char* host, std::int32_t port, const char* text) {
+    SocketState* state = State(handle);
+    if (!Valid(state) || !text || !host || !*host) {
+        lastNetworkError = "invalid arguments for udp send_to";
+        return -1;
+    }
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(static_cast<uint16_t>(port));
+    if (inet_pton(AF_INET, host, &addr.sin_addr) <= 0) {
+        const char* resolved = absolute_net_resolve_host(host);
+        if (!resolved || !*resolved || inet_pton(AF_INET, resolved, &addr.sin_addr) <= 0) {
+            lastNetworkError = "failed to resolve host for udp send_to";
+            return -1;
+        }
+    }
+    std::size_t len = std::strlen(text);
+    int sent = sendto(state->socket, text, static_cast<int>(len), 0, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+    if (sent < 0) {
+        CaptureSocketError("udp sendto");
+        return -1;
+    }
+    return sent;
+}
+
+extern "C" const char* absolute_net_udp_receive_from(void* handle, std::int32_t maxBytes) {
+    SocketState* state = State(handle);
+    if (!Valid(state) || maxBytes <= 0) {
+        lastNetworkError = "invalid receive_from parameters";
+        return nullptr;
+    }
+    state->receiveBuffer.resize(static_cast<std::size_t>(maxBytes));
+    sockaddr_in srcAddr{};
+#if defined(_WIN32)
+    int addrLen = sizeof(srcAddr);
+#else
+    socklen_t addrLen = sizeof(srcAddr);
+#endif
+    int count = recvfrom(state->socket, state->receiveBuffer.data(), maxBytes, 0, reinterpret_cast<sockaddr*>(&srcAddr), &addrLen);
+    if (count < 0) {
+        state->receiveBuffer.clear();
+        CaptureSocketError("udp recvfrom");
+        return nullptr;
+    }
+    state->receiveBuffer.resize(static_cast<std::size_t>(count));
+    return state->receiveBuffer.c_str();
+}
+
+extern "C" void absolute_net_udp_close(void* handle) {
+    absolute_net_tcp_close(handle);
+}
+
 extern "C" const char* absolute_net_error() {
     return lastNetworkError.c_str();
 }

@@ -419,6 +419,18 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-binary.abs"
     )
     add_test(
+        NAME absolute.std-net-udp-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-net-udp.abs"
+    )
+    add_test(
+        NAME absolute.std-uri-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-uri.abs"
+    )
+    add_test(
+        NAME absolute.std-http-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-http.abs"
+    )
+    add_test(
         NAME absolute.script-main-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/script-main.abs"
     )
@@ -2033,6 +2045,51 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-std-binary PROPERTIES
             FIXTURES_REQUIRED absolute-std-binary-executable
             PASS_REGULAR_EXPRESSION "std-binary=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-net-udp
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-net-udp.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-net-udp-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-net-udp PROPERTIES
+            FIXTURES_SETUP absolute-std-net-udp-executable
+        )
+        add_test(NAME absolute.run-std-net-udp
+            COMMAND "${CMAKE_BINARY_DIR}/std-net-udp-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-net-udp PROPERTIES
+            FIXTURES_REQUIRED absolute-std-net-udp-executable
+            PASS_REGULAR_EXPRESSION "std-net-udp=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-uri
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-uri.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-uri-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-uri PROPERTIES
+            FIXTURES_SETUP absolute-std-uri-executable
+        )
+        add_test(NAME absolute.run-std-uri
+            COMMAND "${CMAKE_BINARY_DIR}/std-uri-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-uri PROPERTIES
+            FIXTURES_REQUIRED absolute-std-uri-executable
+            PASS_REGULAR_EXPRESSION "std-uri=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-http
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-http.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-http-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-http PROPERTIES
+            FIXTURES_SETUP absolute-std-http-executable
+        )
+        add_test(NAME absolute.run-std-http
+            COMMAND "${CMAKE_BINARY_DIR}/std-http-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-http PROPERTIES
+            FIXTURES_REQUIRED absolute-std-http-executable
+            PASS_REGULAR_EXPRESSION "std-http=ok"
         )
 
         add_test(

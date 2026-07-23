@@ -1,0 +1,34 @@
+import "../std/net.abs";
+import "../std/uri.abs";
+import "../std/http.abs";
+
+void handleOneRequest(std.http.HttpServer* server) {
+    std.http.HttpContext* ctx = server.accept();
+    if (ctx != null) {
+        ctx.send(200, "text/plain", "Hello HTTP!");
+    }
+}
+
+int32 main() {
+    std.http.HttpServer* server = new std.http.HttpServer();
+    defer server.close();
+
+    bool listening = server.listen("127.0.0.1", 0);
+    assert(listening == true, "server listen failed");
+
+    int32 serverPort = server.port();
+    assert(serverPort > 0, "server port invalid");
+
+    spawn handleOneRequest(server);
+
+    string url = format("http://127.0.0.1:{}/test", serverPort);
+    std.http.HttpResponse* resp = std.http.get(url);
+
+    assert(resp != null, "http get response null");
+    assert(resp.statusCode == 200, "http get statusCode match");
+    assert(resp.body == "Hello HTTP!", "http get body match");
+    assert(resp.isSuccess() == true, "isSuccess match");
+
+    println("std-http=ok");
+    return 0;
+}

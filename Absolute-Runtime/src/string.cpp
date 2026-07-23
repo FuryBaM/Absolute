@@ -321,3 +321,12 @@ extern "C" const char* absolute_string_concat(const char* a, const char* b) {
     if (b) lastStringResult += b;
     return lastStringResult.c_str();
 }
+
+extern "C" int32_t absolute_string_parse_int(const char* text) {
+    if (!text || !*text) return 0;
+    try {
+        return std::stoi(text);
+    } catch (...) {
+        return 0;
+    }
+}

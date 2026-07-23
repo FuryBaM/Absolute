@@ -10,6 +10,8 @@ extern "C" string absolute_string_trim_start(string text);
 extern "C" string absolute_string_trim_end(string text);
 extern "C" int32 absolute_string_starts_with(string text, string prefix);
 extern "C" int32 absolute_string_ends_with(string text, string suffix);
+extern "C" string absolute_string_concat(string a, string b);
+extern "C" int32 absolute_string_parse_int(string text);
 extern "C" int32 absolute_string_contains(string text, string sub);
 extern "C" int32 absolute_string_index_of(string text, string sub);
 extern "C" int32 absolute_string_last_index_of(string text, string sub);
@@ -133,6 +135,10 @@ namespace std.text {
 
     string substring(string text, int32 start, int32 length) {
         return absolute_string_substring(text, start, length);
+    }
+
+    int32 parseInt(string text) {
+        return absolute_string_parse_int(text);
     }
 
     string join(string[] parts, string delimiter) {

@@ -473,8 +473,7 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Добавить `std.net` blocking TCP: connect/listen/accept, ephemeral/local port,
   send/receive, timeout, shutdown и автоматическое закрытие opaque socket handle;
   Windows использует Winsock 2, Linux — POSIX sockets.
-- [ ] Добавить UDP, DNS API верхнего уровня, URI и HTTP client/server поверх
-  готового transport-слоя `std.net`; async file/network I/O остаётся отдельным P1.
+- [x] Добавить UDP (`UdpSocket`), DNS API верхнего уровня (`std.net.resolve`), `std.uri` (`Uri` parser, `encode`, `decode`) и `std.http` (HTTP Client `get`/`post` и HTTP Server `HttpServer`) поверх транспортного слоя `std.net` с использованием операторов `defer`.
 - [ ] Довести стандартные algorithms: существующие sort/search/reverse дополнить
   transform, reduce и filter и подключить весь набор к CTest.
 - [ ] Добавить logging, assertions и test framework.
