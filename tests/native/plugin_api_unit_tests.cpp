@@ -3,6 +3,7 @@
 #include "syntax_plugins.h"
 
 #include <cassert>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -83,6 +84,8 @@ void TestP2ArtifactsAndBackends() {
     std::cout << "[UNIT TEST] P2 Artifacts, Backends, and Cache keys unit tests passed.\n";
 }
 
+#include "plugin_loader.h"
+
 void TestP3IdeDebuggerAndIsolation() {
     AbsoluteIdeCapabilitiesV1 ideCaps{};
     ideCaps.struct_size = sizeof(AbsoluteIdeCapabilitiesV1);
@@ -98,8 +101,36 @@ void TestP3IdeDebuggerAndIsolation() {
     assert(permPolicy.allow_filesystem_read == 1);
     assert(permPolicy.allow_network == 0);
 
-    AbsoluteIsolationModeV1 mode = ABSOLUTE_ISOLATION_ISOLATED_PROCESS;
-    assert(mode == ABSOLUTE_ISOLATION_ISOLATED_PROCESS);
+    PluginManager pm;
+    pm.SetPermissionPolicy(permPolicy);
+    assert(pm.GetPermissionPolicy().allow_network == 0);
+
+    pm.SetIsolationMode(ABSOLUTE_ISOLATION_SANDBOX);
+    assert(pm.GetIsolationMode() == ABSOLUTE_ISOLATION_SANDBOX);
+
+    // Test permission enforcement
+    std::filesystem::path tempManifest = std::filesystem::temp_directory_path() / "test_perm.absplugin";
+    std::ofstream out(tempManifest);
+    out << R"({
+        "name": "perm_test_plugin",
+        "version": "1.0.0",
+        "abi": 1,
+        "library": "nonexistent.dll",
+        "permissions": ["network.http"]
+    })";
+    out.close();
+
+    bool caught = false;
+    try {
+        pm.Load(tempManifest);
+    } catch (const std::exception& ex) {
+        std::string msg = ex.what();
+        if (msg.find("disallowed permission") != std::string::npos) {
+            caught = true;
+        }
+    }
+    std::filesystem::remove(tempManifest);
+    assert(caught == true);
 
     std::cout << "[UNIT TEST] P3 IDE, Debugger, and Permission policies unit tests passed.\n";
 }

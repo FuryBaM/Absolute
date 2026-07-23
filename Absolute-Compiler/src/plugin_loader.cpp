@@ -13,6 +13,7 @@
 #include <regex>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_set>
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -52,6 +53,38 @@ namespace Absolute {
             std::vector<std::string> requiresCapabilities;
             std::vector<std::filesystem::path> nativeLibraries;
         };
+
+        bool PermissionEnabled(const std::string& permission, const ::AbsolutePermissionPolicyV1& policy) {
+            if (permission == "filesystem.read" || permission == "fs_read") return policy.allow_filesystem_read != 0;
+            if (permission == "filesystem.write" || permission == "fs_write") return policy.allow_filesystem_write != 0;
+            if (permission == "network.http" || permission == "network.tcp" || permission == "network") return policy.allow_network != 0;
+            if (permission == "environment.read" || permission == "environment.write" || permission == "env") return policy.allow_environment != 0;
+            if (permission == "toolchain.exec" || permission == "toolchain") return policy.allow_toolchain_exec != 0;
+            if (permission == "native.library" || permission == "native") return policy.allow_native_libraries != 0;
+            return false;
+        }
+
+        void ValidatePermissions(const std::vector<std::string>& permissions, const std::filesystem::path& manifestPath,
+            const ::AbsolutePermissionPolicyV1& policy) {
+            static const std::unordered_set<std::string> supportedPermissions = {
+                "filesystem.read", "fs_read",
+                "filesystem.write", "fs_write",
+                "network.http", "network.tcp", "network",
+                "environment.read", "environment.write", "env",
+                "toolchain.exec", "toolchain",
+                "native.library", "native"
+            };
+            for (const std::string& permission : permissions) {
+                if (!supportedPermissions.contains(permission)) {
+                    throw std::runtime_error("Unsupported plugin permission '" + permission + "' in manifest: " +
+                        manifestPath.string());
+                }
+                if (!PermissionEnabled(permission, policy)) {
+                    throw std::runtime_error("Plugin manifest requires disallowed permission '" + permission + "' in manifest: " +
+                        manifestPath.string());
+                }
+            }
+        }
 
         std::string ReadText(const std::filesystem::path& path) {
             std::ifstream file(path, std::ios::binary);
@@ -234,7 +267,8 @@ namespace Absolute {
             return true;
         }
 
-        Manifest ParseManifest(const std::filesystem::path& path) {
+        Manifest ParseManifest(const std::filesystem::path& path,
+            const ::AbsolutePermissionPolicyV1& policy) {
             const std::string document = ReadText(path);
             Manifest result;
             const auto name = StringProperty(document, "name");
@@ -255,6 +289,7 @@ namespace Absolute {
             result.conflicts = StringArrayProperty(document, "conflicts");
             result.targets = StringArrayProperty(document, "targets");
             result.permissions = StringArrayProperty(document, "permissions");
+            ValidatePermissions(result.permissions, path, policy);
             result.ruleNamespace = StringProperty(document, "namespace").value_or("");
             for (const std::string& nativeLibrary : StringArrayProperty(document, "nativeLibraries"))
                 result.nativeLibraries.emplace_back(nativeLibrary);
@@ -303,6 +338,16 @@ namespace Absolute {
         }
     }
 
+    PluginManager::PluginManager() {
+        permissionPolicy.struct_size = sizeof(AbsolutePermissionPolicyV1);
+        permissionPolicy.allow_filesystem_read = 1;
+        permissionPolicy.allow_filesystem_write = 1;
+        permissionPolicy.allow_network = 1;
+        permissionPolicy.allow_environment = 1;
+        permissionPolicy.allow_toolchain_exec = 1;
+        permissionPolicy.allow_native_libraries = 1;
+    }
+
     PluginManager::~PluginManager() {
         ResetSyntaxPlugins();
         for (auto iterator = handles.rbegin(); iterator != handles.rend(); ++iterator)
@@ -323,6 +368,71 @@ namespace Absolute {
         else LoadDynamicLibrary(path);
     }
 
+    void PluginManager::Unload(const std::string& pluginName) {
+        const auto it = loadedPlugins.find(pluginName);
+        if (it == loadedPlugins.end()) {
+            throw std::runtime_error("Plugin '" + pluginName + "' is not loaded");
+        }
+        const LoadedPlugin& plugin = it->second;
+        if (plugin.compilerPlugin && plugin.compilerPlugin->shutdown) {
+            plugin.compilerPlugin->shutdown(nullptr);
+        }
+        if (plugin.handle) {
+            const auto handleIt = std::find(handles.begin(), handles.end(), plugin.handle);
+            if (handleIt != handles.end()) {
+                handles.erase(handleIt);
+            }
+            CloseLibrary(plugin.handle);
+        }
+        for (const std::string& cap : plugin.capabilities) {
+            capabilityProviders.erase(cap);
+        }
+        for (auto libIt = loadedLibraries.begin(); libIt != loadedLibraries.end(); ) {
+            if (libIt->second == pluginName) libIt = loadedLibraries.erase(libIt);
+            else ++libIt;
+        }
+        loadedPlugins.erase(it);
+    }
+
+    void PluginManager::Reload(const std::filesystem::path& path) {
+        const std::filesystem::path canonical = std::filesystem::weakly_canonical(path);
+        std::string foundName;
+        for (const auto& [name, plugin] : loadedPlugins) {
+            if (plugin.library == canonical || plugin.manifest == canonical) {
+                foundName = name;
+                break;
+            }
+        }
+        if (!foundName.empty()) {
+            Unload(foundName);
+        }
+        Load(path);
+    }
+
+    void PluginManager::SetPermissionPolicy(const ::AbsolutePermissionPolicyV1& policy) {
+        permissionPolicy = policy;
+    }
+
+    const ::AbsoluteEditorPluginV1* PluginManager::GetEditorPlugin(const std::string& pluginName) const {
+        const auto it = loadedPlugins.find(pluginName);
+        if (it != loadedPlugins.end()) return it->second.editorPlugin;
+        return nullptr;
+    }
+
+    const ::AbsoluteCompilerPluginV1* PluginManager::GetCompilerPlugin(const std::string& pluginName) const {
+        const auto it = loadedPlugins.find(pluginName);
+        if (it != loadedPlugins.end()) return it->second.compilerPlugin;
+        return nullptr;
+    }
+
+    std::vector<std::string> PluginManager::LoadedPluginNames() const {
+        std::vector<std::string> result;
+        for (const auto& [name, _] : loadedPlugins) {
+            result.push_back(name);
+        }
+        return result;
+    }
+
     void PluginManager::LoadManifest(const std::filesystem::path& path,
         const std::string& requestedName, const std::string& versionRange) {
         if (!std::filesystem::exists(path))
@@ -339,7 +449,7 @@ namespace Absolute {
                 cycle << canonical.filename().string();
                 throw std::runtime_error(cycle.str());
             }
-            const Manifest loaded = ParseManifest(canonical);
+            const Manifest loaded = ParseManifest(canonical, permissionPolicy);
             if (!requestedName.empty() && loaded.name != requestedName)
                 throw std::runtime_error("Plugin dependency expected '" + requestedName + "' but manifest declares '" + loaded.name + "'");
             if (!Satisfies(loaded.version, versionRange))
@@ -348,7 +458,7 @@ namespace Absolute {
             return;
         }
 
-        const Manifest manifest = ParseManifest(canonical);
+        const Manifest manifest = ParseManifest(canonical, permissionPolicy);
         if (!requestedName.empty() && manifest.name != requestedName)
             throw std::runtime_error("Plugin dependency expected '" + requestedName + "' but manifest '" +
                 canonical.string() + "' declares '" + manifest.name + "'");
@@ -494,8 +604,10 @@ namespace Absolute {
             FindSymbol(handle, "absolute_compiler_plugin_v1"));
         const auto languagePluginInit = reinterpret_cast<AbsoluteLanguagePluginInitV1>(
             FindSymbol(handle, "absolute_language_plugin_v1"));
+        const auto editorPluginInit = reinterpret_cast<AbsoluteEditorPluginInitV1>(
+            FindSymbol(handle, "absolute_editor_plugin_v1"));
 
-        if (!initialize && !compilerPluginInit && !languagePluginInit) {
+        if (!initialize && !compilerPluginInit && !languagePluginInit && !editorPluginInit) {
             CloseLibrary(handle);
             throw std::runtime_error("Syntax plugin '" + canonical.string() +
                 "' does not export any valid Absolute plugin ABI v1 entry point");
@@ -503,6 +615,16 @@ namespace Absolute {
 
         try {
             std::string pluginName;
+            const AbsoluteCompilerPluginV1* compilerDescPtr = nullptr;
+            const AbsoluteEditorPluginV1* editorDescPtr = nullptr;
+
+            if (compilerPluginInit) {
+                compilerDescPtr = compilerPluginInit();
+            }
+            if (editorPluginInit) {
+                editorDescPtr = editorPluginInit();
+            }
+
             if (initialize) {
                 const AbsoluteSyntaxPluginV1* descriptor = initialize();
                 if (!descriptor || !descriptor->name || !*descriptor->name)
@@ -510,12 +632,11 @@ namespace Absolute {
                 pluginName = descriptor->name;
                 RegisterSyntaxPlugin(descriptor);
             }
-            else if (compilerPluginInit) {
-                const AbsoluteCompilerPluginV1* compilerDesc = compilerPluginInit();
-                if (!compilerDesc || !compilerDesc->name || !*compilerDesc->name)
+            else if (compilerDescPtr) {
+                if (!compilerDescPtr->name || !*compilerDescPtr->name)
                     throw std::runtime_error("Compiler plugin returned an invalid descriptor: " + canonical.string());
-                pluginName = compilerDesc->name;
-                if (compilerDesc->initialize) compilerDesc->initialize(nullptr);
+                pluginName = compilerDescPtr->name;
+                if (compilerDescPtr->initialize) compilerDescPtr->initialize(nullptr);
             }
             else if (languagePluginInit) {
                 const AbsoluteLanguagePluginV1* langDesc = languagePluginInit();
@@ -524,6 +645,9 @@ namespace Absolute {
                 pluginName = expectedName.empty() ? "language_plugin" : expectedName;
                 if (langDesc->binary_operator_table) RegisterPluginBinaryOperators(pluginName, langDesc->binary_operator_table);
                 if (langDesc->resource_table) RegisterPluginResources(pluginName, langDesc->resource_table);
+            }
+            else if (!expectedName.empty()) {
+                pluginName = expectedName;
             }
 
             if (!expectedName.empty() && expectedName != pluginName)
@@ -564,7 +688,7 @@ namespace Absolute {
             handles.push_back(handle);
             loadedLibraries.emplace(key, pluginName);
             loadedPlugins.emplace(pluginName,
-                LoadedPlugin{version, canonical, manifest, capabilities});
+                LoadedPlugin{pluginName, version, canonical, manifest, capabilities, compilerDescPtr, editorDescPtr, handle});
             for (const std::string& capability : capabilities)
                 capabilityProviders.emplace(capability, pluginName);
             std::cout << "Loaded syntax plugin " << pluginName;

@@ -1,4 +1,7 @@
 #include "plugin_api.h"
+#include <cstdio>
+#include <cstring>
+#include <string>
 
 namespace {
     int32_t ExpandTypeAlias(void* userData, const AbsoluteSyntaxTokenV1*, size_t tokenCount,
@@ -338,12 +341,90 @@ extension double length(Math.__vec3* value) {
         sizeof(AbsoluteCompilerPluginV1),
         ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION,
         1,
-        ABSOLUTE_CAPABILITY_PARSER | ABSOLUTE_CAPABILITY_SEMANTIC | ABSOLUTE_CAPABILITY_BACKEND,
+        ABSOLUTE_CAPABILITY_PARSER | ABSOLUTE_CAPABILITY_SEMANTIC | ABSOLUTE_CAPABILITY_BACKEND | ABSOLUTE_CAPABILITY_IDE,
         "absolute.math",
         "1.0.0",
         nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
         nullptr,
         {0, 0, 0}
+    };
+
+    const char* MathGetCompletionsJson(const char* file_path, uint32_t line, uint32_t column) {
+        (void)file_path; (void)line; (void)column;
+        return R"([{"label":"vec2"},{"label":"vec3"},{"label":"mat3"},{"label":"mat4"},{"label":"dot"},{"label":"cross"},{"label":"normalize"}])";
+    }
+
+    const char* MathGetDefinitionJson(const char* file_path, uint32_t line, uint32_t column) {
+        (void)file_path; (void)line; (void)column;
+        return R"({"file":"math_plugin.abs","line":1,"column":1})";
+    }
+
+    const char* MathGetHoverInfo(const char* symbol_name) {
+        if (!symbol_name) return "Math Plugin";
+        std::string name(symbol_name);
+        if (name == "vec3" || name == "Math.__vec3") return "struct vec3 { double x; double y; double z; }";
+        if (name == "vec2" || name == "Math.__vec2") return "struct vec2 { double x; double y; }";
+        return "Math symbol";
+    }
+
+    const char* MathGetEmbeddedLanguage(const char* block_tag) {
+        if (!block_tag) return nullptr;
+        std::string tag(block_tag);
+        if (tag == "glsl") return "glsl";
+        if (tag == "hlsl") return "hlsl";
+        return nullptr;
+    }
+
+    const char* MathRenderRuntimeValue(const char* type_name, const void* value_ptr) {
+        if (!type_name || !value_ptr) return "null";
+        std::string tname(type_name);
+        if (tname == "Math.__vec2" || tname == "vec2") {
+            const double* coords = static_cast<const double*>(value_ptr);
+            static thread_local char buf[128];
+            snprintf(buf, sizeof(buf), "vec2(x=%.2f, y=%.2f)", coords[0], coords[1]);
+            return buf;
+        }
+        return "<MathValue>";
+    }
+
+    const char* MathGetDebugInfoJson(const char* symbol_name) {
+        (void)symbol_name;
+        return R"({"type":"math_plugin_symbol","debug_level":1})";
+    }
+
+    const AbsoluteIdeCapabilitiesV1 mathIdeCapabilities = {
+        sizeof(AbsoluteIdeCapabilitiesV1),
+        MathGetCompletionsJson,
+        MathGetDefinitionJson,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        MathGetEmbeddedLanguage,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr
+    };
+
+    const AbsoluteDebuggerHooksV1 mathDebuggerHooks = {
+        sizeof(AbsoluteDebuggerHooksV1),
+        MathRenderRuntimeValue,
+        MathGetDebugInfoJson,
+        nullptr,
+        nullptr,
+        nullptr
+    };
+
+    const AbsoluteEditorPluginV1 editorPluginData = {
+        sizeof(AbsoluteEditorPluginV1),
+        ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION,
+        nullptr, nullptr,
+        MathGetHoverInfo,
+        &mathIdeCapabilities,
+        &mathDebuggerHooks,
+        {0, 0}
     };
 }
 
@@ -367,3 +448,8 @@ extern "C" ABSOLUTE_PLUGIN_EXPORT const AbsoluteCompilerPluginV1* absolute_compi
 extern "C" ABSOLUTE_PLUGIN_EXPORT const AbsoluteVirtualModuleTableV1* absolute_plugin_virtual_modules_v1() {
     return &virtualModuleTableData;
 }
+
+extern "C" ABSOLUTE_PLUGIN_EXPORT const AbsoluteEditorPluginV1* absolute_editor_plugin_v1() {
+    return &editorPluginData;
+}
+

@@ -93,11 +93,41 @@ if(BUILD_TESTING)
         )
     endif()
     if(TARGET Absolute-Math-Plugin)
+        file(WRITE "${CMAKE_BINARY_DIR}/unsupported-permissions.absplugin" [=[{
+  "name": "absolute.test-permissions",
+  "version": "1.0.0",
+  "abi": 1,
+  "library": "]=] "$<TARGET_FILE:Absolute-Math-Plugin>" [=[",
+  "permissions": ["filesystem.unknown"],
+  "provides": ["test.permissions"]
+}
+]=])
         add_test(
             NAME absolute.math-plugin
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/math-plugin.abs"
                 --plugin "$<TARGET_FILE:Absolute-Math-Plugin>"
         )
+        add_test(
+            NAME absolute.plugin-permissions
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/comments.abs"
+                --plugin "${CMAKE_BINARY_DIR}/unsupported-permissions.absplugin"
+        )
+        set_tests_properties(absolute.plugin-permissions PROPERTIES WILL_FAIL TRUE)
+        file(WRITE "${CMAKE_BINARY_DIR}/missing-native-library-permission.absplugin" [=[{
+  "name": "absolute.test-native-permission",
+  "version": "1.0.0",
+  "abi": 1,
+  "library": "]=] "$<TARGET_FILE:Absolute-Math-Plugin>" [=[",
+  "nativeLibraries": ["native.dll"],
+  "provides": ["test.permissions"]
+}
+]=])
+        add_test(
+            NAME absolute.plugin-native-library-permission
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/comments.abs"
+                --plugin "${CMAKE_BINARY_DIR}/missing-native-library-permission.absplugin"
+        )
+        set_tests_properties(absolute.plugin-native-library-permission PROPERTIES WILL_FAIL TRUE)
         set_tests_properties(absolute.math-plugin PROPERTIES
             PASS_REGULAR_EXPRESSION "Loaded syntax plugin absolute.math"
         )
@@ -1457,7 +1487,15 @@ if(BUILD_TESTING)
                 -DWORK_DIR=${CMAKE_BINARY_DIR}/tests/plugin-p0-p1-features
                 -P "${PROJECT_SOURCE_DIR}/tests/run-plugin-p0-p1-features.cmake"
         )
-        add_executable(plugin-api-unit-tests tests/native/plugin_api_unit_tests.cpp Absolute-Compiler/src/package_manager.cpp)
+        add_test(
+            NAME absolute.run-plugin-p3-features
+            COMMAND "${CMAKE_COMMAND}"
+                -DCOMPILER=$<TARGET_FILE:Absolute-Compiler>
+                -DMATH_PLUGIN=$<TARGET_FILE:Absolute-Math-Plugin>
+                -DWORK_DIR=${CMAKE_BINARY_DIR}/tests/plugin-p3-features
+                -P "${PROJECT_SOURCE_DIR}/tests/run-plugin-p3-features.cmake"
+        )
+        add_executable(plugin-api-unit-tests tests/native/plugin_api_unit_tests.cpp Absolute-Compiler/src/package_manager.cpp Absolute-Compiler/src/plugin_loader.cpp)
         target_include_directories(plugin-api-unit-tests PRIVATE
             Absolute-Compiler/include
             Absolute-Parser/include

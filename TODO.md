@@ -432,18 +432,18 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 
 #### P3 — IDE, debugger и надёжность
 
-- [ ] Добавить отдельный IDE API для completion, hover, definition, references,
+- [x] Добавить отдельный IDE API для completion, hover, definition, references,
   semantic tokens, formatting, code actions, rename, inlay hints, outline и
   folding ranges.
-- [ ] Добавить `embedded_language` и virtual-document/source-map contract для
+- [x] Добавить `embedded_language` и virtual-document/source-map contract для
   передачи HLSL/GLSL/SQL блоков специализированному language server.
-- [ ] Добавить debugger/profiler hooks: debug info, debug adapter, отображение
+- [x] Добавить debugger/profiler hooks: debug info, debug adapter, отображение
   runtime value, просмотр plugin-defined типов и profiler events.
-- [ ] Добавить unload/reload плагинов для IDE без перезапуска с проверкой живых
+- [x] Добавить unload/reload плагинов для IDE без перезапуска с проверкой живых
   AST/type/runtime handles перед выгрузкой.
-- [ ] Изолировать падение и исключение плагина от процесса компилятора; ввести
+- [x] Изолировать падение и исключение плагина от процесса компилятора; ввести
   режимы trusted in-process, isolated process, sandbox и WASM plugin.
-- [ ] Реализовать permission enforcement из manifest для filesystem, network,
+- [x] Реализовать permission enforcement из manifest для filesystem, network,
   environment, toolchain и native-library доступа перед plugin marketplace.
 
 ### Стандартная библиотека

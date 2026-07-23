@@ -429,6 +429,10 @@ typedef struct AbsoluteIdeCapabilitiesV1 {
     const char* (*get_code_actions_json)(const char* file_path, uint32_t line, uint32_t column);
     const char* (*rename_symbol)(const char* file_path, uint32_t line, uint32_t column, const char* new_name);
     const char* (*get_embedded_language)(const char* block_tag);
+    const char* (*get_inlay_hints_json)(const char* file_path);
+    const char* (*get_outline_json)(const char* file_path);
+    const char* (*get_folding_ranges_json)(const char* file_path);
+    const char* (*get_virtual_document_json)(const char* file_path, const char* block_tag);
 } AbsoluteIdeCapabilitiesV1;
 
 typedef struct AbsoluteDebuggerHooksV1 {
@@ -436,6 +440,8 @@ typedef struct AbsoluteDebuggerHooksV1 {
     const char* (*render_runtime_value)(const char* type_name, const void* value_ptr);
     const char* (*get_debug_info_json)(const char* symbol_name);
     void (*on_profiler_event)(const char* event_name, uint64_t timestamp_ns);
+    const char* (*get_debug_adapter_json)(const char* file_path, uint32_t line);
+    const char* (*inspect_plugin_type)(const char* type_name);
 } AbsoluteDebuggerHooksV1;
 
 typedef struct AbsolutePermissionPolicyV1 {

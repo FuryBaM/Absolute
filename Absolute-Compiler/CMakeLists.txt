@@ -25,7 +25,11 @@ add_executable(Absolute-Compiler
 target_precompile_headers(Absolute-Compiler PRIVATE include/pch.h)
 
 # Подключаем заголовочные файлы
-target_include_directories(Absolute-Compiler PRIVATE include)
+target_include_directories(Absolute-Compiler PRIVATE
+    include
+    ../Absolute-Parser/include
+    ../Absolute-Analyzer/include
+)
 
 # Линкуем библиотеки
 target_link_libraries(Absolute-Compiler PRIVATE Absolute-Parser Absolute-Analyzer)
