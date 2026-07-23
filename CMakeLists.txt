@@ -399,6 +399,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-process.abs"
     )
     add_test(
+        NAME absolute.std-datetime-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-datetime.abs"
+    )
+    add_test(
         NAME absolute.script-main-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/script-main.abs"
     )
@@ -1938,6 +1942,21 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-std-process PROPERTIES
             FIXTURES_REQUIRED absolute-std-process-executable
             PASS_REGULAR_EXPRESSION "std-process=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-datetime
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-datetime.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-datetime-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-datetime PROPERTIES
+            FIXTURES_SETUP absolute-std-datetime-executable
+        )
+        add_test(NAME absolute.run-std-datetime
+            COMMAND "${CMAKE_BINARY_DIR}/std-datetime-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-datetime PROPERTIES
+            FIXTURES_REQUIRED absolute-std-datetime-executable
+            PASS_REGULAR_EXPRESSION "std-datetime=ok"
         )
 
         add_test(

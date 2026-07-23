@@ -463,7 +463,7 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Добавить `std.fs`: UTF-8 paths, exists/type/size, create/remove/rename/copy,
   whole-file read/write/append и ресурсный streaming `File`; Win32/Linux runtime
   использует native Unicode paths и автоматически закрывает opaque handle.
-- [ ] Добавить календарные Date/DateTime, UTC/local formatting и time zones.
+- [x] Добавить календарные `Date`/`Time`/`DateTime`/`TimeZone`: высокосные года, дни в месяце, день недели, конвертации между временными зонами, Unix epoch timestamps, добавлении дней/секунд и форматирование/парсинг ISO-8601 (`std.datetime`).
 - [x] Добавить `std.random`: `Rng` использует воспроизводимый xoshiro256** с
   явным seed и коротким API `u64`/`i32`/`range`/`real`/`boolean`; `entropy()` и
   `create()` отделяют системный источник seed от детерминированного PRNG.

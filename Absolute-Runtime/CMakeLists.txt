@@ -4,6 +4,7 @@ project(Absolute-Runtime LANGUAGES CXX)
 find_package(Threads REQUIRED)
 
 add_library(Absolute-Runtime STATIC
+    src/datetime.cpp
     src/env.cpp
     src/errors.cpp
     src/filesystem.cpp

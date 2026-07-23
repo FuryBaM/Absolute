@@ -1,0 +1,38 @@
+import "../std/datetime.abs";
+
+int32 main() {
+    Date d = std.datetime.createDate(2026, 7, 23);
+    assert(d.year == 2026 && d.month == 7 && d.day == 23, "date creation failed");
+    assert(std.datetime.isLeapYear(2024), "2024 is leap year");
+    assert(!std.datetime.isLeapYear(2026), "2026 is not leap year");
+    assert(std.datetime.daysInMonth(2024, 2) == 29, "feb 2024 has 29 days");
+    assert(std.datetime.daysInMonth(2026, 2) == 28, "feb 2026 has 28 days");
+
+    Time t = std.datetime.createTime(19, 4, 2, 500);
+    assert(t.hour == 19 && t.minute == 4 && t.second == 2 && t.millisecond == 500, "time creation failed");
+
+    TimeZone utc = std.datetime.utcZone();
+    TimeZone tzPlus5 = std.datetime.createZone(300, "+05:00");
+    assert(utc.offsetMinutes == 0, "utc zone offset 0");
+    assert(tzPlus5.offsetMinutes == 300, "+05:00 offset 300");
+
+    DateTime dtUtc = std.datetime.createDateTime(d, t, utc);
+    DateTime dtPlus5 = std.datetime.toZone(dtUtc, tzPlus5);
+    assert(dtPlus5.time.hour == 0, "19:04 + 5h = 00:04 next day");
+    assert(dtPlus5.date.day == 24, "date rolled over to 24th");
+
+    string isoStr = std.datetime.formatIso(dtUtc);
+    assert(isoStr == "2026-07-23T19:04:02.500Z", "iso format UTC failed");
+
+    DateTime parsed = std.datetime.parseIso("2026-07-23T19:04:02.500Z");
+    assert(parsed.date.year == 2026 && parsed.date.month == 7 && parsed.date.day == 23, "iso parse date failed");
+    assert(parsed.time.hour == 19 && parsed.time.minute == 4, "iso parse time failed");
+
+    assert(std.datetime.dayOfWeek(d) == 4, "2026-07-23 is Thursday (4)");
+
+    Date nextWeek = std.datetime.addDays(d, 7);
+    assert(nextWeek.day == 30, "add 7 days to 23 July = 30 July");
+
+    println("std-datetime=ok");
+    return 0;
+}
