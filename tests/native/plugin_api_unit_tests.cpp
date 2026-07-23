@@ -83,13 +83,35 @@ void TestP2ArtifactsAndBackends() {
     std::cout << "[UNIT TEST] P2 Artifacts, Backends, and Cache keys unit tests passed.\n";
 }
 
+void TestP3IdeDebuggerAndIsolation() {
+    AbsoluteIdeCapabilitiesV1 ideCaps{};
+    ideCaps.struct_size = sizeof(AbsoluteIdeCapabilitiesV1);
+
+    AbsoluteDebuggerHooksV1 debugHooks{};
+    debugHooks.struct_size = sizeof(AbsoluteDebuggerHooksV1);
+
+    AbsolutePermissionPolicyV1 permPolicy{};
+    permPolicy.struct_size = sizeof(AbsolutePermissionPolicyV1);
+    permPolicy.allow_filesystem_read = 1;
+    permPolicy.allow_network = 0;
+
+    assert(permPolicy.allow_filesystem_read == 1);
+    assert(permPolicy.allow_network == 0);
+
+    AbsoluteIsolationModeV1 mode = ABSOLUTE_ISOLATION_ISOLATED_PROCESS;
+    assert(mode == ABSOLUTE_ISOLATION_ISOLATED_PROCESS);
+
+    std::cout << "[UNIT TEST] P3 IDE, Debugger, and Permission policies unit tests passed.\n";
+}
+
 int main() {
     try {
         TestSemVerEngine();
         TestPluginCAbiLayout();
         TestSourceMapperStructures();
         TestP2ArtifactsAndBackends();
-        std::cout << "All P0/P1/P2 C++ plugin API unit tests passed successfully!\n";
+        TestP3IdeDebuggerAndIsolation();
+        std::cout << "All P0/P1/P2/P3 C++ plugin API unit tests passed successfully!\n";
         return 0;
     } catch (const std::exception& ex) {
         std::cerr << "Unit test failure: " << ex.what() << '\n';

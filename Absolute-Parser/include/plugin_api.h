@@ -412,13 +412,51 @@ typedef struct AbsoluteLanguagePluginV1 {
     uint64_t reserved[4];
 } AbsoluteLanguagePluginV1;
 
+typedef enum AbsoluteIsolationModeV1 {
+    ABSOLUTE_ISOLATION_TRUSTED_IN_PROCESS = 0,
+    ABSOLUTE_ISOLATION_ISOLATED_PROCESS = 1,
+    ABSOLUTE_ISOLATION_SANDBOX = 2,
+    ABSOLUTE_ISOLATION_WASM = 3
+} AbsoluteIsolationModeV1;
+
+typedef struct AbsoluteIdeCapabilitiesV1 {
+    uint32_t struct_size;
+    const char* (*get_completions_json)(const char* file_path, uint32_t line, uint32_t column);
+    const char* (*get_definition_json)(const char* file_path, uint32_t line, uint32_t column);
+    const char* (*get_references_json)(const char* file_path, uint32_t line, uint32_t column);
+    const char* (*get_semantic_tokens_json)(const char* file_path);
+    const char* (*format_source)(const char* source_code);
+    const char* (*get_code_actions_json)(const char* file_path, uint32_t line, uint32_t column);
+    const char* (*rename_symbol)(const char* file_path, uint32_t line, uint32_t column, const char* new_name);
+    const char* (*get_embedded_language)(const char* block_tag);
+} AbsoluteIdeCapabilitiesV1;
+
+typedef struct AbsoluteDebuggerHooksV1 {
+    uint32_t struct_size;
+    const char* (*render_runtime_value)(const char* type_name, const void* value_ptr);
+    const char* (*get_debug_info_json)(const char* symbol_name);
+    void (*on_profiler_event)(const char* event_name, uint64_t timestamp_ns);
+} AbsoluteDebuggerHooksV1;
+
+typedef struct AbsolutePermissionPolicyV1 {
+    uint32_t struct_size;
+    uint32_t allow_filesystem_read;
+    uint32_t allow_filesystem_write;
+    uint32_t allow_network;
+    uint32_t allow_environment;
+    uint32_t allow_toolchain_exec;
+    uint32_t allow_native_libraries;
+} AbsolutePermissionPolicyV1;
+
 typedef struct AbsoluteEditorPluginV1 {
     uint32_t struct_size;
     uint32_t abi_version;
     const char* (*get_keywords_json)(void);
     const char* (*get_snippets_json)(void);
     const char* (*get_hover_info)(const char* symbol_name);
-    uint64_t reserved[4];
+    const AbsoluteIdeCapabilitiesV1* ide_capabilities;
+    const AbsoluteDebuggerHooksV1* debugger_hooks;
+    uint64_t reserved[2];
 } AbsoluteEditorPluginV1;
 
 typedef struct AbsoluteRuntimePluginV1 {

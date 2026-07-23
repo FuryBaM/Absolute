@@ -22,6 +22,36 @@ $windowsBuild = Join-Path $buildRoot 'windows'
 $nativeOutput = Join-Path $buildRoot 'native'
 New-Item -ItemType Directory -Force -Path $windowsBuild, $nativeOutput | Out-Null
 
+function Import-VisualStudioEnvironment {
+    $vsWhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+    if (-not (Test-Path -LiteralPath $vsWhere)) {
+        throw "Visual Studio Installer was not found: $vsWhere"
+    }
+
+    $vsInstall = (& $vsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -Last 1).Trim()
+    if (-not $vsInstall) {
+        throw 'Visual Studio C++ x64 build tools were not found.'
+    }
+
+    $vcvars64 = Join-Path $vsInstall 'VC\Auxiliary\Build\vcvars64.bat'
+    if (-not (Test-Path -LiteralPath $vcvars64)) {
+        throw "vcvars64.bat was not found: $vcvars64"
+    }
+
+    $batchOutput = & cmd.exe /d /c "call `"$vcvars64`" && set"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to initialize Microsoft Visual C++ environment using $vcvars64"
+    }
+
+    foreach ($line in $batchOutput) {
+        if ($line -match '^([^=]+)=(.*)$') {
+            $name = $Matches[1]
+            $value = $Matches[2]
+            [System.Environment]::SetEnvironmentVariable($name, $value, 'Process')
+        }
+    }
+}
+
 function Convert-ToWslPath([string]$Path) {
     $normalized = [IO.Path]::GetFullPath($Path).Replace('\', '/')
     $converted = & wsl.exe wslpath -a $normalized
@@ -43,6 +73,7 @@ function Invoke-Step([string]$Label, [string]$Command, [string[]]$Arguments) {
     if ($LASTEXITCODE -ne 0) { throw "$Label failed with exit code $LASTEXITCODE" }
 }
 
+Import-VisualStudioEnvironment
 foreach ($command in 'wsl.exe', 'cmake.exe', 'link.exe') {
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "Required command was not found: $command" }
 }
@@ -75,7 +106,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 Invoke-Step 'Build Absolute compiler and host plugin' 'wsl.exe' @(
     $wslCmake, '--build', $compilerBuildWsl, '--target',
-    'Absolute-Compiler', 'Absolute-Desktop-Plugin', '--parallel'
+    'Absolute-Compiler', 'Absolute-Desktop-Plugin', 'Absolute-Math-Plugin', '--parallel'
 )
 
 if (-not (Test-Path -LiteralPath (Join-Path $windowsBuild 'CMakeCache.txt'))) {
@@ -92,12 +123,14 @@ Invoke-Step 'Build Windows desktop runtime' 'cmake.exe' @(
 
 $compilerWsl = "$compilerBuildWsl/Release/absolutec"
 $hostManifestWsl = "$compilerBuildWsl/plugins/desktop/absolute-desktop.absplugin"
+$mathPluginWsl = "$compilerBuildWsl/plugins/math/absolute-math.so"
 $llvmIr = Join-Path $nativeOutput 'desktop.ll'
 $object = Join-Path $nativeOutput 'desktop.obj'
 $sourcePath = (Resolve-Path -LiteralPath $Source).Path
 Invoke-Step 'Emit LLVM IR' 'wsl.exe' @(
     $compilerWsl, (Convert-ToWslPath $sourcePath),
     '--plugin', $hostManifestWsl,
+    '--plugin', $mathPluginWsl,
     '--emit-llvm', '-o', (Convert-ToWslPath $llvmIr)
 )
 Invoke-Step 'Compile Windows object' 'wsl.exe' @(

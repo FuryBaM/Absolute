@@ -4,6 +4,7 @@
 #include "syntax_plugins.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -524,6 +525,7 @@ namespace {
 
     void BuildExecutable(CodeGenerator& generator, Program& program, const Compilation& compilation,
         const fs::path& requestedOutput) {
+        const auto startTime = std::chrono::steady_clock::now();
         fs::path executable = fs::absolute(requestedOutput);
         if (!executable.parent_path().empty()) fs::create_directories(executable.parent_path());
         fs::path object = executable;
@@ -597,8 +599,9 @@ namespace {
         std::error_code ignored;
         fs::remove(response, ignored);
         if (status != 0) throw std::runtime_error("Native linker failed with exit code " + std::to_string(status));
-        std::cout << "Built " << executable.string() << '\n';
-        std::cout << "Object " << object.string() << '\n';
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - startTime).count();
+        std::cout << "Built " << executable.filename().string() << " [" << elapsed << " ms]\n";
     }
 #endif
 }
