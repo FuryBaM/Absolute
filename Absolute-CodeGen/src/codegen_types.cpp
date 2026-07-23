@@ -53,6 +53,33 @@ namespace Absolute {
             FinalizeStruct(name);
             return structs.at(name).llvmType;
         }
+        if (!currentNamespace.empty()) {
+            const std::string qualified = currentNamespace + "." + name;
+            if (classes.contains(qualified)) {
+                FinalizeClass(qualified);
+                return classes.at(qualified).llvmType;
+            }
+            if (structs.contains(qualified)) {
+                FinalizeStruct(qualified);
+                return structs.at(qualified).llvmType;
+            }
+        }
+        for (const auto& [clsName, info] : classes) {
+            if (clsName == name ||
+                (clsName.size() > name.size() && clsName.ends_with("." + name)) ||
+                (name.size() > clsName.size() && name.ends_with("." + clsName))) {
+                FinalizeClass(clsName);
+                return classes.at(clsName).llvmType;
+            }
+        }
+        for (const auto& [strName, info] : structs) {
+            if (strName == name ||
+                (strName.size() > name.size() && strName.ends_with("." + name)) ||
+                (name.size() > strName.size() && name.ends_with("." + strName))) {
+                FinalizeStruct(strName);
+                return structs.at(strName).llvmType;
+            }
+        }
         llvm::Function* curFn = CurrentFunction();
         std::string subsStr = "{";
         for (const auto& [k, v] : currentGenericSubstitutions) subsStr += k + ":" + v + " ";
@@ -260,14 +287,17 @@ namespace Absolute {
                         std::string base;
                         std::vector<std::string> arguments;
                         if (!ParseCodegenGenericType(specialization, base, arguments) ||
-                            base != baseName || arguments.size() != classDeclaration->templateParams.size()) continue;
+                            arguments.size() != classDeclaration->templateParams.size()) continue;
+                        if (base != baseName && base != classDeclaration->name &&
+                            baseName != QualifiedClassName(base, nameSpace)) continue;
                         if (std::any_of(arguments.begin(), arguments.end(), [&](const std::string& argument) {
                             return ContainsOpenGenericParameter(argument, classDeclaration->templateParams);
                         })) continue;
                         std::unordered_map<std::string, std::string> substitutions;
                         for (size_t index = 0; index < arguments.size(); ++index)
                             substitutions.emplace(classDeclaration->templateParams[index].value, arguments[index]);
-                        CollectClass(*classDeclaration, nameSpace, specialization, std::move(substitutions));
+                        const std::string fullName = baseName + "<" + specialization.substr(specialization.find('<') + 1);
+                        CollectClass(*classDeclaration, nameSpace, fullName, std::move(substitutions));
                     }
                 }
             }
@@ -283,14 +313,17 @@ namespace Absolute {
                         std::string base;
                         std::vector<std::string> arguments;
                         if (!ParseCodegenGenericType(specialization, base, arguments) ||
-                            base != baseName || arguments.size() != structDeclaration->templateParams.size()) continue;
+                            arguments.size() != structDeclaration->templateParams.size()) continue;
+                        if (base != baseName && base != structDeclaration->name &&
+                            baseName != QualifiedClassName(base, nameSpace)) continue;
                         if (std::any_of(arguments.begin(), arguments.end(), [&](const std::string& argument) {
                             return ContainsOpenGenericParameter(argument, structDeclaration->templateParams);
                         })) continue;
                         std::unordered_map<std::string, std::string> substitutions;
                         for (size_t index = 0; index < arguments.size(); ++index)
                             substitutions.emplace(structDeclaration->templateParams[index].value, arguments[index]);
-                        CollectStruct(*structDeclaration, nameSpace, specialization, std::move(substitutions));
+                        const std::string fullName = baseName + "<" + specialization.substr(specialization.find('<') + 1);
+                        CollectStruct(*structDeclaration, nameSpace, fullName, std::move(substitutions));
                     }
                 }
             }

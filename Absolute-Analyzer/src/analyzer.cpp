@@ -62,6 +62,31 @@ namespace Absolute {
         for (Program* program : programs) if (program) AnalyzeProgram(*program);
         phase = Phase::ResolveBodies;
         for (Program* program : programs) if (program) AnalyzeProgram(*program);
+        const size_t startCount = instantiatedGenericTypes.size();
+        bool addedNew = true;
+        while (addedNew) {
+            const size_t beforeCount = instantiatedGenericTypes.size();
+            std::vector<std::string> currentTypes(instantiatedGenericTypes.begin(), instantiatedGenericTypes.end());
+            for (const std::string& genericType : currentTypes) {
+                std::string genericBase;
+                std::vector<std::string> genericArguments;
+                if (!ParseGenericTypeName(genericType, genericBase, genericArguments)) continue;
+                const auto definition = types.find(genericBase);
+                if (definition == types.end() || definition->second.genericParameters.size() != genericArguments.size()) continue;
+                std::unordered_map<std::string, std::string> substitutions;
+                for (size_t index = 0; index < genericArguments.size(); ++index)
+                    substitutions.emplace(definition->second.genericParameters[index], genericArguments[index]);
+                for (const auto& [memberName, overloads] : definition->second.members) {
+                    (void)memberName;
+                    for (const MemberSignature& member : overloads) {
+                        ResolveTypeReference(SubstituteGenericType(member.type, substitutions));
+                        for (const std::string& parameter : member.parameterTypes)
+                            ResolveTypeReference(SubstituteGenericType(parameter, substitutions));
+                    }
+                }
+            }
+            addedNew = instantiatedGenericTypes.size() > beforeCount;
+        }
         return !HasErrors();
     }
 
@@ -1571,7 +1596,16 @@ namespace Absolute {
         }
         if (PrimitiveStringToEnum(name).has_value() || name == "null" || name == "error") return name;
         const Symbol* symbol = table.Get(LookupSymbol(name));
-        return symbol && symbol->kind == SymbolKind::Type ? symbol->name : name;
+        if (symbol && symbol->kind == SymbolKind::Type) return symbol->name;
+        if (!currentNamespace.empty()) {
+            const std::string qualified = currentNamespace + "." + name;
+            if (types.contains(qualified)) return qualified;
+        }
+        for (const auto& [typeName, def] : types) {
+            if (typeName.size() > name.size() && typeName.ends_with("." + name))
+                return typeName;
+        }
+        return name;
     }
 
     std::string Analyzer::LookupTypeAliasName(const std::string& name) const {

@@ -264,7 +264,7 @@
   storage с copy-on-write. Это оптимизация времени и памяти без изменения уже
   реализованной snapshot-семантики: iterator продолжает видеть версию на момент
   `iterate()` и не требует lexical borrow checker.
-- [ ] Скрыть mutable backing стандартных коллекций за private runtime capability:
+- [x] Скрыть mutable backing стандартных коллекций за private runtime capability:
   safe API не возвращает адрес элемента или storage. Для изменяющего обхода дать
   transient builder/cursor, который форкается от immutable snapshot и публикует
   новую collection только через `finish()`; старые aliases остаются корректными и

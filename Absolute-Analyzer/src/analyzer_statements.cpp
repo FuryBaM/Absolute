@@ -232,6 +232,7 @@ namespace Absolute {
         pendingMemberAccess = oldAccess;
         if (phase != Phase::ResolveBodies || functionDepth == 0 || !stmt->expr) return;
         const ExpressionInfo* declaration = GetExpressionInfo(*stmt->expr);
+        if (declaration) ResolveTypeReference(declaration->type);
         const ExpressionInfo* initializer = stmt->expr->value
             ? GetExpressionInfo(*stmt->expr->value) : nullptr;
         const SymbolId id = declaration ? declaration->symbol : InvalidSymbolId;

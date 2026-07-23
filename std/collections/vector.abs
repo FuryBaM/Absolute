@@ -20,6 +20,94 @@ namespace std.collections {
         }
     }
 
+    class VectorBuilder<T> {
+        private T[] buffer;
+        private int32 _count;
+        private int32 _capacity;
+        private bool _finished;
+
+        public VectorBuilder(T[] initialSource, int32 initialCount) {
+            _count = initialCount;
+            _capacity = initialCount > 4 ? initialCount : 4;
+            buffer = new T[_capacity];
+            int32 i = 0;
+            while (i < _count) {
+                buffer[i] = initialSource[i];
+                i = i + 1;
+            }
+            _finished = false;
+        }
+
+        public int32 count {
+            get { return _count; }
+        }
+
+        public void add(T element) {
+            if (_finished) {
+                throw new Error("VectorBuilder already finished");
+            }
+            if (_count == _capacity) {
+                int32 newCap = _capacity * 2;
+                T[] newBuf = new T[newCap];
+                int32 i = 0;
+                while (i < _count) {
+                    newBuf[i] = buffer[i];
+                    i = i + 1;
+                }
+                buffer = copy(newBuf);
+                _capacity = newCap;
+            }
+            buffer[_count] = element;
+            _count = _count + 1;
+        }
+
+        public void setAt(int32 index, T element) {
+            if (_finished) {
+                throw new Error("VectorBuilder already finished");
+            }
+            if (index < 0 || index >= _count) {
+                throw new Error("Index out of bounds");
+            }
+            buffer[index] = element;
+        }
+
+        public T getAt(int32 index) {
+            if (index < 0 || index >= _count) {
+                throw new Error("Index out of bounds");
+            }
+            return buffer[index];
+        }
+
+        public void removeAt(int32 index) {
+            if (_finished) {
+                throw new Error("VectorBuilder already finished");
+            }
+            if (index < 0 || index >= _count) {
+                throw new Error("Index out of bounds");
+            }
+            int32 i = index;
+            while (i < _count - 1) {
+                buffer[i] = buffer[i + 1];
+                i = i + 1;
+            }
+            _count = _count - 1;
+        }
+
+        public std.collections.Vector<T>* finish() {
+            if (_finished) {
+                throw new Error("VectorBuilder already finished");
+            }
+            _finished = true;
+            std.collections.Vector<T>* result = new std.collections.Vector<T>();
+            int32 i = 0;
+            while (i < _count) {
+                result.push(buffer[i]);
+                i = i + 1;
+            }
+            return result;
+        }
+    }
+
     class Vector<T> {
         private T[] items;
         private int32 _count;
@@ -108,9 +196,24 @@ namespace std.collections {
             }
         }
 
-        public VectorIterator<T>* iterate() {
+        public std.collections.VectorIterator<T>* iterate() {
             _isShared = true;
-            return new VectorIterator<T>(items, _count);
+            return new std.collections.VectorIterator<T>(items, _count);
+        }
+
+        public std.collections.VectorBuilder<T>* builder() {
+            return new std.collections.VectorBuilder<T>(items, _count);
+        }
+
+        public T[] unsafeCopyRaw() {
+            T[] res = new T[_count];
+            int32 i = 0;
+            while (i < _count) {
+                res[i] = items[i];
+                i = i + 1;
+            }
+            T[] rawCopy = copy(res);
+            return rawCopy;
         }
     }
 }

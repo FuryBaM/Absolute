@@ -20,6 +20,99 @@ namespace std.collections {
         }
     }
 
+    class SetBuilder<T> {
+        private T[] buffer;
+        private int32 _count;
+        private int32 _capacity;
+        private bool _finished;
+
+        public SetBuilder(T[] initialSource, int32 initialCount) {
+            _count = initialCount;
+            _capacity = initialCount > 4 ? initialCount : 4;
+            buffer = new T[_capacity];
+            int32 i = 0;
+            while (i < _count) {
+                buffer[i] = initialSource[i];
+                i = i + 1;
+            }
+            _finished = false;
+        }
+
+        public int32 count {
+            get { return _count; }
+        }
+
+        public bool contains(T item) {
+            int32 i = 0;
+            while (i < _count) {
+                if (buffer[i] == item) {
+                    return true;
+                }
+                i = i + 1;
+            }
+            return false;
+        }
+
+        public bool add(T item) {
+            if (_finished) {
+                throw new Error("SetBuilder already finished");
+            }
+            if (contains(item)) {
+                return false;
+            }
+
+            if (_count == _capacity) {
+                int32 newCap = _capacity * 2;
+                T[] newBuf = new T[newCap];
+                int32 j = 0;
+                while (j < _count) {
+                    newBuf[j] = buffer[j];
+                    j = j + 1;
+                }
+                buffer = copy(newBuf);
+                _capacity = newCap;
+            }
+
+            buffer[_count] = item;
+            _count = _count + 1;
+            return true;
+        }
+
+        public bool remove(T item) {
+            if (_finished) {
+                throw new Error("SetBuilder already finished");
+            }
+            int32 i = 0;
+            while (i < _count) {
+                if (buffer[i] == item) {
+                    int32 j = i;
+                    while (j < _count - 1) {
+                        buffer[j] = buffer[j + 1];
+                        j = j + 1;
+                    }
+                    _count = _count - 1;
+                    return true;
+                }
+                i = i + 1;
+            }
+            return false;
+        }
+
+        public std.collections.Set<T>* finish() {
+            if (_finished) {
+                throw new Error("SetBuilder already finished");
+            }
+            _finished = true;
+            std.collections.Set<T>* result = new std.collections.Set<T>();
+            int32 i = 0;
+            while (i < _count) {
+                result.add(buffer[i]);
+                i = i + 1;
+            }
+            return result;
+        }
+    }
+
     class Set<T> {
         private T[] items;
         private int32 _count;
@@ -109,9 +202,24 @@ namespace std.collections {
             _count = 0;
         }
 
-        public SetIterator<T>* iterate() {
+        public std.collections.SetIterator<T>* iterate() {
             _isShared = true;
-            return new SetIterator<T>(items, _count);
+            return new std.collections.SetIterator<T>(items, _count);
+        }
+
+        public std.collections.SetBuilder<T>* builder() {
+            return new std.collections.SetBuilder<T>(items, _count);
+        }
+
+        public T[] unsafeCopyRaw() {
+            T[] res = new T[_count];
+            int32 i = 0;
+            while (i < _count) {
+                res[i] = items[i];
+                i = i + 1;
+            }
+            T[] rawCopy = copy(res);
+            return rawCopy;
         }
     }
 }

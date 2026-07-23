@@ -30,6 +30,92 @@ namespace std.collections {
         }
     }
 
+    class MapBuilder<K, V> {
+        private KeyValuePair<K, V>[] buffer;
+        private int32 _count;
+        private int32 _capacity;
+        private bool _finished;
+
+        public MapBuilder(KeyValuePair<K, V>[] initialSource, int32 initialCount) {
+            _count = initialCount;
+            _capacity = initialCount > 4 ? initialCount : 4;
+            buffer = new KeyValuePair<K, V>[_capacity];
+            int32 i = 0;
+            while (i < _count) {
+                buffer[i] = initialSource[i];
+                i = i + 1;
+            }
+            _finished = false;
+        }
+
+        public int32 count {
+            get { return _count; }
+        }
+
+        public void put(K key, V value) {
+            if (_finished) {
+                throw new Error("MapBuilder already finished");
+            }
+            int32 i = 0;
+            while (i < _count) {
+                if (buffer[i].key == key) {
+                    buffer[i].value = value;
+                    return;
+                }
+                i = i + 1;
+            }
+
+            if (_count == _capacity) {
+                int32 newCap = _capacity * 2;
+                KeyValuePair<K, V>[] newBuf = new KeyValuePair<K, V>[newCap];
+                int32 j = 0;
+                while (j < _count) {
+                    newBuf[j] = buffer[j];
+                    j = j + 1;
+                }
+                buffer = copy(newBuf);
+                _capacity = newCap;
+            }
+
+            buffer[_count].initialize(key, value);
+            _count = _count + 1;
+        }
+
+        public bool remove(K key) {
+            if (_finished) {
+                throw new Error("MapBuilder already finished");
+            }
+            int32 i = 0;
+            while (i < _count) {
+                if (buffer[i].key == key) {
+                    int32 j = i;
+                    while (j < _count - 1) {
+                        buffer[j] = buffer[j + 1];
+                        j = j + 1;
+                    }
+                    _count = _count - 1;
+                    return true;
+                }
+                i = i + 1;
+            }
+            return false;
+        }
+
+        public std.collections.Map<K, V>* finish() {
+            if (_finished) {
+                throw new Error("MapBuilder already finished");
+            }
+            _finished = true;
+            std.collections.Map<K, V>* result = new std.collections.Map<K, V>();
+            int32 i = 0;
+            while (i < _count) {
+                result.put(buffer[i].key, buffer[i].value);
+                i = i + 1;
+            }
+            return result;
+        }
+    }
+
     class Map<K, V> {
         private KeyValuePair<K, V>[] entries;
         private int32 _count;
@@ -139,9 +225,24 @@ namespace std.collections {
             _count = 0;
         }
 
-        public MapIterator<K, V>* iterate() {
+        public std.collections.MapIterator<K, V>* iterate() {
             _isShared = true;
-            return new MapIterator<K, V>(entries, _count);
+            return new std.collections.MapIterator<K, V>(entries, _count);
+        }
+
+        public std.collections.MapBuilder<K, V>* builder() {
+            return new std.collections.MapBuilder<K, V>(entries, _count);
+        }
+
+        public KeyValuePair<K, V>[] unsafeCopyRaw() {
+            KeyValuePair<K, V>[] res = new KeyValuePair<K, V>[_count];
+            int32 i = 0;
+            while (i < _count) {
+                res[i] = entries[i];
+                i = i + 1;
+            }
+            KeyValuePair<K, V>[] rawCopy = copy(res);
+            return rawCopy;
         }
     }
 }
