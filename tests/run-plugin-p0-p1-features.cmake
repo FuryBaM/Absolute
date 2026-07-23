@@ -27,8 +27,11 @@ file(WRITE "${WORK_DIR}/packages/pluginB/pluginB.absplugin" [=[
 
 file(MAKE_DIRECTORY "${WORK_DIR}/src")
 file(WRITE "${WORK_DIR}/src/main.abs" [=[
+import MathVirtualModule;
+
 int32 main() {
-    println("p0_p1_plugins=ok");
+    int32 val = MathVirtualModule.vmodule_add(20, 22);
+    println(format("p0_p1_plugins=ok, val={}", val));
     return 0;
 }
 ]=])
@@ -65,7 +68,7 @@ if (NOT RUN_RESULT EQUAL 0)
     message(FATAL_ERROR "Plugin P0/P1 test run failed (${RUN_RESULT}):\n${RUN_OUTPUT}\n${RUN_ERROR}")
 endif()
 
-if (NOT RUN_OUTPUT MATCHES "p0_p1_plugins=ok")
+if (NOT RUN_OUTPUT MATCHES "p0_p1_plugins=ok, val=42")
     message(FATAL_ERROR "Unexpected output from Plugin P0/P1 test:\n${RUN_OUTPUT}")
 endif()
 

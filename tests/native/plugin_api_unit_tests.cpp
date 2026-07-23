@@ -59,12 +59,37 @@ void TestSourceMapperStructures() {
     std::cout << "[UNIT TEST] Source mapper structures unit tests passed.\n";
 }
 
+void TestP2ArtifactsAndBackends() {
+    AbsoluteArtifactV1 artifact{};
+    artifact.struct_size = sizeof(AbsoluteArtifactV1);
+    artifact.kind = ABSOLUTE_ARTIFACT_SPIRV;
+    artifact.file_path = "shader.spv";
+    artifact.target_triple = "spirv64-unknown-unknown";
+
+    assert(artifact.kind == ABSOLUTE_ARTIFACT_SPIRV);
+    assert(std::string(artifact.target_triple) == "spirv64-unknown-unknown");
+
+    AbsoluteBackendDescriptorV1 backend{};
+    backend.struct_size = sizeof(AbsoluteBackendDescriptorV1);
+    backend.abi_version = ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION;
+    backend.target_name = "spirv";
+
+    assert(std::string(backend.target_name) == "spirv");
+
+    AbsoluteCacheKeyV1 cacheKey{"pluginA", "1.0.0", 0x12345678, "hash123"};
+    assert(std::string(cacheKey.plugin_name) == "pluginA");
+    assert(cacheKey.schema_hash == 0x12345678);
+
+    std::cout << "[UNIT TEST] P2 Artifacts, Backends, and Cache keys unit tests passed.\n";
+}
+
 int main() {
     try {
         TestSemVerEngine();
         TestPluginCAbiLayout();
         TestSourceMapperStructures();
-        std::cout << "All P0/P1 C++ plugin API unit tests passed successfully!\n";
+        TestP2ArtifactsAndBackends();
+        std::cout << "All P0/P1/P2 C++ plugin API unit tests passed successfully!\n";
         return 0;
     } catch (const std::exception& ex) {
         std::cerr << "Unit test failure: " << ex.what() << '\n';

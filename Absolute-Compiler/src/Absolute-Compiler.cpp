@@ -363,7 +363,10 @@ namespace {
         for (const CollectedImport& imported : imports.imports) {
             std::vector<fs::path> resolved = ResolveImportPath(canonical.parent_path(), imported.target, project);
             if (resolved.empty()) {
-                if (imported.isFile) {
+                if (const std::string* virtualSource = FindPluginVirtualModule(imported.target)) {
+                    programs.push_back(ParseCode(Tokenize(*virtualSource)));
+                }
+                else if (imported.isFile) {
                     throw std::runtime_error("Imported source does not exist: " + imported.target);
                 }
             }

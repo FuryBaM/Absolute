@@ -326,6 +326,56 @@ typedef struct AbsoluteVirtualModuleTableV1 {
 
 typedef const AbsoluteVirtualModuleTableV1* (*AbsolutePluginVirtualModulesV1)(void);
 
+typedef enum AbsoluteArtifactKindV1 {
+    ABSOLUTE_ARTIFACT_LLVM_IR = 0,
+    ABSOLUTE_ARTIFACT_LLVM_BITCODE = 1,
+    ABSOLUTE_ARTIFACT_OBJECT = 2,
+    ABSOLUTE_ARTIFACT_STATIC_LIB = 3,
+    ABSOLUTE_ARTIFACT_SHARED_LIB = 4,
+    ABSOLUTE_ARTIFACT_SPIRV = 5,
+    ABSOLUTE_ARTIFACT_DXIL = 6,
+    ABSOLUTE_ARTIFACT_PTX = 7,
+    ABSOLUTE_ARTIFACT_CUBIN = 8,
+    ABSOLUTE_ARTIFACT_AMDGPU = 9,
+    ABSOLUTE_ARTIFACT_SOURCE_TEXT = 10,
+    ABSOLUTE_ARTIFACT_CUSTOM_BINARY = 11
+} AbsoluteArtifactKindV1;
+
+typedef struct AbsoluteArtifactV1 {
+    uint32_t struct_size;
+    uint32_t kind;
+    const char* file_path;
+    const char* target_triple;
+    const uint8_t* data;
+    size_t data_size;
+} AbsoluteArtifactV1;
+
+typedef struct AbsoluteBackendDescriptorV1 {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    const char* target_name;
+    int32_t (*supports_target)(const char* target_triple);
+    int32_t (*emit_artifact)(void* context, uint32_t artifact_kind, const AbsoluteArtifactV1** out_artifact);
+    int32_t (*link_artifact)(void* context, const AbsoluteArtifactV1* artifact, const char* output_file);
+    const char* (*query_target_features)(const char* target_triple);
+} AbsoluteBackendDescriptorV1;
+
+typedef struct AbsoluteBuildGraphV1 {
+    uint32_t abi_version;
+    void* context;
+    int32_t (*add_dependency)(void* context, const char* source, const char* depends_on);
+    int32_t (*add_include_path)(void* context, const char* path);
+    int32_t (*add_link_library)(void* context, const char* library);
+    int32_t (*register_generated_file)(void* context, const char* file_path);
+} AbsoluteBuildGraphV1;
+
+typedef struct AbsoluteCacheKeyV1 {
+    const char* plugin_name;
+    const char* plugin_version;
+    uint64_t schema_hash;
+    const char* artifact_hash;
+} AbsoluteCacheKeyV1;
+
 #define ABSOLUTE_CAPABILITY_PARSER    (1ULL << 0)
 #define ABSOLUTE_CAPABILITY_SEMANTIC  (1ULL << 1)
 #define ABSOLUTE_CAPABILITY_IR        (1ULL << 2)
@@ -345,7 +395,8 @@ typedef struct AbsoluteCompilerPluginV1 {
     int32_t (*end_module)(void* compiler_context, const char* module_name);
     int32_t (*end_compilation)(void* compiler_context);
     void (*shutdown)(void* compiler_context);
-    uint64_t reserved[4];
+    const AbsoluteBackendDescriptorV1* backend_descriptor;
+    uint64_t reserved[3];
 } AbsoluteCompilerPluginV1;
 
 typedef struct AbsoluteLanguagePluginV1 {

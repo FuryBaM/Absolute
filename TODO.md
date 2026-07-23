@@ -416,17 +416,17 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 
 #### P2 — artifacts, backends, build graph и runtime
 
-- [ ] Отвязать codegen ABI от одного `emit_llvm`: добавить artifact kinds для
+- [x] Отвязать codegen ABI от одного `emit_llvm`: добавить artifact kinds для
   LLVM IR/bitcode, object/static/shared library, SPIR-V, DXIL, PTX, CUBIN,
   AMDGPU code object, source text и custom binary.
-- [ ] Добавить `supports_target`, `emit_artifact` и `link_artifact`, а затем
+- [x] Добавить `supports_target`, `emit_artifact` и `link_artifact`, а затем
   versioned backend registration: `register_target`, `query_target_features`,
   `compile_module`, `link_module`, `run_toolchain`.
-- [ ] Добавить build graph API для source/binary/tool/environment dependencies,
+- [x] Добавить build graph API для source/binary/tool/environment dependencies,
   generated files, include paths и link libraries.
-- [ ] Добавить plugin cache keys, artifact hashes и incremental state; opaque
+- [x] Добавить plugin cache keys, artifact hashes и incremental state; opaque
   AST сериализовать с версией plugin/schema, не инвалидируя весь module cache.
-- [ ] Формализовать runtime-интеграцию: initialize/shutdown runtime,
+- [x] Формализовать runtime-интеграцию: initialize/shutdown runtime,
   native libraries/functions, allocate/release resource и упаковку compiler,
   runtime, prelude, IDE и debugger частей в один plugin package.
 

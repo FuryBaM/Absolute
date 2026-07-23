@@ -324,6 +324,27 @@ extension double length(Math.__vec3* value) {
         sizeof(binaryOperatorRules) / sizeof(binaryOperatorRules[0]),
         binaryOperatorRules
     };
+
+    const AbsoluteVirtualModuleV1 virtualModulesData[] = {
+        {"MathVirtualModule", "namespace MathVirtualModule { int32 vmodule_add(int32 a, int32 b) { return a + b; } }\n"}
+    };
+
+    const AbsoluteVirtualModuleTableV1 virtualModuleTableData = {
+        sizeof(virtualModulesData) / sizeof(virtualModulesData[0]),
+        virtualModulesData
+    };
+
+    const AbsoluteCompilerPluginV1 compilerPluginData = {
+        sizeof(AbsoluteCompilerPluginV1),
+        ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION,
+        1,
+        ABSOLUTE_CAPABILITY_PARSER | ABSOLUTE_CAPABILITY_SEMANTIC | ABSOLUTE_CAPABILITY_BACKEND,
+        "absolute.math",
+        "1.0.0",
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr,
+        {0, 0, 0}
+    };
 }
 
 extern "C" ABSOLUTE_PLUGIN_EXPORT const AbsoluteSyntaxPluginV1* absolute_syntax_plugin_init_v1() {
@@ -337,4 +358,12 @@ extern "C" ABSOLUTE_PLUGIN_EXPORT const char* absolute_syntax_plugin_prelude_v1(
 extern "C" ABSOLUTE_PLUGIN_EXPORT const AbsoluteBinaryOperatorTableV1*
 absolute_syntax_plugin_binary_operators_v1() {
     return &binaryOperators;
+}
+
+extern "C" ABSOLUTE_PLUGIN_EXPORT const AbsoluteCompilerPluginV1* absolute_compiler_plugin_v1() {
+    return &compilerPluginData;
+}
+
+extern "C" ABSOLUTE_PLUGIN_EXPORT const AbsoluteVirtualModuleTableV1* absolute_plugin_virtual_modules_v1() {
+    return &virtualModuleTableData;
 }
