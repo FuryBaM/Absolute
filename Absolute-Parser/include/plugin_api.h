@@ -212,8 +212,38 @@ typedef struct AbsoluteOpaqueParseResultV1 {
 typedef int32_t (*AbsoluteOpaqueParseV1)(
     void* user_data, AbsoluteParserCursorV1* parser, AbsoluteOpaqueParseResultV1* result);
 
+typedef struct AbsoluteSourceSpanV1 {
+    const char* file_path;
+    uint32_t start_line;
+    uint32_t start_column;
+    uint32_t end_line;
+    uint32_t end_column;
+} AbsoluteSourceSpanV1;
+
+typedef struct AbsoluteSourceMapEntryV1 {
+    AbsoluteSourceSpanV1 host_span;
+    AbsoluteSourceSpanV1 generated_span;
+    const char* foreign_language;
+} AbsoluteSourceMapEntryV1;
+
+typedef void (*AbsoluteMapGeneratedSpanV1)(
+    void* map_context, const AbsoluteSourceSpanV1* host_span, const AbsoluteSourceSpanV1* generated_span);
+typedef void (*AbsoluteMapForeignSpanV1)(
+    void* map_context, const char* foreign_file, const AbsoluteSourceSpanV1* foreign_span, const AbsoluteSourceSpanV1* host_span);
+typedef void (*AbsoluteMapIrInstructionV1)(
+    void* map_context, void* llvm_instruction, const AbsoluteSourceSpanV1* host_span);
+
+typedef struct AbsoluteSourceMapperV1 {
+    uint32_t abi_version;
+    void* context;
+    AbsoluteMapGeneratedSpanV1 map_generated_span;
+    AbsoluteMapForeignSpanV1 map_foreign_span;
+    AbsoluteMapIrInstructionV1 map_ir_instruction;
+} AbsoluteSourceMapperV1;
+
 typedef struct AbsoluteOpaqueSyntaxRuleV1 {
     const char* keyword;
+    const char* rule_namespace;
     AbsoluteOpaqueParseV1 parse;
     void* user_data;
 } AbsoluteOpaqueSyntaxRuleV1;

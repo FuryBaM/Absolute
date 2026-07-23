@@ -382,9 +382,9 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Расширить opaque AST vtable операциями `clone`, `visit_children`,
   `serialize`, `deserialize`, `compute_hash`, `validate` и `lower`; сохранить
   прямой `emit` только как optional backend capability.
-- [ ] Добавить source mapping для expansion/foreign/generated code и IR:
+- [x] Добавить source mapping для expansion/foreign/generated code и IR:
   `map_generated_span`, `map_foreign_span`, `map_ir_instruction`.
-- [ ] Расширить manifest полями `optional_dependencies`, `conflicts`, `targets`,
+- [x] Расширить manifest полями `optional_dependencies`, `conflicts`, `targets`,
   `permissions` и namespace для syntax rules; конфликты правил разрешать явно,
   а не порядком загрузки DLL/SO.
 

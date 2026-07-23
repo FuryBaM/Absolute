@@ -43,6 +43,11 @@ namespace Absolute {
             unsigned abi = 0;
             std::filesystem::path library;
             std::vector<Dependency> dependencies;
+            std::vector<Dependency> optionalDependencies;
+            std::vector<std::string> conflicts;
+            std::vector<std::string> targets;
+            std::vector<std::string> permissions;
+            std::string ruleNamespace;
             std::vector<std::string> provides;
             std::vector<std::string> requiresCapabilities;
             std::vector<std::filesystem::path> nativeLibraries;
@@ -247,6 +252,10 @@ namespace Absolute {
             result.library = *library;
             result.provides = StringArrayProperty(document, "provides");
             result.requiresCapabilities = StringArrayProperty(document, "requires");
+            result.conflicts = StringArrayProperty(document, "conflicts");
+            result.targets = StringArrayProperty(document, "targets");
+            result.permissions = StringArrayProperty(document, "permissions");
+            result.ruleNamespace = StringProperty(document, "namespace").value_or("");
             for (const std::string& nativeLibrary : StringArrayProperty(document, "nativeLibraries"))
                 result.nativeLibraries.emplace_back(nativeLibrary);
 
@@ -391,6 +400,35 @@ namespace Absolute {
                 catch (const std::exception& error) {
                     throw std::runtime_error("While resolving '" + manifest.name + "' -> '" +
                         dependency.name + "' (" + dependency.version + "): " + error.what());
+                }
+            }
+            for (const std::string& conflict : manifest.conflicts) {
+                if (loadedPlugins.contains(conflict)) {
+                    throw std::runtime_error("Plugin '" + manifest.name + "' conflicts with loaded plugin '" + conflict + "'");
+                }
+            }
+            for (const Dependency& dependency : manifest.optionalDependencies) {
+                std::filesystem::path dependencyManifest;
+                if (!dependency.path.empty()) {
+                    dependencyManifest = dependency.path.is_absolute() ? dependency.path : canonical.parent_path() / dependency.path;
+                }
+                else {
+                    std::vector<std::string> names = {dependency.name + ".absplugin"};
+                    std::string dashed = dependency.name;
+                    std::replace(dashed.begin(), dashed.end(), '.', '-');
+                    if (dashed != dependency.name) names.push_back(dashed + ".absplugin");
+                    std::vector<std::filesystem::path> directories = {canonical.parent_path()};
+                    directories.insert(directories.end(), searchPaths.begin(), searchPaths.end());
+                    for (const auto& directory : directories) {
+                        for (const std::string& name : names) {
+                            const std::filesystem::path candidate = directory / name;
+                            if (std::filesystem::exists(candidate)) { dependencyManifest = candidate; break; }
+                        }
+                        if (!dependencyManifest.empty()) break;
+                    }
+                }
+                if (!dependencyManifest.empty() && std::filesystem::exists(dependencyManifest)) {
+                    try { LoadManifest(dependencyManifest, dependency.name, dependency.version); } catch (...) {}
                 }
             }
             for (const std::string& capability : manifest.requiresCapabilities) {

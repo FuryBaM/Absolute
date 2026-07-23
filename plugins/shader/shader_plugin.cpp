@@ -154,7 +154,7 @@ namespace {
     };
 
     const AbsoluteOpaqueSyntaxRuleV1 opaqueRules[] = {
-        {"shader", &ParseShader, nullptr}
+        {"shader", nullptr, &ParseShader, nullptr}
     };
 
     const AbsoluteOpaqueSyntaxTableV1 opaqueTable = {

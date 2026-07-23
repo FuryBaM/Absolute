@@ -247,8 +247,11 @@ namespace Absolute {
         std::unordered_set<std::string> newKeywords;
         for (size_t index = 0; index < table->rule_count; ++index) {
             const AbsoluteOpaqueSyntaxRuleV1& rule = table->rules[index];
-            const std::string keyword = rule.keyword ? rule.keyword : "";
-            if (!IsIdentifier(keyword))
+            std::string keyword = rule.keyword ? rule.keyword : "";
+            if (rule.rule_namespace && rule.rule_namespace[0] != '\0') {
+                keyword = std::string(rule.rule_namespace) + "." + keyword;
+            }
+            if (!IsIdentifier(rule.keyword ? rule.keyword : ""))
                 throw std::runtime_error("Syntax plugin '" + pluginName +
                     "' registered invalid opaque keyword '" + keyword + "'");
             if (!rule.parse)
@@ -257,13 +260,17 @@ namespace Absolute {
                 throw std::runtime_error("Syntax plugin cannot replace core keyword '" + keyword + "'");
             if (rulesByKeyword.contains(keyword) || opaqueRulesByKeyword.contains(keyword) ||
                 !newKeywords.insert(keyword).second)
-                throw std::runtime_error("Syntax keyword '" + keyword + "' is already registered");
+                throw std::runtime_error("Syntax keyword '" + keyword + "' is already registered by plugin");
         }
         for (size_t index = 0; index < table->rule_count; ++index) {
             const AbsoluteOpaqueSyntaxRuleV1& rule = table->rules[index];
+            std::string keyword = rule.keyword ? rule.keyword : "";
+            if (rule.rule_namespace && rule.rule_namespace[0] != '\0') {
+                keyword = std::string(rule.rule_namespace) + "." + keyword;
+            }
             const size_t ruleIndex = opaqueRules.size();
-            opaqueRules.push_back({pluginName, rule.keyword, rule.parse, rule.user_data});
-            opaqueRulesByKeyword.emplace(rule.keyword, ruleIndex);
+            opaqueRules.push_back({pluginName, keyword, rule.parse, rule.user_data});
+            opaqueRulesByKeyword.emplace(keyword, ruleIndex);
         }
     }
 
