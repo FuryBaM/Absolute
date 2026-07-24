@@ -15,7 +15,8 @@
  *
  * options:
  *   httpMocks, tcpMocks, wsMap (host:port -> ws URL),
- *   preferWebSocketTcp (default true when SAB + crossOriginIsolated)
+ *   preferWebSocketTcp (default true when SAB + crossOriginIsolated),
+ *   taskWorkers (N nested task workers; requires SharedArrayBuffer)
  */
 
 /* eslint-disable no-restricted-globals */
@@ -29,6 +30,16 @@ const OP_CLOSE = 6;
 const OP_PORT = 7;
 const OP_SHUTDOWN = 8;
 
+/* Task pool SAB layout (match absolute-wasm-host.js / browser-task-worker). */
+const TASK_STATUS_FREE = 0;
+const TASK_STATUS_READY = 1;
+const TASK_STATUS_DONE = 3;
+const TASK_CONTEXT_MAX = 512;
+const TASK_JOB_COUNT = 32;
+const TASK_JOB_STRIDE = 64 + TASK_CONTEXT_MAX;
+const TASK_JOB_BASE = 64;
+const TASK_WAKE_INDEX = 0;
+
 let memory = null;
 /** @type {WebAssembly.Instance | null} */
 let instance = null;
@@ -36,6 +47,8 @@ let instance = null;
 let tcp = null;
 /** @type {Worker | null} */
 let tcpWorker = null;
+/** @type {ReturnType<typeof createBrowserTaskPool> | null} */
+let taskPool = null;
 
 function readCString(ptr) {
     const view = new Uint8Array(memory.buffer);
@@ -187,7 +200,117 @@ function createWebSocketTcpBridge(wsMap) {
     };
 }
 
-function createImports(options, tcpTable) {
+function createBrowserTaskPool(wasmBytes, workerCount) {
+    const count = Math.max(0, Math.min(16, workerCount | 0));
+    if (count <= 0 || typeof SharedArrayBuffer === 'undefined') {
+        return { size: 0, enqueue() { return -1; }, awaitJob() {}, shutdown() {}, ready: Promise.resolve() };
+    }
+
+    const sabSize = TASK_JOB_BASE + TASK_JOB_COUNT * TASK_JOB_STRIDE;
+    const sab = new SharedArrayBuffer(sabSize);
+    const i32 = new Int32Array(sab);
+    const u8 = new Uint8Array(sab);
+    let boundMemory = null;
+    const workers = [];
+    const bytesCopy = wasmBytes instanceof ArrayBuffer
+        ? wasmBytes.slice(0)
+        : wasmBytes.buffer.slice(wasmBytes.byteOffset, wasmBytes.byteOffset + wasmBytes.byteLength);
+
+    const readyPromises = [];
+    for (let w = 0; w < count; w += 1) {
+        const worker = new Worker(new URL('./absolute-wasm-browser-task-worker.js', import.meta.url));
+        readyPromises.push(new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('task worker ready timeout')), 15000);
+            worker.onmessage = (event) => {
+                if (event.data && event.data.type === 'ready') {
+                    clearTimeout(timer);
+                    resolve();
+                }
+            };
+            worker.onerror = (err) => {
+                clearTimeout(timer);
+                reject(err);
+            };
+        }));
+        // Each worker needs its own copy of the bytes (transfer would detach).
+        const copy = bytesCopy.slice(0);
+        worker.postMessage({
+            type: 'init',
+            wasmBytes: copy,
+            sab,
+            jobCount: TASK_JOB_COUNT,
+            jobStride: TASK_JOB_STRIDE,
+            jobBase: TASK_JOB_BASE,
+            contextMax: TASK_CONTEXT_MAX,
+            wakeIndex: TASK_WAKE_INDEX,
+        }, [copy]);
+        workers.push(worker);
+    }
+
+    function slotI32Offset(jobIndex) {
+        return (TASK_JOB_BASE + jobIndex * TASK_JOB_STRIDE) >> 2;
+    }
+
+    function slotBytesOffset(jobIndex) {
+        return TASK_JOB_BASE + jobIndex * TASK_JOB_STRIDE + 64;
+    }
+
+    return {
+        size: count,
+        ready: Promise.all(readyPromises),
+        bindMemory(mem) { boundMemory = mem; },
+        enqueue(entry, contextPtr, contextBytes) {
+            if (!boundMemory) return -1;
+            const requested = Math.min(Number(contextBytes) | 0, TASK_CONTEXT_MAX);
+            const src = Number(contextPtr) >>> 0;
+            const view = new Uint8Array(boundMemory.buffer);
+            const len = Math.min(requested, Math.max(0, view.length - src));
+            for (let i = 0; i < TASK_JOB_COUNT; i += 1) {
+                const base = slotI32Offset(i);
+                if (Atomics.load(i32, base) !== TASK_STATUS_FREE) continue;
+                Atomics.store(i32, base + 1, Number(entry) | 0);
+                Atomics.store(i32, base + 2, len);
+                Atomics.store(i32, base + 3, 0);
+                Atomics.store(i32, base + 4, 0);
+                Atomics.store(i32, base + 5, 0);
+                u8.set(view.subarray(src, src + len), slotBytesOffset(i));
+                Atomics.store(i32, base, TASK_STATUS_READY);
+                Atomics.add(i32, TASK_WAKE_INDEX, 1);
+                Atomics.notify(i32, TASK_WAKE_INDEX, workers.length);
+                return i;
+            }
+            return -1;
+        },
+        awaitJob(jobId, contextPtr) {
+            if (!boundMemory) return;
+            const id = Number(jobId) | 0;
+            if (id < 0 || id >= TASK_JOB_COUNT) return;
+            const base = slotI32Offset(id);
+            for (;;) {
+                const status = Atomics.load(i32, base);
+                if (status === TASK_STATUS_DONE) break;
+                if (status === TASK_STATUS_FREE) return;
+                const wait = Atomics.wait(i32, base, status, 30000);
+                if (wait === 'timed-out' && Atomics.load(i32, base) !== TASK_STATUS_DONE) return;
+            }
+            const dst = Number(contextPtr) >>> 0;
+            if (dst) {
+                const view = new Uint8Array(boundMemory.buffer);
+                view.set(u8.subarray(slotBytesOffset(id), slotBytesOffset(id) + 8), dst);
+            }
+            Atomics.store(i32, base, TASK_STATUS_FREE);
+            Atomics.notify(i32, base, 1);
+        },
+        shutdown() {
+            for (const worker of workers) {
+                try { worker.terminate(); } catch (_) { /* ignore */ }
+            }
+            workers.length = 0;
+        },
+    };
+}
+
+function createImports(options, tcpTable, pool) {
     const httpMocks = options.httpMocks || Object.create(null);
     const httpCache = options.httpCache || Object.create(null);
 
@@ -239,9 +362,18 @@ function createImports(options, tcpTable) {
             },
             absolute_tcp_close(handle) { tcpTable.close(Number(handle) | 0); },
             absolute_tcp_port(handle) { return tcpTable.port(Number(handle) | 0); },
-            absolute_task_pool_size() { return 0; },
-            absolute_task_enqueue() { return -1; },
-            absolute_task_await_job() {},
+            absolute_task_pool_size() { return pool && pool.size > 0 ? pool.size : 0; },
+            absolute_task_enqueue(entry, contextPtr, contextBytes, core, priority) {
+                void core;
+                void priority;
+                if (!pool || pool.size <= 0) return -1;
+                return pool.enqueue(entry, contextPtr, contextBytes);
+            },
+            absolute_task_await_job(jobId, contextPtr, contextBytes) {
+                void contextBytes;
+                if (!pool) return;
+                pool.awaitJob(jobId, contextPtr);
+            },
         },
     };
 }
@@ -271,17 +403,42 @@ async function instantiate(bytes, options = {}) {
     if (tcp) {
         try { tcp.shutdown(); } catch (_) { /* ignore */ }
     }
+    if (taskPool) {
+        try { taskPool.shutdown(); } catch (_) { /* ignore */ }
+        taskPool = null;
+    }
     tcp = await pickTcp(options);
-    const imports = createImports(options, tcp);
+
+    const wantTasks = (Number(options.taskWorkers) || 0) > 0
+        && typeof SharedArrayBuffer !== 'undefined';
+    if (wantTasks) {
+        try {
+            taskPool = createBrowserTaskPool(bytes, Number(options.taskWorkers) || 0);
+            await taskPool.ready;
+        } catch (error) {
+            self.postMessage({ type: 'log', text: `[tasks] pool unavailable: ${error}\n` });
+            taskPool = null;
+        }
+    }
+
+    const imports = createImports(options, tcp, taskPool);
     const result = await WebAssembly.instantiate(bytes, imports);
     instance = result.instance || result;
     memory = instance.exports.memory || null;
     if (!memory) throw new Error('module did not export memory');
+    if (taskPool && typeof taskPool.bindMemory === 'function') {
+        taskPool.bindMemory(memory);
+    }
+    // Give task workers a moment after main instance exists (they init in parallel).
+    if (taskPool && taskPool.size > 0) {
+        await new Promise((r) => setTimeout(r, 30));
+    }
     const names = Object.keys(instance.exports).filter((n) => !n.startsWith('__'));
     self.postMessage({
         type: 'instantiated',
         exports: names,
         tcpMode: tcp.mode || 'mock',
+        taskWorkers: taskPool ? taskPool.size : 0,
         crossOriginIsolated: typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated : null,
     });
 }
@@ -294,6 +451,8 @@ function callExport(exportName, args) {
 }
 
 function shutdown() {
+    try { if (taskPool) taskPool.shutdown(); } catch (_) { /* ignore */ }
+    taskPool = null;
     try { if (tcp) tcp.shutdown(); } catch (_) { /* ignore */ }
     tcp = null;
     instance = null;

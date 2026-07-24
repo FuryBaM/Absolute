@@ -51,10 +51,13 @@ Shared library for Node unit tests / tooling:
 - `tools/absolute-wasm-browser-host.js` (CJS)
 - `tools/absolute-wasm-browser-host.mjs` (ESM)
 
-| Mode | How | TCP |
-|------|-----|-----|
-| main | UI thread | mocks only |
-| worker | `absolute-wasm-browser-session-worker.js` | mocks, or WebSocket map via nested worker + SAB when isolated |
+| Mode | How | TCP / tasks |
+|------|-----|-------------|
+| main | UI thread | TCP mocks; sync tasks only |
+| worker | session Worker | TCP mocks or WebSocket map; `taskWorkers` nested pool when SAB |
+
+Worker mode defaults to `taskWorkers=2` when `SharedArrayBuffer` is available
+(`?taskWorkers=0` to disable).
 
 ```js
 // Optional WebSocket map (worker mode, COOP/COEP page):

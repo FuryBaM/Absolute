@@ -197,11 +197,15 @@ async function loadInWorker(bytes) {
     workerUrl: new URL('/tools/absolute-wasm-browser-session-worker.js', location.origin),
     onLog: (text) => appendLog(text),
   });
+  const params = new URLSearchParams(location.search);
+  const taskWorkers = Math.max(0, Number(params.get('taskWorkers') || window.__ABSOLUTE_TASK_WORKERS || 2) | 0);
   const options = {
     httpMocks: defaultHttpMocks(),
     tcpMocks: defaultTcpMocks(),
     wsMap: defaultWsMap(),
     preferWebSocketTcp: Object.keys(defaultWsMap()).length > 0,
+    // Nested task workers need SAB (COOP/COEP page from serve-wasm-demo.mjs).
+    taskWorkers: typeof SharedArrayBuffer !== 'undefined' ? taskWorkers : 0,
   };
   // Prefer mocks when present so demos work offline.
   if (Object.keys(options.tcpMocks).length) {
@@ -209,11 +213,11 @@ async function loadInWorker(bytes) {
   }
   const info = await session.instantiate(bytes, options);
   log(
-    `Loaded in Worker.\nexports:\n${(info.exports || []).join('\n')}\ntcpMode=${info.tcpMode}\n\n`,
+    `Loaded in Worker.\nexports:\n${(info.exports || []).join('\n')}\ntcpMode=${info.tcpMode}\ntaskWorkers=${info.taskWorkers}\n\n`,
     'ok',
   );
   setStatus(
-    `mode=worker tcp=${info.tcpMode} crossOriginIsolated=${String(window.crossOriginIsolated)} sab=${String(typeof SharedArrayBuffer !== 'undefined')}`,
+    `mode=worker tcp=${info.tcpMode} tasks=${info.taskWorkers} crossOriginIsolated=${String(window.crossOriginIsolated)} sab=${String(typeof SharedArrayBuffer !== 'undefined')}`,
   );
   runEl.disabled = false;
 }

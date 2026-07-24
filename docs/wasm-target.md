@@ -232,6 +232,7 @@ CMake loads `cmake/AbsoluteWasi.cmake` and reports `ABSOLUTE_WASI_SYSROOT` /
 | `tools/absolute-wasm-browser-session-worker.js` | Runs the module off UI thread |
 | `tools/absolute-wasm-browser-session-client.js` | Main-thread RPC client |
 | `tools/absolute-wasm-ws-tcp-worker.js` | Nested WebSocket TCP + SAB/Atomics |
+| `tools/absolute-wasm-browser-task-worker.js` | Nested task pool workers (isolated instances) |
 | `scripts/serve-wasm-demo.mjs` | Static server with COOP/COEP + `/tools/*` |
 
 ```bat
@@ -241,13 +242,14 @@ node scripts/serve-wasm-demo.mjs
 - **main mode:** HTTP/TCP mocks; no `Atomics.wait` (forbidden on UI thread).
 - **worker mode:** session Worker can block; with `crossOriginIsolated` and
   `wsMap`, TCP uses nested WebSocket worker (same Atomics protocol as Node).
-- Tests: `absolute.run-wasm-browser-host`, `absolute.run-wasm-browser-session`.
+  `taskWorkers: N` starts N nested task workers (same job SAB layout as Node).
+- Tests: `absolute.run-wasm-browser-host`, `absolute.run-wasm-browser-session`,
+  `absolute.run-wasm-browser-task-pool`.
 
 ## Next steps (not done)
 
 1. Shared-memory wasm threads (atomics heap, true shared `memory`).
 2. Link experiments with wasi-libc without clashing Absolute runtime symbols.
-3. Browser task worker pool (mirror Node `taskWorkers`) inside the session Worker.
 
 ## Acceptance criteria progress
 
