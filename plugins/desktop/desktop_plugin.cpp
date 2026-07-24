@@ -47,6 +47,12 @@ extern "C" void absolute_desktop_sprite_fill_circle(int64 handle, int32 cx, int3
 extern "C" void absolute_desktop_sprite_color_key(int64 handle, uint32 color);
 extern "C" void absolute_desktop_sprite_draw(int64 windowHandle, int64 spriteHandle, int32 x, int32 y);
 extern "C" void absolute_desktop_sprite_draw_rect(int64 windowHandle, int64 spriteHandle, int32 destX, int32 destY, int32 srcX, int32 srcY, int32 srcW, int32 srcH);
+extern "C" void absolute_desktop_sprite_draw_text(int64 spriteHandle, int32 x, int32 y, string text, uint32 color, int32 scale);
+extern "C" void absolute_desktop_draw_text(int64 windowHandle, int32 x, int32 y, string text, uint32 color, int32 scale);
+extern "C" int32 absolute_desktop_measure_text(string text, int32 scale);
+extern "C" int32 absolute_desktop_measure_text_height(string text, int32 scale);
+extern "C" int32 absolute_desktop_font_glyph_width();
+extern "C" int32 absolute_desktop_font_glyph_height();
 extern "C" int32 absolute_desktop_text_count(int64 handle);
 extern "C" int32 absolute_desktop_text_pop(int64 handle);
 extern "C" void absolute_desktop_text_clear(int64 handle);
@@ -142,6 +148,23 @@ namespace Desktop {
 
     void sleep(int32 milliseconds) {
         absolute_desktop_sleep(milliseconds);
+    }
+
+    // Built-in 8x8 monospace soft font (ASCII 32..126). Scale is clamped to 1..16.
+    int32 fontGlyphWidth() {
+        return absolute_desktop_font_glyph_width();
+    }
+
+    int32 fontGlyphHeight() {
+        return absolute_desktop_font_glyph_height();
+    }
+
+    int32 measureText(string text, int32 scale) {
+        return absolute_desktop_measure_text(text, scale);
+    }
+
+    int32 measureTextHeight(string text, int32 scale) {
+        return absolute_desktop_measure_text_height(text, scale);
     }
 
     bool gamepadConnected(int32 index) {
@@ -269,6 +292,11 @@ namespace Desktop {
         public void colorKey(uint32 color) {
             absolute_desktop_sprite_color_key(handle, color);
         }
+
+        // Draw built-in 8x8 font into this sprite (opaque pixels; 0 background left alone).
+        public void drawText(int32 x, int32 y, string text, uint32 color, int32 scale) {
+            absolute_desktop_sprite_draw_text(handle, x, y, text, color, scale);
+        }
     }
 
     class Window {
@@ -336,6 +364,11 @@ namespace Desktop {
         // Draw a source rectangle from a sprite/atlas (soft blit with 0 = transparent).
         public void drawSpriteRect(Sprite* sprite, int32 destX, int32 destY, int32 srcX, int32 srcY, int32 srcW, int32 srcH) {
             absolute_desktop_sprite_draw_rect(handle, sprite.handle, destX, destY, srcX, srcY, srcW, srcH);
+        }
+
+        // Built-in soft font (ASCII). Supports '\\n'. scale 1..16. Transparent background.
+        public void drawText(int32 x, int32 y, string text, uint32 color, int32 scale) {
+            absolute_desktop_draw_text(handle, x, y, text, color, scale);
         }
 
         public void present() {

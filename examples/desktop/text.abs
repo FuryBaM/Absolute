@@ -1,0 +1,78 @@
+// Soft bitmap font demo: HUD, multi-line text, scaled title, live typing.
+// Esc quit. Type to append (ASCII); Enter clears the typed line.
+
+import "../../std/string.abs";
+
+int32 main() {
+    auto window = new Desktop.Window("Absolute Text", 720, 400, false);
+    if (!window.isOpen()) {
+        println("Could not create desktop window");
+        return 1;
+    }
+
+    auto typed = new std.text.StringBuilder();
+    double elapsed = 0.0;
+
+    // Pre-bake a label onto a sprite (sprite.drawText).
+    auto badge = new Desktop.Sprite(160, 32);
+    badge.clear(Desktop.rgb(30, 36, 52));
+    badge.drawText(8, 8, "SPRITE FONT", Desktop.rgb(255, 220, 120), 2);
+
+    while (window.poll()) {
+        double dt = window.deltaTime();
+        if (dt <= 0.0) {
+            dt = 0.016;
+        }
+        if (dt > 0.05) {
+            dt = 0.05;
+        }
+        elapsed = elapsed + dt;
+
+        while (window.textCount() > 0) {
+            int32 ch = window.textPop();
+            if (ch >= 32 && ch <= 126) {
+                typed.appendChar(ch);
+                if (Desktop.measureText(typed.toString(), 2) > window.width() - 40) {
+                    typed.clear();
+                }
+            }
+        }
+
+        if (window.keyPressed(Desktop.KeyEscape())) {
+            window.close();
+        } else if (window.keyPressed(Desktop.KeyEnter())) {
+            typed.clear();
+        } else {
+            window.clear(Desktop.rgb(14, 16, 28));
+
+            window.drawText(24, 20, "Absolute Soft Font", Desktop.rgb(120, 200, 255), 3);
+            window.drawText(24, 56, "8x8 monospace  ASCII 32-126  scale 1..16", Desktop.rgb(140, 150, 170), 1);
+
+            string hud = format("fps~{}  t={}s  glyph={}x{}",
+                (1.0 / dt) as int32, elapsed as int32,
+                Desktop.fontGlyphWidth(), Desktop.fontGlyphHeight());
+            window.drawText(24, 80, hud, Desktop.rgb(180, 190, 210), 1);
+
+            window.drawText(24, 110, "Title scale 1", Desktop.rgb(255, 255, 255), 1);
+            window.drawText(24, 128, "Title scale 2", Desktop.rgb(255, 200, 100), 2);
+            window.drawText(24, 160, "Title scale 3", Desktop.rgb(120, 255, 160), 3);
+
+            window.drawText(24, 220, "Multi-line:\nleft paddle\nright paddle", Desktop.rgb(200, 180, 255), 2);
+
+            window.drawSprite(badge, window.width() - 180, 24);
+
+            string prompt = format("type: {}_", typed.toString());
+            int32 tw = Desktop.measureText(prompt, 2);
+            window.fillRect(16, window.height() - 56, tw + 16, 36, Desktop.rgb(24, 28, 40));
+            window.drawText(24, window.height() - 48, prompt, Desktop.rgb(240, 240, 245), 2);
+
+            window.drawText(24, window.height() - 20, "Esc quit  Enter clear typed text", Desktop.rgb(100, 110, 130), 1);
+            window.present();
+        }
+    }
+
+    typed.dispose();
+    badge.destroy();
+    window.close();
+    return 0;
+}

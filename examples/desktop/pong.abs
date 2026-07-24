@@ -130,16 +130,14 @@ int32 main() {
             window.fillRect(window.width() - 30 - paddleW, rightY as int32, paddleW, paddleH,
                 Desktop.rgb(255, 160, 90));
             window.fillCircle((ballX) as int32, (ballY) as int32, ballR, Desktop.rgb(240, 240, 245));
-            // Simple score bars (digit fonts not available yet).
-            int32 i = 0;
-            while (i < scoreL && i < 12) {
-                window.fillRect(20 + i * 14, 16, 10, 10, Desktop.rgb(90, 200, 255));
-                i = i + 1;
-            }
-            i = 0;
-            while (i < scoreR && i < 12) {
-                window.fillRect(window.width() - 30 - i * 14, 16, 10, 10, Desktop.rgb(255, 160, 90));
-                i = i + 1;
+
+            string leftScore = format("{}", scoreL);
+            string rightScore = format("{}", scoreR);
+            window.drawText(48, 18, leftScore, Desktop.rgb(90, 200, 255), 3);
+            int32 rightW = Desktop.measureText(rightScore, 3);
+            window.drawText(window.width() - 48 - rightW, 18, rightScore, Desktop.rgb(255, 160, 90), 3);
+            if (serving) {
+                window.drawText(window.width() / 2 - 70, 40, "SPACE", Desktop.rgb(180, 190, 210), 2);
             }
             window.present();
 

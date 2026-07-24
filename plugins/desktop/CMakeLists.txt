@@ -28,6 +28,7 @@ endif()
 add_library(Absolute-Desktop-Runtime STATIC
     ${ABSOLUTE_DESKTOP_RUNTIME_SOURCE}
     desktop_soft_sprites.cpp
+    desktop_soft_text.cpp
 )
 target_compile_features(Absolute-Desktop-Runtime PRIVATE cxx_std_20)
 if(WIN32)

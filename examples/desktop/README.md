@@ -39,6 +39,7 @@ pong.exe
 | `sprites.abs` | Soft sprites + `FixedStep` 60 Hz sim (WASD / arrows) |
 | `input.abs` | Text queue + mouse/gamepad cursor probe |
 | `image.abs` | BMP load, magenta color key, atlas `drawSpriteRect` |
+| `text.abs` | Built-in 8×8 soft font, scaled HUD, sprite-baked label, typing |
 
 ## API highlights
 
@@ -48,6 +49,7 @@ pong.exe
 - **2D soft buffer:** `clear`, `pixel`, `fillRect`, `drawLine`, `fillCircle`, `blit`, `present`
 - **Sprites:** `Desktop.Sprite(w,h)`, `fillRect`/`fillCircle`/`clear`, `window.drawSprite(sprite,x,y)`
 - **Images:** `sprite.loadBmp(path)`, `colorKey(rgb)`, `drawSpriteRect(..., sx,sy,sw,sh)`
+- **Text:** `window.drawText(x,y,text,color,scale)`, `Desktop.measureText`, `sprite.drawText`
 - **Keys:** `Desktop.KeyEscape()`, `KeySpace()`, `KeyW/A/S/D()`, arrows, …
 
 See `plugins/desktop/README.md` for backend details.

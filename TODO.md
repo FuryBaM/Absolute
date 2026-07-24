@@ -493,13 +493,19 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Примеры: `window.abs`, `pong.abs`, `sprites.abs` (fixed step + sprites).
 - [x] Soft BMP load (`sprite.loadBmp`), `colorKey`, atlas `drawSpriteRect`;
   example `examples/desktop/image.abs` + `assets/*.bmp`.
+- [x] Soft bitmap font (встроенный 8×8 ASCII): `window.drawText` /
+  `sprite.drawText`, `Desktop.measureText` / `measureTextHeight`, glyph metrics;
+  example `examples/desktop/text.abs`; scores in `pong.abs`.
 - [ ] Добавить OpenGL/Vulkan/Direct3D backend либо общий RHI.
 - [ ] Добавить GPU buffers, textures, samplers, pipelines и shader reflection.
-- [ ] Добавить загрузку PNG/шрифтов, моделей и аудио (BMP soft path уже есть).
+- [ ] Добавить загрузку PNG, TTF/внешних шрифтов, моделей и аудио
+  (BMP + built-in soft font уже есть).
 - [ ] Добавить 2D sprite batching / atlas batch поверх soft или GPU backend.
 - [ ] Добавить базовый UI toolkit для desktop-приложений.
 - [ ] Добавить audio output/mixer.
 - [ ] Добавить GPU triangle / sprite scene examples.
+- [ ] Расширить `absolute.shader` от opaque DSL-stub к reflection + RHI bind
+  (SPIR-V/DXIL/Metal IR) поверх выбранного GPU backend.
 
 ### Native interop и платформы
 

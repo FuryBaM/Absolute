@@ -62,6 +62,13 @@ examples\desktop\run.bat pong.abs
 - `clear`, `pixel`, `fillRect`, `fillCircle`, `destroy`, `isValid`
 - `window.drawSprite(sprite, x, y)`
 - `window.drawSpriteRect(sprite, dx, dy, sx, sy, sw, sh)` — atlas / sub-rect blit
+- `sprite.drawText(x, y, text, color, scale)` — bake soft font into the sprite
+
+### Soft text (built-in 8×8 font)
+- Monospace ASCII 32–126; newline starts a new line; non-ASCII draws `?`
+- `window.drawText(x, y, text, color, scale)` — scale clamped to 1..16; transparent background
+- `Desktop.measureText(text, scale)` / `Desktop.measureTextHeight(text, scale)`
+- `Desktop.fontGlyphWidth()` / `Desktop.fontGlyphHeight()` — unscaled glyph size (8×8)
 
 ### Game loop patterns
 
@@ -100,4 +107,4 @@ Call `window.close()` before leaving `main`. Native window handles are explicit
 resources; the current Absolute class model does not yet run RAII destructors.
 
 Examples: `examples/desktop/window.abs`, `pong.abs`, `sprites.abs`, `input.abs`,
-`image.abs` (BMP + atlas).
+`image.abs` (BMP + atlas), `text.abs` (soft font HUD / typing).

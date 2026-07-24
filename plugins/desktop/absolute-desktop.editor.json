@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "plugin": "absolute.desktop",
   "namespaces": [
-    { "name": "Desktop", "documentation": "Native windows, input, timing, and software framebuffer rendering." }
+    { "name": "Desktop", "documentation": "Native windows, input, timing, software framebuffer, sprites, and soft text." }
   ],
   "types": [
     {
@@ -20,24 +20,58 @@
         { "name": "clear", "detail": "void clear(uint32 color)" },
         { "name": "pixel", "detail": "void pixel(int32 x, int32 y, uint32 color)" },
         { "name": "fillRect", "detail": "void fillRect(int32 x, int32 y, int32 width, int32 height, uint32 color)" },
+        { "name": "drawLine", "detail": "void drawLine(int32 x0, int32 y0, int32 x1, int32 y1, uint32 color)" },
+        { "name": "fillCircle", "detail": "void fillCircle(int32 cx, int32 cy, int32 radius, uint32 color)" },
+        { "name": "drawSprite", "detail": "void drawSprite(Sprite* sprite, int32 x, int32 y)" },
+        { "name": "drawSpriteRect", "detail": "void drawSpriteRect(Sprite* sprite, int32 destX, int32 destY, int32 srcX, int32 srcY, int32 srcW, int32 srcH)" },
+        { "name": "drawText", "detail": "void drawText(int32 x, int32 y, string text, uint32 color, int32 scale)", "documentation": "Built-in 8x8 soft font (ASCII). Supports newlines. Scale 1..16." },
         { "name": "present", "detail": "void present()" },
         { "name": "keyDown", "detail": "bool keyDown(int32 key)" },
+        { "name": "keyPressed", "detail": "bool keyPressed(int32 key)" },
+        { "name": "keyReleased", "detail": "bool keyReleased(int32 key)" },
         { "name": "mouseX", "detail": "int32 mouseX()" },
         { "name": "mouseY", "detail": "int32 mouseY()" },
-        { "name": "mouseDown", "detail": "bool mouseDown(int32 button)" }
+        { "name": "mouseDown", "detail": "bool mouseDown(int32 button)" },
+        { "name": "deltaTime", "detail": "double deltaTime()" },
+        { "name": "textCount", "detail": "int32 textCount()" },
+        { "name": "textPop", "detail": "int32 textPop()" }
       ]
+    },
+    {
+      "name": "Desktop.Sprite",
+      "detail": "class Desktop.Sprite",
+      "documentation": "Soft offscreen buffer for procedural art, BMP images, and baked text.",
+      "snippet": "new Desktop.Sprite(${1:64}, ${2:64})",
+      "members": [
+        { "name": "loadBmp", "detail": "bool loadBmp(string path)" },
+        { "name": "colorKey", "detail": "void colorKey(uint32 color)" },
+        { "name": "drawText", "detail": "void drawText(int32 x, int32 y, string text, uint32 color, int32 scale)" },
+        { "name": "destroy", "detail": "void destroy()" },
+        { "name": "width", "detail": "int32 width()" },
+        { "name": "height", "detail": "int32 height()" }
+      ]
+    },
+    {
+      "name": "Desktop.FixedStep",
+      "detail": "class Desktop.FixedStep",
+      "documentation": "Fixed timestep accumulator for deterministic simulation.",
+      "snippet": "new Desktop.FixedStep(${1:60.0})"
     }
   ],
   "functions": [
     { "name": "Desktop.rgb", "detail": "uint32 Desktop.rgb(int32 red, int32 green, int32 blue)", "documentation": "Creates a 0x00RRGGBB framebuffer color.", "snippet": "Desktop.rgb(${1:255}, ${2:255}, ${3:255})" },
     { "name": "Desktop.time", "detail": "double Desktop.time()", "documentation": "Returns monotonic high-resolution time in seconds." },
-    { "name": "Desktop.sleep", "detail": "void Desktop.sleep(int32 milliseconds)", "snippet": "Desktop.sleep(${1:16})" }
+    { "name": "Desktop.sleep", "detail": "void Desktop.sleep(int32 milliseconds)", "snippet": "Desktop.sleep(${1:16})" },
+    { "name": "Desktop.measureText", "detail": "int32 Desktop.measureText(string text, int32 scale)", "documentation": "Pixel width of soft font text." },
+    { "name": "Desktop.measureTextHeight", "detail": "int32 Desktop.measureTextHeight(string text, int32 scale)" },
+    { "name": "Desktop.fontGlyphWidth", "detail": "int32 Desktop.fontGlyphWidth()" },
+    { "name": "Desktop.fontGlyphHeight", "detail": "int32 Desktop.fontGlyphHeight()" }
   ],
   "snippets": [
     {
       "label": "desktop window loop",
       "detail": "Create a window and run an event/render loop",
-      "body": "auto ${1:window} = new Desktop.Window(${2:\"Absolute\"}, ${3:800}, ${4:450}, true);\nwhile ($1.poll()) {\n    $1.clear(Desktop.rgb(18, 22, 32));\n    ${0}\n    $1.present();\n}\n$1.close();"
+      "body": "auto ${1:window} = new Desktop.Window(${2:\"Absolute\"}, ${3:800}, ${4:450}, true);\nwhile ($1.poll()) {\n    $1.clear(Desktop.rgb(18, 22, 32));\n    $1.drawText(16, 16, ${5:\"Hello\"}, Desktop.rgb(255, 255, 255), 2);\n    ${0}\n    $1.present();\n}\n$1.close();"
     }
   ]
 }
