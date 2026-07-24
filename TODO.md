@@ -515,15 +515,26 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 
 - [x] VS Code extension с project/plugin discovery, completion и hover.
 - [x] Запуск проекта и подключение native debugger.
-- [ ] Перевести language intelligence в отдельный LSP server.
-- [ ] Добавить go-to-definition, references, rename и document symbols.
-- [ ] Добавить semantic highlighting и code actions.
-- [ ] Добавить formatter и конфигурируемый linter.
+- [x] Перевести language intelligence в отдельный LSP server.
+  Реализован zero-dep `absolute-extension/server/lsp-server.js` (stdio LSP) и
+  `client/lsp-client.js`; extension v0.3.0 только build/debug + LSP client.
+- [x] Добавить go-to-definition, references, rename и document symbols.
+  Workspace/document symbols, definition, references и rename через LSP;
+  индекс строится эвристическим разбором `.abs` + plugin editor metadata.
+- [x] Добавить semantic highlighting и code actions.
+  Semantic tokens (`keyword`/`type`/`function`/`namespace`) и code actions
+  Format document / Refresh diagnostics.
+- [x] Добавить formatter и конфигурируемый linter.
+  Document formatting provider + `tools/absolute-dev.js fmt`; diagnostics
+  linter через `absolutec` (path/args из `absolute.compilerPath` /
+  `absolute.compilerArguments`).
 - [ ] Добавить debugger visualization для arrays, slices, tasks и managed pointers.
 - [ ] Добавить breakpoints/source mapping для opaque plugin nodes.
 - [ ] Добавить REPL и expression evaluator.
-- [ ] Добавить генератор документации из исходного кода.
-- [ ] Добавить `absolute test`, `absolute fmt`, `absolute doc` и `absolute package`.
+- [x] Добавить генератор документации из исходного кода.
+  `tools/absolute-dev.js doc` пишет Markdown outline по symbols workspace.
+- [x] Добавить `absolute test`, `absolute fmt`, `absolute doc` и `absolute package`.
+  CLI: `tools/absolute-dev.bat` (`fmt`, `test`, `doc`, `package list|resolve`).
 
 ## Критерии готовности языка
 

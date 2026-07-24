@@ -1,13 +1,13 @@
 {
   "name": "absolute-extension",
   "displayName": "Absolute Language",
-  "description": "Absolute language support with plugin-aware IntelliSense, build, run, and native debugging.",
+  "description": "Absolute language support with LSP intelligence, plugin-aware IntelliSense, build, run, and native debugging.",
   "publisher": "FuryBaM",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "engines": {
     "vscode": "^1.80.0"
   },
-  "categories": ["Programming Languages", "Debuggers"],
+  "categories": ["Programming Languages", "Debuggers", "Formatters", "Linters"],
   "activationEvents": [
     "onLanguage:absolute",
     "onCommand:absolute.refreshPlugins",
@@ -123,18 +123,18 @@
         "absolute.compilerPath": {
           "type": "string",
           "default": "absolutec",
-          "description": "Path to the Absolute compiler used for native --build-exe builds."
+          "description": "Path to the Absolute compiler used for native builds and LSP diagnostics."
         },
         "absolute.compilerArguments": {
           "type": "array",
           "items": { "type": "string" },
           "default": [],
-          "description": "Additional arguments passed to absolutec before --build-exe."
+          "description": "Additional arguments passed to absolutec before --build-exe / diagnostics."
         },
         "absolute.buildCommand": {
           "type": "string",
           "default": "",
-          "description": "Optional shell build command. Placeholders: {input}, {output}, {workspace}, {plugins}. Overrides compilerPath."
+          "description": "Optional shell build command. Placeholders: {input}, {output}, {workspace}, {plugins}. Overrides compilerPath for builds."
         },
         "absolute.outputDirectory": {
           "type": "string",
@@ -178,7 +178,8 @@
     }
   },
   "scripts": {
-    "check": "node --check extension.js",
-    "package": "npx @vscode/vsce package --allow-missing-repository"
+    "check": "node --check extension.js && node --check client/lsp-client.js && node --check server/lsp-server.js && node --check server/language.js",
+    "package": "npx @vscode/vsce package --allow-missing-repository",
+    "fmt-smoke": "node ../tools/absolute-dev.js fmt ../tests/std-log.abs"
   }
 }
