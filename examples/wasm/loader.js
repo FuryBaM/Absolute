@@ -1,21 +1,52 @@
 /**
  * Browser loader for Absolute wasm modules.
- * Mirrors tools/absolute-wasm-browser-host.js (log, HTTP/TCP mocks, task stubs).
- * Self-contained so a static server rooted at examples/wasm works.
+ * Modes:
+ *   - main (default): instantiate on UI thread (mocks only; no Atomics.wait)
+ *   - worker: session worker (+ optional WebSocket TCP when COOP/COEP / SAB)
+ *
+ * Serve with: node scripts/serve-wasm-demo.mjs
+ * so /tools/* is available and COOP/COEP enable SharedArrayBuffer.
  */
 
 const logEl = document.getElementById('log');
 const fileEl = document.getElementById('file');
 const runEl = document.getElementById('run');
+const modeEl = document.getElementById('mode');
+const statusEl = document.getElementById('status');
 
 let instance = null;
 let memory = null;
+let session = null;
 const decoder = new TextDecoder('utf-8');
 const encoder = new TextEncoder();
 
 function log(message, className = '') {
   logEl.textContent = message;
   logEl.className = className;
+}
+
+function appendLog(text) {
+  logEl.textContent += text.endsWith('\n') ? text : `${text}\n`;
+}
+
+function setStatus(text) {
+  if (statusEl) statusEl.textContent = text;
+}
+
+function defaultHttpMocks() {
+  return window.__ABSOLUTE_HTTP_MOCKS || {
+    'https://example.test/hello': 'hello-from-browser',
+  };
+}
+
+function defaultTcpMocks() {
+  return window.__ABSOLUTE_TCP_MOCKS || {
+    '127.0.0.1:9': { mode: 'echo' },
+  };
+}
+
+function defaultWsMap() {
+  return window.__ABSOLUTE_WS_MAP || Object.create(null);
 }
 
 function readCString(ptr) {
@@ -89,21 +120,15 @@ function createMockTcp(mocks) {
   };
 }
 
-function createImports() {
-  const httpMocks = window.__ABSOLUTE_HTTP_MOCKS || {
-    'https://example.test/hello': 'hello-from-browser',
-  };
-  const tcpMocks = window.__ABSOLUTE_TCP_MOCKS || {
-    '127.0.0.1:9': { mode: 'echo' },
-  };
-  const tcp = createMockTcp(tcpMocks);
-
+function createMainImports() {
+  const httpMocks = defaultHttpMocks();
+  const tcp = createMockTcp(defaultTcpMocks());
   return {
     env: {
       absolute_log(ptr, len) {
         if (!memory) return;
         const view = new Uint8Array(memory.buffer, Number(ptr) >>> 0, Number(len) >>> 0);
-        logEl.textContent += decoder.decode(view);
+        appendLog(decoder.decode(view));
       },
       absolute_http_get(urlPtr, outPtr, outCap) {
         if (!memory) return -1;
@@ -137,7 +162,6 @@ function createImports() {
       },
       absolute_tcp_close(handle) { tcp.close(Number(handle) | 0); },
       absolute_tcp_port(handle) { return tcp.port(Number(handle) | 0); },
-      // Main-thread browsers cannot Atomics.wait — sync tasks only.
       absolute_task_pool_size() { return 0; },
       absolute_task_enqueue() { return -1; },
       absolute_task_await_job() {},
@@ -145,33 +169,103 @@ function createImports() {
   };
 }
 
-async function loadBytes(bytes) {
-  const imports = createImports();
-  const result = await WebAssembly.instantiate(bytes, imports);
+async function loadOnMain(bytes) {
+  if (session) {
+    await session.shutdown();
+    session = null;
+  }
+  instance = null;
+  memory = null;
+  const result = await WebAssembly.instantiate(bytes, createMainImports());
   instance = result.instance;
   memory = instance.exports.memory;
   const names = Object.keys(instance.exports).filter((n) => !n.startsWith('__'));
-  log(`Loaded exports:\n${names.join('\n')}\n\n`, 'ok');
+  log(`Loaded on main thread.\nexports:\n${names.join('\n')}\n\n`, 'ok');
+  setStatus(`mode=main crossOriginIsolated=${String(window.crossOriginIsolated)}`);
   runEl.disabled = false;
+}
+
+async function loadInWorker(bytes) {
+  instance = null;
+  memory = null;
+  if (session) {
+    await session.shutdown();
+    session = null;
+  }
+  const { AbsoluteWasmBrowserSession } = await import('/tools/absolute-wasm-browser-session-client.js');
+  session = await AbsoluteWasmBrowserSession.create({
+    workerUrl: new URL('/tools/absolute-wasm-browser-session-worker.js', location.origin),
+    onLog: (text) => appendLog(text),
+  });
+  const options = {
+    httpMocks: defaultHttpMocks(),
+    tcpMocks: defaultTcpMocks(),
+    wsMap: defaultWsMap(),
+    preferWebSocketTcp: Object.keys(defaultWsMap()).length > 0,
+  };
+  // Prefer mocks when present so demos work offline.
+  if (Object.keys(options.tcpMocks).length) {
+    options.preferWebSocketTcp = false;
+  }
+  const info = await session.instantiate(bytes, options);
+  log(
+    `Loaded in Worker.\nexports:\n${(info.exports || []).join('\n')}\ntcpMode=${info.tcpMode}\n\n`,
+    'ok',
+  );
+  setStatus(
+    `mode=worker tcp=${info.tcpMode} crossOriginIsolated=${String(window.crossOriginIsolated)} sab=${String(typeof SharedArrayBuffer !== 'undefined')}`,
+  );
+  runEl.disabled = false;
+}
+
+async function loadBytes(bytes) {
+  const mode = modeEl && modeEl.value === 'worker' ? 'worker' : 'main';
+  logEl.textContent = '';
+  if (mode === 'worker') await loadInWorker(bytes);
+  else await loadOnMain(bytes);
 }
 
 fileEl.addEventListener('change', async () => {
   const file = fileEl.files && fileEl.files[0];
   if (!file) return;
   try {
-    logEl.textContent = '';
     await loadBytes(await file.arrayBuffer());
   } catch (error) {
     instance = null;
+    session = null;
     memory = null;
     runEl.disabled = true;
     log(String(error && error.stack ? error.stack : error), 'err');
   }
 });
 
-runEl.addEventListener('click', () => {
-  if (!instance) return;
+if (modeEl) {
+  modeEl.addEventListener('change', () => {
+    setStatus(`selected mode=${modeEl.value}; reload a .wasm to apply`);
+  });
+}
+
+runEl.addEventListener('click', async () => {
   try {
+    if (session) {
+      let line = '';
+      if (session.exports.includes('wasm_add')) {
+        line += `wasm_add(20, 22) => ${await session.call('wasm_add', [20, 22])}\n`;
+      }
+      if (session.exports.includes('wasm_box_sum')) {
+        line += `wasm_box_sum(20, 22) => ${await session.call('wasm_box_sum', [20, 22])}\n`;
+      }
+      if (session.exports.includes('wasm_task_add')) {
+        line += `wasm_task_add(20, 22) => ${await session.call('wasm_task_add', [20, 22])}\n`;
+      }
+      if (session.exports.includes('main')) {
+        line += `main() => ${await session.call('main')}\n`;
+      }
+      appendLog(line);
+      logEl.className = 'ok';
+      return;
+    }
+    if (!instance) return;
     let line = '';
     if (typeof instance.exports.wasm_add === 'function') {
       line += `wasm_add(20, 22) => ${instance.exports.wasm_add(20, 22)}\n`;
@@ -185,20 +279,23 @@ runEl.addEventListener('click', () => {
     if (typeof instance.exports.main === 'function') {
       line += `main() => ${instance.exports.main()}\n`;
     }
-    logEl.textContent += line;
+    appendLog(line);
     logEl.className = 'ok';
   } catch (error) {
     log(String(error && error.stack ? error.stack : error), 'err');
   }
 });
 
+setStatus(`crossOriginIsolated=${String(window.crossOriginIsolated)} (use serve-wasm-demo.mjs for SAB)`);
+
 const defaultUrl = new URLSearchParams(location.search).get('module') || 'module.wasm';
+const defaultMode = new URLSearchParams(location.search).get('mode');
+if (modeEl && (defaultMode === 'worker' || defaultMode === 'main')) {
+  modeEl.value = defaultMode;
+}
 fetch(defaultUrl)
   .then((response) => (response.ok ? response.arrayBuffer() : Promise.reject(new Error(`HTTP ${response.status}`))))
-  .then((buffer) => {
-    logEl.textContent = '';
-    return loadBytes(buffer);
-  })
+  .then((buffer) => loadBytes(buffer))
   .catch(() => {
     /* optional default module */
   });

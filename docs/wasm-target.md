@@ -94,6 +94,7 @@ Common triples:
 - `tests/wasm-smoke.abs` (WASI link) → `absolute.build-wasm-wasi-smoke` (Node WASI / wasmtime)
 - `tests/wasm-wasi-services.abs` → `absolute.run-wasm-wasi-services` (clock/random/args/env)
 - `tests/wasm-http.abs` via browser host → `absolute.run-wasm-browser-host`
+- browser session stack → `absolute.run-wasm-browser-session` (COOP headers + Atomics protocol)
 - IR/object checks
 
 ## Host import
@@ -224,20 +225,29 @@ CMake loads `cmake/AbsoluteWasi.cmake` and reports `ABSOLUTE_WASI_SYSROOT` /
 
 ### Browser embedder
 
-- Demo: `examples/wasm/` — mocks for HTTP/TCP; sync tasks only on the UI thread.
-- Library: `tools/absolute-wasm-browser-host.js` (same import surface as Node host
-  without real TCP / task workers).
-- Test: `absolute.run-wasm-browser-host` (Node runs the browser host against
-  `wasm-http`).
+| Piece | Role |
+|-------|------|
+| `examples/wasm/` | Demo UI (main vs worker mode) |
+| `tools/absolute-wasm-browser-host.js` | Main-thread mocks library |
+| `tools/absolute-wasm-browser-session-worker.js` | Runs the module off UI thread |
+| `tools/absolute-wasm-browser-session-client.js` | Main-thread RPC client |
+| `tools/absolute-wasm-ws-tcp-worker.js` | Nested WebSocket TCP + SAB/Atomics |
+| `scripts/serve-wasm-demo.mjs` | Static server with COOP/COEP + `/tools/*` |
 
-Main-thread browsers **cannot** call `Atomics.wait`; real TCP / multi-worker tasks
-need the module hosted inside a Worker with COOP/COEP `SharedArrayBuffer`.
+```bat
+node scripts/serve-wasm-demo.mjs
+```
+
+- **main mode:** HTTP/TCP mocks; no `Atomics.wait` (forbidden on UI thread).
+- **worker mode:** session Worker can block; with `crossOriginIsolated` and
+  `wsMap`, TCP uses nested WebSocket worker (same Atomics protocol as Node).
+- Tests: `absolute.run-wasm-browser-host`, `absolute.run-wasm-browser-session`.
 
 ## Next steps (not done)
 
 1. Shared-memory wasm threads (atomics heap, true shared `memory`).
 2. Link experiments with wasi-libc without clashing Absolute runtime symbols.
-3. Worker-hosted browser runtime (COOP/COEP) for real TCP / task pools.
+3. Browser task worker pool (mirror Node `taskWorkers`) inside the session Worker.
 
 ## Acceptance criteria progress
 

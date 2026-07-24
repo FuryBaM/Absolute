@@ -22,17 +22,29 @@
   <p>
     Loads Absolute wasm built with
     <code>absolutec --target wasm32-unknown-unknown --build-exe</code>.
-    Host imports: <code>absolute_log</code>, HTTP/TCP <strong>mocks</strong>,
-    task pool size 0 (main thread cannot <code>Atomics.wait</code>).
   </p>
   <p>
-    Optional: set <code>window.__ABSOLUTE_HTTP_MOCKS</code> /
-    <code>window.__ABSOLUTE_TCP_MOCKS</code> before load.
+    <strong>main</strong> — UI thread, HTTP/TCP mocks only (no <code>Atomics.wait</code>).<br />
+    <strong>worker</strong> — session Worker; can use nested WebSocket TCP when the page is
+    cross-origin isolated (COOP/COEP). Prefer
+    <code>node scripts/serve-wasm-demo.mjs</code>.
   </p>
   <p>
+    Optional globals: <code>__ABSOLUTE_HTTP_MOCKS</code>,
+    <code>__ABSOLUTE_TCP_MOCKS</code>, <code>__ABSOLUTE_WS_MAP</code>
+    (<code>{"host:port":"ws://…"}</code>).
+  </p>
+  <p>
+    <label>Mode
+      <select id="mode">
+        <option value="main">main thread</option>
+        <option value="worker">worker session</option>
+      </select>
+    </label>
     <input type="file" id="file" accept=".wasm,application/wasm" />
     <button id="run" disabled>Run exports / main</button>
   </p>
+  <p id="status" style="opacity:0.85;font-size:0.9rem"></p>
   <pre id="log">Drop or choose a <code>.wasm</code> file (smoke, managed, http, net, …).</pre>
   <script type="module" src="./loader.js"></script>
 </body>

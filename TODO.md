@@ -547,8 +547,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Optional wasi-sysroot bootstrap (`scripts/windows/bootstrap-wasi-sysroot.ps1`)
   + CMake `AbsoluteWasi.cmake` discovery (`WASI_SYSROOT` / `WASI_SDK_PATH`).
   Full wasi-libc link into Absolute modules still open (symbol clashes).
-- [ ] shared-memory wasm threads; Worker-hosted browser TCP/task pools (COOP/COEP);
-  wasi-libc coexistence with Absolute runtime.
+- [x] Worker-hosted browser session + WebSocket TCP bridge (COOP/COEP serve):
+  `absolute-wasm-browser-session-{client,worker}.js`, `absolute-wasm-ws-tcp-worker.js`,
+  `scripts/serve-wasm-demo.mjs`, demo mode switch, test `run-wasm-browser-session`.
+- [ ] shared-memory wasm threads; browser task worker pool; wasi-libc coexistence
+  with Absolute runtime.
 
 ### IDE, debugger и developer tools
 

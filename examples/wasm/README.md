@@ -21,17 +21,21 @@ absolutec tests\wasm-net.abs --target wasm32-unknown-unknown --build-exe -o exam
 
 ## Serve locally
 
-Any static file server works. Example:
+For **worker mode** and SharedArrayBuffer (WebSocket TCP path), use the COOP/COEP server:
+
+```bat
+node scripts/serve-wasm-demo.mjs
+```
+
+Open `http://127.0.0.1:5173/` — DevTools should show `crossOriginIsolated === true`.
+The server also maps `/tools/*` to the repo `tools/` tree for worker modules.
+
+Plain static servers still work for **main-thread** mock mode only:
 
 ```bat
 cd examples\wasm
 npx --yes serve -p 5173
 ```
-
-Open `http://localhost:5173/` and either:
-
-- auto-load `module.wasm` if present, or
-- choose a `.wasm` file and click **Run exports / main**.
 
 ## Browser host imports
 
@@ -47,9 +51,19 @@ Shared library for Node unit tests / tooling:
 - `tools/absolute-wasm-browser-host.js` (CJS)
 - `tools/absolute-wasm-browser-host.mjs` (ESM)
 
-**Not on the main thread:** real OS TCP and multi-worker tasks (they need
-`Atomics.wait`, which browsers forbid on the UI thread). Host the whole module
-in a Worker + COOP/COEP if you need that model.
+| Mode | How | TCP |
+|------|-----|-----|
+| main | UI thread | mocks only |
+| worker | `absolute-wasm-browser-session-worker.js` | mocks, or WebSocket map via nested worker + SAB when isolated |
+
+```js
+// Optional WebSocket map (worker mode, COOP/COEP page):
+window.__ABSOLUTE_WS_MAP = { 'echo.example:443': 'wss://echo.websocket.events/' };
+// Clear tcp mocks so the session prefers the WS bridge:
+window.__ABSOLUTE_TCP_MOCKS = {};
+```
+
+`Atomics.wait` is allowed inside the session Worker (not on the UI thread).
 
 ## Node host / CLI
 

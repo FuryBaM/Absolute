@@ -1500,6 +1500,16 @@ if(BUILD_TESTING)
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-browser-host.cmake"
                 )
                 add_test(
+                    NAME absolute.run-wasm-browser-session
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-http.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-browser-session.wasm
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DREPO_ROOT=${PROJECT_SOURCE_DIR}
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-browser-session.cmake"
+                )
+                add_test(
                     NAME absolute.run-wasm-net
                     COMMAND "${CMAKE_COMMAND}"
                         -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>

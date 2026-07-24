@@ -74,9 +74,10 @@ Experimental target via `absolutec --target wasm32-unknown-unknown`:
 
 Dynamic `load` and shared-memory wasm threads are not ported yet. WASI preview1
 services work via `absolute_wasm_runtime_wasi.o` + Node WASI/wasmtime. Optional
-wasi-sysroot can be bootstrapped for headers/libc experiments. Browser demo uses
-HTTP/TCP mocks (no main-thread `Atomics.wait`). Node can opt into a task worker
-pool (`taskWorkers`). See [`wasm-target.md`](wasm-target.md).
+wasi-sysroot can be bootstrapped for headers/libc experiments. Browser: main-thread
+mocks or Worker session (`serve-wasm-demo.mjs` COOP/COEP; WebSocket TCP via nested
+worker). Node can opt into a task worker pool (`taskWorkers`). See
+[`wasm-target.md`](wasm-target.md).
 
 ## Related docs
 
