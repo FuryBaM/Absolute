@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Absolute native debug visualizers for Visual Studio / cppvsdbg.
+  Array descriptors: { data*, owner*, int64 length... } (see docs/array-ownership.md).
+  Managed pointers are i64 handles: low 32 bits = slot, high 32 bits = generation.
+-->
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+
+  <!-- 1D Absolute array / slice descriptor (LLVM name absolute.array.<elem>.1) -->
+  <Type Name="absolute.array.*">
+    <DisplayString Condition="*(__int64*)((char*)this+16) &gt;= 0">
+      {{data={*(void**)this} owner={*(void**)((char*)this+8)} len={*(__int64*)((char*)this+16)}}}
+    </DisplayString>
+    <Expand>
+      <Item Name="data">*(void**)this</Item>
+      <Item Name="owner">*(void**)((char*)this+8)</Item>
+      <Item Name="length[0]">*(__int64*)((char*)this+16)</Item>
+      <Item Name="length[1]" Condition="sizeof(*this) &gt;= 32">*(__int64*)((char*)this+24)</Item>
+      <Item Name="length[2]" Condition="sizeof(*this) &gt;= 40">*(__int64*)((char*)this+32)</Item>
+      <ArrayItems Condition="sizeof(*this) == 24 &amp;&amp; *(void**)this != 0">
+        <Size>*(__int64*)((char*)this+16)</Size>
+        <ValuePointer>*(char**)this</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+
+  <!-- Named helper aliases for explicit casts in the debugger watch window -->
+  <Type Name="AbsoluteArray1D">
+    <DisplayString>{{data={data} owner={owner} len={length0}}}</DisplayString>
+    <Expand>
+      <Item Name="data">data</Item>
+      <Item Name="owner">owner</Item>
+      <Item Name="length">length0</Item>
+    </Expand>
+  </Type>
+
+  <Type Name="AbsoluteManagedHandle">
+    <DisplayString Condition="raw == 0">null managed</DisplayString>
+    <DisplayString Condition="raw != 0">
+      managed slot={(unsigned int)(raw &amp; 0xffffffff)} gen={(unsigned int)(raw &gt;&gt; 32)}
+    </DisplayString>
+    <Expand>
+      <Item Name="raw">raw</Item>
+      <Item Name="slot">(unsigned int)(raw &amp; 0xffffffff)</Item>
+      <Item Name="generation">(unsigned int)(raw &gt;&gt; 32)</Item>
+      <Item Name="valid">raw != 0</Item>
+    </Expand>
+  </Type>
+
+  <Type Name="AbsoluteTaskHandle">
+    <DisplayString Condition="ptr == 0">null task</DisplayString>
+    <DisplayString Condition="ptr != 0">task {ptr}</DisplayString>
+    <Expand>
+      <Item Name="ptr">ptr</Item>
+    </Expand>
+  </Type>
+
+</AutoVisualizer>

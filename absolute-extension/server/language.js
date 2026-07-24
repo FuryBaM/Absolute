@@ -520,6 +520,121 @@ function hoverFor(index, text, position) {
     return value;
 }
 
+/**
+ * Extract opaque plugin blocks (e.g. shader Stage { ... }) for virtual documents
+ * and breakpoint source mapping.
+ *
+ * @param {string} hostUri  file:// URI of the host .abs
+ * @param {string} text     host source
+ * @param {string[]} tags   block introducers (default: shader)
+ */
+function extractOpaqueBlocks(hostUri, text, tags = ['shader']) {
+    const clean = stripComments(text);
+    const offsets = lineOffsets(text);
+    const blocks = [];
+    const tagSet = new Set(tags.map(t => t.toLowerCase()));
+
+    let i = 0;
+    while (i < clean.length) {
+        // Match tag at identifier boundary
+        const rest = clean.slice(i);
+        const match = /^([A-Za-z_][A-Za-z0-9_]*)\b/.exec(rest);
+        if (!match || !tagSet.has(match[1].toLowerCase())) {
+            i += 1;
+            continue;
+        }
+        const tag = match[1];
+        const tagStart = i;
+        i += tag.length;
+        while (i < clean.length && /\s/.test(clean[i])) i += 1;
+
+        // Optional stage / name identifier
+        let name = '';
+        const nameMatch = /^([A-Za-z_][A-Za-z0-9_]*)\b/.exec(clean.slice(i));
+        if (nameMatch) {
+            name = nameMatch[1];
+            i += name.length;
+            while (i < clean.length && /\s/.test(clean[i])) i += 1;
+        }
+        if (clean[i] !== '{') continue;
+        const bodyOpen = i;
+        i += 1;
+        let depth = 1;
+        while (i < clean.length && depth > 0) {
+            if (clean[i] === '{') depth += 1;
+            else if (clean[i] === '}') depth -= 1;
+            i += 1;
+        }
+        const bodyClose = i; // exclusive, past closing brace
+        const hostStart = offsetToPosition(offsets, tagStart);
+        const hostEnd = offsetToPosition(offsets, bodyClose);
+        const bodyText = text.slice(bodyOpen + 1, bodyClose - 1);
+        const virtualUri = `${hostUri.replace(/^file:/, 'absolute-opaque:')}#${tag.toLowerCase()}@${hostStart.line}`;
+        blocks.push({
+            tag: tag.toLowerCase(),
+            name,
+            hostUri,
+            virtualUri,
+            hostRange: { start: hostStart, end: hostEnd },
+            // Line in host that breakpoints map to (start of block).
+            hostBreakpointLine: hostStart.line,
+            body: bodyText.replace(/^\r?\n/, '').replace(/\r?\n\s*$/, '\n'),
+            language: tag.toLowerCase() === 'shader' ? 'hlsl' : 'plaintext',
+            mappings: [{
+                generatedLine: 0,
+                generatedCharacter: 0,
+                originalLine: hostStart.line,
+                originalCharacter: hostStart.character,
+                source: hostUri
+            }]
+        });
+    }
+    return blocks;
+}
+
+function opaqueVirtualUri(hostPath, tag, startLine) {
+    const hostUri = pathToUri(hostPath);
+    return `${hostUri.replace(/^file:/, 'absolute-opaque:')}#${tag}@${startLine}`;
+}
+
+function parseOpaqueVirtualUri(uri) {
+    // absolute-opaque:/C:/path/file.abs#shader@12  or absolute-opaque:///C:/...
+    if (!uri || !uri.startsWith('absolute-opaque:')) return undefined;
+    const withoutScheme = uri.slice('absolute-opaque:'.length);
+    const hash = withoutScheme.lastIndexOf('#');
+    if (hash < 0) return undefined;
+    let hostPart = withoutScheme.slice(0, hash);
+    const frag = withoutScheme.slice(hash + 1);
+    const fragMatch = /^([A-Za-z_][A-Za-z0-9_]*)@(\d+)$/.exec(frag);
+    if (!fragMatch) return undefined;
+    // Restore file URI form for path conversion
+    const hostUri = hostPart.startsWith('/') || /^[A-Za-z]:/.test(hostPart)
+        ? `file://${hostPart.startsWith('/') ? hostPart : '/' + hostPart}`
+        : `file://${hostPart}`;
+    return {
+        hostUri,
+        hostPath: uriToPath(hostUri),
+        tag: fragMatch[1],
+        startLine: parseInt(fragMatch[2], 10)
+    };
+}
+
+function evaluateExpressionSource(expression, preamble = '') {
+    const expr = String(expression || '').trim();
+    if (!expr) throw new Error('empty expression');
+    // Statement-like: ends with ; or starts with keyword
+    const isStatement = /[;{}]\s*$/.test(expr) ||
+        /^(if|for|while|return|throw|try|println|print|assert|var|let|auto|defer|spawn)\b/.test(expr);
+    let body;
+    if (isStatement) {
+        body = expr.endsWith(';') || expr.endsWith('}') ? expr : expr + ';';
+    } else {
+        // Print the expression result; format supports ints/bools/strings/pointers.
+        body = `println(format("{}", (${expr})));`;
+    }
+    return `${preamble}\n\nint32 main() {\n    ${body}\n    return 0;\n}\n`;
+}
+
 function semanticTokens(index, text) {
     // legend: keyword=0 type=1 function=2 namespace=3
     const data = [];
@@ -588,6 +703,10 @@ module.exports = {
     completionItems,
     hoverFor,
     semanticTokens,
+    extractOpaqueBlocks,
+    opaqueVirtualUri,
+    parseOpaqueVirtualUri,
+    evaluateExpressionSource,
     lineOffsets,
     offsetToPosition,
     positionToOffset

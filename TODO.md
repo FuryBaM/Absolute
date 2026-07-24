@@ -528,9 +528,17 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   Document formatting provider + `tools/absolute-dev.js fmt`; diagnostics
   linter через `absolutec` (path/args из `absolute.compilerPath` /
   `absolute.compilerArguments`).
-- [ ] Добавить debugger visualization для arrays, slices, tasks и managed pointers.
-- [ ] Добавить breakpoints/source mapping для opaque plugin nodes.
-- [ ] Добавить REPL и expression evaluator.
+- [x] Добавить debugger visualization для arrays, slices, tasks и managed pointers.
+  `debugging/Absolute.natvis` (cppvsdbg), `debugging/absolute_gdb.py`,
+  helper types `absolute_debug_types.h`; extension injects visualizerFile /
+  GDB setupCommands. Layouts documented in `docs/debugging.md`.
+- [x] Добавить breakpoints/source mapping для opaque plugin nodes.
+  Virtual scheme `absolute-opaque:`, extract `shader` blocks, Open Opaque Block,
+  DAP tracker maps breakpoints back to host `.abs` line; LSP
+  `absolute/opaqueSourceMaps`.
+- [x] Добавить REPL и expression evaluator.
+  `tools/absolute-repl.js`, `absolute-dev eval|repl`, VS Code commands
+  Evaluate Expression / Open REPL (compile-run via absolutec).
 - [x] Добавить генератор документации из исходного кода.
   `tools/absolute-dev.js doc` пишет Markdown outline по symbols workspace.
 - [x] Добавить `absolute test`, `absolute fmt`, `absolute doc` и `absolute package`.

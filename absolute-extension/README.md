@@ -21,6 +21,10 @@ Language support for `.abs` files with:
 - `Absolute: Run Project` / `Absolute: Debug Project`
 - `Absolute: Refresh Plugins`
 - `Absolute: Show Loaded Plugins`
+- `Absolute: Open Opaque Block` — virtual document + breakpoint map for `shader` blocks
+- `Absolute: Evaluate Expression` / `Absolute: Open REPL`
+
+See also [docs/debugging.md](https://github.com/FuryBaM/Absolute/blob/main/docs/debugging.md) for natvis, GDB printers, and layouts.
 
 ## Settings
 
@@ -75,6 +79,7 @@ Commands:
 - `test` — run CTest against a known build directory
 - `doc` — generate Markdown API outline from symbols
 - `package list|resolve` — inspect / dry-resolve project packages
+- `eval <expr>` / `repl` — expression evaluator and interactive REPL
 
 ## Package
 

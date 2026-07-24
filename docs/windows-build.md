@@ -49,12 +49,23 @@ MSVC build to the locally bootstrapped Ninja generator so CMake can use the
 compiler launcher. Cached builds are kept separately under
 `.absolute\build\windows-release-sccache`.
 
-The default and recommended Windows toolchain is MSVC with the Visual Studio
-generator and `/MP`. An experimental `--clang-cl` switch exists for comparing
-toolchains, but the compiler version must be accepted by the installed Visual
-Studio STL. In particular, Visual Studio 2026 requires Clang 19 or newer while
-the validated Absolute backend SDK is LLVM 18.1.8; the build script detects
-this combination before configuration and prints a direct diagnostic.
+The default and recommended Windows toolchain is MSVC with the **Ninja**
+generator and `cl.exe` (what `build-windows.bat` and the
+`windows-msvc-release` / `windows-msvc-frontend` CMake presets use). Ninja is
+bootstrapped under `.absolute\toolchains\ninja` when you run
+`build-windows.bat` (or `scripts\windows\bootstrap-ninja.ps1`). The CMake
+presets point `CMAKE_MAKE_PROGRAM` at that binary and prepend it to `PATH`.
+
+Presets still need an initialized MSVC environment (`cl.exe` on `PATH`): use
+an **x64 Native Tools** shell, or prefer `build-windows.bat`, which runs
+`vcvars64.bat` via `vswhere`. Configuring the NMake generator from a plain
+shell fails with `nmake: no such file or directory` and is no longer used.
+
+An experimental `--clang-cl` switch exists for comparing toolchains, but the
+compiler version must be accepted by the installed Visual Studio STL. In
+particular, Visual Studio 2026 requires Clang 19 or newer while the validated
+Absolute backend SDK is LLVM 18.1.8; the build script detects this combination
+before configuration and prints a direct diagnostic.
 
 ## Using another LLVM SDK
 

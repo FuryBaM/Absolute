@@ -31,7 +31,7 @@ benchmark commands.
 On multi-config generators such as Visual Studio, pass `--config Debug` to the
 build command.
 
-Release presets are available for WSL and Visual Studio:
+Release presets are available for WSL and native Windows:
 
 ```bash
 # Run inside WSL. Build artifacts stay on the Linux filesystem.
@@ -44,8 +44,10 @@ cmake --preset wsl-release-ninja
 ```
 
 ```powershell
-# Run from a Visual Studio developer shell. build-windows.bat is easier because
-# it detects and initializes the installed Visual Studio version automatically.
+# Windows presets use Ninja + MSVC (same layout as build-windows.bat).
+# Run from an x64 Native Tools / Developer PowerShell so cl.exe is on PATH.
+# Prefer build-windows.bat when you want vswhere + vcvars handled for you.
+# Bootstrapped ninja: .absolute\toolchains\ninja\ninja.exe
 cmake --preset windows-msvc-release
 cmake --build --preset windows-msvc-release --parallel
 ctest --preset windows-msvc-release

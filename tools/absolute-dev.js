@@ -7,6 +7,8 @@
  *   node tools/absolute-dev.js test [ctest-args...]
  *   node tools/absolute-dev.js doc [roots...] [-o out.md]
  *   node tools/absolute-dev.js package list|resolve [project.absproj]
+ *   node tools/absolute-dev.js eval <expression>
+ *   node tools/absolute-dev.js repl
  */
 
 const fs = require('fs');
@@ -15,6 +17,7 @@ const childProcess = require('child_process');
 
 const repoRoot = path.resolve(__dirname, '..');
 const language = require(path.join(repoRoot, 'absolute-extension', 'server', 'language.js'));
+const repl = require(path.join(repoRoot, 'tools', 'absolute-repl.js'));
 
 function usage() {
     console.log(`Usage:
@@ -23,6 +26,8 @@ function usage() {
   absolute-dev doc [root ...] [-o out.md]
   absolute-dev package list <project.absproj>
   absolute-dev package resolve <project.absproj>
+  absolute-dev eval <expression>
+  absolute-dev repl
 `);
 }
 
@@ -137,6 +142,21 @@ function main(argv) {
         usage();
         return 1;
     }
+    case 'eval':
+    case 'evaluate': {
+        const expression = rest.join(' ');
+        if (!expression.trim()) {
+            console.error('eval requires an expression');
+            return 1;
+        }
+        const result = repl.evaluate(expression);
+        if (result.stdout) process.stdout.write(result.stdout);
+        if (result.stderr) process.stderr.write(result.stderr);
+        return result.ok ? 0 : 1;
+    }
+    case 'repl':
+        repl.startRepl();
+        return 0;
     default:
         console.error(`unknown command: ${command}`);
         usage();

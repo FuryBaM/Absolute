@@ -5,6 +5,8 @@ const fs = require('fs');
 const path = require('path');
 const childProcess = require('child_process');
 const { LspClient } = require('./client/lsp-client');
+const opaqueDocs = require('./opaque-docs');
+const repl = require('../tools/absolute-repl');
 
 let statusBar;
 let output;
@@ -405,19 +407,79 @@ function nativeDebugger(configuration) {
     return process.platform === 'win32' ? 'cppvsdbg' : 'cppdbg';
 }
 
+function resolveVisualizerFile(folder) {
+    const candidates = [];
+    if (folder) candidates.push(path.join(folder.uri.fsPath, 'debugging', 'Absolute.natvis'));
+    // Extension may run from absolute-extension/; repo root is one level up.
+    candidates.push(path.join(__dirname, '..', 'debugging', 'Absolute.natvis'));
+    candidates.push(path.join(__dirname, 'debugging', 'Absolute.natvis'));
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) return candidate;
+    }
+    return undefined;
+}
+
 async function startNativeDebug(artifact, launch = {}) {
     const configuration = vscode.workspace.getConfiguration('absolute', artifact.folder ? artifact.folder.uri : undefined);
+    const debugType = nativeDebugger(configuration);
     const debugConfiguration = {
-        type: nativeDebugger(configuration), request: 'launch',
+        type: debugType, request: 'launch',
         name: launch.name || `Debug ${path.basename(artifact.executable)}`,
         program: artifact.executable, args: launch.args || [],
         cwd: expandVariables(launch.cwd || artifact.workspace, artifact.folder, artifact.input),
         stopAtEntry: launch.stopAtEntry !== false,
         externalConsole: configuration.get('externalConsole', false)
     };
+    const visualizer = resolveVisualizerFile(artifact.folder);
+    if (visualizer && debugType === 'cppvsdbg') {
+        debugConfiguration.visualizerFile = visualizer;
+    }
+    if (debugType === 'cppdbg') {
+        // Optional GDB pretty printers when debugging on Linux/macOS.
+        const gdbPy = path.join(__dirname, '..', 'debugging', 'absolute_gdb.py');
+        if (fs.existsSync(gdbPy)) {
+            debugConfiguration.setupCommands = [
+                { description: 'Absolute pretty printers', text: `source ${gdbPy.replace(/\\/g, '/')}`, ignoreFailures: true }
+            ];
+        }
+    }
     const started = await vscode.debug.startDebugging(artifact.folder, debugConfiguration);
     if (!started) vscode.window.showErrorMessage(
         `Absolute: could not start ${debugConfiguration.type}. Install/enable the Microsoft C/C++ extension or change absolute.debugger.`);
+}
+
+async function evaluateExpressionCommand() {
+    const expression = await vscode.window.showInputBox({
+        prompt: 'Absolute expression or statement',
+        placeHolder: '2 + 2   or   println("hi")'
+    });
+    if (!expression) return;
+    const configuration = vscode.workspace.getConfiguration('absolute');
+    const compilerPath = configuration.get('compilerPath', 'absolutec');
+    output.appendLine(`abs> ${expression}`);
+    output.show(true);
+    const result = repl.evaluate(expression, '', { compilerPath });
+    if (result.stdout) output.append(result.stdout);
+    if (result.stderr) output.append(result.stderr);
+    if (!result.ok) {
+        output.appendLine(`[${result.stage} failed, exit ${result.code}]`);
+        vscode.window.showErrorMessage('Absolute evaluate failed (see Absolute output).');
+    }
+}
+
+async function openReplCommand() {
+    const configuration = vscode.workspace.getConfiguration('absolute');
+    const compiler = configuration.get('compilerPath', 'absolutec');
+    const terminal = vscode.window.createTerminal({
+        name: 'Absolute REPL',
+        cwd: (vscode.workspace.workspaceFolders || [])[0]?.uri.fsPath
+    });
+    const replScript = path.join(__dirname, '..', 'tools', 'absolute-repl.js');
+    const envPrefix = process.platform === 'win32'
+        ? `set ABSOLUTEC=${compiler}&& `
+        : `ABSOLUTEC=${JSON.stringify(compiler)} `;
+    terminal.show();
+    terminal.sendText(`${envPrefix}node ${JSON.stringify(replScript)}`);
 }
 
 async function showPluginInfo() {
@@ -442,6 +504,7 @@ async function activate(context) {
     statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
     statusBar.command = 'absolute.showPluginInfo';
     context.subscriptions.push(output, statusBar);
+    opaqueDocs.register(context);
 
     const configuration = vscode.workspace.getConfiguration('absolute');
     const boot = collectPluginPaths();
@@ -460,6 +523,8 @@ async function activate(context) {
         vscode.commands.registerCommand('absolute.openProject', openProject),
         vscode.commands.registerCommand('absolute.runProject', resource => runProject(resource, false)),
         vscode.commands.registerCommand('absolute.debugProject', resource => runProject(resource, true)),
+        vscode.commands.registerCommand('absolute.evaluateExpression', evaluateExpressionCommand),
+        vscode.commands.registerCommand('absolute.openRepl', openReplCommand),
         vscode.commands.registerCommand('absolute.runFile', async () => {
             const artifact = await buildAbsolute();
             if (artifact) await runArtifact(artifact);
@@ -467,6 +532,29 @@ async function activate(context) {
         vscode.commands.registerCommand('absolute.debugFile', async () => {
             const artifact = await buildAbsolute();
             if (artifact) await startNativeDebug(artifact);
+        }),
+        // Map breakpoints placed in absolute-opaque: virtual documents back to the host .abs line.
+        vscode.debug.registerDebugAdapterTrackerFactory('*', {
+            createDebugAdapterTracker() {
+                return {
+                    onWillReceiveMessage(message) {
+                        if (!message || message.command !== 'setBreakpoints') return;
+                        const source = message.arguments && message.arguments.source;
+                        const pathValue = source && (source.path || source.sourceReference);
+                        if (!pathValue || !String(pathValue).includes('absolute-opaque:')) return;
+                        const mapped = opaqueDocs.mapBreakpointFromVirtual(String(pathValue));
+                        if (!mapped) return;
+                        source.path = mapped.hostPath;
+                        if (Array.isArray(message.arguments.breakpoints)) {
+                            for (const bp of message.arguments.breakpoints) {
+                                bp.line = mapped.hostLine + 1; // DAP is 1-based
+                            }
+                        }
+                        output.appendLine(
+                            `Absolute: mapped opaque breakpoint ${pathValue} -> ${mapped.hostPath}:${mapped.hostLine + 1}`);
+                    }
+                };
+            }
         }),
         vscode.debug.registerDebugConfigurationProvider('absolute', {
             async resolveDebugConfiguration(folder, launch) {

@@ -2,11 +2,19 @@
   "schemaVersion": 1,
   "plugin": "absolute.shader",
   "keywords": [
-    { "name": "shader", "detail": "shader Name { ... }", "documentation": "Starts a plugin-owned opaque shader AST block.", "snippet": "shader ${1:Vertex} {\n    input ${2:position};\n    output ${3:clipPosition};\n}" },
+    { "name": "shader", "detail": "shader Name { ... }", "documentation": "Starts a plugin-owned opaque shader AST block. Open with Absolute: Open Opaque Block for virtual-document editing and breakpoint mapping.", "snippet": "shader ${1:Vertex} {\n    input ${2:position};\n    output ${3:clipPosition};\n}" },
     { "name": "input", "detail": "shader input declaration" },
     { "name": "output", "detail": "shader output declaration" }
   ],
   "snippets": [
     { "label": "vertex shader block", "detail": "Create an Absolute shader block", "body": "shader ${1:Vertex} {\n    input ${2:position};\n    output ${3:clipPosition};\n}" }
+  ],
+  "embeddedLanguages": [
+    {
+      "tag": "shader",
+      "language": "hlsl",
+      "virtualDocumentScheme": "absolute-opaque",
+      "documentation": "Opaque shader bodies map to absolute-opaque virtual documents with host breakpoint line = block start."
+    }
   ]
 }

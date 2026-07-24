@@ -294,6 +294,35 @@ function handleRequest(message) {
             respond(id, { text: lang.formatDocument(params.text || '', params.options || {}) });
             return;
         }
+        case 'absolute/opaqueSourceMaps': {
+            const uri = params && params.textDocument && params.textDocument.uri;
+            const tags = (params && params.tags) || ['shader'];
+            let text = documentText(uri);
+            if (text === undefined && uri) {
+                respond(id, { blocks: [] });
+                return;
+            }
+            const blocks = lang.extractOpaqueBlocks(uri, text || '', tags).map(block => ({
+                tag: block.tag,
+                name: block.name,
+                hostUri: block.hostUri,
+                virtualUri: block.virtualUri,
+                hostRange: block.hostRange,
+                hostBreakpointLine: block.hostBreakpointLine,
+                language: block.language,
+                body: block.body,
+                mappings: block.mappings
+            }));
+            respond(id, { blocks });
+            return;
+        }
+        case 'absolute/evaluate': {
+            const source = lang.evaluateExpressionSource(
+                params && params.expression,
+                (params && params.preamble) || '');
+            respond(id, { source });
+            return;
+        }
         default:
             if (id !== undefined) respondError(id, -32601, `Method not found: ${method}`);
         }
