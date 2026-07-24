@@ -1,0 +1,40 @@
+// Non-interactive smoke: create Gpu with each backend preference, print status, exit.
+
+int32 tryBackend(Desktop.Window* window, int32 backend, string name) {
+    auto gpu = new Desktop.Gpu(window, backend);
+    if (!gpu.isValid()) {
+        println(name);
+        println("  FAIL:");
+        println(gpu.lastError());
+        gpu.destroy();
+        return 1;
+    }
+    println(name);
+    println("  OK backend=");
+    println(gpu.backend());
+    gpu.destroy();
+    return 0;
+}
+
+int32 main() {
+    auto window = new Desktop.Window("Absolute GPU smoke", 320, 200, false);
+    if (!window.isOpen()) {
+        println("window failed");
+        return 1;
+    }
+
+    // Drain one poll so HWND is ready.
+    window.poll();
+
+    int32 failed = 0;
+    failed = failed + tryBackend(window, Desktop.Gpu.BackendOpenGL, "BackendOpenGL");
+    failed = failed + tryBackend(window, Desktop.Gpu.BackendD3D11, "BackendD3D11");
+    failed = failed + tryBackend(window, Desktop.Gpu.BackendAuto, "BackendAuto");
+
+    window.close();
+    if (failed != 0) {
+        return 1;
+    }
+    println("gpu-backend-smoke OK");
+    return 0;
+}

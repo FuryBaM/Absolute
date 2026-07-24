@@ -48,8 +48,9 @@ pong.exe
 | `shader-code.abs` | `absolute.shader` custom `code { GLSL }` → Gpu |
 | `text.abs` | Built-in 8×8 soft font, scaled HUD, sprite-baked label, typing |
 | `batch.abs` | Soft `SpriteBatch`: 120 atlas tiles + ship in one flush |
-| `triangle.abs` | OpenGL RHI: shader + buffer + pipeline + bind/draw |
+| `triangle.abs` | GPU RHI: shader + buffer + pipeline + bind/draw (`BackendAuto`) |
 | `gpu-sprites.abs` | Indexed textured quads + `GpuSampler` (ship + stars) |
+| `d3d-clear.abs` | D3D11 clear/present only (`BackendD3D11`, Windows) |
 
 ## API highlights
 
@@ -60,7 +61,8 @@ pong.exe
 - **Sprites:** `Desktop.Sprite(w,h)`, `fillRect`/`fillCircle`/`clear`, `window.drawSprite(sprite,x,y)`
 - **Images:** `loadBmp` / `loadPng` / `loadImage`, `colorKey`, `drawSpriteRect`
 - **Batch:** `Desktop.SpriteBatch`, `begin`/`drawRect`/`drawSprite`/`end`
-- **GPU:** `Desktop.Gpu`: shader/buffer/pipeline/texture, `beginFrame`/`bind`/`draw`/`endFrame`/`present`
+- **GPU:** `Desktop.Gpu(window, backend)`: OpenGL full RHI or D3D11 clear/present;
+  `BackendAuto` / `BackendOpenGL` / `BackendD3D11`
 - **Text:** built-in 8×8 `drawText`; `Desktop.Font` + `drawFontText` / `measure`
 - **Audio:** `Desktop.Audio` + `loadWav` / `play` / `playLoop` / `stopAll`
 - **UI:** `Desktop.Ui` button/checkbox/slider/progress

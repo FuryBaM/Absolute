@@ -132,13 +132,17 @@ Windows GDI (ClearType raster → soft buffer). Non-Windows: create returns inva
 - `sprite.drawFontText(font, x, y, text, color)`
 - Example: `examples/desktop/font.abs`
 
-### GPU / OpenGL RHI (`Desktop.Gpu`)
-- **Windows:** WGL + OpenGL 3.3 core (`backend()` → `opengl-wgl`)
-- **Linux:** GLX when X11 + OpenGL dev packages are found (`opengl-glx`);
-  windows are created with a GLX visual when possible
+### GPU RHI (`Desktop.Gpu`)
+- **Constructor:** `new Desktop.Gpu(window, backend)` where backend is
+  `Desktop.Gpu.BackendAuto` (0), `BackendOpenGL` (1), or `BackendD3D11` (2)
+- **BackendAuto:** OpenGL first; on Windows falls back to D3D11 if GL fails
+- **OpenGL (full RHI):** Windows WGL (`opengl-wgl`), Linux GLX (`opengl-glx`)
+- **D3D11 (Windows):** clear/present lifecycle only (`backend()` → `d3d11`);
+  mesh/shader resource APIs return null with `lastError` — use OpenGL for draws
 - Soft `window.present()` and `gpu.present()` are separate paths
+- Per-device: `gpu.backend()` → `opengl-wgl` / `opengl-glx` / `d3d11` / `none`
 
-Resources:
+Resources (OpenGL):
 - `createShader(vs, fs)` → `GpuShader*`
 - `createVertexBuffer(float[] vertices)` → `GpuBuffer*` (VBO; layout is separate)
 - `createIndexBuffer(int32[] indices)` → `GpuIndexBuffer*` (EBO, `drawIndexed`)
@@ -173,7 +177,8 @@ gpu.present();
 
 - `bind` overloads: pipeline, vertex buffer, index buffer, texture, sampler
 - Alpha blending on in `beginFrame`
-- Examples: `triangle.abs`, `gpu-sprites.abs` (indexed quads + sampler)
+- Examples: `triangle.abs`, `gpu-sprites.abs` (indexed quads + sampler),
+  `d3d-clear.abs` (D3D11 clear/present)
 
 ### Game loop patterns
 
@@ -214,6 +219,6 @@ resources; the current Absolute class model does not yet run RAII destructors.
 Examples: `examples/desktop/window.abs`, `pong.abs`, `sprites.abs`, `input.abs`,
 `image.abs` (BMP + atlas), `text.abs` (soft font HUD / typing),
 `batch.abs` (`SpriteBatch` + atlas tiles), `triangle.abs` (OpenGL pipeline),
-`gpu-sprites.abs` (textured ship + atlas), `image-png.abs` (PNG `loadImage`),
-`font.abs`, `audio.abs`, `ui.abs`, `mesh.abs`, `shader-rhi.abs`, `shader-code.abs`
-(custom GLSL `code{}` → Gpu).
+`gpu-sprites.abs` (textured ship + atlas), `d3d-clear.abs` (D3D11 clear),
+`image-png.abs` (PNG `loadImage`), `font.abs`, `audio.abs`, `ui.abs`,
+`mesh.abs`, `shader-rhi.abs`, `shader-code.abs` (custom GLSL `code{}` → Gpu).

@@ -84,9 +84,11 @@ extern "C" void absolute_desktop_batch_flush(int64 handle);
 extern "C" void absolute_desktop_batch_end(int64 handle);
 extern "C" int32 absolute_desktop_batch_count(int64 handle);
 extern "C" int64 absolute_desktop_gpu_create(int64 windowHandle);
+extern "C" int64 absolute_desktop_gpu_create_backend(int64 windowHandle, int32 backend);
 extern "C" void absolute_desktop_gpu_destroy(int64 handle);
 extern "C" int32 absolute_desktop_gpu_is_valid(int64 handle);
 extern "C" string absolute_desktop_gpu_backend();
+extern "C" string absolute_desktop_gpu_backend_of(int64 handle);
 extern "C" string absolute_desktop_gpu_last_error();
 extern "C" void absolute_desktop_gpu_begin_frame(int64 handle);
 extern "C" void absolute_desktop_gpu_end_frame(int64 handle);
@@ -1192,7 +1194,9 @@ namespace Desktop {
         }
     }
 
-    // OpenGL RHI (Windows WGL, OpenGL 3.3 core when available).
+    // Multi-backend GPU RHI.
+    // OpenGL (WGL/GLX): full shader/buffer/pipeline/draw path.
+    // D3D11 (Windows): clear/present lifecycle; resource creates return null.
     // Frame model:
     //   beginFrame(); clear(...); bind(pipeline); bind(vb); bind(ib); bind(tex); bind(sampler);
     //   draw(n) | drawIndexed(n); endFrame(); present();
@@ -1206,8 +1210,13 @@ namespace Desktop {
         public static int32 WrapRepeat = 1;
         public static int32 WrapMirror = 2;
 
-        public Gpu(Window* window) {
-            handle = absolute_desktop_gpu_create(window.handle);
+        // Backend preference (second ctor arg).
+        public static int32 BackendAuto = 0;   // OpenGL, then D3D11 on Windows
+        public static int32 BackendOpenGL = 1;
+        public static int32 BackendD3D11 = 2;  // clear/present; full RHI still OpenGL
+
+        public Gpu(Window* window, int32 backend) {
+            handle = absolute_desktop_gpu_create_backend(window.handle, backend);
         }
 
         public bool isValid() {
@@ -1222,7 +1231,7 @@ namespace Desktop {
         }
 
         public string backend() {
-            return absolute_desktop_gpu_backend();
+            return absolute_desktop_gpu_backend_of(handle);
         }
 
         public string lastError() {

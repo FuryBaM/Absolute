@@ -8,9 +8,9 @@ int32 main() {
         return 1;
     }
 
-    auto gpu = new Desktop.Gpu(window);
+    auto gpu = new Desktop.Gpu(window, Desktop.Gpu.BackendAuto);
     if (!gpu.isValid()) {
-        println("OpenGL GPU context failed:");
+        println("GPU context failed:");
         println(gpu.lastError());
         window.close();
         return 1;

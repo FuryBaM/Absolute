@@ -527,7 +527,10 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   `absolute_shader_glsl_*` accessors, `Desktop.Gpu.createLayout3Attr`;
   examples `shader-rhi.abs`, `shader-code.abs`.
 - [x] Dual OpenGL backends: WGL (Windows) + GLX (Linux/X11); `native_display` hook.
-- [ ] Vulkan/D3D12 backends and SPIR-V·DXIL·Metal IR (beyond OpenGL).
+- [x] Multi-backend `Desktop.Gpu`: magic-header dispatch; `BackendAuto` /
+  `BackendOpenGL` / `BackendD3D11`; D3D11 clear/present (Windows) + OpenGL
+  full RHI; example `examples/desktop/d3d-clear.abs`.
+- [ ] Vulkan/D3D12 backends and SPIR-V·DXIL·Metal IR (beyond OpenGL/D3D11 clear).
 
 ### Native interop и платформы
 

@@ -9,10 +9,24 @@
 #include <string>
 #include <vector>
 
+#include "desktop_gpu_magic.h"
+
 extern "C" void* absolute_desktop_native_window(int64_t handle);
 extern "C" void* absolute_desktop_native_display(int64_t handle);
 extern "C" int32_t absolute_desktop_width(int64_t handle);
 extern "C" int32_t absolute_desktop_height(int64_t handle);
+
+// D3D11 backend (Windows) — lifecycle only for now.
+extern "C" int64_t absolute_desktop_gpu_d3d11_create(int64_t windowHandle);
+extern "C" void absolute_desktop_gpu_d3d11_destroy(int64_t handle);
+extern "C" int32_t absolute_desktop_gpu_d3d11_is_valid(int64_t handle);
+extern "C" const char* absolute_desktop_gpu_d3d11_backend();
+extern "C" const char* absolute_desktop_gpu_d3d11_last_error();
+extern "C" void absolute_desktop_gpu_d3d11_begin_frame(int64_t handle);
+extern "C" void absolute_desktop_gpu_d3d11_end_frame(int64_t handle);
+extern "C" void absolute_desktop_gpu_d3d11_clear(int64_t handle, float r, float g, float b, float a);
+extern "C" void absolute_desktop_gpu_d3d11_present(int64_t handle);
+extern "C" void absolute_desktop_gpu_d3d11_unsupported(const char* what);
 
 #if defined(_WIN32)
 #define ABSOLUTE_GPU_WGL 1
@@ -356,6 +370,8 @@ namespace {
     };
 
     struct GpuDevice {
+        // Must be first: multi-backend magic (see desktop_gpu_magic.h).
+        uint32_t magic = kAbsoluteGpuMagicGL;
         int64_t windowHandle = 0;
 #if defined(ABSOLUTE_GPU_WGL)
         HWND hwnd = nullptr;
@@ -449,6 +465,7 @@ namespace {
     };
 
     GpuDevice* DeviceFromHandle(int64_t handle) {
+        if (!AbsoluteGpuIsGL(handle)) return nullptr;
         return reinterpret_cast<GpuDevice*>(static_cast<intptr_t>(handle));
     }
 
@@ -697,9 +714,10 @@ namespace {
     }
 }
 
-extern "C" int64_t absolute_desktop_gpu_create(int64_t windowHandle) {
+static int64_t CreateOpenGlDevice(int64_t windowHandle) {
     g_lastError.clear();
     auto* device = new GpuDevice();
+    device->magic = kAbsoluteGpuMagicGL;
     device->windowHandle = windowHandle;
 
     if (!CreatePlatformContext(*device)) {
@@ -732,19 +750,57 @@ extern "C" int64_t absolute_desktop_gpu_create(int64_t windowHandle) {
     return DeviceToHandle(device);
 }
 
+// backend: 0=auto (GL then D3D11 on Windows), 1=OpenGL, 2=D3D11
+extern "C" int64_t absolute_desktop_gpu_create_backend(int64_t windowHandle, int32_t backend) {
+    g_lastError.clear();
+    if (backend == 2) {
+#if defined(_WIN32)
+        return absolute_desktop_gpu_d3d11_create(windowHandle);
+#else
+        SetError("D3D11 backend is Windows-only");
+        return 0;
+#endif
+    }
+    if (backend == 1) {
+        return CreateOpenGlDevice(windowHandle);
+    }
+    // Auto: prefer OpenGL, fall back to D3D11 on Windows.
+    const int64_t gl = CreateOpenGlDevice(windowHandle);
+    if (gl != 0) return gl;
+#if defined(_WIN32)
+    const std::string glError = g_lastError;
+    const int64_t d3d = absolute_desktop_gpu_d3d11_create(windowHandle);
+    if (d3d != 0) return d3d;
+    SetError("auto backend failed (OpenGL: " + glError + "; D3D11: "
+        + absolute_desktop_gpu_d3d11_last_error() + ")");
+#endif
+    return 0;
+}
+
+extern "C" int64_t absolute_desktop_gpu_create(int64_t windowHandle) {
+    return absolute_desktop_gpu_create_backend(windowHandle, 0);
+}
+
 extern "C" void absolute_desktop_gpu_destroy(int64_t handle) {
+    if (AbsoluteGpuIsD3D11(handle)) {
+        absolute_desktop_gpu_d3d11_destroy(handle);
+        return;
+    }
     GpuDevice* device = DeviceFromHandle(handle);
-    if (!device) return;
+    if (!device || !AbsoluteGpuIsGL(handle)) return;
     device->Destroy();
     delete device;
 }
 
 extern "C" int32_t absolute_desktop_gpu_is_valid(int64_t handle) {
+    if (AbsoluteGpuIsD3D11(handle)) return absolute_desktop_gpu_d3d11_is_valid(handle);
     const GpuDevice* device = DeviceFromHandle(handle);
-    return device && device->valid ? 1 : 0;
+    return device && AbsoluteGpuIsGL(handle) && device->valid ? 1 : 0;
 }
 
 extern "C" const char* absolute_desktop_gpu_backend() {
+    // Note: no handle — returns default GL backend name. Prefer backend of a live device
+    // via last created path; kept for Absolute prelude compatibility.
 #if defined(ABSOLUTE_GPU_WGL)
     return "opengl-wgl";
 #elif defined(ABSOLUTE_GPU_GLX)
@@ -754,11 +810,32 @@ extern "C" const char* absolute_desktop_gpu_backend() {
 #endif
 }
 
+// Per-device backend string.
+extern "C" const char* absolute_desktop_gpu_backend_of(int64_t handle) {
+    if (AbsoluteGpuIsD3D11(handle)) return absolute_desktop_gpu_d3d11_backend();
+    if (AbsoluteGpuIsGL(handle)) {
+#if defined(ABSOLUTE_GPU_WGL)
+        return "opengl-wgl";
+#elif defined(ABSOLUTE_GPU_GLX)
+        return "opengl-glx";
+#else
+        return "opengl";
+#endif
+    }
+    return "none";
+}
+
 extern "C" const char* absolute_desktop_gpu_last_error() {
-    return g_lastError.c_str();
+    // Prefer D3D11 thread-local if last create was D3D11 — GL g_lastError is primary.
+    if (!g_lastError.empty()) return g_lastError.c_str();
+    return absolute_desktop_gpu_d3d11_last_error();
 }
 
 extern "C" void absolute_desktop_gpu_begin_frame(int64_t handle) {
+    if (AbsoluteGpuIsD3D11(handle)) {
+        absolute_desktop_gpu_d3d11_begin_frame(handle);
+        return;
+    }
     GpuDevice* device = DeviceFromHandle(handle);
     if (!device || !MakeCurrent(*device)) return;
     device->inFrame = true;
@@ -782,6 +859,10 @@ extern "C" void absolute_desktop_gpu_begin_frame(int64_t handle) {
 }
 
 extern "C" void absolute_desktop_gpu_end_frame(int64_t handle) {
+    if (AbsoluteGpuIsD3D11(handle)) {
+        absolute_desktop_gpu_d3d11_end_frame(handle);
+        return;
+    }
     GpuDevice* device = DeviceFromHandle(handle);
     if (!device || !device->valid) return;
     if (MakeCurrent(*device)) {
@@ -800,6 +881,10 @@ extern "C" void absolute_desktop_gpu_end_frame(int64_t handle) {
 }
 
 extern "C" void absolute_desktop_gpu_clear(int64_t handle, float r, float g, float b, float a) {
+    if (AbsoluteGpuIsD3D11(handle)) {
+        absolute_desktop_gpu_d3d11_clear(handle, r, g, b, a);
+        return;
+    }
     GpuDevice* device = DeviceFromHandle(handle);
     if (!device || !MakeCurrent(*device)) return;
     device->gl.ClearColor(r, g, b, a);
@@ -807,6 +892,10 @@ extern "C" void absolute_desktop_gpu_clear(int64_t handle, float r, float g, flo
 }
 
 extern "C" void absolute_desktop_gpu_present(int64_t handle) {
+    if (AbsoluteGpuIsD3D11(handle)) {
+        absolute_desktop_gpu_d3d11_present(handle);
+        return;
+    }
     GpuDevice* device = DeviceFromHandle(handle);
     if (!device || !device->HasContext()) return;
     if (!MakeCurrent(*device)) return;
@@ -849,6 +938,10 @@ extern "C" void absolute_desktop_gpu_layout_destroy(int64_t layoutHandle) {
 
 extern "C" int64_t absolute_desktop_gpu_shader_create(
     int64_t gpuHandle, const char* vertexSource, const char* fragmentSource) {
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        absolute_desktop_gpu_d3d11_unsupported("createShader");
+        return 0;
+    }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     if (!device || !MakeCurrent(*device) || !vertexSource || !fragmentSource) {
         SetError("invalid shader create arguments");
@@ -883,6 +976,10 @@ extern "C" void absolute_desktop_gpu_shader_destroy(int64_t gpuHandle, int64_t s
 
 extern "C" int64_t absolute_desktop_gpu_buffer_create(
     int64_t gpuHandle, const float* data, int32_t floatCount) {
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        absolute_desktop_gpu_d3d11_unsupported("createVertexBuffer");
+        return 0;
+    }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     if (!device || !MakeCurrent(*device) || !data || floatCount <= 0) {
         SetError("vertex buffer requires non-empty float data");
@@ -922,6 +1019,10 @@ extern "C" int32_t absolute_desktop_gpu_buffer_float_count(int64_t bufferHandle)
 
 extern "C" int64_t absolute_desktop_gpu_pipeline_create(
     int64_t gpuHandle, int64_t shaderHandle, int64_t layoutHandle) {
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        absolute_desktop_gpu_d3d11_unsupported("createPipeline");
+        return 0;
+    }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     GpuShader* shader = ShaderFromHandle(shaderHandle);
     GpuLayout* layout = LayoutFromHandle(layoutHandle);
@@ -968,6 +1069,10 @@ extern "C" void absolute_desktop_gpu_bind_buffer(int64_t gpuHandle, int64_t buff
 
 extern "C" int64_t absolute_desktop_gpu_index_buffer_create(
     int64_t gpuHandle, const int32_t* indices, int32_t indexCount) {
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        absolute_desktop_gpu_d3d11_unsupported("createIndexBuffer");
+        return 0;
+    }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     if (!device || !MakeCurrent(*device) || !indices || indexCount <= 0) {
         SetError("index buffer requires non-empty int32 indices");
@@ -1054,6 +1159,10 @@ extern "C" void absolute_desktop_gpu_draw_indexed(int64_t gpuHandle, int32_t ind
 // filter: 0 nearest, 1 linear. wrap: 0 clamp, 1 repeat, 2 mirror.
 extern "C" int64_t absolute_desktop_gpu_sampler_create_on(
     int64_t gpuHandle, int32_t filter, int32_t wrap) {
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        absolute_desktop_gpu_d3d11_unsupported("createSampler");
+        return 0;
+    }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     if (!device || !MakeCurrent(*device) || !device->gl.GenSamplers || !device->gl.SamplerParameteri) {
         SetError("sampler create requires valid GPU context");
@@ -1132,6 +1241,10 @@ extern "C" void absolute_desktop_gpu_set_uniform_2f(
 
 // Upload soft sprite 0x00RRGGBB as RGBA8 (0 = transparent). Flip rows for GL origin.
 extern "C" int64_t absolute_desktop_gpu_texture_from_sprite(int64_t gpuHandle, int64_t spriteHandle) {
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        absolute_desktop_gpu_d3d11_unsupported("createTextureFromSprite");
+        return 0;
+    }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     DesktopSpriteView* sprite = SpriteFromHandle(spriteHandle);
     if (!device || !sprite || sprite->pixels.empty() || !MakeCurrent(*device)) {
@@ -1213,15 +1326,56 @@ namespace {
         "OpenGL RHI requires Windows WGL or Linux X11+GLX (build with OpenGL dev packages)";
 }
 
-extern "C" int64_t absolute_desktop_gpu_create(int64_t) { return 0; }
-extern "C" void absolute_desktop_gpu_destroy(int64_t) {}
-extern "C" int32_t absolute_desktop_gpu_is_valid(int64_t) { return 0; }
+extern "C" int64_t absolute_desktop_gpu_d3d11_create(int64_t);
+extern "C" void absolute_desktop_gpu_d3d11_destroy(int64_t);
+extern "C" int32_t absolute_desktop_gpu_d3d11_is_valid(int64_t);
+extern "C" const char* absolute_desktop_gpu_d3d11_backend();
+extern "C" const char* absolute_desktop_gpu_d3d11_last_error();
+extern "C" void absolute_desktop_gpu_d3d11_begin_frame(int64_t);
+extern "C" void absolute_desktop_gpu_d3d11_end_frame(int64_t);
+extern "C" void absolute_desktop_gpu_d3d11_clear(int64_t, float, float, float, float);
+extern "C" void absolute_desktop_gpu_d3d11_present(int64_t);
+
+extern "C" int64_t absolute_desktop_gpu_create_backend(int64_t windowHandle, int32_t backend) {
+    if (backend == 2) return absolute_desktop_gpu_d3d11_create(windowHandle);
+    g_lastError = "OpenGL unavailable on this build";
+    if (backend == 0) {
+        int64_t d3d = absolute_desktop_gpu_d3d11_create(windowHandle);
+        if (d3d) return d3d;
+    }
+    return 0;
+}
+extern "C" int64_t absolute_desktop_gpu_create(int64_t windowHandle) {
+    return absolute_desktop_gpu_create_backend(windowHandle, 0);
+}
+extern "C" void absolute_desktop_gpu_destroy(int64_t handle) {
+    if (AbsoluteGpuIsD3D11(handle)) absolute_desktop_gpu_d3d11_destroy(handle);
+}
+extern "C" int32_t absolute_desktop_gpu_is_valid(int64_t handle) {
+    if (AbsoluteGpuIsD3D11(handle)) return absolute_desktop_gpu_d3d11_is_valid(handle);
+    return 0;
+}
 extern "C" const char* absolute_desktop_gpu_backend() { return "none"; }
-extern "C" const char* absolute_desktop_gpu_last_error() { return g_lastError.c_str(); }
-extern "C" void absolute_desktop_gpu_begin_frame(int64_t) {}
-extern "C" void absolute_desktop_gpu_end_frame(int64_t) {}
-extern "C" void absolute_desktop_gpu_clear(int64_t, float, float, float, float) {}
-extern "C" void absolute_desktop_gpu_present(int64_t) {}
+extern "C" const char* absolute_desktop_gpu_backend_of(int64_t handle) {
+    if (AbsoluteGpuIsD3D11(handle)) return absolute_desktop_gpu_d3d11_backend();
+    return "none";
+}
+extern "C" const char* absolute_desktop_gpu_last_error() {
+    if (!g_lastError.empty()) return g_lastError.c_str();
+    return absolute_desktop_gpu_d3d11_last_error();
+}
+extern "C" void absolute_desktop_gpu_begin_frame(int64_t handle) {
+    if (AbsoluteGpuIsD3D11(handle)) absolute_desktop_gpu_d3d11_begin_frame(handle);
+}
+extern "C" void absolute_desktop_gpu_end_frame(int64_t handle) {
+    if (AbsoluteGpuIsD3D11(handle)) absolute_desktop_gpu_d3d11_end_frame(handle);
+}
+extern "C" void absolute_desktop_gpu_clear(int64_t handle, float r, float g, float b, float a) {
+    if (AbsoluteGpuIsD3D11(handle)) absolute_desktop_gpu_d3d11_clear(handle, r, g, b, a);
+}
+extern "C" void absolute_desktop_gpu_present(int64_t handle) {
+    if (AbsoluteGpuIsD3D11(handle)) absolute_desktop_gpu_d3d11_present(handle);
+}
 extern "C" int64_t absolute_desktop_gpu_layout_create(int32_t) { return 0; }
 extern "C" void absolute_desktop_gpu_layout_add(int64_t, int32_t, int32_t, int32_t) {}
 extern "C" void absolute_desktop_gpu_layout_destroy(int64_t) {}
