@@ -38,20 +38,40 @@ set_target_properties(Absolute-Runtime PROPERTIES
 # Optional wasm32 runtime subset (clang --target=wasm32-unknown-unknown).
 # LLVM may not be configured yet when this directory is processed, so search the
 # portable toolchain and PATH explicitly.
+#
+# Prefer a host-native clang. The Windows portable SDK under .absolute/toolchains
+# is visible from WSL via /mnt/*; never select PE clang.exe when configuring on
+# a non-Windows host (that produces "Exec format error" at build time).
 set(ABSOLUTE_WASM_RT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/wasm/absolute_wasm_runtime.c")
 set(ABSOLUTE_WASM_SHIM_OBJECT "${CMAKE_BINARY_DIR}/absolute_wasm_runtime.o")
-set(ABSOLUTE_WASM_CLANG "")
-foreach(_absolute_clang_candidate IN ITEMS
-        "${LLVM_TOOLS_BINARY_DIR}/clang${CMAKE_EXECUTABLE_SUFFIX}"
-        "${CMAKE_SOURCE_DIR}/.absolute/toolchains/llvm-18.1.8/bin/clang${CMAKE_EXECUTABLE_SUFFIX}"
+# Leave ABSOLUTE_WASM_CLANG unset until a real path is chosen. An empty normal
+# variable would shadow find_program()'s cache result and hide PATH hits.
+unset(ABSOLUTE_WASM_CLANG)
+unset(ABSOLUTE_WASM_CLANG CACHE)
+set(_absolute_wasm_clang_candidates)
+if(DEFINED LLVM_TOOLS_BINARY_DIR AND LLVM_TOOLS_BINARY_DIR)
+    list(APPEND _absolute_wasm_clang_candidates
+        "${LLVM_TOOLS_BINARY_DIR}/clang${CMAKE_EXECUTABLE_SUFFIX}")
+endif()
+list(APPEND _absolute_wasm_clang_candidates
+    "${CMAKE_SOURCE_DIR}/.absolute/toolchains/llvm-18.1.8/bin/clang${CMAKE_EXECUTABLE_SUFFIX}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../.absolute/toolchains/llvm-18.1.8/bin/clang${CMAKE_EXECUTABLE_SUFFIX}")
+if(WIN32)
+    list(APPEND _absolute_wasm_clang_candidates
         "${CMAKE_SOURCE_DIR}/.absolute/toolchains/llvm-18.1.8/bin/clang.exe"
         "${CMAKE_CURRENT_SOURCE_DIR}/../.absolute/toolchains/llvm-18.1.8/bin/clang.exe")
+endif()
+foreach(_absolute_clang_candidate IN LISTS _absolute_wasm_clang_candidates)
     if(NOT ABSOLUTE_WASM_CLANG AND EXISTS "${_absolute_clang_candidate}")
         set(ABSOLUTE_WASM_CLANG "${_absolute_clang_candidate}")
     endif()
 endforeach()
 if(NOT ABSOLUTE_WASM_CLANG)
-    find_program(ABSOLUTE_WASM_CLANG NAMES clang clang.exe clang-18 clang-19)
+    if(WIN32)
+        find_program(ABSOLUTE_WASM_CLANG NAMES clang clang.exe clang-18 clang-19)
+    else()
+        find_program(ABSOLUTE_WASM_CLANG NAMES clang-18 clang-19 clang)
+    endif()
 endif()
 if(ABSOLUTE_WASM_CLANG)
     set(ABSOLUTE_WASM_RT_FLAGS

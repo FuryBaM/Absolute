@@ -1413,10 +1413,17 @@ if(BUILD_TESTING)
                 --emit-object -o "${CMAKE_BINARY_DIR}/wasm-smoke.o"
         )
         find_program(ABSOLUTE_NODE_FOR_WASM NAMES node nodejs)
-        find_program(ABSOLUTE_WASM_LD_FOR_TEST NAMES wasm-ld wasm-ld.exe
-            HINTS
-                "${LLVM_TOOLS_BINARY_DIR}"
-                "${PROJECT_SOURCE_DIR}/.absolute/toolchains/llvm-18.1.8/bin")
+        if(WIN32)
+            find_program(ABSOLUTE_WASM_LD_FOR_TEST NAMES wasm-ld wasm-ld.exe
+                HINTS
+                    "${LLVM_TOOLS_BINARY_DIR}"
+                    "${PROJECT_SOURCE_DIR}/.absolute/toolchains/llvm-18.1.8/bin")
+        else()
+            find_program(ABSOLUTE_WASM_LD_FOR_TEST NAMES wasm-ld
+                HINTS
+                    "${LLVM_TOOLS_BINARY_DIR}"
+                    "${PROJECT_SOURCE_DIR}/.absolute/toolchains/llvm-18.1.8/bin")
+        endif()
         if(ABSOLUTE_NODE_FOR_WASM AND ABSOLUTE_WASM_LD_FOR_TEST)
             add_test(
                 NAME absolute.run-wasm-export

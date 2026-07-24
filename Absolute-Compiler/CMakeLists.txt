@@ -48,15 +48,21 @@ if(TARGET Absolute-CodeGen)
         )
     endif()
     # Prefer the LLVM SDK that Absolute was configured against.
+    # Do not pick Windows PE wasm-ld.exe when configuring under Linux/WSL.
     set(_absolute_wasm_ld_hints)
-    if(DEFINED LLVM_TOOLS_BINARY_DIR)
+    if(DEFINED LLVM_TOOLS_BINARY_DIR AND LLVM_TOOLS_BINARY_DIR)
         list(APPEND _absolute_wasm_ld_hints "${LLVM_TOOLS_BINARY_DIR}")
     endif()
     list(APPEND _absolute_wasm_ld_hints
         "${PROJECT_SOURCE_DIR}/../.absolute/toolchains/llvm-18.1.8/bin"
         "${CMAKE_SOURCE_DIR}/.absolute/toolchains/llvm-18.1.8/bin")
-    find_program(ABSOLUTE_WASM_LD NAMES wasm-ld wasm-ld.exe
-        HINTS ${_absolute_wasm_ld_hints})
+    if(WIN32)
+        find_program(ABSOLUTE_WASM_LD NAMES wasm-ld wasm-ld.exe
+            HINTS ${_absolute_wasm_ld_hints})
+    else()
+        find_program(ABSOLUTE_WASM_LD NAMES wasm-ld
+            HINTS ${_absolute_wasm_ld_hints})
+    endif()
     if(ABSOLUTE_WASM_LD)
         target_compile_definitions(Absolute-Compiler PRIVATE
             ABSOLUTE_WASM_LD="${ABSOLUTE_WASM_LD}")

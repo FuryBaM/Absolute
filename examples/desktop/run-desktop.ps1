@@ -94,14 +94,31 @@ $compilerBuildWsl = '/root/absolute-desktop-compiler'
 $configureArguments = @(
     $wslCmake, '-S', $repoWsl, '-B', $compilerBuildWsl,
     '-DCMAKE_BUILD_TYPE=Release', '-DABSOLUTE_ENABLE_LLVM=ON',
-    '-DABSOLUTE_DESKTOP_ENABLE_X11=OFF', "-DLLVM_DIR=$llvmDirectory"
+    '-DABSOLUTE_DESKTOP_ENABLE_X11=OFF', "-DLLVM_DIR=$llvmDirectory",
+    # Drop PE tool paths cached when the Windows LLVM tree under .absolute/toolchains
+    # was visible from WSL (/mnt/*) and incorrectly selected as host tools.
+    '-UABSOLUTE_WASM_LD', '-UABSOLUTE_WASM_LD_FOR_TEST', '-UABSOLUTE_WASM_CLANG'
 )
 if ($zstdInclude -and $zstdLibrary) {
     $configureArguments += "-Dzstd_INCLUDE_DIR=$zstdInclude"
     $configureArguments += "-Dzstd_LIBRARY=$zstdLibrary"
 }
-$compilerCacheExists = & wsl.exe sh -lc "test -f '$compilerBuildWsl/CMakeCache.txt'"
-if ($LASTEXITCODE -ne 0) {
+# Reconfigure when missing, or when a previous WSL configure latched onto Windows
+# PE tools (clang.exe / wasm-ld.exe) from the shared portable toolchain.
+$compilerConfigureState = & wsl.exe sh -lc @"
+if [ ! -f '$compilerBuildWsl/CMakeCache.txt' ]; then
+  printf 'missing\n'
+elif grep -Eq 'ABSOLUTE_WASM_(LD|CLANG)(_FOR_TEST)?:FILEPATH=.*\.exe' '$compilerBuildWsl/CMakeCache.txt' 2>/dev/null; then
+  printf 'stale-pe\n'
+else
+  printf 'ok\n'
+fi
+"@
+$compilerConfigureState = if ($compilerConfigureState) { ($compilerConfigureState | Select-Object -Last 1).Trim() } else { 'missing' }
+if ($compilerConfigureState -ne 'ok') {
+    if ($compilerConfigureState -eq 'stale-pe') {
+        Write-Host 'Reconfiguring Absolute LLVM compiler (clearing cached Windows PE wasm tools)'
+    }
     Invoke-Step 'Configure Absolute LLVM compiler' 'wsl.exe' $configureArguments
 }
 Invoke-Step 'Build Absolute compiler and host plugin' 'wsl.exe' @(
