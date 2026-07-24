@@ -474,18 +474,42 @@ node tools/absolute-bindgen.js native/api.h -o native/api.abs
 absolute-dev bindgen native/api.h -o native/api.abs
 ```
 
-Experimental WebAssembly emit and export-only linking (`wasm-ld` from the
-portable LLVM SDK or `PATH`):
+### WebAssembly
+
+Absolute has an experimental **wasm32** backend (`wasm-ld` from the portable
+LLVM SDK or `PATH`). The runtime covers heap, managed pointers, sync and
+host-backed multi-thread tasks, virtual FS, env/process, HTTP/TCP host imports,
+WASI preview1 services, and optional shared-memory modules.
 
 ```bat
-absolutec program.abs --target wasm32-unknown-unknown --emit-llvm -o program.ll
-absolutec tests\wasm-export-only.abs --target wasm32-unknown-unknown --build-exe -o out.wasm
+REM Build (host env imports: Node/browser)
+absolutec tests\wasm-smoke.abs --target wasm32-unknown-unknown --build-exe -o out.wasm
+node tools\absolute-wasm-run.js out.wasm
+
+REM Developer helper (build / run / ctest -R wasm)
+node tools\absolute-dev.js wasm build tests\wasm-smoke.abs -o out.wasm
+node tools\absolute-dev.js wasm run out.wasm
+node tools\absolute-dev.js wasm test
+
+REM WASI (fd_write / clock / args / env) — needs Absolute built with WASI object
+set ABSOLUTE_WASM_RUNTIME=wasi
+absolutec tests\wasm-smoke.abs --target wasm32-unknown-unknown --build-exe -o out-wasi.wasm
+node tools\absolute-wasm-wasi-run.js out-wasi.wasm
+
+REM Browser demo (COOP/COEP for worker + SharedArrayBuffer)
+node scripts\serve-wasm-demo.mjs
 ```
 
-Export-only modules and simple `println`/`assert` programs link with the wasm
-console shim. Managed heap, tasks, and FS still need a full runtime port. Browser
-demo: [`examples/wasm/`](examples/wasm/). See
-[`docs/wasm-target.md`](docs/wasm-target.md).
+| Runtime | How |
+|---------|-----|
+| **host** (default) | `env.absolute_*` imports; `tools/absolute-wasm-host.js` |
+| **wasi** | `ABSOLUTE_WASM_RUNTIME=wasi` or `--runtime wasi` |
+| **shared** | `ABSOLUTE_WASM_RUNTIME=shared` — imported shared memory + locked heap |
+
+Details: [`docs/wasm-target.md`](docs/wasm-target.md), demo
+[`examples/wasm/`](examples/wasm/), platforms matrix
+[`docs/platforms.md`](docs/platforms.md). CI runs `ctest -R wasm` on Windows and
+Linux.
 
 Generate a native object without linking it:
 

@@ -64,19 +64,20 @@ job.
 
 ## WebAssembly
 
-Experimental target via `absolutec --target wasm32-unknown-unknown`:
+First-class experimental target: `absolutec --target wasm32-unknown-unknown`
+(`--emit-llvm` / `--emit-object` / `--build-exe` via `wasm-ld`).
 
-- `--emit-llvm` / `--emit-object` / `--build-exe` (`wasm-ld`)
-- wasm runtime: heap, managed pointers, errors, sync tasks, virtual FS, env/process
-- Node host imports: console, HTTP mocks/prefetch, TCP mocks **or** real OS sockets
-  (worker + `Atomics.wait` bridge; see `wasm-target.md`)
-- Node engine smoke tests; browser demo under `examples/wasm/`
+| Layer | Status |
+|-------|--------|
+| Runtime | heap, managed, errors, VFS, env/process, tasks |
+| Host (Node) | console, HTTP, TCP mocks/real, task pools, shared memory |
+| WASI | preview1 console/time/random/args/env; selective wasi-libc kits |
+| Browser | mocks on UI thread; Worker session + optional shared tasks (COOP/COEP) |
+| CLI helper | `node tools/absolute-dev.js wasm build\|run\|test` |
+| CI | `ctest -R wasm` on Windows + Linux |
 
-Dynamic `load` and full pthread-style wasm threads are not ported yet. Optional
-shared-memory modules (`absolute_wasm_runtime_shared.o`, imported shared
-`env.memory`, locked heap) exist for multi-thread hosts. WASI preview1 services
-work via `absolute_wasm_runtime_wasi.o`. Browser: main-thread mocks or Worker
-session with COOP/COEP. See [`wasm-target.md`](wasm-target.md).
+Not yet: dynamic `load`, full wasi-threads/TLS, guest-on-wasi-libc malloc.
+See [`wasm-target.md`](wasm-target.md) and [`examples/wasm/`](../examples/wasm/).
 
 ## Related docs
 

@@ -10,6 +10,7 @@
  *   node tools/absolute-dev.js eval <expression>
  *   node tools/absolute-dev.js repl
  *   node tools/absolute-dev.js bindgen <header.h> [bindgen-args...]
+ *   node tools/absolute-dev.js wasm build|run|test ...
  */
 
 const fs = require('fs');
@@ -30,7 +31,229 @@ function usage() {
   absolute-dev eval <expression>
   absolute-dev repl
   absolute-dev bindgen <header.h> [-o out.abs] [-I dir] [--clang path]
+  absolute-dev wasm build <file.abs> [-o out.wasm] [--runtime host|wasi|shared]
+  absolute-dev wasm run <file.wasm> [--wasi] [--export name] [--args a,b] [--env K=V]
+  absolute-dev wasm test [ctest-args...]
 `);
+}
+
+function findAbsolutec() {
+    if (process.env.ABSOLUTEC && fs.existsSync(process.env.ABSOLUTEC)) {
+        return process.env.ABSOLUTEC;
+    }
+    const candidates = [
+        path.join(repoRoot, '.absolute', 'build', 'windows-release', 'Release', 'absolutec.exe'),
+        path.join(repoRoot, '.absolute', 'build', 'windows-release', 'absolutec.exe'),
+        path.join(repoRoot, 'build', 'Release', 'absolutec.exe'),
+        path.join(repoRoot, 'build', 'absolutec'),
+        path.join(repoRoot, 'x64', 'Release', 'absolutec.exe'),
+        path.join(repoRoot, 'x64', 'Debug', 'absolutec.exe'),
+    ];
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) return candidate;
+    }
+    return 'absolutec';
+}
+
+function findWasmRuntimeObject(kind) {
+    const names = {
+        host: 'absolute_wasm_runtime.o',
+        wasi: 'absolute_wasm_runtime_wasi.o',
+        shared: 'absolute_wasm_runtime_shared.o',
+    };
+    const file = names[kind] || names.host;
+    const roots = [
+        path.join(repoRoot, '.absolute', 'build', 'windows-release'),
+        path.join(repoRoot, 'build'),
+        path.join(repoRoot, '.absolute', 'build', 'msvc-release'),
+    ];
+    for (const root of roots) {
+        const full = path.join(root, file);
+        if (fs.existsSync(full)) return full;
+    }
+    return null;
+}
+
+function findWasmLd() {
+    if (process.env.ABSOLUTE_WASM_LD && fs.existsSync(process.env.ABSOLUTE_WASM_LD)) {
+        return process.env.ABSOLUTE_WASM_LD;
+    }
+    const candidates = [
+        path.join(repoRoot, '.absolute', 'toolchains', 'llvm-18.1.8', 'bin', 'wasm-ld.exe'),
+        path.join(repoRoot, '.absolute', 'toolchains', 'llvm-18.1.8', 'bin', 'wasm-ld'),
+    ];
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) return candidate;
+    }
+    return process.platform === 'win32' ? 'wasm-ld.exe' : 'wasm-ld';
+}
+
+function runWasmBuild(args) {
+    let source = null;
+    let output = null;
+    let runtime = 'host';
+    for (let i = 0; i < args.length; i += 1) {
+        const arg = args[i];
+        if (arg === '-o' || arg === '--output') {
+            output = args[++i];
+            continue;
+        }
+        if (arg === '--runtime') {
+            runtime = String(args[++i] || 'host').toLowerCase();
+            continue;
+        }
+        if (arg.startsWith('-')) {
+            console.error(`unknown wasm build option: ${arg}`);
+            return 1;
+        }
+        if (source) {
+            console.error('wasm build accepts a single .abs source');
+            return 1;
+        }
+        source = arg;
+    }
+    if (!source || !fs.existsSync(source)) {
+        console.error('wasm build requires an existing .abs file');
+        return 1;
+    }
+    if (!['host', 'wasi', 'shared'].includes(runtime)) {
+        console.error('--runtime must be host, wasi, or shared');
+        return 1;
+    }
+    const absolutec = findAbsolutec();
+    const outWasm = path.resolve(output || path.basename(source, path.extname(source)) + '.wasm');
+    const env = { ...process.env };
+    if (runtime === 'wasi') env.ABSOLUTE_WASM_RUNTIME = 'wasi';
+    if (runtime === 'shared') env.ABSOLUTE_WASM_RUNTIME = 'shared';
+
+    // Prefer absolutec --build-exe when the matching runtime object is baked into absolutec.
+    // Fallback: emit-object + wasm-ld with the runtime .o from the build tree.
+    const preferDirect = runtime === 'host' || process.env.ABSOLUTE_WASM_FORCE_DIRECT === '1';
+    if (preferDirect || runtime === 'wasi' || runtime === 'shared') {
+        // Try direct first when absolutec knows about the runtime objects.
+        const direct = childProcess.spawnSync(
+            absolutec,
+            [path.resolve(source), '--target', 'wasm32-unknown-unknown', '--build-exe', '-o', outWasm],
+            { stdio: 'inherit', shell: true, env },
+        );
+        if (direct.status === 0 && fs.existsSync(outWasm)) {
+            console.log(`wasm: built ${outWasm} (runtime=${runtime})`);
+            return 0;
+        }
+        if (runtime === 'host') {
+            return direct.status === null ? 1 : direct.status;
+        }
+        console.warn('wasm: direct --build-exe failed or incomplete; trying emit-object + wasm-ld');
+    }
+
+    const objectPath = outWasm + '.o';
+    const emit = childProcess.spawnSync(
+        absolutec,
+        [path.resolve(source), '--target', 'wasm32-unknown-unknown', '--emit-object', '-o', objectPath],
+        { stdio: 'inherit', shell: true, env },
+    );
+    if (emit.status !== 0) return emit.status === null ? 1 : emit.status;
+
+    const runtimeObject = findWasmRuntimeObject(runtime);
+    if (!runtimeObject) {
+        console.error(`wasm runtime object for '${runtime}' not found; build Absolute (Absolute-Runtime-WasmShim) first`);
+        return 1;
+    }
+    const wasmLd = findWasmLd();
+    const linkArgs = ['--no-entry', '--export-all'];
+    if (runtime === 'shared') {
+        linkArgs.push('--shared-memory', '--import-memory', '--max-memory=16777216');
+    }
+    linkArgs.push(objectPath, runtimeObject, '-o', outWasm);
+    console.log(`${wasmLd} ${linkArgs.join(' ')}`);
+    const link = childProcess.spawnSync(wasmLd, linkArgs, { stdio: 'inherit', shell: true });
+    if (link.status === 0) console.log(`wasm: built ${outWasm} (runtime=${runtime})`);
+    return link.status === null ? 1 : link.status;
+}
+
+function runWasmRun(args) {
+    let modulePath = null;
+    let useWasi = false;
+    let exportName = 'main';
+    let callArgs = [];
+    const envPairs = [];
+    for (let i = 0; i < args.length; i += 1) {
+        const arg = args[i];
+        if (arg === '--wasi') {
+            useWasi = true;
+            continue;
+        }
+        if (arg === '--export') {
+            exportName = args[++i] || 'main';
+            continue;
+        }
+        if (arg === '--args') {
+            const raw = args[++i] || '';
+            callArgs = raw.split(',').filter(Boolean).map((part) => {
+                if (/^-?\d+$/.test(part)) return Number(part);
+                return part;
+            });
+            continue;
+        }
+        if (arg === '--env') {
+            envPairs.push(args[++i] || '');
+            continue;
+        }
+        if (arg.startsWith('-')) {
+            console.error(`unknown wasm run option: ${arg}`);
+            return 1;
+        }
+        if (modulePath) {
+            console.error('wasm run accepts a single .wasm module');
+            return 1;
+        }
+        modulePath = arg;
+    }
+    if (!modulePath || !fs.existsSync(modulePath)) {
+        console.error('wasm run requires an existing .wasm file');
+        return 1;
+    }
+    const absModule = path.resolve(modulePath);
+    if (useWasi) {
+        const runner = path.join(repoRoot, 'tools', 'absolute-wasm-wasi-run.js');
+        const runnerArgs = [runner, absModule, '--export', exportName];
+        for (const pair of envPairs) {
+            if (pair) runnerArgs.push('--env', pair);
+        }
+        for (const value of callArgs) {
+            runnerArgs.push('--arg', String(value));
+        }
+        const result = childProcess.spawnSync(process.execPath, runnerArgs, {
+            stdio: 'inherit',
+            env: { ...process.env, NODE_NO_WARNINGS: '1' },
+        });
+        return result.status === null ? 1 : result.status;
+    }
+    const runner = path.join(repoRoot, 'tools', 'absolute-wasm-run.js');
+    const runnerArgs = [runner, absModule, '--export', exportName];
+    if (callArgs.length) runnerArgs.push('--args', callArgs.join(','));
+    const result = childProcess.spawnSync(process.execPath, runnerArgs, { stdio: 'inherit' });
+    return result.status === null ? 1 : result.status;
+}
+
+function runWasmTest(args) {
+    const filtered = args[0] === '--' ? args.slice(1) : args;
+    return runTests(['-R', 'wasm', ...filtered]);
+}
+
+function runWasm(args) {
+    const sub = args[0];
+    const rest = args.slice(1);
+    if (!sub || sub === '-h' || sub === '--help') {
+        usage();
+        return 0;
+    }
+    if (sub === 'build') return runWasmBuild(rest);
+    if (sub === 'run') return runWasmRun(rest);
+    if (sub === 'test') return runWasmTest(rest);
+    console.error(`unknown wasm subcommand: ${sub}`);
+    usage();
+    return 1;
 }
 
 function formatFiles(files) {
@@ -163,6 +386,8 @@ function main(argv) {
         const bindgen = require(path.join(repoRoot, 'tools', 'absolute-bindgen.js'));
         return bindgen.main(rest);
     }
+    case 'wasm':
+        return runWasm(rest);
     default:
         console.error(`unknown command: ${command}`);
         usage();
