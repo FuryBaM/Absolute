@@ -1,0 +1,104 @@
+// Desktop audio mixer demo (Windows waveOut).
+// 1 = beep, 2 = blip, 3 = thud, Space = all three, L = loop beep, S = stop, Esc quit.
+
+int32 main() {
+    auto window = new Desktop.Window("Absolute Audio", 640, 360, false);
+    if (!window.isOpen()) {
+        println("Could not create desktop window");
+        return 1;
+    }
+
+    auto audio = new Desktop.Audio();
+    if (!audio.isValid()) {
+        println("Audio device failed (Windows waveOut required)");
+        window.close();
+        return 1;
+    }
+    audio.setMasterVolume(0.85);
+
+    auto beep = audio.loadWav("examples/desktop/assets/beep.wav");
+    if (beep == null) {
+        beep = audio.loadWav("assets/beep.wav");
+    }
+    auto blip = audio.loadWav("examples/desktop/assets/blip.wav");
+    if (blip == null) {
+        blip = audio.loadWav("assets/blip.wav");
+    }
+    auto thud = audio.loadWav("examples/desktop/assets/thud.wav");
+    if (thud == null) {
+        thud = audio.loadWav("assets/thud.wav");
+    }
+    if (beep == null || blip == null || thud == null) {
+        println("Failed to load WAV assets");
+        audio.destroy();
+        window.close();
+        return 1;
+    }
+
+    auto font = new Desktop.Font("Segoe UI", 20, Desktop.Font.StyleNormal);
+    auto small = new Desktop.Font("Consolas", 16, Desktop.Font.StyleNormal);
+
+    while (window.poll()) {
+        if (window.keyPressed(Desktop.KeyEscape())) {
+            window.close();
+        } else {
+            // Virtual-key codes: '1' '2' '3' Space L S
+            if (window.keyPressed(49)) {
+                beep.play(0.9);
+            }
+            if (window.keyPressed(50)) {
+                blip.play(0.9);
+            }
+            if (window.keyPressed(51)) {
+                thud.play(1.0);
+            }
+            if (window.keyPressed(Desktop.KeySpace())) {
+                beep.play(0.7);
+                blip.play(0.7);
+                thud.play(0.7);
+            }
+            if (window.keyPressed(76)) {
+                if (beep.isPlaying()) {
+                    beep.stop();
+                } else {
+                    beep.playLoop(0.35);
+                }
+            }
+            if (window.keyPressed(83)) {
+                audio.stopAll();
+            }
+
+            window.clear(Desktop.rgb(14, 16, 26));
+            if (font.isValid()) {
+                window.drawFontText(font, 24, 24, "Desktop.Audio mixer", Desktop.rgb(240, 244, 255));
+                window.drawFontText(font, 24, 64, "1 beep  2 blip  3 thud", Desktop.rgb(180, 200, 230));
+                window.drawFontText(font, 24, 100, "Space = chord   L = loop beep   S = stop", Desktop.rgb(160, 180, 210));
+            }
+            if (small.isValid()) {
+                window.drawFontText(small, 24, 160, "active voices / master", Desktop.rgb(120, 200, 160));
+            }
+            // Simple voice meter bars.
+            int32 voices = audio.activeVoices();
+            int32 i = 0;
+            while (i < 8) {
+                uint32 col = Desktop.rgb(40, 50, 70);
+                if (i < voices) {
+                    col = Desktop.rgb(80, 200, 140);
+                }
+                window.fillRect(24 + i * 28, 200, 22, 40, col);
+                i = i + 1;
+            }
+            window.drawText(24, 260, "Esc quit", Desktop.rgb(140, 150, 170), 2);
+            window.present();
+        }
+    }
+
+    beep.destroy();
+    blip.destroy();
+    thud.destroy();
+    small.destroy();
+    font.destroy();
+    audio.destroy();
+    window.close();
+    return 0;
+}

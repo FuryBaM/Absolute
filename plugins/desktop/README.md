@@ -84,6 +84,15 @@ examples\desktop\run.bat pong.abs
 - `Desktop.measureText(text, scale)` / `Desktop.measureTextHeight(text, scale)`
 - `Desktop.fontGlyphWidth()` / `Desktop.fontGlyphHeight()` — unscaled glyph size (8×8)
 
+### Audio (WAV mixer)
+Windows waveOut software mixer @ 44.1 kHz stereo, up to 32 voices. Non-Windows: stub.
+
+- `new Desktop.Audio()` / `isValid` / `destroy` / `setMasterVolume(0..1)` / `stopAll` / `activeVoices`
+- `audio.loadWav(path)` → `Sound*` (8/16-bit PCM mono/stereo; resampled)
+- `sound.play(volume)` / `playLoop(volume)` / `stop` / `isPlaying` / `duration`
+- Assets: `examples/desktop/assets/beep.wav`, `blip.wav`, `thud.wav`
+- Example: `examples/desktop/audio.abs`
+
 ### Soft TrueType / system fonts (`Desktop.Font`)
 Windows GDI (ClearType raster → soft buffer). Non-Windows: create returns invalid.
 
@@ -177,4 +186,4 @@ Examples: `examples/desktop/window.abs`, `pong.abs`, `sprites.abs`, `input.abs`,
 `image.abs` (BMP + atlas), `text.abs` (soft font HUD / typing),
 `batch.abs` (`SpriteBatch` + atlas tiles), `triangle.abs` (OpenGL pipeline),
 `gpu-sprites.abs` (textured ship + atlas), `image-png.abs` (PNG `loadImage`),
-`font.abs` (system / TTF soft fonts).
+`font.abs` (system / TTF soft fonts), `audio.abs` (WAV mixer).

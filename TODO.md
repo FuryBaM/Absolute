@@ -515,10 +515,12 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   non-Windows PNG still open.
 - [x] Soft TTF / system fonts: `Desktop.Font` (Windows GDI), `loadFile` for
   private `.ttf`/`.otf`, `drawFontText` / `measure` / `lineHeight`;
-  example `examples/desktop/font.abs`. Models/audio still open.
-- [ ] Модели 3D и аудио (BMP + PNG + soft 8×8 + TTF/system fonts уже есть).
+  example `examples/desktop/font.abs`.
+- [x] Audio output/mixer: `Desktop.Audio` + `Sound` (WAV PCM load, waveOut
+  software mixer, 32 voices, master volume, play/loop/stop);
+  assets `beep.wav`/`blip.wav`/`thud.wav`, example `audio.abs`.
+- [ ] 3D model load (meshes) — still open.
 - [ ] Добавить базовый UI toolkit для desktop-приложений.
-- [ ] Добавить audio output/mixer.
 - [ ] Расширить `absolute.shader` от opaque DSL-stub к reflection + RHI bind
   (SPIR-V/DXIL/Metal IR) поверх выбранного GPU backend.
 

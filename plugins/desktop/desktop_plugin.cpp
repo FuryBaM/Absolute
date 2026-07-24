@@ -58,6 +58,20 @@ extern "C" int32 absolute_desktop_font_measure(int64 handle, string text);
 extern "C" int32 absolute_desktop_font_measure_height(int64 handle, string text);
 extern "C" void absolute_desktop_font_draw_window(int64 windowHandle, int64 fontHandle, int32 x, int32 y, string text, uint32 color);
 extern "C" void absolute_desktop_font_draw_sprite(int64 spriteHandle, int64 fontHandle, int32 x, int32 y, string text, uint32 color);
+extern "C" int64 absolute_desktop_audio_create();
+extern "C" void absolute_desktop_audio_destroy(int64 handle);
+extern "C" int32 absolute_desktop_audio_is_valid(int64 handle);
+extern "C" void absolute_desktop_audio_set_master(int64 handle, float volume);
+extern "C" float absolute_desktop_audio_master(int64 handle);
+extern "C" void absolute_desktop_audio_stop_all(int64 handle);
+extern "C" int32 absolute_desktop_audio_active_voices(int64 handle);
+extern "C" int64 absolute_desktop_sound_load_wav(int64 audioHandle, string path);
+extern "C" void absolute_desktop_sound_destroy(int64 audioHandle, int64 soundHandle);
+extern "C" int32 absolute_desktop_sound_is_valid(int64 soundHandle);
+extern "C" float absolute_desktop_sound_duration(int64 soundHandle);
+extern "C" int32 absolute_desktop_sound_play(int64 audioHandle, int64 soundHandle, float volume, int32 loop);
+extern "C" void absolute_desktop_sound_stop(int64 audioHandle, int64 soundHandle);
+extern "C" int32 absolute_desktop_sound_is_playing(int64 audioHandle, int64 soundHandle);
 extern "C" int64 absolute_desktop_batch_create();
 extern "C" void absolute_desktop_batch_destroy(int64 handle);
 extern "C" void absolute_desktop_batch_begin(int64 handle, int64 windowHandle, int64 atlasHandle);
@@ -236,6 +250,93 @@ namespace Desktop {
 
     double gamepadAxis(int32 index, int32 axis) {
         return absolute_desktop_gamepad_axis(index, axis);
+    }
+
+    // Decoded PCM clip owned by an Audio device (created via Audio.loadWav).
+    class Sound {
+        public int64 handle;
+        public int64 audioHandle;
+
+        public bool isValid() {
+            return handle != 0 && absolute_desktop_sound_is_valid(handle) != 0;
+        }
+
+        public void destroy() {
+            if (handle != 0) {
+                absolute_desktop_sound_destroy(audioHandle, handle);
+                handle = 0;
+            }
+        }
+
+        public float duration() {
+            return absolute_desktop_sound_duration(handle);
+        }
+
+        // One-shot. Returns false if no free voice (max 32).
+        public bool play(float volume) {
+            return absolute_desktop_sound_play(audioHandle, handle, volume, 0) != 0;
+        }
+
+        public bool playLoop(float volume) {
+            return absolute_desktop_sound_play(audioHandle, handle, volume, 1) != 0;
+        }
+
+        public void stop() {
+            absolute_desktop_sound_stop(audioHandle, handle);
+        }
+
+        public bool isPlaying() {
+            return absolute_desktop_sound_is_playing(audioHandle, handle) != 0;
+        }
+    }
+
+    // Software mixer (Windows waveOut, stereo 44.1 kHz). Up to 32 concurrent voices.
+    class Audio {
+        public int64 handle;
+
+        public Audio() {
+            handle = absolute_desktop_audio_create();
+        }
+
+        public bool isValid() {
+            return handle != 0 && absolute_desktop_audio_is_valid(handle) != 0;
+        }
+
+        public void destroy() {
+            if (handle != 0) {
+                absolute_desktop_audio_destroy(handle);
+                handle = 0;
+            }
+        }
+
+        // Master gain 0..1.
+        public void setMasterVolume(float volume) {
+            absolute_desktop_audio_set_master(handle, volume);
+        }
+
+        public float masterVolume() {
+            return absolute_desktop_audio_master(handle);
+        }
+
+        public void stopAll() {
+            absolute_desktop_audio_stop_all(handle);
+        }
+
+        public int32 activeVoices() {
+            return absolute_desktop_audio_active_voices(handle);
+        }
+
+        // Load 8/16-bit PCM WAV (mono/stereo); resampled to 44.1 kHz stereo.
+        public Sound* loadWav(string path) {
+            int64 h = absolute_desktop_sound_load_wav(handle, path);
+            if (h == 0) {
+                return null;
+            }
+            auto sound = new Sound();
+            sound.handle = h;
+            sound.audioHandle = handle;
+            return sound;
+        }
     }
 
     // Fixed timestep accumulator for deterministic simulation.

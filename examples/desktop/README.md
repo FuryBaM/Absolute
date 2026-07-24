@@ -41,6 +41,7 @@ pong.exe
 | `image.abs` | BMP load, magenta color key, atlas `drawSpriteRect` |
 | `image-png.abs` | PNG `loadImage` (WIC) with BMP fallback, same soft demo |
 | `font.abs` | `Desktop.Font` system/TTF soft text vs built-in 8×8 |
+| `audio.abs` | WAV mixer: play / loop / stop / multi-voice |
 | `text.abs` | Built-in 8×8 soft font, scaled HUD, sprite-baked label, typing |
 | `batch.abs` | Soft `SpriteBatch`: 120 atlas tiles + ship in one flush |
 | `triangle.abs` | OpenGL RHI: shader + buffer + pipeline + bind/draw |
@@ -57,6 +58,7 @@ pong.exe
 - **Batch:** `Desktop.SpriteBatch`, `begin`/`drawRect`/`drawSprite`/`end`
 - **GPU:** `Desktop.Gpu`: shader/buffer/pipeline/texture, `beginFrame`/`bind`/`draw`/`endFrame`/`present`
 - **Text:** built-in 8×8 `drawText`; `Desktop.Font` + `drawFontText` / `measure`
+- **Audio:** `Desktop.Audio` + `loadWav` / `play` / `playLoop` / `stopAll`
 - **Keys:** `Desktop.KeyEscape()`, `KeySpace()`, `KeyW/A/S/D()`, arrows, …
 
 See `plugins/desktop/README.md` for backend details.

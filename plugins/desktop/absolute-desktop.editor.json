@@ -51,6 +51,32 @@
       ]
     },
     {
+      "name": "Desktop.Audio",
+      "detail": "class Desktop.Audio",
+      "documentation": "WAV software mixer (Windows waveOut). loadWav, master volume, stopAll.",
+      "snippet": "auto ${1:audio} = new Desktop.Audio();\nauto ${2:sfx} = $1.loadWav(${3:\"assets/beep.wav\"});\n$2.play(1.0);",
+      "members": [
+        { "name": "loadWav", "detail": "Sound* loadWav(string path)" },
+        { "name": "setMasterVolume", "detail": "void setMasterVolume(float volume)" },
+        { "name": "stopAll", "detail": "void stopAll()" },
+        { "name": "activeVoices", "detail": "int32 activeVoices()" },
+        { "name": "destroy", "detail": "void destroy()" }
+      ]
+    },
+    {
+      "name": "Desktop.Sound",
+      "detail": "class Desktop.Sound",
+      "documentation": "Decoded WAV clip. play(volume), playLoop(volume), stop.",
+      "members": [
+        { "name": "play", "detail": "bool play(float volume)" },
+        { "name": "playLoop", "detail": "bool playLoop(float volume)" },
+        { "name": "stop", "detail": "void stop()" },
+        { "name": "isPlaying", "detail": "bool isPlaying()" },
+        { "name": "duration", "detail": "float duration()" },
+        { "name": "destroy", "detail": "void destroy()" }
+      ]
+    },
+    {
       "name": "Desktop.Sprite",
       "detail": "class Desktop.Sprite",
       "documentation": "Soft offscreen buffer for procedural art, BMP/PNG images, and baked text.",
