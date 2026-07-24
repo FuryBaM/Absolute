@@ -32,7 +32,7 @@ absolutec tests\wasm-export-only.abs --target wasm32-unknown-unknown --build-exe
 | `--build-exe --target` for non-wasm triples | Error |
 | `load(.dll)` / desktop plugins on wasm | not available |
 | Full WASI sysroot / wasi-sdk libc | Not shipped |
-| Multi-threaded Absolute tasks on wasm | sync only (no worker pool yet) |
+| Shared-memory pthread-style wasm threads | not yet (worker pool uses isolated instances) |
 
 ## Runtime and linking
 
@@ -47,7 +47,8 @@ Supported profiles:
 1. **Export-only** — `export "C"` scalars.
 2. **Console/assert** — `println` / `assert` via `env.absolute_log`.
 3. **Managed objects** — `new` / `delete` (see `tests/wasm-managed.abs`).
-4. **Sync tasks** — `spawn`/`await` run immediately (see `tests/wasm-task.abs`).
+4. **Tasks** — sync `spawn`/`await` by default (`tests/wasm-task.abs`); optional
+   Node worker pool (`taskWorkers`, `tests/wasm-task-mt.abs`).
 5. **Virtual FS** — in-memory `absolute_fs_*` (see `tests/wasm-fs.abs`).
 6. **HTTP** — host `absolute_http_get` with mocks or prefetch (see `tests/wasm-http.abs`).
 7. **TCP** — host `absolute_tcp_*` mocks or real OS sockets under Node (below).
@@ -85,6 +86,7 @@ Common triples:
 - `tests/wasm-smoke.abs` → `absolute.run-wasm-smoke`
 - `tests/wasm-managed.abs` → `absolute.run-wasm-managed` (`new`/`delete` Box)
 - `tests/wasm-task.abs` → `absolute.run-wasm-task` (sync spawn/await)
+- `tests/wasm-task-mt.abs` → `absolute.run-wasm-task-mt` (Node task worker pool)
 - `tests/wasm-fs.abs` → `absolute.run-wasm-fs` (virtual FS round-trip)
 - `tests/wasm-http.abs` → `absolute.run-wasm-http` (host HTTP mock)
 - `tests/wasm-net.abs` → `absolute.run-wasm-net` (host TCP echo mock)
@@ -98,12 +100,42 @@ Common triples:
 | `absolute_log(ptr, len)` | `env` | UTF-8 console from `puts`/`printf` |
 | `absolute_http_get(url, out, cap)` | `env` | Host HTTP GET (or mocks) into linear memory |
 | `absolute_tcp_*` | `env` | Host TCP: mocks and/or real OS sockets (Node) |
+| `absolute_task_pool_size` | `env` | `0` = sync tasks; `>0` = host worker pool |
+| `absolute_task_enqueue` / `absolute_task_await_job` | `env` | Offload spawn/await to workers |
 
 Node helpers:
 
 - `tools/absolute-wasm-host.js` — `instantiateAbsoluteWasm`
 - `tools/absolute-wasm-tcp-worker.js` — background TCP for blocking imports
+- `tools/absolute-wasm-task-worker.js` — task worker pool (isolated instances)
 - `tools/absolute-wasm-run.js` — CLI runner for `main` / exports
+
+### Task worker pool (Node)
+
+By default `spawn` runs the entry immediately on the calling thread (same as a
+single-threaded scheduler). With `instantiateAbsoluteWasm(bytes, { taskWorkers: N })`
+and `N > 0`:
+
+1. Runtime copies the task context (i64 slots) into a `SharedArrayBuffer` job queue.
+2. One of `N` OS workers claims the job, runs the entry on its **own** module
+   instance (`__indirect_function_table` + `malloc`), and writes the result slot.
+3. `await` blocks via `Atomics.wait` until the slot is done, then copies **only**
+   the 8-byte result slot back into the main context.
+
+| Option | Behavior |
+|--------|----------|
+| `taskWorkers: 0` / omitted | Sync tasks (no extra workers) |
+| `taskWorkers: N` | Up to `N` parallel OS workers (capped at 16) |
+| `host.shutdown()` | Terminates task workers (and TCP worker if any) |
+
+Limits:
+
+- **Isolated heaps** — workers do not share linear memory with main. Contexts must
+  be primitive/pointer **slots** as produced by Absolute codegen. Pointers into
+  the main heap are not valid on the worker.
+- **Not shared-memory wasm threads** — no `memory.atomic` pthread model yet.
+- Job queue holds a fixed number of in-flight tasks (32); enqueue fails (abort)
+  if saturated.
 
 ### Real TCP (Node)
 
@@ -135,9 +167,9 @@ WASI console build (`absolute_wasm_runtime_wasi.o`) uses
 
 ## Next steps (not done)
 
-1. Multi-threaded Absolute tasks / SharedArrayBuffer worker pool.
+1. Shared-memory wasm threads (atomics heap, true shared `memory`).
 2. Optional wasi-sdk sysroot and richer WASI networking.
-3. Browser-side TCP/WebSocket bridge equivalent to the Node worker.
+3. Browser-side TCP/WebSocket / task-worker bridges.
 
 ## Acceptance criteria progress
 

@@ -11,8 +11,10 @@
  * provides it (Node/browser helpers), println/assert text is visible; when
  * omitted, wasm-ld can still link if the import is satisfied at instantiate.
  *
- * Tasks: single-threaded synchronous spawn/await (entry runs immediately).
- * Not provided: dynamic load, FS, sockets, full host Absolute-Runtime.
+ * Tasks: sync spawn/await by default (entry runs immediately). When the host
+ * reports a task worker pool (Node `taskWorkers`), spawn enqueues the entry +
+ * context bytes and await blocks until a worker finishes (isolated wasm heap;
+ * primitive/pointer-slot contexts only — see docs/wasm-target.md).
  */
 
 #include <stdarg.h>
@@ -555,18 +557,48 @@ const char* absolute_load_error(void) {
     return g_load_error;
 }
 
-/* ---------- tasks: single-threaded synchronous scheduler ---------- */
+/* ---------- tasks: sync scheduler or host worker pool ---------- */
+
+/* Max context bytes copied to/from a host worker (i64 slots from codegen). */
+enum { ABSOLUTE_WASM_TASK_CONTEXT_MAX = 512 };
 
 typedef struct WasmTask {
     void* context;
     uint64_t error_handle;
     uint64_t error_type;
+    int32_t job_id; /* host pool job slot, or -1 when run synchronously */
     int done;
 } WasmTask;
 
 static int32_t g_task_core = -1;
 static int32_t g_task_priority = 0;
 static const char* g_task_role = "";
+
+#if !defined(ABSOLUTE_WASM_USE_WASI)
+__attribute__((import_module("env"), import_name("absolute_task_pool_size")))
+int32_t absolute_host_task_pool_size(void);
+__attribute__((import_module("env"), import_name("absolute_task_enqueue")))
+int32_t absolute_host_task_enqueue(
+    int32_t entry, void* context, int32_t context_bytes, int32_t core, int32_t priority);
+__attribute__((import_module("env"), import_name("absolute_task_await_job")))
+void absolute_host_task_await_job(int32_t job_id, void* context, int32_t context_bytes);
+#else
+static int32_t absolute_host_task_pool_size(void) { return 0; }
+static int32_t absolute_host_task_enqueue(
+    int32_t entry, void* context, int32_t context_bytes, int32_t core, int32_t priority) {
+    (void)entry;
+    (void)context;
+    (void)context_bytes;
+    (void)core;
+    (void)priority;
+    return -1;
+}
+static void absolute_host_task_await_job(int32_t job_id, void* context, int32_t context_bytes) {
+    (void)job_id;
+    (void)context;
+    (void)context_bytes;
+}
+#endif
 
 void* absolute_task_spawn_config(
     void (*entry)(void*), void* context, int32_t core, int32_t priority, const char* role) {
@@ -581,6 +613,7 @@ void* absolute_task_spawn_config(
     task->context = context;
     task->error_handle = 0;
     task->error_type = 0;
+    task->job_id = -1;
     task->done = 0;
 
     const int32_t prev_core = g_task_core;
@@ -590,13 +623,24 @@ void* absolute_task_spawn_config(
     g_task_priority = priority;
     g_task_role = role ? role : "";
 
-    /* Run immediately on the calling "thread" (single-threaded wasm). */
-    entry(context);
-    task->done = 1;
+    if (absolute_host_task_pool_size() > 0) {
+        /* Offload to host worker pool (isolated module instance per worker). */
+        const int32_t entry_index = (int32_t)(uintptr_t)entry;
+        const int32_t job = absolute_host_task_enqueue(
+            entry_index, context, ABSOLUTE_WASM_TASK_CONTEXT_MAX, core, priority);
+        if (job < 0)
+            abort();
+        task->job_id = job;
+        /* done remains 0 until await joins the worker. */
+    } else {
+        /* Run immediately on the calling "thread" (single-threaded wasm). */
+        entry(context);
+        task->done = 1;
 
-    if (absolute_error_pending()) {
-        task->error_type = absolute_error_type();
-        task->error_handle = absolute_error_take();
+        if (absolute_error_pending()) {
+            task->error_type = absolute_error_type();
+            task->error_handle = absolute_error_take();
+        }
     }
 
     g_task_core = prev_core;
@@ -636,8 +680,13 @@ void* absolute_task_await(void* handle) {
     if (!handle)
         abort();
     WasmTask* task = (WasmTask*)handle;
-    if (!task->done)
-        abort(); /* sync scheduler always completes in spawn */
+    if (!task->done) {
+        if (task->job_id < 0)
+            abort();
+        absolute_host_task_await_job(
+            task->job_id, task->context, ABSOLUTE_WASM_TASK_CONTEXT_MAX);
+        task->done = 1;
+    }
     if (task->error_handle)
         absolute_error_set(task->error_handle, task->error_type);
     void* context = task->context;
@@ -649,8 +698,15 @@ void absolute_task_destroy(void* handle) {
     if (!handle)
         return;
     WasmTask* task = (WasmTask*)handle;
-    if (!task->done)
-        abort();
+    if (!task->done) {
+        if (task->job_id >= 0) {
+            absolute_host_task_await_job(
+                task->job_id, task->context, ABSOLUTE_WASM_TASK_CONTEXT_MAX);
+            task->done = 1;
+        } else {
+            abort();
+        }
+    }
     if (task->error_handle)
         absolute_managed_destroy(task->error_handle);
     free(task->context);

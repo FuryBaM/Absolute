@@ -1459,6 +1459,16 @@ if(BUILD_TESTING)
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-task.cmake"
                 )
                 add_test(
+                    NAME absolute.run-wasm-task-mt
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-task-mt.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-task-mt.wasm
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-task-mt.cmake"
+                )
+                add_test(
                     NAME absolute.run-wasm-fs
                     COMMAND "${CMAKE_COMMAND}"
                         -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>

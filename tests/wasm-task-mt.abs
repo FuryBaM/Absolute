@@ -1,0 +1,19 @@
+// Multi-worker host pool: two spawns run on isolated worker instances.
+async int32 doubleOf(int32 value) {
+    return value * 2;
+}
+
+async int32 addPair(int32 left, int32 right) {
+    return left + right;
+}
+
+async int32 main() {
+    task<int32> a = spawn doubleOf(21);
+    task<int32> b = spawn addPair(20, 22);
+    int32 left = await a;
+    int32 right = await b;
+    assert(left == 42, "wasm task mt double");
+    assert(right == 42, "wasm task mt add");
+    println("wasm-task-mt=ok");
+    return 0;
+}

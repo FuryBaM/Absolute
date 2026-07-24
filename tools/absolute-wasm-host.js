@@ -5,7 +5,8 @@
  *
  * env imports:
  *   absolute_log, absolute_http_get,
- *   absolute_tcp_connect/listen/accept/send/receive/close/port
+ *   absolute_tcp_connect/listen/accept/send/receive/close/port,
+ *   absolute_task_pool_size / absolute_task_enqueue / absolute_task_await_job
  */
 
 const http = require('http');
@@ -64,6 +65,136 @@ function httpGetSync(url, maxBytes) {
             reject(new Error('timeout'));
         });
     });
+}
+
+/* Task pool SAB layout (must match absolute-wasm-task-worker.js). */
+const TASK_STATUS_FREE = 0;
+const TASK_STATUS_READY = 1;
+const TASK_STATUS_RUNNING = 2;
+const TASK_STATUS_DONE = 3;
+const TASK_CONTEXT_MAX = 512;
+const TASK_JOB_COUNT = 32;
+const TASK_JOB_STRIDE = 64 + TASK_CONTEXT_MAX; // header + payload
+const TASK_JOB_BASE = 64;
+const TASK_WAKE_INDEX = 0; // i32 index in control header
+
+function createTaskPool(wasmBytes, workerCount) {
+    const count = Math.max(0, Math.min(16, workerCount | 0));
+    if (count <= 0) {
+        return {
+            size: 0,
+            enqueue() { return -1; },
+            awaitJob() {},
+            shutdown() {},
+        };
+    }
+
+    const sabSize = TASK_JOB_BASE + TASK_JOB_COUNT * TASK_JOB_STRIDE;
+    const sab = new SharedArrayBuffer(sabSize);
+    const i32 = new Int32Array(sab);
+    const u8 = new Uint8Array(sab);
+    /** @type {WebAssembly.Memory | null} */
+    let memory = null;
+
+    const workers = [];
+    for (let w = 0; w < count; w += 1) {
+        const worker = new Worker(path.join(__dirname, 'absolute-wasm-task-worker.js'), {
+            workerData: {
+                wasmBytes: Buffer.from(wasmBytes),
+                sab,
+                jobCount: TASK_JOB_COUNT,
+                jobStride: TASK_JOB_STRIDE,
+                jobBase: TASK_JOB_BASE,
+                contextMax: TASK_CONTEXT_MAX,
+                wakeIndex: TASK_WAKE_INDEX,
+            },
+        });
+        if (typeof worker.unref === 'function') worker.unref();
+        worker.on('error', (error) => {
+            if (typeof console !== 'undefined') console.error('absolute wasm task worker error', error);
+        });
+        workers.push(worker);
+    }
+
+    function slotI32Offset(jobIndex) {
+        return (TASK_JOB_BASE + jobIndex * TASK_JOB_STRIDE) >> 2;
+    }
+
+    function slotBytesOffset(jobIndex) {
+        return TASK_JOB_BASE + jobIndex * TASK_JOB_STRIDE + 64;
+    }
+
+    function bindMemory(mem) {
+        memory = mem;
+    }
+
+    function enqueue(entry, contextPtr, contextBytes, core, priority) {
+        if (!memory) return -1;
+        // Cap the copy to stay inside wasm memory; workers only need arg slots.
+        const requested = Math.min(Number(contextBytes) | 0, TASK_CONTEXT_MAX);
+        const src = Number(contextPtr) >>> 0;
+        const view = new Uint8Array(memory.buffer);
+        const len = Math.min(requested, Math.max(0, view.length - src));
+        for (let i = 0; i < TASK_JOB_COUNT; i += 1) {
+            const base = slotI32Offset(i);
+            // Only the main thread enqueues: fill the free slot, then publish READY.
+            if (Atomics.load(i32, base) !== TASK_STATUS_FREE) continue;
+            Atomics.store(i32, base + 1, Number(entry) | 0);
+            Atomics.store(i32, base + 2, len);
+            Atomics.store(i32, base + 3, Number(core) | 0);
+            Atomics.store(i32, base + 4, Number(priority) | 0);
+            Atomics.store(i32, base + 5, 0);
+            u8.set(view.subarray(src, src + len), slotBytesOffset(i));
+            Atomics.store(i32, base, TASK_STATUS_READY);
+            Atomics.add(i32, TASK_WAKE_INDEX, 1);
+            Atomics.notify(i32, TASK_WAKE_INDEX, workers.length);
+            return i;
+        }
+        return -1; // pool full
+    }
+
+    function awaitJob(jobId, contextPtr, contextBytes) {
+        if (!memory) return;
+        const id = Number(jobId) | 0;
+        if (id < 0 || id >= TASK_JOB_COUNT) return;
+        const base = slotI32Offset(id);
+        // Wait until worker marks done (3). Also accept free if already reaped.
+        for (;;) {
+            const status = Atomics.load(i32, base);
+            if (status === TASK_STATUS_DONE) break;
+            if (status === TASK_STATUS_FREE) return;
+            const wait = Atomics.wait(i32, base, status, 30000);
+            if (wait === 'timed-out' && Atomics.load(i32, base) !== TASK_STATUS_DONE) {
+                // Leave slot for debugging; caller may see empty/partial context.
+                return;
+            }
+        }
+        // Codegen stores the task result in i64 slot 0 of the context. Copy only
+        // that slot back — writing CONTEXT_MAX bytes would smash neighboring
+        // heap objects (other task contexts / WasmTask headers).
+        const dst = Number(contextPtr) >>> 0;
+        if (dst) {
+            const view = new Uint8Array(memory.buffer);
+            view.set(u8.subarray(slotBytesOffset(id), slotBytesOffset(id) + 8), dst);
+        }
+        Atomics.store(i32, base, TASK_STATUS_FREE);
+        Atomics.notify(i32, base, 1);
+    }
+
+    function shutdown() {
+        for (const worker of workers) {
+            try { worker.terminate(); } catch (_) { /* ignore */ }
+        }
+        workers.length = 0;
+    }
+
+    return {
+        size: count,
+        bindMemory,
+        enqueue,
+        awaitJob,
+        shutdown,
+    };
 }
 
 function createMockTcpTable(options = {}) {
@@ -266,6 +397,8 @@ function createAbsoluteImports(options = {}) {
         tcpOptions.forceTcpMocks = true;
     }
     const tcp = createTcpTable(tcpOptions);
+    /** @type {ReturnType<typeof createTaskPool> | null} */
+    let taskPool = options._taskPool || null;
 
     const env = {
         absolute_log(ptr, len) {
@@ -335,12 +468,33 @@ function createAbsoluteImports(options = {}) {
         absolute_tcp_port(handle) {
             return tcp.port(Number(handle) | 0);
         },
+
+        absolute_task_pool_size() {
+            return taskPool ? taskPool.size : 0;
+        },
+        absolute_task_enqueue(entry, contextPtr, contextBytes, core, priority) {
+            if (!taskPool || taskPool.size <= 0) return -1;
+            return taskPool.enqueue(entry, contextPtr, contextBytes, core, priority);
+        },
+        absolute_task_await_job(jobId, contextPtr, contextBytes) {
+            if (!taskPool) return;
+            taskPool.awaitJob(jobId, contextPtr, contextBytes);
+        },
     };
 
     return {
         imports: { env },
         logs,
+        setTaskPool(pool) {
+            taskPool = pool;
+            if (taskPool && memory && typeof taskPool.bindMemory === 'function') {
+                taskPool.bindMemory(memory);
+            }
+        },
         shutdown() {
+            try {
+                if (taskPool && typeof taskPool.shutdown === 'function') taskPool.shutdown();
+            } catch (_) { /* ignore */ }
             try {
                 if (tcp && typeof tcp.shutdown === 'function') tcp.shutdown();
             } catch (_) { /* ignore */ }
@@ -348,6 +502,9 @@ function createAbsoluteImports(options = {}) {
         bind(instance) {
             memory = instance.exports.memory || null;
             if (!memory) throw new Error('Absolute wasm module did not export memory');
+            if (taskPool && typeof taskPool.bindMemory === 'function') {
+                taskPool.bindMemory(memory);
+            }
         },
     };
 }
@@ -364,10 +521,21 @@ async function instantiateAbsoluteWasm(bytes, options = {}) {
     if (options.allowNetwork && options.prefetchUrls && options.prefetchUrls.length) {
         options._httpCache = await prepareHttp(options.prefetchUrls, options.maxHttpBytes || 65536);
     }
+    const taskWorkers = Number(options.taskWorkers) || 0;
+    let taskPool = null;
+    if (taskWorkers > 0) {
+        taskPool = createTaskPool(bytes, taskWorkers);
+        options = { ...options, _taskPool: taskPool };
+    }
     const host = createAbsoluteImports(options);
+    if (taskPool) host.setTaskPool(taskPool);
     const result = await WebAssembly.instantiate(bytes, host.imports);
     const instance = result.instance || result;
     host.bind(instance);
+    // Give workers a moment to compile/instantiate before the first spawn.
+    if (taskPool && taskPool.size > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+    }
     return { instance, exports: instance.exports, logs: host.logs, host };
 }
 
@@ -377,4 +545,5 @@ module.exports = {
     prepareHttp,
     httpGetSync,
     createTcpTable,
+    createTaskPool,
 };

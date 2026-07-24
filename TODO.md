@@ -532,7 +532,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   bridge (`tools/absolute-wasm-tcp-worker.js`), test `wasm-net-real` with local
   echo server in a dedicated worker (same-thread peers deadlock under
   `Atomics.wait`); mock TCP remains for deterministic unit tests.
-- [ ] wasm multi-thread task workers; full wasi-sdk libc sysroot.
+- [x] wasm multi-thread task workers (Node): isolated-instance pool via
+  `taskWorkers` + SAB job queue (`absolute-wasm-task-worker.js`),
+  test `wasm-task-mt`; sync path remains default. Shared-memory pthread model
+  and full wasi-sdk libc sysroot still open.
+- [ ] full wasi-sdk libc sysroot; shared-memory wasm threads.
 
 ### IDE, debugger и developer tools
 
