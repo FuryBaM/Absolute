@@ -12,14 +12,15 @@ build-windows.bat -NoTest
   --build-exe -o examples\wasm\module.wasm
 ```
 
-Programs that only use `println` / `assert` / scalars can also build when the
-wasm console shim is present (`Absolute-Runtime/wasm/absolute_wasm_shim.c`):
+Programs with `println` / `assert` / managed `new`/`delete` link against the
+wasm runtime subset (`Absolute-Runtime/wasm/absolute_wasm_runtime.c`):
 
 ```bat
 absolutec tests\wasm-smoke.abs --target wasm32-unknown-unknown --build-exe -o examples\wasm\module.wasm
+absolutec tests\wasm-managed.abs --target wasm32-unknown-unknown --build-exe -o examples\wasm\module.wasm
 ```
 
-Managed heap, tasks, `load`, FS, and sockets still need a real wasm runtime port.
+Tasks, dynamic `load`, FS, and sockets are still not ported.
 
 ## Serve locally
 

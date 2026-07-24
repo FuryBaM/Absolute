@@ -1436,6 +1436,15 @@ if(BUILD_TESTING)
                         -DNODE=${ABSOLUTE_NODE_FOR_WASM}
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-smoke.cmake"
                 )
+                add_test(
+                    NAME absolute.run-wasm-managed
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-managed.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-managed.wasm
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-managed.cmake"
+                )
             endif()
         endif()
 

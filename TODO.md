@@ -523,11 +523,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   Windows x64 (frontend + full LLVM), Linux x64 (full LLVM), macOS smoke
   (`macos-latest`, typically arm64 host) — см. `docs/platforms.md` и
   `.github/workflows/ci.yml`. Windows ARM64 и Linux ARM64 runners отложены.
-- [x] WebAssembly: `--target`, IR/object, `wasm-ld --build-exe`, console shim
-  (`Absolute-Runtime/wasm/absolute_wasm_shim.c` for puts/printf/abort),
-  Node smoke (`wasm-export-only`, `wasm-smoke`), browser demo
-  `examples/wasm/` (см. `docs/wasm-target.md`).
-- [ ] Full Absolute-Runtime on wasm/WASI (managed heap, tasks, FS, network).
+- [x] WebAssembly: `--target`, IR/object, `wasm-ld --build-exe`,
+  wasm runtime subset (`absolute_wasm_runtime.c`: heap, managed, errors,
+  libc helpers), Node smoke (`wasm-export-only`, `wasm-smoke`,
+  `wasm-managed`), browser demo `examples/wasm/` (`docs/wasm-target.md`).
+- [ ] wasm/WASI: tasks, dynamic load, FS, network, real console via WASI.
 
 ### IDE, debugger и developer tools
 

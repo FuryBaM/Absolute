@@ -35,11 +35,11 @@ set_target_properties(Absolute-Runtime PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
 
-# Optional wasm32 console/assert shim (clang --target=wasm32-unknown-unknown).
+# Optional wasm32 runtime subset (clang --target=wasm32-unknown-unknown).
 # LLVM may not be configured yet when this directory is processed, so search the
 # portable toolchain and PATH explicitly.
-set(ABSOLUTE_WASM_SHIM_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/wasm/absolute_wasm_shim.c")
-set(ABSOLUTE_WASM_SHIM_OBJECT "${CMAKE_BINARY_DIR}/absolute_wasm_shim.o")
+set(ABSOLUTE_WASM_RT_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/wasm/absolute_wasm_runtime.c")
+set(ABSOLUTE_WASM_SHIM_OBJECT "${CMAKE_BINARY_DIR}/absolute_wasm_runtime.o")
 set(ABSOLUTE_WASM_CLANG "")
 foreach(_absolute_clang_candidate IN ITEMS
         "${LLVM_TOOLS_BINARY_DIR}/clang${CMAKE_EXECUTABLE_SUFFIX}"
@@ -58,19 +58,20 @@ if(ABSOLUTE_WASM_CLANG)
         OUTPUT "${ABSOLUTE_WASM_SHIM_OBJECT}"
         COMMAND "${ABSOLUTE_WASM_CLANG}"
             --target=wasm32-unknown-unknown
-            -c "${ABSOLUTE_WASM_SHIM_SOURCE}"
+            -c "${ABSOLUTE_WASM_RT_SOURCE}"
             -o "${ABSOLUTE_WASM_SHIM_OBJECT}"
             -O2
-        DEPENDS "${ABSOLUTE_WASM_SHIM_SOURCE}"
-        COMMENT "Building Absolute wasm runtime shim"
+            -std=c11
+        DEPENDS "${ABSOLUTE_WASM_RT_SOURCE}"
+        COMMENT "Building Absolute wasm runtime (heap/managed/errors)"
         VERBATIM
     )
     add_custom_target(Absolute-Runtime-WasmShim ALL DEPENDS "${ABSOLUTE_WASM_SHIM_OBJECT}")
     set(ABSOLUTE_WASM_SHIM_OBJECT "${ABSOLUTE_WASM_SHIM_OBJECT}" CACHE FILEPATH
-        "wasm32 object providing puts/printf/abort stubs" FORCE)
-    message(STATUS "Absolute wasm shim: ${ABSOLUTE_WASM_SHIM_OBJECT} (clang=${ABSOLUTE_WASM_CLANG})")
+        "wasm32 Absolute runtime object (heap, managed, errors, libc helpers)" FORCE)
+    message(STATUS "Absolute wasm runtime: ${ABSOLUTE_WASM_SHIM_OBJECT} (clang=${ABSOLUTE_WASM_CLANG})")
 else()
     set(ABSOLUTE_WASM_SHIM_OBJECT "" CACHE FILEPATH
-        "wasm32 object providing puts/printf/abort stubs" FORCE)
-    message(STATUS "clang for wasm32 not found; Absolute wasm shim will not be built")
+        "wasm32 Absolute runtime object (heap, managed, errors, libc helpers)" FORCE)
+    message(STATUS "clang for wasm32 not found; Absolute wasm runtime will not be built")
 endif()

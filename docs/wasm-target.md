@@ -19,9 +19,8 @@ absolutec tests\wasm-export-only.abs --target wasm32-unknown-unknown --build-exe
   `.absolute/toolchains/llvm-*/bin/wasm-ld`).
 - Pure `export "C"` modules produce a loadable `.wasm`
   (`tests/wasm-export-only.abs` + Node runner).
-- Programs that lower to `puts` / `printf` / `abort` / `snprintf` (for example
-  `println` and `assert`) link against the optional **wasm console shim**
-  `Absolute-Runtime/wasm/absolute_wasm_shim.c` (built with
+- Console helpers and managed pointers link against
+  `Absolute-Runtime/wasm/absolute_wasm_runtime.c` (built with
   `clang --target=wasm32-unknown-unknown` when available).
 - Browser demo: `examples/wasm/` (static HTML + `loader.js`).
 
@@ -31,22 +30,23 @@ absolutec tests\wasm-export-only.abs --target wasm32-unknown-unknown --build-exe
 |------|--------|
 | `--target wasm32-... --sanitize=address` | Error |
 | `--build-exe --target` for non-wasm triples | Error |
-| managed heap, tasks, `load`, FS, sockets on wasm | undefined symbols / no shim |
-| Full WASI sysroot / Absolute-Runtime port | Not shipped |
+| tasks, `load`, FS, sockets on wasm | stubs / not functional |
+| Full WASI sysroot | Not shipped |
 
 ## Runtime and linking
 
 | Layer | Status |
 |-------|--------|
 | Host `Absolute-Runtime` | Native only |
-| `absolute_wasm_shim.o` | Minimal no-op I/O + `abort` trap + libc mem helpers |
+| `absolute_wasm_runtime.o` | Heap, managed handles, errors, libc helpers, no-op console |
 | `ABSOLUTE_WASM_LIBS` | Extra space/`;`-separated objects to link |
 
 Supported profiles:
 
-1. **Export-only** — `export "C"` scalars, no host runtime calls.
-2. **Console/assert** — `println` / `assert` / pure scalars with the wasm shim.
-3. Load in Node / browser with **empty imports** (`WebAssembly.instantiate(bytes, {})`).
+1. **Export-only** — `export "C"` scalars.
+2. **Console/assert** — `println` / `assert` / scalars.
+3. **Managed objects** — `new` / `delete` / class fields (see `tests/wasm-managed.abs`).
+4. Load in Node / browser with **empty imports**.
 
 See the host matrix in [`platforms.md`](platforms.md) and
 [`examples/wasm/README.md`](../examples/wasm/README.md).
@@ -78,14 +78,15 @@ Common triples:
 ## Tests
 
 - `tests/wasm-export-only.abs` → `absolute.run-wasm-export`
-- `tests/wasm-smoke.abs` → `absolute.run-wasm-smoke` (shim + `main` + `wasm_add`)
+- `tests/wasm-smoke.abs` → `absolute.run-wasm-smoke`
+- `tests/wasm-managed.abs` → `absolute.run-wasm-managed` (`new`/`delete` Box)
 - IR/object checks: `emit-wasm-smoke-ir`, `check-wasm-smoke-ir`, `emit-wasm-smoke-object`
 
 ## Next steps (not done)
 
-1. Real managed-heap / task / FS Absolute-Runtime for wasm32 or WASI.
-2. Optional wasi-sdk sysroot for full libc.
-3. Dedicated wasmtime CI job (Node already covers smoke when tools exist).
+1. Task runtime, dynamic `load`, FS, network for wasm/WASI.
+2. Optional wasi-sdk sysroot / real stdout via WASI.
+3. Dedicated wasmtime CI job (Node already covers engine smoke).
 
 ## Acceptance criteria progress
 
