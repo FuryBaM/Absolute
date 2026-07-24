@@ -42,7 +42,7 @@ pong.exe
 | `text.abs` | Built-in 8×8 soft font, scaled HUD, sprite-baked label, typing |
 | `batch.abs` | Soft `SpriteBatch`: 120 atlas tiles + ship in one flush |
 | `triangle.abs` | OpenGL RHI: shader + buffer + pipeline + bind/draw |
-| `gpu-sprites.abs` | Textured quads: ship + atlas stars (`GpuTexture`) |
+| `gpu-sprites.abs` | Indexed textured quads + `GpuSampler` (ship + stars) |
 
 ## API highlights
 

@@ -76,11 +76,16 @@ extern "C" void absolute_desktop_gpu_shader_destroy(int64 gpuHandle, int64 shade
 extern "C" int64 absolute_desktop_gpu_buffer_create(int64 gpuHandle, raw float* data, int32 floatCount);
 extern "C" void absolute_desktop_gpu_buffer_destroy(int64 gpuHandle, int64 bufferHandle);
 extern "C" int32 absolute_desktop_gpu_buffer_float_count(int64 bufferHandle);
+extern "C" int64 absolute_desktop_gpu_index_buffer_create(int64 gpuHandle, raw int32* indices, int32 indexCount);
+extern "C" void absolute_desktop_gpu_index_buffer_destroy(int64 gpuHandle, int64 bufferHandle);
+extern "C" int32 absolute_desktop_gpu_index_buffer_count(int64 bufferHandle);
+extern "C" void absolute_desktop_gpu_bind_index_buffer(int64 gpuHandle, int64 bufferHandle);
 extern "C" int64 absolute_desktop_gpu_pipeline_create(int64 gpuHandle, int64 shaderHandle, int64 layoutHandle);
 extern "C" void absolute_desktop_gpu_pipeline_destroy(int64 gpuHandle, int64 pipelineHandle);
 extern "C" void absolute_desktop_gpu_bind_pipeline(int64 gpuHandle, int64 pipelineHandle);
 extern "C" void absolute_desktop_gpu_bind_buffer(int64 gpuHandle, int64 bufferHandle);
 extern "C" void absolute_desktop_gpu_draw(int64 gpuHandle, int32 vertexCount);
+extern "C" void absolute_desktop_gpu_draw_indexed(int64 gpuHandle, int32 indexCount);
 extern "C" void absolute_desktop_gpu_set_uniform_f(int64 gpuHandle, string name, float value);
 extern "C" void absolute_desktop_gpu_set_uniform_i(int64 gpuHandle, string name, int32 value);
 extern "C" void absolute_desktop_gpu_set_uniform_2f(int64 gpuHandle, string name, float x, float y);
@@ -89,6 +94,9 @@ extern "C" void absolute_desktop_gpu_texture_destroy(int64 gpuHandle, int64 text
 extern "C" void absolute_desktop_gpu_bind_texture(int64 gpuHandle, int64 textureHandle, int32 unit);
 extern "C" int32 absolute_desktop_gpu_texture_width(int64 textureHandle);
 extern "C" int32 absolute_desktop_gpu_texture_height(int64 textureHandle);
+extern "C" int64 absolute_desktop_gpu_sampler_create_on(int64 gpuHandle, int32 filter, int32 wrap);
+extern "C" void absolute_desktop_gpu_sampler_destroy(int64 gpuHandle, int64 samplerHandle);
+extern "C" void absolute_desktop_gpu_bind_sampler(int64 gpuHandle, int64 samplerHandle, int32 unit);
 extern "C" void absolute_desktop_draw_text(int64 windowHandle, int32 x, int32 y, string text, uint32 color, int32 scale);
 extern "C" int32 absolute_desktop_measure_text(string text, int32 scale);
 extern "C" int32 absolute_desktop_measure_text_height(string text, int32 scale);
@@ -592,6 +600,42 @@ namespace Desktop {
         }
     }
 
+    class GpuIndexBuffer {
+        public int64 handle;
+        public int64 gpuHandle;
+
+        public bool isValid() {
+            return handle != 0;
+        }
+
+        public int32 indexCount() {
+            return absolute_desktop_gpu_index_buffer_count(handle);
+        }
+
+        public void destroy() {
+            if (handle != 0) {
+                absolute_desktop_gpu_index_buffer_destroy(gpuHandle, handle);
+                handle = 0;
+            }
+        }
+    }
+
+    class GpuSampler {
+        public int64 handle;
+        public int64 gpuHandle;
+
+        public bool isValid() {
+            return handle != 0;
+        }
+
+        public void destroy() {
+            if (handle != 0) {
+                absolute_desktop_gpu_sampler_destroy(gpuHandle, handle);
+                handle = 0;
+            }
+        }
+    }
+
     class GpuPipeline {
         public int64 handle;
         public int64 gpuHandle;
@@ -634,9 +678,17 @@ namespace Desktop {
 
     // OpenGL RHI (Windows WGL, OpenGL 3.3 core when available).
     // Frame model:
-    //   beginFrame(); clear(...); bind(pipeline); bind(buffer); bind(texture); draw(n); endFrame(); present();
+    //   beginFrame(); clear(...); bind(pipeline); bind(vb); bind(ib); bind(tex); bind(sampler);
+    //   draw(n) | drawIndexed(n); endFrame(); present();
     class Gpu {
         public int64 handle;
+
+        // Sampler filter / wrap codes (OpenGL sampler object).
+        public static int32 FilterNearest = 0;
+        public static int32 FilterLinear = 1;
+        public static int32 WrapClamp = 0;
+        public static int32 WrapRepeat = 1;
+        public static int32 WrapMirror = 2;
 
         public Gpu(Window* window) {
             handle = absolute_desktop_gpu_create(window.handle);
@@ -685,6 +737,33 @@ namespace Desktop {
             buffer.handle = h;
             buffer.gpuHandle = handle;
             return buffer;
+        }
+
+        // 32-bit indices (>= 0), used with drawIndexed.
+        public GpuIndexBuffer* createIndexBuffer(int32[] indices) {
+            if (indices.length <= 0) {
+                return null;
+            }
+            int64 h = absolute_desktop_gpu_index_buffer_create(handle, &indices[0], indices.length);
+            if (h == 0) {
+                return null;
+            }
+            auto buffer = new GpuIndexBuffer();
+            buffer.handle = h;
+            buffer.gpuHandle = handle;
+            return buffer;
+        }
+
+        // filter: FilterNearest/FilterLinear; wrap: WrapClamp/WrapRepeat/WrapMirror.
+        public GpuSampler* createSampler(int32 filter, int32 wrap) {
+            int64 h = absolute_desktop_gpu_sampler_create_on(handle, filter, wrap);
+            if (h == 0) {
+                return null;
+            }
+            auto sampler = new GpuSampler();
+            sampler.handle = h;
+            sampler.gpuHandle = handle;
+            return sampler;
         }
 
         // Convenience: stride 24 bytes, loc0 = vec3 pos @0, loc1 = vec3 color @12.
@@ -751,10 +830,22 @@ namespace Desktop {
             }
         }
 
+        public void bind(GpuIndexBuffer* buffer) {
+            if (buffer != null) {
+                absolute_desktop_gpu_bind_index_buffer(handle, buffer.handle);
+            }
+        }
+
         // Binds to texture unit 0.
         public void bind(GpuTexture* texture) {
             if (texture != null) {
                 absolute_desktop_gpu_bind_texture(handle, texture.handle, 0);
+            }
+        }
+
+        public void bind(GpuSampler* sampler) {
+            if (sampler != null) {
+                absolute_desktop_gpu_bind_sampler(handle, sampler.handle, 0);
             }
         }
 
@@ -764,8 +855,18 @@ namespace Desktop {
             }
         }
 
+        public void bindSampler(GpuSampler* sampler, int32 unit) {
+            if (sampler != null) {
+                absolute_desktop_gpu_bind_sampler(handle, sampler.handle, unit);
+            }
+        }
+
         public void draw(int32 vertexCount) {
             absolute_desktop_gpu_draw(handle, vertexCount);
+        }
+
+        public void drawIndexed(int32 indexCount) {
+            absolute_desktop_gpu_draw_indexed(handle, indexCount);
         }
 
         // Applies to the currently bound pipeline program.

@@ -88,35 +88,40 @@ separate paths — use GPU clear/present for GL frames.
 
 Resources:
 - `createShader(vs, fs)` → `GpuShader*`
-- `createVertexBuffer(float[] vertices)` → `GpuBuffer*` (raw GPU VBO; layout is separate)
+- `createVertexBuffer(float[] vertices)` → `GpuBuffer*` (VBO; layout is separate)
+- `createIndexBuffer(int32[] indices)` → `GpuIndexBuffer*` (EBO, `drawIndexed`)
+- `createSampler(filter, wrap)` → `GpuSampler*` (`FilterNearest`/`FilterLinear`,
+  `WrapClamp`/`WrapRepeat`/`WrapMirror` on `Desktop.Gpu`)
 - `new VertexLayout(strideBytes)` + `layout.add(location, components, offsetBytes)`
-- `createLayoutPos3Color3()` — stride 24, loc0 pos, loc1 color
-- `createLayoutPos3Uv2()` — stride 20, loc0 pos, loc1 uv (textured sprites)
-- `createPipeline(shader, layout)` → `GpuPipeline*` (program + vertex format; shader must outlive draws)
-- `createTextureFromSprite(sprite)` → `GpuTexture*` (RGBA8, flipped for GL; alpha from color key)
+- `createLayoutPos3Color3()` / `createLayoutPos3Uv2()`
+- `createPipeline(shader, layout)` → `GpuPipeline*`
+- `createTextureFromSprite(sprite)` → `GpuTexture*` (RGBA8 + color-key alpha)
 
 Frame:
 ```absolute
 auto shader = gpu.createShader(vertexSource, fragmentSource);
-auto buffer = gpu.createVertexBuffer(vertices);
-auto layout = gpu.createLayoutPos3Color3();
+auto vb = gpu.createVertexBuffer(vertices);
+auto ib = gpu.createIndexBuffer(indices);
+auto layout = gpu.createLayoutPos3Uv2();
 auto pipeline = gpu.createPipeline(shader, layout);
+auto sampler = gpu.createSampler(Desktop.Gpu.FilterNearest, Desktop.Gpu.WrapClamp);
 
 gpu.beginFrame();
 gpu.clear(0.06, 0.07, 0.12, 1.0);
 gpu.bind(pipeline);
-gpu.bind(buffer);
-gpu.bind(texture);              // optional textured path
+gpu.bind(vb);
+gpu.bind(ib);
+gpu.bind(texture);
+gpu.bind(sampler);
 gpu.setUniformI("uTex", 0);
-gpu.setUniform2F("uOffset", x, y);
-gpu.draw(6);
+gpu.drawIndexed(6);
 gpu.endFrame();
 gpu.present();
 ```
 
-- `bind` is overloaded for `GpuPipeline*`, `GpuBuffer*`, and `GpuTexture*` (unit 0)
-- Alpha blending is enabled in `beginFrame`
-- Examples: `triangle.abs`, `gpu-sprites.abs`
+- `bind` overloads: pipeline, vertex buffer, index buffer, texture, sampler
+- Alpha blending on in `beginFrame`
+- Examples: `triangle.abs`, `gpu-sprites.abs` (indexed quads + sampler)
 
 ### Game loop patterns
 

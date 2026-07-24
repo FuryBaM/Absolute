@@ -1,6 +1,6 @@
 // Minimal OpenGL RHI for absolute.desktop.
-// Model: Shader + VertexBuffer + VertexLayout + Pipeline;
-// frame: beginFrame / clear / bind / draw / endFrame / present.
+// Model: Shader + VertexBuffer + IndexBuffer + VertexLayout + Pipeline + Sampler;
+// frame: beginFrame / clear / bind / draw|drawIndexed / endFrame / present.
 // Windows: WGL + OpenGL 3.3 core. Other platforms: stub (isValid = false).
 
 #include <algorithm>
@@ -30,10 +30,12 @@ using GLintptr = ptrdiff_t;
 #define GL_LINK_STATUS 0x8B82
 #define GL_INFO_LOG_LENGTH 0x8B84
 #define GL_ARRAY_BUFFER 0x8892
+#define GL_ELEMENT_ARRAY_BUFFER 0x8893
 #define GL_STATIC_DRAW 0x88E4
 #define GL_COLOR_BUFFER_BIT 0x00004000
 #define GL_DEPTH_BUFFER_BIT 0x00000100
 #define GL_FLOAT 0x1406
+#define GL_UNSIGNED_INT 0x1405
 #define GL_FALSE 0
 #define GL_TRUE 1
 #define GL_TRIANGLES 0x0004
@@ -41,7 +43,10 @@ using GLintptr = ptrdiff_t;
 #define GL_RGBA 0x1908
 #define GL_UNSIGNED_BYTE 0x1401
 #define GL_TEXTURE0 0x84C0
+#define GL_NEAREST 0x2600
 #define GL_LINEAR 0x2601
+#define GL_REPEAT 0x2901
+#define GL_MIRRORED_REPEAT 0x8370
 #define GL_CLAMP_TO_EDGE 0x812F
 #define GL_TEXTURE_MIN_FILTER 0x2801
 #define GL_TEXTURE_MAG_FILTER 0x2800
@@ -88,6 +93,11 @@ namespace {
     using PFNGLDISABLEVERTEXATTRIBARRAY = void(APIENTRY*)(GLuint);
     using PFNGLVERTEXATTRIBPOINTER = void(APIENTRY*)(GLuint, GLint, GLenum, GLboolean, GLsizei, const void*);
     using PFNGLDRAWARRAYS = void(APIENTRY*)(GLenum, GLint, GLsizei);
+    using PFNGLDRAWELEMENTS = void(APIENTRY*)(GLenum, GLsizei, GLenum, const void*);
+    using PFNGLGENSAMPLERS = void(APIENTRY*)(GLsizei, GLuint*);
+    using PFNGLDELETESAMPLERS = void(APIENTRY*)(GLsizei, const GLuint*);
+    using PFNGLBINDSAMPLER = void(APIENTRY*)(GLuint, GLuint);
+    using PFNGLSAMPLERPARAMETERI = void(APIENTRY*)(GLuint, GLenum, GLint);
     using PFNGLVIEWPORT = void(APIENTRY*)(GLint, GLint, GLsizei, GLsizei);
     using PFNGLCLEARCOLOR = void(APIENTRY*)(GLfloat, GLfloat, GLfloat, GLfloat);
     using PFNGLCLEAR = void(APIENTRY*)(GLbitfield);
@@ -130,6 +140,11 @@ namespace {
         PFNGLDISABLEVERTEXATTRIBARRAY DisableVertexAttribArray = nullptr;
         PFNGLVERTEXATTRIBPOINTER VertexAttribPointer = nullptr;
         PFNGLDRAWARRAYS DrawArrays = nullptr;
+        PFNGLDRAWELEMENTS DrawElements = nullptr;
+        PFNGLGENSAMPLERS GenSamplers = nullptr;
+        PFNGLDELETESAMPLERS DeleteSamplers = nullptr;
+        PFNGLBINDSAMPLER BindSampler = nullptr;
+        PFNGLSAMPLERPARAMETERI SamplerParameteri = nullptr;
         PFNGLVIEWPORT Viewport = nullptr;
         PFNGLCLEARCOLOR ClearColor = nullptr;
         PFNGLCLEAR Clear = nullptr;
@@ -190,6 +205,11 @@ namespace {
         gl.DisableVertexAttribArray = LoadProc<PFNGLDISABLEVERTEXATTRIBARRAY>("glDisableVertexAttribArray");
         gl.VertexAttribPointer = LoadProc<PFNGLVERTEXATTRIBPOINTER>("glVertexAttribPointer");
         gl.DrawArrays = LoadProc<PFNGLDRAWARRAYS>("glDrawArrays");
+        gl.DrawElements = LoadProc<PFNGLDRAWELEMENTS>("glDrawElements");
+        gl.GenSamplers = LoadProc<PFNGLGENSAMPLERS>("glGenSamplers");
+        gl.DeleteSamplers = LoadProc<PFNGLDELETESAMPLERS>("glDeleteSamplers");
+        gl.BindSampler = LoadProc<PFNGLBINDSAMPLER>("glBindSampler");
+        gl.SamplerParameteri = LoadProc<PFNGLSAMPLERPARAMETERI>("glSamplerParameteri");
         gl.Viewport = LoadProc<PFNGLVIEWPORT>("glViewport");
         gl.ClearColor = LoadProc<PFNGLCLEARCOLOR>("glClearColor");
         gl.Clear = LoadProc<PFNGLCLEAR>("glClear");
@@ -209,6 +229,7 @@ namespace {
             && gl.UseProgram && gl.GenBuffers && gl.BindBuffer && gl.BufferData
             && gl.GenVertexArrays && gl.BindVertexArray
             && gl.EnableVertexAttribArray && gl.VertexAttribPointer && gl.DrawArrays
+            && gl.DrawElements && gl.GenSamplers && gl.BindSampler && gl.SamplerParameteri
             && gl.Viewport && gl.ClearColor && gl.Clear
             && gl.Enable && gl.BlendFunc && gl.Uniform1i && gl.Uniform2f;
     }
@@ -271,6 +292,11 @@ namespace {
         int32_t floatCount = 0;
     };
 
+    struct GpuIndexBuffer {
+        GLuint ibo = 0;
+        int32_t indexCount = 0;
+    };
+
     struct GpuPipeline {
         GLuint program = 0;
         int32_t strideBytes = 0;
@@ -281,6 +307,10 @@ namespace {
         GLuint id = 0;
         int32_t width = 0;
         int32_t height = 0;
+    };
+
+    struct GpuSampler {
+        GLuint id = 0;
     };
 
     struct GpuDevice {
@@ -294,6 +324,8 @@ namespace {
         bool inFrame = false;
         int64_t boundPipeline = 0;
         int64_t boundBuffer = 0;
+        int64_t boundIndexBuffer = 0;
+        int64_t boundSamplerUnit0 = 0;
         bool attrsDirty = true;
 
         void ReleaseGlObjects() {
@@ -321,6 +353,8 @@ namespace {
             inFrame = false;
             boundPipeline = 0;
             boundBuffer = 0;
+            boundIndexBuffer = 0;
+            boundSamplerUnit0 = 0;
         }
     };
 
@@ -344,12 +378,30 @@ namespace {
         return reinterpret_cast<GpuBuffer*>(static_cast<intptr_t>(handle));
     }
 
+    GpuIndexBuffer* IndexBufferFromHandle(int64_t handle) {
+        return reinterpret_cast<GpuIndexBuffer*>(static_cast<intptr_t>(handle));
+    }
+
     GpuPipeline* PipelineFromHandle(int64_t handle) {
         return reinterpret_cast<GpuPipeline*>(static_cast<intptr_t>(handle));
     }
 
     GpuTexture* TextureFromHandle(int64_t handle) {
         return reinterpret_cast<GpuTexture*>(static_cast<intptr_t>(handle));
+    }
+
+    GpuSampler* SamplerFromHandle(int64_t handle) {
+        return reinterpret_cast<GpuSampler*>(static_cast<intptr_t>(handle));
+    }
+
+    GLenum FilterToGl(int32_t filter) {
+        return filter == 1 ? GL_LINEAR : GL_NEAREST;
+    }
+
+    GLenum WrapToGl(int32_t wrap) {
+        if (wrap == 1) return GL_REPEAT;
+        if (wrap == 2) return GL_MIRRORED_REPEAT;
+        return GL_CLAMP_TO_EDGE;
     }
 
     bool MakeCurrent(GpuDevice& device) {
@@ -540,11 +592,16 @@ extern "C" void absolute_desktop_gpu_begin_frame(int64_t handle) {
     device->inFrame = true;
     device->boundPipeline = 0;
     device->boundBuffer = 0;
+    device->boundIndexBuffer = 0;
+    device->boundSamplerUnit0 = 0;
     device->attrsDirty = true;
     device->gl.BindVertexArray(device->defaultVao);
     // Premultiplied-friendly alpha for soft sprites / BMP color keys.
     device->gl.Enable(GL_BLEND);
     device->gl.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    if (device->gl.BindSampler) {
+        device->gl.BindSampler(0, 0);
+    }
 }
 
 extern "C" void absolute_desktop_gpu_end_frame(int64_t handle) {
@@ -553,11 +610,15 @@ extern "C" void absolute_desktop_gpu_end_frame(int64_t handle) {
     if (MakeCurrent(*device)) {
         device->gl.UseProgram(0);
         device->gl.BindBuffer(GL_ARRAY_BUFFER, 0);
+        device->gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+        if (device->gl.BindSampler) device->gl.BindSampler(0, 0);
         device->gl.BindVertexArray(0);
     }
     device->inFrame = false;
     device->boundPipeline = 0;
     device->boundBuffer = 0;
+    device->boundIndexBuffer = 0;
+    device->boundSamplerUnit0 = 0;
     device->attrsDirty = true;
 }
 
@@ -728,6 +789,58 @@ extern "C" void absolute_desktop_gpu_bind_buffer(int64_t gpuHandle, int64_t buff
     device->attrsDirty = true;
 }
 
+extern "C" int64_t absolute_desktop_gpu_index_buffer_create(
+    int64_t gpuHandle, const int32_t* indices, int32_t indexCount) {
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    if (!device || !MakeCurrent(*device) || !indices || indexCount <= 0) {
+        SetError("index buffer requires non-empty int32 indices");
+        return 0;
+    }
+    // Upload as uint32 for glDrawElements UNSIGNED_INT (values stay non-negative).
+    std::vector<uint32_t> data(static_cast<std::size_t>(indexCount));
+    for (int32_t i = 0; i < indexCount; ++i) {
+        if (indices[i] < 0) {
+            SetError("index buffer indices must be >= 0");
+            return 0;
+        }
+        data[static_cast<std::size_t>(i)] = static_cast<uint32_t>(indices[i]);
+    }
+    GlFns& gl = device->gl;
+    auto* buffer = new GpuIndexBuffer();
+    buffer->indexCount = indexCount;
+    gl.GenBuffers(1, &buffer->ibo);
+    gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer->ibo);
+    gl.BufferData(GL_ELEMENT_ARRAY_BUFFER,
+        static_cast<GLsizeiptr>(indexCount) * static_cast<GLsizeiptr>(sizeof(uint32_t)),
+        data.data(), GL_STATIC_DRAW);
+    gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    return static_cast<int64_t>(reinterpret_cast<intptr_t>(buffer));
+}
+
+extern "C" void absolute_desktop_gpu_index_buffer_destroy(int64_t gpuHandle, int64_t bufferHandle) {
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    GpuIndexBuffer* buffer = IndexBufferFromHandle(bufferHandle);
+    if (!device || !buffer) return;
+    if (device->boundIndexBuffer == bufferHandle) {
+        device->boundIndexBuffer = 0;
+    }
+    if (MakeCurrent(*device) && buffer->ibo) {
+        device->gl.DeleteBuffers(1, &buffer->ibo);
+    }
+    delete buffer;
+}
+
+extern "C" int32_t absolute_desktop_gpu_index_buffer_count(int64_t bufferHandle) {
+    const GpuIndexBuffer* buffer = IndexBufferFromHandle(bufferHandle);
+    return buffer ? buffer->indexCount : 0;
+}
+
+extern "C" void absolute_desktop_gpu_bind_index_buffer(int64_t gpuHandle, int64_t bufferHandle) {
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    if (!device) return;
+    device->boundIndexBuffer = bufferHandle;
+}
+
 extern "C" void absolute_desktop_gpu_draw(int64_t gpuHandle, int32_t vertexCount) {
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     if (!device || vertexCount <= 0 || !MakeCurrent(*device)) return;
@@ -739,6 +852,73 @@ extern "C" void absolute_desktop_gpu_draw(int64_t gpuHandle, int32_t vertexCount
         return;
     }
     device->gl.DrawArrays(GL_TRIANGLES, 0, vertexCount);
+}
+
+extern "C" void absolute_desktop_gpu_draw_indexed(int64_t gpuHandle, int32_t indexCount) {
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    if (!device || indexCount <= 0 || !MakeCurrent(*device)) return;
+    ApplyVertexState(*device);
+    GpuPipeline* pipeline = PipelineFromHandle(device->boundPipeline);
+    GpuBuffer* vbuffer = BufferFromHandle(device->boundBuffer);
+    GpuIndexBuffer* ibuffer = IndexBufferFromHandle(device->boundIndexBuffer);
+    if (!pipeline || !vbuffer || !ibuffer || !pipeline->program || !vbuffer->vbo || !ibuffer->ibo) {
+        SetError("drawIndexed requires bound pipeline, vertex buffer, and index buffer");
+        return;
+    }
+    if (!device->gl.DrawElements) {
+        SetError("glDrawElements unavailable");
+        return;
+    }
+    // Element array is part of VAO state in core profile.
+    device->gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibuffer->ibo);
+    device->gl.DrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, nullptr);
+}
+
+// filter: 0 nearest, 1 linear. wrap: 0 clamp, 1 repeat, 2 mirror.
+extern "C" int64_t absolute_desktop_gpu_sampler_create_on(
+    int64_t gpuHandle, int32_t filter, int32_t wrap) {
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    if (!device || !MakeCurrent(*device) || !device->gl.GenSamplers || !device->gl.SamplerParameteri) {
+        SetError("sampler create requires valid GPU context");
+        return 0;
+    }
+    auto* sampler = new GpuSampler();
+    device->gl.GenSamplers(1, &sampler->id);
+    if (!sampler->id) {
+        delete sampler;
+        SetError("glGenSamplers failed");
+        return 0;
+    }
+    const GLenum glFilter = FilterToGl(filter);
+    const GLenum glWrap = WrapToGl(wrap);
+    device->gl.SamplerParameteri(sampler->id, GL_TEXTURE_MIN_FILTER, static_cast<GLint>(glFilter));
+    device->gl.SamplerParameteri(sampler->id, GL_TEXTURE_MAG_FILTER, static_cast<GLint>(glFilter));
+    device->gl.SamplerParameteri(sampler->id, GL_TEXTURE_WRAP_S, static_cast<GLint>(glWrap));
+    device->gl.SamplerParameteri(sampler->id, GL_TEXTURE_WRAP_T, static_cast<GLint>(glWrap));
+    return static_cast<int64_t>(reinterpret_cast<intptr_t>(sampler));
+}
+
+extern "C" void absolute_desktop_gpu_sampler_destroy(int64_t gpuHandle, int64_t samplerHandle) {
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    GpuSampler* sampler = SamplerFromHandle(samplerHandle);
+    if (!device || !sampler) return;
+    if (device->boundSamplerUnit0 == samplerHandle) {
+        device->boundSamplerUnit0 = 0;
+    }
+    if (MakeCurrent(*device) && sampler->id && device->gl.DeleteSamplers) {
+        device->gl.DeleteSamplers(1, &sampler->id);
+    }
+    delete sampler;
+}
+
+extern "C" void absolute_desktop_gpu_bind_sampler(
+    int64_t gpuHandle, int64_t samplerHandle, int32_t unit) {
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    GpuSampler* sampler = SamplerFromHandle(samplerHandle);
+    if (!device || !sampler || !MakeCurrent(*device) || !device->gl.BindSampler) return;
+    if (unit < 0) unit = 0;
+    device->gl.BindSampler(static_cast<GLuint>(unit), sampler->id);
+    if (unit == 0) device->boundSamplerUnit0 = samplerHandle;
 }
 
 extern "C" void absolute_desktop_gpu_set_uniform_f(
@@ -876,7 +1056,12 @@ extern "C" int64_t absolute_desktop_gpu_pipeline_create(int64_t, int64_t, int64_
 extern "C" void absolute_desktop_gpu_pipeline_destroy(int64_t, int64_t) {}
 extern "C" void absolute_desktop_gpu_bind_pipeline(int64_t, int64_t) {}
 extern "C" void absolute_desktop_gpu_bind_buffer(int64_t, int64_t) {}
+extern "C" int64_t absolute_desktop_gpu_index_buffer_create(int64_t, const int32_t*, int32_t) { return 0; }
+extern "C" void absolute_desktop_gpu_index_buffer_destroy(int64_t, int64_t) {}
+extern "C" int32_t absolute_desktop_gpu_index_buffer_count(int64_t) { return 0; }
+extern "C" void absolute_desktop_gpu_bind_index_buffer(int64_t, int64_t) {}
 extern "C" void absolute_desktop_gpu_draw(int64_t, int32_t) {}
+extern "C" void absolute_desktop_gpu_draw_indexed(int64_t, int32_t) {}
 extern "C" void absolute_desktop_gpu_set_uniform_f(int64_t, const char*, float) {}
 extern "C" void absolute_desktop_gpu_set_uniform_i(int64_t, const char*, int32_t) {}
 extern "C" void absolute_desktop_gpu_set_uniform_2f(int64_t, const char*, float, float) {}
@@ -885,5 +1070,8 @@ extern "C" void absolute_desktop_gpu_texture_destroy(int64_t, int64_t) {}
 extern "C" void absolute_desktop_gpu_bind_texture(int64_t, int64_t, int32_t) {}
 extern "C" int32_t absolute_desktop_gpu_texture_width(int64_t) { return 0; }
 extern "C" int32_t absolute_desktop_gpu_texture_height(int64_t) { return 0; }
+extern "C" int64_t absolute_desktop_gpu_sampler_create_on(int64_t, int32_t, int32_t) { return 0; }
+extern "C" void absolute_desktop_gpu_sampler_destroy(int64_t, int64_t) {}
+extern "C" void absolute_desktop_gpu_bind_sampler(int64_t, int64_t, int32_t) {}
 
 #endif

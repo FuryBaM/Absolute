@@ -502,15 +502,14 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] OpenGL RHI (`Desktop.Gpu`): Windows WGL + OpenGL 3.3 core (legacy fallback);
   Linux stub until GLX. Frame model `beginFrame` / `clear` / `bind(pipeline)` /
   `bind(buffer)` / `draw(n)` / `endFrame` / `present`.
-- [x] GPU resources: `GpuShader`, `GpuBuffer` (`createVertexBuffer(float[])`),
-  `VertexLayout` + `createPipeline(shader, layout)`, texture-from-sprite;
-  samplers / index buffers / multi-backend still open.
+- [x] GPU resources: `GpuShader`, `GpuBuffer`, `GpuIndexBuffer`, `GpuSampler`,
+  `GpuTexture`, `VertexLayout` + `createPipeline`; multi-backend still open.
 - [x] GPU triangle example uses full pipeline path: `examples/desktop/triangle.abs`.
-- [x] GPU sprite scene: `GpuTexture` + `createLayoutPos3Uv2` + alpha blend +
-  `setUniform2F` / `setUniformI`; example `examples/desktop/gpu-sprites.abs`
-  (ship + atlas stars, WASD).
-- [ ] Расширить RHI: samplers objects, index buffers, multi-backend (Vulkan/D3D12)
-  поверх того же Absolute API.
+- [x] GPU sprite scene: textured indexed quads + sampler; example
+  `examples/desktop/gpu-sprites.abs` (ship + atlas stars, WASD).
+- [x] Index buffers (`createIndexBuffer` / `drawIndexed`) и sampler objects
+  (`createSampler` / `bind(sampler)`); multi-backend (Vulkan/D3D12) open.
+- [ ] Multi-backend RHI (Vulkan/D3D12) поверх того же Absolute API.
 - [ ] Добавить загрузку PNG, TTF/внешних шрифтов, моделей и аудио
   (BMP + built-in soft font уже есть).
 - [ ] Добавить базовый UI toolkit для desktop-приложений.

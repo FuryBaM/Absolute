@@ -1,16 +1,21 @@
-// GPU textured sprite scene: ship + atlas stars via pipeline/bind/draw.
+// GPU textured sprite scene with index buffers + sampler objects.
 // Esc quit. Arrows / WASD move the ship. Requires Windows OpenGL (Desktop.Gpu).
 
-// One axis-aligned textured quad (2 triangles, 6 verts) as pos3+uv2 (5 floats/vert).
-void writeQuad(float[] v, int32 base, float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1) {
-    // tri 1: TL, BL, BR
+// 4 vertices (TL, BL, BR, TR) as pos3+uv2 — use with 6 indices.
+void writeQuad4(float[] v, int32 base, float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1) {
     v[base + 0] = x0; v[base + 1] = y1; v[base + 2] = 0.0; v[base + 3] = u0; v[base + 4] = v1;
     v[base + 5] = x0; v[base + 6] = y0; v[base + 7] = 0.0; v[base + 8] = u0; v[base + 9] = v0;
     v[base + 10] = x1; v[base + 11] = y0; v[base + 12] = 0.0; v[base + 13] = u1; v[base + 14] = v0;
-    // tri 2: TL, BR, TR
-    v[base + 15] = x0; v[base + 16] = y1; v[base + 17] = 0.0; v[base + 18] = u0; v[base + 19] = v1;
-    v[base + 20] = x1; v[base + 21] = y0; v[base + 22] = 0.0; v[base + 23] = u1; v[base + 24] = v0;
-    v[base + 25] = x1; v[base + 26] = y1; v[base + 27] = 0.0; v[base + 28] = u1; v[base + 29] = v1;
+    v[base + 15] = x1; v[base + 16] = y1; v[base + 17] = 0.0; v[base + 18] = u1; v[base + 19] = v1;
+}
+
+void writeQuadIndices(int32[] indices, int32 base, int32 vertexBase) {
+    indices[base + 0] = vertexBase + 0;
+    indices[base + 1] = vertexBase + 1;
+    indices[base + 2] = vertexBase + 2;
+    indices[base + 3] = vertexBase + 0;
+    indices[base + 4] = vertexBase + 2;
+    indices[base + 5] = vertexBase + 3;
 }
 
 int32 main() {
@@ -63,6 +68,14 @@ int32 main() {
         return 1;
     }
 
+    // Pixel-art nearest sampler; clamp edges.
+    auto sampler = gpu.createSampler(Desktop.Gpu.FilterNearest, Desktop.Gpu.WrapClamp);
+    if (sampler == null) {
+        println("createSampler failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
     string vs = "#version 330 core\nlayout(location = 0) in vec3 aPos;\nlayout(location = 1) in vec2 aUv;\nuniform vec2 uOffset;\nout vec2 vUv;\nvoid main() {\n    gl_Position = vec4(aPos.xy + uOffset, aPos.z, 1.0);\n    vUv = aUv;\n}\n";
     string fs = "#version 330 core\nin vec2 vUv;\nuniform sampler2D uTex;\nout vec4 FragColor;\nvoid main() {\n    vec4 c = texture(uTex, vUv);\n    if (c.a < 0.01) discard;\n    FragColor = c;\n}\n";
 
@@ -75,16 +88,20 @@ int32 main() {
         return 1;
     }
 
-    // Ship quad in NDC (centered; move via uOffset).
+    // Ship: 4 verts + 6 indices.
     float shipHalfW = 0.08;
     float shipHalfH = 0.06;
-    float[] shipVerts = new float[30];
-    writeQuad(shipVerts, 0, -shipHalfW, -shipHalfH, shipHalfW, shipHalfH, 0.0, 0.0, 1.0, 1.0);
+    float[] shipVerts = new float[20];
+    writeQuad4(shipVerts, 0, -shipHalfW, -shipHalfH, shipHalfW, shipHalfH, 0.0, 0.0, 1.0, 1.0);
+    int32[] shipIdx = new int32[6];
+    writeQuadIndices(shipIdx, 0, 0);
     auto shipBuffer = gpu.createVertexBuffer(shipVerts);
+    auto shipIndex = gpu.createIndexBuffer(shipIdx);
 
-    // Star field from atlas bottom row (4 tiles of 16x16 in a typical 64x32 atlas).
+    // Stars: 24 quads, 4 verts + 6 indices each.
     int32 starCount = 24;
-    float[] starVerts = new float[starCount * 30];
+    float[] starVerts = new float[starCount * 20];
+    int32[] starIdx = new int32[starCount * 6];
     int32 i = 0;
     while (i < starCount) {
         float cx = -0.9 + (i as float) * 0.075;
@@ -94,14 +111,14 @@ int32 main() {
         int32 tile = i % 4;
         float u0 = (tile as float) * 0.25;
         float u1 = u0 + 0.25;
-        float v0 = 0.0;
-        float v1 = 0.5;
-        writeQuad(starVerts, i * 30, cx - half, cy - half, cx + half, cy + half, u0, v0, u1, v1);
+        writeQuad4(starVerts, i * 20, cx - half, cy - half, cx + half, cy + half, u0, 0.0, u1, 0.5);
+        writeQuadIndices(starIdx, i * 6, i * 4);
         i = i + 1;
     }
     auto starBuffer = gpu.createVertexBuffer(starVerts);
-    if (shipBuffer == null || starBuffer == null) {
-        println("createVertexBuffer failed:");
+    auto starIndex = gpu.createIndexBuffer(starIdx);
+    if (shipBuffer == null || shipIndex == null || starBuffer == null || starIndex == null) {
+        println("createVertexBuffer/createIndexBuffer failed:");
         println(gpu.lastError());
         return 1;
     }
@@ -153,31 +170,35 @@ int32 main() {
             gpu.beginFrame();
             gpu.clear(0.04, 0.05, 0.10, 1.0);
             gpu.bind(pipeline);
+            gpu.bind(sampler);
 
-            // Stars
             gpu.bind(starBuffer);
+            gpu.bind(starIndex);
             gpu.bind(atlasTex);
             gpu.setUniformI("uTex", 0);
             gpu.setUniform2F("uOffset", -scroll, 0.0);
-            gpu.draw(starCount * 6);
+            gpu.drawIndexed(starCount * 6);
 
-            // Ship
             gpu.bind(shipBuffer);
+            gpu.bind(shipIndex);
             gpu.bind(shipTex);
             gpu.setUniformI("uTex", 0);
             gpu.setUniform2F("uOffset", ox, oy);
-            gpu.draw(6);
+            gpu.drawIndexed(6);
 
             gpu.endFrame();
             gpu.present();
         }
     }
 
+    starIndex.destroy();
     starBuffer.destroy();
+    shipIndex.destroy();
     shipBuffer.destroy();
     pipeline.destroy();
     layout.destroy();
     shader.destroy();
+    sampler.destroy();
     atlasTex.destroy();
     shipTex.destroy();
     atlasSprite.destroy();
