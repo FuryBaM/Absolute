@@ -1388,6 +1388,38 @@ if(BUILD_TESTING)
                 -P "${PROJECT_SOURCE_DIR}/tests/check-export-c-abi.cmake"
         )
         add_test(
+            NAME absolute.emit-wasm-smoke-ir
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/wasm-smoke.abs"
+                --target wasm32-unknown-unknown
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/wasm-smoke.ll"
+        )
+        set_tests_properties(absolute.emit-wasm-smoke-ir PROPERTIES
+            FIXTURES_SETUP absolute-wasm-smoke-ir
+        )
+        add_test(
+            NAME absolute.check-wasm-smoke-ir
+            COMMAND "${CMAKE_COMMAND}"
+                -DINPUT=${CMAKE_BINARY_DIR}/wasm-smoke.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-wasm-target-ir.cmake"
+        )
+        set_tests_properties(absolute.check-wasm-smoke-ir PROPERTIES
+            FIXTURES_REQUIRED absolute-wasm-smoke-ir
+        )
+        add_test(
+            NAME absolute.emit-wasm-smoke-object
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/wasm-smoke.abs"
+                --target wasm32-unknown-unknown
+                --emit-object -o "${CMAKE_BINARY_DIR}/wasm-smoke.o"
+        )
+        add_test(
+            NAME absolute.wasm-build-exe-rejected
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/wasm-smoke.abs"
+                --target wasm32-unknown-unknown
+                --build-exe -o "${CMAKE_BINARY_DIR}/wasm-smoke.exe"
+        )
+        set_tests_properties(absolute.wasm-build-exe-rejected PROPERTIES WILL_FAIL TRUE)
+
+        add_test(
             NAME absolute.emit-export-c-bool
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-c-bool.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/export-c-bool.ll"

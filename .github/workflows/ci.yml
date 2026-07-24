@@ -57,3 +57,32 @@ jobs:
       - name: Bootstrap LLVM, build, and test natively
         shell: cmd
         run: build-windows.bat --bootstrap
+
+  # Host-native smoke on macOS (often Apple Silicon arm64 on GitHub runners).
+  macos-smoke:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM
+        run: |
+          brew update
+          brew install llvm@18 || brew install llvm
+          LLVM_PREFIX="$(brew --prefix llvm@18 2>/dev/null || brew --prefix llvm)"
+          echo "LLVM_PREFIX=${LLVM_PREFIX}" >> "$GITHUB_ENV"
+          echo "LLVM_DIR=${LLVM_PREFIX}/lib/cmake/llvm" >> "$GITHUB_ENV"
+          echo "${LLVM_PREFIX}/bin" >> "$GITHUB_PATH"
+
+      - name: Configure Release with LLVM
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TESTING=ON
+          -DABSOLUTE_ENABLE_LLVM=ON
+          -DLLVM_DIR="${LLVM_DIR}"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 2
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure

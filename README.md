@@ -26,7 +26,8 @@ This installs a portable LLVM 18.1.8 SDK under the ignored `.absolute`
 directory, builds the compiler and DLL plugins with MSVC, and runs the native
 tests. Later builds use `build-windows.bat` without `--bootstrap`. See
 [`docs/windows-build.md`](docs/windows-build.md) for toolchain overrides and
-benchmark commands.
+benchmark commands. The host platform matrix and CI coverage are summarized in
+[`docs/platforms.md`](docs/platforms.md).
 
 On multi-config generators such as Visual Studio, pass `--config Debug` to the
 build command.
@@ -472,6 +473,15 @@ Generate Absolute declarations from a C header (requires `clang`):
 node tools/absolute-bindgen.js native/api.h -o native/api.abs
 absolute-dev bindgen native/api.h -o native/api.abs
 ```
+
+Experimental WebAssembly IR/object emit (no host linker for wasm yet):
+
+```bat
+absolutec program.abs --target wasm32-unknown-unknown --emit-llvm -o program.ll
+absolutec program.abs --target wasm32-unknown-unknown --emit-object -o program.o
+```
+
+See [`docs/wasm-target.md`](docs/wasm-target.md).
 
 Generate a native object without linking it:
 

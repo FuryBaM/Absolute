@@ -1,0 +1,13 @@
+// Minimal program for WebAssembly IR/object smoke tests.
+// Uses only Absolute builtins that lower to libc-style calls in IR.
+
+export "C" int32 wasm_add(int32 left, int32 right) {
+    return left + right;
+}
+
+int32 main() {
+    int32 value = wasm_add(20, 22);
+    assert(value == 42, "wasm add");
+    println("wasm-smoke=ok");
+    return 0;
+}

@@ -519,8 +519,15 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   maps scalars, `raw` pointers, `const char*`→`string`, typedef handles,
   `cfunc` for function pointers; skips variadic/unsupported with comments;
   fixtures in `tests/bindgen/`.
-- [ ] Проверить targets x64, ARM64, Windows, Linux и macOS в CI.
-- [ ] Добавить WebAssembly target и browser runtime.
+- [x] Проверить targets в CI (host-native matrix):
+  Windows x64 (frontend + full LLVM), Linux x64 (full LLVM), macOS smoke
+  (`macos-latest`, typically arm64 host) — см. `docs/platforms.md` и
+  `.github/workflows/ci.yml`. Windows ARM64 и Linux ARM64 runners отложены.
+- [x] WebAssembly MVP: `--target <triple>` (в т.ч. `wasm32-unknown-unknown`),
+  LLVM WebAssembly backend, `--emit-llvm` / `--emit-object`; отказ
+  `--build-exe` и ASan для wasm; тесты `wasm-smoke` (см. `docs/wasm-target.md`).
+- [ ] WASI/browser runtime: wasm-ld driver, Absolute-Runtime for wasm, CI
+  engine smoke, browser loader.
 
 ### IDE, debugger и developer tools
 

@@ -3,6 +3,9 @@
 Absolute can be built, tested, and used on Windows without WSL. The supported
 toolchain is x64 MSVC plus the portable LLVM 18.1.8 development SDK.
 
+For the multi-OS host matrix (Linux, macOS, ARM64 status, CI jobs), see
+[`platforms.md`](platforms.md).
+
 ## Requirements
 
 - Windows 10 or newer;

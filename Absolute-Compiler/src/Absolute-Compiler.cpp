@@ -4,6 +4,7 @@
 #include "syntax_plugins.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -11,6 +12,7 @@
 #include <regex>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <unordered_set>
 
 using namespace Absolute;
@@ -33,10 +35,23 @@ namespace {
         bool buildExecutable = false;
         bool parseOnly = false;
         bool sanitizeAddress = false;
+        std::string targetTriple; // empty => host default
         fs::path output;
         std::vector<fs::path> plugins;
         std::vector<fs::path> pluginSearchPaths;
     };
+
+    bool IsWebAssemblyTargetTriple(const std::string& triple) {
+        if (triple.empty()) return false;
+        const std::string lower = [&] {
+            std::string value = triple;
+            for (char& ch : value) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            return value;
+        }();
+        return lower.starts_with("wasm32") || lower.starts_with("wasm64") ||
+            lower.find("wasm32") != std::string::npos ||
+            lower.find("wasm64") != std::string::npos;
+    }
 
     struct ProjectConfig {
         std::string name;
@@ -60,9 +75,14 @@ namespace {
     void PrintUsage() {
         std::cerr
             << "Usage:\n"
-            << "  absolutec <source.abs> [--plugin path] [--plugin-path directory] [--parse-only | --emit-llvm | --emit-object | --build-exe] [--sanitize=address] [-o output]\n"
-            << "  absolutec build <project.absproj> [--plugin path] [--plugin-path directory] [--parse-only | --emit-llvm | --emit-object | --build-exe] [--sanitize=address] [-o output]\n"
-            << "  absolutec new <name> [--directory path]\n";
+            << "  absolutec <source.abs> [options]\n"
+            << "  absolutec build <project.absproj> [options]\n"
+            << "  absolutec new <name> [--directory path]\n"
+            << "Options:\n"
+            << "  --parse-only | --emit-llvm | --emit-object | --build-exe\n"
+            << "  --target <triple>     host default, or e.g. wasm32-unknown-unknown\n"
+            << "  --sanitize=address    (host targets only)\n"
+            << "  --plugin path | --plugin-path directory | -o output\n";
     }
 
     void ParseCompileOptions(CommandLine& result, int argc, char* argv[], int firstOption) {
@@ -73,6 +93,15 @@ namespace {
             else if (argument == "--build-exe") result.buildExecutable = true;
             else if (argument == "--parse-only") result.parseOnly = true;
             else if (argument == "--sanitize=address") result.sanitizeAddress = true;
+            else if (argument == "--target") {
+                if (++index >= argc) throw std::invalid_argument("--target requires a triple");
+                result.targetTriple = argv[index];
+            }
+            else if (argument.starts_with("--target=")) {
+                result.targetTriple = argument.substr(std::string("--target=").size());
+                if (result.targetTriple.empty())
+                    throw std::invalid_argument("--target requires a triple");
+            }
             else if (argument == "--plugin") {
                 if (++index >= argc) throw std::invalid_argument("--plugin requires a library path");
                 result.plugins.emplace_back(argv[index]);
@@ -627,9 +656,21 @@ int main(int argc, char* argv[]) {
 
         if (commandLine.emitLlvm || commandLine.emitObject || commandLine.buildExecutable) {
 #ifdef ABSOLUTE_HAS_LLVM
+            const bool wasmTarget = IsWebAssemblyTargetTriple(commandLine.targetTriple);
+            if (wasmTarget && commandLine.buildExecutable) {
+                throw std::runtime_error(
+                    "WebAssembly --build-exe is not implemented yet; use --emit-llvm or --emit-object "
+                    "and link with wasm-ld / wasi-sdk (see docs/wasm-target.md)");
+            }
+            if (wasmTarget && commandLine.sanitizeAddress) {
+                throw std::runtime_error(
+                    "AddressSanitizer is not supported for WebAssembly targets");
+            }
+
             CodeGenerator generator(&analyzer);
             if (commandLine.emitLlvm) {
-                const std::string ir = generator.Generate(*compilation.program, compilation.moduleName);
+                const std::string ir = generator.Generate(*compilation.program, compilation.moduleName,
+                    commandLine.targetTriple);
                 if (commandLine.output.empty()) std::cout << ir;
                 else WriteFile(commandLine.output, ir);
             }
@@ -637,16 +678,24 @@ int main(int argc, char* argv[]) {
                 fs::path output = commandLine.output;
                 if (output.empty()) {
                     output = compilation.moduleName;
+                    if (wasmTarget) output.replace_extension(".o");
+                    else {
 #ifdef _WIN32
-                    output.replace_extension(".obj");
+                        output.replace_extension(".obj");
 #else
-                    output.replace_extension(".o");
+                        output.replace_extension(".o");
 #endif
+                    }
                 }
                 generator.GenerateObject(*compilation.program, compilation.moduleName,
-                    output.string(), compilation.sanitizeAddress);
+                    output.string(), compilation.sanitizeAddress, commandLine.targetTriple);
             }
             else {
+                if (!commandLine.targetTriple.empty()) {
+                    throw std::runtime_error(
+                        "--build-exe with --target is not supported; omit --target for host "
+                        "executables, or use --emit-object for cross/wasm objects");
+                }
                 fs::path output = commandLine.output;
                 if (output.empty()) {
                     output = compilation.moduleName;

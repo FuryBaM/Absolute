@@ -17,8 +17,12 @@ namespace Absolute {
         CodeGenerator(const CodeGenerator&) = delete;
         CodeGenerator& operator=(const CodeGenerator&) = delete;
 
-        std::string Generate(Program& program, const std::string& moduleName);
-        void GenerateObject(Program& program, const std::string& moduleName, const std::string& outputPath, bool sanitizeAddress = false);
+        // targetTriple empty => host default (llvm::sys::getDefaultTargetTriple()).
+        std::string Generate(Program& program, const std::string& moduleName,
+            const std::string& targetTriple = {});
+        void GenerateObject(Program& program, const std::string& moduleName,
+            const std::string& outputPath, bool sanitizeAddress = false,
+            const std::string& targetTriple = {});
 
         void Visit(PrimitiveTypeExpr* expr) override;
         void Visit(UserTypeExpr* expr) override;

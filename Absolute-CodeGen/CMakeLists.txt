@@ -85,6 +85,7 @@ target_compile_features(Absolute-CodeGen PUBLIC cxx_std_20)
 target_include_directories(Absolute-CodeGen PUBLIC include)
 target_include_directories(Absolute-CodeGen SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
 
+# nativecodegen = host backend; WebAssembly enables --target wasm32-... object emit.
 llvm_map_components_to_libnames(ABSOLUTE_LLVM_LIBS
     Core
     Support
@@ -96,6 +97,7 @@ llvm_map_components_to_libnames(ABSOLUTE_LLVM_LIBS
     AsmParser
     Linker
     nativecodegen
+    WebAssembly
 )
 
 target_link_libraries(Absolute-CodeGen

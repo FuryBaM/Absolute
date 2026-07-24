@@ -7,13 +7,15 @@ namespace Absolute {
 
     CodeGenerator::~CodeGenerator() = default;
 
-    std::string CodeGenerator::Generate(Program& program, const std::string& moduleName) {
-        return impl->Generate(program, moduleName);
+    std::string CodeGenerator::Generate(Program& program, const std::string& moduleName,
+        const std::string& targetTriple) {
+        return impl->Generate(program, moduleName, targetTriple);
     }
 
     void CodeGenerator::GenerateObject(
-        Program& program, const std::string& moduleName, const std::string& outputPath, bool sanitizeAddress) {
-        impl->GenerateObject(program, moduleName, outputPath, sanitizeAddress);
+        Program& program, const std::string& moduleName, const std::string& outputPath,
+        bool sanitizeAddress, const std::string& targetTriple) {
+        impl->GenerateObject(program, moduleName, outputPath, sanitizeAddress, targetTriple);
     }
 
 }

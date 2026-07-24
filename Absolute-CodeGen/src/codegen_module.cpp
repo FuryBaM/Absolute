@@ -654,8 +654,35 @@ namespace Absolute {
         return *module;
     }
 
-    std::string CodeGenerator::Impl::Generate(Program& program, const std::string& moduleName) {
-        BuildModule(program, moduleName, llvm::sys::getDefaultTargetTriple());
+    static bool IsWebAssemblyTriple(const llvm::Triple& triple) {
+        return triple.getArch() == llvm::Triple::wasm32 ||
+            triple.getArch() == llvm::Triple::wasm64;
+    }
+
+    static void InitializeCodegenTargets() {
+        static std::once_flag initializeTarget;
+        std::call_once(initializeTarget, [] {
+            if (llvm::InitializeNativeTarget())
+                throw std::runtime_error("LLVM codegen: failed to initialize the native target");
+            if (llvm::InitializeNativeTargetAsmPrinter())
+                throw std::runtime_error("LLVM codegen: failed to initialize the native assembly printer");
+            // Optional cross target used by --target wasm32-...
+            LLVMInitializeWebAssemblyTargetInfo();
+            LLVMInitializeWebAssemblyTarget();
+            LLVMInitializeWebAssemblyTargetMC();
+            LLVMInitializeWebAssemblyAsmPrinter();
+        });
+    }
+
+    static std::string ResolveTargetTriple(const std::string& requested) {
+        if (requested.empty()) return llvm::sys::getDefaultTargetTriple();
+        return requested;
+    }
+
+    std::string CodeGenerator::Impl::Generate(Program& program, const std::string& moduleName,
+        const std::string& targetTriple) {
+        const std::string triple = ResolveTargetTriple(targetTriple);
+        BuildModule(program, moduleName, triple);
 
         std::string output;
         llvm::raw_string_ostream stream(output);
@@ -664,28 +691,38 @@ namespace Absolute {
         return output;
     }
 
-    void CodeGenerator::Impl::GenerateObject(Program& program, const std::string& moduleName, const std::string& outputPath, bool sanitizeAddress) {
-        static std::once_flag initializeTarget;
-        std::call_once(initializeTarget, [] {
-            if (llvm::InitializeNativeTarget())
-                throw std::runtime_error("LLVM codegen: failed to initialize the native target");
-            if (llvm::InitializeNativeTargetAsmPrinter())
-                throw std::runtime_error("LLVM codegen: failed to initialize the native assembly printer");
-        });
+    void CodeGenerator::Impl::GenerateObject(Program& program, const std::string& moduleName,
+        const std::string& outputPath, bool sanitizeAddress, const std::string& targetTriple) {
+        InitializeCodegenTargets();
 
-        const std::string triple = llvm::sys::getDefaultTargetTriple();
+        const std::string tripleName = ResolveTargetTriple(targetTriple);
+        const llvm::Triple triple(tripleName);
+        if (sanitizeAddress && IsWebAssemblyTriple(triple))
+            Fail("AddressSanitizer is not supported for WebAssembly targets");
+
         std::string targetError;
-        const llvm::Target* target = llvm::TargetRegistry::lookupTarget(triple, targetError);
-        if (!target) Fail("cannot select target '" + triple + "': " + targetError);
+        const llvm::Target* target = llvm::TargetRegistry::lookupTarget(tripleName, targetError);
+        if (!target) Fail("cannot select target '" + tripleName + "': " + targetError);
 
         llvm::TargetOptions options;
-        const std::string cpu = llvm::sys::getHostCPUName().str();
+        std::string cpu = "generic";
+        llvm::Reloc::Model reloc = llvm::Reloc::PIC_;
+        if (IsWebAssemblyTriple(triple)) {
+            // Wasm objects use a generic CPU; PIC is the usual reloc model.
+            cpu = "generic";
+            reloc = llvm::Reloc::PIC_;
+        }
+        else {
+            const std::string hostCpu = llvm::sys::getHostCPUName().str();
+            if (!hostCpu.empty()) cpu = hostCpu;
+        }
+
         std::unique_ptr<llvm::TargetMachine> targetMachine(target->createTargetMachine(
-            triple, cpu.empty() ? "generic" : cpu, "", options, llvm::Reloc::PIC_,
+            tripleName, cpu, "", options, reloc,
             std::nullopt, llvm::CodeGenOptLevel::Aggressive));
-        if (!targetMachine) Fail("cannot create target machine for '" + triple + "'");
+        if (!targetMachine) Fail("cannot create target machine for '" + tripleName + "'");
         const std::string dataLayout = targetMachine->createDataLayout().getStringRepresentation();
-        llvm::Module& generatedModule = BuildModule(program, moduleName, triple, dataLayout);
+        llvm::Module& generatedModule = BuildModule(program, moduleName, tripleName, dataLayout);
         if (sanitizeAddress) {
             for (llvm::Function& function : generatedModule) {
                 if (!function.isDeclaration())

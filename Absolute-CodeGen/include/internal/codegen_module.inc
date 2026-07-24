@@ -36,6 +36,9 @@
         llvm::Module& BuildModule(Program& program, const std::string& moduleName,
             const std::string& targetTriple = {}, const std::string& dataLayout = {});
 
-        std::string Generate(Program& program, const std::string& moduleName);
+        std::string Generate(Program& program, const std::string& moduleName,
+            const std::string& targetTriple = {});
 
-        void GenerateObject(Program& program, const std::string& moduleName, const std::string& outputPath, bool sanitizeAddress = false);
+        void GenerateObject(Program& program, const std::string& moduleName,
+            const std::string& outputPath, bool sanitizeAddress = false,
+            const std::string& targetTriple = {});
