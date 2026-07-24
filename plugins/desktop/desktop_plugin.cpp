@@ -37,6 +37,7 @@ extern "C" double absolute_desktop_time();
 extern "C" void absolute_desktop_sleep(int32 milliseconds);
 extern "C" int64 absolute_desktop_sprite_create(int32 width, int32 height);
 extern "C" int64 absolute_desktop_sprite_load_bmp(string path);
+extern "C" int64 absolute_desktop_sprite_load_png(string path);
 extern "C" void absolute_desktop_sprite_destroy(int64 handle);
 extern "C" int32 absolute_desktop_sprite_width(int64 handle);
 extern "C" int32 absolute_desktop_sprite_height(int64 handle);
@@ -311,6 +312,25 @@ namespace Desktop {
             }
             handle = absolute_desktop_sprite_load_bmp(path);
             return handle != 0;
+        }
+
+        // Replace buffer with PNG (Windows WIC). Alpha < ~3% becomes transparent 0.
+        // Returns false on failure (including non-Windows builds for now).
+        public bool loadPng(string path) {
+            if (handle != 0) {
+                absolute_desktop_sprite_destroy(handle);
+                handle = 0;
+            }
+            handle = absolute_desktop_sprite_load_png(path);
+            return handle != 0;
+        }
+
+        // Prefer PNG, fall back to BMP (same soft buffer layout).
+        public bool loadImage(string path) {
+            if (loadPng(path)) {
+                return true;
+            }
+            return loadBmp(path);
         }
 
         public int32 width() {

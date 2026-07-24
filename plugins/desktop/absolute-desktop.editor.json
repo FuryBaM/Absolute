@@ -44,6 +44,8 @@
       "snippet": "new Desktop.Sprite(${1:64}, ${2:64})",
       "members": [
         { "name": "loadBmp", "detail": "bool loadBmp(string path)" },
+        { "name": "loadPng", "detail": "bool loadPng(string path)", "documentation": "PNG via Windows WIC." },
+        { "name": "loadImage", "detail": "bool loadImage(string path)", "documentation": "Try PNG then BMP." },
         { "name": "colorKey", "detail": "void colorKey(uint32 color)" },
         { "name": "drawText", "detail": "void drawText(int32 x, int32 y, string text, uint32 color, int32 scale)" },
         { "name": "destroy", "detail": "void destroy()" },

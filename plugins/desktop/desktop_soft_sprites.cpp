@@ -122,6 +122,19 @@ extern "C" int64_t absolute_desktop_sprite_load_bmp(const char* path) {
     return sprite ? SpriteToHandle(sprite) : 0;
 }
 
+// Adopt a 0x00RRGGBB pixel buffer into a soft sprite (used by PNG loader, etc.).
+extern "C" int64_t absolute_desktop_sprite_from_pixels(
+    int32_t width, int32_t height, const uint32_t* pixels) {
+    if (width <= 0 || height <= 0 || !pixels) return 0;
+    if (width > 16384 || height > 16384) return 0;
+    auto* sprite = new DesktopSprite();
+    sprite->width = width;
+    sprite->height = height;
+    const std::size_t count = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+    sprite->pixels.assign(pixels, pixels + count);
+    return SpriteToHandle(sprite);
+}
+
 extern "C" void absolute_desktop_sprite_destroy(int64_t handle) {
     delete SpriteFromHandle(handle);
 }

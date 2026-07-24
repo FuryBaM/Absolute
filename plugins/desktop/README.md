@@ -58,7 +58,10 @@ examples\desktop\run.bat pong.abs
 
 ### Soft sprites & images
 - `new Desktop.Sprite(w, h)` — procedural offscreen buffer (`0` = transparent)
-- `sprite.loadBmp(path)` — replace buffer with 24/32-bit uncompressed BMP (`false` on failure)
+- `sprite.loadBmp(path)` — 24/32-bit uncompressed BMP (`false` on failure)
+- `sprite.loadPng(path)` — PNG via Windows WIC (RGBA; low alpha → transparent `0`);
+  currently returns false on non-Windows
+- `sprite.loadImage(path)` — try PNG then BMP
 - `sprite.colorKey(rgb)` — exact RGB → transparent `0` (e.g. magenta `Desktop.rgb(255, 0, 255)`)
 - `clear`, `pixel`, `fillRect`, `fillCircle`, `destroy`, `isValid`
 - `window.drawSprite(sprite, x, y)`
@@ -162,4 +165,4 @@ resources; the current Absolute class model does not yet run RAII destructors.
 Examples: `examples/desktop/window.abs`, `pong.abs`, `sprites.abs`, `input.abs`,
 `image.abs` (BMP + atlas), `text.abs` (soft font HUD / typing),
 `batch.abs` (`SpriteBatch` + atlas tiles), `triangle.abs` (OpenGL pipeline),
-`gpu-sprites.abs` (textured ship + atlas).
+`gpu-sprites.abs` (textured ship + atlas), `image-png.abs` (PNG `loadImage`).

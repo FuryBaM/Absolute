@@ -510,8 +510,10 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Index buffers (`createIndexBuffer` / `drawIndexed`) и sampler objects
   (`createSampler` / `bind(sampler)`); multi-backend (Vulkan/D3D12) open.
 - [ ] Multi-backend RHI (Vulkan/D3D12) поверх того же Absolute API.
-- [ ] Добавить загрузку PNG, TTF/внешних шрифтов, моделей и аудио
-  (BMP + built-in soft font уже есть).
+- [x] PNG load for soft sprites: `sprite.loadPng` / `loadImage` (Windows WIC),
+  assets `examples/desktop/assets/*.png`, example `image-png.abs`;
+  non-Windows PNG and TTF/models/audio still open.
+- [ ] TTF / внешние шрифты, модели и аудио (BMP + PNG + soft font уже есть).
 - [ ] Добавить базовый UI toolkit для desktop-приложений.
 - [ ] Добавить audio output/mixer.
 - [ ] Расширить `absolute.shader` от opaque DSL-stub к reflection + RHI bind
