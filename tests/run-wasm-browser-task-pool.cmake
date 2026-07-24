@@ -61,11 +61,20 @@ const browserTaskWorker = process.argv[4];
     throw new Error('browser task worker missing expected protocol');
   }
 
-  // 3) Session worker wires taskWorkers option.
+  // 3) Session worker wires taskWorkers option (isolated + shared modes).
   const sessionWorker = path.join(path.dirname(browserTaskWorker), 'absolute-wasm-browser-session-worker.js');
   const sessionSrc = fs.readFileSync(sessionWorker, 'utf8');
   if (!sessionSrc.includes('createBrowserTaskPool') || !sessionSrc.includes('taskWorkers')) {
     throw new Error('session worker missing task pool wiring');
+  }
+  if (!sessionSrc.includes('prepareSharedMemoryImport') || !sessionSrc.includes('taskPoolMode')) {
+    throw new Error('session worker missing shared-memory task pool wiring');
+  }
+  const sharedWorker = path.join(path.dirname(browserTaskWorker), 'absolute-wasm-browser-shared-task-worker.js');
+  if (!fs.existsSync(sharedWorker)) throw new Error('missing browser shared task worker');
+  const sharedSrc = fs.readFileSync(sharedWorker, 'utf8');
+  if (!sharedSrc.includes('contextPtr') || !sharedSrc.includes('sharedMemory')) {
+    throw new Error('browser shared task worker missing in-place protocol');
   }
 
   console.log('wasm-browser-task-pool=ok');

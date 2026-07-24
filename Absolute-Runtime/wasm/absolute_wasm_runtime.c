@@ -118,43 +118,148 @@ typedef struct HeapBlock {
 } HeapBlock;
 
 static unsigned char g_static_heap[2 * 1024 * 1024];
+
+static size_t align_up(size_t value, size_t alignment) {
+    return (value + alignment - 1) & ~(alignment - 1);
+}
+
+#if defined(ABSOLUTE_WASM_SHARED)
+#include <stdatomic.h>
+/*
+ * Heap control lives in linear memory so every module instance that shares
+ * env.memory sees the same break/free-list (wasm globals are per-instance).
+ */
+typedef struct SharedHeapCtrl {
+    atomic_int lock;
+    atomic_int ready; /* 0 = uninit, 1 = ready */
+    uint32_t break_off; /* offset from g_static_heap to next free byte */
+    uint32_t free_off; /* 0 = empty; else offset of HeapBlock head */
+    uint32_t pad;
+} SharedHeapCtrl;
+
+enum { ABSOLUTE_HEAP_CTRL_SIZE = 64 };
+
+static SharedHeapCtrl* heap_ctrl(void) {
+    return (SharedHeapCtrl*)(void*)g_static_heap;
+}
+
+static unsigned char* heap_arena_start(void) {
+    return g_static_heap + ABSOLUTE_HEAP_CTRL_SIZE;
+}
+
+static unsigned char* heap_arena_end(void) {
+    return g_static_heap + sizeof(g_static_heap);
+}
+
+static void heap_lock(void) {
+    SharedHeapCtrl* ctrl = heap_ctrl();
+    int expected = 0;
+    while (!atomic_compare_exchange_weak_explicit(
+            &ctrl->lock, &expected, 1,
+            memory_order_acquire, memory_order_relaxed)) {
+        expected = 0;
+    }
+}
+
+static void heap_unlock(void) {
+    atomic_store_explicit(&heap_ctrl()->lock, 0, memory_order_release);
+}
+
+static void heap_init(void) {
+    SharedHeapCtrl* ctrl = heap_ctrl();
+    if (atomic_load_explicit(&ctrl->ready, memory_order_acquire) == 1)
+        return;
+    heap_lock();
+    if (atomic_load_explicit(&ctrl->ready, memory_order_relaxed) == 0) {
+        ctrl->break_off = (uint32_t)ABSOLUTE_HEAP_CTRL_SIZE;
+        ctrl->free_off = 0;
+        atomic_store_explicit(&ctrl->ready, 1, memory_order_release);
+    }
+    heap_unlock();
+}
+
+static HeapBlock* heap_block_from_off(uint32_t off) {
+    if (off == 0)
+        return NULL;
+    return (HeapBlock*)(void*)(g_static_heap + off);
+}
+
+static uint32_t heap_off_from_ptr(void* pointer) {
+    if (!pointer)
+        return 0;
+    return (uint32_t)((unsigned char*)pointer - g_static_heap);
+}
+
+static void* heap_alloc(size_t size) {
+    heap_init();
+    if (size == 0)
+        size = 1;
+    size = align_up(size, ABSOLUTE_WASM_HEAP_ALIGN);
+    heap_lock();
+    SharedHeapCtrl* ctrl = heap_ctrl();
+
+    uint32_t prev_off = 0;
+    uint32_t cur_off = ctrl->free_off;
+    while (cur_off) {
+        HeapBlock* block = heap_block_from_off(cur_off);
+        uint32_t next_off = heap_off_from_ptr(block->next);
+        if (block->free && block->size >= size) {
+            block->free = 0;
+            if (prev_off == 0)
+                ctrl->free_off = next_off;
+            else
+                heap_block_from_off(prev_off)->next = block->next;
+            void* result = (unsigned char*)block + sizeof(HeapBlock);
+            heap_unlock();
+            return result;
+        }
+        prev_off = cur_off;
+        cur_off = next_off;
+    }
+
+    size_t total = sizeof(HeapBlock) + size;
+    total = align_up(total, ABSOLUTE_WASM_HEAP_ALIGN);
+    if ((size_t)(heap_arena_end() - (g_static_heap + ctrl->break_off)) < total) {
+        heap_unlock();
+        return NULL;
+    }
+    HeapBlock* block = (HeapBlock*)(void*)(g_static_heap + ctrl->break_off);
+    ctrl->break_off += (uint32_t)total;
+    block->size = size;
+    block->free = 0;
+    block->next = NULL;
+    void* result = (unsigned char*)block + sizeof(HeapBlock);
+    heap_unlock();
+    return result;
+}
+
+void free(void* pointer) {
+    if (!pointer)
+        return;
+    heap_init();
+    heap_lock();
+    SharedHeapCtrl* ctrl = heap_ctrl();
+    HeapBlock* block = (HeapBlock*)((unsigned char*)pointer - sizeof(HeapBlock));
+    block->free = 1;
+    block->next = heap_block_from_off(ctrl->free_off);
+    ctrl->free_off = heap_off_from_ptr(block);
+    heap_unlock();
+}
+
+#else /* !ABSOLUTE_WASM_SHARED */
+
 static unsigned char* g_heap_start;
 static unsigned char* g_heap_end;
 static unsigned char* g_heap_break;
 static HeapBlock* g_free_list;
 static int g_heap_ready;
 
-#if defined(ABSOLUTE_WASM_SHARED)
-#include <stdatomic.h>
-/* Global malloc lock for multi-threaded shared-memory modules. */
-static atomic_int g_heap_lock = 0;
-
-static void heap_lock(void) {
-    int expected = 0;
-    while (!atomic_compare_exchange_weak_explicit(
-            &g_heap_lock, &expected, 1,
-            memory_order_acquire, memory_order_relaxed)) {
-        expected = 0;
-        /* spin — hosts should not hold the lock across long work */
-    }
-}
-
-static void heap_unlock(void) {
-    atomic_store_explicit(&g_heap_lock, 0, memory_order_release);
-}
-#else
 static void heap_lock(void) {}
 static void heap_unlock(void) {}
-#endif
-
-static size_t align_up(size_t value, size_t alignment) {
-    return (value + alignment - 1) & ~(alignment - 1);
-}
 
 static void heap_init(void) {
     if (g_heap_ready)
         return;
-    /* Fixed linear-memory arena: simple and import-free. */
     g_heap_start = g_static_heap;
     g_heap_end = g_static_heap + sizeof(g_static_heap);
     g_heap_break = g_heap_start;
@@ -162,14 +267,7 @@ static void heap_init(void) {
     g_heap_ready = 1;
 }
 
-static int heap_grow(size_t need) {
-    (void)need;
-    return 0;
-}
-
-/* Absolute LLVM always declares malloc(i64) even on wasm32; match that ABI. */
 static void* heap_alloc(size_t size) {
-    heap_lock();
     heap_init();
     if (size == 0)
         size = 1;
@@ -181,48 +279,37 @@ static void* heap_alloc(size_t size) {
         if (block->free && block->size >= size) {
             block->free = 0;
             *link = block->next;
-            void* result = (unsigned char*)block + sizeof(HeapBlock);
-            heap_unlock();
-            return result;
+            return (unsigned char*)block + sizeof(HeapBlock);
         }
         link = &block->next;
     }
 
     size_t total = sizeof(HeapBlock) + size;
     total = align_up(total, ABSOLUTE_WASM_HEAP_ALIGN);
-    if ((size_t)(g_heap_end - g_heap_break) < total) {
-        if (!heap_grow(total - (size_t)(g_heap_end - g_heap_break) + 65536)) {
-            heap_unlock();
-            return NULL;
-        }
-        if ((size_t)(g_heap_end - g_heap_break) < total) {
-            heap_unlock();
-            return NULL;
-        }
-    }
+    if ((size_t)(g_heap_end - g_heap_break) < total)
+        return NULL;
     HeapBlock* block = (HeapBlock*)g_heap_break;
     g_heap_break += total;
     block->size = size;
     block->free = 0;
     block->next = NULL;
-    void* result = (unsigned char*)block + sizeof(HeapBlock);
-    heap_unlock();
-    return result;
-}
-
-void* malloc(uint64_t size) {
-    return heap_alloc((size_t)size);
+    return (unsigned char*)block + sizeof(HeapBlock);
 }
 
 void free(void* pointer) {
     if (!pointer)
         return;
-    heap_lock();
     HeapBlock* block = (HeapBlock*)((unsigned char*)pointer - sizeof(HeapBlock));
     block->free = 1;
     block->next = g_free_list;
     g_free_list = block;
-    heap_unlock();
+}
+
+#endif /* ABSOLUTE_WASM_SHARED */
+
+/* Absolute LLVM always declares malloc(i64) even on wasm32; match that ABI. */
+void* malloc(uint64_t size) {
+    return heap_alloc((size_t)size);
 }
 
 void* calloc(uint64_t count, uint64_t size) {
@@ -243,14 +330,10 @@ void* realloc(void* pointer, uint64_t size) {
         free(pointer);
         return NULL;
     }
-    heap_lock();
     HeapBlock* block = (HeapBlock*)((unsigned char*)pointer - sizeof(HeapBlock));
-    if (block->size >= (size_t)size) {
-        heap_unlock();
+    if (block->size >= (size_t)size)
         return pointer;
-    }
     size_t old_size = block->size;
-    heap_unlock();
     void* next = heap_alloc((size_t)size);
     if (!next)
         return NULL;
@@ -263,7 +346,6 @@ void* realloc(void* pointer, uint64_t size) {
 }
 
 #if defined(ABSOLUTE_WASM_SHARED)
-/* Probe export: 1 when this runtime was built for shared-memory modules. */
 int32_t absolute_wasm_shared_memory_enabled(void) {
     return 1;
 }

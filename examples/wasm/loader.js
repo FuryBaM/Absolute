@@ -213,11 +213,11 @@ async function loadInWorker(bytes) {
   }
   const info = await session.instantiate(bytes, options);
   log(
-    `Loaded in Worker.\nexports:\n${(info.exports || []).join('\n')}\ntcpMode=${info.tcpMode}\ntaskWorkers=${info.taskWorkers}\n\n`,
+    `Loaded in Worker.\nexports:\n${(info.exports || []).join('\n')}\ntcpMode=${info.tcpMode}\ntaskWorkers=${info.taskWorkers}\ntaskPoolMode=${info.taskPoolMode}\nsharedMemory=${info.sharedMemory}\n\n`,
     'ok',
   );
   setStatus(
-    `mode=worker tcp=${info.tcpMode} tasks=${info.taskWorkers} crossOriginIsolated=${String(window.crossOriginIsolated)} sab=${String(typeof SharedArrayBuffer !== 'undefined')}`,
+    `mode=worker tcp=${info.tcpMode} tasks=${info.taskWorkers}/${info.taskPoolMode || 'none'} sharedMem=${info.sharedMemory} crossOriginIsolated=${String(window.crossOriginIsolated)}`,
   );
   runEl.disabled = false;
 }

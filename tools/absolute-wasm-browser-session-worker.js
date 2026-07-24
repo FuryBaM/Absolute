@@ -200,25 +200,62 @@ function createWebSocketTcpBridge(wsMap) {
     };
 }
 
-function createBrowserTaskPool(wasmBytes, workerCount) {
+function prepareSharedMemoryImport(module, imports) {
+    const memImport = WebAssembly.Module.imports(module).find(
+        (entry) => entry.module === 'env' && entry.name === 'memory' && entry.kind === 'memory',
+    );
+    if (!memImport) return null;
+    if (typeof SharedArrayBuffer === 'undefined') {
+        throw new Error('shared-memory module requires SharedArrayBuffer (COOP/COEP)');
+    }
+    const type = memImport.type || {};
+    const initial = Number(type.initial ?? type.minimum ?? 256) || 256;
+    let maximum = type.maximum != null ? Number(type.maximum) : 256;
+    if (!Number.isFinite(maximum) || maximum < initial) maximum = Math.max(initial, 256);
+    const memoryObj = new WebAssembly.Memory({ initial, maximum, shared: true });
+    if (!imports.env) imports.env = {};
+    imports.env.memory = memoryObj;
+    return memoryObj;
+}
+
+/**
+ * @param {Uint8Array|ArrayBuffer} wasmBytes
+ * @param {number} workerCount
+ * @param {{ sharedMemory?: WebAssembly.Memory|null }} [poolOptions]
+ */
+function createBrowserTaskPool(wasmBytes, workerCount, poolOptions = {}) {
     const count = Math.max(0, Math.min(16, workerCount | 0));
     if (count <= 0 || typeof SharedArrayBuffer === 'undefined') {
-        return { size: 0, enqueue() { return -1; }, awaitJob() {}, shutdown() {}, ready: Promise.resolve() };
+        return {
+            size: 0,
+            mode: 'none',
+            enqueue() { return -1; },
+            awaitJob() {},
+            shutdown() {},
+            ready: Promise.resolve(),
+        };
     }
 
-    const sabSize = TASK_JOB_BASE + TASK_JOB_COUNT * TASK_JOB_STRIDE;
+    const sharedMemory = poolOptions.sharedMemory || null;
+    const sharedMode = !!(sharedMemory && sharedMemory.buffer instanceof SharedArrayBuffer);
+    const jobStride = sharedMode ? 64 : TASK_JOB_STRIDE;
+    const sabSize = TASK_JOB_BASE + TASK_JOB_COUNT * jobStride;
     const sab = new SharedArrayBuffer(sabSize);
     const i32 = new Int32Array(sab);
-    const u8 = new Uint8Array(sab);
-    let boundMemory = null;
+    const u8 = sharedMode ? null : new Uint8Array(sab);
+    let boundMemory = sharedMemory;
     const workers = [];
     const bytesCopy = wasmBytes instanceof ArrayBuffer
         ? wasmBytes.slice(0)
         : wasmBytes.buffer.slice(wasmBytes.byteOffset, wasmBytes.byteOffset + wasmBytes.byteLength);
 
+    const workerUrl = sharedMode
+        ? new URL('./absolute-wasm-browser-shared-task-worker.js', import.meta.url)
+        : new URL('./absolute-wasm-browser-task-worker.js', import.meta.url);
+
     const readyPromises = [];
     for (let w = 0; w < count; w += 1) {
-        const worker = new Worker(new URL('./absolute-wasm-browser-task-worker.js', import.meta.url));
+        const worker = new Worker(workerUrl);
         readyPromises.push(new Promise((resolve, reject) => {
             const timer = setTimeout(() => reject(new Error('task worker ready timeout')), 15000);
             worker.onmessage = (event) => {
@@ -232,34 +269,66 @@ function createBrowserTaskPool(wasmBytes, workerCount) {
                 reject(err);
             };
         }));
-        // Each worker needs its own copy of the bytes (transfer would detach).
         const copy = bytesCopy.slice(0);
-        worker.postMessage({
-            type: 'init',
-            wasmBytes: copy,
-            sab,
-            jobCount: TASK_JOB_COUNT,
-            jobStride: TASK_JOB_STRIDE,
-            jobBase: TASK_JOB_BASE,
-            contextMax: TASK_CONTEXT_MAX,
-            wakeIndex: TASK_WAKE_INDEX,
-        }, [copy]);
+        if (sharedMode) {
+            // Structured-clone shared WebAssembly.Memory (same SAB).
+            worker.postMessage({
+                type: 'init',
+                wasmBytes: copy,
+                memory: sharedMemory,
+                jobSab: sab,
+                jobCount: TASK_JOB_COUNT,
+                jobStride,
+                jobBase: TASK_JOB_BASE,
+                wakeIndex: TASK_WAKE_INDEX,
+            }, [copy]);
+        } else {
+            worker.postMessage({
+                type: 'init',
+                wasmBytes: copy,
+                sab,
+                jobCount: TASK_JOB_COUNT,
+                jobStride: TASK_JOB_STRIDE,
+                jobBase: TASK_JOB_BASE,
+                contextMax: TASK_CONTEXT_MAX,
+                wakeIndex: TASK_WAKE_INDEX,
+            }, [copy]);
+        }
         workers.push(worker);
     }
 
     function slotI32Offset(jobIndex) {
-        return (TASK_JOB_BASE + jobIndex * TASK_JOB_STRIDE) >> 2;
+        return (TASK_JOB_BASE + jobIndex * jobStride) >> 2;
     }
 
     function slotBytesOffset(jobIndex) {
-        return TASK_JOB_BASE + jobIndex * TASK_JOB_STRIDE + 64;
+        return TASK_JOB_BASE + jobIndex * jobStride + 64;
     }
 
     return {
         size: count,
+        mode: sharedMode ? 'shared' : 'isolated',
         ready: Promise.all(readyPromises),
-        bindMemory(mem) { boundMemory = mem; },
+        bindMemory(mem) {
+            if (!sharedMode) boundMemory = mem;
+        },
         enqueue(entry, contextPtr, contextBytes) {
+            if (sharedMode) {
+                for (let i = 0; i < TASK_JOB_COUNT; i += 1) {
+                    const base = slotI32Offset(i);
+                    if (Atomics.load(i32, base) !== TASK_STATUS_FREE) continue;
+                    Atomics.store(i32, base + 1, Number(entry) | 0);
+                    Atomics.store(i32, base + 2, Number(contextPtr) | 0);
+                    Atomics.store(i32, base + 3, 0);
+                    Atomics.store(i32, base + 4, 0);
+                    Atomics.store(i32, base + 5, 0);
+                    Atomics.store(i32, base, TASK_STATUS_READY);
+                    Atomics.add(i32, TASK_WAKE_INDEX, 1);
+                    Atomics.notify(i32, TASK_WAKE_INDEX, workers.length);
+                    return i;
+                }
+                return -1;
+            }
             if (!boundMemory) return -1;
             const requested = Math.min(Number(contextBytes) | 0, TASK_CONTEXT_MAX);
             const src = Number(contextPtr) >>> 0;
@@ -282,7 +351,6 @@ function createBrowserTaskPool(wasmBytes, workerCount) {
             return -1;
         },
         awaitJob(jobId, contextPtr) {
-            if (!boundMemory) return;
             const id = Number(jobId) | 0;
             if (id < 0 || id >= TASK_JOB_COUNT) return;
             const base = slotI32Offset(id);
@@ -293,10 +361,12 @@ function createBrowserTaskPool(wasmBytes, workerCount) {
                 const wait = Atomics.wait(i32, base, status, 30000);
                 if (wait === 'timed-out' && Atomics.load(i32, base) !== TASK_STATUS_DONE) return;
             }
-            const dst = Number(contextPtr) >>> 0;
-            if (dst) {
-                const view = new Uint8Array(boundMemory.buffer);
-                view.set(u8.subarray(slotBytesOffset(id), slotBytesOffset(id) + 8), dst);
+            if (!sharedMode && boundMemory) {
+                const dst = Number(contextPtr) >>> 0;
+                if (dst) {
+                    const view = new Uint8Array(boundMemory.buffer);
+                    view.set(u8.subarray(slotBytesOffset(id), slotBytesOffset(id) + 8), dst);
+                }
             }
             Atomics.store(i32, base, TASK_STATUS_FREE);
             Atomics.notify(i32, base, 1);
@@ -409,11 +479,27 @@ async function instantiate(bytes, options = {}) {
     }
     tcp = await pickTcp(options);
 
+    const module = await WebAssembly.compile(bytes);
+    const imports = createImports(options, tcp, null);
+    let importedMemory = null;
+    try {
+        importedMemory = prepareSharedMemoryImport(module, imports);
+    } catch (error) {
+        self.postMessage({ type: 'log', text: `[memory] ${error}\n` });
+    }
+
     const wantTasks = (Number(options.taskWorkers) || 0) > 0
         && typeof SharedArrayBuffer !== 'undefined';
     if (wantTasks) {
         try {
-            taskPool = createBrowserTaskPool(bytes, Number(options.taskWorkers) || 0);
+            taskPool = createBrowserTaskPool(bytes, Number(options.taskWorkers) || 0, {
+                sharedMemory: importedMemory,
+            });
+            // Wire pool into imports after creation (pool_size / enqueue).
+            const poolImports = createImports(options, tcp, taskPool);
+            imports.env.absolute_task_pool_size = poolImports.env.absolute_task_pool_size;
+            imports.env.absolute_task_enqueue = poolImports.env.absolute_task_enqueue;
+            imports.env.absolute_task_await_job = poolImports.env.absolute_task_await_job;
             await taskPool.ready;
         } catch (error) {
             self.postMessage({ type: 'log', text: `[tasks] pool unavailable: ${error}\n` });
@@ -421,24 +507,27 @@ async function instantiate(bytes, options = {}) {
         }
     }
 
-    const imports = createImports(options, tcp, taskPool);
-    const result = await WebAssembly.instantiate(bytes, imports);
+    const result = await WebAssembly.instantiate(module, imports);
     instance = result.instance || result;
-    memory = instance.exports.memory || null;
-    if (!memory) throw new Error('module did not export memory');
+    memory = instance.exports.memory || importedMemory || null;
+    if (!memory) throw new Error('module did not provide memory');
     if (taskPool && typeof taskPool.bindMemory === 'function') {
         taskPool.bindMemory(memory);
     }
-    // Give task workers a moment after main instance exists (they init in parallel).
     if (taskPool && taskPool.size > 0) {
-        await new Promise((r) => setTimeout(r, 30));
+        await new Promise((r) => setTimeout(r, 50));
     }
     const names = Object.keys(instance.exports).filter((n) => !n.startsWith('__'));
+    const shared = !!(memory.buffer
+        && typeof SharedArrayBuffer !== 'undefined'
+        && memory.buffer instanceof SharedArrayBuffer);
     self.postMessage({
         type: 'instantiated',
         exports: names,
         tcpMode: tcp.mode || 'mock',
         taskWorkers: taskPool ? taskPool.size : 0,
+        taskPoolMode: taskPool ? taskPool.mode : 'none',
+        sharedMemory: shared,
         crossOriginIsolated: typeof crossOriginIsolated !== 'undefined' ? crossOriginIsolated : null,
     });
 }

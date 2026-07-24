@@ -78,28 +78,49 @@ const TASK_JOB_STRIDE = 64 + TASK_CONTEXT_MAX; // header + payload
 const TASK_JOB_BASE = 64;
 const TASK_WAKE_INDEX = 0; // i32 index in control header
 
-function createTaskPool(wasmBytes, workerCount) {
+function createTaskPool(wasmBytes, workerCount, options = {}) {
     const count = Math.max(0, Math.min(16, workerCount | 0));
     if (count <= 0) {
         return {
             size: 0,
+            mode: 'none',
             enqueue() { return -1; },
             awaitJob() {},
             shutdown() {},
         };
     }
 
-    const sabSize = TASK_JOB_BASE + TASK_JOB_COUNT * TASK_JOB_STRIDE;
+    const sharedMemory = options.sharedMemory || null;
+    const sharedMode = !!(sharedMemory && sharedMemory.buffer instanceof SharedArrayBuffer);
+
+    // Shared mode only needs a small control SAB; isolated mode carries context bytes.
+    const sabSize = sharedMode
+        ? TASK_JOB_BASE + TASK_JOB_COUNT * 64
+        : TASK_JOB_BASE + TASK_JOB_COUNT * TASK_JOB_STRIDE;
+    const jobStride = sharedMode ? 64 : TASK_JOB_STRIDE;
     const sab = new SharedArrayBuffer(sabSize);
     const i32 = new Int32Array(sab);
-    const u8 = new Uint8Array(sab);
+    const u8 = sharedMode ? null : new Uint8Array(sab);
     /** @type {WebAssembly.Memory | null} */
-    let memory = null;
+    let memory = sharedMemory;
 
     const workers = [];
+    const workerScript = sharedMode
+        ? path.join(__dirname, 'absolute-wasm-shared-task-worker.js')
+        : path.join(__dirname, 'absolute-wasm-task-worker.js');
+
     for (let w = 0; w < count; w += 1) {
-        const worker = new Worker(path.join(__dirname, 'absolute-wasm-task-worker.js'), {
-            workerData: {
+        const workerData = sharedMode
+            ? {
+                wasmBytes: Buffer.from(wasmBytes),
+                memory: sharedMemory,
+                jobSab: sab,
+                jobCount: TASK_JOB_COUNT,
+                jobStride,
+                jobBase: TASK_JOB_BASE,
+                wakeIndex: TASK_WAKE_INDEX,
+            }
+            : {
                 wasmBytes: Buffer.from(wasmBytes),
                 sab,
                 jobCount: TASK_JOB_COUNT,
@@ -107,8 +128,8 @@ function createTaskPool(wasmBytes, workerCount) {
                 jobBase: TASK_JOB_BASE,
                 contextMax: TASK_CONTEXT_MAX,
                 wakeIndex: TASK_WAKE_INDEX,
-            },
-        });
+            };
+        const worker = new Worker(workerScript, { workerData });
         if (typeof worker.unref === 'function') worker.unref();
         worker.on('error', (error) => {
             if (typeof console !== 'undefined') console.error('absolute wasm task worker error', error);
@@ -117,18 +138,35 @@ function createTaskPool(wasmBytes, workerCount) {
     }
 
     function slotI32Offset(jobIndex) {
-        return (TASK_JOB_BASE + jobIndex * TASK_JOB_STRIDE) >> 2;
+        return (TASK_JOB_BASE + jobIndex * jobStride) >> 2;
     }
 
     function slotBytesOffset(jobIndex) {
-        return TASK_JOB_BASE + jobIndex * TASK_JOB_STRIDE + 64;
+        return TASK_JOB_BASE + jobIndex * jobStride + 64;
     }
 
     function bindMemory(mem) {
-        memory = mem;
+        if (!sharedMode) memory = mem;
     }
 
     function enqueue(entry, contextPtr, contextBytes, core, priority) {
+        if (sharedMode) {
+            for (let i = 0; i < TASK_JOB_COUNT; i += 1) {
+                const base = slotI32Offset(i);
+                if (Atomics.load(i32, base) !== TASK_STATUS_FREE) continue;
+                Atomics.store(i32, base + 1, Number(entry) | 0);
+                Atomics.store(i32, base + 2, Number(contextPtr) | 0);
+                Atomics.store(i32, base + 3, Number(core) | 0);
+                Atomics.store(i32, base + 4, Number(priority) | 0);
+                Atomics.store(i32, base + 5, 0);
+                Atomics.store(i32, base, TASK_STATUS_READY);
+                Atomics.add(i32, TASK_WAKE_INDEX, 1);
+                Atomics.notify(i32, TASK_WAKE_INDEX, workers.length);
+                return i;
+            }
+            return -1;
+        }
+
         if (!memory) return -1;
         // Cap the copy to stay inside wasm memory; workers only need arg slots.
         const requested = Math.min(Number(contextBytes) | 0, TASK_CONTEXT_MAX);
@@ -154,7 +192,6 @@ function createTaskPool(wasmBytes, workerCount) {
     }
 
     function awaitJob(jobId, contextPtr, contextBytes) {
-        if (!memory) return;
         const id = Number(jobId) | 0;
         if (id < 0 || id >= TASK_JOB_COUNT) return;
         const base = slotI32Offset(id);
@@ -165,18 +202,19 @@ function createTaskPool(wasmBytes, workerCount) {
             if (status === TASK_STATUS_FREE) return;
             const wait = Atomics.wait(i32, base, status, 30000);
             if (wait === 'timed-out' && Atomics.load(i32, base) !== TASK_STATUS_DONE) {
-                // Leave slot for debugging; caller may see empty/partial context.
                 return;
             }
         }
-        // Codegen stores the task result in i64 slot 0 of the context. Copy only
-        // that slot back — writing CONTEXT_MAX bytes would smash neighboring
-        // heap objects (other task contexts / WasmTask headers).
-        const dst = Number(contextPtr) >>> 0;
-        if (dst) {
-            const view = new Uint8Array(memory.buffer);
-            view.set(u8.subarray(slotBytesOffset(id), slotBytesOffset(id) + 8), dst);
+        if (!sharedMode && memory) {
+            // Isolated workers wrote result into the job payload; copy 8-byte slot 0.
+            const dst = Number(contextPtr) >>> 0;
+            if (dst) {
+                const view = new Uint8Array(memory.buffer);
+                view.set(u8.subarray(slotBytesOffset(id), slotBytesOffset(id) + 8), dst);
+            }
         }
+        // Shared mode: worker wrote result in-place into contextPtr in shared memory.
+        void contextBytes;
         Atomics.store(i32, base, TASK_STATUS_FREE);
         Atomics.notify(i32, base, 1);
     }
@@ -190,6 +228,7 @@ function createTaskPool(wasmBytes, workerCount) {
 
     return {
         size: count,
+        mode: sharedMode ? 'shared' : 'isolated',
         bindMemory,
         enqueue,
         awaitJob,
@@ -548,32 +587,38 @@ async function instantiateAbsoluteWasm(bytes, options = {}) {
         options._httpCache = await prepareHttp(options.prefetchUrls, options.maxHttpBytes || 65536);
     }
     const taskWorkers = Number(options.taskWorkers) || 0;
-    let taskPool = null;
-    if (taskWorkers > 0) {
-        taskPool = createTaskPool(bytes, taskWorkers);
-        options = { ...options, _taskPool: taskPool };
-    }
     const host = createAbsoluteImports(options);
-    if (taskPool) host.setTaskPool(taskPool);
     const module = await WebAssembly.compile(bytes);
     const importedMemory = prepareSharedMemoryImport(module, host.imports);
+    // Shared modules + taskWorkers => in-place tasks on one shared heap.
+    // Non-shared modules keep isolated worker instances (context copy).
+    let taskPool = null;
+    if (taskWorkers > 0) {
+        taskPool = createTaskPool(bytes, taskWorkers, {
+            sharedMemory: importedMemory || null,
+        });
+        host.setTaskPool(taskPool);
+    }
     const result = await WebAssembly.instantiate(module, host.imports);
     const instance = result.instance || result;
     host.bind(instance, importedMemory);
     // Give workers a moment to compile/instantiate before the first spawn.
     if (taskPool && taskPool.size > 0) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await new Promise((resolve) => setTimeout(resolve, 80));
     }
+    const memory = importedMemory || instance.exports.memory || null;
+    const sharedMemory = !!(memory
+        && memory.buffer
+        && typeof SharedArrayBuffer !== 'undefined'
+        && memory.buffer instanceof SharedArrayBuffer);
     return {
         instance,
         exports: instance.exports,
         logs: host.logs,
         host,
-        memory: importedMemory || instance.exports.memory || null,
-        sharedMemory: !!(importedMemory || (instance.exports.memory
-            && instance.exports.memory.buffer
-            && typeof SharedArrayBuffer !== 'undefined'
-            && instance.exports.memory.buffer instanceof SharedArrayBuffer)),
+        memory,
+        sharedMemory,
+        taskPoolMode: taskPool ? taskPool.mode : 'none',
     };
 }
 

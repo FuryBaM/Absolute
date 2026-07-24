@@ -96,6 +96,7 @@ Common triples:
 - `tests/wasm-http.abs` via browser host → `absolute.run-wasm-browser-host`
 - browser session stack → `absolute.run-wasm-browser-session` (COOP headers + Atomics protocol)
 - shared-memory smoke → `absolute.run-wasm-shared-memory`
+- shared-instance tasks → `absolute.run-wasm-shared-tasks` (`wasm-task-mt` + shared pool)
 - IR/object checks
 
 ## Host import
@@ -275,19 +276,86 @@ wasm-ld --shared-memory --import-memory --max-memory=16777216 --no-entry --expor
 Memory. Export `absolute_wasm_shared_memory_enabled()` returns 1 on shared builds.
 Heap `malloc`/`free` use a global spinlock when `ABSOLUTE_WASM_SHARED` is defined.
 
+### Shared-instance task pool
+
+When a **shared-memory** module is instantiated with `taskWorkers: N > 0`, the host
+uses `absolute-wasm-shared-task-worker.js`:
+
+1. Host and each worker instantiate the **same** module with the **same**
+   `WebAssembly.Memory` (shared).
+2. Heap control (`lock`, `break`, free-list) lives in linear memory so every
+   instance sees one arena (wasm globals alone are per-instance).
+3. `spawn` enqueues `(entryIndex, contextPtr)`; the worker calls
+   `table.get(entry)(contextPtr)` **in place** (no context byte copy).
+
+```js
+const { exports, taskPoolMode, sharedMemory } = await instantiateAbsoluteWasm(bytes, {
+  taskWorkers: 2, // => taskPoolMode === 'shared' for shared modules
+});
+```
+
+Non-shared modules still use the isolated pool (`absolute-wasm-task-worker.js`,
+context copy).
+
 Limits:
 
-- Not a full pthread / wasi-threads model (no TLS, no automatic thread spawn).
-- Isolated task workers still use **separate** module instances (unchanged).
+- Not a full pthread / wasi-threads model (no TLS, no automatic C thread spawn).
 - Browser pages need COOP/COEP for `SharedArrayBuffer`.
 - Default (non-shared) modules keep exported non-shared memory for simple embeds.
+- Managed/global Absolute state beyond the locked heap is still largely
+  single-thread oriented.
 
-Test: `absolute.run-wasm-shared-memory`.
+Tests: `absolute.run-wasm-shared-memory`, `absolute.run-wasm-shared-tasks`.
+
+### wasi-libc coexistence (selective kits)
+
+Full `libc.a` **cannot** be linked with Absolute: `wasm-ld` errors on duplicate
+`malloc` / `exit` / `printf` / … Absolute keeps its heap and console; wasi-libc
+is pulled in as **selected `.o` members** for symbols Absolute does not provide.
+
+| Piece | Role |
+|-------|------|
+| `scripts/windows/bootstrap-wasi-sysroot.ps1` | wasi-sysroot + compiler-rt builtins |
+| `cmake/AbsoluteWasi.cmake` | discovers `ABSOLUTE_WASI_SYSROOT` / `ABSOLUTE_WASI_LIBC` |
+| `cmake/AbsoluteWasiLibcExtras.cmake` | kit lists + `llvm-ar` extract |
+| `tests/wasi-libc-probe.c` | `wasi_libc_strtol` / optional `wasi_libc_strtod` |
+| `tests/run-wasm-wasi-libc.cmake` | link Absolute WASI runtime + kit + builtins |
+
+| Kit (`WASI_LIBC_KIT=`) | Provides |
+|------------------------|----------|
+| `STRTOL` | `strtol` (+ minimal scan glue) |
+| `STRTOD` (default) | `strtol` + `strtod`/`atof` (+ float/stdio/fd glue) |
+
+```bat
+powershell -File scripts\windows\bootstrap-wasi-sysroot.ps1
+# WASI_LIBC_KIT=STRTOD|STRTOL
+```
+
+Link order: Absolute object → probe → `absolute_wasm_runtime_wasi.o` → kit objects
+→ `libclang_rt.builtins-wasm32.a`. **Never** full `-lc` while Absolute defines
+malloc/printf (guest-on-libc would need Absolute to drop those and use wasm32
+`size_t` malloc ABI — not done).
+
+Adding a kit: start from a root `.o`, resolve remaining `env` imports with
+`llvm-nm -A libc.a`, append members until only `wasi_snapshot_preview1` remains.
+
+Test: `absolute.run-wasm-wasi-libc` (when sysroot is present at configure).
+
+### Browser shared-instance tasks
+
+Session Worker (`absolute-wasm-browser-session-worker.js`) detects imported
+shared `env.memory` and, with `taskWorkers: N`, starts nested
+`absolute-wasm-browser-shared-task-worker.js` workers that share the same
+`WebAssembly.Memory` and run `entry(contextPtr)` in place (same model as Node
+`taskPoolMode: 'shared'`). Non-shared modules keep isolated browser task workers.
+
+Requires COOP/COEP (`scripts/serve-wasm-demo.mjs`).
 
 ## Next steps (not done)
 
-1. True multi-thread Absolute tasks on one shared instance (beyond isolated workers).
-2. Link experiments with wasi-libc without clashing Absolute runtime symbols.
+1. Guest-on-libc mode (Absolute without custom malloc; size_t ABI).
+2. Full wasi-threads / TLS-aware Absolute runtime.
+3. More kits (qsort, locale, …) as needed.
 
 ## Acceptance criteria progress
 

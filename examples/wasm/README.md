@@ -57,7 +57,10 @@ Shared library for Node unit tests / tooling:
 | worker | session Worker | TCP mocks or WebSocket map; `taskWorkers` nested pool when SAB |
 
 Worker mode defaults to `taskWorkers=2` when `SharedArrayBuffer` is available
-(`?taskWorkers=0` to disable).
+(`?taskWorkers=0` to disable). If the `.wasm` imports shared `env.memory`
+(Absolute shared runtime), the session uses **in-place** shared-instance tasks
+(`absolute-wasm-browser-shared-task-worker.js`); otherwise isolated workers
+(copy context).
 
 ```js
 // Optional WebSocket map (worker mode, COOP/COEP page):

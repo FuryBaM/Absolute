@@ -92,8 +92,31 @@ $props = Join-Path $InstallRoot 'absolute-wasi-sysroot.json'
     tag = $tag
 } | ConvertTo-Json | Set-Content -Path $props -Encoding UTF8
 
+# Compiler-rt builtins (small) — needed when linking selective wasi-libc kits (__multi3, …).
+$builtinsVersion = $Version
+$builtinsTag = $tag
+$builtinsName = "libclang_rt.builtins-wasm32-wasi-$builtinsVersion.tar.gz"
+$builtinsUrl = "https://github.com/WebAssembly/wasi-sdk/releases/download/$builtinsTag/$builtinsName"
+$builtinsArchive = Join-Path $downloadsRoot $builtinsName
+$builtinsRoot = Join-Path $toolchainsRoot "wasi-builtins-$builtinsVersion"
+if (-not (Test-Path -LiteralPath (Join-Path $builtinsRoot 'libclang_rt.builtins-wasm32.a')) -and
+    -not (Get-ChildItem -Path $builtinsRoot -Recurse -Filter 'libclang_rt.builtins-wasm32.a' -ErrorAction SilentlyContinue)) {
+    if (-not (Test-Path -LiteralPath $builtinsArchive) -or $Force) {
+        Write-Host "Downloading $builtinsUrl"
+        & curl.exe -fsSL -o $builtinsArchive $builtinsUrl
+        if ($LASTEXITCODE -ne 0) { throw "curl failed for $builtinsUrl" }
+    }
+    if (Test-Path -LiteralPath $builtinsRoot) {
+        Remove-Item -LiteralPath $builtinsRoot -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $builtinsRoot | Out-Null
+    & tar.exe -xzf $builtinsArchive -C $builtinsRoot
+    if ($LASTEXITCODE -ne 0) { throw "tar extract failed for builtins" }
+}
+
 Write-Host "wasi-sysroot installed:"
 Write-Host "  install: $InstallRoot"
 Write-Host "  sysroot: $sysroot"
+Write-Host "  builtins: $builtinsRoot"
 Write-Host "Set: `$env:WASI_SYSROOT = '$sysroot'"
 Write-Output $sysroot

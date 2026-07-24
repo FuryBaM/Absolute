@@ -555,9 +555,21 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   test `run-wasm-browser-task-pool`.
 - [x] Shared-memory wasm foundation: `absolute_wasm_runtime_shared.o` (atomics heap
   lock), link `--shared-memory --import-memory`, host imports `env.memory` as
-  SharedArrayBuffer, test `run-wasm-shared-memory`. Full pthread/wasi-threads
-  task model still open.
-- [ ] wasi-libc coexistence with Absolute runtime; shared-instance multi-thread tasks.
+  SharedArrayBuffer, test `run-wasm-shared-memory`.
+- [x] Shared-instance multi-thread tasks: heap ctrl in linear memory; Node
+  `absolute-wasm-shared-task-worker.js` runs `entry(contextPtr)` in-place on the
+  shared heap; `taskPoolMode: 'shared'`; test `run-wasm-shared-tasks`.
+- [x] wasi-libc coexistence (selective kits): bootstrap sysroot + builtins,
+  `AbsoluteWasiLibcExtras` STRTOL kit, probe `wasi_libc_strtol`, test
+  `run-wasm-wasi-libc` (no full `-lc` — duplicate malloc/exit).
+- [x] Browser shared-instance task pool: session worker detects shared
+  `env.memory`, nested `absolute-wasm-browser-shared-task-worker.js`,
+  `taskPoolMode: 'shared'|'isolated'`; wiring checked in
+  `run-wasm-browser-task-pool`.
+- [x] Larger wasi-libc kits: `STRTOL` + `STRTOD` (default), dual probe, kit
+  registry in `AbsoluteWasiLibcExtras.cmake`, `WASI_LIBC_KIT` switch.
+- [ ] Guest-on-libc mode (drop Absolute malloc; size_t ABI); wasi-threads/TLS;
+  more kits (qsort/locale) as needed.
 
 ### IDE, debugger и developer tools
 
