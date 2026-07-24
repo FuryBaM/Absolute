@@ -46,7 +46,8 @@ Supported profiles:
 1. **Export-only** — `export "C"` scalars.
 2. **Console/assert** — `println` / `assert` / scalars.
 3. **Managed objects** — `new` / `delete` / class fields (see `tests/wasm-managed.abs`).
-4. Load in Node / browser with **empty imports**.
+4. Load in Node / browser with `env.absolute_log` (see `tools/absolute-wasm-host.js`).
+5. **Sync tasks** — `spawn`/`await` run the entry immediately on the same stack.
 
 See the host matrix in [`platforms.md`](platforms.md) and
 [`examples/wasm/README.md`](../examples/wasm/README.md).
@@ -80,19 +81,30 @@ Common triples:
 - `tests/wasm-export-only.abs` → `absolute.run-wasm-export`
 - `tests/wasm-smoke.abs` → `absolute.run-wasm-smoke`
 - `tests/wasm-managed.abs` → `absolute.run-wasm-managed` (`new`/`delete` Box)
+- `tests/wasm-task.abs` → `absolute.run-wasm-task` (sync spawn/await)
 - IR/object checks: `emit-wasm-smoke-ir`, `check-wasm-smoke-ir`, `emit-wasm-smoke-object`
+
+## Host import
+
+| Import | Module | Purpose |
+|--------|--------|---------|
+| `absolute_log(ptr, len)` | `env` | UTF-8 console from `puts`/`printf` |
+
+Node helper: `tools/absolute-wasm-host.js` (`instantiateAbsoluteWasm`).
 
 ## Next steps (not done)
 
-1. Task runtime, dynamic `load`, FS, network for wasm/WASI.
-2. Optional wasi-sdk sysroot / real stdout via WASI.
-3. Dedicated wasmtime CI job (Node already covers engine smoke).
+1. Dynamic `load`, FS, network for wasm/WASI.
+2. Multi-threaded tasks / worker pool.
+3. Optional wasi-sdk sysroot; dedicated wasmtime CI job.
 
 ## Acceptance criteria progress
 
 - [x] Explicit CLI/target selection (`--target`)
 - [x] Documented wasm emit/link limits (this file)
-- [x] Engine smoke: Node for export-only and console/assert modules
+- [x] Engine smoke: Node for export/smoke/managed/task modules
+- [x] Host console via `env.absolute_log`
 - [x] Browser loader example (`examples/wasm`)
 - [x] Clear errors for ASan / non-wasm cross `--build-exe`
 - [x] Host backends remain default when `--target` is omitted
+

@@ -1,0 +1,12 @@
+// Single-threaded wasm task scheduler runs spawn entry immediately.
+async int32 addAsync(int32 left, int32 right) {
+    return left + right;
+}
+
+async int32 main() {
+    task<int32> job = spawn addAsync(20, 22);
+    int32 value = await job;
+    assert(value == 42, "wasm task add");
+    println("wasm-task=ok");
+    return 0;
+}

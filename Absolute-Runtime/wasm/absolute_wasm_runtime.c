@@ -7,13 +7,30 @@
  *   - exception TLS (absolute_error_*)
  *   - libc helpers used by Absolute codegen (printf family, mem*, strcmp, abort)
  *
- * Not provided: tasks, load(), FS, sockets, full stdlib Absolute-Runtime.
- * Console I/O is a no-op so modules instantiate with zero imports.
+ * Console: optional host import env.absolute_log(ptr,len). When the host
+ * provides it (Node/browser helpers), println/assert text is visible; when
+ * omitted, wasm-ld can still link if the import is satisfied at instantiate.
+ *
+ * Tasks: single-threaded synchronous spawn/await (entry runs immediately).
+ * Not provided: dynamic load, FS, sockets, full host Absolute-Runtime.
  */
 
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+
+/* Host log hook — must be provided by the embedder (see tools/absolute-wasm-host.js). */
+__attribute__((import_module("env"), import_name("absolute_log")))
+void absolute_host_log(const uint8_t* data, int32_t length);
+
+static void host_log_cstr(const char* text) {
+    if (!text)
+        return;
+    size_t n = 0;
+    while (text[n])
+        ++n;
+    absolute_host_log((const uint8_t*)text, (int32_t)n);
+}
 
 /* ---------- heap ---------- */
 
@@ -52,7 +69,8 @@ static int heap_grow(size_t need) {
     return 0;
 }
 
-void* malloc(size_t size) {
+/* Absolute LLVM always declares malloc(i64) even on wasm32; match that ABI. */
+static void* heap_alloc(size_t size) {
     heap_init();
     if (size == 0)
         size = 1;
@@ -74,7 +92,6 @@ void* malloc(size_t size) {
     if ((size_t)(g_heap_end - g_heap_break) < total) {
         if (!heap_grow(total - (size_t)(g_heap_end - g_heap_break) + 65536))
             return NULL;
-        /* After grow, end moves; break stays. */
         if ((size_t)(g_heap_end - g_heap_break) < total)
             return NULL;
     }
@@ -86,6 +103,10 @@ void* malloc(size_t size) {
     return (unsigned char*)block + sizeof(HeapBlock);
 }
 
+void* malloc(uint64_t size) {
+    return heap_alloc((size_t)size);
+}
+
 void free(void* pointer) {
     if (!pointer)
         return;
@@ -95,18 +116,18 @@ void free(void* pointer) {
     g_free_list = block;
 }
 
-void* calloc(size_t count, size_t size) {
-    size_t total = count * size;
-    void* memory = malloc(total == 0 ? 1 : total);
+void* calloc(uint64_t count, uint64_t size) {
+    uint64_t total = count * size;
+    void* memory = heap_alloc((size_t)(total == 0 ? 1 : total));
     if (!memory)
         return NULL;
     unsigned char* bytes = (unsigned char*)memory;
-    for (size_t i = 0; i < total; ++i)
+    for (size_t i = 0; i < (size_t)total; ++i)
         bytes[i] = 0;
     return memory;
 }
 
-void* realloc(void* pointer, size_t size) {
+void* realloc(void* pointer, uint64_t size) {
     if (!pointer)
         return malloc(size);
     if (size == 0) {
@@ -114,9 +135,9 @@ void* realloc(void* pointer, size_t size) {
         return NULL;
     }
     HeapBlock* block = (HeapBlock*)((unsigned char*)pointer - sizeof(HeapBlock));
-    if (block->size >= size)
+    if (block->size >= (size_t)size)
         return pointer;
-    void* next = malloc(size);
+    void* next = heap_alloc((size_t)size);
     if (!next)
         return NULL;
     unsigned char* dst = (unsigned char*)next;
@@ -139,27 +160,115 @@ void exit(int code) {
 }
 
 int puts(const char* text) {
-    (void)text;
+    host_log_cstr(text ? text : "");
+    absolute_host_log((const uint8_t*)"\n", 1);
     return 0;
+}
+
+/* Minimal formatter: supports %s %d %i %u %lld %llu %% only (Absolute assert/println). */
+static int format_into(char* out, size_t cap, const char* format, va_list args) {
+    size_t o = 0;
+    if (!format)
+        format = "";
+    for (size_t i = 0; format[i]; ++i) {
+        if (format[i] != '%' || !format[i + 1]) {
+            if (out && o + 1 < cap)
+                out[o] = format[i];
+            ++o;
+            continue;
+        }
+        ++i;
+        if (format[i] == '%') {
+            if (out && o + 1 < cap)
+                out[o] = '%';
+            ++o;
+            continue;
+        }
+        if (format[i] == 's') {
+            const char* s = va_arg(args, const char*);
+            if (!s)
+                s = "(null)";
+            for (size_t k = 0; s[k]; ++k) {
+                if (out && o + 1 < cap)
+                    out[o] = s[k];
+                ++o;
+            }
+            continue;
+        }
+        if (format[i] == 'd' || format[i] == 'i') {
+            int value = va_arg(args, int);
+            char tmp[16];
+            int n = 0;
+            unsigned u;
+            if (value < 0) {
+                if (out && o + 1 < cap)
+                    out[o] = '-';
+                ++o;
+                u = (unsigned)(-(value + 1)) + 1u;
+            } else {
+                u = (unsigned)value;
+            }
+            if (u == 0)
+                tmp[n++] = '0';
+            while (u) {
+                tmp[n++] = (char)('0' + (u % 10));
+                u /= 10;
+            }
+            while (n--) {
+                if (out && o + 1 < cap)
+                    out[o] = tmp[n];
+                ++o;
+            }
+            continue;
+        }
+        if (format[i] == 'u') {
+            unsigned u = va_arg(args, unsigned);
+            char tmp[16];
+            int n = 0;
+            if (u == 0)
+                tmp[n++] = '0';
+            while (u) {
+                tmp[n++] = (char)('0' + (u % 10));
+                u /= 10;
+            }
+            while (n--) {
+                if (out && o + 1 < cap)
+                    out[o] = tmp[n];
+                ++o;
+            }
+            continue;
+        }
+        /* Fallback: skip unknown specifier. */
+    }
+    if (out && cap > 0)
+        out[o < cap ? o : cap - 1] = '\0';
+    return (int)o;
 }
 
 int printf(const char* format, ...) {
-    (void)format;
-    return 0;
+    char buffer[512];
+    va_list args;
+    va_start(args, format);
+    int n = format_into(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    absolute_host_log((const uint8_t*)buffer, n > 0 ? n : 0);
+    return n;
 }
 
 int snprintf(char* buffer, size_t size, const char* format, ...) {
-    (void)format;
-    if (buffer && size > 0)
-        buffer[0] = '\0';
-    return 0;
+    va_list args;
+    va_start(args, format);
+    int n = format_into(buffer, size, format, args);
+    va_end(args);
+    return n;
 }
 
 int sprintf(char* buffer, const char* format, ...) {
-    (void)format;
-    if (buffer)
-        buffer[0] = '\0';
-    return 0;
+    va_list args;
+    va_start(args, format);
+    int n = format_into(buffer, (size_t)-1 / 4, format, args);
+    va_end(args);
+    return n;
 }
 
 void* memcpy(void* dest, const void* src, size_t n) {
@@ -268,7 +377,7 @@ static ManagedSlot* find_slot(uint64_t handle) {
 
 uint64_t absolute_managed_create(uint64_t size) {
     size_t bytes = (size_t)(size == 0 ? 1 : size);
-    void* allocation = calloc(1, bytes);
+    void* allocation = calloc(1, (uint64_t)bytes);
     if (!allocation)
         abort();
 
@@ -385,7 +494,9 @@ void absolute_error_report(void) {
     absolute_error_discard();
 }
 
-/* ---------- stubs for APIs not yet ported ---------- */
+/* ---------- dynamic load (unavailable on pure wasm) ---------- */
+
+static char g_load_error[96] = "dynamic load is not available on wasm";
 
 int32_t absolute_load_library(const char* path) {
     (void)path;
@@ -398,24 +509,107 @@ int32_t absolute_library_is_loaded(const char* path) {
 }
 
 const char* absolute_load_error(void) {
-    return "dynamic load is not available on wasm";
+    return g_load_error;
 }
+
+/* ---------- tasks: single-threaded synchronous scheduler ---------- */
+
+typedef struct WasmTask {
+    void* context;
+    uint64_t error_handle;
+    uint64_t error_type;
+    int done;
+} WasmTask;
+
+static int32_t g_task_core = -1;
+static int32_t g_task_priority = 0;
+static const char* g_task_role = "";
 
 void* absolute_task_spawn_config(
     void (*entry)(void*), void* context, int32_t core, int32_t priority, const char* role) {
-    (void)entry;
-    (void)context;
-    (void)core;
-    (void)priority;
-    (void)role;
-    return NULL;
+    if (!entry || !context)
+        abort();
+    if (core < -1 || priority < -3 || priority > 3)
+        abort();
+
+    WasmTask* task = (WasmTask*)heap_alloc(sizeof(WasmTask));
+    if (!task)
+        abort();
+    task->context = context;
+    task->error_handle = 0;
+    task->error_type = 0;
+    task->done = 0;
+
+    const int32_t prev_core = g_task_core;
+    const int32_t prev_priority = g_task_priority;
+    const char* prev_role = g_task_role;
+    g_task_core = core;
+    g_task_priority = priority;
+    g_task_role = role ? role : "";
+
+    /* Run immediately on the calling "thread" (single-threaded wasm). */
+    entry(context);
+    task->done = 1;
+
+    if (absolute_error_pending()) {
+        task->error_type = absolute_error_type();
+        task->error_handle = absolute_error_take();
+    }
+
+    g_task_core = prev_core;
+    g_task_priority = prev_priority;
+    g_task_role = prev_role;
+    return task;
+}
+
+void* absolute_task_spawn(void (*entry)(void*), void* context) {
+    return absolute_task_spawn_config(entry, context, -1, 0, NULL);
+}
+
+int32_t absolute_task_current_core(void) {
+    return g_task_core;
+}
+
+int32_t absolute_task_current_priority(void) {
+    return g_task_priority;
+}
+
+const char* absolute_task_current_role(void) {
+    return g_task_role ? g_task_role : "";
+}
+
+uint8_t absolute_task_current_role_is(const char* role) {
+    if (!role)
+        return 0;
+    const char* current = absolute_task_current_role();
+    while (*role && *role == *current) {
+        ++role;
+        ++current;
+    }
+    return (*role == 0 && *current == 0) ? 1 : 0;
 }
 
 void* absolute_task_await(void* handle) {
-    (void)handle;
-    return NULL;
+    if (!handle)
+        abort();
+    WasmTask* task = (WasmTask*)handle;
+    if (!task->done)
+        abort(); /* sync scheduler always completes in spawn */
+    if (task->error_handle)
+        absolute_error_set(task->error_handle, task->error_type);
+    void* context = task->context;
+    free(task);
+    return context;
 }
 
 void absolute_task_destroy(void* handle) {
-    (void)handle;
+    if (!handle)
+        return;
+    WasmTask* task = (WasmTask*)handle;
+    if (!task->done)
+        abort();
+    if (task->error_handle)
+        absolute_managed_destroy(task->error_handle);
+    free(task->context);
+    free(task);
 }

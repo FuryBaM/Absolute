@@ -1424,6 +1424,7 @@ if(BUILD_TESTING)
                     -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-export-only.abs
                     -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-export-only.wasm
                     -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                    -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
                     -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-export.cmake"
             )
             if(ABSOLUTE_WASM_SHIM_OBJECT)
@@ -1434,6 +1435,7 @@ if(BUILD_TESTING)
                         -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-smoke.abs
                         -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-smoke.wasm
                         -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-smoke.cmake"
                 )
                 add_test(
@@ -1443,7 +1445,18 @@ if(BUILD_TESTING)
                         -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-managed.abs
                         -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-managed.wasm
                         -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-managed.cmake"
+                )
+                add_test(
+                    NAME absolute.run-wasm-task
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-task.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-task.wasm
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-task.cmake"
                 )
             endif()
         endif()

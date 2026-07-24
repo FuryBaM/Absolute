@@ -62,6 +62,10 @@ if(ABSOLUTE_WASM_CLANG)
             -o "${ABSOLUTE_WASM_SHIM_OBJECT}"
             -O2
             -std=c11
+            -fno-builtin-malloc
+            -fno-builtin-calloc
+            -fno-builtin-realloc
+            -fno-builtin-free
         DEPENDS "${ABSOLUTE_WASM_RT_SOURCE}"
         COMMENT "Building Absolute wasm runtime (heap/managed/errors)"
         VERBATIM

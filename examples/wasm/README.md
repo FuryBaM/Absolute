@@ -38,10 +38,14 @@ Open `http://localhost:5173/` and either:
 
 ## API
 
-`loader.js` instantiates modules with **empty imports**:
+Modules import `env.absolute_log(ptr, len)` for console text. The demo
+`loader.js` and Node helper `tools/absolute-wasm-host.js` provide it:
 
 ```js
-WebAssembly.instantiate(bytes, {})
+const { instantiateAbsoluteWasm } = require('../../tools/absolute-wasm-host.js');
+const { exports, logs } = await instantiateAbsoluteWasm(fs.readFileSync('module.wasm'), {
+  captureLogs: true,
+});
 ```
 
 Exported Absolute `export "C"` functions appear on `instance.exports`.

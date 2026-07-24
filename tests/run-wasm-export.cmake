@@ -11,6 +11,12 @@ endif()
 if(NOT DEFINED NODE OR NOT EXISTS "${NODE}")
     message(FATAL_ERROR "NODE is missing: ${NODE}")
 endif()
+if(NOT DEFINED HOST_JS)
+    set(HOST_JS "${CMAKE_CURRENT_LIST_DIR}/../tools/absolute-wasm-host.js")
+endif()
+if(NOT EXISTS "${HOST_JS}")
+    message(FATAL_ERROR "HOST_JS is missing: ${HOST_JS}")
+endif()
 
 execute_process(
     COMMAND "${ABSOLUTEC}" "${SOURCE}"
@@ -29,22 +35,18 @@ endif()
 
 get_filename_component(_wasm_dir "${OUTPUT}" DIRECTORY)
 set(RUNNER "${_wasm_dir}/run-wasm-export-runner.js")
-file(WRITE "${RUNNER}" [=[
+file(WRITE "${RUNNER}" "
 const fs = require('fs');
-const wasmPath = process.argv[2];
+const { instantiateAbsoluteWasm } = require(process.argv[2]);
+const wasmPath = process.argv[3];
 const bytes = fs.readFileSync(wasmPath);
-if (bytes.length < 4 || bytes[0] !== 0x00 || bytes[1] !== 0x61 || bytes[2] !== 0x73 || bytes[3] !== 0x6d) {
-  console.error('not a wasm module:', wasmPath, 'size=', bytes.length);
-  process.exit(4);
-}
-WebAssembly.instantiate(bytes, {}).then(({ instance }) => {
-  const exp = instance.exports;
-  if (typeof exp.wasm_add !== 'function' || typeof exp.wasm_mul !== 'function') {
-    console.error('missing exports', Object.keys(exp));
+instantiateAbsoluteWasm(bytes, { captureLogs: true }).then(({ exports }) => {
+  if (typeof exports.wasm_add !== 'function' || typeof exports.wasm_mul !== 'function') {
+    console.error('missing exports', Object.keys(exports));
     process.exit(2);
   }
-  const add = exp.wasm_add(20, 22);
-  const mul = exp.wasm_mul(6, 7);
+  const add = exports.wasm_add(20, 22);
+  const mul = exports.wasm_mul(6, 7);
   if (add !== 42 || mul !== 42) {
     console.error('bad results', { add, mul });
     process.exit(3);
@@ -54,10 +56,10 @@ WebAssembly.instantiate(bytes, {}).then(({ instance }) => {
   console.error(error);
   process.exit(1);
 });
-]=])
+")
 
 execute_process(
-    COMMAND "${NODE}" "${RUNNER}" "${OUTPUT}"
+    COMMAND "${NODE}" "${RUNNER}" "${HOST_JS}" "${OUTPUT}"
     RESULT_VARIABLE RUN_STATUS
     OUTPUT_VARIABLE RUN_OUT
     ERROR_VARIABLE RUN_ERR
