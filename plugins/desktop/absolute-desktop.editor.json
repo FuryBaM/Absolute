@@ -51,6 +51,22 @@
       ]
     },
     {
+      "name": "Desktop.Ui",
+      "detail": "class Desktop.Ui",
+      "documentation": "Immediate-mode soft UI: begin/end, button, checkbox, slider, progress.",
+      "snippet": "auto ${1:ui} = new Desktop.Ui(${2:window}, ${3:font});\n$1.begin();\nif ($1.button(40, 40, 120, 32, \"OK\")) { ${0} }\n$1.end();",
+      "members": [
+        { "name": "begin", "detail": "void begin()" },
+        { "name": "end", "detail": "void end()" },
+        { "name": "panel", "detail": "void panel(int32 x, int32 y, int32 w, int32 h)" },
+        { "name": "label", "detail": "void label(int32 x, int32 y, string text)" },
+        { "name": "button", "detail": "bool button(int32 x, int32 y, int32 w, int32 h, string text)" },
+        { "name": "checkbox", "detail": "bool checkbox(int32 x, int32 y, string text, bool checked)" },
+        { "name": "slider", "detail": "float slider(int32 x, int32 y, int32 w, int32 h, float value, float min, float max)" },
+        { "name": "progress", "detail": "void progress(int32 x, int32 y, int32 w, int32 h, float value)" }
+      ]
+    },
+    {
       "name": "Desktop.Audio",
       "detail": "class Desktop.Audio",
       "documentation": "WAV software mixer (Windows waveOut). loadWav, master volume, stopAll.",

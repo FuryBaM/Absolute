@@ -520,7 +520,8 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   software mixer, 32 voices, master volume, play/loop/stop);
   assets `beep.wav`/`blip.wav`/`thud.wav`, example `audio.abs`.
 - [ ] 3D model load (meshes) — still open.
-- [ ] Добавить базовый UI toolkit для desktop-приложений.
+- [x] Базовый soft UI toolkit: `Desktop.Ui` + `UiTheme` (immediate-mode
+  panel/label/button/checkbox/slider/progress); example `examples/desktop/ui.abs`.
 - [ ] Расширить `absolute.shader` от opaque DSL-stub к reflection + RHI bind
   (SPIR-V/DXIL/Metal IR) поверх выбранного GPU backend.
 

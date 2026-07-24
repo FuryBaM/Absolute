@@ -84,6 +84,25 @@ examples\desktop\run.bat pong.abs
 - `Desktop.measureText(text, scale)` / `Desktop.measureTextHeight(text, scale)`
 - `Desktop.fontGlyphWidth()` / `Desktop.fontGlyphHeight()` — unscaled glyph size (8×8)
 
+### Soft UI toolkit (`Desktop.Ui`)
+Immediate-mode widgets over the software framebuffer + mouse:
+
+- `new Desktop.Ui(window, font)` — font may be invalid; falls back to 8×8
+- `ui.begin()` / `ui.end()` each frame after `poll`
+- `ui.panel`, `label`, `labelDim`, `button` (returns click), `checkbox` (returns state),
+  `slider` (returns value), `progress`
+- `ui.theme` — colors (`UiTheme`)
+- Example: `examples/desktop/ui.abs`
+
+```absolute
+auto ui = new Desktop.Ui(window, font);
+ui.begin();
+if (ui.button(40, 40, 120, 32, "OK")) { /* clicked */ }
+checked = ui.checkbox(40, 90, "Option", checked);
+value = ui.slider(40, 140, 200, 18, value, 0.0, 1.0);
+ui.end();
+```
+
 ### Audio (WAV mixer)
 Windows waveOut software mixer @ 44.1 kHz stereo, up to 32 voices. Non-Windows: stub.
 
@@ -186,4 +205,4 @@ Examples: `examples/desktop/window.abs`, `pong.abs`, `sprites.abs`, `input.abs`,
 `image.abs` (BMP + atlas), `text.abs` (soft font HUD / typing),
 `batch.abs` (`SpriteBatch` + atlas tiles), `triangle.abs` (OpenGL pipeline),
 `gpu-sprites.abs` (textured ship + atlas), `image-png.abs` (PNG `loadImage`),
-`font.abs` (system / TTF soft fonts), `audio.abs` (WAV mixer).
+`font.abs` (system / TTF soft fonts), `audio.abs` (WAV mixer), `ui.abs` (UI toolkit).

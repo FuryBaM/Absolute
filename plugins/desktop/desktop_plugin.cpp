@@ -671,6 +671,276 @@ namespace Desktop {
         }
     }
 
+    // Immediate-mode soft UI colors.
+    class UiTheme {
+        public uint32 background;
+        public uint32 panel;
+        public uint32 panelBorder;
+        public uint32 button;
+        public uint32 buttonHot;
+        public uint32 buttonActive;
+        public uint32 text;
+        public uint32 textDim;
+        public uint32 accent;
+        public uint32 track;
+
+        public UiTheme() {
+            background = absolute_desktop_rgb(18, 22, 32);
+            panel = absolute_desktop_rgb(32, 38, 54);
+            panelBorder = absolute_desktop_rgb(60, 70, 96);
+            button = absolute_desktop_rgb(48, 90, 160);
+            buttonHot = absolute_desktop_rgb(64, 120, 200);
+            buttonActive = absolute_desktop_rgb(36, 70, 130);
+            text = absolute_desktop_rgb(236, 240, 250);
+            textDim = absolute_desktop_rgb(150, 160, 180);
+            accent = absolute_desktop_rgb(90, 200, 150);
+            track = absolute_desktop_rgb(24, 28, 40);
+        }
+    }
+
+    // Immediate-mode soft UI toolkit (buttons, labels, checkbox, slider, progress).
+    // Stores window/font as native handles (borrow-safe). Font handle 0 => 8x8 text.
+    // Typical frame after window.poll():
+    //   ui.begin(); ... widgets ...; ui.end(); window.present();
+    class Ui {
+        public int64 windowHandle;
+        public int64 fontHandle;
+        public UiTheme* theme;
+        public int32 textScale;
+        public int32 mouseX;
+        public int32 mouseY;
+        public bool mouseDown;
+        public bool mousePressed;
+        public bool mouseReleased;
+        public int32 hotId;
+        public int32 activeId;
+        public int32 widgetSeq;
+
+        public Ui(Window* win, Font* uiFont) {
+            windowHandle = win.handle;
+            fontHandle = 0;
+            if (uiFont != null) {
+                fontHandle = uiFont.handle;
+            }
+            theme = new UiTheme();
+            textScale = 2;
+            mouseX = 0;
+            mouseY = 0;
+            mouseDown = false;
+            mousePressed = false;
+            mouseReleased = false;
+            hotId = 0;
+            activeId = 0;
+            widgetSeq = 1;
+        }
+
+        public void destroy() {
+            theme = null;
+            windowHandle = 0;
+            fontHandle = 0;
+        }
+
+        public void begin() {
+            mouseX = absolute_desktop_mouse_x(windowHandle);
+            mouseY = absolute_desktop_mouse_y(windowHandle);
+            mouseDown = absolute_desktop_mouse_down(windowHandle, 0) != 0;
+            mousePressed = absolute_desktop_mouse_pressed(windowHandle, 0) != 0;
+            mouseReleased = absolute_desktop_mouse_released(windowHandle, 0) != 0;
+            hotId = 0;
+            widgetSeq = 1;
+            // Keep activeId through this frame so widgets can see click-release.
+        }
+
+        public void end() {
+            if (!mouseDown) {
+                activeId = 0;
+            }
+        }
+
+        public int32 allocId() {
+            int32 id = widgetSeq;
+            widgetSeq = widgetSeq + 1;
+            return id;
+        }
+
+        public bool hit(int32 x, int32 y, int32 w, int32 h) {
+            return mouseX >= x && mouseY >= y && mouseX < (x + w) && mouseY < (y + h);
+        }
+
+        public int32 measure(string text) {
+            if (fontHandle != 0 && absolute_desktop_font_is_valid(fontHandle) != 0) {
+                return absolute_desktop_font_measure(fontHandle, text);
+            }
+            return absolute_desktop_measure_text(text, textScale);
+        }
+
+        public int32 lineHeight() {
+            if (fontHandle != 0 && absolute_desktop_font_is_valid(fontHandle) != 0) {
+                return absolute_desktop_font_line_height(fontHandle);
+            }
+            return absolute_desktop_measure_text_height("Ag", textScale);
+        }
+
+        public void drawLabel(int32 x, int32 y, string text, uint32 color) {
+            if (fontHandle != 0 && absolute_desktop_font_is_valid(fontHandle) != 0) {
+                absolute_desktop_font_draw_window(windowHandle, fontHandle, x, y, text, color);
+            } else {
+                absolute_desktop_draw_text(windowHandle, x, y, text, color, textScale);
+            }
+        }
+
+        public void panel(int32 x, int32 y, int32 w, int32 h) {
+            absolute_desktop_fill_rect(windowHandle, x, y, w, h, theme.panel);
+            absolute_desktop_fill_rect(windowHandle, x, y, w, 1, theme.panelBorder);
+            absolute_desktop_fill_rect(windowHandle, x, y + h - 1, w, 1, theme.panelBorder);
+            absolute_desktop_fill_rect(windowHandle, x, y, 1, h, theme.panelBorder);
+            absolute_desktop_fill_rect(windowHandle, x + w - 1, y, 1, h, theme.panelBorder);
+        }
+
+        public void label(int32 x, int32 y, string text) {
+            drawLabel(x, y, text, theme.text);
+        }
+
+        public void labelDim(int32 x, int32 y, string text) {
+            drawLabel(x, y, text, theme.textDim);
+        }
+
+        // Returns true on click release while still over the button.
+        public bool button(int32 x, int32 y, int32 w, int32 h, string text) {
+            int32 id = allocId();
+            bool over = hit(x, y, w, h);
+            if (over) {
+                hotId = id;
+                if (mousePressed) {
+                    activeId = id;
+                }
+            }
+            uint32 bg = theme.button;
+            if (activeId == id) {
+                bg = theme.buttonActive;
+            } else {
+                if (hotId == id) {
+                    bg = theme.buttonHot;
+                }
+            }
+            absolute_desktop_fill_rect(windowHandle, x, y, w, h, bg);
+            absolute_desktop_fill_rect(windowHandle, x, y, w, 1, theme.panelBorder);
+            absolute_desktop_fill_rect(windowHandle, x, y + h - 1, w, 1, theme.panelBorder);
+            int32 tw = measure(text);
+            int32 th = lineHeight();
+            int32 tx = x + (w - tw) / 2;
+            int32 ty = y + (h - th) / 2;
+            if (tx < x + 4) {
+                tx = x + 4;
+            }
+            drawLabel(tx, ty, text, theme.text);
+            return mouseReleased && activeId == id && over;
+        }
+
+        // Returns the (possibly toggled) checked state.
+        public bool checkbox(int32 x, int32 y, string text, bool checked) {
+            int32 id = allocId();
+            int32 box = lineHeight();
+            if (box < 16) {
+                box = 16;
+            }
+            int32 h = box;
+            int32 w = box + 8 + measure(text);
+            bool over = hit(x, y, w, h);
+            if (over) {
+                hotId = id;
+                if (mousePressed) {
+                    activeId = id;
+                }
+            }
+            absolute_desktop_fill_rect(windowHandle, x, y, box, box, theme.track);
+            absolute_desktop_fill_rect(windowHandle, x, y, box, 1, theme.panelBorder);
+            absolute_desktop_fill_rect(windowHandle, x, y + box - 1, box, 1, theme.panelBorder);
+            absolute_desktop_fill_rect(windowHandle, x, y, 1, box, theme.panelBorder);
+            absolute_desktop_fill_rect(windowHandle, x + box - 1, y, 1, box, theme.panelBorder);
+            if (checked) {
+                absolute_desktop_fill_rect(windowHandle, x + 4, y + 4, box - 8, box - 8, theme.accent);
+            }
+            drawLabel(x + box + 8, y, text, theme.text);
+            if (mouseReleased && activeId == id && over) {
+                return !checked;
+            }
+            return checked;
+        }
+
+        // Returns updated value in [minV, maxV]. Drag while held on the track.
+        public float slider(int32 x, int32 y, int32 w, int32 h, float value, float minV, float maxV) {
+            int32 id = allocId();
+            if (maxV <= minV) {
+                maxV = minV + 1.0;
+            }
+            bool over = hit(x, y, w, h);
+            if (over) {
+                hotId = id;
+                if (mousePressed) {
+                    activeId = id;
+                }
+            }
+            if (activeId == id && mouseDown) {
+                float t = (mouseX - x) as float / (w as float);
+                if (t < 0.0) {
+                    t = 0.0;
+                }
+                if (t > 1.0) {
+                    t = 1.0;
+                }
+                value = minV + t * (maxV - minV);
+            }
+            float span = maxV - minV;
+            float t2 = 0.0;
+            if (span > 0.0) {
+                t2 = (value - minV) / span;
+            }
+            if (t2 < 0.0) {
+                t2 = 0.0;
+            }
+            if (t2 > 1.0) {
+                t2 = 1.0;
+            }
+            absolute_desktop_fill_rect(windowHandle, x, y, w, h, theme.track);
+            int32 fill = (t2 * (w as float)) as int32;
+            if (fill > 0) {
+                absolute_desktop_fill_rect(windowHandle, x, y, fill, h, theme.accent);
+            }
+            absolute_desktop_fill_rect(windowHandle, x, y, w, 1, theme.panelBorder);
+            absolute_desktop_fill_rect(windowHandle, x, y + h - 1, w, 1, theme.panelBorder);
+            int32 knobX = x + fill - 4;
+            if (knobX < x) {
+                knobX = x;
+            }
+            if (knobX > x + w - 8) {
+                knobX = x + w - 8;
+            }
+            uint32 knob = theme.button;
+            if (hotId == id || activeId == id) {
+                knob = theme.buttonHot;
+            }
+            absolute_desktop_fill_rect(windowHandle, knobX, y - 2, 8, h + 4, knob);
+            return value;
+        }
+
+        public void progress(int32 x, int32 y, int32 w, int32 h, float value) {
+            if (value < 0.0) {
+                value = 0.0;
+            }
+            if (value > 1.0) {
+                value = 1.0;
+            }
+            absolute_desktop_fill_rect(windowHandle, x, y, w, h, theme.track);
+            int32 fill = (value * (w as float)) as int32;
+            if (fill > 0) {
+                absolute_desktop_fill_rect(windowHandle, x, y, fill, h, theme.accent);
+            }
+            absolute_desktop_fill_rect(windowHandle, x, y, w, 1, theme.panelBorder);
+            absolute_desktop_fill_rect(windowHandle, x, y + h - 1, w, 1, theme.panelBorder);
+        }
+    }
+
     // Soft sprite batch: queue many atlas/sprite draws, then flush once.
     // begin(window, atlas) binds the default atlas; draw/drawRect use it.
     // drawSprite / drawSpriteRect draw other sprites without changing the atlas.
