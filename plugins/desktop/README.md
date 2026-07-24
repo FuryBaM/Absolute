@@ -1,53 +1,72 @@
 # `absolute.desktop`
 
 Windows/Win32 and Linux/X11 desktop runtime for Absolute. It provides a native resizable window,
-event polling, keyboard and mouse state, a 32-bit software framebuffer, simple
-pixel/rectangle drawing, high-resolution time, and sleeping for game loops.
+event polling, keyboard and mouse state (held + edge), a 32-bit software framebuffer, 2D
+primitives (rect, line, circle, blit), high-resolution time, frame delta, and sleeping for game loops.
 
 Build the compiler and plugin in Release:
 
 ```powershell
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release --target Absolute-Compiler Absolute-Desktop-Plugin
+cmake -S . -B .absolute/build/windows-release --preset windows-msvc-release
+cmake --build .absolute/build/windows-release --config Release --target Absolute-Desktop-Plugin
 ```
 
 The build creates `absolute-desktop.absplugin` beside the plugin DLL. The
 manifest automatically adds the static runtime and Win32 system libraries when
-`--build-exe` is used:
+`--build-exe` is used.
 
 ```powershell
-build\Release\absolutec.exe examples\desktop\window.abs `
-  --plugin build\plugins\desktop\Release\absolute-desktop.absplugin `
+.absolute\build\windows-release\Release\absolutec.exe examples\desktop\window.abs `
+  --plugin .absolute\build\windows-release\plugins\desktop\Release\absolute-desktop.absplugin `
   --build-exe -o build\desktop-demo.exe
 build\desktop-demo.exe
 ```
 
-On this repository's Windows + WSL toolchain the shortest command is:
+Shortest path on a full Windows+WSL toolchain:
 
 ```powershell
 examples\desktop\run.bat
+examples\desktop\run.bat pong.abs
 ```
 
-It builds the LLVM compiler in WSL, cross-compiles the generated IR for Windows,
-links the Win32 runtime with Visual Studio, and starts the example.
+## API
 
-Main API:
-
+### Window lifecycle
 - `new Desktop.Window(title, width, height, resizable)`
-- `poll()`, `isOpen()`, `close()`, `setTitle()`
-- `clear()`, `pixel()`, `fillRect()`, `present()`
-- `keyDown()`, `mouseX()`, `mouseY()`, `mouseDown()`
-- `Desktop.rgb()`, `Desktop.time()`, `Desktop.sleep()`
+- `poll()`, `isOpen()`, `close()`, `setTitle()`, `width()`, `height()`
 
-Key codes use Win32 virtual-key values: Escape is `27`, arrows are `37`-`40`,
-space is `32`, and letters use their uppercase ASCII values. Mouse buttons are
-`0` (left), `1` (right), and `2` (middle). Colors are `0x00RRGGBB`; use
-`Desktop.rgb(red, green, blue)` to construct them.
+### Drawing (software framebuffer, colors `0x00RRGGBB`)
+- `clear(color)`, `pixel(x, y, color)`, `fillRect(...)`, `drawLine(...)`, `fillCircle(...)`
+- `blit(x, y, w, h, raw uint32* pixels)` — `0` pixels are transparent
+- `present()`
 
-The Linux backend is enabled when X11 development files are available (for
-example, the `libx11-dev` package). Without them the plugin builds a headless
-backend so CI and servers can still compile/link programs and use timing/color
-helpers; `Desktop.Window` then reports that it could not open.
+### Input
+- Held: `keyDown(key)`, `mouseDown(button)`, `mouseX()`, `mouseY()`
+- Edges (updated on each `poll`): `keyPressed` / `keyReleased`, `mousePressed` / `mouseReleased`
+- Codes: `Desktop.KeyEscape` (27), arrows `KeyLeft`…`KeyDown`, `KeyW/A/S/D`, `KeySpace`, mouse `0/1/2`
+
+### Timing
+- `Desktop.time()` — monotonic seconds
+- `window.deltaTime()` — seconds since previous `poll` (0 on first frame)
+- `Desktop.sleep(ms)`
+
+### Game loop pattern
+
+```absolute
+while (window.poll()) {
+    double dt = window.deltaTime();
+    if (dt <= 0.0) { dt = 0.016; }
+    if (dt > 0.05) { dt = 0.05; }
+    // update with dt, draw, present
+}
+window.close();
+```
+
+The Linux backend is enabled when X11 development files are available
+(`libx11-dev`). Without them the plugin builds a headless backend so CI can
+still compile/link; `Desktop.Window` then reports that it could not open.
 
 Call `window.close()` before leaving `main`. Native window handles are explicit
 resources; the current Absolute class model does not yet run RAII destructors.
+
+Examples: `examples/desktop/window.abs`, `examples/desktop/pong.abs`.

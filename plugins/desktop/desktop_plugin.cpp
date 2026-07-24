@@ -19,16 +19,40 @@ extern "C" int32 absolute_desktop_height(int64 handle);
 extern "C" void absolute_desktop_clear(int64 handle, uint32 color);
 extern "C" void absolute_desktop_pixel(int64 handle, int32 x, int32 y, uint32 color);
 extern "C" void absolute_desktop_fill_rect(int64 handle, int32 x, int32 y, int32 width, int32 height, uint32 color);
+extern "C" void absolute_desktop_draw_line(int64 handle, int32 x0, int32 y0, int32 x1, int32 y1, uint32 color);
+extern "C" void absolute_desktop_fill_circle(int64 handle, int32 cx, int32 cy, int32 radius, uint32 color);
+extern "C" void absolute_desktop_blit(int64 handle, int32 destX, int32 destY, int32 width, int32 height, raw uint32* pixels);
 extern "C" void absolute_desktop_present(int64 handle);
 extern "C" int32 absolute_desktop_key_down(int64 handle, int32 key);
+extern "C" int32 absolute_desktop_key_pressed(int64 handle, int32 key);
+extern "C" int32 absolute_desktop_key_released(int64 handle, int32 key);
 extern "C" int32 absolute_desktop_mouse_x(int64 handle);
 extern "C" int32 absolute_desktop_mouse_y(int64 handle);
 extern "C" int32 absolute_desktop_mouse_down(int64 handle, int32 button);
+extern "C" int32 absolute_desktop_mouse_pressed(int64 handle, int32 button);
+extern "C" int32 absolute_desktop_mouse_released(int64 handle, int32 button);
+extern "C" double absolute_desktop_delta_time(int64 handle);
 extern "C" uint32 absolute_desktop_rgb(int32 red, int32 green, int32 blue);
 extern "C" double absolute_desktop_time();
 extern "C" void absolute_desktop_sleep(int32 milliseconds);
 
 namespace Desktop {
+    // Virtual-key style codes (Win32 / mapped X11).
+    int32 KeyEscape = 27;
+    int32 KeySpace = 32;
+    int32 KeyEnter = 13;
+    int32 KeyLeft = 37;
+    int32 KeyUp = 38;
+    int32 KeyRight = 39;
+    int32 KeyDown = 40;
+    int32 KeyW = 87;
+    int32 KeyA = 65;
+    int32 KeyS = 83;
+    int32 KeyD = 68;
+    int32 MouseLeft = 0;
+    int32 MouseRight = 1;
+    int32 MouseMiddle = 2;
+
     uint32 rgb(int32 red, int32 green, int32 blue) {
         return absolute_desktop_rgb(red, green, blue);
     }
@@ -87,12 +111,32 @@ namespace Desktop {
             absolute_desktop_fill_rect(handle, x, y, width, height, color);
         }
 
+        public void drawLine(int32 x0, int32 y0, int32 x1, int32 y1, uint32 color) {
+            absolute_desktop_draw_line(handle, x0, y0, x1, y1, color);
+        }
+
+        public void fillCircle(int32 cx, int32 cy, int32 radius, uint32 color) {
+            absolute_desktop_fill_circle(handle, cx, cy, radius, color);
+        }
+
+        public void blit(int32 destX, int32 destY, int32 width, int32 height, raw uint32* pixels) {
+            absolute_desktop_blit(handle, destX, destY, width, height, pixels);
+        }
+
         public void present() {
             absolute_desktop_present(handle);
         }
 
         public bool keyDown(int32 key) {
             return absolute_desktop_key_down(handle, key) != 0;
+        }
+
+        public bool keyPressed(int32 key) {
+            return absolute_desktop_key_pressed(handle, key) != 0;
+        }
+
+        public bool keyReleased(int32 key) {
+            return absolute_desktop_key_released(handle, key) != 0;
         }
 
         public int32 mouseX() {
@@ -106,6 +150,19 @@ namespace Desktop {
         public bool mouseDown(int32 button) {
             return absolute_desktop_mouse_down(handle, button) != 0;
         }
+
+        public bool mousePressed(int32 button) {
+            return absolute_desktop_mouse_pressed(handle, button) != 0;
+        }
+
+        public bool mouseReleased(int32 button) {
+            return absolute_desktop_mouse_released(handle, button) != 0;
+        }
+
+        // Seconds since previous poll(); 0 on the first frame.
+        public double deltaTime() {
+            return absolute_desktop_delta_time(handle);
+        }
     }
 }
 )ABSOLUTE";
@@ -118,4 +175,3 @@ extern "C" ABSOLUTE_PLUGIN_EXPORT const AbsoluteSyntaxPluginV1* absolute_syntax_
 extern "C" ABSOLUTE_PLUGIN_EXPORT const char* absolute_syntax_plugin_prelude_v1() {
     return prelude;
 }
-

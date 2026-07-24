@@ -483,15 +483,19 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Native Win32/X11 окно, event loop и headless backend через desktop plugin.
 - [x] Shader-блоки как opaque plugin syntax.
 - [x] Векторные и матричные math-типы, projection и lookAt.
-- [ ] Добавить keyboard, mouse, gamepad и text-input API.
+- [x] Keyboard/mouse held + edge input (`keyDown`/`keyPressed`/`keyReleased`,
+  mouse equivalents); gamepad и text-input ещё нет.
+- [x] Software 2D: rect, line, circle, blit; `deltaTime` + sleep для game loop.
+- [x] Примеры: `examples/desktop/window.abs`, `examples/desktop/pong.abs`.
+- [ ] Добавить gamepad и text-input API.
 - [ ] Добавить OpenGL/Vulkan/Direct3D backend либо общий RHI.
 - [ ] Добавить GPU buffers, textures, samplers, pipelines и shader reflection.
 - [ ] Добавить загрузку изображений, шрифтов, моделей и аудио.
-- [ ] Добавить 2D renderer, sprites и batching.
+- [ ] Добавить 2D sprite batching / atlas поверх soft или GPU backend.
 - [ ] Добавить базовый UI toolkit для desktop-приложений.
 - [ ] Добавить audio output/mixer.
-- [ ] Добавить game loop, frame timing и fixed update.
-- [ ] Добавить примеры: triangle, sprite scene, UI window и небольшая игра.
+- [ ] Добавить fixed-timestep helper API (аккумулятор поверх `deltaTime`).
+- [ ] Добавить GPU triangle / sprite scene examples.
 
 ### Native interop и платформы
 

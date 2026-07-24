@@ -23,16 +23,50 @@ namespace {
         bool open = true;
         std::vector<uint32_t> pixels;
         std::array<bool, 256> keys{};
+        std::array<bool, 256> keysPrev{};
+        std::array<bool, 256> keysPressed{};
+        std::array<bool, 256> keysReleased{};
         std::array<bool, 3> mouseButtons{};
+        std::array<bool, 3> mousePrev{};
+        std::array<bool, 3> mousePressed{};
+        std::array<bool, 3> mouseReleased{};
         int32_t mouseX = 0;
         int32_t mouseY = 0;
+        double lastTime = -1.0;
+        double deltaTime = 0.0;
 
         void Resize(int32_t newWidth, int32_t newHeight) {
             width = std::max<int32_t>(1, newWidth);
             height = std::max<int32_t>(1, newHeight);
             pixels.assign(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0);
         }
+
+        void PutPixel(int32_t x, int32_t y, uint32_t color) {
+            if (x < 0 || y < 0 || x >= width || y >= height) return;
+            pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)] = color;
+        }
     };
+
+    void UpdateInputEdges(DesktopWindow& state) {
+        for (std::size_t i = 0; i < state.keys.size(); ++i) {
+            state.keysPressed[i] = state.keys[i] && !state.keysPrev[i];
+            state.keysReleased[i] = !state.keys[i] && state.keysPrev[i];
+            state.keysPrev[i] = state.keys[i];
+        }
+        for (std::size_t i = 0; i < state.mouseButtons.size(); ++i) {
+            state.mousePressed[i] = state.mouseButtons[i] && !state.mousePrev[i];
+            state.mouseReleased[i] = !state.mouseButtons[i] && state.mousePrev[i];
+            state.mousePrev[i] = state.mouseButtons[i];
+        }
+    }
+
+    void UpdateDelta(DesktopWindow& state) {
+        const double now = std::chrono::duration<double>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (state.lastTime < 0.0) state.deltaTime = 0.0;
+        else state.deltaTime = std::max(0.0, now - state.lastTime);
+        state.lastTime = now;
+    }
 
     DesktopWindow* FromHandle(int64_t handle) {
         return reinterpret_cast<DesktopWindow*>(static_cast<intptr_t>(handle));
@@ -149,6 +183,8 @@ extern "C" int32_t absolute_desktop_poll(int64_t handle) {
         default: break;
         }
     }
+    UpdateInputEdges(*state);
+    UpdateDelta(*state);
     return state->open && state->window ? 1 : 0;
 }
 
@@ -180,8 +216,7 @@ extern "C" void absolute_desktop_clear(int64_t handle, uint32_t color) {
 
 extern "C" void absolute_desktop_pixel(int64_t handle, int32_t x, int32_t y, uint32_t color) {
     DesktopWindow* state = FromHandle(handle);
-    if (!state || x < 0 || y < 0 || x >= state->width || y >= state->height) return;
-    state->pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(state->width) + static_cast<std::size_t>(x)] = color;
+    if (state) state->PutPixel(x, y, color);
 }
 
 extern "C" void absolute_desktop_fill_rect(
@@ -198,6 +233,62 @@ extern "C" void absolute_desktop_fill_rect(
     }
 }
 
+extern "C" void absolute_desktop_draw_line(
+    int64_t handle, int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t color) {
+    DesktopWindow* state = FromHandle(handle);
+    if (!state) return;
+    int32_t dx = std::abs(x1 - x0);
+    int32_t sx = x0 < x1 ? 1 : -1;
+    int32_t dy = -std::abs(y1 - y0);
+    int32_t sy = y0 < y1 ? 1 : -1;
+    int32_t err = dx + dy;
+    for (;;) {
+        state->PutPixel(x0, y0, color);
+        if (x0 == x1 && y0 == y1) break;
+        const int32_t e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+}
+
+extern "C" void absolute_desktop_fill_circle(
+    int64_t handle, int32_t cx, int32_t cy, int32_t radius, uint32_t color) {
+    DesktopWindow* state = FromHandle(handle);
+    if (!state || radius <= 0) return;
+    const int32_t r2 = radius * radius;
+    const int32_t top = std::max(0, cy - radius);
+    const int32_t bottom = std::min(state->height - 1, cy + radius);
+    for (int32_t y = top; y <= bottom; ++y) {
+        const int32_t dy = y - cy;
+        const int32_t span2 = r2 - dy * dy;
+        if (span2 < 0) continue;
+        int32_t span = 0;
+        while ((span + 1) * (span + 1) <= span2) ++span;
+        const int32_t left = std::max(0, cx - span);
+        const int32_t right = std::min(state->width - 1, cx + span);
+        auto begin = state->pixels.begin() + static_cast<std::size_t>(y) * state->width + left;
+        std::fill(begin, begin + (right - left + 1), color);
+    }
+}
+
+extern "C" void absolute_desktop_blit(
+    int64_t handle, int32_t destX, int32_t destY, int32_t width, int32_t height, const uint32_t* pixels) {
+    DesktopWindow* state = FromHandle(handle);
+    if (!state || !pixels || width <= 0 || height <= 0) return;
+    for (int32_t row = 0; row < height; ++row) {
+        const int32_t y = destY + row;
+        if (y < 0 || y >= state->height) continue;
+        for (int32_t col = 0; col < width; ++col) {
+            const int32_t x = destX + col;
+            if (x < 0 || x >= state->width) continue;
+            const uint32_t color = pixels[static_cast<std::size_t>(row) * static_cast<std::size_t>(width)
+                + static_cast<std::size_t>(col)];
+            if (color == 0) continue;
+            state->PutPixel(x, y, color & 0x00FFFFFFu);
+        }
+    }
+}
+
 extern "C" void absolute_desktop_present(int64_t handle) {
     DesktopWindow* state = FromHandle(handle);
     if (state) Present(*state);
@@ -206,6 +297,16 @@ extern "C" void absolute_desktop_present(int64_t handle) {
 extern "C" int32_t absolute_desktop_key_down(int64_t handle, int32_t key) {
     const DesktopWindow* state = FromHandle(handle);
     return state && key >= 0 && key < static_cast<int32_t>(state->keys.size()) && state->keys[key] ? 1 : 0;
+}
+
+extern "C" int32_t absolute_desktop_key_pressed(int64_t handle, int32_t key) {
+    const DesktopWindow* state = FromHandle(handle);
+    return state && key >= 0 && key < static_cast<int32_t>(state->keysPressed.size()) && state->keysPressed[key] ? 1 : 0;
+}
+
+extern "C" int32_t absolute_desktop_key_released(int64_t handle, int32_t key) {
+    const DesktopWindow* state = FromHandle(handle);
+    return state && key >= 0 && key < static_cast<int32_t>(state->keysReleased.size()) && state->keysReleased[key] ? 1 : 0;
 }
 
 extern "C" int32_t absolute_desktop_mouse_x(int64_t handle) {
@@ -222,6 +323,23 @@ extern "C" int32_t absolute_desktop_mouse_down(int64_t handle, int32_t button) {
     const DesktopWindow* state = FromHandle(handle);
     return state && button >= 0 && button < static_cast<int32_t>(state->mouseButtons.size()) &&
         state->mouseButtons[button] ? 1 : 0;
+}
+
+extern "C" int32_t absolute_desktop_mouse_pressed(int64_t handle, int32_t button) {
+    const DesktopWindow* state = FromHandle(handle);
+    return state && button >= 0 && button < static_cast<int32_t>(state->mousePressed.size()) &&
+        state->mousePressed[button] ? 1 : 0;
+}
+
+extern "C" int32_t absolute_desktop_mouse_released(int64_t handle, int32_t button) {
+    const DesktopWindow* state = FromHandle(handle);
+    return state && button >= 0 && button < static_cast<int32_t>(state->mouseReleased.size()) &&
+        state->mouseReleased[button] ? 1 : 0;
+}
+
+extern "C" double absolute_desktop_delta_time(int64_t handle) {
+    const DesktopWindow* state = FromHandle(handle);
+    return state ? state->deltaTime : 0.0;
 }
 
 extern "C" uint32_t absolute_desktop_rgb(int32_t red, int32_t green, int32_t blue) {
