@@ -1,4 +1,6 @@
 // Minimal OpenGL RHI for absolute.desktop.
+// Model: Shader + VertexBuffer + VertexLayout + Pipeline;
+// frame: beginFrame / clear / bind / draw / endFrame / present.
 // Windows: WGL + OpenGL 3.3 core. Other platforms: stub (isValid = false).
 
 #include <algorithm>
@@ -17,7 +19,6 @@ extern "C" int32_t absolute_desktop_height(int64_t handle);
 
 #pragma comment(lib, "opengl32.lib")
 
-// --- WGL / OpenGL types not always in system gl.h ---
 using GLchar = char;
 using GLsizeiptr = ptrdiff_t;
 using GLintptr = ptrdiff_t;
@@ -30,7 +31,6 @@ using GLintptr = ptrdiff_t;
 #define GL_INFO_LOG_LENGTH 0x8B84
 #define GL_ARRAY_BUFFER 0x8892
 #define GL_STATIC_DRAW 0x88E4
-#define GL_DYNAMIC_DRAW 0x88E8
 #define GL_COLOR_BUFFER_BIT 0x00004000
 #define GL_DEPTH_BUFFER_BIT 0x00000100
 #define GL_FLOAT 0x1406
@@ -55,7 +55,6 @@ using GLintptr = ptrdiff_t;
 
 namespace {
     using PFNWGLCREATECONTEXTATTRIBSARB = HGLRC(WINAPI*)(HDC, HGLRC, const int*);
-    using PFNWGLCHOOSEPIXELFORMATARB = BOOL(WINAPI*)(HDC, const int*, const FLOAT*, UINT, int*, UINT*);
     using PFNWGLSWAPINTERVALEXT = BOOL(WINAPI*)(int);
 
     using PFNGLCREATESHADER = GLuint(APIENTRY*)(GLenum);
@@ -82,6 +81,7 @@ namespace {
     using PFNGLBINDVERTEXARRAY = void(APIENTRY*)(GLuint);
     using PFNGLDELETEVERTEXARRAYS = void(APIENTRY*)(GLsizei, const GLuint*);
     using PFNGLENABLEVERTEXATTRIBARRAY = void(APIENTRY*)(GLuint);
+    using PFNGLDISABLEVERTEXATTRIBARRAY = void(APIENTRY*)(GLuint);
     using PFNGLVERTEXATTRIBPOINTER = void(APIENTRY*)(GLuint, GLint, GLenum, GLboolean, GLsizei, const void*);
     using PFNGLDRAWARRAYS = void(APIENTRY*)(GLenum, GLint, GLsizei);
     using PFNGLVIEWPORT = void(APIENTRY*)(GLint, GLint, GLsizei, GLsizei);
@@ -93,7 +93,6 @@ namespace {
     using PFNGLTEXPARAMETERI = void(APIENTRY*)(GLenum, GLenum, GLint);
     using PFNGLDELETETEXTURES = void(APIENTRY*)(GLsizei, const GLuint*);
     using PFNGLACTIVETEXTURE = void(APIENTRY*)(GLenum);
-    using PFNGLGETERROR = GLenum(APIENTRY*)();
 
     struct GlFns {
         PFNGLCREATESHADER CreateShader = nullptr;
@@ -120,6 +119,7 @@ namespace {
         PFNGLBINDVERTEXARRAY BindVertexArray = nullptr;
         PFNGLDELETEVERTEXARRAYS DeleteVertexArrays = nullptr;
         PFNGLENABLEVERTEXATTRIBARRAY EnableVertexAttribArray = nullptr;
+        PFNGLDISABLEVERTEXATTRIBARRAY DisableVertexAttribArray = nullptr;
         PFNGLVERTEXATTRIBPOINTER VertexAttribPointer = nullptr;
         PFNGLDRAWARRAYS DrawArrays = nullptr;
         PFNGLVIEWPORT Viewport = nullptr;
@@ -175,6 +175,7 @@ namespace {
         gl.BindVertexArray = LoadProc<PFNGLBINDVERTEXARRAY>("glBindVertexArray");
         gl.DeleteVertexArrays = LoadProc<PFNGLDELETEVERTEXARRAYS>("glDeleteVertexArrays");
         gl.EnableVertexAttribArray = LoadProc<PFNGLENABLEVERTEXATTRIBARRAY>("glEnableVertexAttribArray");
+        gl.DisableVertexAttribArray = LoadProc<PFNGLDISABLEVERTEXATTRIBARRAY>("glDisableVertexAttribArray");
         gl.VertexAttribPointer = LoadProc<PFNGLVERTEXATTRIBPOINTER>("glVertexAttribPointer");
         gl.DrawArrays = LoadProc<PFNGLDRAWARRAYS>("glDrawArrays");
         gl.Viewport = LoadProc<PFNGLVIEWPORT>("glViewport");
@@ -206,9 +207,7 @@ namespace {
             GLint len = 0;
             gl.GetShaderiv(shader, GL_INFO_LOG_LENGTH, &len);
             std::string log(static_cast<std::size_t>(std::max(len, 1)), '\0');
-            if (gl.GetShaderInfoLog) {
-                gl.GetShaderInfoLog(shader, len, nullptr, log.data());
-            }
+            if (gl.GetShaderInfoLog) gl.GetShaderInfoLog(shader, len, nullptr, log.data());
             gl.DeleteShader(shader);
             SetError(std::string("shader compile failed: ") + log.c_str());
             return 0;
@@ -227,9 +226,7 @@ namespace {
             GLint len = 0;
             gl.GetProgramiv(program, GL_INFO_LOG_LENGTH, &len);
             std::string log(static_cast<std::size_t>(std::max(len, 1)), '\0');
-            if (gl.GetProgramInfoLog) {
-                gl.GetProgramInfoLog(program, len, nullptr, log.data());
-            }
+            if (gl.GetProgramInfoLog) gl.GetProgramInfoLog(program, len, nullptr, log.data());
             gl.DeleteProgram(program);
             SetError(std::string("shader link failed: ") + log.c_str());
             return 0;
@@ -237,35 +234,15 @@ namespace {
         return program;
     }
 
-    constexpr const char* kDemoVs = R"GLSL(
-#version 330 core
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec3 aColor;
-uniform float uTime;
-out vec3 vColor;
-void main() {
-    float c = cos(uTime);
-    float s = sin(uTime);
-    vec2 p = vec2(aPos.x * c - aPos.y * s, aPos.x * s + aPos.y * c);
-    gl_Position = vec4(p * 0.7, aPos.z, 1.0);
-    vColor = aColor;
-}
-)GLSL";
+    struct VertexAttr {
+        int32_t location = 0;
+        int32_t components = 0;
+        int32_t offsetBytes = 0;
+    };
 
-    constexpr const char* kDemoFs = R"GLSL(
-#version 330 core
-in vec3 vColor;
-out vec4 FragColor;
-void main() {
-    FragColor = vec4(vColor, 1.0);
-}
-)GLSL";
-
-    // Layout: pos.xyz + color.rgb (6 floats per vertex).
-    constexpr float kDemoVerts[] = {
-        0.0f,  0.55f, 0.0f,  1.0f, 0.35f, 0.25f,
-       -0.55f, -0.45f, 0.0f,  0.25f, 0.85f, 0.35f,
-        0.55f, -0.45f, 0.0f,  0.30f, 0.45f, 1.0f,
+    struct GpuLayout {
+        int32_t strideBytes = 0;
+        std::vector<VertexAttr> attrs;
     };
 
     struct GpuShader {
@@ -274,8 +251,14 @@ void main() {
 
     struct GpuBuffer {
         GLuint vbo = 0;
-        GLuint vao = 0;
-        int32_t vertexCount = 0; // when layout is known (6 floats/vert)
+        int32_t byteSize = 0;
+        int32_t floatCount = 0;
+    };
+
+    struct GpuPipeline {
+        GLuint program = 0;
+        int32_t strideBytes = 0;
+        std::vector<VertexAttr> attrs;
     };
 
     struct GpuTexture {
@@ -290,25 +273,19 @@ void main() {
         HDC hdc = nullptr;
         HGLRC hglrc = nullptr;
         GlFns gl{};
-        GLuint demoProgram = 0;
-        GLuint demoVao = 0;
-        GLuint demoVbo = 0;
+        GLuint defaultVao = 0;
         bool valid = false;
+        bool inFrame = false;
+        int64_t boundPipeline = 0;
+        int64_t boundBuffer = 0;
+        bool attrsDirty = true;
 
         void ReleaseGlObjects() {
             if (!hglrc || !hdc) return;
             wglMakeCurrent(hdc, hglrc);
-            if (demoProgram) {
-                gl.DeleteProgram(demoProgram);
-                demoProgram = 0;
-            }
-            if (demoVao) {
-                gl.DeleteVertexArrays(1, &demoVao);
-                demoVao = 0;
-            }
-            if (demoVbo) {
-                gl.DeleteBuffers(1, &demoVbo);
-                demoVbo = 0;
+            if (defaultVao) {
+                gl.DeleteVertexArrays(1, &defaultVao);
+                defaultVao = 0;
             }
         }
 
@@ -325,6 +302,9 @@ void main() {
             }
             hwnd = nullptr;
             valid = false;
+            inFrame = false;
+            boundPipeline = 0;
+            boundBuffer = 0;
         }
     };
 
@@ -336,12 +316,20 @@ void main() {
         return static_cast<int64_t>(reinterpret_cast<intptr_t>(device));
     }
 
+    GpuLayout* LayoutFromHandle(int64_t handle) {
+        return reinterpret_cast<GpuLayout*>(static_cast<intptr_t>(handle));
+    }
+
     GpuShader* ShaderFromHandle(int64_t handle) {
         return reinterpret_cast<GpuShader*>(static_cast<intptr_t>(handle));
     }
 
     GpuBuffer* BufferFromHandle(int64_t handle) {
         return reinterpret_cast<GpuBuffer*>(static_cast<intptr_t>(handle));
+    }
+
+    GpuPipeline* PipelineFromHandle(int64_t handle) {
+        return reinterpret_cast<GpuPipeline*>(static_cast<intptr_t>(handle));
     }
 
     GpuTexture* TextureFromHandle(int64_t handle) {
@@ -364,7 +352,6 @@ void main() {
 
     bool CreateModernContext(HDC hdc, HGLRC* out) {
         *out = nullptr;
-        // Temporary context to load WGL extensions.
         PIXELFORMATDESCRIPTOR pfd{};
         pfd.nSize = sizeof(pfd);
         pfd.nVersion = 1;
@@ -401,7 +388,6 @@ void main() {
         wglDeleteContext(temp);
 
         if (!modern) {
-            // Fallback: legacy context (may still load many entry points).
             modern = wglCreateContext(hdc);
             if (!modern) {
                 SetError("OpenGL 3.3 core context unavailable");
@@ -417,32 +403,39 @@ void main() {
         return true;
     }
 
-    bool InitDemoResources(GpuDevice& device) {
-        GlFns& gl = device.gl;
-        GLuint vs = CompileShader(gl, GL_VERTEX_SHADER, kDemoVs);
-        if (!vs) return false;
-        GLuint fs = CompileShader(gl, GL_FRAGMENT_SHADER, kDemoFs);
-        if (!fs) {
-            gl.DeleteShader(vs);
-            return false;
-        }
-        device.demoProgram = LinkProgram(gl, vs, fs);
-        gl.DeleteShader(vs);
-        gl.DeleteShader(fs);
-        if (!device.demoProgram) return false;
+    void ApplyVertexState(GpuDevice& device) {
+        if (!device.attrsDirty) return;
+        device.attrsDirty = false;
 
-        gl.GenVertexArrays(1, &device.demoVao);
-        gl.GenBuffers(1, &device.demoVbo);
-        gl.BindVertexArray(device.demoVao);
-        gl.BindBuffer(GL_ARRAY_BUFFER, device.demoVbo);
-        gl.BufferData(GL_ARRAY_BUFFER, sizeof(kDemoVerts), kDemoVerts, GL_STATIC_DRAW);
-        const GLsizei stride = static_cast<GLsizei>(6 * sizeof(float));
-        gl.EnableVertexAttribArray(0);
-        gl.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(0));
-        gl.EnableVertexAttribArray(1);
-        gl.VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(3 * sizeof(float)));
-        gl.BindVertexArray(0);
-        return true;
+        GlFns& gl = device.gl;
+        gl.BindVertexArray(device.defaultVao);
+
+        GpuPipeline* pipeline = PipelineFromHandle(device.boundPipeline);
+        GpuBuffer* buffer = BufferFromHandle(device.boundBuffer);
+
+        // Disable a reasonable location range, then re-enable from layout.
+        for (int32_t loc = 0; loc < 16; ++loc) {
+            if (gl.DisableVertexAttribArray) gl.DisableVertexAttribArray(static_cast<GLuint>(loc));
+        }
+
+        if (!pipeline || !buffer || !pipeline->program || !buffer->vbo) {
+            gl.BindBuffer(GL_ARRAY_BUFFER, 0);
+            return;
+        }
+
+        gl.UseProgram(pipeline->program);
+        gl.BindBuffer(GL_ARRAY_BUFFER, buffer->vbo);
+        for (const VertexAttr& attr : pipeline->attrs) {
+            if (attr.components <= 0 || attr.location < 0) continue;
+            gl.EnableVertexAttribArray(static_cast<GLuint>(attr.location));
+            gl.VertexAttribPointer(
+                static_cast<GLuint>(attr.location),
+                attr.components,
+                GL_FLOAT,
+                GL_FALSE,
+                pipeline->strideBytes,
+                reinterpret_cast<void*>(static_cast<intptr_t>(attr.offsetBytes)));
+        }
     }
 
     // Soft sprite layout (must match desktop_soft_sprites.cpp).
@@ -492,7 +485,9 @@ extern "C" int64_t absolute_desktop_gpu_create(int64_t windowHandle) {
         device->gl.SwapIntervalEXT(1);
     }
 
-    if (!InitDemoResources(*device)) {
+    device->gl.GenVertexArrays(1, &device->defaultVao);
+    if (!device->defaultVao) {
+        SetError("failed to create default VAO");
         device->Destroy();
         delete device;
         return 0;
@@ -523,10 +518,28 @@ extern "C" const char* absolute_desktop_gpu_last_error() {
     return g_lastError.c_str();
 }
 
-extern "C" void absolute_desktop_gpu_make_current(int64_t handle) {
+extern "C" void absolute_desktop_gpu_begin_frame(int64_t handle) {
     GpuDevice* device = DeviceFromHandle(handle);
-    if (!device) return;
-    MakeCurrent(*device);
+    if (!device || !MakeCurrent(*device)) return;
+    device->inFrame = true;
+    device->boundPipeline = 0;
+    device->boundBuffer = 0;
+    device->attrsDirty = true;
+    device->gl.BindVertexArray(device->defaultVao);
+}
+
+extern "C" void absolute_desktop_gpu_end_frame(int64_t handle) {
+    GpuDevice* device = DeviceFromHandle(handle);
+    if (!device || !device->valid) return;
+    if (MakeCurrent(*device)) {
+        device->gl.UseProgram(0);
+        device->gl.BindBuffer(GL_ARRAY_BUFFER, 0);
+        device->gl.BindVertexArray(0);
+    }
+    device->inFrame = false;
+    device->boundPipeline = 0;
+    device->boundBuffer = 0;
+    device->attrsDirty = true;
 }
 
 extern "C" void absolute_desktop_gpu_clear(int64_t handle, float r, float g, float b, float a) {
@@ -543,16 +556,38 @@ extern "C" void absolute_desktop_gpu_present(int64_t handle) {
     SwapBuffers(device->hdc);
 }
 
-extern "C" void absolute_desktop_gpu_draw_demo_triangle(int64_t handle, float timeSeconds) {
-    GpuDevice* device = DeviceFromHandle(handle);
-    if (!device || !MakeCurrent(*device) || !device->demoProgram) return;
-    GlFns& gl = device->gl;
-    gl.UseProgram(device->demoProgram);
-    const GLint loc = gl.GetUniformLocation(device->demoProgram, "uTime");
-    if (loc >= 0) gl.Uniform1f(loc, timeSeconds);
-    gl.BindVertexArray(device->demoVao);
-    gl.DrawArrays(GL_TRIANGLES, 0, 3);
-    gl.BindVertexArray(0);
+extern "C" int64_t absolute_desktop_gpu_layout_create(int32_t strideBytes) {
+    if (strideBytes <= 0) {
+        SetError("VertexLayout strideBytes must be > 0");
+        return 0;
+    }
+    auto* layout = new GpuLayout();
+    layout->strideBytes = strideBytes;
+    layout->attrs.reserve(8);
+    return static_cast<int64_t>(reinterpret_cast<intptr_t>(layout));
+}
+
+extern "C" void absolute_desktop_gpu_layout_add(
+    int64_t layoutHandle, int32_t location, int32_t components, int32_t offsetBytes) {
+    GpuLayout* layout = LayoutFromHandle(layoutHandle);
+    if (!layout) return;
+    if (location < 0 || components <= 0 || components > 4 || offsetBytes < 0) {
+        SetError("invalid VertexLayout attribute");
+        return;
+    }
+    if (static_cast<int32_t>(layout->attrs.size()) >= 16) {
+        SetError("VertexLayout attribute limit (16) exceeded");
+        return;
+    }
+    VertexAttr attr{};
+    attr.location = location;
+    attr.components = components;
+    attr.offsetBytes = offsetBytes;
+    layout->attrs.push_back(attr);
+}
+
+extern "C" void absolute_desktop_gpu_layout_destroy(int64_t layoutHandle) {
+    delete LayoutFromHandle(layoutHandle);
 }
 
 extern "C" int64_t absolute_desktop_gpu_shader_create(
@@ -589,30 +624,23 @@ extern "C" void absolute_desktop_gpu_shader_destroy(int64_t gpuHandle, int64_t s
     delete shader;
 }
 
-// Interleaved float data: [x,y,z,r,g,b] * vertexCount (floatCount must be multiple of 6).
 extern "C" int64_t absolute_desktop_gpu_buffer_create(
     int64_t gpuHandle, const float* data, int32_t floatCount) {
     GpuDevice* device = DeviceFromHandle(gpuHandle);
-    if (!device || !MakeCurrent(*device) || !data || floatCount < 6 || (floatCount % 6) != 0) {
-        SetError("vertex buffer requires floatCount multiple of 6 (pos3+color3)");
+    if (!device || !MakeCurrent(*device) || !data || floatCount <= 0) {
+        SetError("vertex buffer requires non-empty float data");
         return 0;
     }
     GlFns& gl = device->gl;
     auto* buffer = new GpuBuffer();
-    buffer->vertexCount = floatCount / 6;
-    gl.GenVertexArrays(1, &buffer->vao);
+    buffer->floatCount = floatCount;
+    buffer->byteSize = floatCount * static_cast<int32_t>(sizeof(float));
     gl.GenBuffers(1, &buffer->vbo);
-    gl.BindVertexArray(buffer->vao);
     gl.BindBuffer(GL_ARRAY_BUFFER, buffer->vbo);
     gl.BufferData(GL_ARRAY_BUFFER,
-        static_cast<GLsizeiptr>(floatCount) * static_cast<GLsizeiptr>(sizeof(float)),
+        static_cast<GLsizeiptr>(buffer->byteSize),
         data, GL_STATIC_DRAW);
-    const GLsizei stride = static_cast<GLsizei>(6 * sizeof(float));
-    gl.EnableVertexAttribArray(0);
-    gl.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(0));
-    gl.EnableVertexAttribArray(1);
-    gl.VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(3 * sizeof(float)));
-    gl.BindVertexArray(0);
+    gl.BindBuffer(GL_ARRAY_BUFFER, 0);
     return static_cast<int64_t>(reinterpret_cast<intptr_t>(buffer));
 }
 
@@ -620,38 +648,89 @@ extern "C" void absolute_desktop_gpu_buffer_destroy(int64_t gpuHandle, int64_t b
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     GpuBuffer* buffer = BufferFromHandle(bufferHandle);
     if (!device || !buffer) return;
-    if (MakeCurrent(*device)) {
-        if (buffer->vao) device->gl.DeleteVertexArrays(1, &buffer->vao);
-        if (buffer->vbo) device->gl.DeleteBuffers(1, &buffer->vbo);
+    if (device->boundBuffer == bufferHandle) {
+        device->boundBuffer = 0;
+        device->attrsDirty = true;
+    }
+    if (MakeCurrent(*device) && buffer->vbo) {
+        device->gl.DeleteBuffers(1, &buffer->vbo);
     }
     delete buffer;
 }
 
-extern "C" void absolute_desktop_gpu_draw(
-    int64_t gpuHandle, int64_t shaderHandle, int64_t bufferHandle, int32_t vertexCount) {
+extern "C" int32_t absolute_desktop_gpu_buffer_float_count(int64_t bufferHandle) {
+    const GpuBuffer* buffer = BufferFromHandle(bufferHandle);
+    return buffer ? buffer->floatCount : 0;
+}
+
+extern "C" int64_t absolute_desktop_gpu_pipeline_create(
+    int64_t gpuHandle, int64_t shaderHandle, int64_t layoutHandle) {
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     GpuShader* shader = ShaderFromHandle(shaderHandle);
-    GpuBuffer* buffer = BufferFromHandle(bufferHandle);
-    if (!device || !shader || !buffer || !MakeCurrent(*device)) return;
-    const int32_t count = vertexCount > 0 ? vertexCount : buffer->vertexCount;
-    if (count <= 0 || !shader->program || !buffer->vao) return;
-    GlFns& gl = device->gl;
-    gl.UseProgram(shader->program);
-    gl.BindVertexArray(buffer->vao);
-    gl.DrawArrays(GL_TRIANGLES, 0, count);
-    gl.BindVertexArray(0);
+    GpuLayout* layout = LayoutFromHandle(layoutHandle);
+    if (!device || !shader || !layout || !shader->program) {
+        SetError("createPipeline requires valid gpu, shader, and layout");
+        return 0;
+    }
+    if (layout->strideBytes <= 0 || layout->attrs.empty()) {
+        SetError("createPipeline layout needs stride and at least one attribute");
+        return 0;
+    }
+    auto* pipeline = new GpuPipeline();
+    pipeline->program = shader->program; // borrowed; shader must outlive pipeline draws
+    pipeline->strideBytes = layout->strideBytes;
+    pipeline->attrs = layout->attrs;
+    return static_cast<int64_t>(reinterpret_cast<intptr_t>(pipeline));
+}
+
+extern "C" void absolute_desktop_gpu_pipeline_destroy(int64_t gpuHandle, int64_t pipelineHandle) {
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    GpuPipeline* pipeline = PipelineFromHandle(pipelineHandle);
+    if (!device || !pipeline) return;
+    if (device->boundPipeline == pipelineHandle) {
+        device->boundPipeline = 0;
+        device->attrsDirty = true;
+    }
+    // Program is owned by GpuShader — do not delete here.
+    delete pipeline;
+}
+
+extern "C" void absolute_desktop_gpu_bind_pipeline(int64_t gpuHandle, int64_t pipelineHandle) {
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    if (!device) return;
+    device->boundPipeline = pipelineHandle;
+    device->attrsDirty = true;
+}
+
+extern "C" void absolute_desktop_gpu_bind_buffer(int64_t gpuHandle, int64_t bufferHandle) {
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    if (!device) return;
+    device->boundBuffer = bufferHandle;
+    device->attrsDirty = true;
+}
+
+extern "C" void absolute_desktop_gpu_draw(int64_t gpuHandle, int32_t vertexCount) {
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    if (!device || vertexCount <= 0 || !MakeCurrent(*device)) return;
+    ApplyVertexState(*device);
+    GpuPipeline* pipeline = PipelineFromHandle(device->boundPipeline);
+    GpuBuffer* buffer = BufferFromHandle(device->boundBuffer);
+    if (!pipeline || !buffer || !pipeline->program || !buffer->vbo) {
+        SetError("draw requires bound pipeline and vertex buffer");
+        return;
+    }
+    device->gl.DrawArrays(GL_TRIANGLES, 0, vertexCount);
 }
 
 extern "C" void absolute_desktop_gpu_set_uniform_f(
-    int64_t gpuHandle, int64_t shaderHandle, const char* name, float value) {
+    int64_t gpuHandle, const char* name, float value) {
     GpuDevice* device = DeviceFromHandle(gpuHandle);
-    GpuShader* shader = ShaderFromHandle(shaderHandle);
-    if (!device || !shader || !name || !MakeCurrent(*device) || !shader->program) return;
-    const GLint loc = device->gl.GetUniformLocation(shader->program, name);
+    GpuPipeline* pipeline = device ? PipelineFromHandle(device->boundPipeline) : nullptr;
+    if (!device || !pipeline || !name || !MakeCurrent(*device) || !pipeline->program) return;
+    const GLint loc = device->gl.GetUniformLocation(pipeline->program, name);
     if (loc >= 0) device->gl.Uniform1f(loc, value);
 }
 
-// Upload soft sprite 0x00RRGGBB pixels as RGBA8 texture (0 remains transparent black).
 extern "C" int64_t absolute_desktop_gpu_texture_from_sprite(int64_t gpuHandle, int64_t spriteHandle) {
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     DesktopSpriteView* sprite = SpriteFromHandle(spriteHandle);
@@ -716,23 +795,29 @@ namespace {
     thread_local std::string g_lastError = "OpenGL RHI is currently implemented on Windows (WGL) only";
 }
 
-extern "C" int64_t absolute_desktop_gpu_create(int64_t) {
-    return 0;
-}
+extern "C" int64_t absolute_desktop_gpu_create(int64_t) { return 0; }
 extern "C" void absolute_desktop_gpu_destroy(int64_t) {}
 extern "C" int32_t absolute_desktop_gpu_is_valid(int64_t) { return 0; }
 extern "C" const char* absolute_desktop_gpu_backend() { return "none"; }
 extern "C" const char* absolute_desktop_gpu_last_error() { return g_lastError.c_str(); }
-extern "C" void absolute_desktop_gpu_make_current(int64_t) {}
+extern "C" void absolute_desktop_gpu_begin_frame(int64_t) {}
+extern "C" void absolute_desktop_gpu_end_frame(int64_t) {}
 extern "C" void absolute_desktop_gpu_clear(int64_t, float, float, float, float) {}
 extern "C" void absolute_desktop_gpu_present(int64_t) {}
-extern "C" void absolute_desktop_gpu_draw_demo_triangle(int64_t, float) {}
+extern "C" int64_t absolute_desktop_gpu_layout_create(int32_t) { return 0; }
+extern "C" void absolute_desktop_gpu_layout_add(int64_t, int32_t, int32_t, int32_t) {}
+extern "C" void absolute_desktop_gpu_layout_destroy(int64_t) {}
 extern "C" int64_t absolute_desktop_gpu_shader_create(int64_t, const char*, const char*) { return 0; }
 extern "C" void absolute_desktop_gpu_shader_destroy(int64_t, int64_t) {}
 extern "C" int64_t absolute_desktop_gpu_buffer_create(int64_t, const float*, int32_t) { return 0; }
 extern "C" void absolute_desktop_gpu_buffer_destroy(int64_t, int64_t) {}
-extern "C" void absolute_desktop_gpu_draw(int64_t, int64_t, int64_t, int32_t) {}
-extern "C" void absolute_desktop_gpu_set_uniform_f(int64_t, int64_t, const char*, float) {}
+extern "C" int32_t absolute_desktop_gpu_buffer_float_count(int64_t) { return 0; }
+extern "C" int64_t absolute_desktop_gpu_pipeline_create(int64_t, int64_t, int64_t) { return 0; }
+extern "C" void absolute_desktop_gpu_pipeline_destroy(int64_t, int64_t) {}
+extern "C" void absolute_desktop_gpu_bind_pipeline(int64_t, int64_t) {}
+extern "C" void absolute_desktop_gpu_bind_buffer(int64_t, int64_t) {}
+extern "C" void absolute_desktop_gpu_draw(int64_t, int32_t) {}
+extern "C" void absolute_desktop_gpu_set_uniform_f(int64_t, const char*, float) {}
 extern "C" int64_t absolute_desktop_gpu_texture_from_sprite(int64_t, int64_t) { return 0; }
 extern "C" void absolute_desktop_gpu_texture_destroy(int64_t, int64_t) {}
 extern "C" void absolute_desktop_gpu_bind_texture(int64_t, int64_t, int32_t) {}

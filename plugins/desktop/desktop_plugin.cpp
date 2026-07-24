@@ -64,16 +64,24 @@ extern "C" void absolute_desktop_gpu_destroy(int64 handle);
 extern "C" int32 absolute_desktop_gpu_is_valid(int64 handle);
 extern "C" string absolute_desktop_gpu_backend();
 extern "C" string absolute_desktop_gpu_last_error();
-extern "C" void absolute_desktop_gpu_make_current(int64 handle);
+extern "C" void absolute_desktop_gpu_begin_frame(int64 handle);
+extern "C" void absolute_desktop_gpu_end_frame(int64 handle);
 extern "C" void absolute_desktop_gpu_clear(int64 handle, float r, float g, float b, float a);
 extern "C" void absolute_desktop_gpu_present(int64 handle);
-extern "C" void absolute_desktop_gpu_draw_demo_triangle(int64 handle, float timeSeconds);
+extern "C" int64 absolute_desktop_gpu_layout_create(int32 strideBytes);
+extern "C" void absolute_desktop_gpu_layout_add(int64 layoutHandle, int32 location, int32 components, int32 offsetBytes);
+extern "C" void absolute_desktop_gpu_layout_destroy(int64 layoutHandle);
 extern "C" int64 absolute_desktop_gpu_shader_create(int64 gpuHandle, string vertexSource, string fragmentSource);
 extern "C" void absolute_desktop_gpu_shader_destroy(int64 gpuHandle, int64 shaderHandle);
 extern "C" int64 absolute_desktop_gpu_buffer_create(int64 gpuHandle, raw float* data, int32 floatCount);
 extern "C" void absolute_desktop_gpu_buffer_destroy(int64 gpuHandle, int64 bufferHandle);
-extern "C" void absolute_desktop_gpu_draw(int64 gpuHandle, int64 shaderHandle, int64 bufferHandle, int32 vertexCount);
-extern "C" void absolute_desktop_gpu_set_uniform_f(int64 gpuHandle, int64 shaderHandle, string name, float value);
+extern "C" int32 absolute_desktop_gpu_buffer_float_count(int64 bufferHandle);
+extern "C" int64 absolute_desktop_gpu_pipeline_create(int64 gpuHandle, int64 shaderHandle, int64 layoutHandle);
+extern "C" void absolute_desktop_gpu_pipeline_destroy(int64 gpuHandle, int64 pipelineHandle);
+extern "C" void absolute_desktop_gpu_bind_pipeline(int64 gpuHandle, int64 pipelineHandle);
+extern "C" void absolute_desktop_gpu_bind_buffer(int64 gpuHandle, int64 bufferHandle);
+extern "C" void absolute_desktop_gpu_draw(int64 gpuHandle, int32 vertexCount);
+extern "C" void absolute_desktop_gpu_set_uniform_f(int64 gpuHandle, string name, float value);
 extern "C" int64 absolute_desktop_gpu_texture_from_sprite(int64 gpuHandle, int64 spriteHandle);
 extern "C" void absolute_desktop_gpu_texture_destroy(int64 gpuHandle, int64 textureHandle);
 extern "C" void absolute_desktop_gpu_bind_texture(int64 gpuHandle, int64 textureHandle, int32 unit);
@@ -519,9 +527,86 @@ namespace Desktop {
         }
     }
 
-    // Minimal OpenGL RHI (Windows WGL, OpenGL 3.3 core when available).
-    // Soft framebuffer (clear/drawSprite/present) and GPU present are separate paths;
-    // use Gpu.clear / Gpu.present when rendering with OpenGL.
+    // Vertex attribute layout for GpuPipeline (float components only for now).
+    // Example pos3+color3: stride 24, add(0,3,0), add(1,3,12).
+    class VertexLayout {
+        public int64 handle;
+
+        public VertexLayout(int32 strideBytes) {
+            handle = absolute_desktop_gpu_layout_create(strideBytes);
+        }
+
+        public bool isValid() {
+            return handle != 0;
+        }
+
+        public void add(int32 location, int32 components, int32 offsetBytes) {
+            absolute_desktop_gpu_layout_add(handle, location, components, offsetBytes);
+        }
+
+        public void destroy() {
+            if (handle != 0) {
+                absolute_desktop_gpu_layout_destroy(handle);
+                handle = 0;
+            }
+        }
+    }
+
+    class GpuShader {
+        public int64 handle;
+        public int64 gpuHandle;
+
+        public bool isValid() {
+            return handle != 0;
+        }
+
+        public void destroy() {
+            if (handle != 0) {
+                absolute_desktop_gpu_shader_destroy(gpuHandle, handle);
+                handle = 0;
+            }
+        }
+    }
+
+    class GpuBuffer {
+        public int64 handle;
+        public int64 gpuHandle;
+
+        public bool isValid() {
+            return handle != 0;
+        }
+
+        public int32 floatCount() {
+            return absolute_desktop_gpu_buffer_float_count(handle);
+        }
+
+        public void destroy() {
+            if (handle != 0) {
+                absolute_desktop_gpu_buffer_destroy(gpuHandle, handle);
+                handle = 0;
+            }
+        }
+    }
+
+    class GpuPipeline {
+        public int64 handle;
+        public int64 gpuHandle;
+
+        public bool isValid() {
+            return handle != 0;
+        }
+
+        public void destroy() {
+            if (handle != 0) {
+                absolute_desktop_gpu_pipeline_destroy(gpuHandle, handle);
+                handle = 0;
+            }
+        }
+    }
+
+    // OpenGL RHI (Windows WGL, OpenGL 3.3 core when available).
+    // Frame model:
+    //   beginFrame(); clear(...); bind(pipeline); bind(buffer); draw(n); endFrame(); present();
     class Gpu {
         public int64 handle;
 
@@ -548,8 +633,63 @@ namespace Desktop {
             return absolute_desktop_gpu_last_error();
         }
 
-        public void makeCurrent() {
-            absolute_desktop_gpu_make_current(handle);
+        public GpuShader* createShader(string vertexSource, string fragmentSource) {
+            int64 h = absolute_desktop_gpu_shader_create(handle, vertexSource, fragmentSource);
+            if (h == 0) {
+                return null;
+            }
+            auto shader = new GpuShader();
+            shader.handle = h;
+            shader.gpuHandle = handle;
+            return shader;
+        }
+
+        // Upload interleaved floats (interpreted later by VertexLayout / Pipeline).
+        public GpuBuffer* createVertexBuffer(float[] vertices) {
+            if (vertices.length <= 0) {
+                return null;
+            }
+            int64 h = absolute_desktop_gpu_buffer_create(handle, &vertices[0], vertices.length);
+            if (h == 0) {
+                return null;
+            }
+            auto buffer = new GpuBuffer();
+            buffer.handle = h;
+            buffer.gpuHandle = handle;
+            return buffer;
+        }
+
+        // Convenience: stride 24 bytes, loc0 = vec3 pos @0, loc1 = vec3 color @12.
+        public VertexLayout* createLayoutPos3Color3() {
+            auto layout = new VertexLayout(24);
+            if (!layout.isValid()) {
+                return null;
+            }
+            layout.add(0, 3, 0);
+            layout.add(1, 3, 12);
+            return layout;
+        }
+
+        public GpuPipeline* createPipeline(GpuShader* shader, VertexLayout* layout) {
+            if (shader == null || layout == null) {
+                return null;
+            }
+            int64 h = absolute_desktop_gpu_pipeline_create(handle, shader.handle, layout.handle);
+            if (h == 0) {
+                return null;
+            }
+            auto pipeline = new GpuPipeline();
+            pipeline.handle = h;
+            pipeline.gpuHandle = handle;
+            return pipeline;
+        }
+
+        public void beginFrame() {
+            absolute_desktop_gpu_begin_frame(handle);
+        }
+
+        public void endFrame() {
+            absolute_desktop_gpu_end_frame(handle);
         }
 
         public void clear(float r, float g, float b, float a) {
@@ -560,38 +700,27 @@ namespace Desktop {
             absolute_desktop_gpu_present(handle);
         }
 
-        // Built-in rotating RGB triangle (embedded shader + VBO).
-        public void drawDemoTriangle(float timeSeconds) {
-            absolute_desktop_gpu_draw_demo_triangle(handle, timeSeconds);
+        public void bind(GpuPipeline* pipeline) {
+            if (pipeline != null) {
+                absolute_desktop_gpu_bind_pipeline(handle, pipeline.handle);
+            }
         }
 
-        // GLSL 330 sources. Vertex layout for draw(): location0 vec3 pos, location1 vec3 color.
-        public int64 createShader(string vertexSource, string fragmentSource) {
-            return absolute_desktop_gpu_shader_create(handle, vertexSource, fragmentSource);
+        public void bind(GpuBuffer* buffer) {
+            if (buffer != null) {
+                absolute_desktop_gpu_bind_buffer(handle, buffer.handle);
+            }
         }
 
-        public void destroyShader(int64 shader) {
-            absolute_desktop_gpu_shader_destroy(handle, shader);
+        public void draw(int32 vertexCount) {
+            absolute_desktop_gpu_draw(handle, vertexCount);
         }
 
-        // Interleaved floats: [x,y,z,r,g,b] * N. floatCount must be multiple of 6.
-        public int64 createVertexBuffer(raw float* data, int32 floatCount) {
-            return absolute_desktop_gpu_buffer_create(handle, data, floatCount);
+        // Applies to the currently bound pipeline program.
+        public void setUniformF(string name, float value) {
+            absolute_desktop_gpu_set_uniform_f(handle, name, value);
         }
 
-        public void destroyBuffer(int64 buffer) {
-            absolute_desktop_gpu_buffer_destroy(handle, buffer);
-        }
-
-        public void draw(int64 shader, int64 buffer, int32 vertexCount) {
-            absolute_desktop_gpu_draw(handle, shader, buffer, vertexCount);
-        }
-
-        public void setUniformF(int64 shader, string name, float value) {
-            absolute_desktop_gpu_set_uniform_f(handle, shader, name, value);
-        }
-
-        // Upload soft Sprite pixels as RGBA8 texture (0 = transparent).
         public int64 createTextureFromSprite(Sprite* sprite) {
             return absolute_desktop_gpu_texture_from_sprite(handle, sprite.handle);
         }

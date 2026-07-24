@@ -86,26 +86,33 @@ Windows: WGL + OpenGL 3.3 core when available (legacy fallback). Linux/X11: stub
 (`isValid() == false`) until GLX lands. Soft `window.present()` and `gpu.present()` are
 separate paths — use GPU clear/present for GL frames.
 
-- `new Desktop.Gpu(window)` / `isValid()` / `destroy()` / `backend()` / `lastError()`
-- `makeCurrent()`, `clear(r,g,b,a)`, `present()` (swap buffers)
-- `drawDemoTriangle(time)` — built-in rotating RGB triangle
-- Minimal RHI:
-  - `createShader(vs, fs)` / `destroyShader` — GLSL 330, layout `0=vec3 pos`, `1=vec3 color`
-  - `createVertexBuffer(raw float* data, floatCount)` — interleaved `[x,y,z,r,g,b]*N`
-  - `draw(shader, buffer, vertexCount)`, `setUniformF(shader, name, value)`
-  - `createTextureFromSprite(sprite)` / `bindTexture` / `destroyTexture` — RGBA8 upload
-- Example: `examples/desktop/triangle.abs`
+Resources:
+- `createShader(vs, fs)` → `GpuShader*`
+- `createVertexBuffer(float[] vertices)` → `GpuBuffer*` (raw GPU VBO; layout is separate)
+- `new VertexLayout(strideBytes)` + `layout.add(location, components, offsetBytes)`
+- `createLayoutPos3Color3()` — stride 24, loc0 pos, loc1 color
+- `createPipeline(shader, layout)` → `GpuPipeline*` (program + vertex format; shader must outlive draws)
+- `createTextureFromSprite(sprite)` / `bindTexture` / `destroyTexture`
 
+Frame:
 ```absolute
-auto gpu = new Desktop.Gpu(window);
-if (!gpu.isValid()) { println(gpu.lastError()); return 1; }
-while (window.poll()) {
-    gpu.clear(0.06, 0.07, 0.12, 1.0);
-    gpu.drawDemoTriangle(Desktop.time() as float);
-    gpu.present();
-}
-gpu.destroy();
+auto shader = gpu.createShader(vertexSource, fragmentSource);
+auto buffer = gpu.createVertexBuffer(vertices);
+auto layout = gpu.createLayoutPos3Color3();
+auto pipeline = gpu.createPipeline(shader, layout);
+
+gpu.beginFrame();
+gpu.clear(0.06, 0.07, 0.12, 1.0);
+gpu.bind(pipeline);
+gpu.bind(buffer);
+gpu.setUniformF("uTime", t); // optional, uses bound pipeline
+gpu.draw(3);
+gpu.endFrame();
+gpu.present();
 ```
+
+- `bind` is overloaded for `GpuPipeline*` and `GpuBuffer*`
+- Example: `examples/desktop/triangle.abs`
 
 ### Game loop patterns
 
