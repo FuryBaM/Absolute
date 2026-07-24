@@ -2,6 +2,10 @@
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
 
+#if defined(ABSOLUTE_DESKTOP_HAS_GLX)
+#include <GL/glx.h>
+#endif
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -18,6 +22,7 @@ namespace {
         Display* display = nullptr;
         ::Window window = 0;
         GC graphics = nullptr;
+        Colormap colormap = 0;
         Atom closeMessage = 0;
         int32_t width = 1;
         int32_t height = 1;
@@ -100,8 +105,13 @@ namespace {
         char* imageData = static_cast<char*>(std::malloc(bytes));
         if (!imageData) return;
         std::memcpy(imageData, state.pixels.data(), bytes);
-        XImage* image = XCreateImage(state.display, DefaultVisual(state.display, screen),
-            static_cast<unsigned>(depth), ZPixmap, 0, imageData,
+        // Use the window visual (may be GLX-capable, not DefaultVisual).
+        XWindowAttributes attrs{};
+        XGetWindowAttributes(state.display, state.window, &attrs);
+        Visual* visual = attrs.visual ? attrs.visual : DefaultVisual(state.display, screen);
+        const unsigned imgDepth = attrs.depth ? static_cast<unsigned>(attrs.depth)
+            : static_cast<unsigned>(depth);
+        XImage* image = XCreateImage(state.display, visual, imgDepth, ZPixmap, 0, imageData,
             static_cast<unsigned>(state.width), static_cast<unsigned>(state.height), 32, 0);
         if (!image) { std::free(imageData); return; }
         XPutImage(state.display, state.window, state.graphics, image, 0, 0, 0, 0,
@@ -119,14 +129,44 @@ extern "C" int64_t absolute_desktop_create(const char* title, int32_t width, int
     state->display = display;
     state->Resize(width, height);
     const int screen = DefaultScreen(display);
-    state->window = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0,
-        static_cast<unsigned>(width), static_cast<unsigned>(height), 0,
-        BlackPixel(display, screen), BlackPixel(display, screen));
-    if (!state->window) { XCloseDisplay(display); delete state; return 0; }
-    XStoreName(display, state->window, title ? title : "Absolute");
-    XSelectInput(display, state->window, ExposureMask | StructureNotifyMask |
+    const long eventMask = ExposureMask | StructureNotifyMask |
         KeyPressMask | KeyReleaseMask | PointerMotionMask |
-        ButtonPressMask | ButtonReleaseMask | FocusChangeMask);
+        ButtonPressMask | ButtonReleaseMask | FocusChangeMask;
+
+#if defined(ABSOLUTE_DESKTOP_HAS_GLX)
+    // Prefer a GLX-capable visual so Desktop.Gpu (OpenGL) can attach cleanly.
+    GLint glxAttribs[] = { GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None };
+    XVisualInfo* vi = glXChooseVisual(display, screen, glxAttribs);
+    if (vi) {
+        state->colormap = XCreateColormap(display, RootWindow(display, screen), vi->visual, AllocNone);
+        XSetWindowAttributes swa{};
+        swa.colormap = state->colormap;
+        swa.event_mask = eventMask;
+        swa.border_pixel = BlackPixel(display, screen);
+        swa.background_pixel = BlackPixel(display, screen);
+        state->window = XCreateWindow(
+            display, RootWindow(display, screen), 0, 0,
+            static_cast<unsigned>(width), static_cast<unsigned>(height), 0,
+            vi->depth, InputOutput, vi->visual,
+            CWColormap | CWEventMask | CWBorderPixel | CWBackPixel, &swa);
+        XFree(vi);
+    }
+#endif
+    if (!state->window) {
+        state->window = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0,
+            static_cast<unsigned>(width), static_cast<unsigned>(height), 0,
+            BlackPixel(display, screen), BlackPixel(display, screen));
+        if (state->window) {
+            XSelectInput(display, state->window, eventMask);
+        }
+    }
+    if (!state->window) {
+        if (state->colormap) XFreeColormap(display, state->colormap);
+        XCloseDisplay(display);
+        delete state;
+        return 0;
+    }
+    XStoreName(display, state->window, title ? title : "Absolute");
     state->closeMessage = XInternAtom(display, "WM_DELETE_WINDOW", False);
     XSetWMProtocols(display, state->window, &state->closeMessage, 1);
     if (resizable == 0) {
@@ -148,6 +188,7 @@ extern "C" void absolute_desktop_destroy(int64_t handle) {
     if (state->display) {
         if (state->graphics) XFreeGC(state->display, state->graphics);
         if (state->window) XDestroyWindow(state->display, state->window);
+        if (state->colormap) XFreeColormap(state->display, state->colormap);
         XCloseDisplay(state->display);
     }
     delete state;

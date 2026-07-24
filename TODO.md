@@ -499,19 +499,19 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Soft 2D sprite batch / atlas batch: `Desktop.SpriteBatch` (`begin` /
   `draw` / `drawRect` / `drawSprite` / `setAtlas` / `flush` / `end`),
   zero-copy `drawSpriteRect` via strided blit; example `examples/desktop/batch.abs`.
-- [x] OpenGL RHI (`Desktop.Gpu`): Windows WGL + OpenGL 3.3 core (legacy fallback);
-  Linux stub until GLX. Frame model `beginFrame` / `clear` / `bind(pipeline)` /
-  `bind(buffer)` / `draw(n)` / `endFrame` / `present`.
+- [x] OpenGL RHI (`Desktop.Gpu`): Windows WGL + Linux GLX (when OpenGL found);
+  frame model `beginFrame` / `clear` / `bind` / `draw` / `endFrame` / `present`;
+  `backend()` → `opengl-wgl` / `opengl-glx`.
 - [x] GPU resources: `GpuShader`, `GpuBuffer`, `GpuIndexBuffer`, `GpuSampler`,
-  `GpuTexture`, `VertexLayout` + `createPipeline`; multi-backend still open.
+  `GpuTexture`, `VertexLayout` + `createPipeline`.
 - [x] GPU triangle example uses full pipeline path: `examples/desktop/triangle.abs`.
 - [x] GPU sprite scene: textured indexed quads + sampler; example
   `examples/desktop/gpu-sprites.abs` (ship + atlas stars, WASD).
 - [x] Index buffers (`createIndexBuffer` / `drawIndexed`) и sampler objects
   (`createSampler` / `bind(sampler)`).
-- [x] PNG load for soft sprites: `sprite.loadPng` / `loadImage` (Windows WIC),
-  assets `examples/desktop/assets/*.png`, example `image-png.abs`;
-  non-Windows PNG still open.
+- [x] PNG load for soft sprites: `sprite.loadPng` / `loadImage` (Windows WIC;
+  portable zlib decoder for 8-bit RGB/RGBA elsewhere), assets `*.png`,
+  example `image-png.abs`.
 - [x] Soft TTF / system fonts: `Desktop.Font` (Windows GDI), `loadFile` for
   private `.ttf`/`.otf`, `drawFontText` / `measure` / `lineHeight`;
   example `examples/desktop/font.abs`.
@@ -526,8 +526,8 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   generated GLSL 330, optional `code { ... }` raw GLSL body, LLVM reflection +
   `absolute_shader_glsl_*` accessors, `Desktop.Gpu.createLayout3Attr`;
   examples `shader-rhi.abs`, `shader-code.abs`.
-- [ ] Multi-backend RHI (Vulkan/D3D12) / SPIR-V·DXIL·Metal; Linux GLX Gpu
-  (`native_display` hook ready).
+- [x] Dual OpenGL backends: WGL (Windows) + GLX (Linux/X11); `native_display` hook.
+- [ ] Vulkan/D3D12 backends and SPIR-V·DXIL·Metal IR (beyond OpenGL).
 
 ### Native interop и платформы
 

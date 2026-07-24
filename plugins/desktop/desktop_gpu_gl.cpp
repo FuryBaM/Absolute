@@ -1,23 +1,37 @@
 // Minimal OpenGL RHI for absolute.desktop.
 // Model: Shader + VertexBuffer + IndexBuffer + VertexLayout + Pipeline + Sampler;
 // frame: beginFrame / clear / bind / draw|drawIndexed / endFrame / present.
-// Windows: WGL + OpenGL 3.3 core. Other platforms: stub (isValid = false).
+// Windows: WGL. Linux (X11+GL): GLX. Else: stub (isValid = false).
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
 extern "C" void* absolute_desktop_native_window(int64_t handle);
+extern "C" void* absolute_desktop_native_display(int64_t handle);
 extern "C" int32_t absolute_desktop_width(int64_t handle);
 extern "C" int32_t absolute_desktop_height(int64_t handle);
 
 #if defined(_WIN32)
+#define ABSOLUTE_GPU_WGL 1
+#elif defined(ABSOLUTE_DESKTOP_HAS_GLX)
+#define ABSOLUTE_GPU_GLX 1
+#endif
+
+#if defined(ABSOLUTE_GPU_WGL) || defined(ABSOLUTE_GPU_GLX)
+
+#if defined(ABSOLUTE_GPU_WGL)
 #define NOMINMAX
 #include <Windows.h>
 #include <GL/gl.h>
-
 #pragma comment(lib, "opengl32.lib")
+#elif defined(ABSOLUTE_GPU_GLX)
+#include <GL/gl.h>
+#include <GL/glx.h>
+#include <X11/Xlib.h>
+#endif
 
 using GLchar = char;
 using GLsizeiptr = ptrdiff_t;
@@ -63,9 +77,23 @@ using GLintptr = ptrdiff_t;
 #define WGL_CONTEXT_CORE_PROFILE_BIT_ARB 0x00000001
 #endif
 
+#if defined(ABSOLUTE_GPU_GLX)
+#ifndef GLX_CONTEXT_MAJOR_VERSION_ARB
+#define GLX_CONTEXT_MAJOR_VERSION_ARB 0x2091
+#define GLX_CONTEXT_MINOR_VERSION_ARB 0x2092
+#define GLX_CONTEXT_PROFILE_MASK_ARB 0x9126
+#define GLX_CONTEXT_CORE_PROFILE_BIT_ARB 0x00000001
+#endif
+#endif
+
 namespace {
+#if defined(ABSOLUTE_GPU_WGL)
     using PFNWGLCREATECONTEXTATTRIBSARB = HGLRC(WINAPI*)(HDC, HGLRC, const int*);
-    using PFNWGLSWAPINTERVALEXT = BOOL(WINAPI*)(int);
+    using PFNSWAPINTERVAL = BOOL(WINAPI*)(int);
+#elif defined(ABSOLUTE_GPU_GLX)
+    using PFNSWAPINTERVAL = int (*)(int);
+    using PFNGLXCREATECONTEXTATTRIBSARB = GLXContext (*)(Display*, GLXFBConfig, GLXContext, Bool, const int*);
+#endif
 
     using PFNGLCREATESHADER = GLuint(APIENTRY*)(GLenum);
     using PFNGLSHADERSOURCE = void(APIENTRY*)(GLuint, GLsizei, const GLchar* const*, const GLint*);
@@ -161,7 +189,7 @@ namespace {
         PFNGLDISABLE Disable = nullptr;
         PFNGLBLENDFUNC BlendFunc = nullptr;
         PFNGLDEPTHFUNC DepthFunc = nullptr;
-        PFNWGLSWAPINTERVALEXT SwapIntervalEXT = nullptr;
+        PFNSWAPINTERVAL SwapInterval = nullptr;
     };
 
     thread_local std::string g_lastError;
@@ -172,12 +200,16 @@ namespace {
 
     template <typename T>
     T LoadProc(const char* name) {
+#if defined(ABSOLUTE_GPU_WGL)
         PROC proc = wglGetProcAddress(name);
         if (!proc) {
             HMODULE module = GetModuleHandleA("opengl32.dll");
             if (module) proc = GetProcAddress(module, name);
         }
         return reinterpret_cast<T>(proc);
+#elif defined(ABSOLUTE_GPU_GLX)
+        return reinterpret_cast<T>(glXGetProcAddress(reinterpret_cast<const GLubyte*>(name)));
+#endif
     }
 
     bool LoadGl(GlFns& gl) {
@@ -227,7 +259,12 @@ namespace {
         gl.Disable = LoadProc<PFNGLDISABLE>("glDisable");
         gl.BlendFunc = LoadProc<PFNGLBLENDFUNC>("glBlendFunc");
         gl.DepthFunc = LoadProc<PFNGLDEPTHFUNC>("glDepthFunc");
-        gl.SwapIntervalEXT = LoadProc<PFNWGLSWAPINTERVALEXT>("wglSwapIntervalEXT");
+#if defined(ABSOLUTE_GPU_WGL)
+        gl.SwapInterval = LoadProc<PFNSWAPINTERVAL>("wglSwapIntervalEXT");
+#elif defined(ABSOLUTE_GPU_GLX)
+        gl.SwapInterval = LoadProc<PFNSWAPINTERVAL>("glXSwapIntervalEXT");
+        if (!gl.SwapInterval) gl.SwapInterval = LoadProc<PFNSWAPINTERVAL>("glXSwapIntervalSGI");
+#endif
 
         return gl.CreateShader && gl.ShaderSource && gl.CompileShader && gl.GetShaderiv
             && gl.CreateProgram && gl.AttachShader && gl.LinkProgram && gl.GetProgramiv
@@ -320,9 +357,15 @@ namespace {
 
     struct GpuDevice {
         int64_t windowHandle = 0;
+#if defined(ABSOLUTE_GPU_WGL)
         HWND hwnd = nullptr;
         HDC hdc = nullptr;
         HGLRC hglrc = nullptr;
+#elif defined(ABSOLUTE_GPU_GLX)
+        Display* display = nullptr;
+        Window xwindow = 0;
+        GLXContext glx = nullptr;
+#endif
         GlFns gl{};
         GLuint defaultVao = 0;
         bool valid = false;
@@ -333,9 +376,41 @@ namespace {
         int64_t boundSamplerUnit0 = 0;
         bool attrsDirty = true;
 
+        bool HasContext() const {
+#if defined(ABSOLUTE_GPU_WGL)
+            return hglrc != nullptr && hdc != nullptr;
+#elif defined(ABSOLUTE_GPU_GLX)
+            return glx != nullptr && display != nullptr && xwindow != 0;
+#endif
+        }
+
+        bool PlatformMakeCurrent() {
+#if defined(ABSOLUTE_GPU_WGL)
+            return wglMakeCurrent(hdc, hglrc) == TRUE;
+#elif defined(ABSOLUTE_GPU_GLX)
+            return glXMakeCurrent(display, xwindow, glx) == True;
+#endif
+        }
+
+        void PlatformClearCurrent() {
+#if defined(ABSOLUTE_GPU_WGL)
+            wglMakeCurrent(nullptr, nullptr);
+#elif defined(ABSOLUTE_GPU_GLX)
+            glXMakeCurrent(display, None, nullptr);
+#endif
+        }
+
+        void PlatformSwap() {
+#if defined(ABSOLUTE_GPU_WGL)
+            SwapBuffers(hdc);
+#elif defined(ABSOLUTE_GPU_GLX)
+            glXSwapBuffers(display, xwindow);
+#endif
+        }
+
         void ReleaseGlObjects() {
-            if (!hglrc || !hdc) return;
-            wglMakeCurrent(hdc, hglrc);
+            if (!HasContext()) return;
+            PlatformMakeCurrent();
             if (defaultVao) {
                 gl.DeleteVertexArrays(1, &defaultVao);
                 defaultVao = 0;
@@ -343,17 +418,27 @@ namespace {
         }
 
         void Destroy() {
-            if (hglrc) {
+            if (HasContext()) {
                 ReleaseGlObjects();
-                wglMakeCurrent(nullptr, nullptr);
+                PlatformClearCurrent();
+#if defined(ABSOLUTE_GPU_WGL)
                 wglDeleteContext(hglrc);
                 hglrc = nullptr;
+#elif defined(ABSOLUTE_GPU_GLX)
+                glXDestroyContext(display, glx);
+                glx = nullptr;
+#endif
             }
+#if defined(ABSOLUTE_GPU_WGL)
             if (hdc && hwnd) {
                 ReleaseDC(hwnd, hdc);
                 hdc = nullptr;
             }
             hwnd = nullptr;
+#elif defined(ABSOLUTE_GPU_GLX)
+            display = nullptr;
+            xwindow = 0;
+#endif
             valid = false;
             inFrame = false;
             boundPipeline = 0;
@@ -410,9 +495,9 @@ namespace {
     }
 
     bool MakeCurrent(GpuDevice& device) {
-        if (!device.valid || !device.hdc || !device.hglrc) return false;
-        if (!wglMakeCurrent(device.hdc, device.hglrc)) {
-            SetError("wglMakeCurrent failed");
+        if (!device.valid || !device.HasContext()) return false;
+        if (!device.PlatformMakeCurrent()) {
+            SetError("make current failed");
             return false;
         }
         const int32_t w = absolute_desktop_width(device.windowHandle);
@@ -423,8 +508,19 @@ namespace {
         return true;
     }
 
-    bool CreateModernContext(HDC hdc, HGLRC* out) {
-        *out = nullptr;
+#if defined(ABSOLUTE_GPU_WGL)
+    bool CreatePlatformContext(GpuDevice& device) {
+        device.hwnd = static_cast<HWND>(absolute_desktop_native_window(device.windowHandle));
+        if (!device.hwnd) {
+            SetError("window has no native handle");
+            return false;
+        }
+        device.hdc = GetDC(device.hwnd);
+        if (!device.hdc) {
+            SetError("GetDC failed");
+            return false;
+        }
+
         PIXELFORMATDESCRIPTOR pfd{};
         pfd.nSize = sizeof(pfd);
         pfd.nVersion = 1;
@@ -433,13 +529,13 @@ namespace {
         pfd.cColorBits = 32;
         pfd.cDepthBits = 24;
         pfd.iLayerType = PFD_MAIN_PLANE;
-        const int format = ChoosePixelFormat(hdc, &pfd);
-        if (format == 0 || !SetPixelFormat(hdc, format, &pfd)) {
+        const int format = ChoosePixelFormat(device.hdc, &pfd);
+        if (format == 0 || !SetPixelFormat(device.hdc, format, &pfd)) {
             SetError("SetPixelFormat failed");
             return false;
         }
-        HGLRC temp = wglCreateContext(hdc);
-        if (!temp || !wglMakeCurrent(hdc, temp)) {
+        HGLRC temp = wglCreateContext(device.hdc);
+        if (!temp || !wglMakeCurrent(device.hdc, temp)) {
             if (temp) wglDeleteContext(temp);
             SetError("temporary WGL context failed");
             return false;
@@ -454,27 +550,105 @@ namespace {
                 WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
                 0
             };
-            modern = createAttribs(hdc, nullptr, attribs);
+            modern = createAttribs(device.hdc, nullptr, attribs);
         }
 
         wglMakeCurrent(nullptr, nullptr);
         wglDeleteContext(temp);
 
         if (!modern) {
-            modern = wglCreateContext(hdc);
+            modern = wglCreateContext(device.hdc);
             if (!modern) {
                 SetError("OpenGL 3.3 core context unavailable");
                 return false;
             }
         }
-        if (!wglMakeCurrent(hdc, modern)) {
+        if (!wglMakeCurrent(device.hdc, modern)) {
             wglDeleteContext(modern);
             SetError("failed to activate OpenGL context");
             return false;
         }
-        *out = modern;
+        device.hglrc = modern;
         return true;
     }
+#elif defined(ABSOLUTE_GPU_GLX)
+    bool CreatePlatformContext(GpuDevice& device) {
+        device.display = static_cast<Display*>(absolute_desktop_native_display(device.windowHandle));
+        device.xwindow = static_cast<Window>(reinterpret_cast<uintptr_t>(
+            absolute_desktop_native_window(device.windowHandle)));
+        if (!device.display || !device.xwindow) {
+            SetError("window has no X11 display/window");
+            return false;
+        }
+
+        // Prefer modern GLX 3.3 core via FBConfig when available.
+        static int fbAttribs[] = {
+            GLX_X_RENDERABLE, True,
+            GLX_DRAWABLE_TYPE, GLX_WINDOW_BIT,
+            GLX_RENDER_TYPE, GLX_RGBA_BIT,
+            GLX_X_VISUAL_TYPE, GLX_TRUE_COLOR,
+            GLX_RED_SIZE, 8,
+            GLX_GREEN_SIZE, 8,
+            GLX_BLUE_SIZE, 8,
+            GLX_ALPHA_SIZE, 8,
+            GLX_DEPTH_SIZE, 24,
+            GLX_DOUBLEBUFFER, True,
+            None
+        };
+        int fbCount = 0;
+        GLXFBConfig* fbc = glXChooseFBConfig(device.display, DefaultScreen(device.display), fbAttribs, &fbCount);
+        auto createAttribs = reinterpret_cast<PFNGLXCREATECONTEXTATTRIBSARB>(
+            glXGetProcAddress(reinterpret_cast<const GLubyte*>("glXCreateContextAttribsARB")));
+
+        if (fbc && fbCount > 0 && createAttribs) {
+            const int ctxAttribs[] = {
+                GLX_CONTEXT_MAJOR_VERSION_ARB, 3,
+                GLX_CONTEXT_MINOR_VERSION_ARB, 3,
+                GLX_CONTEXT_PROFILE_MASK_ARB, GLX_CONTEXT_CORE_PROFILE_BIT_ARB,
+                None
+            };
+            device.glx = createAttribs(device.display, fbc[0], nullptr, True, ctxAttribs);
+            XFree(fbc);
+            fbc = nullptr;
+        }
+        if (fbc) {
+            XFree(fbc);
+            fbc = nullptr;
+        }
+
+        if (!device.glx) {
+            // Legacy visual path (matches X11 window visual when possible).
+            XWindowAttributes gwa{};
+            XGetWindowAttributes(device.display, device.xwindow, &gwa);
+            XVisualInfo templ{};
+            templ.visualid = XVisualIDFromVisual(gwa.visual);
+            int n = 0;
+            XVisualInfo* vi = XGetVisualInfo(device.display, VisualIDMask, &templ, &n);
+            if (!vi) {
+                GLint att[] = { GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None };
+                vi = glXChooseVisual(device.display, DefaultScreen(device.display), att);
+            }
+            if (!vi) {
+                SetError("GLX visual unavailable");
+                return false;
+            }
+            device.glx = glXCreateContext(device.display, vi, nullptr, True);
+            XFree(vi);
+        }
+
+        if (!device.glx) {
+            SetError("glXCreateContext failed");
+            return false;
+        }
+        if (!glXMakeCurrent(device.display, device.xwindow, device.glx)) {
+            glXDestroyContext(device.display, device.glx);
+            device.glx = nullptr;
+            SetError("glXMakeCurrent failed");
+            return false;
+        }
+        return true;
+    }
+#endif
 
     void ApplyVertexState(GpuDevice& device) {
         if (!device.attrsDirty) return;
@@ -525,23 +699,10 @@ namespace {
 
 extern "C" int64_t absolute_desktop_gpu_create(int64_t windowHandle) {
     g_lastError.clear();
-    HWND hwnd = static_cast<HWND>(absolute_desktop_native_window(windowHandle));
-    if (!hwnd) {
-        SetError("window has no native handle");
-        return 0;
-    }
-
     auto* device = new GpuDevice();
     device->windowHandle = windowHandle;
-    device->hwnd = hwnd;
-    device->hdc = GetDC(hwnd);
-    if (!device->hdc) {
-        SetError("GetDC failed");
-        delete device;
-        return 0;
-    }
 
-    if (!CreateModernContext(device->hdc, &device->hglrc)) {
+    if (!CreatePlatformContext(*device)) {
         device->Destroy();
         delete device;
         return 0;
@@ -554,8 +715,8 @@ extern "C" int64_t absolute_desktop_gpu_create(int64_t windowHandle) {
         return 0;
     }
 
-    if (device->gl.SwapIntervalEXT) {
-        device->gl.SwapIntervalEXT(1);
+    if (device->gl.SwapInterval) {
+        device->gl.SwapInterval(1);
     }
 
     device->gl.GenVertexArrays(1, &device->defaultVao);
@@ -567,7 +728,7 @@ extern "C" int64_t absolute_desktop_gpu_create(int64_t windowHandle) {
     }
 
     device->valid = true;
-    wglMakeCurrent(nullptr, nullptr);
+    device->PlatformClearCurrent();
     return DeviceToHandle(device);
 }
 
@@ -584,7 +745,13 @@ extern "C" int32_t absolute_desktop_gpu_is_valid(int64_t handle) {
 }
 
 extern "C" const char* absolute_desktop_gpu_backend() {
+#if defined(ABSOLUTE_GPU_WGL)
+    return "opengl-wgl";
+#elif defined(ABSOLUTE_GPU_GLX)
+    return "opengl-glx";
+#else
     return "opengl";
+#endif
 }
 
 extern "C" const char* absolute_desktop_gpu_last_error() {
@@ -641,9 +808,9 @@ extern "C" void absolute_desktop_gpu_clear(int64_t handle, float r, float g, flo
 
 extern "C" void absolute_desktop_gpu_present(int64_t handle) {
     GpuDevice* device = DeviceFromHandle(handle);
-    if (!device || !device->hdc) return;
+    if (!device || !device->HasContext()) return;
     if (!MakeCurrent(*device)) return;
-    SwapBuffers(device->hdc);
+    device->PlatformSwap();
 }
 
 extern "C" int64_t absolute_desktop_gpu_layout_create(int32_t strideBytes) {
@@ -1039,10 +1206,11 @@ extern "C" void absolute_desktop_gpu_bind_texture(
     device->gl.BindTexture(GL_TEXTURE_2D, texture->id);
 }
 
-#else // !_WIN32
+#else // no WGL/GLX
 
 namespace {
-    thread_local std::string g_lastError = "OpenGL RHI is currently implemented on Windows (WGL) only";
+    thread_local std::string g_lastError =
+        "OpenGL RHI requires Windows WGL or Linux X11+GLX (build with OpenGL dev packages)";
 }
 
 extern "C" int64_t absolute_desktop_gpu_create(int64_t) { return 0; }

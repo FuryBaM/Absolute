@@ -59,8 +59,7 @@ examples\desktop\run.bat pong.abs
 ### Soft sprites & images
 - `new Desktop.Sprite(w, h)` — procedural offscreen buffer (`0` = transparent)
 - `sprite.loadBmp(path)` — 24/32-bit uncompressed BMP (`false` on failure)
-- `sprite.loadPng(path)` — PNG via Windows WIC (RGBA; low alpha → transparent `0`);
-  currently returns false on non-Windows
+- `sprite.loadPng(path)` — PNG (Windows WIC; elsewhere zlib portable 8-bit RGB/RGBA)
 - `sprite.loadImage(path)` — try PNG then BMP
 - `sprite.colorKey(rgb)` — exact RGB → transparent `0` (e.g. magenta `Desktop.rgb(255, 0, 255)`)
 - `clear`, `pixel`, `fillRect`, `fillCircle`, `destroy`, `isValid`
@@ -134,9 +133,10 @@ Windows GDI (ClearType raster → soft buffer). Non-Windows: create returns inva
 - Example: `examples/desktop/font.abs`
 
 ### GPU / OpenGL RHI (`Desktop.Gpu`)
-Windows: WGL + OpenGL 3.3 core when available (legacy fallback). Linux/X11: stub
-(`isValid() == false`) until GLX lands. Soft `window.present()` and `gpu.present()` are
-separate paths — use GPU clear/present for GL frames.
+- **Windows:** WGL + OpenGL 3.3 core (`backend()` → `opengl-wgl`)
+- **Linux:** GLX when X11 + OpenGL dev packages are found (`opengl-glx`);
+  windows are created with a GLX visual when possible
+- Soft `window.present()` and `gpu.present()` are separate paths
 
 Resources:
 - `createShader(vs, fs)` → `GpuShader*`
