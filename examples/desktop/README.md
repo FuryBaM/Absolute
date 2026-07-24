@@ -43,6 +43,7 @@ pong.exe
 | `font.abs` | `Desktop.Font` system/TTF soft text vs built-in 8×8 |
 | `audio.abs` | WAV mixer: play / loop / stop / multi-voice |
 | `ui.abs` | Immediate-mode UI: button, checkbox, slider, progress |
+| `mesh.abs` | OBJ mesh load + GPU lit rotating cube |
 | `text.abs` | Built-in 8×8 soft font, scaled HUD, sprite-baked label, typing |
 | `batch.abs` | Soft `SpriteBatch`: 120 atlas tiles + ship in one flush |
 | `triangle.abs` | OpenGL RHI: shader + buffer + pipeline + bind/draw |
@@ -61,6 +62,7 @@ pong.exe
 - **Text:** built-in 8×8 `drawText`; `Desktop.Font` + `drawFontText` / `measure`
 - **Audio:** `Desktop.Audio` + `loadWav` / `play` / `playLoop` / `stopAll`
 - **UI:** `Desktop.Ui` button/checkbox/slider/progress
+- **Mesh:** `Desktop.Mesh.loadObj` + GPU buffers / layout
 - **Keys:** `Desktop.KeyEscape()`, `KeySpace()`, `KeyW/A/S/D()`, arrows, …
 
 See `plugins/desktop/README.md` for backend details.

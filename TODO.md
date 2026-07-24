@@ -508,8 +508,7 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] GPU sprite scene: textured indexed quads + sampler; example
   `examples/desktop/gpu-sprites.abs` (ship + atlas stars, WASD).
 - [x] Index buffers (`createIndexBuffer` / `drawIndexed`) и sampler objects
-  (`createSampler` / `bind(sampler)`); multi-backend (Vulkan/D3D12) open.
-- [ ] Multi-backend RHI (Vulkan/D3D12) поверх того же Absolute API.
+  (`createSampler` / `bind(sampler)`).
 - [x] PNG load for soft sprites: `sprite.loadPng` / `loadImage` (Windows WIC),
   assets `examples/desktop/assets/*.png`, example `image-png.abs`;
   non-Windows PNG still open.
@@ -519,11 +518,13 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Audio output/mixer: `Desktop.Audio` + `Sound` (WAV PCM load, waveOut
   software mixer, 32 voices, master volume, play/loop/stop);
   assets `beep.wav`/`blip.wav`/`thud.wav`, example `audio.abs`.
-- [ ] 3D model load (meshes) — still open.
+- [x] 3D mesh load: Wavefront OBJ → `Desktop.Mesh` (pos/normal/uv, indices),
+  GPU upload helpers + `createLayoutPos3Normal3Uv2`; example `mesh.abs` + `cube.obj`.
 - [x] Базовый soft UI toolkit: `Desktop.Ui` + `UiTheme` (immediate-mode
   panel/label/button/checkbox/slider/progress); example `examples/desktop/ui.abs`.
 - [ ] Расширить `absolute.shader` от opaque DSL-stub к reflection + RHI bind
   (SPIR-V/DXIL/Metal IR) поверх выбранного GPU backend.
+- [ ] Multi-backend RHI (Vulkan/D3D12) поверх того же Absolute API.
 
 ### Native interop и платформы
 

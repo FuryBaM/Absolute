@@ -84,6 +84,16 @@ examples\desktop\run.bat pong.abs
 - `Desktop.measureText(text, scale)` / `Desktop.measureTextHeight(text, scale)`
 - `Desktop.fontGlyphWidth()` / `Desktop.fontGlyphHeight()` — unscaled glyph size (8×8)
 
+### Mesh (Wavefront OBJ)
+Portable CPU loader → GPU buffers:
+
+- `new Desktop.Mesh()` + `mesh.loadObj(path)` — triangulates faces, `pos3+normal3+uv2`
+- Face normals generated when `vn` missing
+- `gpu.createVertexBufferFromMesh(mesh)` / `createIndexBufferFromMesh(mesh)`
+- `gpu.createLayoutPos3Normal3Uv2()` — stride 32
+- Asset: `examples/desktop/assets/cube.obj`
+- Example: `examples/desktop/mesh.abs`
+
 ### Soft UI toolkit (`Desktop.Ui`)
 Immediate-mode widgets over the software framebuffer + mouse:
 
@@ -205,4 +215,4 @@ Examples: `examples/desktop/window.abs`, `pong.abs`, `sprites.abs`, `input.abs`,
 `image.abs` (BMP + atlas), `text.abs` (soft font HUD / typing),
 `batch.abs` (`SpriteBatch` + atlas tiles), `triangle.abs` (OpenGL pipeline),
 `gpu-sprites.abs` (textured ship + atlas), `image-png.abs` (PNG `loadImage`),
-`font.abs` (system / TTF soft fonts), `audio.abs` (WAV mixer), `ui.abs` (UI toolkit).
+`font.abs`, `audio.abs`, `ui.abs`, `mesh.abs` (OBJ + lit GPU cube).

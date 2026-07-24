@@ -55,6 +55,8 @@ using GLintptr = ptrdiff_t;
 #define GL_BLEND 0x0BE2
 #define GL_SRC_ALPHA 0x0302
 #define GL_ONE_MINUS_SRC_ALPHA 0x0303
+#define GL_DEPTH_TEST 0x0B71
+#define GL_LESS 0x0201
 #define WGL_CONTEXT_MAJOR_VERSION_ARB 0x2091
 #define WGL_CONTEXT_MINOR_VERSION_ARB 0x2092
 #define WGL_CONTEXT_PROFILE_MASK_ARB 0x9126
@@ -110,6 +112,7 @@ namespace {
     using PFNGLENABLE = void(APIENTRY*)(GLenum);
     using PFNGLDISABLE = void(APIENTRY*)(GLenum);
     using PFNGLBLENDFUNC = void(APIENTRY*)(GLenum, GLenum);
+    using PFNGLDEPTHFUNC = void(APIENTRY*)(GLenum);
 
     struct GlFns {
         PFNGLCREATESHADER CreateShader = nullptr;
@@ -157,6 +160,7 @@ namespace {
         PFNGLENABLE Enable = nullptr;
         PFNGLDISABLE Disable = nullptr;
         PFNGLBLENDFUNC BlendFunc = nullptr;
+        PFNGLDEPTHFUNC DepthFunc = nullptr;
         PFNWGLSWAPINTERVALEXT SwapIntervalEXT = nullptr;
     };
 
@@ -222,6 +226,7 @@ namespace {
         gl.Enable = LoadProc<PFNGLENABLE>("glEnable");
         gl.Disable = LoadProc<PFNGLDISABLE>("glDisable");
         gl.BlendFunc = LoadProc<PFNGLBLENDFUNC>("glBlendFunc");
+        gl.DepthFunc = LoadProc<PFNGLDEPTHFUNC>("glDepthFunc");
         gl.SwapIntervalEXT = LoadProc<PFNWGLSWAPINTERVALEXT>("wglSwapIntervalEXT");
 
         return gl.CreateShader && gl.ShaderSource && gl.CompileShader && gl.GetShaderiv
@@ -599,6 +604,11 @@ extern "C" void absolute_desktop_gpu_begin_frame(int64_t handle) {
     // Premultiplied-friendly alpha for soft sprites / BMP color keys.
     device->gl.Enable(GL_BLEND);
     device->gl.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    // Depth for 3D meshes.
+    device->gl.Enable(GL_DEPTH_TEST);
+    if (device->gl.DepthFunc) {
+        device->gl.DepthFunc(GL_LESS);
+    }
     if (device->gl.BindSampler) {
         device->gl.BindSampler(0, 0);
     }

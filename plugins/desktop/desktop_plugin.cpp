@@ -100,6 +100,14 @@ extern "C" void absolute_desktop_gpu_shader_destroy(int64 gpuHandle, int64 shade
 extern "C" int64 absolute_desktop_gpu_buffer_create(int64 gpuHandle, raw float* data, int32 floatCount);
 extern "C" void absolute_desktop_gpu_buffer_destroy(int64 gpuHandle, int64 bufferHandle);
 extern "C" int32 absolute_desktop_gpu_buffer_float_count(int64 bufferHandle);
+extern "C" int64 absolute_desktop_mesh_load_obj(string path);
+extern "C" void absolute_desktop_mesh_destroy(int64 handle);
+extern "C" int32 absolute_desktop_mesh_is_valid(int64 handle);
+extern "C" int32 absolute_desktop_mesh_vertex_float_count(int64 handle);
+extern "C" int32 absolute_desktop_mesh_index_count(int64 handle);
+extern "C" int32 absolute_desktop_mesh_stride_floats();
+extern "C" int64 absolute_desktop_mesh_create_vertex_buffer(int64 gpuHandle, int64 meshHandle);
+extern "C" int64 absolute_desktop_mesh_create_index_buffer(int64 gpuHandle, int64 meshHandle);
 extern "C" int64 absolute_desktop_gpu_index_buffer_create(int64 gpuHandle, raw int32* indices, int32 indexCount);
 extern "C" void absolute_desktop_gpu_index_buffer_destroy(int64 gpuHandle, int64 bufferHandle);
 extern "C" int32 absolute_desktop_gpu_index_buffer_count(int64 bufferHandle);
@@ -1142,6 +1150,48 @@ namespace Desktop {
         }
     }
 
+    // CPU mesh from Wavefront OBJ (pos3 + normal3 + uv2 interleaved, triangulated).
+    class Mesh {
+        public int64 handle;
+
+        public Mesh() {
+            handle = 0;
+        }
+
+        public bool loadObj(string path) {
+            if (handle != 0) {
+                absolute_desktop_mesh_destroy(handle);
+                handle = 0;
+            }
+            handle = absolute_desktop_mesh_load_obj(path);
+            return handle != 0 && absolute_desktop_mesh_is_valid(handle) != 0;
+        }
+
+        public bool isValid() {
+            return handle != 0 && absolute_desktop_mesh_is_valid(handle) != 0;
+        }
+
+        public void destroy() {
+            if (handle != 0) {
+                absolute_desktop_mesh_destroy(handle);
+                handle = 0;
+            }
+        }
+
+        public int32 indexCount() {
+            return absolute_desktop_mesh_index_count(handle);
+        }
+
+        public int32 vertexFloatCount() {
+            return absolute_desktop_mesh_vertex_float_count(handle);
+        }
+
+        // 8 floats per vertex: pos.xyz normal.xyz uv.xy
+        public int32 strideFloats() {
+            return absolute_desktop_mesh_stride_floats();
+        }
+    }
+
     // OpenGL RHI (Windows WGL, OpenGL 3.3 core when available).
     // Frame model:
     //   beginFrame(); clear(...); bind(pipeline); bind(vb); bind(ib); bind(tex); bind(sampler);
@@ -1252,6 +1302,47 @@ namespace Desktop {
             layout.add(0, 3, 0);
             layout.add(1, 2, 12);
             return layout;
+        }
+
+        // Mesh OBJ layout: stride 32 bytes, loc0 pos, loc1 normal, loc2 uv.
+        public VertexLayout* createLayoutPos3Normal3Uv2() {
+            auto layout = new VertexLayout(32);
+            if (!layout.isValid()) {
+                return null;
+            }
+            layout.add(0, 3, 0);
+            layout.add(1, 3, 12);
+            layout.add(2, 2, 24);
+            return layout;
+        }
+
+        // Upload CPU Mesh data to GPU buffers.
+        public GpuBuffer* createVertexBufferFromMesh(Mesh* mesh) {
+            if (mesh == null || !mesh.isValid()) {
+                return null;
+            }
+            int64 h = absolute_desktop_mesh_create_vertex_buffer(handle, mesh.handle);
+            if (h == 0) {
+                return null;
+            }
+            auto buffer = new GpuBuffer();
+            buffer.handle = h;
+            buffer.gpuHandle = handle;
+            return buffer;
+        }
+
+        public GpuIndexBuffer* createIndexBufferFromMesh(Mesh* mesh) {
+            if (mesh == null || !mesh.isValid()) {
+                return null;
+            }
+            int64 h = absolute_desktop_mesh_create_index_buffer(handle, mesh.handle);
+            if (h == 0) {
+                return null;
+            }
+            auto buffer = new GpuIndexBuffer();
+            buffer.handle = h;
+            buffer.gpuHandle = handle;
+            return buffer;
         }
 
         public GpuPipeline* createPipeline(GpuShader* shader, VertexLayout* layout) {

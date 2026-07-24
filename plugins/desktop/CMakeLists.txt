@@ -34,6 +34,7 @@ add_library(Absolute-Desktop-Runtime STATIC
     desktop_soft_batch.cpp
     desktop_gpu_gl.cpp
     desktop_audio.cpp
+    desktop_mesh_obj.cpp
 )
 target_compile_features(Absolute-Desktop-Runtime PRIVATE cxx_std_20)
 if(WIN32)
