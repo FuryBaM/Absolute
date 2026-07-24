@@ -31,39 +31,39 @@ int32 main() {
             dt = 0.05;
         }
 
-        if (window.keyPressed(Desktop.KeyEscape)) {
+        if (window.keyPressed(Desktop.KeyEscape())) {
             window.close();
         } else {
             double speed = 360.0;
-            if (window.keyDown(Desktop.KeyW)) {
+            if (window.keyDown(Desktop.KeyW())) {
                 leftY = leftY - speed * dt;
             }
-            if (window.keyDown(Desktop.KeyS)) {
+            if (window.keyDown(Desktop.KeyS())) {
                 leftY = leftY + speed * dt;
             }
-            if (window.keyDown(Desktop.KeyUp)) {
+            if (window.keyDown(Desktop.KeyUp())) {
                 rightY = rightY - speed * dt;
             }
-            if (window.keyDown(Desktop.KeyDown)) {
+            if (window.keyDown(Desktop.KeyDown())) {
                 rightY = rightY + speed * dt;
             }
 
             if (leftY < 0.0) {
                 leftY = 0.0;
             }
-            if (leftY > (double)(window.height() - paddleH)) {
-                leftY = (double)(window.height() - paddleH);
+            if (leftY > (window.height() - paddleH) as double) {
+                leftY = (window.height() - paddleH) as double;
             }
             if (rightY < 0.0) {
                 rightY = 0.0;
             }
-            if (rightY > (double)(window.height() - paddleH)) {
-                rightY = (double)(window.height() - paddleH);
+            if (rightY > (window.height() - paddleH) as double) {
+                rightY = (window.height() - paddleH) as double;
             }
 
             if (serving) {
                 serveTimer = serveTimer - dt;
-                if (serveTimer <= 0.0 || window.keyPressed(Desktop.KeySpace)) {
+                if (serveTimer <= 0.0 || window.keyPressed(Desktop.KeySpace())) {
                     serving = false;
                     serveTimer = 0.0;
                 }
@@ -71,30 +71,30 @@ int32 main() {
                 ballX = ballX + ballVX * dt;
                 ballY = ballY + ballVY * dt;
 
-                if (ballY < (double)ballR) {
-                    ballY = (double)ballR;
+                if (ballY < (ballR) as double) {
+                    ballY = (ballR) as double;
                     ballVY = 0.0 - ballVY;
                 }
-                if (ballY > (double)(window.height() - ballR)) {
-                    ballY = (double)(window.height() - ballR);
+                if (ballY > (window.height() - ballR) as double) {
+                    ballY = (window.height() - ballR) as double;
                     ballVY = 0.0 - ballVY;
                 }
 
                 // Left paddle collision.
-                if (ballVX < 0.0 && ballX - (double)ballR <= 30.0 + (double)paddleW) {
-                    if (ballY >= leftY && ballY <= leftY + (double)paddleH) {
-                        ballX = 30.0 + (double)paddleW + (double)ballR;
+                if (ballVX < 0.0 && ballX - (ballR) as double <= 30.0 + (paddleW) as double) {
+                    if (ballY >= leftY && ballY <= leftY + (paddleH) as double) {
+                        ballX = 30.0 + (paddleW) as double + (ballR) as double;
                         ballVX = 0.0 - ballVX;
-                        double hit = (ballY - leftY) / (double)paddleH - 0.5;
+                        double hit = (ballY - leftY) / (paddleH) as double - 0.5;
                         ballVY = ballVY + hit * 220.0;
                     }
                 }
                 // Right paddle collision.
-                if (ballVX > 0.0 && ballX + (double)ballR >= (double)(window.width() - 30 - paddleW)) {
-                    if (ballY >= rightY && ballY <= rightY + (double)paddleH) {
-                        ballX = (double)(window.width() - 30 - paddleW) - (double)ballR;
+                if (ballVX > 0.0 && ballX + (ballR) as double >= (window.width() - 30 - paddleW) as double) {
+                    if (ballY >= rightY && ballY <= rightY + (paddleH) as double) {
+                        ballX = (window.width() - 30 - paddleW) as double - (ballR) as double;
                         ballVX = 0.0 - ballVX;
-                        double hit = (ballY - rightY) / (double)paddleH - 0.5;
+                        double hit = (ballY - rightY) / (paddleH) as double - 0.5;
                         ballVY = ballVY + hit * 220.0;
                     }
                 }
@@ -108,7 +108,7 @@ int32 main() {
                     serving = true;
                     serveTimer = 0.8;
                 }
-                if (ballX > (double)window.width()) {
+                if (ballX > (window.width()) as double) {
                     scoreL = scoreL + 1;
                     ballX = 400.0;
                     ballY = 225.0;
@@ -126,10 +126,10 @@ int32 main() {
                 window.fillRect(window.width() / 2 - 2, y, 4, 16, Desktop.rgb(40, 50, 70));
                 y = y + 28;
             }
-            window.fillRect(30, (int32)leftY, paddleW, paddleH, Desktop.rgb(90, 200, 255));
-            window.fillRect(window.width() - 30 - paddleW, (int32)rightY, paddleW, paddleH,
+            window.fillRect(30, (leftY) as int32, paddleW, paddleH, Desktop.rgb(90, 200, 255));
+            window.fillRect(window.width() - 30 - paddleW, (rightY) as int32, paddleW, paddleH,
                 Desktop.rgb(255, 160, 90));
-            window.fillCircle((int32)ballX, (int32)ballY, ballR, Desktop.rgb(240, 240, 245));
+            window.fillCircle((ballX) as int32, (ballY) as int32, ballR, Desktop.rgb(240, 240, 245));
             // Simple score bars (digit fonts not available yet).
             int32 i = 0;
             while (i < scoreL && i < 12) {

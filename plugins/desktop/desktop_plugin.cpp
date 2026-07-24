@@ -36,6 +36,7 @@ extern "C" uint32 absolute_desktop_rgb(int32 red, int32 green, int32 blue);
 extern "C" double absolute_desktop_time();
 extern "C" void absolute_desktop_sleep(int32 milliseconds);
 extern "C" int64 absolute_desktop_sprite_create(int32 width, int32 height);
+extern "C" int64 absolute_desktop_sprite_load_bmp(string path);
 extern "C" void absolute_desktop_sprite_destroy(int64 handle);
 extern "C" int32 absolute_desktop_sprite_width(int64 handle);
 extern "C" int32 absolute_desktop_sprite_height(int64 handle);
@@ -43,24 +44,93 @@ extern "C" void absolute_desktop_sprite_clear(int64 handle, uint32 color);
 extern "C" void absolute_desktop_sprite_pixel(int64 handle, int32 x, int32 y, uint32 color);
 extern "C" void absolute_desktop_sprite_fill_rect(int64 handle, int32 x, int32 y, int32 width, int32 height, uint32 color);
 extern "C" void absolute_desktop_sprite_fill_circle(int64 handle, int32 cx, int32 cy, int32 radius, uint32 color);
+extern "C" void absolute_desktop_sprite_color_key(int64 handle, uint32 color);
 extern "C" void absolute_desktop_sprite_draw(int64 windowHandle, int64 spriteHandle, int32 x, int32 y);
+extern "C" void absolute_desktop_sprite_draw_rect(int64 windowHandle, int64 spriteHandle, int32 destX, int32 destY, int32 srcX, int32 srcY, int32 srcW, int32 srcH);
+extern "C" int32 absolute_desktop_text_count(int64 handle);
+extern "C" int32 absolute_desktop_text_pop(int64 handle);
+extern "C" void absolute_desktop_text_clear(int64 handle);
+extern "C" int32 absolute_desktop_gamepad_connected(int32 index);
+extern "C" int32 absolute_desktop_gamepad_button(int32 index, int32 button);
+extern "C" double absolute_desktop_gamepad_axis(int32 index, int32 axis);
 
 namespace Desktop {
-    // Virtual-key style codes (Win32 / mapped X11).
-    int32 KeyEscape = 27;
-    int32 KeySpace = 32;
-    int32 KeyEnter = 13;
-    int32 KeyLeft = 37;
-    int32 KeyUp = 38;
-    int32 KeyRight = 39;
-    int32 KeyDown = 40;
-    int32 KeyW = 87;
-    int32 KeyA = 65;
-    int32 KeyS = 83;
-    int32 KeyD = 68;
-    int32 MouseLeft = 0;
-    int32 MouseRight = 1;
-    int32 MouseMiddle = 2;
+    // Input codes as static fields (namespace vars are not LLVM-codegen'd yet).
+    class Codes {
+        // Virtual-key style (Win32 / mapped X11).
+        public static int32 KeyEscape = 27;
+        public static int32 KeySpace = 32;
+        public static int32 KeyEnter = 13;
+        public static int32 KeyLeft = 37;
+        public static int32 KeyUp = 38;
+        public static int32 KeyRight = 39;
+        public static int32 KeyDown = 40;
+        public static int32 KeyW = 87;
+        public static int32 KeyA = 65;
+        public static int32 KeyS = 83;
+        public static int32 KeyD = 68;
+        public static int32 MouseLeft = 0;
+        public static int32 MouseRight = 1;
+        public static int32 MouseMiddle = 2;
+
+        // XInput-style gamepad (index 0..3). Linux backend returns disconnected.
+        public static int32 PadA = 0;
+        public static int32 PadB = 1;
+        public static int32 PadX = 2;
+        public static int32 PadY = 3;
+        public static int32 PadLB = 4;
+        public static int32 PadRB = 5;
+        public static int32 PadBack = 6;
+        public static int32 PadStart = 7;
+        public static int32 PadLS = 8;
+        public static int32 PadRS = 9;
+        public static int32 PadDUp = 10;
+        public static int32 PadDDown = 11;
+        public static int32 PadDLeft = 12;
+        public static int32 PadDRight = 13;
+        public static int32 AxisLX = 0;
+        public static int32 AxisLY = 1;
+        public static int32 AxisRX = 2;
+        public static int32 AxisRY = 3;
+        public static int32 AxisLT = 4;
+        public static int32 AxisRT = 5;
+    }
+
+    // Convenience aliases as zero-arg functions (namespace fields are not codegen'd).
+    int32 KeyEscape() { return Codes.KeyEscape; }
+    int32 KeySpace() { return Codes.KeySpace; }
+    int32 KeyEnter() { return Codes.KeyEnter; }
+    int32 KeyLeft() { return Codes.KeyLeft; }
+    int32 KeyUp() { return Codes.KeyUp; }
+    int32 KeyRight() { return Codes.KeyRight; }
+    int32 KeyDown() { return Codes.KeyDown; }
+    int32 KeyW() { return Codes.KeyW; }
+    int32 KeyA() { return Codes.KeyA; }
+    int32 KeyS() { return Codes.KeyS; }
+    int32 KeyD() { return Codes.KeyD; }
+    int32 MouseLeft() { return Codes.MouseLeft; }
+    int32 MouseRight() { return Codes.MouseRight; }
+    int32 MouseMiddle() { return Codes.MouseMiddle; }
+    int32 PadA() { return Codes.PadA; }
+    int32 PadB() { return Codes.PadB; }
+    int32 PadX() { return Codes.PadX; }
+    int32 PadY() { return Codes.PadY; }
+    int32 PadLB() { return Codes.PadLB; }
+    int32 PadRB() { return Codes.PadRB; }
+    int32 PadBack() { return Codes.PadBack; }
+    int32 PadStart() { return Codes.PadStart; }
+    int32 PadLS() { return Codes.PadLS; }
+    int32 PadRS() { return Codes.PadRS; }
+    int32 PadDUp() { return Codes.PadDUp; }
+    int32 PadDDown() { return Codes.PadDDown; }
+    int32 PadDLeft() { return Codes.PadDLeft; }
+    int32 PadDRight() { return Codes.PadDRight; }
+    int32 AxisLX() { return Codes.AxisLX; }
+    int32 AxisLY() { return Codes.AxisLY; }
+    int32 AxisRX() { return Codes.AxisRX; }
+    int32 AxisRY() { return Codes.AxisRY; }
+    int32 AxisLT() { return Codes.AxisLT; }
+    int32 AxisRT() { return Codes.AxisRT; }
 
     uint32 rgb(int32 red, int32 green, int32 blue) {
         return absolute_desktop_rgb(red, green, blue);
@@ -72,6 +142,18 @@ namespace Desktop {
 
     void sleep(int32 milliseconds) {
         absolute_desktop_sleep(milliseconds);
+    }
+
+    bool gamepadConnected(int32 index) {
+        return absolute_desktop_gamepad_connected(index) != 0;
+    }
+
+    bool gamepadButton(int32 index, int32 button) {
+        return absolute_desktop_gamepad_button(index, button) != 0;
+    }
+
+    double gamepadAxis(int32 index, int32 axis) {
+        return absolute_desktop_gamepad_axis(index, axis);
     }
 
     // Fixed timestep accumulator for deterministic simulation.
@@ -130,7 +212,7 @@ namespace Desktop {
         }
     }
 
-    // Soft sprite: offscreen ARGB buffer (0 = transparent when drawn).
+    // Soft sprite: offscreen 0x00RRGGBB buffer (0 = transparent when drawn).
     class Sprite {
         public int64 handle;
 
@@ -138,11 +220,25 @@ namespace Desktop {
             handle = absolute_desktop_sprite_create(width, height);
         }
 
+        public bool isValid() {
+            return handle != 0;
+        }
+
         public void destroy() {
             if (handle != 0) {
                 absolute_desktop_sprite_destroy(handle);
                 handle = 0;
             }
+        }
+
+        // Replace buffer with 24/32-bit uncompressed BMP. Returns false on failure.
+        public bool loadBmp(string path) {
+            if (handle != 0) {
+                absolute_desktop_sprite_destroy(handle);
+                handle = 0;
+            }
+            handle = absolute_desktop_sprite_load_bmp(path);
+            return handle != 0;
         }
 
         public int32 width() {
@@ -167,6 +263,11 @@ namespace Desktop {
 
         public void fillCircle(int32 cx, int32 cy, int32 radius, uint32 color) {
             absolute_desktop_sprite_fill_circle(handle, cx, cy, radius, color);
+        }
+
+        // Treat exact RGB matches as transparent (set to 0). e.g. magenta Desktop.rgb(255, 0, 255).
+        public void colorKey(uint32 color) {
+            absolute_desktop_sprite_color_key(handle, color);
         }
     }
 
@@ -228,8 +329,13 @@ namespace Desktop {
             absolute_desktop_blit(handle, destX, destY, width, height, pixels);
         }
 
-        public void drawSprite(Sprite sprite, int32 x, int32 y) {
+        public void drawSprite(Sprite* sprite, int32 x, int32 y) {
             absolute_desktop_sprite_draw(handle, sprite.handle, x, y);
+        }
+
+        // Draw a source rectangle from a sprite/atlas (soft blit with 0 = transparent).
+        public void drawSpriteRect(Sprite* sprite, int32 destX, int32 destY, int32 srcX, int32 srcY, int32 srcW, int32 srcH) {
+            absolute_desktop_sprite_draw_rect(handle, sprite.handle, destX, destY, srcX, srcY, srcW, srcH);
         }
 
         public void present() {
@@ -271,6 +377,19 @@ namespace Desktop {
         // Seconds since previous poll(); 0 on the first frame.
         public double deltaTime() {
             return absolute_desktop_delta_time(handle);
+        }
+
+        // UTF code units / ASCII from keyboard (BMP). -1 when empty.
+        public int32 textCount() {
+            return absolute_desktop_text_count(handle);
+        }
+
+        public int32 textPop() {
+            return absolute_desktop_text_pop(handle);
+        }
+
+        public void textClear() {
+            absolute_desktop_text_clear(handle);
         }
     }
 }

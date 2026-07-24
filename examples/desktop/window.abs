@@ -8,7 +8,7 @@ int32 main() {
     double position = 0.0;
     double direction = 1.0;
     while (window.poll()) {
-        if (window.keyPressed(Desktop.KeyEscape)) {
+        if (window.keyPressed(Desktop.KeyEscape())) {
             window.close();
         }
         else {
@@ -21,13 +21,13 @@ int32 main() {
             }
 
             window.clear(Desktop.rgb(18, 22, 32));
-            window.fillRect((int32)position, 170, 120, 90, Desktop.rgb(70, 150, 255));
+            window.fillRect((position) as int32, 170, 120, 90, Desktop.rgb(70, 150, 255));
             window.drawLine(0, 0, window.width(), window.height(), Desktop.rgb(35, 45, 60));
             window.fillCircle(window.mouseX(), window.mouseY(), 8, Desktop.rgb(255, 190, 60));
             window.present();
 
             position = position + direction * 240.0 * dt;
-            if (position >= (double)(window.width() - 120)) {
+            if (position >= (window.width() - 120) as double) {
                 direction = -1.0;
             }
             if (position <= 0.0) {

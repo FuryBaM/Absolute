@@ -1,0 +1,109 @@
+// BMP load + color key + atlas drawSpriteRect demo.
+// Esc quit. Arrows / WASD move the ship. Space flash frame.
+
+int32 main() {
+    auto window = new Desktop.Window("Absolute Images", 640, 360, false);
+    if (!window.isOpen()) {
+        println("Could not create desktop window");
+        return 1;
+    }
+
+    // Placeholder size; loadBmp replaces the buffer.
+    auto ship = new Desktop.Sprite(1, 1);
+    if (!ship.loadBmp("examples/desktop/assets/ship.bmp")) {
+        if (!ship.loadBmp("assets/ship.bmp")) {
+            println("Failed to load ship.bmp");
+            window.close();
+            return 1;
+        }
+    }
+    ship.colorKey(Desktop.rgb(255, 0, 255));
+
+    auto atlas = new Desktop.Sprite(1, 1);
+    if (!atlas.loadBmp("examples/desktop/assets/atlas.bmp")) {
+        if (!atlas.loadBmp("assets/atlas.bmp")) {
+            println("Failed to load atlas.bmp");
+            ship.destroy();
+            window.close();
+            return 1;
+        }
+    }
+    atlas.colorKey(Desktop.rgb(255, 0, 255));
+
+    auto fixed = new Desktop.FixedStep(60.0);
+    double shipX = 280.0;
+    double shipY = 150.0;
+    int32 frame = 0;
+    double anim = 0.0;
+
+    while (window.poll()) {
+        fixed.add(window.deltaTime());
+
+        while (fixed.shouldUpdate()) {
+            double step = fixed.step;
+            double velX = 0.0;
+            double velY = 0.0;
+            if (window.keyDown(Desktop.KeyLeft()) || window.keyDown(Desktop.KeyA())) {
+                velX = velX - 240.0;
+                frame = 2;
+            }
+            if (window.keyDown(Desktop.KeyRight()) || window.keyDown(Desktop.KeyD())) {
+                velX = velX + 240.0;
+                frame = 1;
+            }
+            if (window.keyDown(Desktop.KeyUp()) || window.keyDown(Desktop.KeyW())) {
+                velY = velY - 240.0;
+            }
+            if (window.keyDown(Desktop.KeyDown()) || window.keyDown(Desktop.KeyS())) {
+                velY = velY + 240.0;
+            }
+            if (velX == 0.0 && velY == 0.0) {
+                frame = 0;
+            }
+            if (window.keyPressed(Desktop.KeySpace())) {
+                frame = 3;
+            }
+            shipX = shipX + velX * step;
+            shipY = shipY + velY * step;
+            double maxX = (window.width() - ship.width()) as double;
+            double maxY = (window.height() - ship.height()) as double;
+            if (shipX < 0.0) { shipX = 0.0; }
+            if (shipY < 0.0) { shipY = 0.0; }
+            if (shipX > maxX) { shipX = maxX; }
+            if (shipY > maxY) { shipY = maxY; }
+            anim = anim + step;
+            fixed.consume();
+        }
+
+        if (window.keyPressed(Desktop.KeyEscape())) {
+            window.close();
+        } else {
+            window.clear(Desktop.rgb(12, 14, 28));
+
+            // Tiled star strip from bottom row of atlas (y=16..31).
+            int32 i = 0;
+            while (i < 20) {
+                int32 sx = (i * 37 + (anim * 30.0) as int32) % window.width();
+                int32 sy = 20 + (i * 17) % (window.height() - 40);
+                int32 tile = i % 4;
+                window.drawSpriteRect(atlas, sx, sy, tile * 16, 16, 16, 16);
+                i = i + 1;
+            }
+
+            window.drawSprite(ship, (shipX) as int32, (shipY) as int32);
+
+            int32 charX = (shipX) as int32 + 8;
+            int32 charY = (shipY) as int32 - 28;
+            window.drawSpriteRect(atlas, charX, charY, frame * 16, 0, 16, 16);
+
+            window.drawLine(0, window.height() - 1, window.width(), window.height() - 1,
+                Desktop.rgb(40, 50, 80));
+            window.present();
+        }
+    }
+
+    ship.destroy();
+    atlas.destroy();
+    window.close();
+    return 0;
+}

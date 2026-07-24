@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <string>
 #include <thread>
 #include <vector>
@@ -34,6 +35,7 @@ namespace {
         int32_t mouseY = 0;
         double lastTime = -1.0;
         double deltaTime = 0.0;
+        std::deque<int32_t> textQueue;
 
         void Resize(int32_t newWidth, int32_t newHeight) {
             width = std::max<int32_t>(1, newWidth);
@@ -168,6 +170,18 @@ extern "C" int32_t absolute_desktop_poll(int64_t handle) {
             const int32_t key = KeyCode(XLookupKeysym(&event.xkey, 0));
             if (key >= 0 && key < static_cast<int32_t>(state->keys.size()))
                 state->keys[key] = event.type == KeyPress;
+            if (event.type == KeyPress) {
+                char buffer[8]{};
+                KeySym sym = 0;
+                const int n = XLookupString(&event.xkey, buffer, sizeof(buffer), &sym, nullptr);
+                if (n > 0) {
+                    const unsigned char ch = static_cast<unsigned char>(buffer[0]);
+                    if (ch == 8 || ch == 9 || ch == 10 || ch == 13 || ch >= 32) {
+                        if (state->textQueue.size() < 256)
+                            state->textQueue.push_back(static_cast<int32_t>(ch));
+                    }
+                }
+            }
             break;
         }
         case FocusOut: state->keys.fill(false); state->mouseButtons.fill(false); break;
@@ -358,91 +372,26 @@ extern "C" void absolute_desktop_sleep(int32_t milliseconds) {
     if (milliseconds > 0) std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
 }
 
-namespace {
-    struct DesktopSprite {
-        int32_t width = 1;
-        int32_t height = 1;
-        std::vector<uint32_t> pixels;
-    };
-
-    DesktopSprite* SpriteFromHandle(int64_t handle) {
-        return reinterpret_cast<DesktopSprite*>(static_cast<intptr_t>(handle));
-    }
+extern "C" int32_t absolute_desktop_text_count(int64_t handle) {
+    const DesktopWindow* state = FromHandle(handle);
+    return state ? static_cast<int32_t>(state->textQueue.size()) : 0;
 }
 
-extern "C" int64_t absolute_desktop_sprite_create(int32_t width, int32_t height) {
-    if (width <= 0 || height <= 0) return 0;
-    auto* sprite = new DesktopSprite();
-    sprite->width = width;
-    sprite->height = height;
-    sprite->pixels.assign(static_cast<std::size_t>(width) * static_cast<std::size_t>(height), 0);
-    return static_cast<int64_t>(reinterpret_cast<intptr_t>(sprite));
+extern "C" int32_t absolute_desktop_text_pop(int64_t handle) {
+    DesktopWindow* state = FromHandle(handle);
+    if (!state || state->textQueue.empty()) return -1;
+    const int32_t ch = state->textQueue.front();
+    state->textQueue.pop_front();
+    return ch;
 }
 
-extern "C" void absolute_desktop_sprite_destroy(int64_t handle) {
-    delete SpriteFromHandle(handle);
+extern "C" void absolute_desktop_text_clear(int64_t handle) {
+    DesktopWindow* state = FromHandle(handle);
+    if (state) state->textQueue.clear();
 }
 
-extern "C" int32_t absolute_desktop_sprite_width(int64_t handle) {
-    const DesktopSprite* sprite = SpriteFromHandle(handle);
-    return sprite ? sprite->width : 0;
-}
-
-extern "C" int32_t absolute_desktop_sprite_height(int64_t handle) {
-    const DesktopSprite* sprite = SpriteFromHandle(handle);
-    return sprite ? sprite->height : 0;
-}
-
-extern "C" void absolute_desktop_sprite_clear(int64_t handle, uint32_t color) {
-    DesktopSprite* sprite = SpriteFromHandle(handle);
-    if (sprite) std::fill(sprite->pixels.begin(), sprite->pixels.end(), color);
-}
-
-extern "C" void absolute_desktop_sprite_pixel(int64_t handle, int32_t x, int32_t y, uint32_t color) {
-    DesktopSprite* sprite = SpriteFromHandle(handle);
-    if (!sprite || x < 0 || y < 0 || x >= sprite->width || y >= sprite->height) return;
-    sprite->pixels[static_cast<std::size_t>(y) * static_cast<std::size_t>(sprite->width)
-        + static_cast<std::size_t>(x)] = color;
-}
-
-extern "C" void absolute_desktop_sprite_fill_rect(
-    int64_t handle, int32_t x, int32_t y, int32_t width, int32_t height, uint32_t color) {
-    DesktopSprite* sprite = SpriteFromHandle(handle);
-    if (!sprite || width <= 0 || height <= 0) return;
-    const int32_t left = std::clamp<int32_t>(x, 0, sprite->width);
-    const int32_t top = std::clamp<int32_t>(y, 0, sprite->height);
-    const int32_t right = std::clamp<int32_t>(x + width, 0, sprite->width);
-    const int32_t bottom = std::clamp<int32_t>(y + height, 0, sprite->height);
-    for (int32_t row = top; row < bottom; ++row) {
-        auto begin = sprite->pixels.begin()
-            + static_cast<std::size_t>(row) * sprite->width + left;
-        std::fill(begin, begin + (right - left), color);
-    }
-}
-
-extern "C" void absolute_desktop_sprite_fill_circle(
-    int64_t handle, int32_t cx, int32_t cy, int32_t radius, uint32_t color) {
-    DesktopSprite* sprite = SpriteFromHandle(handle);
-    if (!sprite || radius <= 0) return;
-    const int32_t r2 = radius * radius;
-    for (int32_t y = cy - radius; y <= cy + radius; ++y) {
-        if (y < 0 || y >= sprite->height) continue;
-        const int32_t dy = y - cy;
-        const int32_t span2 = r2 - dy * dy;
-        if (span2 < 0) continue;
-        int32_t span = 0;
-        while ((span + 1) * (span + 1) <= span2) ++span;
-        const int32_t left = std::max(0, cx - span);
-        const int32_t right = std::min(sprite->width - 1, cx + span);
-        auto begin = sprite->pixels.begin()
-            + static_cast<std::size_t>(y) * sprite->width + left;
-        std::fill(begin, begin + (right - left + 1), color);
-    }
-}
-
-extern "C" void absolute_desktop_sprite_draw(int64_t windowHandle, int64_t spriteHandle, int32_t x, int32_t y) {
-    DesktopSprite* sprite = SpriteFromHandle(spriteHandle);
-    if (!sprite || sprite->pixels.empty()) return;
-    absolute_desktop_blit(windowHandle, x, y, sprite->width, sprite->height, sprite->pixels.data());
-}
+// Gamepad: no XInput on Linux in this backend yet.
+extern "C" int32_t absolute_desktop_gamepad_connected(int32_t) { return 0; }
+extern "C" int32_t absolute_desktop_gamepad_button(int32_t, int32_t) { return 0; }
+extern "C" double absolute_desktop_gamepad_axis(int32_t, int32_t) { return 0.0; }
 

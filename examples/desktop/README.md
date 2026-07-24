@@ -37,6 +37,8 @@ pong.exe
 | `window.abs` | Bouncing rect, delta time, line, mouse circle |
 | `pong.abs` | Two-player soft Pong (W/S, arrows, Space serve, Esc quit) |
 | `sprites.abs` | Soft sprites + `FixedStep` 60 Hz sim (WASD / arrows) |
+| `input.abs` | Text queue + mouse/gamepad cursor probe |
+| `image.abs` | BMP load, magenta color key, atlas `drawSpriteRect` |
 
 ## API highlights
 
@@ -45,6 +47,7 @@ pong.exe
 - **Held input:** `keyDown`, `mouseDown`, `mouseX` / `mouseY`
 - **2D soft buffer:** `clear`, `pixel`, `fillRect`, `drawLine`, `fillCircle`, `blit`, `present`
 - **Sprites:** `Desktop.Sprite(w,h)`, `fillRect`/`fillCircle`/`clear`, `window.drawSprite(sprite,x,y)`
-- **Keys:** `Desktop.KeyEscape`, `KeySpace`, `KeyW/A/S/D`, arrows, …
+- **Images:** `sprite.loadBmp(path)`, `colorKey(rgb)`, `drawSpriteRect(..., sx,sy,sw,sh)`
+- **Keys:** `Desktop.KeyEscape()`, `KeySpace()`, `KeyW/A/S/D()`, arrows, …
 
 See `plugins/desktop/README.md` for backend details.

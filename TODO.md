@@ -484,16 +484,19 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Shader-блоки как opaque plugin syntax.
 - [x] Векторные и матричные math-типы, projection и lookAt.
 - [x] Keyboard/mouse held + edge input (`keyDown`/`keyPressed`/`keyReleased`,
-  mouse equivalents); gamepad и text-input ещё нет.
+  mouse equivalents).
+- [x] Text-input queue (`textPop` / `textCount`) + Windows XInput gamepad API
+  (Linux stub); example `examples/desktop/input.abs`.
 - [x] Software 2D: rect, line, circle, blit; `deltaTime` + sleep для game loop.
 - [x] `Desktop.FixedStep` (fixed timestep accumulator + render alpha).
 - [x] Soft `Desktop.Sprite` (offscreen buffer + drawSprite).
 - [x] Примеры: `window.abs`, `pong.abs`, `sprites.abs` (fixed step + sprites).
-- [ ] Добавить gamepad и text-input API.
+- [x] Soft BMP load (`sprite.loadBmp`), `colorKey`, atlas `drawSpriteRect`;
+  example `examples/desktop/image.abs` + `assets/*.bmp`.
 - [ ] Добавить OpenGL/Vulkan/Direct3D backend либо общий RHI.
 - [ ] Добавить GPU buffers, textures, samplers, pipelines и shader reflection.
-- [ ] Добавить загрузку изображений, шрифтов, моделей и аудио.
-- [ ] Добавить 2D sprite batching / atlas поверх soft или GPU backend.
+- [ ] Добавить загрузку PNG/шрифтов, моделей и аудио (BMP soft path уже есть).
+- [ ] Добавить 2D sprite batching / atlas batch поверх soft или GPU backend.
 - [ ] Добавить базовый UI toolkit для desktop-приложений.
 - [ ] Добавить audio output/mixer.
 - [ ] Добавить GPU triangle / sprite scene examples.

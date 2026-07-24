@@ -43,7 +43,11 @@ examples\desktop\run.bat pong.abs
 ### Input
 - Held: `keyDown(key)`, `mouseDown(button)`, `mouseX()`, `mouseY()`
 - Edges (updated on each `poll`): `keyPressed` / `keyReleased`, `mousePressed` / `mouseReleased`
-- Codes: `Desktop.KeyEscape` (27), arrows `KeyLeft`…`KeyDown`, `KeyW/A/S/D`, `KeySpace`, mouse `0/1/2`
+- Text: `textCount()`, `textPop()` (code point / ASCII; `-1` empty), `textClear()`
+- Gamepad (Windows XInput 0..3; Linux stub): `Desktop.gamepadConnected(i)`,
+  `gamepadButton(i, btn)`, `gamepadAxis(i, axis)` in `[-1,1]` (triggers `[0,1]`)
+- Codes (functions or `Desktop.Codes.*` statics): `Desktop.KeyEscape()`, arrows,
+  `KeyW/A/S/D()`, `KeySpace()`, mouse `MouseLeft()`, pad `PadA()`…, axes `AxisLX()`…
 
 ### Timing
 - `Desktop.time()` — monotonic seconds
@@ -51,10 +55,13 @@ examples\desktop\run.bat pong.abs
 - `Desktop.sleep(ms)`
 - `Desktop.FixedStep(updatesPerSecond)` — accumulator (`add` / `shouldUpdate` / `consume` / `alpha`)
 
-### Soft sprites
-- `new Desktop.Sprite(w, h)` — offscreen buffer (`0` = transparent)
-- `clear`, `pixel`, `fillRect`, `fillCircle`, `destroy`
+### Soft sprites & images
+- `new Desktop.Sprite(w, h)` — procedural offscreen buffer (`0` = transparent)
+- `sprite.loadBmp(path)` — replace buffer with 24/32-bit uncompressed BMP (`false` on failure)
+- `sprite.colorKey(rgb)` — exact RGB → transparent `0` (e.g. magenta `Desktop.rgb(255, 0, 255)`)
+- `clear`, `pixel`, `fillRect`, `fillCircle`, `destroy`, `isValid`
 - `window.drawSprite(sprite, x, y)`
+- `window.drawSpriteRect(sprite, dx, dy, sx, sy, sw, sh)` — atlas / sub-rect blit
 
 ### Game loop patterns
 
@@ -92,4 +99,5 @@ still compile/link; `Desktop.Window` then reports that it could not open.
 Call `window.close()` before leaving `main`. Native window handles are explicit
 resources; the current Absolute class model does not yet run RAII destructors.
 
-Examples: `examples/desktop/window.abs`, `examples/desktop/pong.abs`.
+Examples: `examples/desktop/window.abs`, `pong.abs`, `sprites.abs`, `input.abs`,
+`image.abs` (BMP + atlas).

@@ -5,7 +5,7 @@ option(ABSOLUTE_DESKTOP_ENABLE_X11 "Build the Linux X11 window backend when avai
 
 if(WIN32)
     set(ABSOLUTE_DESKTOP_RUNTIME_SOURCE desktop_runtime.cpp)
-    set(ABSOLUTE_DESKTOP_SYSTEM_LIBRARIES user32.lib gdi32.lib)
+    set(ABSOLUTE_DESKTOP_SYSTEM_LIBRARIES user32.lib gdi32.lib Xinput9_1_0.lib)
 else()
     if(ABSOLUTE_DESKTOP_ENABLE_X11)
         find_package(X11 QUIET)
@@ -25,7 +25,10 @@ else()
     endif()
 endif()
 
-add_library(Absolute-Desktop-Runtime STATIC ${ABSOLUTE_DESKTOP_RUNTIME_SOURCE})
+add_library(Absolute-Desktop-Runtime STATIC
+    ${ABSOLUTE_DESKTOP_RUNTIME_SOURCE}
+    desktop_soft_sprites.cpp
+)
 target_compile_features(Absolute-Desktop-Runtime PRIVATE cxx_std_20)
 if(WIN32)
     target_compile_definitions(Absolute-Desktop-Runtime PRIVATE UNICODE _UNICODE)

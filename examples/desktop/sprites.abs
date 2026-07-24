@@ -33,16 +33,16 @@ int32 main() {
             double step = fixed.step;
             velX = 0.0;
             velY = 0.0;
-            if (window.keyDown(Desktop.KeyLeft) || window.keyDown(Desktop.KeyA)) {
+            if (window.keyDown(Desktop.KeyLeft()) || window.keyDown(Desktop.KeyA())) {
                 velX = velX - 220.0;
             }
-            if (window.keyDown(Desktop.KeyRight) || window.keyDown(Desktop.KeyD)) {
+            if (window.keyDown(Desktop.KeyRight()) || window.keyDown(Desktop.KeyD())) {
                 velX = velX + 220.0;
             }
-            if (window.keyDown(Desktop.KeyUp) || window.keyDown(Desktop.KeyW)) {
+            if (window.keyDown(Desktop.KeyUp()) || window.keyDown(Desktop.KeyW())) {
                 velY = velY - 220.0;
             }
-            if (window.keyDown(Desktop.KeyDown) || window.keyDown(Desktop.KeyS)) {
+            if (window.keyDown(Desktop.KeyDown()) || window.keyDown(Desktop.KeyS())) {
                 velY = velY + 220.0;
             }
             shipX = shipX + velX * step;
@@ -53,29 +53,29 @@ int32 main() {
             if (shipY < 0.0) {
                 shipY = 0.0;
             }
-            if (shipX > (double)(window.width() - ship.width())) {
-                shipX = (double)(window.width() - ship.width());
+            if (shipX > (window.width() - ship.width()) as double) {
+                shipX = (window.width() - ship.width()) as double;
             }
-            if (shipY > (double)(window.height() - ship.height())) {
-                shipY = (double)(window.height() - ship.height());
+            if (shipY > (window.height() - ship.height()) as double) {
+                shipY = (window.height() - ship.height()) as double;
             }
             starPhase = starPhase + step * 2.0;
             fixed.consume();
         }
 
-        if (window.keyPressed(Desktop.KeyEscape)) {
+        if (window.keyPressed(Desktop.KeyEscape())) {
             window.close();
         } else {
             window.clear(Desktop.rgb(8, 10, 22));
             // Parallax stars via procedural offsets.
             int32 i = 0;
             while (i < 18) {
-                int32 sx = (i * 73 + (int32)(starPhase * 40.0)) % window.width();
+                int32 sx = (i * 73 + (starPhase * 40.0) as int32) % window.width();
                 int32 sy = (i * 41 + 20) % window.height();
                 window.drawSprite(star, sx, sy);
                 i = i + 1;
             }
-            window.drawSprite(ship, (int32)shipX, (int32)shipY);
+            window.drawSprite(ship, (shipX) as int32, (shipY) as int32);
             window.drawLine(0, window.height() - 1, window.width(), window.height() - 1,
                 Desktop.rgb(30, 40, 60));
             window.present();
