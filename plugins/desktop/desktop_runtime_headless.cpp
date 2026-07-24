@@ -34,3 +34,13 @@ extern "C" uint32_t absolute_desktop_rgb(int32_t red, int32_t green, int32_t blu
 
 extern "C" double absolute_desktop_time() { return 0.0; }
 extern "C" void absolute_desktop_sleep(int32_t) {}
+
+extern "C" int64_t absolute_desktop_sprite_create(int32_t, int32_t) { return 0; }
+extern "C" void absolute_desktop_sprite_destroy(int64_t) {}
+extern "C" int32_t absolute_desktop_sprite_width(int64_t) { return 0; }
+extern "C" int32_t absolute_desktop_sprite_height(int64_t) { return 0; }
+extern "C" void absolute_desktop_sprite_clear(int64_t, uint32_t) {}
+extern "C" void absolute_desktop_sprite_pixel(int64_t, int32_t, int32_t, uint32_t) {}
+extern "C" void absolute_desktop_sprite_fill_rect(int64_t, int32_t, int32_t, int32_t, int32_t, uint32_t) {}
+extern "C" void absolute_desktop_sprite_fill_circle(int64_t, int32_t, int32_t, int32_t, uint32_t) {}
+extern "C" void absolute_desktop_sprite_draw(int64_t, int64_t, int32_t, int32_t) {}

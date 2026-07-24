@@ -486,7 +486,9 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Keyboard/mouse held + edge input (`keyDown`/`keyPressed`/`keyReleased`,
   mouse equivalents); gamepad и text-input ещё нет.
 - [x] Software 2D: rect, line, circle, blit; `deltaTime` + sleep для game loop.
-- [x] Примеры: `examples/desktop/window.abs`, `examples/desktop/pong.abs`.
+- [x] `Desktop.FixedStep` (fixed timestep accumulator + render alpha).
+- [x] Soft `Desktop.Sprite` (offscreen buffer + drawSprite).
+- [x] Примеры: `window.abs`, `pong.abs`, `sprites.abs` (fixed step + sprites).
 - [ ] Добавить gamepad и text-input API.
 - [ ] Добавить OpenGL/Vulkan/Direct3D backend либо общий RHI.
 - [ ] Добавить GPU buffers, textures, samplers, pipelines и shader reflection.
@@ -494,7 +496,6 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [ ] Добавить 2D sprite batching / atlas поверх soft или GPU backend.
 - [ ] Добавить базовый UI toolkit для desktop-приложений.
 - [ ] Добавить audio output/mixer.
-- [ ] Добавить fixed-timestep helper API (аккумулятор поверх `deltaTime`).
 - [ ] Добавить GPU triangle / sprite scene examples.
 
 ### Native interop и платформы

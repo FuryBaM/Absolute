@@ -49,8 +49,16 @@ examples\desktop\run.bat pong.abs
 - `Desktop.time()` — monotonic seconds
 - `window.deltaTime()` — seconds since previous `poll` (0 on first frame)
 - `Desktop.sleep(ms)`
+- `Desktop.FixedStep(updatesPerSecond)` — accumulator (`add` / `shouldUpdate` / `consume` / `alpha`)
 
-### Game loop pattern
+### Soft sprites
+- `new Desktop.Sprite(w, h)` — offscreen buffer (`0` = transparent)
+- `clear`, `pixel`, `fillRect`, `fillCircle`, `destroy`
+- `window.drawSprite(sprite, x, y)`
+
+### Game loop patterns
+
+Variable step:
 
 ```absolute
 while (window.poll()) {
@@ -60,6 +68,21 @@ while (window.poll()) {
     // update with dt, draw, present
 }
 window.close();
+```
+
+Fixed step (e.g. 60 Hz sim):
+
+```absolute
+auto fixed = new Desktop.FixedStep(60.0);
+while (window.poll()) {
+    fixed.add(window.deltaTime());
+    while (fixed.shouldUpdate()) {
+        // simulate(fixed.step)
+        fixed.consume();
+    }
+    // render(fixed.alpha())
+    window.present();
+}
 ```
 
 The Linux backend is enabled when X11 development files are available

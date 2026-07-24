@@ -36,13 +36,15 @@ pong.exe
 |------|-------------|
 | `window.abs` | Bouncing rect, delta time, line, mouse circle |
 | `pong.abs` | Two-player soft Pong (W/S, arrows, Space serve, Esc quit) |
+| `sprites.abs` | Soft sprites + `FixedStep` 60 Hz sim (WASD / arrows) |
 
 ## API highlights
 
-- **Frame timing:** `window.deltaTime()` (seconds since last `poll`)
+- **Frame timing:** `window.deltaTime()`; `Desktop.FixedStep(hz)` for fixed updates
 - **Input edges:** `keyPressed` / `keyReleased`, `mousePressed` / `mouseReleased`
 - **Held input:** `keyDown`, `mouseDown`, `mouseX` / `mouseY`
 - **2D soft buffer:** `clear`, `pixel`, `fillRect`, `drawLine`, `fillCircle`, `blit`, `present`
+- **Sprites:** `Desktop.Sprite(w,h)`, `fillRect`/`fillCircle`/`clear`, `window.drawSprite(sprite,x,y)`
 - **Keys:** `Desktop.KeyEscape`, `KeySpace`, `KeyW/A/S/D`, arrows, …
 
 See `plugins/desktop/README.md` for backend details.

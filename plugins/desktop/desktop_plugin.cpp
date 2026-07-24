@@ -35,6 +35,15 @@ extern "C" double absolute_desktop_delta_time(int64 handle);
 extern "C" uint32 absolute_desktop_rgb(int32 red, int32 green, int32 blue);
 extern "C" double absolute_desktop_time();
 extern "C" void absolute_desktop_sleep(int32 milliseconds);
+extern "C" int64 absolute_desktop_sprite_create(int32 width, int32 height);
+extern "C" void absolute_desktop_sprite_destroy(int64 handle);
+extern "C" int32 absolute_desktop_sprite_width(int64 handle);
+extern "C" int32 absolute_desktop_sprite_height(int64 handle);
+extern "C" void absolute_desktop_sprite_clear(int64 handle, uint32 color);
+extern "C" void absolute_desktop_sprite_pixel(int64 handle, int32 x, int32 y, uint32 color);
+extern "C" void absolute_desktop_sprite_fill_rect(int64 handle, int32 x, int32 y, int32 width, int32 height, uint32 color);
+extern "C" void absolute_desktop_sprite_fill_circle(int64 handle, int32 cx, int32 cy, int32 radius, uint32 color);
+extern "C" void absolute_desktop_sprite_draw(int64 windowHandle, int64 spriteHandle, int32 x, int32 y);
 
 namespace Desktop {
     // Virtual-key style codes (Win32 / mapped X11).
@@ -63,6 +72,102 @@ namespace Desktop {
 
     void sleep(int32 milliseconds) {
         absolute_desktop_sleep(milliseconds);
+    }
+
+    // Fixed timestep accumulator for deterministic simulation.
+    // Typical usage after window.poll():
+    //   fixed.add(window.deltaTime());
+    //   while (fixed.shouldUpdate()) { simulate(fixed.step); fixed.consume(); }
+    //   render(fixed.alpha());
+    class FixedStep {
+        public double step;
+        public double accumulator;
+        public double maxFrame;
+
+        public FixedStep(double updatesPerSecond) {
+            if (updatesPerSecond <= 0.0) {
+                updatesPerSecond = 60.0;
+            }
+            step = 1.0 / updatesPerSecond;
+            accumulator = 0.0;
+            maxFrame = 0.1;
+        }
+
+        public void add(double dt) {
+            if (dt < 0.0) {
+                dt = 0.0;
+            }
+            if (dt > maxFrame) {
+                dt = maxFrame;
+            }
+            accumulator = accumulator + dt;
+        }
+
+        public bool shouldUpdate() {
+            return accumulator >= step;
+        }
+
+        public void consume() {
+            accumulator = accumulator - step;
+            if (accumulator < 0.0) {
+                accumulator = 0.0;
+            }
+        }
+
+        // Interpolation factor in [0, 1) for rendering between fixed steps.
+        public double alpha() {
+            if (step <= 0.0) {
+                return 0.0;
+            }
+            double a = accumulator / step;
+            if (a < 0.0) {
+                a = 0.0;
+            }
+            if (a > 1.0) {
+                a = 1.0;
+            }
+            return a;
+        }
+    }
+
+    // Soft sprite: offscreen ARGB buffer (0 = transparent when drawn).
+    class Sprite {
+        public int64 handle;
+
+        public Sprite(int32 width, int32 height) {
+            handle = absolute_desktop_sprite_create(width, height);
+        }
+
+        public void destroy() {
+            if (handle != 0) {
+                absolute_desktop_sprite_destroy(handle);
+                handle = 0;
+            }
+        }
+
+        public int32 width() {
+            return absolute_desktop_sprite_width(handle);
+        }
+
+        public int32 height() {
+            return absolute_desktop_sprite_height(handle);
+        }
+
+        public void clear(uint32 color) {
+            absolute_desktop_sprite_clear(handle, color);
+        }
+
+        public void pixel(int32 x, int32 y, uint32 color) {
+            absolute_desktop_sprite_pixel(handle, x, y, color);
+        }
+
+        public void fillRect(int32 x, int32 y, int32 width, int32 height, uint32 color) {
+            absolute_desktop_sprite_fill_rect(handle, x, y, width, height, color);
+        }
+
+        public void fillCircle(int32 cx, int32 cy, int32 radius, uint32 color) {
+            absolute_desktop_sprite_fill_circle(handle, cx, cy, radius, color);
+        }
     }
 
     class Window {
@@ -121,6 +226,10 @@ namespace Desktop {
 
         public void blit(int32 destX, int32 destY, int32 width, int32 height, raw uint32* pixels) {
             absolute_desktop_blit(handle, destX, destY, width, height, pixels);
+        }
+
+        public void drawSprite(Sprite sprite, int32 x, int32 y) {
+            absolute_desktop_sprite_draw(handle, sprite.handle, x, y);
         }
 
         public void present() {
