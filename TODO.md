@@ -512,8 +512,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [ ] Multi-backend RHI (Vulkan/D3D12) поверх того же Absolute API.
 - [x] PNG load for soft sprites: `sprite.loadPng` / `loadImage` (Windows WIC),
   assets `examples/desktop/assets/*.png`, example `image-png.abs`;
-  non-Windows PNG and TTF/models/audio still open.
-- [ ] TTF / внешние шрифты, модели и аудио (BMP + PNG + soft font уже есть).
+  non-Windows PNG still open.
+- [x] Soft TTF / system fonts: `Desktop.Font` (Windows GDI), `loadFile` for
+  private `.ttf`/`.otf`, `drawFontText` / `measure` / `lineHeight`;
+  example `examples/desktop/font.abs`. Models/audio still open.
+- [ ] Модели 3D и аудио (BMP + PNG + soft 8×8 + TTF/system fonts уже есть).
 - [ ] Добавить базовый UI toolkit для desktop-приложений.
 - [ ] Добавить audio output/mixer.
 - [ ] Расширить `absolute.shader` от opaque DSL-stub к reflection + RHI bind

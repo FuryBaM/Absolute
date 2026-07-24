@@ -38,9 +38,22 @@
       ]
     },
     {
+      "name": "Desktop.Font",
+      "detail": "class Desktop.Font",
+      "documentation": "Soft TrueType/system font (Windows GDI). drawFontText on Window/Sprite.",
+      "snippet": "auto ${1:font} = new Desktop.Font(${2:\"Segoe UI\"}, ${3:18}, Desktop.Font.StyleNormal);\n$4.drawFontText($1, ${5:16}, ${6:16}, ${7:\"Hello\"}, Desktop.rgb(255,255,255));",
+      "members": [
+        { "name": "loadFile", "detail": "bool loadFile(string path, int32 pixelHeight, int32 style)" },
+        { "name": "measure", "detail": "int32 measure(string text)" },
+        { "name": "measureHeight", "detail": "int32 measureHeight(string text)" },
+        { "name": "lineHeight", "detail": "int32 lineHeight()" },
+        { "name": "destroy", "detail": "void destroy()" }
+      ]
+    },
+    {
       "name": "Desktop.Sprite",
       "detail": "class Desktop.Sprite",
-      "documentation": "Soft offscreen buffer for procedural art, BMP images, and baked text.",
+      "documentation": "Soft offscreen buffer for procedural art, BMP/PNG images, and baked text.",
       "snippet": "new Desktop.Sprite(${1:64}, ${2:64})",
       "members": [
         { "name": "loadBmp", "detail": "bool loadBmp(string path)" },
@@ -48,6 +61,7 @@
         { "name": "loadImage", "detail": "bool loadImage(string path)", "documentation": "Try PNG then BMP." },
         { "name": "colorKey", "detail": "void colorKey(uint32 color)" },
         { "name": "drawText", "detail": "void drawText(int32 x, int32 y, string text, uint32 color, int32 scale)" },
+        { "name": "drawFontText", "detail": "void drawFontText(Font* font, int32 x, int32 y, string text, uint32 color)" },
         { "name": "destroy", "detail": "void destroy()" },
         { "name": "width", "detail": "int32 width()" },
         { "name": "height", "detail": "int32 height()" }

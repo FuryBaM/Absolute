@@ -30,6 +30,7 @@ add_library(Absolute-Desktop-Runtime STATIC
     desktop_soft_sprites.cpp
     desktop_soft_png.cpp
     desktop_soft_text.cpp
+    desktop_soft_font.cpp
     desktop_soft_batch.cpp
     desktop_gpu_gl.cpp
 )

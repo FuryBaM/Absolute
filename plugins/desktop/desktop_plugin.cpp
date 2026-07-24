@@ -49,6 +49,15 @@ extern "C" void absolute_desktop_sprite_color_key(int64 handle, uint32 color);
 extern "C" void absolute_desktop_sprite_draw(int64 windowHandle, int64 spriteHandle, int32 x, int32 y);
 extern "C" void absolute_desktop_sprite_draw_rect(int64 windowHandle, int64 spriteHandle, int32 destX, int32 destY, int32 srcX, int32 srcY, int32 srcW, int32 srcH);
 extern "C" void absolute_desktop_sprite_draw_text(int64 spriteHandle, int32 x, int32 y, string text, uint32 color, int32 scale);
+extern "C" int64 absolute_desktop_font_create(string faceName, int32 pixelHeight, int32 style);
+extern "C" int64 absolute_desktop_font_load_file(string path, int32 pixelHeight, int32 style);
+extern "C" void absolute_desktop_font_destroy(int64 handle);
+extern "C" int32 absolute_desktop_font_is_valid(int64 handle);
+extern "C" int32 absolute_desktop_font_line_height(int64 handle);
+extern "C" int32 absolute_desktop_font_measure(int64 handle, string text);
+extern "C" int32 absolute_desktop_font_measure_height(int64 handle, string text);
+extern "C" void absolute_desktop_font_draw_window(int64 windowHandle, int64 fontHandle, int32 x, int32 y, string text, uint32 color);
+extern "C" void absolute_desktop_font_draw_sprite(int64 spriteHandle, int64 fontHandle, int32 x, int32 y, string text, uint32 color);
 extern "C" int64 absolute_desktop_batch_create();
 extern "C" void absolute_desktop_batch_destroy(int64 handle);
 extern "C" void absolute_desktop_batch_begin(int64 handle, int64 windowHandle, int64 atlasHandle);
@@ -285,6 +294,58 @@ namespace Desktop {
         }
     }
 
+    // Soft TrueType / system font (Windows GDI). Built-in 8x8 remains on drawText(scale).
+    // style: StyleNormal=0, StyleBold=1, StyleItalic=2, StyleBoldItalic=3.
+    class Font {
+        public int64 handle;
+
+        public static int32 StyleNormal = 0;
+        public static int32 StyleBold = 1;
+        public static int32 StyleItalic = 2;
+        public static int32 StyleBoldItalic = 3;
+
+        // style: StyleNormal / StyleBold / StyleItalic / StyleBoldItalic
+        public Font(string faceName, int32 pixelHeight, int32 style) {
+            handle = absolute_desktop_font_create(faceName, pixelHeight, style);
+        }
+
+        public bool isValid() {
+            return handle != 0 && absolute_desktop_font_is_valid(handle) != 0;
+        }
+
+        // Load a private .ttf/.otf file (FR_PRIVATE). Replaces current font.
+        public bool loadFile(string path, int32 pixelHeight, int32 style) {
+            int64 h = absolute_desktop_font_load_file(path, pixelHeight, style);
+            if (h == 0) {
+                return false;
+            }
+            if (handle != 0) {
+                absolute_desktop_font_destroy(handle);
+            }
+            handle = h;
+            return true;
+        }
+
+        public void destroy() {
+            if (handle != 0) {
+                absolute_desktop_font_destroy(handle);
+                handle = 0;
+            }
+        }
+
+        public int32 lineHeight() {
+            return absolute_desktop_font_line_height(handle);
+        }
+
+        public int32 measure(string text) {
+            return absolute_desktop_font_measure(handle, text);
+        }
+
+        public int32 measureHeight(string text) {
+            return absolute_desktop_font_measure_height(handle, text);
+        }
+    }
+
     // Soft sprite: offscreen 0x00RRGGBB buffer (0 = transparent when drawn).
     class Sprite {
         public int64 handle;
@@ -366,6 +427,13 @@ namespace Desktop {
         public void drawText(int32 x, int32 y, string text, uint32 color, int32 scale) {
             absolute_desktop_sprite_draw_text(handle, x, y, text, color, scale);
         }
+
+        // TrueType / system font into sprite pixels (transparent background).
+        public void drawFontText(Font* font, int32 x, int32 y, string text, uint32 color) {
+            if (font != null) {
+                absolute_desktop_font_draw_sprite(handle, font.handle, x, y, text, color);
+            }
+        }
     }
 
     class Window {
@@ -438,6 +506,13 @@ namespace Desktop {
         // Built-in soft font (ASCII). Supports '\\n'. scale 1..16. Transparent background.
         public void drawText(int32 x, int32 y, string text, uint32 color, int32 scale) {
             absolute_desktop_draw_text(handle, x, y, text, color, scale);
+        }
+
+        // TrueType / system font (Desktop.Font). Supports UTF-8 and '\\n'.
+        public void drawFontText(Font* font, int32 x, int32 y, string text, uint32 color) {
+            if (font != null) {
+                absolute_desktop_font_draw_window(handle, font.handle, x, y, text, color);
+            }
         }
 
         public void present() {

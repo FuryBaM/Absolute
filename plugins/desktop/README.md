@@ -84,6 +84,17 @@ examples\desktop\run.bat pong.abs
 - `Desktop.measureText(text, scale)` / `Desktop.measureTextHeight(text, scale)`
 - `Desktop.fontGlyphWidth()` / `Desktop.fontGlyphHeight()` — unscaled glyph size (8×8)
 
+### Soft TrueType / system fonts (`Desktop.Font`)
+Windows GDI (ClearType raster → soft buffer). Non-Windows: create returns invalid.
+
+- `new Desktop.Font(faceName, pixelHeight, style)`
+- Styles: `Font.StyleNormal`, `StyleBold`, `StyleItalic`, `StyleBoldItalic`
+- `font.loadFile(path, pixelHeight, style)` — private `.ttf`/`.otf` via `AddFontResourceEx`
+- `font.measure` / `measureHeight` / `lineHeight` / `destroy`
+- `window.drawFontText(font, x, y, text, color)` — UTF-8, supports `\n`
+- `sprite.drawFontText(font, x, y, text, color)`
+- Example: `examples/desktop/font.abs`
+
 ### GPU / OpenGL RHI (`Desktop.Gpu`)
 Windows: WGL + OpenGL 3.3 core when available (legacy fallback). Linux/X11: stub
 (`isValid() == false`) until GLX lands. Soft `window.present()` and `gpu.present()` are
@@ -165,4 +176,5 @@ resources; the current Absolute class model does not yet run RAII destructors.
 Examples: `examples/desktop/window.abs`, `pong.abs`, `sprites.abs`, `input.abs`,
 `image.abs` (BMP + atlas), `text.abs` (soft font HUD / typing),
 `batch.abs` (`SpriteBatch` + atlas tiles), `triangle.abs` (OpenGL pipeline),
-`gpu-sprites.abs` (textured ship + atlas), `image-png.abs` (PNG `loadImage`).
+`gpu-sprites.abs` (textured ship + atlas), `image-png.abs` (PNG `loadImage`),
+`font.abs` (system / TTF soft fonts).
