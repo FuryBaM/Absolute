@@ -6,12 +6,43 @@ const path = require('path');
 const childProcess = require('child_process');
 const { LspClient } = require('./client/lsp-client');
 const opaqueDocs = require('./opaque-docs');
-const repl = require('../tools/absolute-repl');
 
 let statusBar;
 let output;
 let lspClient;
 let pluginIndexState = { plugins: [], errors: [] };
+let replModule;
+
+/**
+ * Resolve the bundled REPL module. Prefer the in-package copy so a published
+ * VSIX does not depend on repo-root tools/ (missing there breaks activation).
+ */
+function loadRepl() {
+    if (replModule) return replModule;
+    const candidates = [
+        path.join(__dirname, 'tools', 'absolute-repl.js'),
+        path.join(__dirname, '..', 'tools', 'absolute-repl.js')
+    ];
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) {
+            replModule = require(candidate);
+            return replModule;
+        }
+    }
+    throw new Error(
+        'Absolute REPL module not found. Expected absolute-extension/tools/absolute-repl.js inside the extension package.');
+}
+
+function replScriptPath() {
+    const candidates = [
+        path.join(__dirname, 'tools', 'absolute-repl.js'),
+        path.join(__dirname, '..', 'tools', 'absolute-repl.js')
+    ];
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) return candidate;
+    }
+    return candidates[0];
+}
 
 function canonical(file) {
     const resolved = path.resolve(file);
@@ -458,7 +489,13 @@ async function evaluateExpressionCommand() {
     const compilerPath = configuration.get('compilerPath', 'absolutec');
     output.appendLine(`abs> ${expression}`);
     output.show(true);
-    const result = repl.evaluate(expression, '', { compilerPath });
+    let result;
+    try {
+        result = loadRepl().evaluate(expression, '', { compilerPath });
+    } catch (error) {
+        vscode.window.showErrorMessage(error.message || String(error));
+        return;
+    }
     if (result.stdout) output.append(result.stdout);
     if (result.stderr) output.append(result.stderr);
     if (!result.ok) {
@@ -474,7 +511,11 @@ async function openReplCommand() {
         name: 'Absolute REPL',
         cwd: (vscode.workspace.workspaceFolders || [])[0]?.uri.fsPath
     });
-    const replScript = path.join(__dirname, '..', 'tools', 'absolute-repl.js');
+    const replScript = replScriptPath();
+    if (!fs.existsSync(replScript)) {
+        vscode.window.showErrorMessage(`Absolute REPL script not found: ${replScript}`);
+        return;
+    }
     const envPrefix = process.platform === 'win32'
         ? `set ABSOLUTEC=${compiler}&& `
         : `ABSOLUTEC=${JSON.stringify(compiler)} `;

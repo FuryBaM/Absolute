@@ -127,7 +127,7 @@ int32 main() {
                 y = y + 28;
             }
             window.fillRect(30, (leftY) as int32, paddleW, paddleH, Desktop.rgb(90, 200, 255));
-            window.fillRect(window.width() - 30 - paddleW, (rightY) as int32, paddleW, paddleH,
+            window.fillRect(window.width() - 30 - paddleW, rightY as int32, paddleW, paddleH,
                 Desktop.rgb(255, 160, 90));
             window.fillCircle((ballX) as int32, (ballY) as int32, ballR, Desktop.rgb(240, 240, 245));
             // Simple score bars (digit fonts not available yet).
