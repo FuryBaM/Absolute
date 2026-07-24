@@ -87,15 +87,60 @@ extern "C" void fill_point(raw int32* xy); // writes x,y
 Interfaces and class objects have no C representation; expose plain functions
 and opaque `raw void*` (or typed `raw T*` to incomplete native types).
 
-## Callbacks
+## Callbacks (`cfunc`)
 
-First-class C function-pointer types are planned. Until then:
+C-compatible function pointers use the `cfunc` type constructor. Unlike Absolute
+`func` values (closures with optional captures), a `cfunc` is a raw code pointer
+with a fixed C ABI signature:
 
-- Pass Absolute logic to C only as a global `export "C"` function whose address
-  is taken by native code, or
-- Keep registration entirely on the C side.
+```absolute
+// cfunc<Return, Param0, Param1, ...>
+using Handler = cfunc<int32, int32>;
 
-Absolute `func` values (including capturing lambdas) are not C callbacks.
+export "C" int32 absolute_double(int32 value) {
+    return value * 2;
+}
+
+Handler handler = absolute_double; // export "C" / extern "C" only
+assert(handler(21) == 42);
+handler = null; // nullable like a raw pointer
+```
+
+Rules:
+
+- Every parameter and the return type must be C-ABI-safe (this document).
+- Only `extern "C"` / `export "C"` functions can be stored in a `cfunc`.
+- Absolute functions and capturing lambdas stay as `func<...>` and cannot convert.
+- Calling a `cfunc` uses the platform C calling convention; Absolute exception
+  checks are not inserted after the call (same as pure `extern "C"`).
+- `cfunc` may appear as a parameter/return of another C ABI function so native
+  code can receive Absolute `export "C"` callbacks as function pointers.
+
+## Safe native handles
+
+Opaque native resources should not leak as bare `raw void*` without ownership.
+The supported pattern is a resource-owning `struct` with a user `destroy()`
+method (see also `docs/resource-ownership.md`):
+
+```absolute
+extern "C" raw void* window_create(int32 width, int32 height);
+extern "C" void window_destroy(raw void* window);
+
+struct Window {
+    raw void* ptr;
+
+    void destroy() {
+        if (ptr != null) {
+            window_destroy(ptr);
+            ptr = null;
+        }
+    }
+}
+```
+
+`destroy()` runs when the struct leaves scope, is overwritten, or is cleaned by
+`move` transfer rules. Prefer returning handles with `move(...)` when the type
+owns resources.
 
 ## Exceptions and errors
 

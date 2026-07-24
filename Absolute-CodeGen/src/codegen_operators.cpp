@@ -25,7 +25,23 @@ namespace Absolute {
         const bool rightRaw = IsRawPointerTypeName(rightType);
         const bool leftManaged = IsManagedPointerTypeName(leftType);
         const bool rightManaged = IsManagedPointerTypeName(rightType);
+        std::string cfuncReturn;
+        std::vector<std::string> cfuncParameters;
+        const bool leftCFunction = ParseCodegenCFunctionType(leftType, cfuncReturn, cfuncParameters);
+        const bool rightCFunction = ParseCodegenCFunctionType(rightType, cfuncReturn, cfuncParameters);
         const bool equality = expr->op == "==" || expr->op == "!=";
+
+        if (equality && (leftCFunction || rightCFunction) &&
+            (leftCFunction || leftType == "null") &&
+            (rightCFunction || rightType == "null")) {
+            llvm::Value* leftPtr = impl->Coerce(left, impl->builder.getPtrTy());
+            llvm::Value* rightPtr = impl->Coerce(right, impl->builder.getPtrTy());
+            impl->value = expr->op == "=="
+                ? impl->builder.CreateICmpEQ(leftPtr, rightPtr, "cfunc.equal")
+                : impl->builder.CreateICmpNE(leftPtr, rightPtr, "cfunc.not.equal");
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
 
         if (equality && leftType == "string" && rightType == "string") {
             llvm::FunctionType* compareType = llvm::FunctionType::get(

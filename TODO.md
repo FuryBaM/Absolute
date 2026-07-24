@@ -510,9 +510,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   (`_Bool`); callbacks как first-class C fnptr остаются следующим шагом.
 - [x] Официально оставить только C ABI: `extern "C++"`/`export "C++"` отклоняются
   парсером; C++ библиотеки требуют thin `extern "C"` shim (см. native-c-abi.md).
+- [x] Добавить безопасные wrappers для native handles и callbacks:
+  `cfunc<Return, Params...>` — raw C function pointer (export/extern only,
+  nullable, C CC call); handle-pattern: `struct` + `destroy()` + `move` with
+  tests `cfunc-callbacks`, `native-handle-wrapper` (см. `docs/native-c-abi.md`).
 - [ ] Добавить генератор Absolute declarations из C headers.
-- [ ] Добавить безопасные wrappers для native handles и callbacks
-  (resource-pattern + C function-pointer type).
 - [ ] Проверить targets x64, ARM64, Windows, Linux и macOS в CI.
 - [ ] Добавить WebAssembly target и browser runtime.
 

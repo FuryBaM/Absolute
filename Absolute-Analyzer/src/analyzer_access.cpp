@@ -45,7 +45,11 @@ namespace Absolute {
         const Symbol* symbol = table.Get(id);
         std::string expectedReturn;
         std::vector<std::string> expectedParameters;
-        if (ParseFunctionType(expectedType, expectedReturn, expectedParameters)) {
+        const bool expectedCFunction = ParseCFunctionType(
+            expectedType, expectedReturn, expectedParameters);
+        const bool expectedFunction = !expectedCFunction &&
+            ParseFunctionType(expectedType, expectedReturn, expectedParameters);
+        if (expectedFunction || expectedCFunction) {
             const std::vector<SymbolId> candidates = FindFunctionCandidates(expr->name);
             SymbolId matching = InvalidSymbolId;
             for (SymbolId candidateId : candidates) {
@@ -54,9 +58,15 @@ namespace Absolute {
                     !candidate->genericParameters.empty() ||
                     candidate->type != expectedReturn ||
                     candidate->parameterTypes != expectedParameters) continue;
+                if (expectedCFunction &&
+                    !(candidate->externalFunction || candidate->exportedFunction))
+                    continue;
+                if (expectedFunction &&
+                    (candidate->externalFunction || candidate->exportedFunction))
+                    continue;
                 if (matching != InvalidSymbolId) {
                     Report("function value '" + expr->name + "' is ambiguous",
-                        "E_FUNCTION_VALUE_AMBIGUOUS");
+                        expectedCFunction ? "E_CFUNC_VALUE_AMBIGUOUS" : "E_FUNCTION_VALUE_AMBIGUOUS");
                     matching = InvalidSymbolId;
                     break;
                 }
@@ -149,6 +159,9 @@ namespace Absolute {
             Report("captured value '" + expr->name +
                 "' is immutable; captures use by-value semantics",
                 "E_LAMBDA_CAPTURE_MUTATION", id);
+        const bool cFunctionValue = symbol->kind == SymbolKind::Function &&
+            symbol->genericParameters.empty() &&
+            (symbol->externalFunction || symbol->exportedFunction);
         const bool functionValue = symbol->kind == SymbolKind::Function &&
             symbol->genericParameters.empty() && !symbol->externalFunction &&
             !symbol->exportedFunction;
@@ -156,11 +169,13 @@ namespace Absolute {
             symbol->parameterTypes.end(), IsValueReferenceType))
             Report("function with value-reference parameters cannot be stored in a func value",
                 "E_VALUE_REF_FUNCTION_VALUE", id);
-        if (symbol->kind == SymbolKind::Function &&
-            (symbol->externalFunction || symbol->exportedFunction))
+        if (cFunctionValue && !expectedCFunction && !expectedType.empty() &&
+            ParseFunctionType(expectedType, expectedReturn, expectedParameters))
             Report("C ABI function '" + expr->name +
-                "' cannot be stored in an Absolute func value", "E_FUNCTION_VALUE_C_ABI", id);
-        const bool value = functionValue || symbol->kind == SymbolKind::Variable || symbol->kind == SymbolKind::Parameter ||
+                "' cannot be stored in an Absolute func value; use cfunc<...>",
+                "E_FUNCTION_VALUE_C_ABI", id);
+        const bool value = functionValue || cFunctionValue ||
+            symbol->kind == SymbolKind::Variable || symbol->kind == SymbolKind::Parameter ||
             symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Property;
         if (!value) Report("object '" + expr->name + "' is not a value");
         ValueFlowState flow;
@@ -173,10 +188,12 @@ namespace Absolute {
                 Report("object '" + expr->name + "' is not initialized on every control-flow path",
                     "E_MAYBE_UNINITIALIZED_READ", id);
         }
-        const std::string resolvedType = functionValue
-            ? FunctionTypeName(symbol->type, symbol->parameterTypes) : symbol->type;
+        const std::string resolvedType = cFunctionValue
+            ? CFunctionTypeName(symbol->type, symbol->parameterTypes)
+            : (functionValue
+                ? FunctionTypeName(symbol->type, symbol->parameterTypes) : symbol->type);
         Save(expr, {id, resolvedType,
-            functionValue ? false :
+            (functionValue || cFunctionValue) ? false :
                 (capturedByCurrentLambda ? false :
                     (symbol->kind == SymbolKind::Property ? symbol->canWrite : value)), false,
             value && symbol->kind == SymbolKind::Variable &&
@@ -244,24 +261,29 @@ namespace Absolute {
             const Result callableValue = Evaluate(expr->base.get());
             std::string returnType;
             std::vector<std::string> parameterTypes;
-            if (!ParseFunctionType(callableValue.type, returnType, parameterTypes)) {
+            const bool cFunctionValue = ParseCFunctionType(
+                callableValue.type, returnType, parameterTypes);
+            if (!cFunctionValue &&
+                !ParseFunctionType(callableValue.type, returnType, parameterTypes)) {
                 Report("expression of type '" + callableValue.type + "' is not callable",
                     "E_NOT_CALLABLE");
                 Save(expr, {InvalidSymbolId, "error", false});
                 return;
             }
             if (expr->arguments.size() != parameterTypes.size())
-                Report("function value expects " + std::to_string(parameterTypes.size()) +
+                Report(std::string(cFunctionValue ? "cfunc" : "function value") +
+                    " expects " + std::to_string(parameterTypes.size()) +
                     " argument(s), got " + std::to_string(expr->arguments.size()),
-                    "E_FUNCTION_VALUE_ARITY");
+                    cFunctionValue ? "E_CFUNC_ARITY" : "E_FUNCTION_VALUE_ARITY");
             for (size_t index = 0; index < expr->arguments.size(); ++index) {
                 const std::string expected = index < parameterTypes.size()
                     ? parameterTypes[index] : std::string{};
                 const Result argument = EvaluateExpected(expr->arguments[index].get(), expected);
                 if (!expected.empty() && !IsAssignable(expected, argument.type))
-                    Report("function value argument " + std::to_string(index + 1) +
+                    Report(std::string(cFunctionValue ? "cfunc" : "function value") +
+                        " argument " + std::to_string(index + 1) +
                         " has type '" + argument.type + "', expected '" + expected + "'",
-                        "E_FUNCTION_VALUE_ARGUMENT");
+                        cFunctionValue ? "E_CFUNC_ARGUMENT" : "E_FUNCTION_VALUE_ARGUMENT");
                 CheckManagedMoveArgument(argument, expected, index, "function value");
             }
             Save(expr, {callableValue.symbol, returnType, false,

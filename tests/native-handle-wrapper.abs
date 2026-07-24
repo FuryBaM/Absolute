@@ -1,0 +1,40 @@
+// Opaque native handle wrapped as a resource-owning Absolute struct.
+// destroy() participates in automatic cleanup (see docs/native-c-abi.md).
+
+extern "C" raw void* absolute_test_handle_create(int32 tag);
+extern "C" int32 absolute_test_handle_tag(raw void* handle);
+extern "C" void absolute_test_handle_destroy(raw void* handle);
+
+struct NativeHandle {
+    raw void* ptr;
+
+    void destroy() {
+        if (ptr != null) {
+            absolute_test_handle_destroy(ptr);
+            ptr = null;
+        }
+    }
+
+    int32 tag() {
+        return absolute_test_handle_tag(ptr);
+    }
+}
+
+NativeHandle openHandle(int32 tag) {
+    NativeHandle handle;
+    handle.ptr = absolute_test_handle_create(tag);
+    return move(handle);
+}
+
+int32 main() {
+    {
+        NativeHandle a = openHandle(7);
+        assert(a.tag() == 7, "handle tag");
+        // destroy() runs when a leaves this scope.
+    }
+    NativeHandle b = openHandle(11);
+    NativeHandle c = move(b);
+    assert(c.tag() == 11, "moved handle");
+    println("native-handle=ok");
+    return 0;
+}

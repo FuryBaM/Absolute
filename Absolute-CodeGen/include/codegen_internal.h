@@ -236,6 +236,17 @@ namespace Absolute {
             return true;
         }
 
+        inline bool ParseCodegenCFunctionType(const std::string& type,
+            std::string& returnType, std::vector<std::string>& parameterTypes) {
+            std::string base;
+            std::vector<std::string> arguments;
+            if (!ParseCodegenGenericType(type, base, arguments) || base != "cfunc" ||
+                arguments.empty()) return false;
+            returnType = arguments.front();
+            parameterTypes.assign(arguments.begin() + 1, arguments.end());
+            return true;
+        }
+
         inline bool IsCodegenFunctionType(const std::string& type) {
             std::string returnType;
             std::vector<std::string> parameterTypes;

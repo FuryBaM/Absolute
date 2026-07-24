@@ -461,8 +461,10 @@ extern "C" __declspec(dllexport) int native_add(int left, int right) {
 On non-Windows platforms omit `__declspec(dllexport)`. Absolute rejects
 `extern "C++"` / `export "C++"` at parse time; C++ libraries must provide a C
 wrapper. Absolute `struct`/`class`/`interface` values, managed pointers, and
-array descriptors cannot cross the C boundary—use `raw T*` and scalars (see
-`docs/native-c-abi.md`).
+array descriptors cannot cross the C boundary—use `raw T*` and scalars.
+C callbacks use `cfunc<Return, Params...>` (raw function pointers from
+`extern`/`export "C"` only). Native handles wrap `raw void*` in a resource
+`struct` with `destroy()`. See `docs/native-c-abi.md`.
 
 Generate a native object without linking it:
 

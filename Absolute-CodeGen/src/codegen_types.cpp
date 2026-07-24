@@ -55,6 +55,8 @@ namespace Absolute {
         std::vector<std::string> functionParameters;
         if (ParseCodegenFunctionType(name, functionReturn, functionParameters))
             return builder.getPtrTy();
+        if (ParseCodegenCFunctionType(name, functionReturn, functionParameters))
+            return builder.getPtrTy();
         if (IsManagedPointerTypeName(name)) return builder.getInt64Ty();
         if (IsRawPointerTypeName(name)) return builder.getPtrTy();
         if (name == "int8" || name == "uint8" || name == "char") return builder.getInt8Ty();

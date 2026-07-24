@@ -528,10 +528,11 @@ namespace Absolute {
         std::string genericBase;
         std::vector<std::string> genericArguments;
         if (ParseGenericTypeName(name, genericBase, genericArguments)) {
-            if (genericBase == "func") {
+            if (genericBase == "func" || genericBase == "cfunc") {
                 if (genericArguments.empty() || genericArguments.front() == "auto" ||
                     genericArguments.front() == "dynamic") return false;
-                if (!IsKnownType(genericArguments.front())) return false;
+                if (genericArguments.front() != "void" && !IsKnownType(genericArguments.front()))
+                    return false;
                 return std::all_of(genericArguments.begin() + 1, genericArguments.end(),
                     [&](const std::string& argument) {
                         return argument != "void" && argument != "auto" &&
@@ -562,6 +563,17 @@ namespace Absolute {
             return IsAssignable(ValueReferenceBaseType(target), source);
         if (target == "error" || source == "error" || target == "dynamic" || source == "dynamic") return true;
         if (target == source) return true;
+        {
+            std::string targetReturn;
+            std::string sourceReturn;
+            std::vector<std::string> targetParameters;
+            std::vector<std::string> sourceParameters;
+            if (ParseCFunctionType(target, targetReturn, targetParameters) &&
+                ParseCFunctionType(source, sourceReturn, sourceParameters))
+                return targetReturn == sourceReturn && targetParameters == sourceParameters;
+            if (ParseCFunctionType(target, targetReturn, targetParameters) && source == "null")
+                return true;
+        }
         if (target.ends_with("[]") && source.ends_with("[]"))
             return IsAssignable(ArrayElementType(target), ArrayElementType(source));
         if (IsPointerType(target) && source == "null") return true;
@@ -803,8 +815,16 @@ namespace Absolute {
         std::string functionReturn;
         std::vector<std::string> functionParameters;
         if (ParseFunctionType(type, functionReturn, functionParameters)) {
-            Report(where + " cannot use an Absolute func type; C callbacks are not available yet",
+            Report(where + " cannot use an Absolute func type; use cfunc<...> for C callbacks",
                 "E_C_ABI_FUNC_TYPE");
+            return;
+        }
+        if (ParseCFunctionType(type, functionReturn, functionParameters)) {
+            // C function pointers are themselves C-compatible values (raw code pointers).
+            ValidateCAbiType(functionReturn, where + " cfunc return", true);
+            for (size_t index = 0; index < functionParameters.size(); ++index)
+                ValidateCAbiType(functionParameters[index],
+                    where + " cfunc parameter " + std::to_string(index + 1), false);
             return;
         }
         if (IsRawPointerType(type)) return;

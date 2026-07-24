@@ -84,6 +84,16 @@ namespace Absolute {
             const Symbol* symbol = info ? impl->analyzer->GetSymbol(info->symbol) : nullptr;
             if (symbol && symbol->kind == SymbolKind::Function) {
                 if (impl->addressMode) impl->Fail("a function value is not assignable");
+                if (symbol->externalFunction || symbol->exportedFunction) {
+                    // C ABI: raw function pointer (cfunc), not Absolute closure object.
+                    llvm::Function* target = impl->module->getFunction(
+                        impl->FunctionLinkName(*symbol));
+                    if (!target) impl->Fail("missing C ABI function '" + symbol->name + "'");
+                    impl->value = target;
+                    impl->valueCreatesManagedOwner = false;
+                    impl->valueCreatesClosureOwner = false;
+                    return;
+                }
                 impl->value = impl->FunctionClosure(*symbol);
                 impl->valueCreatesManagedOwner = false;
                 impl->valueCreatesClosureOwner = false;
@@ -146,6 +156,33 @@ namespace Absolute {
         std::string functionValueReturn;
         std::vector<std::string> functionValueParameters;
         const std::string baseType = impl->SemanticType(expr->base.get());
+        if (ParseCodegenCFunctionType(baseType, functionValueReturn,
+            functionValueParameters)) {
+            std::vector<llvm::Type*> llvmParameters;
+            llvmParameters.reserve(functionValueParameters.size());
+            for (const std::string& parameter : functionValueParameters)
+                llvmParameters.push_back(impl->AbiParameterType(parameter, true));
+            llvm::FunctionType* functionType = llvm::FunctionType::get(
+                impl->AbiReturnType(functionValueReturn, true), llvmParameters, false);
+            llvm::Value* callee = impl->Evaluate(expr->base.get());
+            std::vector<llvm::Value*> arguments;
+            std::vector<llvm::Value*> temporaryArrayOwners;
+            std::vector<llvm::Value*> temporaryClosureOwners;
+            for (size_t index = 0; index < expr->arguments.size(); ++index)
+                arguments.push_back(impl->EvaluateCallArgument(
+                    expr->arguments[index].get(), temporaryArrayOwners,
+                    temporaryClosureOwners, index < functionValueParameters.size()
+                        ? functionValueParameters[index] : std::string{}));
+            impl->value = impl->EmitAbiCall(functionType, callee,
+                functionValueReturn, {}, functionValueParameters, arguments,
+                "cfunc.result", true);
+            impl->ReleaseArrayTemporaries(temporaryArrayOwners);
+            impl->ReleaseClosureTemporaries(temporaryClosureOwners);
+            // Pure C function pointer: no Absolute exception state.
+            impl->valueCreatesManagedOwner = false;
+            impl->valueCreatesClosureOwner = false;
+            return;
+        }
         if (ParseCodegenFunctionType(baseType, functionValueReturn,
             functionValueParameters)) {
             llvm::FunctionType* functionType = impl->ClosureInvokeType(

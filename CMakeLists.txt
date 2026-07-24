@@ -1318,6 +1318,11 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/c-abi-type-errors.abs"
     )
     set_tests_properties(absolute.c-abi-type-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.cfunc-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/cfunc-errors.abs"
+    )
+    set_tests_properties(absolute.cfunc-errors PROPERTIES WILL_FAIL TRUE)
 
     if(ABSOLUTE_ENABLE_LLVM)
         add_test(
@@ -1362,6 +1367,55 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.check-export-c-abi PROPERTIES
             FIXTURES_REQUIRED absolute-export-c-abi-ir
         )
+        add_test(
+            NAME absolute.emit-cfunc-callbacks
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/cfunc-callbacks.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/cfunc-callbacks.ll"
+        )
+        set_tests_properties(absolute.emit-cfunc-callbacks PROPERTIES
+            FIXTURES_SETUP absolute-cfunc-callbacks-ir
+        )
+        add_test(
+            NAME absolute.build-cfunc-callbacks
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/cfunc-callbacks.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/cfunc-callbacks-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-cfunc-callbacks PROPERTIES
+            FIXTURES_SETUP absolute-cfunc-callbacks-executable
+        )
+        add_test(
+            NAME absolute.run-cfunc-callbacks
+            COMMAND "${CMAKE_BINARY_DIR}/cfunc-callbacks-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-cfunc-callbacks PROPERTIES
+            FIXTURES_REQUIRED absolute-cfunc-callbacks-executable
+            PASS_REGULAR_EXPRESSION "cfunc-callbacks=ok"
+        )
+        file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/NativeHandle-$<CONFIG>.absproj" CONTENT
+"{
+  \"name\": \"NativeHandle\",
+  \"entry\": \"${PROJECT_SOURCE_DIR}/tests/projects/native-handle/src/main.abs\",
+  \"sources\": [\"${PROJECT_SOURCE_DIR}/tests/projects/native-handle/src\"],
+  \"nativeLibraries\": [\"$<TARGET_FILE:absolute-native-test>\"],
+  \"nativeSearchPaths\": []
+}
+")
+        add_test(
+            NAME absolute.build-native-handle
+            COMMAND Absolute-Compiler build "${CMAKE_BINARY_DIR}/NativeHandle-$<CONFIG>.absproj"
+                --build-exe -o "${CMAKE_BINARY_DIR}/native-handle-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-native-handle PROPERTIES
+            FIXTURES_SETUP absolute-native-handle-executable
+        )
+        add_test(
+            NAME absolute.run-native-handle
+            COMMAND "${CMAKE_BINARY_DIR}/native-handle-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-native-handle PROPERTIES
+            FIXTURES_REQUIRED absolute-native-handle-executable
+            PASS_REGULAR_EXPRESSION "native-handle=ok"
+        )
         if(ABSOLUTE_LLI_EXECUTABLE)
             add_test(
                 NAME absolute.run-native-ffi
@@ -1373,7 +1427,10 @@ if(BUILD_TESTING)
             )
         endif()
 
-        add_library(absolute-native-test STATIC tests/native/native_math.cpp)
+        add_library(absolute-native-test STATIC
+            tests/native/native_math.cpp
+            tests/native/native_handle.cpp
+            tests/native/cfunc_apply.cpp)
         add_library(absolute-load-test-library SHARED tests/native/load_library.cpp)
         set_target_properties(absolute-load-test-library PROPERTIES
             OUTPUT_NAME "absolute-load-test"

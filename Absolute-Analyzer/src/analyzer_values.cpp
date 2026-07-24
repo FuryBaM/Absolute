@@ -898,6 +898,32 @@ namespace Absolute {
                 false});
             return;
         }
+        if (typeContext && templateName == "cfunc") {
+            if (expr->types.empty()) {
+                Report("cfunc requires a return type", "E_CFUNC_TYPE_ARITY");
+                Save(expr, {InvalidSymbolId, "error", false});
+                return;
+            }
+            std::vector<std::string> types;
+            types.reserve(expr->types.size());
+            for (const auto& type : expr->types) types.push_back(ResolveType(type.get()));
+            if (types.front() == "auto" || types.front() == "dynamic")
+                Report("cfunc return type must be concrete", "E_CFUNC_TYPE_RETURN");
+            for (size_t index = 1; index < types.size(); ++index)
+                if (types[index] == "void" || types[index] == "auto" || types[index] == "dynamic")
+                    Report("cfunc parameter types must be concrete non-void types",
+                        "E_CFUNC_TYPE_PARAMETER");
+            // Each component must itself be C-ABI safe (no Absolute aggregates/func/managed).
+            ValidateCAbiType(types.front(), "cfunc return", true);
+            for (size_t index = 1; index < types.size(); ++index)
+                ValidateCAbiType(types[index],
+                    "cfunc parameter " + std::to_string(index), false);
+            Save(expr, {InvalidSymbolId,
+                CFunctionTypeName(types.front(),
+                    std::vector<std::string>(types.begin() + 1, types.end())),
+                false});
+            return;
+        }
         if (typeContext) {
             const std::string base = ResolveTypeReference(ExtractQualifiedName(expr->base.get()));
             std::vector<std::string> arguments;
