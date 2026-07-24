@@ -85,6 +85,42 @@ int32 main() {
     int32 vectorSum = vec1.reduce(0, sumReducer);
     assert(vectorSum == 28, "reduce vector sum extension");
 
+    // 6. Free-function style for transform / filter / reduce
+    int32[] freeMapped = std.collections.transform(arr1, doubleVal);
+    assert(freeMapped[0] == 2, "free transform array");
+    std.collections.Vector<int32>* freeMappedVec = std.collections.transform(vec1, doubleVal);
+    assert(freeMappedVec[5] == 18, "free transform vector");
+
+    int32[] freeFiltered = std.collections.filter(arr1, isEven);
+    assert(freeFiltered.length == 2, "free filter array length");
+    std.collections.Vector<int32>* freeFilteredVec = std.collections.filter(vec1, isEven);
+    assert(freeFilteredVec.count == 2, "free filter vector count");
+
+    assert(std.collections.reduce(arr1, 0, sumReducer) == 28, "free reduce array");
+    assert(std.collections.reduce(vec1, 0, sumReducer) == 28, "free reduce vector");
+
+    // 7. reverse (array + vector)
+    int32[] revArr = {1, 2, 3, 4};
+    revArr.reverse();
+    assert(revArr[0] == 4, "array reverse first");
+    assert(revArr[3] == 1, "array reverse last");
+    std.collections.reverse(revArr);
+    assert(revArr[0] == 1, "array reverse free restores first");
+
+    std.collections.Vector<int32>* revVec = new std.collections.Vector<int32>();
+    revVec.push(10);
+    revVec.push(20);
+    revVec.push(30);
+    revVec.reverse();
+    assert(revVec[0] == 30, "vector reverse first");
+    assert(revVec[2] == 10, "vector reverse last");
+
+    // 8. Empty filter / identity reduce
+    int32[] empty = {};
+    int32[] emptyFiltered = empty.filter(isEven);
+    assert(emptyFiltered.length == 0, "filter empty array");
+    assert(empty.reduce(7, sumReducer) == 7, "reduce empty keeps initial");
+
     println("collection-algorithms=ok");
     return 0;
 }

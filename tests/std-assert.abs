@@ -1,0 +1,48 @@
+import "../std/assert.abs";
+
+int32 main() {
+    std.assert.that(true, "true must pass");
+    std.assert.isTrue(1 == 1);
+    std.assert.isFalse(1 == 2);
+    std.assert.equalInt(42, 40 + 2);
+    std.assert.equalInt(7, 7, "labeled equal");
+    std.assert.notEqualInt(1, 2);
+    std.assert.equalString("hello", "hello");
+    std.assert.equalString("a", "a", "labeled string");
+
+    bool failedSoft = false;
+    try {
+        std.assert.that(false, "soft fail");
+    }
+    catch (std.assert.AssertionError* error) {
+        failedSoft = true;
+        assert(error.message == "soft fail", "AssertionError message");
+    }
+    assert(failedSoft, "that(false) must throw AssertionError");
+
+    bool failedEqual = false;
+    try {
+        std.assert.equalInt(1, 2);
+    }
+    catch (std.assert.AssertionError* error) {
+        failedEqual = true;
+    }
+    assert(failedEqual, "equalInt mismatch must throw");
+
+    std.assert.fails(fn() -> void {
+        throw new Error("boom");
+    }, "body must throw");
+
+    bool failsFailed = false;
+    try {
+        std.assert.fails(fn() -> void {
+        }, "expected throw");
+    }
+    catch (std.assert.AssertionError* error) {
+        failsFailed = true;
+    }
+    assert(failsFailed, "fails() without throw must fail");
+
+    println("std-assert=ok");
+    return 0;
+}

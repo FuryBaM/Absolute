@@ -10,6 +10,33 @@ namespace {
     thread_local std::string lastStringError;
     thread_local std::string lastStringResult;
 
+    // Absolute `string` is a bare `const char*`. Runtime helpers must return
+    // durable storage: a single thread-local buffer is invalidated by the next
+    // string-producing call (breaks uri/http parse pipelines that keep fields).
+    // Matches the builtin format() path, which also mallocs the result.
+    const char* DurableCopy(const std::string& value) {
+        const std::size_t size = value.size() + 1;
+        char* copy = static_cast<char*>(std::malloc(size));
+        if (!copy) {
+            lastStringError = "string allocation failed";
+            return "";
+        }
+        std::memcpy(copy, value.c_str(), size);
+        return copy;
+    }
+
+    const char* DurableCString(const char* value) {
+        if (!value) value = "";
+        const std::size_t size = std::strlen(value) + 1;
+        char* copy = static_cast<char*>(std::malloc(size));
+        if (!copy) {
+            lastStringError = "string allocation failed";
+            return "";
+        }
+        std::memcpy(copy, value, size);
+        return copy;
+    }
+
     // Helper: decode single UTF-8 code point starting at ptr, advances ptr
     uint32_t DecodeUtf8(const char*& ptr) {
         if (!ptr || !*ptr) return 0;
@@ -118,70 +145,68 @@ extern "C" int32_t absolute_string_code_point_at(const char* text, int32_t index
 
 extern "C" const char* absolute_string_from_code_point(int32_t codePoint) {
     if (codePoint < 0) {
-        lastStringResult.clear();
-        return lastStringResult.c_str();
+        return DurableCopy(std::string());
     }
-    lastStringResult = EncodeUtf8(static_cast<uint32_t>(codePoint));
-    return lastStringResult.c_str();
+    return DurableCopy(EncodeUtf8(static_cast<uint32_t>(codePoint)));
 }
 
 extern "C" const char* absolute_string_to_upper(const char* text) {
     lastStringResult.clear();
-    if (!text) return lastStringResult.c_str();
+    if (!text) return DurableCopy(lastStringResult);
     const char* p = text;
     while (*p) {
         uint32_t cp = DecodeUtf8(p);
         lastStringResult += EncodeUtf8(ToUpperCodePoint(cp));
     }
-    return lastStringResult.c_str();
+    return DurableCopy(lastStringResult);
 }
 
 extern "C" const char* absolute_string_to_lower(const char* text) {
     lastStringResult.clear();
-    if (!text) return lastStringResult.c_str();
+    if (!text) return DurableCopy(lastStringResult);
     const char* p = text;
     while (*p) {
         uint32_t cp = DecodeUtf8(p);
         lastStringResult += EncodeUtf8(ToLowerCodePoint(cp));
     }
-    return lastStringResult.c_str();
+    return DurableCopy(lastStringResult);
 }
 
 extern "C" const char* absolute_string_trim(const char* text) {
     lastStringResult.clear();
-    if (!text || !*text) return lastStringResult.c_str();
+    if (!text || !*text) return DurableCopy(lastStringResult);
     std::string str(text);
     size_t start = str.find_first_not_of(" \t\r\n");
     if (start == std::string::npos) {
-        return lastStringResult.c_str();
+        return DurableCopy(lastStringResult);
     }
     size_t end = str.find_last_not_of(" \t\r\n");
     lastStringResult = str.substr(start, end - start + 1);
-    return lastStringResult.c_str();
+    return DurableCopy(lastStringResult);
 }
 
 extern "C" const char* absolute_string_trim_start(const char* text) {
     lastStringResult.clear();
-    if (!text || !*text) return lastStringResult.c_str();
+    if (!text || !*text) return DurableCopy(lastStringResult);
     std::string str(text);
     size_t start = str.find_first_not_of(" \t\r\n");
     if (start == std::string::npos) {
-        return lastStringResult.c_str();
+        return DurableCopy(lastStringResult);
     }
     lastStringResult = str.substr(start);
-    return lastStringResult.c_str();
+    return DurableCopy(lastStringResult);
 }
 
 extern "C" const char* absolute_string_trim_end(const char* text) {
     lastStringResult.clear();
-    if (!text || !*text) return lastStringResult.c_str();
+    if (!text || !*text) return DurableCopy(lastStringResult);
     std::string str(text);
     size_t end = str.find_last_not_of(" \t\r\n");
     if (end == std::string::npos) {
-        return lastStringResult.c_str();
+        return DurableCopy(lastStringResult);
     }
     lastStringResult = str.substr(0, end + 1);
-    return lastStringResult.c_str();
+    return DurableCopy(lastStringResult);
 }
 
 extern "C" int32_t absolute_string_starts_with(const char* text, const char* prefix) {
@@ -223,10 +248,9 @@ extern "C" int32_t absolute_string_last_index_of(const char* text, const char* s
 
 extern "C" const char* absolute_string_replace(const char* text, const char* fromText, const char* toText) {
     lastStringResult.clear();
-    if (!text) return lastStringResult.c_str();
+    if (!text) return DurableCopy(lastStringResult);
     if (!fromText || !*fromText) {
-        lastStringResult = text;
-        return lastStringResult.c_str();
+        return DurableCString(text);
     }
     const char* toVal = toText ? toText : "";
     std::string str(text);
@@ -238,20 +262,20 @@ extern "C" const char* absolute_string_replace(const char* text, const char* fro
         pos += toStr.length();
     }
     lastStringResult = str;
-    return lastStringResult.c_str();
+    return DurableCopy(lastStringResult);
 }
 
 extern "C" const char* absolute_string_substring(const char* text, int32_t start, int32_t length) {
     lastStringResult.clear();
-    if (!text || start < 0 || length <= 0) return lastStringResult.c_str();
+    if (!text || start < 0 || length <= 0) return DurableCopy(lastStringResult);
     size_t textLen = std::strlen(text);
-    if (static_cast<size_t>(start) >= textLen) return lastStringResult.c_str();
+    if (static_cast<size_t>(start) >= textLen) return DurableCopy(lastStringResult);
     size_t count = static_cast<size_t>(length);
     if (static_cast<size_t>(start) + count > textLen) {
         count = textLen - static_cast<size_t>(start);
     }
     lastStringResult = std::string(text + start, count);
-    return lastStringResult.c_str();
+    return DurableCopy(lastStringResult);
 }
 
 extern "C" void* absolute_string_builder_create() {
@@ -312,14 +336,14 @@ extern "C" const char* absolute_string_builder_to_string(void* handle) {
     if (handle) {
         lastStringResult = *static_cast<std::string*>(handle);
     }
-    return lastStringResult.c_str();
+    return DurableCopy(lastStringResult);
 }
 
 extern "C" const char* absolute_string_concat(const char* a, const char* b) {
     lastStringResult.clear();
     if (a) lastStringResult += a;
     if (b) lastStringResult += b;
-    return lastStringResult.c_str();
+    return DurableCopy(lastStringResult);
 }
 
 extern "C" int32_t absolute_string_parse_int(const char* text) {

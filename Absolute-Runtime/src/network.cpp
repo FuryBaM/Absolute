@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <climits>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <new>
@@ -256,7 +257,15 @@ extern "C" const char* absolute_net_tcp_receive(void* handle, std::int32_t maxim
     }
     state->receiveBuffer.resize(static_cast<std::size_t>(count));
     lastNetworkError.clear();
-    return state->receiveBuffer.c_str();
+    // Durable copy: callers may keep the string after the next receive/close.
+    const std::size_t size = state->receiveBuffer.size() + 1;
+    char* durable = static_cast<char*>(std::malloc(size));
+    if (!durable) {
+        lastNetworkError = "receive allocation failed";
+        return nullptr;
+    }
+    std::memcpy(durable, state->receiveBuffer.c_str(), size);
+    return durable;
 }
 
 extern "C" std::int32_t absolute_net_tcp_set_timeout(
@@ -353,9 +362,17 @@ extern "C" const char* absolute_net_resolve_host(const char* hostname) {
     sockaddr_in* ipv4 = reinterpret_cast<sockaddr_in*>(result->ai_addr);
     inet_ntop(AF_INET, &(ipv4->sin_addr), ipBuffer, sizeof(ipBuffer));
     freeaddrinfo(result);
-    static thread_local std::string lastResolvedIp;
-    lastResolvedIp = ipBuffer;
-    return lastResolvedIp.c_str();
+    // Durable copy: Absolute string is a bare pointer and must outlive later
+    // resolve/send calls on the same thread.
+    const std::size_t size = std::strlen(ipBuffer) + 1;
+    char* durable = static_cast<char*>(std::malloc(size));
+    if (!durable) {
+        lastNetworkError = "resolve host allocation failed";
+        return "";
+    }
+    std::memcpy(durable, ipBuffer, size);
+    lastNetworkError.clear();
+    return durable;
 }
 
 extern "C" void* absolute_net_udp_bind(const char* host, std::int32_t port) {
@@ -429,7 +446,15 @@ extern "C" const char* absolute_net_udp_receive_from(void* handle, std::int32_t 
         return nullptr;
     }
     state->receiveBuffer.resize(static_cast<std::size_t>(count));
-    return state->receiveBuffer.c_str();
+    lastNetworkError.clear();
+    const std::size_t size = state->receiveBuffer.size() + 1;
+    char* durable = static_cast<char*>(std::malloc(size));
+    if (!durable) {
+        lastNetworkError = "udp receive allocation failed";
+        return nullptr;
+    }
+    std::memcpy(durable, state->receiveBuffer.c_str(), size);
+    return durable;
 }
 
 extern "C" void absolute_net_udp_close(void* handle) {

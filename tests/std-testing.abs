@@ -1,0 +1,41 @@
+import "../std/testing.abs";
+import "../std/assert.abs";
+import "../std/log.abs";
+
+int32 main() {
+    std.log.setMinLevel(std.log.Level.Error);
+
+    std.testing.Suite* suite = new std.testing.Suite("demo");
+    suite.setQuiet(true);
+
+    suite.test("arithmetic", fn() -> void {
+        std.assert.equalInt(4, 2 + 2);
+        std.assert.that(3 * 3 == 9, "multiply");
+    });
+
+    suite.test("strings", fn() -> void {
+        std.assert.equalString("ok", "ok");
+    });
+
+    suite.test("intentional-fail", fn() -> void {
+        std.assert.equalInt(1, 2, "must fail");
+    });
+
+    suite.test("unexpected-error", fn() -> void {
+        throw new Error("unexpected");
+    });
+
+    assert(suite.passedCount() == 2, "two cases must pass");
+    assert(suite.failedCount() == 2, "two cases must fail");
+    assert(suite.totalCount() == 4, "four cases total");
+    assert(suite.finish() == 1, "finish returns failure exit code");
+
+    int32 okCode = std.testing.run("solo-pass", fn() -> void {
+        std.assert.isTrue(true);
+    });
+    assert(okCode == 0, "run success exit code");
+
+    std.log.setMinLevel(std.log.Level.Info);
+    println("std-testing=ok");
+    return 0;
+}

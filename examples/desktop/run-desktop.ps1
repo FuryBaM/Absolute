@@ -142,11 +142,14 @@ $runtimeLibrary = Join-Path $windowsBuild 'Release\Absolute-Runtime.lib'
 $desktopLibrary = Join-Path $windowsBuild 'plugins\desktop\Release\absolute-desktop-runtime.lib'
 $outputPath = [IO.Path]::GetFullPath($Output)
 New-Item -ItemType Directory -Force -Path ([IO.Path]::GetDirectoryName($outputPath)) | Out-Null
+# Match Absolute-Compiler --build-exe defaults (ws2_32/shell32 for std.net/std.fs)
+# plus desktop Win32 libs (user32/gdi32).
 Invoke-Step 'Link Windows executable' 'link.exe' @(
     '/nologo', "/out:$outputPath", '/subsystem:console', '/stack:67108864',
     $object, $runtimeLibrary, $desktopLibrary,
     'libcmt.lib', 'libvcruntime.lib', 'libucrt.lib',
-    'kernel32.lib', 'user32.lib', 'gdi32.lib'
+    'kernel32.lib', 'user32.lib', 'gdi32.lib',
+    'ws2_32.lib', 'shell32.lib'
 )
 
 Write-Host "Built: $outputPath"

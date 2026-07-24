@@ -474,9 +474,9 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   send/receive, timeout, shutdown и автоматическое закрытие opaque socket handle;
   Windows использует Winsock 2, Linux — POSIX sockets.
 - [x] Добавить UDP (`UdpSocket`), DNS API верхнего уровня (`std.net.resolve`), `std.uri` (`Uri` parser, `encode`, `decode`) и `std.http` (HTTP Client `get`/`post` и HTTP Server `HttpServer`) поверх транспортного слоя `std.net` с использованием операторов `defer`.
-- [ ] Довести стандартные algorithms: существующие sort/search/reverse дополнить
+- [x] Довести стандартные algorithms: существующие sort/search/reverse дополнить
   transform, reduce и filter и подключить весь набор к CTest.
-- [ ] Добавить logging, assertions и test framework.
+- [x] Добавить logging, assertions и test framework.
 
 ### Desktop, игры и графика
 

@@ -431,6 +431,18 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-http.abs"
     )
     add_test(
+        NAME absolute.std-log-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-log.abs"
+    )
+    add_test(
+        NAME absolute.std-assert-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-assert.abs"
+    )
+    add_test(
+        NAME absolute.std-testing-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-testing.abs"
+    )
+    add_test(
         NAME absolute.script-main-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/script-main.abs"
     )
@@ -452,6 +464,11 @@ if(BUILD_TESTING)
         NAME absolute.collection-builder-capability-semantic
         COMMAND Absolute-Compiler
             "${PROJECT_SOURCE_DIR}/tests/collection-builder-capability.abs"
+    )
+    add_test(
+        NAME absolute.collection-algorithms-semantic
+        COMMAND Absolute-Compiler
+            "${PROJECT_SOURCE_DIR}/tests/collection-algorithms.abs"
     )
     add_test(
         NAME absolute.generics-errors
@@ -1649,6 +1666,25 @@ if(BUILD_TESTING)
             FIXTURES_REQUIRED absolute-collection-builder-capability-executable
         )
         add_test(
+            NAME absolute.build-collection-algorithms
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/tests/collection-algorithms.abs"
+                --build-exe
+                -o "${CMAKE_BINARY_DIR}/collection-algorithms-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-collection-algorithms PROPERTIES
+            FIXTURES_SETUP absolute-collection-algorithms-executable
+        )
+        add_test(
+            NAME absolute.run-collection-algorithms
+            COMMAND
+                "${CMAKE_BINARY_DIR}/collection-algorithms-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-collection-algorithms PROPERTIES
+            FIXTURES_REQUIRED absolute-collection-algorithms-executable
+            PASS_REGULAR_EXPRESSION "collection-algorithms=ok"
+        )
+        add_test(
             NAME absolute.build-interfaces-codegen
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interfaces-codegen.abs"
                 --build-exe -o "${CMAKE_BINARY_DIR}/interfaces-codegen-app${CMAKE_EXECUTABLE_SUFFIX}"
@@ -2090,6 +2126,51 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-std-http PROPERTIES
             FIXTURES_REQUIRED absolute-std-http-executable
             PASS_REGULAR_EXPRESSION "std-http=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-log
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-log.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-log-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-log PROPERTIES
+            FIXTURES_SETUP absolute-std-log-executable
+        )
+        add_test(NAME absolute.run-std-log
+            COMMAND "${CMAKE_BINARY_DIR}/std-log-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-log PROPERTIES
+            FIXTURES_REQUIRED absolute-std-log-executable
+            PASS_REGULAR_EXPRESSION "std-log=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-assert
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-assert.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-assert-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-assert PROPERTIES
+            FIXTURES_SETUP absolute-std-assert-executable
+        )
+        add_test(NAME absolute.run-std-assert
+            COMMAND "${CMAKE_BINARY_DIR}/std-assert-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-assert PROPERTIES
+            FIXTURES_REQUIRED absolute-std-assert-executable
+            PASS_REGULAR_EXPRESSION "std-assert=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-testing
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-testing.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-testing-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-testing PROPERTIES
+            FIXTURES_SETUP absolute-std-testing-executable
+        )
+        add_test(NAME absolute.run-std-testing
+            COMMAND "${CMAKE_BINARY_DIR}/std-testing-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-testing PROPERTIES
+            FIXTURES_REQUIRED absolute-std-testing-executable
+            PASS_REGULAR_EXPRESSION "std-testing=ok"
         )
 
         add_test(

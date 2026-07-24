@@ -1,17 +1,33 @@
 import "../std/http.abs";
 
-async void doFetch(int32 port) {
+async int32 doFetch(int32 port) {
     string url = format("http://127.0.0.1:{}/test", port);
     std.http.HttpResponse* resp = std.http.fetch(url);
+    int32 ok = 0;
     if (resp != null) {
+        if (resp.isSuccess() && resp.statusCode == 200 && resp.body == "Hello HTTP!") {
+            ok = 1;
+        }
         delete resp;
     }
+    return ok;
 }
 
-int32 main() {
+async int32 doPost(int32 port) {
+    string url = format("http://127.0.0.1:{}/echo", port);
+    std.http.HttpResponse* resp = std.http.post(url, "ping", "text/plain");
+    int32 ok = 0;
+    if (resp != null) {
+        if (resp.body == "pong") {
+            ok = 1;
+        }
+        delete resp;
+    }
+    return ok;
+}
+
+async int32 main() {
     std.http.HttpServer* server = new std.http.HttpServer();
-    defer server.close();
-    defer delete server;
 
     bool listening = server.listen("127.0.0.1", 0);
     assert(listening == true, "server listen failed");
@@ -19,15 +35,33 @@ int32 main() {
     int32 serverPort = server.port();
     assert(serverPort > 0, "server port invalid");
 
-    spawn doFetch(serverPort);
+    task<int32> clientTask = spawn doFetch(serverPort);
 
     std.http.HttpContext* ctx = server.accept();
     assert(ctx != null, "ctx null");
-    if (ctx != null) {
-        ctx.send(200, "text/plain", "Hello HTTP!");
-        ctx.dispose();
-        delete ctx;
-    }
+    assert(ctx.request.method == "GET", "request method");
+    assert(ctx.request.url == "/test", "request url");
+    ctx.send(200, "text/plain", "Hello HTTP!");
+    ctx.dispose();
+    delete ctx;
+
+    int32 fetchOk = await clientTask;
+    assert(fetchOk == 1, "fetch response mismatch");
+
+    task<int32> postTask = spawn doPost(serverPort);
+    std.http.HttpContext* postCtx = server.accept();
+    assert(postCtx != null, "post ctx null");
+    assert(postCtx.request.method == "POST", "post method");
+    assert(postCtx.request.body == "ping", "post body");
+    postCtx.send(200, "text/plain", "pong");
+    postCtx.dispose();
+    delete postCtx;
+
+    int32 postOk = await postTask;
+    assert(postOk == 1, "post response mismatch");
+
+    server.close();
+    delete server;
 
     println("std-http=ok");
     return 0;

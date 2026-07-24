@@ -35,113 +35,148 @@ namespace std.http {
         }
     }
 
+    HttpResponse* parseResponse(string responseRaw) {
+        HttpResponse* response = new HttpResponse();
+        int32 headerEnd = std.text.indexOf(responseRaw, "\r\n\r\n");
+        if (headerEnd < 0) {
+            response.body = responseRaw;
+            return response;
+        }
+
+        response.body = std.text.substring(
+            responseRaw,
+            headerEnd + 4,
+            std.text.codePointCount(responseRaw) - (headerEnd + 4));
+        string headerPart = std.text.substring(responseRaw, 0, headerEnd);
+        response.headers = headerPart;
+
+        int32 firstLineEnd = std.text.indexOf(headerPart, "\r\n");
+        string statusLine = headerPart;
+        if (firstLineEnd >= 0) {
+            statusLine = std.text.substring(headerPart, 0, firstLineEnd);
+        }
+
+        int32 sp1 = std.text.indexOf(statusLine, " ");
+        if (sp1 >= 0) {
+            string afterVersion = std.text.substring(
+                statusLine,
+                sp1 + 1,
+                std.text.codePointCount(statusLine) - (sp1 + 1));
+            int32 sp2 = std.text.indexOf(afterVersion, " ");
+            string codeText = afterVersion;
+            string reason = "";
+            if (sp2 >= 0) {
+                codeText = std.text.substring(afterVersion, 0, sp2);
+                reason = std.text.substring(
+                    afterVersion,
+                    sp2 + 1,
+                    std.text.codePointCount(afterVersion) - (sp2 + 1));
+            }
+            response.statusCode = std.text.parseInt(codeText);
+            if (reason != "") {
+                response.statusText = reason;
+            }
+        }
+        return response;
+    }
+
+    std.net.TcpSocket* connectWithRetry(string host, int32 port) {
+        int32 attempts = 0;
+        while (attempts < 20) {
+            try {
+                std.net.TcpSocket* socket = std.net.connect(host, port);
+                socket.setTimeout(5000);
+                return socket;
+            }
+            catch (Error* e) {
+                attempts = attempts + 1;
+            }
+        }
+        throw new Error(format("HTTP failed to connect to {}:{}", host, port));
+    }
+
     HttpResponse* fetch(string urlStr) {
         std.uri.Uri* uri = std.uri.parse(urlStr);
         defer delete uri;
 
-        std.net.TcpSocket* socket = null;
-        int32 attempts = 0;
-        while (socket == null && attempts < 10) {
-            try {
-                socket = std.net.connect(uri.host, uri.port);
-            } catch (Error* e) {
-                attempts = attempts + 1;
-            }
-        }
-        if (socket == null) {
-            throw new Error(format("HTTP fetch failed to connect to {}:{}", uri.host, uri.port));
-        }
-        defer socket.close();
+        std.net.TcpSocket* socket = connectWithRetry(uri.host, uri.port);
+        defer delete socket;
 
-        string reqStr = format("GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n", uri.path, uri.host);
+        string path = uri.path;
+        if (uri.query != "") {
+            path = format("{}?{}", path, uri.query);
+        }
+        string reqStr = format(
+            "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+            path,
+            uri.host);
         socket.send(reqStr);
 
         string responseRaw = socket.receive(65536);
-        HttpResponse* response = new HttpResponse();
-
-        int32 headerEnd = std.text.indexOf(responseRaw, "\r\n\r\n");
-        if (headerEnd >= 0) {
-            response.body = std.text.substring(responseRaw, headerEnd + 4, std.text.codePointCount(responseRaw) - (headerEnd + 4));
-            string headerPart = std.text.substring(responseRaw, 0, headerEnd);
-            response.headers = headerPart;
-
-            int32 firstLineEnd = std.text.indexOf(headerPart, "\r\n");
-            if (firstLineEnd >= 0) {
-                string statusLine = std.text.substring(headerPart, 0, firstLineEnd);
-                if (std.text.contains(statusLine, "200")) { response.statusCode = 200; response.statusText = "OK"; }
-                if (std.text.contains(statusLine, "404")) { response.statusCode = 404; response.statusText = "Not Found"; }
-                if (std.text.contains(statusLine, "500")) { response.statusCode = 500; response.statusText = "Internal Server Error"; }
-            }
-        } else {
-            response.body = responseRaw;
-        }
-
-        return response;
+        return parseResponse(responseRaw);
     }
 
     HttpResponse* post(string urlStr, string bodyText, string contentType) {
         std.uri.Uri* uri = std.uri.parse(urlStr);
         defer delete uri;
 
-        std.net.TcpSocket* socket = null;
-        int32 attempts = 0;
-        while (socket == null && attempts < 10) {
-            try {
-                socket = std.net.connect(uri.host, uri.port);
-            } catch (Error* e) {
-                attempts = attempts + 1;
-            }
-        }
-        if (socket == null) {
-            throw new Error(format("HTTP post failed to connect to {}:{}", uri.host, uri.port));
-        }
-        defer socket.close();
+        std.net.TcpSocket* socket = connectWithRetry(uri.host, uri.port);
+        defer delete socket;
 
+        string path = uri.path;
+        if (uri.query != "") {
+            path = format("{}?{}", path, uri.query);
+        }
         int32 bodyLen = std.text.codePointCount(bodyText);
-        string reqStr = format("POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", uri.path, uri.host, contentType, bodyLen, bodyText);
+        string reqStr = format(
+            "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            path,
+            uri.host,
+            contentType,
+            bodyLen,
+            bodyText);
         socket.send(reqStr);
 
         string responseRaw = socket.receive(65536);
-        HttpResponse* response = new HttpResponse();
-
-        int32 headerEnd = std.text.indexOf(responseRaw, "\r\n\r\n");
-        if (headerEnd >= 0) {
-            response.body = std.text.substring(responseRaw, headerEnd + 4, std.text.codePointCount(responseRaw) - (headerEnd + 4));
-            response.headers = std.text.substring(responseRaw, 0, headerEnd);
-            response.statusCode = 200;
-        } else {
-            response.body = responseRaw;
-        }
-
-        return response;
+        return parseResponse(responseRaw);
     }
 
     class HttpContext {
-        public raw HttpRequest* request;
-        public raw uint8* socketHandle;
+        public HttpRequest* request;
+        private raw uint8* socketHandle;
 
-        public HttpContext(raw HttpRequest* req, raw uint8* nativeSock) {
-            request = req;
+        public HttpContext(string methodVal, string urlVal, string bodyVal, raw uint8* nativeSock) {
+            request = new HttpRequest(methodVal, urlVal, bodyVal);
             socketHandle = nativeSock;
         }
 
         public void send(int32 statusCode, string contentType, string bodyText) {
-            if (socketHandle != null) {
-                string statusMsg = "OK";
-                if (statusCode == 404) { statusMsg = "Not Found"; }
-                if (statusCode == 500) { statusMsg = "Internal Error"; }
-
-                int32 bodyLen = std.text.codePointCount(bodyText);
-                string respStr = format("HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", statusCode, statusMsg, contentType, bodyLen, bodyText);
-                absolute_net_tcp_send(socketHandle, respStr);
-                absolute_net_tcp_close(socketHandle);
-                socketHandle = null;
+            if (socketHandle == null) {
+                return;
             }
+            string statusMsg = "OK";
+            if (statusCode == 404) {
+                statusMsg = "Not Found";
+            }
+            if (statusCode == 500) {
+                statusMsg = "Internal Error";
+            }
+
+            int32 bodyLen = std.text.codePointCount(bodyText);
+            string respStr = format(
+                "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                statusCode,
+                statusMsg,
+                contentType,
+                bodyLen,
+                bodyText);
+            absolute_net_tcp_send(socketHandle, respStr);
+            absolute_net_tcp_close(socketHandle);
+            socketHandle = null;
         }
 
         public void dispose() {
             if (request != null) {
-                delete request;
                 request = null;
             }
             if (socketHandle != null) {
@@ -171,9 +206,14 @@ namespace std.http {
         }
 
         public HttpContext* accept() {
-            if (listener == null) { return null; }
+            if (listener == null) {
+                return null;
+            }
             raw uint8* nativeSock = absolute_net_tcp_accept(listener.getHandle());
-            if (nativeSock == null) { return null; }
+            if (nativeSock == null) {
+                return null;
+            }
+            absolute_net_tcp_set_timeout(nativeSock, 5000);
 
             string rawReq = absolute_net_tcp_receive(nativeSock, 16384);
 
@@ -184,7 +224,10 @@ namespace std.http {
             int32 space1 = std.text.indexOf(rawReq, " ");
             if (space1 >= 0) {
                 reqMethod = std.text.substring(rawReq, 0, space1);
-                string rest = std.text.substring(rawReq, space1 + 1, std.text.codePointCount(rawReq) - (space1 + 1));
+                string rest = std.text.substring(
+                    rawReq,
+                    space1 + 1,
+                    std.text.codePointCount(rawReq) - (space1 + 1));
                 int32 space2 = std.text.indexOf(rest, " ");
                 if (space2 >= 0) {
                     reqUrl = std.text.substring(rest, 0, space2);
@@ -193,10 +236,13 @@ namespace std.http {
 
             int32 bodyStart = std.text.indexOf(rawReq, "\r\n\r\n");
             if (bodyStart >= 0) {
-                reqBody = std.text.substring(rawReq, bodyStart + 4, std.text.codePointCount(rawReq) - (bodyStart + 4));
+                reqBody = std.text.substring(
+                    rawReq,
+                    bodyStart + 4,
+                    std.text.codePointCount(rawReq) - (bodyStart + 4));
             }
 
-            return new HttpContext(new raw HttpRequest(reqMethod, reqUrl, reqBody), nativeSock);
+            return new HttpContext(reqMethod, reqUrl, reqBody, nativeSock);
         }
 
         public void close() {

@@ -1,0 +1,73 @@
+// std.assert - soft assertions that throw AssertionError (do not abort).
+// Built-in assert(condition, message) still aborts the process on failure.
+
+namespace std.assert {
+    class AssertionError : Error {
+        public AssertionError(string text) {
+            base(text);
+        }
+    }
+
+    void that(bool condition, string message) {
+        if (!condition) {
+            throw new AssertionError(message);
+        }
+    }
+
+    void isTrue(bool condition) {
+        that(condition, "expected true");
+    }
+
+    void isFalse(bool condition) {
+        that(!condition, "expected false");
+    }
+
+    void equalInt(int32 expected, int32 actual) {
+        if (expected != actual) {
+            throw new AssertionError(
+                format("expected {}, got {}", expected, actual));
+        }
+    }
+
+    void equalInt(int32 expected, int32 actual, string message) {
+        if (expected != actual) {
+            throw new AssertionError(
+                format("{}: expected {}, got {}", message, expected, actual));
+        }
+    }
+
+    void notEqualInt(int32 unexpected, int32 actual) {
+        if (unexpected == actual) {
+            throw new AssertionError(
+                format("expected value not equal to {}", unexpected));
+        }
+    }
+
+    void equalString(string expected, string actual) {
+        if (expected != actual) {
+            throw new AssertionError(
+                format("expected \"{}\", got \"{}\"", expected, actual));
+        }
+    }
+
+    void equalString(string expected, string actual, string message) {
+        if (expected != actual) {
+            throw new AssertionError(
+                format("{}: expected \"{}\", got \"{}\"", message, expected, actual));
+        }
+    }
+
+    // Passes when body throws any Error; fails otherwise.
+    void fails(func<void> body, string message) {
+        bool threw = false;
+        try {
+            body();
+        }
+        catch (Error* error) {
+            threw = true;
+        }
+        if (!threw) {
+            throw new AssertionError(message);
+        }
+    }
+}
