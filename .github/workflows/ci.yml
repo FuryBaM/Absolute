@@ -90,3 +90,33 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+
+  # Linux wasm smoke: build Absolute + run wasm ctests; optional wasmtime for WASI module.
+  linux-wasm-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM and tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-dev clang lld
+          # wasm-ld often ships with lld package as wasm-ld-XX or via llvm
+          which wasm-ld || which wasm-ld-18 || true
+          curl -sSfL https://github.com/bytecodealliance/wasmtime/releases/download/v25.0.2/wasmtime-v25.0.2-x86_64-linux.tar.xz -o /tmp/wasmtime.tar.xz
+          sudo tar -xJf /tmp/wasmtime.tar.xz -C /usr/local --strip-components=1
+          wasmtime --version
+
+      - name: Configure Release with LLVM
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DBUILD_TESTING=ON
+          -DABSOLUTE_ENABLE_LLVM=ON
+          -DLLVM_DIR="$(llvm-config --cmakedir)"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 2
+
+      - name: Wasm tests
+        run: ctest --test-dir build -C Release -R wasm --output-on-failure

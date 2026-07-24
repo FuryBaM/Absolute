@@ -3,17 +3,14 @@
 /**
  * Embedder helpers for Absolute wasm modules.
  *
- * Imports:
- *   env.absolute_log(ptr, len)           — console UTF-8
- *   env.absolute_http_get(url, out, cap) — host HTTP GET into wasm memory
- *
- * Usage:
- *   const { instantiateAbsoluteWasm } = require('./absolute-wasm-host.js');
- *   const { exports, logs } = await instantiateAbsoluteWasm(bytes, { captureLogs: true });
+ * env imports:
+ *   absolute_log, absolute_http_get,
+ *   absolute_tcp_connect/listen/accept/send/receive/close/port
  */
 
 const http = require('http');
 const https = require('https');
+const net = require('net');
 
 function readCString(memory, ptr) {
     const view = new Uint8Array(memory.buffer);
@@ -23,7 +20,6 @@ function readCString(memory, ptr) {
 }
 
 function httpGetSync(url, maxBytes) {
-    // Prefer mock table for deterministic tests.
     return new Promise((resolve, reject) => {
         let parsed;
         try {
@@ -60,6 +56,107 @@ function httpGetSync(url, maxBytes) {
     });
 }
 
+function createTcpTable(options = {}) {
+    /** @type {Map<number, any>} */
+    const sockets = new Map();
+    let nextId = 1;
+    const mocks = options.tcpMocks || Object.create(null);
+
+    function mockKey(host, port) {
+        return `${host}:${port}`;
+    }
+
+    function allocId(record) {
+        const id = nextId++;
+        sockets.set(id, record);
+        return id;
+    }
+
+    return {
+        connect(host, port) {
+            const key = mockKey(host, port);
+            if (Object.prototype.hasOwnProperty.call(mocks, key)) {
+                const mock = mocks[key];
+                if (mock.mode === 'echo' || mock.echo) {
+                    return allocId({ kind: 'mock-echo', buffer: Buffer.alloc(0), port });
+                }
+                if (mock.mode === 'script' && Array.isArray(mock.responses)) {
+                    return allocId({
+                        kind: 'mock-script',
+                        responses: mock.responses.slice(),
+                        port,
+                    });
+                }
+            }
+            if (!options.allowNetwork) return -1;
+            // Real connect is async; for determinism require mocks in tests.
+            return -1;
+        },
+
+        listen(host, port, backlog) {
+            void backlog;
+            const key = mockKey(host || '127.0.0.1', port);
+            if (Object.prototype.hasOwnProperty.call(mocks, key) && mocks[key].mode === 'listen-echo') {
+                return allocId({
+                    kind: 'mock-listen-echo',
+                    port,
+                    pending: [],
+                });
+            }
+            if (!options.allowNetwork) return -1;
+            return -1;
+        },
+
+        accept(handle) {
+            const server = sockets.get(handle);
+            if (!server || server.kind !== 'mock-listen-echo') return -1;
+            // Create a peer echo client for each accept.
+            return allocId({ kind: 'mock-echo', buffer: Buffer.alloc(0), port: server.port });
+        },
+
+        send(handle, text) {
+            const socket = sockets.get(handle);
+            if (!socket) return 0;
+            const data = Buffer.from(String(text || ''), 'utf8');
+            if (socket.kind === 'mock-echo') {
+                socket.buffer = Buffer.concat([socket.buffer, data]);
+                return data.length;
+            }
+            if (socket.kind === 'mock-script') {
+                socket.lastSend = data;
+                return data.length;
+            }
+            return 0;
+        },
+
+        receive(handle, maxBytes) {
+            const socket = sockets.get(handle);
+            if (!socket) return null;
+            if (socket.kind === 'mock-echo') {
+                const n = Math.min(socket.buffer.length, maxBytes);
+                const out = socket.buffer.subarray(0, n);
+                socket.buffer = socket.buffer.subarray(n);
+                return out;
+            }
+            if (socket.kind === 'mock-script') {
+                if (!socket.responses.length) return Buffer.alloc(0);
+                const next = Buffer.from(String(socket.responses.shift()), 'utf8');
+                return next.subarray(0, maxBytes);
+            }
+            return null;
+        },
+
+        port(handle) {
+            const socket = sockets.get(handle);
+            return socket && typeof socket.port === 'number' ? socket.port : -1;
+        },
+
+        close(handle) {
+            sockets.delete(handle);
+        },
+    };
+}
+
 function createAbsoluteImports(options = {}) {
     const capture = options.captureLogs === true;
     const logs = [];
@@ -67,6 +164,7 @@ function createAbsoluteImports(options = {}) {
     /** @type {WebAssembly.Memory | null} */
     let memory = null;
     const mocks = options.httpMocks || Object.create(null);
+    const tcp = createTcpTable(options);
 
     const env = {
         absolute_log(ptr, len) {
@@ -84,39 +182,57 @@ function createAbsoluteImports(options = {}) {
             }
         },
 
-        /**
-         * Sync-looking import; Absolute calls it from wasm. We cannot truly block
-         * the wasm thread on async I/O, so this uses a pre-seeded mock table or
-         * returns -1 unless options.allowNetwork is set with a deasync-free
-         * strategy. For tests, always prefer httpMocks.
-         *
-         * Signature: (url_ptr, out_ptr, out_cap) -> i32 bytes_written_or_-1
-         */
         absolute_http_get(urlPtr, outPtr, outCap) {
             if (!memory) return -1;
             const url = readCString(memory, urlPtr);
             const cap = Number(outCap) | 0;
             const out = Number(outPtr) >>> 0;
             if (cap <= 0) return -1;
-
             let body;
             if (Object.prototype.hasOwnProperty.call(mocks, url)) {
                 body = Buffer.from(String(mocks[url]), 'utf8');
-            } else if (options.allowNetwork) {
-                // Best-effort: only works if the host pre-resolved via prepareHttp.
-                if (options._httpCache && Object.prototype.hasOwnProperty.call(options._httpCache, url)) {
-                    body = options._httpCache[url];
-                } else {
-                    return -1;
-                }
+            } else if (options._httpCache && Object.prototype.hasOwnProperty.call(options._httpCache, url)) {
+                body = options._httpCache[url];
             } else {
                 return -1;
             }
-
             const view = new Uint8Array(memory.buffer);
             const n = Math.min(body.length, cap);
             view.set(body.subarray(0, n), out);
             return n;
+        },
+
+        absolute_tcp_connect(hostPtr, port) {
+            if (!memory) return -1;
+            return tcp.connect(readCString(memory, hostPtr), Number(port) | 0);
+        },
+        absolute_tcp_listen(hostPtr, port, backlog) {
+            if (!memory) return -1;
+            const host = hostPtr ? readCString(memory, hostPtr) : '127.0.0.1';
+            return tcp.listen(host, Number(port) | 0, Number(backlog) | 0);
+        },
+        absolute_tcp_accept(handle) {
+            return tcp.accept(Number(handle) | 0);
+        },
+        absolute_tcp_send(handle, textPtr) {
+            if (!memory) return 0;
+            return tcp.send(Number(handle) | 0, readCString(memory, textPtr));
+        },
+        absolute_tcp_receive(handle, outPtr, maxBytes) {
+            if (!memory) return -1;
+            const data = tcp.receive(Number(handle) | 0, Number(maxBytes) | 0);
+            if (!data) return -1;
+            const view = new Uint8Array(memory.buffer);
+            const out = Number(outPtr) >>> 0;
+            const n = Math.min(data.length, Number(maxBytes) | 0);
+            view.set(data.subarray(0, n), out);
+            return n;
+        },
+        absolute_tcp_close(handle) {
+            tcp.close(Number(handle) | 0);
+        },
+        absolute_tcp_port(handle) {
+            return tcp.port(Number(handle) | 0);
         },
     };
 
@@ -130,11 +246,6 @@ function createAbsoluteImports(options = {}) {
     };
 }
 
-/**
- * Optionally prefetch URLs so absolute_http_get can serve them synchronously.
- * @param {string[]} urls
- * @param {number} [maxBytes]
- */
 async function prepareHttp(urls, maxBytes = 65536) {
     const cache = Object.create(null);
     for (const url of urls || []) {
@@ -159,4 +270,5 @@ module.exports = {
     instantiateAbsoluteWasm,
     prepareHttp,
     httpGetSync,
+    createTcpTable,
 };

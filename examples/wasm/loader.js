@@ -42,6 +42,14 @@ function createImports() {
         view.set(body.subarray(0, n), Number(outPtr) >>> 0);
         return n;
       },
+      // TCP host table is Node-oriented; browser stubs keep instantiate working.
+      absolute_tcp_connect() { return -1; },
+      absolute_tcp_listen() { return -1; },
+      absolute_tcp_accept() { return -1; },
+      absolute_tcp_send() { return 0; },
+      absolute_tcp_receive() { return -1; },
+      absolute_tcp_close() {},
+      absolute_tcp_port() { return -1; },
     },
   };
 }

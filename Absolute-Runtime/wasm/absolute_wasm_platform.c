@@ -578,66 +578,209 @@ const char* absolute_process_arg_at(int32_t index) {
     return "";
 }
 
-/* ---------- network stubs ---------- */
+/* ---------- network (host-backed TCP when not pure WASI) ---------- */
 
-static char g_net_error[96] = "network is not available on wasm";
+static char g_net_error[96];
+static char g_net_recv_scratch[8192];
+static char g_net_resolve_scratch[256];
+
+#if !defined(ABSOLUTE_WASM_USE_WASI)
+/* Host socket table lives in tools/absolute-wasm-host.js. Handles are positive ids. */
+__attribute__((import_module("env"), import_name("absolute_tcp_connect")))
+int32_t absolute_host_tcp_connect(const char* host, int32_t port);
+__attribute__((import_module("env"), import_name("absolute_tcp_listen")))
+int32_t absolute_host_tcp_listen(const char* host, int32_t port, int32_t backlog);
+__attribute__((import_module("env"), import_name("absolute_tcp_accept")))
+int32_t absolute_host_tcp_accept(int32_t handle);
+__attribute__((import_module("env"), import_name("absolute_tcp_send")))
+int32_t absolute_host_tcp_send(int32_t handle, const char* text);
+__attribute__((import_module("env"), import_name("absolute_tcp_receive")))
+int32_t absolute_host_tcp_receive(int32_t handle, uint8_t* out, int32_t max_bytes);
+__attribute__((import_module("env"), import_name("absolute_tcp_close")))
+void absolute_host_tcp_close(int32_t handle);
+__attribute__((import_module("env"), import_name("absolute_tcp_port")))
+int32_t absolute_host_tcp_port(int32_t handle);
+#else
+static int32_t absolute_host_tcp_connect(const char* host, int32_t port) {
+    (void)host; (void)port; return -1;
+}
+static int32_t absolute_host_tcp_listen(const char* host, int32_t port, int32_t backlog) {
+    (void)host; (void)port; (void)backlog; return -1;
+}
+static int32_t absolute_host_tcp_accept(int32_t handle) {
+    (void)handle; return -1;
+}
+static int32_t absolute_host_tcp_send(int32_t handle, const char* text) {
+    (void)handle; (void)text; return 0;
+}
+static int32_t absolute_host_tcp_receive(int32_t handle, uint8_t* out, int32_t max_bytes) {
+    (void)handle; (void)out; (void)max_bytes; return -1;
+}
+static void absolute_host_tcp_close(int32_t handle) { (void)handle; }
+static int32_t absolute_host_tcp_port(int32_t handle) {
+    (void)handle; return -1;
+}
+#endif
+
+typedef struct NetHandle {
+    int32_t id;
+} NetHandle;
+
+static void net_set_error(const char* message) {
+    size_t i = 0;
+    if (!message) message = "network error";
+    while (message[i] && i + 1 < sizeof(g_net_error)) {
+        g_net_error[i] = message[i];
+        ++i;
+    }
+    g_net_error[i] = '\0';
+}
 
 const char* absolute_net_error(void) { return g_net_error; }
 
 void* absolute_net_tcp_connect(const char* host, int32_t port) {
-    (void)host;
-    (void)port;
-    return NULL;
+    int32_t id = absolute_host_tcp_connect(host, port);
+    if (id < 0) {
+        net_set_error("tcp connect failed");
+        return NULL;
+    }
+    NetHandle* handle = (NetHandle*)heap_alloc(sizeof(NetHandle));
+    if (!handle) {
+        absolute_host_tcp_close(id);
+        net_set_error("out of memory");
+        return NULL;
+    }
+    handle->id = id;
+    g_net_error[0] = '\0';
+    return handle;
 }
-void* absolute_net_tcp_listen(const char* host, int32_t port) {
-    (void)host;
-    (void)port;
-    return NULL;
+
+void* absolute_net_tcp_listen(const char* host, int32_t port, int32_t backlog) {
+    int32_t id = absolute_host_tcp_listen(host ? host : "127.0.0.1", port, backlog);
+    if (id < 0) {
+        net_set_error("tcp listen failed");
+        return NULL;
+    }
+    NetHandle* handle = (NetHandle*)heap_alloc(sizeof(NetHandle));
+    if (!handle) {
+        absolute_host_tcp_close(id);
+        net_set_error("out of memory");
+        return NULL;
+    }
+    handle->id = id;
+    g_net_error[0] = '\0';
+    return handle;
 }
+
 void* absolute_net_tcp_accept(void* handle) {
-    (void)handle;
-    return NULL;
+    NetHandle* server = (NetHandle*)handle;
+    if (!server) {
+        net_set_error("null listen handle");
+        return NULL;
+    }
+    int32_t id = absolute_host_tcp_accept(server->id);
+    if (id < 0) {
+        net_set_error("tcp accept failed");
+        return NULL;
+    }
+    NetHandle* client = (NetHandle*)heap_alloc(sizeof(NetHandle));
+    if (!client) {
+        absolute_host_tcp_close(id);
+        net_set_error("out of memory");
+        return NULL;
+    }
+    client->id = id;
+    g_net_error[0] = '\0';
+    return client;
 }
+
 int32_t absolute_net_tcp_send(void* handle, const char* text) {
-    (void)handle;
-    (void)text;
-    return 0;
+    NetHandle* socket = (NetHandle*)handle;
+    if (!socket) {
+        net_set_error("null socket");
+        return 0;
+    }
+    int32_t n = absolute_host_tcp_send(socket->id, text ? text : "");
+    if (n <= 0) {
+        net_set_error("tcp send failed");
+        return 0;
+    }
+    g_net_error[0] = '\0';
+    return n;
 }
+
 const char* absolute_net_tcp_receive(void* handle, int32_t maximumBytes) {
-    (void)handle;
-    (void)maximumBytes;
-    return "";
+    NetHandle* socket = (NetHandle*)handle;
+    if (!socket) {
+        net_set_error("null socket");
+        return "";
+    }
+    int32_t cap = maximumBytes;
+    if (cap <= 0 || cap >= (int32_t)sizeof(g_net_recv_scratch))
+        cap = (int32_t)sizeof(g_net_recv_scratch) - 1;
+    int32_t n = absolute_host_tcp_receive(socket->id, (uint8_t*)g_net_recv_scratch, cap);
+    if (n < 0) {
+        net_set_error("tcp receive failed");
+        g_net_recv_scratch[0] = '\0';
+        return g_net_recv_scratch;
+    }
+    g_net_recv_scratch[n] = '\0';
+    g_net_error[0] = '\0';
+    return g_net_recv_scratch;
 }
+
 int32_t absolute_net_tcp_set_timeout(void* handle, int32_t milliseconds) {
     (void)handle;
     (void)milliseconds;
-    return 0;
+    g_net_error[0] = '\0';
+    return 1;
 }
+
 int32_t absolute_net_tcp_port(void* handle) {
-    (void)handle;
-    return -1;
+    NetHandle* socket = (NetHandle*)handle;
+    if (!socket)
+        return -1;
+    return absolute_host_tcp_port(socket->id);
 }
-void absolute_net_tcp_shutdown(void* handle) { (void)handle; }
-void absolute_net_tcp_close(void* handle) { (void)handle; }
+
+void absolute_net_tcp_close(void* handle);
+
+void absolute_net_tcp_shutdown(void* handle) {
+    absolute_net_tcp_close(handle);
+}
+
+void absolute_net_tcp_close(void* handle) {
+    NetHandle* socket = (NetHandle*)handle;
+    if (!socket)
+        return;
+    absolute_host_tcp_close(socket->id);
+    free(socket);
+}
+
 const char* absolute_net_resolve_host(const char* hostname) {
-    (void)hostname;
-    return "";
+    if (!hostname) {
+        net_set_error("null hostname");
+        return "";
+    }
+    /* Host may rewrite; default echo the name for mock hosts. */
+    fs_copy_path(g_net_resolve_scratch, sizeof(g_net_resolve_scratch), hostname);
+    g_net_error[0] = '\0';
+    return g_net_resolve_scratch;
 }
+
 void* absolute_net_udp_bind(const char* host, int32_t port) {
     (void)host;
     (void)port;
+    net_set_error("udp is not available on wasm");
     return NULL;
 }
 int32_t absolute_net_udp_send_to(void* handle, const char* host, int32_t port, const char* text) {
-    (void)handle;
-    (void)host;
-    (void)port;
-    (void)text;
+    (void)handle; (void)host; (void)port; (void)text;
+    net_set_error("udp is not available on wasm");
     return 0;
 }
 const char* absolute_net_udp_receive_from(void* handle, int32_t maxBytes) {
-    (void)handle;
-    (void)maxBytes;
+    (void)handle; (void)maxBytes;
     return "";
 }
 void absolute_net_udp_close(void* handle) { (void)handle; }

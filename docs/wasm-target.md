@@ -84,7 +84,9 @@ Common triples:
 - `tests/wasm-managed.abs` → `absolute.run-wasm-managed` (`new`/`delete` Box)
 - `tests/wasm-task.abs` → `absolute.run-wasm-task` (sync spawn/await)
 - `tests/wasm-fs.abs` → `absolute.run-wasm-fs` (virtual FS round-trip)
-- IR/object checks: `emit-wasm-smoke-ir`, `check-wasm-smoke-ir`, `emit-wasm-smoke-object`
+- `tests/wasm-http.abs` → `absolute.run-wasm-http` (host HTTP mock)
+- `tests/wasm-net.abs` → `absolute.run-wasm-net` (host TCP echo mock)
+- IR/object checks + optional WASI/wasmtime smoke
 
 ## Host import
 
@@ -92,6 +94,7 @@ Common triples:
 |--------|--------|---------|
 | `absolute_log(ptr, len)` | `env` | UTF-8 console from `puts`/`printf` |
 | `absolute_http_get(url, out, cap)` | `env` | Host HTTP GET (or mocks) into linear memory |
+| `absolute_tcp_*` | `env` | Host TCP table (mocks or future real sockets) |
 
 Node helpers:
 

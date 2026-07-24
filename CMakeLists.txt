@@ -1478,6 +1478,16 @@ if(BUILD_TESTING)
                         -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-http.cmake"
                 )
+                add_test(
+                    NAME absolute.run-wasm-net
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-net.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-net.wasm
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-net.cmake"
+                )
                 if(ABSOLUTE_WASM_WASI_OBJECT)
                     add_test(
                         NAME absolute.build-wasm-wasi-smoke
