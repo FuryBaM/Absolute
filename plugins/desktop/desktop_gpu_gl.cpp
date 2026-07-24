@@ -16,7 +16,7 @@ extern "C" void* absolute_desktop_native_display(int64_t handle);
 extern "C" int32_t absolute_desktop_width(int64_t handle);
 extern "C" int32_t absolute_desktop_height(int64_t handle);
 
-// D3D11 backend (Windows) — lifecycle only for now.
+// D3D11 backend (Windows) — clear/present + mesh RHI (HLSL).
 extern "C" int64_t absolute_desktop_gpu_d3d11_create(int64_t windowHandle);
 extern "C" void absolute_desktop_gpu_d3d11_destroy(int64_t handle);
 extern "C" int32_t absolute_desktop_gpu_d3d11_is_valid(int64_t handle);
@@ -27,6 +27,36 @@ extern "C" void absolute_desktop_gpu_d3d11_end_frame(int64_t handle);
 extern "C" void absolute_desktop_gpu_d3d11_clear(int64_t handle, float r, float g, float b, float a);
 extern "C" void absolute_desktop_gpu_d3d11_present(int64_t handle);
 extern "C" void absolute_desktop_gpu_d3d11_unsupported(const char* what);
+extern "C" int32_t absolute_desktop_gpu_d3d11_is_resource(int64_t handle);
+extern "C" int64_t absolute_desktop_gpu_d3d11_shader_create(
+    int64_t gpuHandle, const char* vertexSource, const char* fragmentSource);
+extern "C" void absolute_desktop_gpu_d3d11_shader_destroy(int64_t gpuHandle, int64_t shaderHandle);
+extern "C" int64_t absolute_desktop_gpu_d3d11_buffer_create(
+    int64_t gpuHandle, const float* data, int32_t floatCount);
+extern "C" void absolute_desktop_gpu_d3d11_buffer_destroy(int64_t gpuHandle, int64_t bufferHandle);
+extern "C" int32_t absolute_desktop_gpu_d3d11_buffer_float_count(int64_t bufferHandle);
+extern "C" int64_t absolute_desktop_gpu_d3d11_index_buffer_create(
+    int64_t gpuHandle, const int32_t* indices, int32_t indexCount);
+extern "C" void absolute_desktop_gpu_d3d11_index_buffer_destroy(int64_t gpuHandle, int64_t bufferHandle);
+extern "C" int32_t absolute_desktop_gpu_d3d11_index_buffer_count(int64_t bufferHandle);
+extern "C" int64_t absolute_desktop_gpu_d3d11_pipeline_create(
+    int64_t gpuHandle,
+    int64_t shaderHandle,
+    int32_t strideBytes,
+    const int32_t* locations,
+    const int32_t* components,
+    const int32_t* offsets,
+    int32_t attrCount);
+extern "C" void absolute_desktop_gpu_d3d11_pipeline_destroy(int64_t gpuHandle, int64_t pipelineHandle);
+extern "C" void absolute_desktop_gpu_d3d11_bind_pipeline(int64_t gpuHandle, int64_t pipelineHandle);
+extern "C" void absolute_desktop_gpu_d3d11_bind_buffer(int64_t gpuHandle, int64_t bufferHandle);
+extern "C" void absolute_desktop_gpu_d3d11_bind_index_buffer(int64_t gpuHandle, int64_t bufferHandle);
+extern "C" void absolute_desktop_gpu_d3d11_draw(int64_t gpuHandle, int32_t vertexCount);
+extern "C" void absolute_desktop_gpu_d3d11_draw_indexed(int64_t gpuHandle, int32_t indexCount);
+extern "C" void absolute_desktop_gpu_d3d11_set_uniform_f(int64_t gpuHandle, const char* name, float value);
+extern "C" void absolute_desktop_gpu_d3d11_set_uniform_i(int64_t gpuHandle, const char* name, int32_t value);
+extern "C" void absolute_desktop_gpu_d3d11_set_uniform_2f(
+    int64_t gpuHandle, const char* name, float x, float y);
 
 #if defined(_WIN32)
 #define ABSOLUTE_GPU_WGL 1
@@ -939,8 +969,7 @@ extern "C" void absolute_desktop_gpu_layout_destroy(int64_t layoutHandle) {
 extern "C" int64_t absolute_desktop_gpu_shader_create(
     int64_t gpuHandle, const char* vertexSource, const char* fragmentSource) {
     if (AbsoluteGpuIsD3D11(gpuHandle)) {
-        absolute_desktop_gpu_d3d11_unsupported("createShader");
-        return 0;
+        return absolute_desktop_gpu_d3d11_shader_create(gpuHandle, vertexSource, fragmentSource);
     }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     if (!device || !MakeCurrent(*device) || !vertexSource || !fragmentSource) {
@@ -965,6 +994,10 @@ extern "C" int64_t absolute_desktop_gpu_shader_create(
 }
 
 extern "C" void absolute_desktop_gpu_shader_destroy(int64_t gpuHandle, int64_t shaderHandle) {
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        absolute_desktop_gpu_d3d11_shader_destroy(gpuHandle, shaderHandle);
+        return;
+    }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     GpuShader* shader = ShaderFromHandle(shaderHandle);
     if (!device || !shader) return;
@@ -977,8 +1010,7 @@ extern "C" void absolute_desktop_gpu_shader_destroy(int64_t gpuHandle, int64_t s
 extern "C" int64_t absolute_desktop_gpu_buffer_create(
     int64_t gpuHandle, const float* data, int32_t floatCount) {
     if (AbsoluteGpuIsD3D11(gpuHandle)) {
-        absolute_desktop_gpu_d3d11_unsupported("createVertexBuffer");
-        return 0;
+        return absolute_desktop_gpu_d3d11_buffer_create(gpuHandle, data, floatCount);
     }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     if (!device || !MakeCurrent(*device) || !data || floatCount <= 0) {
@@ -999,6 +1031,10 @@ extern "C" int64_t absolute_desktop_gpu_buffer_create(
 }
 
 extern "C" void absolute_desktop_gpu_buffer_destroy(int64_t gpuHandle, int64_t bufferHandle) {
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        absolute_desktop_gpu_d3d11_buffer_destroy(gpuHandle, bufferHandle);
+        return;
+    }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     GpuBuffer* buffer = BufferFromHandle(bufferHandle);
     if (!device || !buffer) return;
@@ -1013,19 +1049,44 @@ extern "C" void absolute_desktop_gpu_buffer_destroy(int64_t gpuHandle, int64_t b
 }
 
 extern "C" int32_t absolute_desktop_gpu_buffer_float_count(int64_t bufferHandle) {
+    if (absolute_desktop_gpu_d3d11_is_resource(bufferHandle)) {
+        return absolute_desktop_gpu_d3d11_buffer_float_count(bufferHandle);
+    }
     const GpuBuffer* buffer = BufferFromHandle(bufferHandle);
     return buffer ? buffer->floatCount : 0;
 }
 
 extern "C" int64_t absolute_desktop_gpu_pipeline_create(
     int64_t gpuHandle, int64_t shaderHandle, int64_t layoutHandle) {
+    GpuLayout* layout = LayoutFromHandle(layoutHandle);
     if (AbsoluteGpuIsD3D11(gpuHandle)) {
-        absolute_desktop_gpu_d3d11_unsupported("createPipeline");
-        return 0;
+        if (!layout || layout->strideBytes <= 0 || layout->attrs.empty()) {
+            // Prefer D3D lastError path via unsupported when layout bad.
+            SetError("createPipeline layout needs stride and at least one attribute");
+            return 0;
+        }
+        std::vector<int32_t> locations;
+        std::vector<int32_t> components;
+        std::vector<int32_t> offsets;
+        locations.reserve(layout->attrs.size());
+        components.reserve(layout->attrs.size());
+        offsets.reserve(layout->attrs.size());
+        for (const VertexAttr& a : layout->attrs) {
+            locations.push_back(a.location);
+            components.push_back(a.components);
+            offsets.push_back(a.offsetBytes);
+        }
+        return absolute_desktop_gpu_d3d11_pipeline_create(
+            gpuHandle,
+            shaderHandle,
+            layout->strideBytes,
+            locations.data(),
+            components.data(),
+            offsets.data(),
+            static_cast<int32_t>(locations.size()));
     }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     GpuShader* shader = ShaderFromHandle(shaderHandle);
-    GpuLayout* layout = LayoutFromHandle(layoutHandle);
     if (!device || !shader || !layout || !shader->program) {
         SetError("createPipeline requires valid gpu, shader, and layout");
         return 0;
@@ -1042,6 +1103,10 @@ extern "C" int64_t absolute_desktop_gpu_pipeline_create(
 }
 
 extern "C" void absolute_desktop_gpu_pipeline_destroy(int64_t gpuHandle, int64_t pipelineHandle) {
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        absolute_desktop_gpu_d3d11_pipeline_destroy(gpuHandle, pipelineHandle);
+        return;
+    }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     GpuPipeline* pipeline = PipelineFromHandle(pipelineHandle);
     if (!device || !pipeline) return;
@@ -1054,6 +1119,10 @@ extern "C" void absolute_desktop_gpu_pipeline_destroy(int64_t gpuHandle, int64_t
 }
 
 extern "C" void absolute_desktop_gpu_bind_pipeline(int64_t gpuHandle, int64_t pipelineHandle) {
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        absolute_desktop_gpu_d3d11_bind_pipeline(gpuHandle, pipelineHandle);
+        return;
+    }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     if (!device) return;
     device->boundPipeline = pipelineHandle;
@@ -1061,6 +1130,10 @@ extern "C" void absolute_desktop_gpu_bind_pipeline(int64_t gpuHandle, int64_t pi
 }
 
 extern "C" void absolute_desktop_gpu_bind_buffer(int64_t gpuHandle, int64_t bufferHandle) {
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        absolute_desktop_gpu_d3d11_bind_buffer(gpuHandle, bufferHandle);
+        return;
+    }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     if (!device) return;
     device->boundBuffer = bufferHandle;
@@ -1070,8 +1143,7 @@ extern "C" void absolute_desktop_gpu_bind_buffer(int64_t gpuHandle, int64_t buff
 extern "C" int64_t absolute_desktop_gpu_index_buffer_create(
     int64_t gpuHandle, const int32_t* indices, int32_t indexCount) {
     if (AbsoluteGpuIsD3D11(gpuHandle)) {
-        absolute_desktop_gpu_d3d11_unsupported("createIndexBuffer");
-        return 0;
+        return absolute_desktop_gpu_d3d11_index_buffer_create(gpuHandle, indices, indexCount);
     }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     if (!device || !MakeCurrent(*device) || !indices || indexCount <= 0) {
@@ -1100,6 +1172,10 @@ extern "C" int64_t absolute_desktop_gpu_index_buffer_create(
 }
 
 extern "C" void absolute_desktop_gpu_index_buffer_destroy(int64_t gpuHandle, int64_t bufferHandle) {
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        absolute_desktop_gpu_d3d11_index_buffer_destroy(gpuHandle, bufferHandle);
+        return;
+    }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     GpuIndexBuffer* buffer = IndexBufferFromHandle(bufferHandle);
     if (!device || !buffer) return;
@@ -1113,17 +1189,28 @@ extern "C" void absolute_desktop_gpu_index_buffer_destroy(int64_t gpuHandle, int
 }
 
 extern "C" int32_t absolute_desktop_gpu_index_buffer_count(int64_t bufferHandle) {
+    if (absolute_desktop_gpu_d3d11_is_resource(bufferHandle)) {
+        return absolute_desktop_gpu_d3d11_index_buffer_count(bufferHandle);
+    }
     const GpuIndexBuffer* buffer = IndexBufferFromHandle(bufferHandle);
     return buffer ? buffer->indexCount : 0;
 }
 
 extern "C" void absolute_desktop_gpu_bind_index_buffer(int64_t gpuHandle, int64_t bufferHandle) {
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        absolute_desktop_gpu_d3d11_bind_index_buffer(gpuHandle, bufferHandle);
+        return;
+    }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     if (!device) return;
     device->boundIndexBuffer = bufferHandle;
 }
 
 extern "C" void absolute_desktop_gpu_draw(int64_t gpuHandle, int32_t vertexCount) {
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        absolute_desktop_gpu_d3d11_draw(gpuHandle, vertexCount);
+        return;
+    }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     if (!device || vertexCount <= 0 || !MakeCurrent(*device)) return;
     ApplyVertexState(*device);
@@ -1137,6 +1224,10 @@ extern "C" void absolute_desktop_gpu_draw(int64_t gpuHandle, int32_t vertexCount
 }
 
 extern "C" void absolute_desktop_gpu_draw_indexed(int64_t gpuHandle, int32_t indexCount) {
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        absolute_desktop_gpu_d3d11_draw_indexed(gpuHandle, indexCount);
+        return;
+    }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     if (!device || indexCount <= 0 || !MakeCurrent(*device)) return;
     ApplyVertexState(*device);
@@ -1209,6 +1300,10 @@ extern "C" void absolute_desktop_gpu_bind_sampler(
 
 extern "C" void absolute_desktop_gpu_set_uniform_f(
     int64_t gpuHandle, const char* name, float value) {
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        absolute_desktop_gpu_d3d11_set_uniform_f(gpuHandle, name, value);
+        return;
+    }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     GpuPipeline* pipeline = device ? PipelineFromHandle(device->boundPipeline) : nullptr;
     if (!device || !pipeline || !name || !MakeCurrent(*device) || !pipeline->program) return;
@@ -1219,6 +1314,10 @@ extern "C" void absolute_desktop_gpu_set_uniform_f(
 
 extern "C" void absolute_desktop_gpu_set_uniform_i(
     int64_t gpuHandle, const char* name, int32_t value) {
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        absolute_desktop_gpu_d3d11_set_uniform_i(gpuHandle, name, value);
+        return;
+    }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     GpuPipeline* pipeline = device ? PipelineFromHandle(device->boundPipeline) : nullptr;
     if (!device || !pipeline || !name || !MakeCurrent(*device) || !pipeline->program) return;
@@ -1230,6 +1329,10 @@ extern "C" void absolute_desktop_gpu_set_uniform_i(
 
 extern "C" void absolute_desktop_gpu_set_uniform_2f(
     int64_t gpuHandle, const char* name, float x, float y) {
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        absolute_desktop_gpu_d3d11_set_uniform_2f(gpuHandle, name, x, y);
+        return;
+    }
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     GpuPipeline* pipeline = device ? PipelineFromHandle(device->boundPipeline) : nullptr;
     if (!device || !pipeline || !name || !MakeCurrent(*device) || !pipeline->program) return;

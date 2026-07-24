@@ -1,0 +1,99 @@
+// D3D11 triangle: HLSL + VB + pipeline + bind/draw (Windows).
+// Esc quit. Semantics: location0=POSITION, location1=TEXCOORD0.
+
+int32 main() {
+    auto window = new Desktop.Window("Absolute D3D11 Triangle", 800, 450, true);
+    if (!window.isOpen()) {
+        println("Could not create desktop window");
+        return 1;
+    }
+
+    auto gpu = new Desktop.Gpu(window, Desktop.Gpu.BackendD3D11);
+    if (!gpu.isValid()) {
+        println("D3D11 GPU context failed:");
+        println(gpu.lastError());
+        window.close();
+        return 1;
+    }
+
+    println("Desktop.Gpu backend:");
+    println(gpu.backend());
+
+    // HLSL (not GLSL). Entry point: main. cbuffer b0 for setUniformF.
+    string vertexSource = "cbuffer Frame : register(b0) {\n  float uTime;\n  float3 _pad;\n};\nstruct VSIn {\n  float3 aPos : POSITION;\n  float3 aColor : TEXCOORD0;\n};\nstruct VSOut {\n  float4 pos : SV_POSITION;\n  float3 vColor : TEXCOORD0;\n};\nVSOut main(VSIn i) {\n  float c = cos(uTime);\n  float s = sin(uTime);\n  float2 p = float2(i.aPos.x * c - i.aPos.y * s, i.aPos.x * s + i.aPos.y * c);\n  VSOut o;\n  o.pos = float4(p * 0.7, i.aPos.z, 1.0);\n  o.vColor = i.aColor;\n  return o;\n}\n";
+    string fragmentSource = "struct PSIn {\n  float4 pos : SV_POSITION;\n  float3 vColor : TEXCOORD0;\n};\nfloat4 main(PSIn i) : SV_TARGET {\n  return float4(i.vColor, 1.0);\n}\n";
+
+    auto program = gpu.createShader(vertexSource, fragmentSource);
+    if (program == null) {
+        println("createShader failed:");
+        println(gpu.lastError());
+        gpu.destroy();
+        window.close();
+        return 1;
+    }
+
+    float[] vertices = new float[18];
+    vertices[0] = 0.0;  vertices[1] = 0.55; vertices[2] = 0.0;
+    vertices[3] = 1.0;  vertices[4] = 0.35; vertices[5] = 0.25;
+    vertices[6] = -0.55; vertices[7] = -0.45; vertices[8] = 0.0;
+    vertices[9] = 0.25; vertices[10] = 0.85; vertices[11] = 0.35;
+    vertices[12] = 0.55; vertices[13] = -0.45; vertices[14] = 0.0;
+    vertices[15] = 0.30; vertices[16] = 0.45; vertices[17] = 1.0;
+
+    auto buffer = gpu.createVertexBuffer(vertices);
+    if (buffer == null) {
+        println("createVertexBuffer failed:");
+        println(gpu.lastError());
+        program.destroy();
+        gpu.destroy();
+        window.close();
+        return 1;
+    }
+
+    auto layout = gpu.createLayoutPos3Color3();
+    if (layout == null) {
+        println("createLayout failed:");
+        println(gpu.lastError());
+        buffer.destroy();
+        program.destroy();
+        gpu.destroy();
+        window.close();
+        return 1;
+    }
+
+    auto pipeline = gpu.createPipeline(program, layout);
+    if (pipeline == null) {
+        println("createPipeline failed:");
+        println(gpu.lastError());
+        layout.destroy();
+        buffer.destroy();
+        program.destroy();
+        gpu.destroy();
+        window.close();
+        return 1;
+    }
+
+    while (window.poll()) {
+        if (window.keyPressed(Desktop.KeyEscape())) {
+            window.close();
+        } else {
+            float t = Desktop.time() as float;
+            gpu.beginFrame();
+            gpu.clear(0.06, 0.07, 0.12, 1.0);
+            gpu.bind(pipeline);
+            gpu.bind(buffer);
+            gpu.setUniformF("uTime", t);
+            gpu.draw(3);
+            gpu.endFrame();
+            gpu.present();
+        }
+    }
+
+    pipeline.destroy();
+    layout.destroy();
+    buffer.destroy();
+    program.destroy();
+    gpu.destroy();
+    window.close();
+    return 0;
+}

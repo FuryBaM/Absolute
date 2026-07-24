@@ -530,7 +530,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Multi-backend `Desktop.Gpu`: magic-header dispatch; `BackendAuto` /
   `BackendOpenGL` / `BackendD3D11`; D3D11 clear/present (Windows) + OpenGL
   full RHI; example `examples/desktop/d3d-clear.abs`.
-- [ ] Vulkan/D3D12 backends and SPIR-V·DXIL·Metal IR (beyond OpenGL/D3D11 clear).
+- [x] D3D11 mesh RHI (Windows): HLSL `createShader`, VB/IB, pipeline + input
+  layout (POSITION / TEXCOORDn), bind/draw/drawIndexed, uniforms via cbuffer b0
+  + D3DReflect; textures/samplers still OpenGL-only; examples `d3d-triangle.abs`,
+  `d3d-triangle-smoke.abs`.
+- [ ] D3D11 textures/samplers; Vulkan/D3D12 and SPIR-V·DXIL·Metal IR.
 
 ### Native interop и платформы
 

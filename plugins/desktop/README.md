@@ -137,12 +137,15 @@ Windows GDI (ClearType raster → soft buffer). Non-Windows: create returns inva
   `Desktop.Gpu.BackendAuto` (0), `BackendOpenGL` (1), or `BackendD3D11` (2)
 - **BackendAuto:** OpenGL first; on Windows falls back to D3D11 if GL fails
 - **OpenGL (full RHI):** Windows WGL (`opengl-wgl`), Linux GLX (`opengl-glx`)
-- **D3D11 (Windows):** clear/present lifecycle only (`backend()` → `d3d11`);
-  mesh/shader resource APIs return null with `lastError` — use OpenGL for draws
+- **D3D11 (Windows):** clear/present + mesh path (`backend()` → `d3d11`):
+  HLSL shaders (not GLSL), VB/IB, pipeline, draw/drawIndexed, float/int/float2
+  uniforms via cbuffer `register(b0)`; textures/samplers still OpenGL-only
+- **Vertex semantics (D3D11):** location 0 → `POSITION`; location n → `TEXCOORDn-1`
+  (match HLSL; `createLayoutPos3Color3` → POSITION + TEXCOORD0)
 - Soft `window.present()` and `gpu.present()` are separate paths
 - Per-device: `gpu.backend()` → `opengl-wgl` / `opengl-glx` / `d3d11` / `none`
 
-Resources (OpenGL):
+Resources:
 - `createShader(vs, fs)` → `GpuShader*`
 - `createVertexBuffer(float[] vertices)` → `GpuBuffer*` (VBO; layout is separate)
 - `createIndexBuffer(int32[] indices)` → `GpuIndexBuffer*` (EBO, `drawIndexed`)
@@ -177,8 +180,8 @@ gpu.present();
 
 - `bind` overloads: pipeline, vertex buffer, index buffer, texture, sampler
 - Alpha blending on in `beginFrame`
-- Examples: `triangle.abs`, `gpu-sprites.abs` (indexed quads + sampler),
-  `d3d-clear.abs` (D3D11 clear/present)
+- Examples: `triangle.abs` (OpenGL GLSL), `gpu-sprites.abs` (indexed quads + sampler),
+  `d3d-clear.abs` / `d3d-triangle.abs` (D3D11 HLSL)
 
 ### Game loop patterns
 
