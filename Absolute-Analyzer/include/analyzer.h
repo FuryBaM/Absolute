@@ -433,6 +433,8 @@ namespace Absolute {
         void ValidateValueReferenceParameter(VarDeclExpr& parameter,
             const std::string& type, const std::string& callable,
             bool asyncCallable = false, bool cAbi = false);
+        void ValidateCAbiType(const std::string& type, const std::string& where,
+            bool isReturn);
         std::vector<std::string> ResolveParameterTypes(const std::vector<std::unique_ptr<VarDeclExpr>>& parameters);
         void DeclareGlobalFunction(FunctionDeclStmt& statement);
         void ResolveFunction(FunctionDeclStmt& statement, SymbolKind kind);

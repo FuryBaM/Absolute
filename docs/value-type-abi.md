@@ -56,6 +56,7 @@ rules, and benchmark evidence are documented in
 
 All objects linked through this internal ABI must be rebuilt with the same
 compiler ABI revision. `extern "C"` declarations and `export "C"` definitions
-are intentionally excluded: their aggregate layout and passing rules are
-defined by the selected platform C ABI, so a native wrapper is required when
-its struct convention differs.
+are intentionally excluded from the 16-byte Absolute value ABI: the language
+rejects by-value Absolute aggregates at the C boundary and requires `raw T*`
+(or scalar) interop instead. Full rules for strings, arrays, `bool`, and
+dynamic load are in [`native-c-abi.md`](native-c-abi.md).

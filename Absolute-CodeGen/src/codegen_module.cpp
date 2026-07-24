@@ -278,10 +278,12 @@ namespace Absolute {
                 Fail("duplicate parameter '" + name + "'");
             return;
         }
-        llvm::AllocaInst* address = CreateEntryAlloca(*argument.getParent(), argument.getType(), name);
-        builder.CreateStore(&argument, address);
+        // C ABI may pass bool as i8; store Absolute locals as the language type (i1).
+        llvm::Type* storageType = TypeFromName(typeName);
+        llvm::AllocaInst* address = CreateEntryAlloca(*argument.getParent(), storageType, name);
+        builder.CreateStore(Coerce(&argument, storageType), address);
         if (!scopes.back().emplace(name,
-            Variable{address, argument.getType(), typeName, false, false, nullptr, {},
+            Variable{address, storageType, typeName, false, false, nullptr, {},
                 nullptr, SemanticSymbol(&parameter)}).second)
             Fail("duplicate parameter '" + name + "'");
     }

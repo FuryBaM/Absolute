@@ -504,12 +504,17 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   `dllexport`, проверкой ABI-safe сигнатур и запретом overload/generics/default
   parameters; PE export table и вызов из Absolute покрыты native/LLVM тестами.
 - [x] Генерация LLVM IR и native object/executable.
+- [x] Формализовать ABI массивов, strings, structs, interfaces и callbacks:
+  нормативный `docs/native-c-abi.md`; analyzer `ValidateCAbiType` отклоняет
+  managed/`T[]`/func/task/by-value struct|class|interface; C ABI `bool` → `i8`
+  (`_Bool`); callbacks как first-class C fnptr остаются следующим шагом.
+- [x] Официально оставить только C ABI: `extern "C++"`/`export "C++"` отклоняются
+  парсером; C++ библиотеки требуют thin `extern "C"` shim (см. native-c-abi.md).
 - [ ] Добавить генератор Absolute declarations из C headers.
-- [ ] Добавить безопасные wrappers для native handles и callbacks.
-- [ ] Определить ограниченную поддержку C++ ABI либо официально оставить только C ABI.
+- [ ] Добавить безопасные wrappers для native handles и callbacks
+  (resource-pattern + C function-pointer type).
 - [ ] Проверить targets x64, ARM64, Windows, Linux и macOS в CI.
 - [ ] Добавить WebAssembly target и browser runtime.
-- [ ] Формализовать ABI массивов, strings, structs, interfaces и callbacks.
 
 ### IDE, debugger и developer tools
 

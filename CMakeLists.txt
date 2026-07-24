@@ -1313,6 +1313,11 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-errors.abs"
     )
     set_tests_properties(absolute.export-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.c-abi-type-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/c-abi-type-errors.abs"
+    )
+    set_tests_properties(absolute.c-abi-type-errors PROPERTIES WILL_FAIL TRUE)
 
     if(ABSOLUTE_ENABLE_LLVM)
         add_test(
@@ -1336,6 +1341,23 @@ if(BUILD_TESTING)
             COMMAND "${CMAKE_COMMAND}"
                 -DINPUT=${CMAKE_BINARY_DIR}/export-c-abi.ll
                 -P "${PROJECT_SOURCE_DIR}/tests/check-export-c-abi.cmake"
+        )
+        add_test(
+            NAME absolute.emit-export-c-bool
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-c-bool.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/export-c-bool.ll"
+        )
+        set_tests_properties(absolute.emit-export-c-bool PROPERTIES
+            FIXTURES_SETUP absolute-export-c-bool-ir
+        )
+        add_test(
+            NAME absolute.check-export-c-bool
+            COMMAND "${CMAKE_COMMAND}"
+                -DINPUT=${CMAKE_BINARY_DIR}/export-c-bool.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-export-c-bool.cmake"
+        )
+        set_tests_properties(absolute.check-export-c-bool PROPERTIES
+            FIXTURES_REQUIRED absolute-export-c-bool-ir
         )
         set_tests_properties(absolute.check-export-c-abi PROPERTIES
             FIXTURES_REQUIRED absolute-export-c-abi-ir

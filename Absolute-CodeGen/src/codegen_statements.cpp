@@ -203,8 +203,11 @@ namespace Absolute {
             impl->builder.CreateRetVoid();
             return;
         }
-        llvm::Value* result = impl->Coerce(
-            impl->Evaluate(stmt->expr.get()), impl->TypeFromName(impl->currentReturnTypeName));
+        // C ABI bool returns i8 while Absolute evaluation produces i1.
+        llvm::Type* expectedReturn = impl->currentReturnStorage
+            ? impl->TypeFromName(impl->currentReturnTypeName)
+            : function->getReturnType();
+        llvm::Value* result = impl->Coerce(impl->Evaluate(stmt->expr.get()), expectedReturn);
         SymbolId transferredOwner = InvalidSymbolId;
         if (IsStrongManagedPointerTypeName(impl->currentReturnTypeName)) {
             const auto* returnedIdentifier = dynamic_cast<IdentifierExpr*>(stmt->expr.get());

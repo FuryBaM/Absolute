@@ -12,13 +12,18 @@ namespace Absolute {
 
     llvm::Type* CodeGenerator::Impl::AbiReturnType(
         const std::string& name, bool external) {
-        return !external && IsIndirectValueType(name) ? builder.getVoidTy() : TypeFromName(name);
+        if (!external && IsIndirectValueType(name)) return builder.getVoidTy();
+        // C _Bool is i8; Absolute internal bool remains i1.
+        if (external && ValueReferenceBaseTypeName(name) == "bool") return builder.getInt8Ty();
+        return TypeFromName(name);
     }
 
     llvm::Type* CodeGenerator::Impl::AbiParameterType(
         const std::string& name, bool external) {
         if (!external && IsValueReferenceTypeName(name)) return builder.getPtrTy();
-        return !external && IsIndirectValueType(name) ? builder.getPtrTy() : TypeFromName(name);
+        if (!external && IsIndirectValueType(name)) return builder.getPtrTy();
+        if (external && ValueReferenceBaseTypeName(name) == "bool") return builder.getInt8Ty();
+        return TypeFromName(name);
     }
 
     unsigned CodeGenerator::Impl::AbiReturnOffset(
@@ -87,6 +92,8 @@ namespace Absolute {
         if (indirectReturn)
             return builder.CreateLoad(TypeFromName(returnTypeName), resultStorage,
                 resultName.empty() ? "value.result.load" : resultName + ".load");
-        return functionType->getReturnType()->isVoidTy() ? nullptr : call;
+        if (functionType->getReturnType()->isVoidTy()) return nullptr;
+        // Coerce C ABI bool (i8) back to Absolute bool (i1) for the caller.
+        return Coerce(call, TypeFromName(returnTypeName));
     }
 }

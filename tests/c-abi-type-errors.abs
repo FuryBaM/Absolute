@@ -1,0 +1,68 @@
+struct Point {
+    int32 x;
+    int32 y;
+}
+
+class Node {
+}
+
+interface Drawable {
+}
+
+enum Color {
+    Red,
+    Green
+}
+
+export "C" Point badStructReturn() {
+    Point p;
+    p.x = 1;
+    p.y = 2;
+    return p;
+}
+
+export "C" int32 badStructParam(Point value) {
+    return value.x;
+}
+
+export "C" Node badClassReturn() {
+    Node n;
+    return n;
+}
+
+export "C" int32 badInterfaceParam(Drawable value) {
+    return 0;
+}
+
+export "C" int32 badArrayParam(int32[] values) {
+    return 0;
+}
+
+export "C" int32[] badArrayReturn() {
+    int32[] values = {1};
+    return values;
+}
+
+export "C" Node* badManagedReturn() {
+    return new Node();
+}
+
+export "C" int32 badManagedParam(Node* value) {
+    return 0;
+}
+
+export "C" int32 badFuncParam(func<int32, int32> callback) {
+    return callback(1);
+}
+
+export "C" task<int32> badTaskReturn() {
+}
+
+export "C" int32 badTaskParam(task<int32> job) {
+    return 0;
+}
+
+// Color enum is allowed at the C boundary (fixed i32).
+export "C" int32 colorCode(Color c) {
+    return 0;
+}

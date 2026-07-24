@@ -422,6 +422,11 @@ module directly runnable with `lli`.
 
 ## C and C++ interop
 
+Absolute language interop is **C ABI only**. Direct C++ ABI (mangling, classes,
+overloads, C++ exceptions) is not supported; expose a thin `extern "C"` shim
+from C++. The normative type and ownership rules are in
+[`docs/native-c-abi.md`](docs/native-c-abi.md).
+
 Absolute can call functions that use the stable C ABI. Declare the native
 function without a body:
 
@@ -453,9 +458,11 @@ extern "C" __declspec(dllexport) int native_add(int left, int right) {
 }
 ```
 
-On non-Windows platforms omit `__declspec(dllexport)`. Direct C++ ABI imports
-(overloads, classes and exceptions) are intentionally not supported yet because
-their binary names and rules differ between MSVC and Clang/GCC.
+On non-Windows platforms omit `__declspec(dllexport)`. Absolute rejects
+`extern "C++"` / `export "C++"` at parse time; C++ libraries must provide a C
+wrapper. Absolute `struct`/`class`/`interface` values, managed pointers, and
+array descriptors cannot cross the C boundary—use `raw T*` and scalars (see
+`docs/native-c-abi.md`).
 
 Generate a native object without linking it:
 

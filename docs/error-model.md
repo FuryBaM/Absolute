@@ -112,6 +112,9 @@ The runtime exports `absolute_error_set`, `absolute_error_pending`,
 This produces the same LLVM control flow on Windows and Linux and does not
 require target-specific landing pads.
 
+C ABI type and ownership rules for the language boundary are documented in
+[`native-c-abi.md`](native-c-abi.md).
+
 Calls declared with `extern "C"` are non-throwing from the language's point of
 view. Throwing a C++ exception through them is an ABI violation. Syntax and
 opaque plugins must also catch native exceptions before returning to the host.

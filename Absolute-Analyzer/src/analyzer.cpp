@@ -776,6 +776,69 @@ namespace Absolute {
                 "E_VALUE_REF_C_ABI");
     }
 
+    void Analyzer::ValidateCAbiType(const std::string& type, const std::string& where,
+        bool isReturn) {
+        if (isReturn && type == "void") return;
+        if (!isReturn && type == "void") {
+            Report(where + " requires a concrete C-compatible type", "E_C_ABI_TYPE");
+            return;
+        }
+        if (type == "auto" || type == "dynamic" || type == "error" || type == "null") {
+            Report(where + " requires a concrete C-compatible type", "E_C_ABI_TYPE");
+            return;
+        }
+        if (IsValueReferenceType(type)) return;
+        if (IsManagedPointerType(type)) {
+            Report(where + " must use raw T* instead of a managed pointer", "E_C_ABI_MANAGED");
+            return;
+        }
+        if (ArrayRank(type) > 0) {
+            Report(where + " cannot use an Absolute array descriptor", "E_C_ABI_ARRAY");
+            return;
+        }
+        if (IsTaskType(type)) {
+            Report(where + " cannot use a task type at the C ABI boundary", "E_C_ABI_TASK");
+            return;
+        }
+        std::string functionReturn;
+        std::vector<std::string> functionParameters;
+        if (ParseFunctionType(type, functionReturn, functionParameters)) {
+            Report(where + " cannot use an Absolute func type; C callbacks are not available yet",
+                "E_C_ABI_FUNC_TYPE");
+            return;
+        }
+        if (IsRawPointerType(type)) return;
+        if (type == "bool" || type == "string" || type == "char" ||
+            type == "float" || type == "double")
+            return;
+        if (type.starts_with("int") || type.starts_with("uint")) return;
+
+        const auto found = types.find(type);
+        if (found != types.end()) {
+            if (found->second.kind == TypeKind::Enum) return;
+            if (found->second.kind == TypeKind::Struct ||
+                found->second.kind == TypeKind::Class ||
+                found->second.kind == TypeKind::Interface) {
+                Report(where + " cannot pass Absolute " +
+                    (found->second.kind == TypeKind::Struct ? "struct" :
+                        found->second.kind == TypeKind::Class ? "class" : "interface") +
+                    " '" + type + "' by value; use raw T*", "E_C_ABI_AGGREGATE");
+                return;
+            }
+        }
+
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseGenericTypeName(type, genericBase, genericArguments) && genericBase != "func") {
+            Report(where + " cannot use generic type '" + type + "' at the C ABI boundary",
+                "E_C_ABI_TYPE");
+            return;
+        }
+
+        if (!IsKnownType(type)) return;
+        Report(where + " type '" + type + "' is not C-compatible", "E_C_ABI_TYPE");
+    }
+
     void Analyzer::DeclareGlobalFunction(FunctionDeclStmt& statement) {
         if (!statement.name || !statement.returnType) return;
         std::unordered_map<std::string, std::string> genericScope;
@@ -922,13 +985,9 @@ namespace Absolute {
             Report("async instance method '" + currentType + "." + statement.name->value +
                 "' must be const so its receiver cannot be mutated by the task",
                 "E_ASYNC_METHOD_REQUIRES_CONST");
-        if (statement.UsesCAbi() && (returnType == "auto" || returnType == "dynamic" ||
-            IsManagedPointerType(returnType)))
-            Report("C ABI function '" + statement.name->value +
-                "' requires a concrete C-compatible return type; use raw T* for pointers");
-        if (statement.UsesCAbi() && returnType.ends_with("[]"))
-            Report("C ABI function '" + statement.name->value +
-                "' cannot return an Absolute array descriptor");
+        if (statement.UsesCAbi())
+            ValidateCAbiType(returnType,
+                "C ABI function '" + statement.name->value + "' return", true);
 
         const std::string oldReturn = currentReturnType;
         const bool oldAsync = currentFunctionAsync;
@@ -982,12 +1041,8 @@ namespace Absolute {
                 Report("async parameter '" + name + "' cannot capture '" + type +
                     "': the task context cannot own its lifetime safely",
                     "E_ASYNC_CAPTURE_LIFETIME");
-            if (statement.UsesCAbi() && (type == "auto" || type == "dynamic" || type == "void"))
-                Report("C ABI parameter '" + name + "' requires a concrete C-compatible type");
-            if (statement.UsesCAbi() && IsManagedPointerType(type))
-                Report("C ABI parameter '" + name + "' must use raw T* instead of a managed pointer");
-            if (statement.UsesCAbi() && type.ends_with("[]"))
-                Report("C ABI parameter '" + name + "' cannot use an Absolute array descriptor");
+            if (statement.UsesCAbi())
+                ValidateCAbiType(type, "C ABI parameter '" + name + "'", false);
             SymbolId parameterId = InvalidSymbolId;
             if (name.empty()) Report("function parameter requires an identifier");
             else if (const auto declared = table.Declare(SymbolKind::Parameter, name, type)) {
