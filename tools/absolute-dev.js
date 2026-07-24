@@ -9,6 +9,7 @@
  *   node tools/absolute-dev.js package list|resolve [project.absproj]
  *   node tools/absolute-dev.js eval <expression>
  *   node tools/absolute-dev.js repl
+ *   node tools/absolute-dev.js bindgen <header.h> [bindgen-args...]
  */
 
 const fs = require('fs');
@@ -28,6 +29,7 @@ function usage() {
   absolute-dev package resolve <project.absproj>
   absolute-dev eval <expression>
   absolute-dev repl
+  absolute-dev bindgen <header.h> [-o out.abs] [-I dir] [--clang path]
 `);
 }
 
@@ -157,6 +159,10 @@ function main(argv) {
     case 'repl':
         repl.startRepl();
         return 0;
+    case 'bindgen': {
+        const bindgen = require(path.join(repoRoot, 'tools', 'absolute-bindgen.js'));
+        return bindgen.main(rest);
+    }
     default:
         console.error(`unknown command: ${command}`);
         usage();

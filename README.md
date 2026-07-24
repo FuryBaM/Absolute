@@ -466,6 +466,13 @@ C callbacks use `cfunc<Return, Params...>` (raw function pointers from
 `extern`/`export "C"` only). Native handles wrap `raw void*` in a resource
 `struct` with `destroy()`. See `docs/native-c-abi.md`.
 
+Generate Absolute declarations from a C header (requires `clang`):
+
+```bat
+node tools/absolute-bindgen.js native/api.h -o native/api.abs
+absolute-dev bindgen native/api.h -o native/api.abs
+```
+
 Generate a native object without linking it:
 
 ```bash

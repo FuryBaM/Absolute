@@ -174,6 +174,31 @@ extern "C" int native_add(int left, int right) {
 Do not declare Absolute `extern "C++"`. MSVC and Itanium C++ ABIs differ; Absolute
 will not bridge them at the language level.
 
+## Header bindgen
+
+Generate Absolute `extern "C"` stubs from a C header with the optional
+clang-based tool:
+
+```bat
+node tools/absolute-bindgen.js path\to\api.h -o api.abs
+absolute-dev bindgen path\to\api.h -o api.abs -I third_party\include
+```
+
+The tool uses `clang -Xclang -ast-dump=json` (portable LLVM under
+`.absolute/toolchains` or `clang` on `PATH`). It maps:
+
+| C | Absolute |
+|---|----------|
+| fixed-width integers / `float` / `double` / `bool` | matching Absolute scalar |
+| `void*` / opaque typedef pointers | `raw void*` or `using Handle = raw void*` |
+| `const char*` | `string` (caller-owned) |
+| `T*` for scalars | `raw T*` |
+| function pointers | `cfunc<...>` when argument types map |
+| variadic / incomplete aggregates | skipped with a comment |
+
+Re-check `long` / `size_t` mappings against your target ABI. The generator does
+not parse C++ headers or invent mangled names.
+
 ## Versioning
 
 This document describes Absolute language revision for C interop. Changing

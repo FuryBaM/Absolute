@@ -514,7 +514,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   `cfunc<Return, Params...>` — raw C function pointer (export/extern only,
   nullable, C CC call); handle-pattern: `struct` + `destroy()` + `move` with
   tests `cfunc-callbacks`, `native-handle-wrapper` (см. `docs/native-c-abi.md`).
-- [ ] Добавить генератор Absolute declarations из C headers.
+- [x] Добавить генератор Absolute declarations из C headers:
+  `tools/absolute-bindgen.js` / `absolute-dev bindgen` (clang AST JSON);
+  maps scalars, `raw` pointers, `const char*`→`string`, typedef handles,
+  `cfunc` for function pointers; skips variadic/unsupported with comments;
+  fixtures in `tests/bindgen/`.
 - [ ] Проверить targets x64, ARM64, Windows, Linux и macOS в CI.
 - [ ] Добавить WebAssembly target и browser runtime.
 

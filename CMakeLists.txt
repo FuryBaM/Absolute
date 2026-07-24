@@ -1324,6 +1324,46 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.cfunc-errors PROPERTIES WILL_FAIL TRUE)
 
+    find_program(ABSOLUTE_NODE_EXECUTABLE NAMES node nodejs)
+    set(ABSOLUTE_BINDGEN_CLANG "")
+    if(EXISTS "${PROJECT_SOURCE_DIR}/.absolute/toolchains/llvm-18.1.8/bin/clang${CMAKE_EXECUTABLE_SUFFIX}")
+        set(ABSOLUTE_BINDGEN_CLANG
+            "${PROJECT_SOURCE_DIR}/.absolute/toolchains/llvm-18.1.8/bin/clang${CMAKE_EXECUTABLE_SUFFIX}")
+    else()
+        find_program(ABSOLUTE_BINDGEN_CLANG NAMES clang clang-18 clang-19)
+    endif()
+    if(ABSOLUTE_NODE_EXECUTABLE AND ABSOLUTE_BINDGEN_CLANG)
+        add_test(
+            NAME absolute.bindgen-sample
+            COMMAND "${ABSOLUTE_NODE_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tools/absolute-bindgen.js"
+                "${PROJECT_SOURCE_DIR}/tests/bindgen/sample.h"
+                --clang "${ABSOLUTE_BINDGEN_CLANG}"
+                -o "${CMAKE_BINARY_DIR}/bindgen-sample.abs"
+        )
+        set_tests_properties(absolute.bindgen-sample PROPERTIES
+            FIXTURES_SETUP absolute-bindgen-sample
+        )
+        add_test(
+            NAME absolute.check-bindgen-sample
+            COMMAND "${CMAKE_COMMAND}"
+                -DGENERATED=${CMAKE_BINARY_DIR}/bindgen-sample.abs
+                -P "${PROJECT_SOURCE_DIR}/tests/bindgen/check-bindgen-sample.cmake"
+        )
+        set_tests_properties(absolute.check-bindgen-sample PROPERTIES
+            FIXTURES_REQUIRED absolute-bindgen-sample
+        )
+        if(ABSOLUTE_ENABLE_LLVM)
+            add_test(
+                NAME absolute.parse-bindgen-sample
+                COMMAND Absolute-Compiler "${CMAKE_BINARY_DIR}/bindgen-sample.abs" --parse-only
+            )
+            set_tests_properties(absolute.parse-bindgen-sample PROPERTIES
+                FIXTURES_REQUIRED absolute-bindgen-sample
+            )
+        endif()
+    endif()
+
     if(ABSOLUTE_ENABLE_LLVM)
         add_test(
             NAME absolute.emit-native-ffi
