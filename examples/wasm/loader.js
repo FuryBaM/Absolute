@@ -1,6 +1,7 @@
 /**
  * Browser loader for Absolute wasm modules.
- * Provides env.absolute_log so println/assert text appears in the page log.
+ * Mirrors tools/absolute-wasm-browser-host.js (log, HTTP/TCP mocks, task stubs).
+ * Self-contained so a static server rooted at examples/wasm works.
  */
 
 const logEl = document.getElementById('log');
@@ -10,6 +11,7 @@ const runEl = document.getElementById('run');
 let instance = null;
 let memory = null;
 const decoder = new TextDecoder('utf-8');
+const encoder = new TextEncoder();
 
 function log(message, className = '') {
   logEl.textContent = message;
@@ -23,7 +25,79 @@ function readCString(ptr) {
   return decoder.decode(view.subarray(Number(ptr) >>> 0, end));
 }
 
+function toBytes(value) {
+  if (value instanceof Uint8Array) return value;
+  return encoder.encode(String(value ?? ''));
+}
+
+function createMockTcp(mocks) {
+  const sockets = new Map();
+  let nextId = 1;
+  const keyOf = (host, port) => `${host}:${port}`;
+  const alloc = (rec) => {
+    const id = nextId++;
+    sockets.set(id, rec);
+    return id;
+  };
+  return {
+    connect(host, port) {
+      const key = keyOf(host, port);
+      if (!Object.prototype.hasOwnProperty.call(mocks, key)) return -1;
+      const mock = mocks[key];
+      if (mock.mode === 'echo' || mock.echo) {
+        return alloc({ kind: 'echo', buffer: new Uint8Array(0), port });
+      }
+      if (mock.mode === 'script' && Array.isArray(mock.responses)) {
+        return alloc({ kind: 'script', responses: mock.responses.slice(), port });
+      }
+      return -1;
+    },
+    send(handle, text) {
+      const s = sockets.get(handle);
+      if (!s) return 0;
+      const data = toBytes(text || '');
+      if (s.kind === 'echo') {
+        const next = new Uint8Array(s.buffer.length + data.length);
+        next.set(s.buffer, 0);
+        next.set(data, s.buffer.length);
+        s.buffer = next;
+        return data.length;
+      }
+      if (s.kind === 'script') return data.length;
+      return 0;
+    },
+    receive(handle, maxBytes) {
+      const s = sockets.get(handle);
+      if (!s) return null;
+      if (s.kind === 'echo') {
+        const n = Math.min(s.buffer.length, maxBytes);
+        const out = s.buffer.subarray(0, n);
+        s.buffer = s.buffer.subarray(n);
+        return out;
+      }
+      if (s.kind === 'script') {
+        if (!s.responses.length) return new Uint8Array(0);
+        return toBytes(String(s.responses.shift())).subarray(0, maxBytes);
+      }
+      return null;
+    },
+    close(handle) { sockets.delete(handle); },
+    port(handle) {
+      const s = sockets.get(handle);
+      return s && typeof s.port === 'number' ? s.port : -1;
+    },
+  };
+}
+
 function createImports() {
+  const httpMocks = window.__ABSOLUTE_HTTP_MOCKS || {
+    'https://example.test/hello': 'hello-from-browser',
+  };
+  const tcpMocks = window.__ABSOLUTE_TCP_MOCKS || {
+    '127.0.0.1:9': { mode: 'echo' },
+  };
+  const tcp = createMockTcp(tcpMocks);
+
   return {
     env: {
       absolute_log(ptr, len) {
@@ -34,22 +108,39 @@ function createImports() {
       absolute_http_get(urlPtr, outPtr, outCap) {
         if (!memory) return -1;
         const url = readCString(urlPtr);
-        const mock = window.__ABSOLUTE_HTTP_MOCKS && window.__ABSOLUTE_HTTP_MOCKS[url];
+        const mock = httpMocks[url];
         if (mock == null) return -1;
-        const body = new TextEncoder().encode(String(mock));
+        const body = toBytes(mock);
         const view = new Uint8Array(memory.buffer);
         const n = Math.min(body.length, Number(outCap) | 0);
         view.set(body.subarray(0, n), Number(outPtr) >>> 0);
         return n;
       },
-      // TCP host table is Node-oriented; browser stubs keep instantiate working.
-      absolute_tcp_connect() { return -1; },
+      absolute_tcp_connect(hostPtr, port) {
+        if (!memory) return -1;
+        return tcp.connect(readCString(hostPtr), Number(port) | 0);
+      },
       absolute_tcp_listen() { return -1; },
       absolute_tcp_accept() { return -1; },
-      absolute_tcp_send() { return 0; },
-      absolute_tcp_receive() { return -1; },
-      absolute_tcp_close() {},
-      absolute_tcp_port() { return -1; },
+      absolute_tcp_send(handle, textPtr) {
+        if (!memory) return 0;
+        return tcp.send(Number(handle) | 0, readCString(textPtr));
+      },
+      absolute_tcp_receive(handle, outPtr, maxBytes) {
+        if (!memory) return -1;
+        const data = tcp.receive(Number(handle) | 0, Number(maxBytes) | 0);
+        if (!data) return -1;
+        const view = new Uint8Array(memory.buffer);
+        const n = Math.min(data.length, Number(maxBytes) | 0);
+        view.set(data.subarray(0, n), Number(outPtr) >>> 0);
+        return n;
+      },
+      absolute_tcp_close(handle) { tcp.close(Number(handle) | 0); },
+      absolute_tcp_port(handle) { return tcp.port(Number(handle) | 0); },
+      // Main-thread browsers cannot Atomics.wait — sync tasks only.
+      absolute_task_pool_size() { return 0; },
+      absolute_task_enqueue() { return -1; },
+      absolute_task_await_job() {},
     },
   };
 }
@@ -61,9 +152,7 @@ async function loadBytes(bytes) {
   memory = instance.exports.memory;
   const names = Object.keys(instance.exports).filter((n) => !n.startsWith('__'));
   log(`Loaded exports:\n${names.join('\n')}\n\n`, 'ok');
-  runEl.disabled = typeof instance.exports.wasm_add !== 'function' &&
-    typeof instance.exports.wasm_box_sum !== 'function' &&
-    typeof instance.exports.wasm_task_add !== 'function';
+  runEl.disabled = false;
 }
 
 fileEl.addEventListener('change', async () => {

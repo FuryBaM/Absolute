@@ -1,0 +1,66 @@
+# Optional wasi-sysroot discovery for Absolute.
+# Does not replace Absolute's wasm runtime; use for extra C objects / future libc experiments.
+#
+# Search order:
+#   1. WASI_SYSROOT env
+#   2. WASI_SDK_PATH/share/wasi-sysroot or WASI_SDK_PATH
+#   3. .absolute/toolchains/wasi-sysroot-*/share/wasi-sysroot
+#   4. .absolute/toolchains/wasi-sysroot-*
+
+set(ABSOLUTE_WASI_SYSROOT "" CACHE PATH "wasi-sysroot path (include + lib)")
+
+function(absolute_find_wasi_sysroot out_var)
+    if(ABSOLUTE_WASI_SYSROOT AND EXISTS "${ABSOLUTE_WASI_SYSROOT}")
+        set(${out_var} "${ABSOLUTE_WASI_SYSROOT}" PARENT_SCOPE)
+        return()
+    endif()
+    if(DEFINED ENV{WASI_SYSROOT} AND EXISTS "$ENV{WASI_SYSROOT}")
+        set(${out_var} "$ENV{WASI_SYSROOT}" PARENT_SCOPE)
+        return()
+    endif()
+    if(DEFINED ENV{WASI_SDK_PATH})
+        set(_sdk "$ENV{WASI_SDK_PATH}")
+        if(EXISTS "${_sdk}/share/wasi-sysroot")
+            set(${out_var} "${_sdk}/share/wasi-sysroot" PARENT_SCOPE)
+            return()
+        endif()
+        if(EXISTS "${_sdk}")
+            set(${out_var} "${_sdk}" PARENT_SCOPE)
+            return()
+        endif()
+    endif()
+    file(GLOB _absolute_wasi_roots
+        "${CMAKE_SOURCE_DIR}/.absolute/toolchains/wasi-sysroot-*"
+        "${PROJECT_SOURCE_DIR}/.absolute/toolchains/wasi-sysroot-*")
+    list(SORT _absolute_wasi_roots)
+    list(REVERSE _absolute_wasi_roots)
+    foreach(_root IN LISTS _absolute_wasi_roots)
+        if(EXISTS "${_root}/share/wasi-sysroot")
+            set(${out_var} "${_root}/share/wasi-sysroot" PARENT_SCOPE)
+            return()
+        endif()
+        if(EXISTS "${_root}/include" OR EXISTS "${_root}/lib")
+            set(${out_var} "${_root}" PARENT_SCOPE)
+            return()
+        endif()
+    endforeach()
+    set(${out_var} "" PARENT_SCOPE)
+endfunction()
+
+absolute_find_wasi_sysroot(_absolute_wasi_found)
+if(_absolute_wasi_found)
+    set(ABSOLUTE_WASI_SYSROOT "${_absolute_wasi_found}" CACHE PATH "wasi-sysroot path (include + lib)" FORCE)
+    message(STATUS "Absolute wasi-sysroot: ${ABSOLUTE_WASI_SYSROOT}")
+    if(EXISTS "${ABSOLUTE_WASI_SYSROOT}/lib/wasm32-wasi/libc.a")
+        set(ABSOLUTE_WASI_LIBC "${ABSOLUTE_WASI_SYSROOT}/lib/wasm32-wasi/libc.a" CACHE FILEPATH "" FORCE)
+    elseif(EXISTS "${ABSOLUTE_WASI_SYSROOT}/lib/wasm32-wasip1/libc.a")
+        set(ABSOLUTE_WASI_LIBC "${ABSOLUTE_WASI_SYSROOT}/lib/wasm32-wasip1/libc.a" CACHE FILEPATH "" FORCE)
+    else()
+        set(ABSOLUTE_WASI_LIBC "" CACHE FILEPATH "" FORCE)
+    endif()
+    if(ABSOLUTE_WASI_LIBC)
+        message(STATUS "Absolute wasi libc: ${ABSOLUTE_WASI_LIBC}")
+    endif()
+else()
+    message(STATUS "wasi-sysroot not found (optional). Run scripts/windows/bootstrap-wasi-sysroot.ps1")
+endif()

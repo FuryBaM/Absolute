@@ -93,6 +93,7 @@ Common triples:
 - `tests/wasm-net-real.abs` → `absolute.run-wasm-net-real` (real localhost TCP via worker bridge)
 - `tests/wasm-smoke.abs` (WASI link) → `absolute.build-wasm-wasi-smoke` (Node WASI / wasmtime)
 - `tests/wasm-wasi-services.abs` → `absolute.run-wasm-wasi-services` (clock/random/args/env)
+- `tests/wasm-http.abs` via browser host → `absolute.run-wasm-browser-host`
 - IR/object checks
 
 ## Host import
@@ -112,6 +113,7 @@ Node helpers:
 - `tools/absolute-wasm-task-worker.js` — task worker pool (isolated instances)
 - `tools/absolute-wasm-run.js` — CLI runner for host-import modules
 - `tools/absolute-wasm-wasi-run.js` — CLI runner for WASI preview1 modules (Node)
+- `tools/absolute-wasm-browser-host.js` / `.mjs` — browser-safe mocks (no Atomics.wait)
 
 ### Task worker pool (Node)
 
@@ -203,14 +205,39 @@ runtime object) and `wasi.initialize(instance)` before calling `main`.
 
 Tests: `absolute.build-wasm-wasi-smoke`, `absolute.run-wasm-wasi-services`.
 
-**Not included yet:** full wasi-sdk/libc sysroot (`printf` from wasi-libc, preopens
-for real FS, sockets). Absolute still ships its own heap/VFS/printf subset.
+**Not included yet:** linking Absolute modules against wasi-libc (symbol clash with
+Absolute's heap/printf). Absolute still ships its own heap/VFS/printf subset.
+
+### Optional wasi-sysroot (headers + libc.a)
+
+For experiments / extra C objects (not required for Absolute wasm programs):
+
+```powershell
+pwsh scripts/windows/bootstrap-wasi-sysroot.ps1
+# sets up .absolute/toolchains/wasi-sysroot-25.0
+$env:WASI_SYSROOT = (Resolve-Path .absolute\toolchains\wasi-sysroot-25.0\...)
+```
+
+CMake loads `cmake/AbsoluteWasi.cmake` and reports `ABSOLUTE_WASI_SYSROOT` /
+`ABSOLUTE_WASI_LIBC` when present. Absolute's default link path still uses
+`absolute_wasm_runtime*.o` only.
+
+### Browser embedder
+
+- Demo: `examples/wasm/` — mocks for HTTP/TCP; sync tasks only on the UI thread.
+- Library: `tools/absolute-wasm-browser-host.js` (same import surface as Node host
+  without real TCP / task workers).
+- Test: `absolute.run-wasm-browser-host` (Node runs the browser host against
+  `wasm-http`).
+
+Main-thread browsers **cannot** call `Atomics.wait`; real TCP / multi-worker tasks
+need the module hosted inside a Worker with COOP/COEP `SharedArrayBuffer`.
 
 ## Next steps (not done)
 
 1. Shared-memory wasm threads (atomics heap, true shared `memory`).
-2. Optional wasi-sdk sysroot link (`WASI_SDK_PATH` / wasi-libc).
-3. Browser-side TCP/WebSocket / task-worker bridges.
+2. Link experiments with wasi-libc without clashing Absolute runtime symbols.
+3. Worker-hosted browser runtime (COOP/COEP) for real TCP / task pools.
 
 ## Acceptance criteria progress
 

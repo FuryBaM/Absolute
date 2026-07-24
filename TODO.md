@@ -542,7 +542,13 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   tests `wasm-wasi-services` + smoke under Node WASI; absolutec can select
   WASI object via `*wasi*` target / `ABSOLUTE_WASM_RUNTIME=wasi` when built
   with `ABSOLUTE_WASM_WASI_OBJECT`.
-- [ ] full wasi-sdk libc sysroot (`WASI_SDK_PATH`); shared-memory wasm threads.
+- [x] Browser wasm host parity (mocks): `absolute-wasm-browser-host.js` / demo
+  loader HTTP+TCP mocks + task stubs; test `run-wasm-browser-host`.
+- [x] Optional wasi-sysroot bootstrap (`scripts/windows/bootstrap-wasi-sysroot.ps1`)
+  + CMake `AbsoluteWasi.cmake` discovery (`WASI_SYSROOT` / `WASI_SDK_PATH`).
+  Full wasi-libc link into Absolute modules still open (symbol clashes).
+- [ ] shared-memory wasm threads; Worker-hosted browser TCP/task pools (COOP/COEP);
+  wasi-libc coexistence with Absolute runtime.
 
 ### IDE, debugger и developer tools
 

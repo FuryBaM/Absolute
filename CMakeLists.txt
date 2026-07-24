@@ -12,6 +12,7 @@ set(ABSOLUTE_LLVM_ROOT "" CACHE PATH "Root of a native LLVM SDK containing lib/c
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(AbsoluteLLVM)
+include(AbsoluteWasi)
 
 if(MSVC AND CMAKE_GENERATOR MATCHES "Visual Studio")
     add_compile_options(/MP)
@@ -1487,6 +1488,16 @@ if(BUILD_TESTING)
                         -DNODE=${ABSOLUTE_NODE_FOR_WASM}
                         -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-http.cmake"
+                )
+                add_test(
+                    NAME absolute.run-wasm-browser-host
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-http.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-browser-host.wasm
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DBROWSER_HOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-browser-host.js
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-browser-host.cmake"
                 )
                 add_test(
                     NAME absolute.run-wasm-net
