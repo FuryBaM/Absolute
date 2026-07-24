@@ -1195,8 +1195,9 @@ namespace Desktop {
     }
 
     // Multi-backend GPU RHI.
-    // OpenGL (WGL/GLX): GLSL shaders + full buffer/pipeline/texture path.
+    // OpenGL (WGL/GLX): GLSL + full buffer/pipeline/texture path.
     // D3D11 (Windows): HLSL + VB/IB/pipeline/draw + texture/sampler.
+    // D3D12 (Windows): clear/present lifecycle only (mesh RHI later).
     // Frame model:
     //   beginFrame(); clear(...); bind(pipeline); bind(vb); bind(ib); bind(tex); bind(sampler);
     //   draw(n) | drawIndexed(n); endFrame(); present();
@@ -1213,7 +1214,8 @@ namespace Desktop {
         // Backend preference (second ctor arg).
         public static int32 BackendAuto = 0;   // OpenGL, then D3D11 on Windows
         public static int32 BackendOpenGL = 1;
-        public static int32 BackendD3D11 = 2;  // clear/present; full RHI still OpenGL
+        public static int32 BackendD3D11 = 2;  // full mesh RHI (HLSL)
+        public static int32 BackendD3D12 = 3;  // clear/present only
 
         public Gpu(Window* window, int32 backend) {
             handle = absolute_desktop_gpu_create_backend(window.handle, backend);

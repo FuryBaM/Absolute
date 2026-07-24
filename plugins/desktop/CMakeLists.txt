@@ -5,7 +5,7 @@ option(ABSOLUTE_DESKTOP_ENABLE_X11 "Build the Linux X11 window backend when avai
 
 if(WIN32)
     set(ABSOLUTE_DESKTOP_RUNTIME_SOURCE desktop_runtime.cpp)
-    set(ABSOLUTE_DESKTOP_SYSTEM_LIBRARIES user32.lib gdi32.lib Xinput9_1_0.lib opengl32.lib windowscodecs.lib ole32.lib winmm.lib d3d11.lib dxgi.lib d3dcompiler.lib dxguid.lib)
+    set(ABSOLUTE_DESKTOP_SYSTEM_LIBRARIES user32.lib gdi32.lib Xinput9_1_0.lib opengl32.lib windowscodecs.lib ole32.lib winmm.lib d3d11.lib d3d12.lib dxgi.lib d3dcompiler.lib dxguid.lib)
 else()
     if(ABSOLUTE_DESKTOP_ENABLE_X11)
         find_package(X11 QUIET)
@@ -43,13 +43,14 @@ add_library(Absolute-Desktop-Runtime STATIC
     desktop_soft_batch.cpp
     desktop_gpu_gl.cpp
     desktop_gpu_d3d11.cpp
+    desktop_gpu_d3d12.cpp
     desktop_audio.cpp
     desktop_mesh_obj.cpp
 )
 target_compile_features(Absolute-Desktop-Runtime PRIVATE cxx_std_20)
 if(WIN32)
     target_compile_definitions(Absolute-Desktop-Runtime PRIVATE UNICODE _UNICODE)
-    target_link_libraries(Absolute-Desktop-Runtime PUBLIC opengl32 windowscodecs ole32 winmm d3d11 dxgi d3dcompiler dxguid)
+    target_link_libraries(Absolute-Desktop-Runtime PUBLIC opengl32 windowscodecs ole32 winmm d3d11 d3d12 dxgi d3dcompiler dxguid)
 elseif(X11_FOUND)
     target_include_directories(Absolute-Desktop-Runtime PRIVATE ${X11_INCLUDE_DIR})
     if(ABSOLUTE_DESKTOP_HAS_GLX)
