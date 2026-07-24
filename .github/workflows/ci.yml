@@ -58,6 +58,10 @@ jobs:
         shell: cmd
         run: build-windows.bat --bootstrap
 
+      - name: WebAssembly tests (Node engine)
+        shell: cmd
+        run: ctest --test-dir .absolute\build\windows-release -C Release -R wasm --output-on-failure
+
   # Host-native smoke on macOS (often Apple Silicon arm64 on GitHub runners).
   macos-smoke:
     runs-on: macos-latest

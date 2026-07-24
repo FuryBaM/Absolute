@@ -524,10 +524,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   (`macos-latest`, typically arm64 host) — см. `docs/platforms.md` и
   `.github/workflows/ci.yml`. Windows ARM64 и Linux ARM64 runners отложены.
 - [x] WebAssembly: `--target`, IR/object, `wasm-ld --build-exe`,
-  wasm runtime (`absolute_wasm_runtime.c`: heap, managed, errors, sync tasks,
-  printf→`env.absolute_log`), Node host `tools/absolute-wasm-host.js`,
-  tests export/smoke/managed/task, browser demo `examples/wasm/`.
-- [ ] wasm/WASI: dynamic load, FS, network, multi-thread tasks, wasi-sdk/wasmtime CI.
+  wasm runtime (heap, managed, errors, sync tasks, virtual FS, env/process,
+  network stubs, printf→`env.absolute_log`), Node host
+  `tools/absolute-wasm-host.js`, tests export/smoke/managed/task/fs,
+  browser demo `examples/wasm/`, CI `ctest -R wasm` after Windows LLVM job.
+- [ ] wasm/WASI: real network, multi-thread tasks, wasi-sdk sysroot, wasmtime host.
 
 ### IDE, debugger и developer tools
 

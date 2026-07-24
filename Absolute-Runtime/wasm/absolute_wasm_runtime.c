@@ -613,3 +613,7 @@ void absolute_task_destroy(void* handle) {
     free(task->context);
     free(task);
 }
+
+/* Platform services: virtual FS, env, process, network stubs, capsules. */
+#include "absolute_wasm_platform.c"
+

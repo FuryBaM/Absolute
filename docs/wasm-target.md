@@ -38,16 +38,17 @@ absolutec tests\wasm-export-only.abs --target wasm32-unknown-unknown --build-exe
 | Layer | Status |
 |-------|--------|
 | Host `Absolute-Runtime` | Native only |
-| `absolute_wasm_runtime.o` | Heap, managed handles, errors, libc helpers, no-op console |
+| `absolute_wasm_runtime.o` | Heap, managed, errors, sync tasks, virtual FS, env/process, net stubs |
 | `ABSOLUTE_WASM_LIBS` | Extra space/`;`-separated objects to link |
 
 Supported profiles:
 
 1. **Export-only** — `export "C"` scalars.
-2. **Console/assert** — `println` / `assert` / scalars.
-3. **Managed objects** — `new` / `delete` / class fields (see `tests/wasm-managed.abs`).
-4. Load in Node / browser with `env.absolute_log` (see `tools/absolute-wasm-host.js`).
-5. **Sync tasks** — `spawn`/`await` run the entry immediately on the same stack.
+2. **Console/assert** — `println` / `assert` via `env.absolute_log`.
+3. **Managed objects** — `new` / `delete` (see `tests/wasm-managed.abs`).
+4. **Sync tasks** — `spawn`/`await` run immediately (see `tests/wasm-task.abs`).
+5. **Virtual FS** — in-memory `absolute_fs_*` (see `tests/wasm-fs.abs`).
+6. **Network** — stubs returning errors (not functional sockets).
 
 See the host matrix in [`platforms.md`](platforms.md) and
 [`examples/wasm/README.md`](../examples/wasm/README.md).
@@ -82,6 +83,7 @@ Common triples:
 - `tests/wasm-smoke.abs` → `absolute.run-wasm-smoke`
 - `tests/wasm-managed.abs` → `absolute.run-wasm-managed` (`new`/`delete` Box)
 - `tests/wasm-task.abs` → `absolute.run-wasm-task` (sync spawn/await)
+- `tests/wasm-fs.abs` → `absolute.run-wasm-fs` (virtual FS round-trip)
 - IR/object checks: `emit-wasm-smoke-ir`, `check-wasm-smoke-ir`, `emit-wasm-smoke-object`
 
 ## Host import
@@ -94,9 +96,9 @@ Node helper: `tools/absolute-wasm-host.js` (`instantiateAbsoluteWasm`).
 
 ## Next steps (not done)
 
-1. Dynamic `load`, FS, network for wasm/WASI.
+1. Real sockets / HTTP on wasm or WASI.
 2. Multi-threaded tasks / worker pool.
-3. Optional wasi-sdk sysroot; dedicated wasmtime CI job.
+3. Optional wasi-sdk sysroot and wasmtime-native host (CI already runs Node wasm tests on Windows LLVM job).
 
 ## Acceptance criteria progress
 

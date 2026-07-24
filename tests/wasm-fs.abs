@@ -1,0 +1,36 @@
+// In-memory virtual filesystem on wasm Absolute runtime.
+extern "C" int32 absolute_fs_exists(string path);
+extern "C" int64 absolute_fs_file_size(string path);
+extern "C" string absolute_fs_read_text(string path);
+extern "C" int32 absolute_fs_write_text(string path, string text, int32 append);
+extern "C" int32 absolute_fs_remove(string path);
+
+export "C" int32 wasm_fs_roundtrip() {
+    if (absolute_fs_write_text("/tmp/hello.txt", "hello-wasm", 0) == 0) {
+        return 1;
+    }
+    if (absolute_fs_exists("/tmp/hello.txt") == 0) {
+        return 2;
+    }
+    string text = absolute_fs_read_text("/tmp/hello.txt");
+    if (text != "hello-wasm") {
+        return 3;
+    }
+    if (absolute_fs_file_size("/tmp/hello.txt") != 10) {
+        return 4;
+    }
+    if (absolute_fs_remove("/tmp/hello.txt") == 0) {
+        return 5;
+    }
+    if (absolute_fs_exists("/tmp/hello.txt") != 0) {
+        return 6;
+    }
+    return 0;
+}
+
+int32 main() {
+    int32 code = wasm_fs_roundtrip();
+    assert(code == 0, "wasm fs roundtrip");
+    println("wasm-fs=ok");
+    return 0;
+}
