@@ -523,11 +523,12 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   Windows x64 (frontend + full LLVM), Linux x64 (full LLVM), macOS smoke
   (`macos-latest`, typically arm64 host) — см. `docs/platforms.md` и
   `.github/workflows/ci.yml`. Windows ARM64 и Linux ARM64 runners отложены.
-- [x] WebAssembly MVP: `--target <triple>` (в т.ч. `wasm32-unknown-unknown`),
-  LLVM WebAssembly backend, `--emit-llvm` / `--emit-object`; отказ
-  `--build-exe` и ASan для wasm; тесты `wasm-smoke` (см. `docs/wasm-target.md`).
-- [ ] WASI/browser runtime: wasm-ld driver, Absolute-Runtime for wasm, CI
-  engine smoke, browser loader.
+- [x] WebAssembly MVP: `--target <triple>`, LLVM WebAssembly backend,
+  `--emit-llvm` / `--emit-object`, `--build-exe` → `wasm-ld --no-entry
+  --export-all` for export-only modules; Node engine smoke
+  (`tests/wasm-export-only.abs`); host-runtime wasm link rejected; docs
+  `docs/wasm-target.md`.
+- [ ] WASI/browser Absolute-Runtime port, wasi-sdk `main`/libc, browser loader.
 
 ### IDE, debugger и developer tools
 

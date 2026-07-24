@@ -1411,13 +1411,31 @@ if(BUILD_TESTING)
                 --target wasm32-unknown-unknown
                 --emit-object -o "${CMAKE_BINARY_DIR}/wasm-smoke.o"
         )
+        # Host-runtime programs still cannot link for wasm (missing absolute_*).
         add_test(
-            NAME absolute.wasm-build-exe-rejected
+            NAME absolute.wasm-host-runtime-link-rejected
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/wasm-smoke.abs"
                 --target wasm32-unknown-unknown
-                --build-exe -o "${CMAKE_BINARY_DIR}/wasm-smoke.exe"
+                --build-exe -o "${CMAKE_BINARY_DIR}/wasm-smoke.wasm"
         )
-        set_tests_properties(absolute.wasm-build-exe-rejected PROPERTIES WILL_FAIL TRUE)
+        set_tests_properties(absolute.wasm-host-runtime-link-rejected PROPERTIES WILL_FAIL TRUE)
+
+        find_program(ABSOLUTE_NODE_FOR_WASM NAMES node nodejs)
+        find_program(ABSOLUTE_WASM_LD_FOR_TEST NAMES wasm-ld wasm-ld.exe
+            HINTS
+                "${LLVM_TOOLS_BINARY_DIR}"
+                "${PROJECT_SOURCE_DIR}/.absolute/toolchains/llvm-18.1.8/bin")
+        if(ABSOLUTE_NODE_FOR_WASM AND ABSOLUTE_WASM_LD_FOR_TEST)
+            add_test(
+                NAME absolute.run-wasm-export
+                COMMAND "${CMAKE_COMMAND}"
+                    -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                    -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-export-only.abs
+                    -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-export-only.wasm
+                    -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                    -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-export.cmake"
+            )
+        endif()
 
         add_test(
             NAME absolute.emit-export-c-bool

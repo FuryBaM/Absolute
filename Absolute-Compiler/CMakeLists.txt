@@ -47,6 +47,23 @@ if(TARGET Absolute-CodeGen)
             ABSOLUTE_RUNTIME_DL_LIBRARY="${CMAKE_DL_LIBS}"
         )
     endif()
+    # Prefer the LLVM SDK that Absolute was configured against.
+    set(_absolute_wasm_ld_hints)
+    if(DEFINED LLVM_TOOLS_BINARY_DIR)
+        list(APPEND _absolute_wasm_ld_hints "${LLVM_TOOLS_BINARY_DIR}")
+    endif()
+    list(APPEND _absolute_wasm_ld_hints
+        "${PROJECT_SOURCE_DIR}/../.absolute/toolchains/llvm-18.1.8/bin"
+        "${CMAKE_SOURCE_DIR}/.absolute/toolchains/llvm-18.1.8/bin")
+    find_program(ABSOLUTE_WASM_LD NAMES wasm-ld wasm-ld.exe
+        HINTS ${_absolute_wasm_ld_hints})
+    if(ABSOLUTE_WASM_LD)
+        target_compile_definitions(Absolute-Compiler PRIVATE
+            ABSOLUTE_WASM_LD="${ABSOLUTE_WASM_LD}")
+        message(STATUS "wasm-ld for Absolute: ${ABSOLUTE_WASM_LD}")
+    else()
+        message(STATUS "wasm-ld not found; WebAssembly --build-exe will search PATH at runtime")
+    endif()
     add_dependencies(Absolute-Compiler Absolute-Runtime)
 endif()
 

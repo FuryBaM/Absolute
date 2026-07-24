@@ -474,14 +474,16 @@ node tools/absolute-bindgen.js native/api.h -o native/api.abs
 absolute-dev bindgen native/api.h -o native/api.abs
 ```
 
-Experimental WebAssembly IR/object emit (no host linker for wasm yet):
+Experimental WebAssembly emit and export-only linking (`wasm-ld` from the
+portable LLVM SDK or `PATH`):
 
 ```bat
 absolutec program.abs --target wasm32-unknown-unknown --emit-llvm -o program.ll
-absolutec program.abs --target wasm32-unknown-unknown --emit-object -o program.o
+absolutec tests\wasm-export-only.abs --target wasm32-unknown-unknown --build-exe -o out.wasm
 ```
 
-See [`docs/wasm-target.md`](docs/wasm-target.md).
+Programs that use the host Absolute runtime cannot link for wasm yet. See
+[`docs/wasm-target.md`](docs/wasm-target.md).
 
 Generate a native object without linking it:
 

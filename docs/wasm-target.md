@@ -1,41 +1,45 @@
 # WebAssembly target
 
-Status: **experimental MVP**. Absolute can select a WebAssembly LLVM triple for
-IR and object emission. There is **no** host `--build-exe` path for wasm yet
-(no `wasm-ld` / WASI sysroot integration, no browser runtime).
+Status: **experimental**. Absolute can emit WebAssembly IR/objects and, when
+`wasm-ld` is available, link **export-only** modules into `.wasm` for engines
+such as Node's `WebAssembly` API.
 
 ## What works today
 
 ```bat
 absolutec program.abs --target wasm32-unknown-unknown --emit-llvm -o program.ll
 absolutec program.abs --target wasm32-unknown-unknown --emit-object -o program.o
+absolutec tests\wasm-export-only.abs --target wasm32-unknown-unknown --build-exe -o out.wasm
 ```
 
 - Module `target triple` is set to the requested triple (e.g. `wasm32-unknown-unknown`).
 - LLVM WebAssembly backend is linked and initialized alongside the host backend.
-- Default object extension for wasm is `.o` on every host OS.
-- `export "C"` symbols remain unmangled in IR/objects (useful as wasm exports after linking).
+- `--build-exe` for wasm runs `wasm-ld --no-entry --export-all` (found via
+  `ABSOLUTE_WASM_LD`, configure-time LLVM tools, PATH, or
+  `.absolute/toolchains/llvm-*/bin/wasm-ld`).
+- Pure `export "C"` modules (no `println` / managed heap / tasks) produce a
+  loadable `.wasm` (see `tests/wasm-export-only.abs` + Node runner).
 
-## What is rejected
+## What is rejected or unsupported
 
 | Mode | Result |
 |------|--------|
-| `--target wasm32-... --build-exe` | Error: use emit-llvm/object + external linker |
 | `--target wasm32-... --sanitize=address` | Error |
-| `--build-exe --target <any non-empty>` | Error (host linker only) |
+| `--build-exe --target` for non-wasm triples | Error |
+| wasm module that calls host Absolute runtime | `wasm-ld` undefined-symbol failure |
+| Full WASI / browser app runtime | Not shipped |
 
-## Runtime and linking (not automated)
+## Runtime and linking
 
-Emitted IR/objects still reference Absolute runtime symbols (`absolute_*`, libc
-helpers for `println`/`assert`, managed heap, tasks, etc.). Those symbols come
-from the **host** `Absolute-Runtime` today and are **not** wasm/WASI ports.
+Host `Absolute-Runtime` is **not** wasm-compatible. Programs that use
+`println`, `assert` (runtime path), managed pointers, `load`, tasks, etc. will
+not link until a wasm runtime port exists.
 
-To produce a runnable `.wasm` you must currently:
+Supported link profile today:
 
-1. Emit object or bitcode with `--target wasm32-unknown-unknown`.
-2. Provide wasm-compatible definitions for every referenced runtime symbol
-   (or stick to a pure `export "C"` subset and supply a tiny WASI/stub runtime).
-3. Link with `wasm-ld` (wasi-sdk / emscripten / standalone LLVM).
+1. Absolute source with only `export "C"` functions and Absolute scalars.
+2. `absolutec --target wasm32-unknown-unknown --build-exe -o mod.wasm`
+3. Load in Node / browser / wasmtime with no imports (memory is exported).
 
 See the host matrix in [`platforms.md`](platforms.md).
 
@@ -65,21 +69,21 @@ Common triples:
 
 ## Tests
 
-- `tests/wasm-smoke.abs` + `absolute.emit-wasm-smoke-ir` / `check-wasm-smoke-ir`
-- `absolute.emit-wasm-smoke-object`
-- `absolute.wasm-build-exe-rejected` (`WILL_FAIL`)
+- `tests/wasm-smoke.abs` — IR/object + host-runtime link rejection
+- `tests/wasm-export-only.abs` + `absolute.run-wasm-export` (build + Node)
+- `absolute.emit-wasm-smoke-ir` / `check-wasm-smoke-ir` / `emit-wasm-smoke-object`
 
 ## Next steps (not done)
 
-1. Optional `wasm-ld` driver behind `--build-exe` when wasi-sdk is detected.
-2. Minimal Absolute-Runtime subset compiled for wasm32.
-3. CI job: emit object + `wasm-ld` + `wasmtime` smoke.
+1. Minimal Absolute-Runtime subset compiled for wasm32/WASI.
+2. Optional wasi-sdk sysroot integration for `main` + libc.
+3. Dedicated CI job installing wasmtime (Node runner already covers export smoke when tools exist).
 4. Browser demo loader.
 
 ## Acceptance criteria progress
 
 - [x] Explicit CLI/target selection (`--target`)
 - [x] Documented wasm emit/link limits (this file)
-- [ ] CI job: wasm artifact + engine run
-- [x] Clear error for unsupported modes (`--build-exe`, ASan)
+- [x] Engine smoke: Node WebAssembly for export-only modules (`run-wasm-export`)
+- [x] Clear errors for ASan / non-wasm cross `--build-exe` / host-runtime link failures
 - [x] Host backends remain default when `--target` is omitted

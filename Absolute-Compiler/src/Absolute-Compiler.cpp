@@ -14,6 +14,18 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
+#include <vector>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 using namespace Absolute;
 
@@ -51,6 +63,47 @@ namespace {
         return lower.starts_with("wasm32") || lower.starts_with("wasm64") ||
             lower.find("wasm32") != std::string::npos ||
             lower.find("wasm64") != std::string::npos;
+    }
+
+    fs::path FindWasmLd() {
+        if (const char* fromEnv = std::getenv("ABSOLUTE_WASM_LD")) {
+            const fs::path candidate(fromEnv);
+            if (fs::exists(candidate)) return candidate;
+        }
+#ifdef ABSOLUTE_WASM_LD
+        {
+            const fs::path candidate(ABSOLUTE_WASM_LD);
+            if (fs::exists(candidate)) return candidate;
+        }
+#endif
+#ifdef _WIN32
+        const char* pathEnv = std::getenv("PATH");
+        const char pathSep = ';';
+        const char* wasmName = "wasm-ld.exe";
+#else
+        const char* pathEnv = std::getenv("PATH");
+        const char pathSep = ':';
+        const char* wasmName = "wasm-ld";
+#endif
+        if (pathEnv) {
+            const std::string path = pathEnv;
+            size_t start = 0;
+            while (start <= path.size()) {
+                const size_t end = path.find(pathSep, start);
+                const std::string dir = path.substr(start,
+                    end == std::string::npos ? std::string::npos : end - start);
+                if (!dir.empty()) {
+                    const fs::path candidate = fs::path(dir) / wasmName;
+                    if (fs::exists(candidate)) return candidate;
+                }
+                if (end == std::string::npos) break;
+                start = end + 1;
+            }
+        }
+        const fs::path cwdCandidate = fs::path(".absolute") / "toolchains" /
+            "llvm-18.1.8" / "bin" / wasmName;
+        if (fs::exists(cwdCandidate)) return fs::absolute(cwdCandidate);
+        return {};
     }
 
     struct ProjectConfig {
@@ -552,6 +605,98 @@ namespace {
 #endif
     }
 
+    int RunProcess(const fs::path& executable, const std::vector<std::string>& arguments) {
+#ifdef _WIN32
+        std::wstring commandLine = L"\"" + executable.wstring() + L"\"";
+        for (const std::string& argument : arguments) {
+            commandLine.push_back(L' ');
+            commandLine.push_back(L'"');
+            for (char ch : argument) {
+                if (ch == '"') throw std::runtime_error("Process argument contains a quote");
+                commandLine.push_back(static_cast<wchar_t>(static_cast<unsigned char>(ch)));
+            }
+            commandLine.push_back(L'"');
+        }
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        PROCESS_INFORMATION process{};
+        std::vector<wchar_t> mutableCommand(commandLine.begin(), commandLine.end());
+        mutableCommand.push_back(L'\0');
+        if (!CreateProcessW(executable.wstring().c_str(), mutableCommand.data(),
+                nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process)) {
+            throw std::runtime_error("failed to launch process: " + executable.string());
+        }
+        WaitForSingleObject(process.hProcess, INFINITE);
+        DWORD exitCode = 1;
+        GetExitCodeProcess(process.hProcess, &exitCode);
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        return static_cast<int>(exitCode);
+#else
+        std::vector<std::string> storage;
+        storage.push_back(executable.string());
+        storage.insert(storage.end(), arguments.begin(), arguments.end());
+        std::vector<char*> argv;
+        argv.reserve(storage.size() + 1);
+        for (std::string& item : storage) argv.push_back(item.data());
+        argv.push_back(nullptr);
+        const pid_t pid = fork();
+        if (pid < 0) throw std::runtime_error("fork failed for " + executable.string());
+        if (pid == 0) {
+            execv(executable.c_str(), argv.data());
+            _exit(127);
+        }
+        int status = 0;
+        if (waitpid(pid, &status, 0) < 0)
+            throw std::runtime_error("waitpid failed for " + executable.string());
+        if (WIFEXITED(status)) return WEXITSTATUS(status);
+        return 1;
+#endif
+    }
+
+    void BuildWasmModule(CodeGenerator& generator, Program& program,
+        const Compilation& compilation, const fs::path& requestedOutput,
+        const std::string& targetTriple) {
+        const auto startTime = std::chrono::steady_clock::now();
+        const fs::path wasmLd = FindWasmLd();
+        if (wasmLd.empty()) {
+            throw std::runtime_error(
+                "wasm-ld was not found. Install LLVM with WebAssembly tools, set ABSOLUTE_WASM_LD, "
+                "or place wasm-ld under .absolute/toolchains/llvm-*/bin (see docs/wasm-target.md)");
+        }
+
+        fs::path modulePath = fs::absolute(requestedOutput);
+        if (modulePath.extension().empty() || modulePath.extension() == ".exe")
+            modulePath.replace_extension(".wasm");
+        if (!modulePath.parent_path().empty()) fs::create_directories(modulePath.parent_path());
+
+        fs::path object = modulePath;
+        object.replace_extension(".o");
+        generator.GenerateObject(program, compilation.moduleName, object.string(),
+            false, targetTriple);
+
+        // Pure export "C" modules link without a WASI sysroot. Host
+        // Absolute-Runtime is not wasm-compatible; undefined absolute_* symbols
+        // fail the link with a wasm-ld diagnostic.
+        const int status = RunProcess(wasmLd, {
+            "--no-entry",
+            "--export-all",
+            object.string(),
+            "-o",
+            modulePath.string(),
+        });
+        if (status != 0) {
+            throw std::runtime_error(
+                "wasm-ld failed with exit code " + std::to_string(status) +
+                ". Programs that call Absolute host runtime (println, managed heap, tasks, load) "
+                "cannot link for wasm yet; use export \"C\"-only modules or emit-object "
+                "(docs/wasm-target.md)");
+        }
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - startTime).count();
+        std::cout << "Built " << modulePath.filename().string() << " [" << elapsed << " ms]\n";
+    }
+
     void BuildExecutable(CodeGenerator& generator, Program& program, const Compilation& compilation,
         const fs::path& requestedOutput) {
         const auto startTime = std::chrono::steady_clock::now();
@@ -657,11 +802,6 @@ int main(int argc, char* argv[]) {
         if (commandLine.emitLlvm || commandLine.emitObject || commandLine.buildExecutable) {
 #ifdef ABSOLUTE_HAS_LLVM
             const bool wasmTarget = IsWebAssemblyTargetTriple(commandLine.targetTriple);
-            if (wasmTarget && commandLine.buildExecutable) {
-                throw std::runtime_error(
-                    "WebAssembly --build-exe is not implemented yet; use --emit-llvm or --emit-object "
-                    "and link with wasm-ld / wasi-sdk (see docs/wasm-target.md)");
-            }
             if (wasmTarget && commandLine.sanitizeAddress) {
                 throw std::runtime_error(
                     "AddressSanitizer is not supported for WebAssembly targets");
@@ -690,11 +830,20 @@ int main(int argc, char* argv[]) {
                 generator.GenerateObject(*compilation.program, compilation.moduleName,
                     output.string(), compilation.sanitizeAddress, commandLine.targetTriple);
             }
+            else if (wasmTarget) {
+                fs::path output = commandLine.output;
+                if (output.empty()) {
+                    output = compilation.moduleName;
+                    output.replace_extension(".wasm");
+                }
+                BuildWasmModule(generator, *compilation.program, compilation, output,
+                    commandLine.targetTriple);
+            }
             else {
                 if (!commandLine.targetTriple.empty()) {
                     throw std::runtime_error(
-                        "--build-exe with --target is not supported; omit --target for host "
-                        "executables, or use --emit-object for cross/wasm objects");
+                        "--build-exe with a non-host --target is only supported for WebAssembly; "
+                        "omit --target for host executables, or use --emit-object");
                 }
                 fs::path output = commandLine.output;
                 if (output.empty()) {
