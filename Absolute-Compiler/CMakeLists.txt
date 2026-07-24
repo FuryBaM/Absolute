@@ -75,6 +75,10 @@ if(TARGET Absolute-CodeGen)
         target_compile_definitions(Absolute-Compiler PRIVATE
             ABSOLUTE_WASM_WASI_OBJECT="${ABSOLUTE_WASM_WASI_OBJECT}")
     endif()
+    if(ABSOLUTE_WASM_SHARED_OBJECT)
+        target_compile_definitions(Absolute-Compiler PRIVATE
+            ABSOLUTE_WASM_SHARED_OBJECT="${ABSOLUTE_WASM_SHARED_OBJECT}")
+    endif()
     add_dependencies(Absolute-Compiler Absolute-Runtime)
 endif()
 

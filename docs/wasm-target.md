@@ -95,6 +95,7 @@ Common triples:
 - `tests/wasm-wasi-services.abs` → `absolute.run-wasm-wasi-services` (clock/random/args/env)
 - `tests/wasm-http.abs` via browser host → `absolute.run-wasm-browser-host`
 - browser session stack → `absolute.run-wasm-browser-session` (COOP headers + Atomics protocol)
+- shared-memory smoke → `absolute.run-wasm-shared-memory`
 - IR/object checks
 
 ## Host import
@@ -246,9 +247,46 @@ node scripts/serve-wasm-demo.mjs
 - Tests: `absolute.run-wasm-browser-host`, `absolute.run-wasm-browser-session`,
   `absolute.run-wasm-browser-task-pool`.
 
+### Shared-memory modules (experimental)
+
+Optional second runtime object with a locked heap for multi-threaded hosts:
+
+| Piece | Role |
+|-------|------|
+| `absolute_wasm_runtime_shared.o` | `-matomics -mbulk-memory -DABSOLUTE_WASM_SHARED` |
+| `ABSOLUTE_WASM_RUNTIME=shared` or `ABSOLUTE_WASM_SHARED=1` | absolutec links shared object |
+| wasm-ld flags | `--shared-memory --import-memory --max-memory=16777216` |
+| Host | creates `WebAssembly.Memory({ shared: true })` as `env.memory` |
+
+```bat
+set ABSOLUTE_WASM_RUNTIME=shared
+absolutec tests\wasm-smoke.abs --target wasm32-unknown-unknown --build-exe -o shared.wasm
+```
+
+Manual link (without rebuilt absolutec):
+
+```bat
+absolutec tests\wasm-smoke.abs --target wasm32-unknown-unknown --emit-object -o smoke.o
+wasm-ld --shared-memory --import-memory --max-memory=16777216 --no-entry --export-all ^
+  smoke.o absolute_wasm_runtime_shared.o -o shared.wasm
+```
+
+`instantiateAbsoluteWasm` detects the `env.memory` import and supplies a shared
+Memory. Export `absolute_wasm_shared_memory_enabled()` returns 1 on shared builds.
+Heap `malloc`/`free` use a global spinlock when `ABSOLUTE_WASM_SHARED` is defined.
+
+Limits:
+
+- Not a full pthread / wasi-threads model (no TLS, no automatic thread spawn).
+- Isolated task workers still use **separate** module instances (unchanged).
+- Browser pages need COOP/COEP for `SharedArrayBuffer`.
+- Default (non-shared) modules keep exported non-shared memory for simple embeds.
+
+Test: `absolute.run-wasm-shared-memory`.
+
 ## Next steps (not done)
 
-1. Shared-memory wasm threads (atomics heap, true shared `memory`).
+1. True multi-thread Absolute tasks on one shared instance (beyond isolated workers).
 2. Link experiments with wasi-libc without clashing Absolute runtime symbols.
 
 ## Acceptance criteria progress

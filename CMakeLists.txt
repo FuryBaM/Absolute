@@ -1539,6 +1539,20 @@ if(BUILD_TESTING)
                         -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-net-real.cmake"
                 )
+                if(ABSOLUTE_WASM_SHARED_OBJECT)
+                    add_test(
+                        NAME absolute.run-wasm-shared-memory
+                        COMMAND "${CMAKE_COMMAND}"
+                            -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                            -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-smoke.abs
+                            -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-shared-memory.wasm
+                            -DSHARED_RUNTIME=${ABSOLUTE_WASM_SHARED_OBJECT}
+                            -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                            -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                            -DWASM_LD=${ABSOLUTE_WASM_LD_FOR_TEST}
+                            -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-shared-memory.cmake"
+                    )
+                endif()
                 if(ABSOLUTE_WASM_WASI_OBJECT)
                     add_test(
                         NAME absolute.build-wasm-wasi-smoke

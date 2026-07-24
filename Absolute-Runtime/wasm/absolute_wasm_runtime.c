@@ -124,6 +124,29 @@ static unsigned char* g_heap_break;
 static HeapBlock* g_free_list;
 static int g_heap_ready;
 
+#if defined(ABSOLUTE_WASM_SHARED)
+#include <stdatomic.h>
+/* Global malloc lock for multi-threaded shared-memory modules. */
+static atomic_int g_heap_lock = 0;
+
+static void heap_lock(void) {
+    int expected = 0;
+    while (!atomic_compare_exchange_weak_explicit(
+            &g_heap_lock, &expected, 1,
+            memory_order_acquire, memory_order_relaxed)) {
+        expected = 0;
+        /* spin — hosts should not hold the lock across long work */
+    }
+}
+
+static void heap_unlock(void) {
+    atomic_store_explicit(&g_heap_lock, 0, memory_order_release);
+}
+#else
+static void heap_lock(void) {}
+static void heap_unlock(void) {}
+#endif
+
 static size_t align_up(size_t value, size_t alignment) {
     return (value + alignment - 1) & ~(alignment - 1);
 }
@@ -146,6 +169,7 @@ static int heap_grow(size_t need) {
 
 /* Absolute LLVM always declares malloc(i64) even on wasm32; match that ABI. */
 static void* heap_alloc(size_t size) {
+    heap_lock();
     heap_init();
     if (size == 0)
         size = 1;
@@ -157,7 +181,9 @@ static void* heap_alloc(size_t size) {
         if (block->free && block->size >= size) {
             block->free = 0;
             *link = block->next;
-            return (unsigned char*)block + sizeof(HeapBlock);
+            void* result = (unsigned char*)block + sizeof(HeapBlock);
+            heap_unlock();
+            return result;
         }
         link = &block->next;
     }
@@ -165,17 +191,23 @@ static void* heap_alloc(size_t size) {
     size_t total = sizeof(HeapBlock) + size;
     total = align_up(total, ABSOLUTE_WASM_HEAP_ALIGN);
     if ((size_t)(g_heap_end - g_heap_break) < total) {
-        if (!heap_grow(total - (size_t)(g_heap_end - g_heap_break) + 65536))
+        if (!heap_grow(total - (size_t)(g_heap_end - g_heap_break) + 65536)) {
+            heap_unlock();
             return NULL;
-        if ((size_t)(g_heap_end - g_heap_break) < total)
+        }
+        if ((size_t)(g_heap_end - g_heap_break) < total) {
+            heap_unlock();
             return NULL;
+        }
     }
     HeapBlock* block = (HeapBlock*)g_heap_break;
     g_heap_break += total;
     block->size = size;
     block->free = 0;
     block->next = NULL;
-    return (unsigned char*)block + sizeof(HeapBlock);
+    void* result = (unsigned char*)block + sizeof(HeapBlock);
+    heap_unlock();
+    return result;
 }
 
 void* malloc(uint64_t size) {
@@ -185,10 +217,12 @@ void* malloc(uint64_t size) {
 void free(void* pointer) {
     if (!pointer)
         return;
+    heap_lock();
     HeapBlock* block = (HeapBlock*)((unsigned char*)pointer - sizeof(HeapBlock));
     block->free = 1;
     block->next = g_free_list;
     g_free_list = block;
+    heap_unlock();
 }
 
 void* calloc(uint64_t count, uint64_t size) {
@@ -209,19 +243,35 @@ void* realloc(void* pointer, uint64_t size) {
         free(pointer);
         return NULL;
     }
+    heap_lock();
     HeapBlock* block = (HeapBlock*)((unsigned char*)pointer - sizeof(HeapBlock));
-    if (block->size >= (size_t)size)
+    if (block->size >= (size_t)size) {
+        heap_unlock();
         return pointer;
+    }
+    size_t old_size = block->size;
+    heap_unlock();
     void* next = heap_alloc((size_t)size);
     if (!next)
         return NULL;
     unsigned char* dst = (unsigned char*)next;
     unsigned char* src = (unsigned char*)pointer;
-    for (size_t i = 0; i < block->size; ++i)
+    for (size_t i = 0; i < old_size; ++i)
         dst[i] = src[i];
     free(pointer);
     return next;
 }
+
+#if defined(ABSOLUTE_WASM_SHARED)
+/* Probe export: 1 when this runtime was built for shared-memory modules. */
+int32_t absolute_wasm_shared_memory_enabled(void) {
+    return 1;
+}
+#else
+int32_t absolute_wasm_shared_memory_enabled(void) {
+    return 0;
+}
+#endif
 
 /* ---------- libc helpers ---------- */
 

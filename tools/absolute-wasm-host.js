@@ -499,14 +499,40 @@ function createAbsoluteImports(options = {}) {
                 if (tcp && typeof tcp.shutdown === 'function') tcp.shutdown();
             } catch (_) { /* ignore */ }
         },
-        bind(instance) {
-            memory = instance.exports.memory || null;
-            if (!memory) throw new Error('Absolute wasm module did not export memory');
+        bind(instance, importedMemory) {
+            memory = (instance && instance.exports && instance.exports.memory)
+                || importedMemory
+                || null;
+            if (!memory) throw new Error('Absolute wasm module did not provide memory');
             if (taskPool && typeof taskPool.bindMemory === 'function') {
                 taskPool.bindMemory(memory);
             }
         },
     };
+}
+
+/**
+ * If the module imports env.memory (shared-memory builds), create a matching
+ * WebAssembly.Memory and attach it to imports.env.memory.
+ */
+function prepareSharedMemoryImport(module, imports) {
+    const memImport = WebAssembly.Module.imports(module).find(
+        (entry) => entry.module === 'env' && entry.name === 'memory' && entry.kind === 'memory',
+    );
+    if (!memImport) return null;
+    const type = memImport.type || {};
+    const initial = Number(type.initial ?? type.minimum ?? 256) || 256;
+    let maximum = type.maximum != null ? Number(type.maximum) : 256;
+    if (!Number.isFinite(maximum) || maximum < initial) maximum = Math.max(initial, 256);
+    // Shared-memory Absolute modules always expect a SharedArrayBuffer-backed Memory.
+    const memory = new WebAssembly.Memory({
+        initial,
+        maximum,
+        shared: true,
+    });
+    if (!imports.env) imports.env = {};
+    imports.env.memory = memory;
+    return memory;
 }
 
 async function prepareHttp(urls, maxBytes = 65536) {
@@ -529,19 +555,32 @@ async function instantiateAbsoluteWasm(bytes, options = {}) {
     }
     const host = createAbsoluteImports(options);
     if (taskPool) host.setTaskPool(taskPool);
-    const result = await WebAssembly.instantiate(bytes, host.imports);
+    const module = await WebAssembly.compile(bytes);
+    const importedMemory = prepareSharedMemoryImport(module, host.imports);
+    const result = await WebAssembly.instantiate(module, host.imports);
     const instance = result.instance || result;
-    host.bind(instance);
+    host.bind(instance, importedMemory);
     // Give workers a moment to compile/instantiate before the first spawn.
     if (taskPool && taskPool.size > 0) {
         await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    return { instance, exports: instance.exports, logs: host.logs, host };
+    return {
+        instance,
+        exports: instance.exports,
+        logs: host.logs,
+        host,
+        memory: importedMemory || instance.exports.memory || null,
+        sharedMemory: !!(importedMemory || (instance.exports.memory
+            && instance.exports.memory.buffer
+            && typeof SharedArrayBuffer !== 'undefined'
+            && instance.exports.memory.buffer instanceof SharedArrayBuffer)),
+    };
 }
 
 module.exports = {
     createAbsoluteImports,
     instantiateAbsoluteWasm,
+    prepareSharedMemoryImport,
     prepareHttp,
     httpGetSync,
     createTcpTable,

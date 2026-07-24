@@ -553,7 +553,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Browser task worker pool in session Worker (`taskWorkers`,
   `absolute-wasm-browser-task-worker.js`); demo default N=2 under COOP/COEP;
   test `run-wasm-browser-task-pool`.
-- [ ] shared-memory wasm threads; wasi-libc coexistence with Absolute runtime.
+- [x] Shared-memory wasm foundation: `absolute_wasm_runtime_shared.o` (atomics heap
+  lock), link `--shared-memory --import-memory`, host imports `env.memory` as
+  SharedArrayBuffer, test `run-wasm-shared-memory`. Full pthread/wasi-threads
+  task model still open.
+- [ ] wasi-libc coexistence with Absolute runtime; shared-instance multi-thread tasks.
 
 ### IDE, debugger и developer tools
 

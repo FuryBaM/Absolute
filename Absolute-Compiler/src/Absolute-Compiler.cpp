@@ -680,10 +680,13 @@ namespace {
             "--export-all",
             object.string(),
         };
-        // Prefer WASI runtime when targeting *wasi* or ABSOLUTE_WASM_RUNTIME=wasi.
+        // Prefer WASI / shared runtime via triple or ABSOLUTE_WASM_RUNTIME.
         const char* runtimePref = std::getenv("ABSOLUTE_WASM_RUNTIME");
         const bool wantWasi = targetTriple.find("wasi") != std::string::npos
             || (runtimePref && std::string(runtimePref) == "wasi");
+        const bool wantShared = !wantWasi && (
+            (runtimePref && std::string(runtimePref) == "shared")
+            || std::getenv("ABSOLUTE_WASM_SHARED") != nullptr);
 #ifdef ABSOLUTE_WASM_WASI_OBJECT
         if (wantWasi) {
             const fs::path wasi(ABSOLUTE_WASM_WASI_OBJECT);
@@ -694,8 +697,24 @@ namespace {
                     "WASI runtime object missing (ABSOLUTE_WASM_WASI_OBJECT). Rebuild Absolute-Runtime.");
         }
 #endif
+#ifdef ABSOLUTE_WASM_SHARED_OBJECT
+        if (wantShared) {
+            const fs::path sharedRt(ABSOLUTE_WASM_SHARED_OBJECT);
+            if (fs::exists(sharedRt))
+                linkArgs.push_back(sharedRt.string());
+            else
+                throw std::runtime_error(
+                    "Shared wasm runtime object missing (ABSOLUTE_WASM_SHARED_OBJECT). Rebuild Absolute-Runtime.");
+            // Shared linear memory: host imports env.memory as SharedArrayBuffer.
+            linkArgs.insert(linkArgs.begin(), {
+                "--shared-memory",
+                "--import-memory",
+                "--max-memory=16777216",
+            });
+        }
+#endif
 #ifdef ABSOLUTE_WASM_SHIM_OBJECT
-        if (!wantWasi) {
+        if (!wantWasi && !wantShared) {
             const fs::path shim(ABSOLUTE_WASM_SHIM_OBJECT);
             if (fs::exists(shim))
                 linkArgs.push_back(shim.string());
@@ -706,6 +725,12 @@ namespace {
             throw std::runtime_error(
                 "This absolutec was built without ABSOLUTE_WASM_WASI_OBJECT; "
                 "link absolute_wasm_runtime_wasi.o via ABSOLUTE_WASM_LIBS or rebuild.");
+        }
+#endif
+#if !defined(ABSOLUTE_WASM_SHARED_OBJECT)
+        if (wantShared) {
+            throw std::runtime_error(
+                "This absolutec was built without ABSOLUTE_WASM_SHARED_OBJECT; rebuild Absolute-Runtime.");
         }
 #endif
         // Optional override / additional objects (space-separated paths).

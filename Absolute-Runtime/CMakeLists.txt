@@ -63,6 +63,12 @@ if(ABSOLUTE_WASM_CLANG)
         -fno-builtin-realloc
         -fno-builtin-free
     )
+    set(ABSOLUTE_WASM_RT_SHARED_FLAGS
+        ${ABSOLUTE_WASM_RT_FLAGS}
+        -matomics
+        -mbulk-memory
+        -DABSOLUTE_WASM_SHARED=1
+    )
     add_custom_command(
         OUTPUT "${ABSOLUTE_WASM_SHIM_OBJECT}"
         COMMAND "${ABSOLUTE_WASM_CLANG}"
@@ -87,18 +93,36 @@ if(ABSOLUTE_WASM_CLANG)
         COMMENT "Building Absolute wasm runtime (WASI fd_write console)"
         VERBATIM
     )
+    set(ABSOLUTE_WASM_SHARED_OBJECT "${CMAKE_BINARY_DIR}/absolute_wasm_runtime_shared.o")
+    add_custom_command(
+        OUTPUT "${ABSOLUTE_WASM_SHARED_OBJECT}"
+        COMMAND "${ABSOLUTE_WASM_CLANG}"
+            ${ABSOLUTE_WASM_RT_SHARED_FLAGS}
+            -c "${ABSOLUTE_WASM_RT_SOURCE}"
+            -o "${ABSOLUTE_WASM_SHARED_OBJECT}"
+        DEPENDS "${ABSOLUTE_WASM_RT_SOURCE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/wasm/absolute_wasm_platform.c"
+        COMMENT "Building Absolute wasm runtime (shared-memory + atomics heap lock)"
+        VERBATIM
+    )
     add_custom_target(Absolute-Runtime-WasmShim ALL
-        DEPENDS "${ABSOLUTE_WASM_SHIM_OBJECT}" "${ABSOLUTE_WASM_WASI_OBJECT}")
+        DEPENDS "${ABSOLUTE_WASM_SHIM_OBJECT}" "${ABSOLUTE_WASM_WASI_OBJECT}"
+            "${ABSOLUTE_WASM_SHARED_OBJECT}")
     set(ABSOLUTE_WASM_SHIM_OBJECT "${ABSOLUTE_WASM_SHIM_OBJECT}" CACHE FILEPATH
         "wasm32 Absolute runtime object (host imports)" FORCE)
     set(ABSOLUTE_WASM_WASI_OBJECT "${ABSOLUTE_WASM_WASI_OBJECT}" CACHE FILEPATH
         "wasm32 Absolute runtime object (WASI console)" FORCE)
+    set(ABSOLUTE_WASM_SHARED_OBJECT "${ABSOLUTE_WASM_SHARED_OBJECT}" CACHE FILEPATH
+        "wasm32 Absolute runtime object (shared memory)" FORCE)
     message(STATUS "Absolute wasm runtime: ${ABSOLUTE_WASM_SHIM_OBJECT}")
     message(STATUS "Absolute wasm WASI runtime: ${ABSOLUTE_WASM_WASI_OBJECT}")
+    message(STATUS "Absolute wasm shared runtime: ${ABSOLUTE_WASM_SHARED_OBJECT}")
 else()
     set(ABSOLUTE_WASM_SHIM_OBJECT "" CACHE FILEPATH
         "wasm32 Absolute runtime object (host imports)" FORCE)
     set(ABSOLUTE_WASM_WASI_OBJECT "" CACHE FILEPATH
         "wasm32 Absolute runtime object (WASI console)" FORCE)
+    set(ABSOLUTE_WASM_SHARED_OBJECT "" CACHE FILEPATH
+        "wasm32 Absolute runtime object (shared memory)" FORCE)
     message(STATUS "clang for wasm32 not found; Absolute wasm runtime will not be built")
 endif()
