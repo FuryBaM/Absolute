@@ -72,9 +72,10 @@ Experimental target via `absolutec --target wasm32-unknown-unknown`:
   (worker + `Atomics.wait` bridge; see `wasm-target.md`)
 - Node engine smoke tests; browser demo under `examples/wasm/`
 
-Dynamic `load`, shared-memory wasm threads, and full WASI sysroot are not ported
-yet. Node can opt into a task worker pool (`taskWorkers`). See
-[`wasm-target.md`](wasm-target.md).
+Dynamic `load`, shared-memory wasm threads, and full wasi-sdk/libc sysroot are
+not ported yet. WASI preview1 services (console/time/random/args/env) work via
+`absolute_wasm_runtime_wasi.o` + Node WASI or wasmtime. Node can opt into a task
+worker pool (`taskWorkers`). See [`wasm-target.md`](wasm-target.md).
 
 ## Related docs
 

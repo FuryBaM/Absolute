@@ -91,7 +91,9 @@ Common triples:
 - `tests/wasm-http.abs` → `absolute.run-wasm-http` (host HTTP mock)
 - `tests/wasm-net.abs` → `absolute.run-wasm-net` (host TCP echo mock)
 - `tests/wasm-net-real.abs` → `absolute.run-wasm-net-real` (real localhost TCP via worker bridge)
-- IR/object checks + optional WASI/wasmtime smoke
+- `tests/wasm-smoke.abs` (WASI link) → `absolute.build-wasm-wasi-smoke` (Node WASI / wasmtime)
+- `tests/wasm-wasi-services.abs` → `absolute.run-wasm-wasi-services` (clock/random/args/env)
+- IR/object checks
 
 ## Host import
 
@@ -108,7 +110,8 @@ Node helpers:
 - `tools/absolute-wasm-host.js` — `instantiateAbsoluteWasm`
 - `tools/absolute-wasm-tcp-worker.js` — background TCP for blocking imports
 - `tools/absolute-wasm-task-worker.js` — task worker pool (isolated instances)
-- `tools/absolute-wasm-run.js` — CLI runner for `main` / exports
+- `tools/absolute-wasm-run.js` — CLI runner for host-import modules
+- `tools/absolute-wasm-wasi-run.js` — CLI runner for WASI preview1 modules (Node)
 
 ### Task worker pool (Node)
 
@@ -161,14 +164,52 @@ Limits:
   the worker bridge is Node-oriented.
 - UDP remains unavailable on wasm.
 
-WASI console build (`absolute_wasm_runtime_wasi.o`) uses
-`wasi_snapshot_preview1.fd_write` instead of `env.absolute_log` so
-`wasmtime run --invoke main module.wasm` works when the WASI object is linked.
+### WASI runtime (preview1)
+
+Link against `absolute_wasm_runtime_wasi.o` (no custom `env.*` Absolute host):
+
+| WASI import | Absolute use |
+|-------------|--------------|
+| `fd_write` | `println` / assert console |
+| `clock_time_get` | `absolute_time_unix_*`, monotonic |
+| `random_get` | `absolute_random_entropy` (+ PRNG seed) |
+| `args_sizes_get` / `args_get` | `absolute_process_args_*` |
+| `environ_*` | seed for `absolute_env_*` (table capped) |
+| `proc_exit` | `absolute_process_exit` / abort |
+
+How to build:
+
+```bat
+absolutec program.abs --target wasm32-unknown-unknown --emit-object -o program.o
+wasm-ld --no-entry --export-all program.o absolute_wasm_runtime_wasi.o -o program.wasm
+```
+
+Or, after rebuilding `absolutec` with `ABSOLUTE_WASM_WASI_OBJECT`:
+
+```bat
+set ABSOLUTE_WASM_RUNTIME=wasi
+absolutec program.abs --target wasm32-unknown-wasi --build-exe -o program.wasm
+```
+
+Run:
+
+```bat
+node tools/absolute-wasm-wasi-run.js program.wasm --env KEY=val --arg extra
+wasmtime run --invoke main program.wasm
+```
+
+Node's experimental WASI requires the `_initialize` export (provided by the WASI
+runtime object) and `wasi.initialize(instance)` before calling `main`.
+
+Tests: `absolute.build-wasm-wasi-smoke`, `absolute.run-wasm-wasi-services`.
+
+**Not included yet:** full wasi-sdk/libc sysroot (`printf` from wasi-libc, preopens
+for real FS, sockets). Absolute still ships its own heap/VFS/printf subset.
 
 ## Next steps (not done)
 
 1. Shared-memory wasm threads (atomics heap, true shared `memory`).
-2. Optional wasi-sdk sysroot and richer WASI networking.
+2. Optional wasi-sdk sysroot link (`WASI_SDK_PATH` / wasi-libc).
 3. Browser-side TCP/WebSocket / task-worker bridges.
 
 ## Acceptance criteria progress

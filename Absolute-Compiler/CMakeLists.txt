@@ -71,6 +71,10 @@ if(TARGET Absolute-CodeGen)
             add_dependencies(Absolute-Compiler Absolute-Runtime-WasmShim)
         endif()
     endif()
+    if(ABSOLUTE_WASM_WASI_OBJECT)
+        target_compile_definitions(Absolute-Compiler PRIVATE
+            ABSOLUTE_WASM_WASI_OBJECT="${ABSOLUTE_WASM_WASI_OBJECT}")
+    endif()
     add_dependencies(Absolute-Compiler Absolute-Runtime)
 endif()
 

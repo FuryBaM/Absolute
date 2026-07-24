@@ -680,11 +680,32 @@ namespace {
             "--export-all",
             object.string(),
         };
+        // Prefer WASI runtime when targeting *wasi* or ABSOLUTE_WASM_RUNTIME=wasi.
+        const char* runtimePref = std::getenv("ABSOLUTE_WASM_RUNTIME");
+        const bool wantWasi = targetTriple.find("wasi") != std::string::npos
+            || (runtimePref && std::string(runtimePref) == "wasi");
+#ifdef ABSOLUTE_WASM_WASI_OBJECT
+        if (wantWasi) {
+            const fs::path wasi(ABSOLUTE_WASM_WASI_OBJECT);
+            if (fs::exists(wasi))
+                linkArgs.push_back(wasi.string());
+            else
+                throw std::runtime_error(
+                    "WASI runtime object missing (ABSOLUTE_WASM_WASI_OBJECT). Rebuild Absolute-Runtime.");
+        }
+#endif
 #ifdef ABSOLUTE_WASM_SHIM_OBJECT
-        {
+        if (!wantWasi) {
             const fs::path shim(ABSOLUTE_WASM_SHIM_OBJECT);
             if (fs::exists(shim))
                 linkArgs.push_back(shim.string());
+        }
+#endif
+#if !defined(ABSOLUTE_WASM_WASI_OBJECT)
+        if (wantWasi) {
+            throw std::runtime_error(
+                "This absolutec was built without ABSOLUTE_WASM_WASI_OBJECT; "
+                "link absolute_wasm_runtime_wasi.o via ABSOLUTE_WASM_LIBS or rebuild.");
         }
 #endif
         // Optional override / additional objects (space-separated paths).

@@ -462,7 +462,11 @@ const char* absolute_fs_error(void) {
 
 /* ---------- env ---------- */
 
-enum { ABSOLUTE_ENV_MAX = 32, ABSOLUTE_ENV_KEY = 64, ABSOLUTE_ENV_VAL = 256 };
+enum { ABSOLUTE_ENV_MAX = 128, ABSOLUTE_ENV_KEY = 96, ABSOLUTE_ENV_VAL = 512 };
+
+#if defined(ABSOLUTE_WASM_USE_WASI)
+static void wasi_seed_environ(void);
+#endif
 
 static struct {
     int used;
@@ -485,6 +489,9 @@ static void env_set_error(const char* m) {
 const char* absolute_env_error(void) { return g_env_error; }
 
 int32_t absolute_env_has(const char* name) {
+#if defined(ABSOLUTE_WASM_USE_WASI)
+    wasi_seed_environ();
+#endif
     if (!name)
         return 0;
     for (int i = 0; i < ABSOLUTE_ENV_MAX; ++i)
@@ -494,6 +501,9 @@ int32_t absolute_env_has(const char* name) {
 }
 
 const char* absolute_env_get(const char* name) {
+#if defined(ABSOLUTE_WASM_USE_WASI)
+    wasi_seed_environ();
+#endif
     env_clear_error();
     if (!name) {
         env_set_error("null name");
@@ -556,11 +566,111 @@ static char g_process_error[64];
 static char g_process_exe[] = "absolutec-wasm";
 static char g_process_host[] = "wasm";
 
+#if defined(ABSOLUTE_WASM_USE_WASI)
+enum { ABSOLUTE_WASI_MAX_ARGS = 64, ABSOLUTE_WASI_ARGV_BUF = 4096 };
+static int g_wasi_args_ready = 0;
+static int32_t g_wasi_argc = 0;
+static char g_wasi_argv_storage[ABSOLUTE_WASI_ARGV_BUF];
+static char* g_wasi_argv[ABSOLUTE_WASI_MAX_ARGS];
+
+static void wasi_load_args(void) {
+    if (g_wasi_args_ready)
+        return;
+    g_wasi_args_ready = 1;
+    g_wasi_argc = 0;
+    size_t argc = 0;
+    size_t buf_size = 0;
+    if (absolute_wasi_args_sizes_get(&argc, &buf_size) != 0)
+        return;
+    if (argc == 0 || buf_size == 0)
+        return;
+    if (argc > (size_t)ABSOLUTE_WASI_MAX_ARGS)
+        argc = ABSOLUTE_WASI_MAX_ARGS;
+    if (buf_size >= sizeof(g_wasi_argv_storage))
+        buf_size = sizeof(g_wasi_argv_storage) - 1;
+    for (size_t i = 0; i < argc; ++i)
+        g_wasi_argv[i] = NULL;
+    if (absolute_wasi_args_get((uint8_t**)g_wasi_argv, (uint8_t*)g_wasi_argv_storage) != 0) {
+        g_wasi_argc = 0;
+        return;
+    }
+    g_wasi_argc = (int32_t)argc;
+}
+
+static void wasi_seed_environ(void) {
+    static int seeded = 0;
+    if (seeded)
+        return;
+    seeded = 1;
+    size_t count = 0;
+    size_t buf_size = 0;
+    if (absolute_wasi_environ_sizes_get(&count, &buf_size) != 0 || count == 0 || buf_size == 0)
+        return;
+    /* Cap to Absolute env table + buffer limits. */
+    if (count > (size_t)ABSOLUTE_ENV_MAX)
+        count = (size_t)ABSOLUTE_ENV_MAX;
+    if (buf_size > 65536)
+        buf_size = 65536;
+    uint8_t* buf = (uint8_t*)heap_alloc(buf_size + 8);
+    uint8_t** envp = (uint8_t**)heap_alloc(count * sizeof(uint8_t*));
+    if (!buf || !envp) {
+        if (buf) free(buf);
+        if (envp) free(envp);
+        return;
+    }
+    if (absolute_wasi_environ_get(envp, buf) == 0) {
+        for (size_t i = 0; i < count; ++i) {
+            if (!envp[i])
+                continue;
+            const char* entry = (const char*)envp[i];
+            size_t eq = 0;
+            while (entry[eq] && entry[eq] != '=')
+                ++eq;
+            if (!entry[eq])
+                continue;
+            char key[ABSOLUTE_ENV_KEY];
+            char value[ABSOLUTE_ENV_VAL];
+            size_t k = 0;
+            while (k < eq && k + 1 < sizeof(key)) {
+                key[k] = entry[k];
+                ++k;
+            }
+            key[k] = '\0';
+            fs_copy_path(value, sizeof(value), entry + eq + 1);
+            if (!absolute_env_set(key, value))
+                break; /* table full */
+        }
+    }
+    free(buf);
+    free(envp);
+}
+#endif
+
 const char* absolute_process_error(void) { return g_process_error; }
 int32_t absolute_process_pid(void) { return 1; }
-void absolute_process_exit(int32_t code) { (void)code; abort(); }
-void absolute_process_abort(void) { abort(); }
-const char* absolute_process_executable_path(void) { return g_process_exe; }
+void absolute_process_exit(int32_t code) {
+#if defined(ABSOLUTE_WASM_USE_WASI)
+    absolute_wasi_proc_exit(code);
+#else
+    (void)code;
+    abort();
+#endif
+}
+void absolute_process_abort(void) {
+#if defined(ABSOLUTE_WASM_USE_WASI)
+    absolute_wasi_proc_exit(1);
+#else
+    abort();
+#endif
+}
+const char* absolute_process_executable_path(void) {
+#if defined(ABSOLUTE_WASM_USE_WASI)
+    wasi_load_args();
+    if (g_wasi_argc > 0 && g_wasi_argv[0] && g_wasi_argv[0][0])
+        return g_wasi_argv[0];
+#endif
+    return g_process_exe;
+}
 const char* absolute_process_hostname(void) { return g_process_host; }
 int32_t absolute_process_run(const char* command) {
     (void)command;
@@ -572,10 +682,24 @@ const char* absolute_process_run_capture(const char* command) {
     (void)command;
     return "";
 }
-int32_t absolute_process_args_count(void) { return 0; }
+int32_t absolute_process_args_count(void) {
+#if defined(ABSOLUTE_WASM_USE_WASI)
+    wasi_load_args();
+    return g_wasi_argc;
+#else
+    return 0;
+#endif
+}
 const char* absolute_process_arg_at(int32_t index) {
+#if defined(ABSOLUTE_WASM_USE_WASI)
+    wasi_load_args();
+    if (index < 0 || index >= g_wasi_argc || !g_wasi_argv[index])
+        return "";
+    return g_wasi_argv[index];
+#else
     (void)index;
     return "";
+#endif
 }
 
 /* ---------- network (host-backed TCP when not pure WASI) ---------- */
@@ -818,4 +942,126 @@ void absolute_capsule_destroy(void* capsulePtr) {
     if (!capsule->transferred && capsule->handle)
         absolute_managed_destroy(capsule->handle);
     free(capsule);
+}
+
+/* ---------- time / random (WASI-backed when available) ---------- */
+
+int64_t absolute_time_unix_nanos(void) {
+#if defined(ABSOLUTE_WASM_USE_WASI)
+    uint64_t ts = 0;
+    if (absolute_wasi_clock_time_get(ABSOLUTE_WASI_CLOCK_REALTIME, 1, &ts) != 0)
+        return 0;
+    return (int64_t)ts;
+#else
+    return 0;
+#endif
+}
+
+int64_t absolute_time_unix_millis(void) {
+    return absolute_time_unix_nanos() / 1000000;
+}
+
+int64_t absolute_time_unix_seconds(void) {
+    return absolute_time_unix_nanos() / 1000000000;
+}
+
+int64_t absolute_time_monotonic_nanos(void) {
+#if defined(ABSOLUTE_WASM_USE_WASI)
+    uint64_t ts = 0;
+    if (absolute_wasi_clock_time_get(ABSOLUTE_WASI_CLOCK_MONOTONIC, 1, &ts) != 0)
+        return 0;
+    return (int64_t)ts;
+#else
+    return 0;
+#endif
+}
+
+void absolute_time_sleep_nanos(int64_t nanoseconds) {
+    (void)nanoseconds; /* cooperative sleep not available on wasm reactor */
+}
+
+void absolute_time_sleep_micros(int64_t microseconds) {
+    (void)microseconds;
+}
+
+void absolute_time_sleep_millis(int64_t milliseconds) {
+    (void)milliseconds;
+}
+
+void absolute_time_sleep_seconds(int64_t seconds) {
+    (void)seconds;
+}
+
+void absolute_time_sleep(int32_t milliseconds) {
+    (void)milliseconds;
+}
+
+void absolute_time_local_str(char* buffer, int32_t bufferSize) {
+    if (!buffer || bufferSize <= 0)
+        return;
+    buffer[0] = '\0';
+}
+
+void absolute_time_date_str(char* buffer, int32_t bufferSize) {
+    if (!buffer || bufferSize <= 0)
+        return;
+    buffer[0] = '\0';
+}
+
+typedef struct WasmRng {
+    uint64_t state;
+} WasmRng;
+
+static uint64_t wasm_splitmix64(uint64_t* state) {
+    uint64_t z = (*state += 0x9E3779B97F4A7C15ULL);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return z ^ (z >> 31);
+}
+
+uint64_t absolute_random_entropy(void) {
+#if defined(ABSOLUTE_WASM_USE_WASI)
+    uint64_t value = 0;
+    if (absolute_wasi_random_get((uint8_t*)&value, sizeof(value)) == 0 && value != 0)
+        return value;
+#endif
+    /* Fallback constant seed material for host-import builds without entropy. */
+    return 0xA5A5F00D1234C0DEULL ^ (uint64_t)(uintptr_t)&absolute_random_entropy;
+}
+
+uint64_t* absolute_random_create(uint64_t seed) {
+    WasmRng* rng = (WasmRng*)heap_alloc(sizeof(WasmRng));
+    if (!rng)
+        return NULL;
+    if (seed == 0)
+        seed = absolute_random_entropy();
+    rng->state = seed;
+    return &rng->state;
+}
+
+void absolute_random_destroy(uint64_t* handle) {
+    if (handle)
+        free(handle);
+}
+
+uint64_t absolute_random_u64(uint64_t* handle) {
+    if (!handle)
+        return 0;
+    return wasm_splitmix64(handle);
+}
+
+int32_t absolute_random_i32(uint64_t* handle) {
+    return (int32_t)(absolute_random_u64(handle) >> 32);
+}
+
+int32_t absolute_random_range(uint64_t* handle, int32_t lo, int32_t hi) {
+    if (hi <= lo)
+        return lo;
+    uint64_t span = (uint64_t)(hi - lo);
+    return lo + (int32_t)(absolute_random_u64(handle) % span);
+}
+
+double absolute_random_real(uint64_t* handle) {
+    const uint64_t bits = absolute_random_u64(handle) >> 11;
+    return (double)bits / (double)(1ULL << 53);
 }

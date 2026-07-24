@@ -536,7 +536,13 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   `taskWorkers` + SAB job queue (`absolute-wasm-task-worker.js`),
   test `wasm-task-mt`; sync path remains default. Shared-memory pthread model
   and full wasi-sdk libc sysroot still open.
-- [ ] full wasi-sdk libc sysroot; shared-memory wasm threads.
+- [x] Richer WASI preview1 runtime (no full wasi-sdk yet): `fd_write`,
+  `clock_time_get`, `random_get`, `args_*`, `environ_*`, `proc_exit`,
+  `_initialize` for Node reactors; `tools/absolute-wasm-wasi-run.js`;
+  tests `wasm-wasi-services` + smoke under Node WASI; absolutec can select
+  WASI object via `*wasi*` target / `ABSOLUTE_WASM_RUNTIME=wasi` when built
+  with `ABSOLUTE_WASM_WASI_OBJECT`.
+- [ ] full wasi-sdk libc sysroot (`WASI_SDK_PATH`); shared-memory wasm threads.
 
 ### IDE, debugger и developer tools
 

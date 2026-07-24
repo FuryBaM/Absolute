@@ -22,15 +22,42 @@
 #include <stdint.h>
 
 #if defined(ABSOLUTE_WASM_USE_WASI)
-/* WASI preview1 stdout — works with wasmtime / wasmer without a custom host. */
+/* WASI preview1 — wasmtime / Node WASI / wasmer without a custom Absolute host. */
 typedef struct absolute_wasi_ciovec {
     const void* buf;
     size_t buf_len;
 } absolute_wasi_ciovec;
 
+enum {
+    ABSOLUTE_WASI_CLOCK_REALTIME = 0,
+    ABSOLUTE_WASI_CLOCK_MONOTONIC = 1
+};
+
 __attribute__((import_module("wasi_snapshot_preview1"), import_name("fd_write")))
 int32_t absolute_wasi_fd_write(int32_t fd, const absolute_wasi_ciovec* iovs,
     size_t iovs_len, size_t* nwritten);
+
+__attribute__((import_module("wasi_snapshot_preview1"), import_name("proc_exit")))
+__attribute__((noreturn))
+void absolute_wasi_proc_exit(int32_t rval);
+
+__attribute__((import_module("wasi_snapshot_preview1"), import_name("clock_time_get")))
+int32_t absolute_wasi_clock_time_get(uint32_t id, uint64_t precision, uint64_t* time);
+
+__attribute__((import_module("wasi_snapshot_preview1"), import_name("random_get")))
+int32_t absolute_wasi_random_get(uint8_t* buf, size_t buf_len);
+
+__attribute__((import_module("wasi_snapshot_preview1"), import_name("args_sizes_get")))
+int32_t absolute_wasi_args_sizes_get(size_t* argc, size_t* argv_buf_size);
+
+__attribute__((import_module("wasi_snapshot_preview1"), import_name("args_get")))
+int32_t absolute_wasi_args_get(uint8_t** argv, uint8_t* argv_buf);
+
+__attribute__((import_module("wasi_snapshot_preview1"), import_name("environ_sizes_get")))
+int32_t absolute_wasi_environ_sizes_get(size_t* count, size_t* buf_size);
+
+__attribute__((import_module("wasi_snapshot_preview1"), import_name("environ_get")))
+int32_t absolute_wasi_environ_get(uint8_t** environ, uint8_t* environ_buf);
 
 void absolute_host_log(const uint8_t* data, int32_t length) {
     if (!data || length <= 0)
@@ -41,6 +68,9 @@ void absolute_host_log(const uint8_t* data, int32_t length) {
     size_t written = 0;
     (void)absolute_wasi_fd_write(1, &iov, 1, &written);
 }
+
+/* Node WASI reactors require an `_initialize` export before imports work. */
+void _initialize(void) {}
 #else
 /* Custom host hook (Node/browser): tools/absolute-wasm-host.js */
 __attribute__((import_module("env"), import_name("absolute_log")))

@@ -63,20 +63,39 @@ if(NOT LINK_STATUS EQUAL 0)
     message(FATAL_ERROR "wasi wasm-ld failed: ${LINK_OUT}\n${LINK_ERR}")
 endif()
 
-if(WASMTIME_EXECUTABLE)
+# Execute: prefer Node WASI (no extra install on Windows), else wasmtime.
+set(RUN_STATUS 1)
+set(RUN_OUT "")
+set(RUN_ERR "")
+if(DEFINED NODE AND EXISTS "${NODE}")
+    if(NOT DEFINED WASI_RUN_JS)
+        set(WASI_RUN_JS "${CMAKE_CURRENT_LIST_DIR}/../tools/absolute-wasm-wasi-run.js")
+    endif()
+    if(EXISTS "${WASI_RUN_JS}")
+        execute_process(
+            COMMAND "${NODE}" "${WASI_RUN_JS}" "${OUTPUT}"
+            RESULT_VARIABLE RUN_STATUS
+            OUTPUT_VARIABLE RUN_OUT
+            ERROR_VARIABLE RUN_ERR
+        )
+    endif()
+endif()
+if(NOT RUN_STATUS EQUAL 0 AND WASMTIME_EXECUTABLE)
     execute_process(
         COMMAND "${WASMTIME_EXECUTABLE}" run --invoke main "${OUTPUT}"
         RESULT_VARIABLE RUN_STATUS
         OUTPUT_VARIABLE RUN_OUT
         ERROR_VARIABLE RUN_ERR
     )
-    if(NOT RUN_STATUS EQUAL 0)
-        message(FATAL_ERROR "wasmtime run failed (${RUN_STATUS}):\n${RUN_OUT}\n${RUN_ERR}")
+endif()
+if(NOT RUN_STATUS EQUAL 0)
+    if(WASMTIME_EXECUTABLE OR (DEFINED NODE AND EXISTS "${NODE}"))
+        message(FATAL_ERROR "WASI run failed (${RUN_STATUS}):\n${RUN_OUT}\n${RUN_ERR}")
     endif()
-    if(NOT RUN_OUT MATCHES "wasm-smoke=ok")
-        message(FATAL_ERROR "wasmtime output missing marker:\n${RUN_OUT}")
-    endif()
-    message(STATUS "wasmtime ok: ${RUN_OUT}")
+    message(STATUS "Built WASI module ${OUTPUT} (install Node 20+ or wasmtime to execute)")
 else()
-    message(STATUS "Built WASI module ${OUTPUT} (install wasmtime to execute)")
+    if(NOT RUN_OUT MATCHES "wasm-smoke=ok")
+        message(FATAL_ERROR "WASI output missing marker:\n${RUN_OUT}\n${RUN_ERR}")
+    endif()
+    message(STATUS "WASI run ok: ${RUN_OUT}")
 endif()

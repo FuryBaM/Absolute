@@ -1516,7 +1516,19 @@ if(BUILD_TESTING)
                             -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-smoke.abs
                             -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-smoke-wasi.wasm
                             -DWASI_RUNTIME=${ABSOLUTE_WASM_WASI_OBJECT}
+                            -DNODE=${ABSOLUTE_NODE_FOR_WASM}
                             -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-wasi.cmake"
+                    )
+                    add_test(
+                        NAME absolute.run-wasm-wasi-services
+                        COMMAND "${CMAKE_COMMAND}"
+                            -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                            -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-wasi-services.abs
+                            -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-wasi-services.wasm
+                            -DWASI_RUNTIME=${ABSOLUTE_WASM_WASI_OBJECT}
+                            -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                            -DWASM_LD=${ABSOLUTE_WASM_LD_FOR_TEST}
+                            -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-wasi-services.cmake"
                     )
                 endif()
             endif()
