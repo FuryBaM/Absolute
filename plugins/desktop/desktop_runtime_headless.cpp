@@ -13,6 +13,8 @@ extern "C" void absolute_desktop_pixel(int64_t, int32_t, int32_t, uint32_t) {}
 extern "C" void absolute_desktop_fill_rect(int64_t, int32_t, int32_t, int32_t, int32_t, uint32_t) {}
 extern "C" void absolute_desktop_draw_line(int64_t, int32_t, int32_t, int32_t, int32_t, uint32_t) {}
 extern "C" void absolute_desktop_fill_circle(int64_t, int32_t, int32_t, int32_t, uint32_t) {}
+extern "C" void absolute_desktop_blit_strided(
+    int64_t, int32_t, int32_t, int32_t, int32_t, const uint32_t*, int32_t) {}
 extern "C" void absolute_desktop_blit(int64_t, int32_t, int32_t, int32_t, int32_t, const uint32_t*) {}
 extern "C" void absolute_desktop_present(int64_t) {}
 extern "C" int32_t absolute_desktop_key_down(int64_t, int32_t) { return 0; }

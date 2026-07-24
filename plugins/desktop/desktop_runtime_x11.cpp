@@ -285,22 +285,28 @@ extern "C" void absolute_desktop_fill_circle(
     }
 }
 
-extern "C" void absolute_desktop_blit(
-    int64_t handle, int32_t destX, int32_t destY, int32_t width, int32_t height, const uint32_t* pixels) {
+extern "C" void absolute_desktop_blit_strided(
+    int64_t handle, int32_t destX, int32_t destY, int32_t width, int32_t height,
+    const uint32_t* pixels, int32_t pitch) {
     DesktopWindow* state = FromHandle(handle);
-    if (!state || !pixels || width <= 0 || height <= 0) return;
+    if (!state || !pixels || width <= 0 || height <= 0 || pitch < width) return;
     for (int32_t row = 0; row < height; ++row) {
         const int32_t y = destY + row;
         if (y < 0 || y >= state->height) continue;
+        const uint32_t* srcRow = pixels + static_cast<std::size_t>(row) * static_cast<std::size_t>(pitch);
         for (int32_t col = 0; col < width; ++col) {
             const int32_t x = destX + col;
             if (x < 0 || x >= state->width) continue;
-            const uint32_t color = pixels[static_cast<std::size_t>(row) * static_cast<std::size_t>(width)
-                + static_cast<std::size_t>(col)];
+            const uint32_t color = srcRow[static_cast<std::size_t>(col)];
             if (color == 0) continue;
             state->PutPixel(x, y, color & 0x00FFFFFFu);
         }
     }
+}
+
+extern "C" void absolute_desktop_blit(
+    int64_t handle, int32_t destX, int32_t destY, int32_t width, int32_t height, const uint32_t* pixels) {
+    absolute_desktop_blit_strided(handle, destX, destY, width, height, pixels, width);
 }
 
 extern "C" void absolute_desktop_present(int64_t handle) {

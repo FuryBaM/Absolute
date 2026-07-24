@@ -48,6 +48,17 @@ extern "C" void absolute_desktop_sprite_color_key(int64 handle, uint32 color);
 extern "C" void absolute_desktop_sprite_draw(int64 windowHandle, int64 spriteHandle, int32 x, int32 y);
 extern "C" void absolute_desktop_sprite_draw_rect(int64 windowHandle, int64 spriteHandle, int32 destX, int32 destY, int32 srcX, int32 srcY, int32 srcW, int32 srcH);
 extern "C" void absolute_desktop_sprite_draw_text(int64 spriteHandle, int32 x, int32 y, string text, uint32 color, int32 scale);
+extern "C" int64 absolute_desktop_batch_create();
+extern "C" void absolute_desktop_batch_destroy(int64 handle);
+extern "C" void absolute_desktop_batch_begin(int64 handle, int64 windowHandle, int64 atlasHandle);
+extern "C" void absolute_desktop_batch_set_atlas(int64 handle, int64 atlasHandle);
+extern "C" void absolute_desktop_batch_draw(int64 handle, int32 x, int32 y);
+extern "C" void absolute_desktop_batch_draw_rect(int64 handle, int32 destX, int32 destY, int32 srcX, int32 srcY, int32 srcW, int32 srcH);
+extern "C" void absolute_desktop_batch_draw_sprite(int64 handle, int64 spriteHandle, int32 x, int32 y);
+extern "C" void absolute_desktop_batch_draw_sprite_rect(int64 handle, int64 spriteHandle, int32 destX, int32 destY, int32 srcX, int32 srcY, int32 srcW, int32 srcH);
+extern "C" void absolute_desktop_batch_flush(int64 handle);
+extern "C" void absolute_desktop_batch_end(int64 handle);
+extern "C" int32 absolute_desktop_batch_count(int64 handle);
 extern "C" void absolute_desktop_draw_text(int64 windowHandle, int32 x, int32 y, string text, uint32 color, int32 scale);
 extern "C" int32 absolute_desktop_measure_text(string text, int32 scale);
 extern "C" int32 absolute_desktop_measure_text_height(string text, int32 scale);
@@ -423,6 +434,70 @@ namespace Desktop {
 
         public void textClear() {
             absolute_desktop_text_clear(handle);
+        }
+    }
+
+    // Soft sprite batch: queue many atlas/sprite draws, then flush once.
+    // begin(window, atlas) binds the default atlas; draw/drawRect use it.
+    // drawSprite / drawSpriteRect draw other sprites without changing the atlas.
+    // Auto-flushes at 8192 pending entries. Call end() (or flush) before present.
+    class SpriteBatch {
+        public int64 handle;
+
+        public SpriteBatch() {
+            handle = absolute_desktop_batch_create();
+        }
+
+        public bool isValid() {
+            return handle != 0;
+        }
+
+        public void destroy() {
+            if (handle != 0) {
+                absolute_desktop_batch_destroy(handle);
+                handle = 0;
+            }
+        }
+
+        public void begin(Window* window, Sprite* atlas) {
+            absolute_desktop_batch_begin(handle, window.handle, atlas.handle);
+        }
+
+        // Switch default atlas; flushes pending draws first.
+        public void setAtlas(Sprite* atlas) {
+            absolute_desktop_batch_set_atlas(handle, atlas.handle);
+        }
+
+        // Full default atlas at (x, y).
+        public void draw(int32 x, int32 y) {
+            absolute_desktop_batch_draw(handle, x, y);
+        }
+
+        // Sub-rect of the default atlas (atlas / tile).
+        public void drawRect(int32 destX, int32 destY, int32 srcX, int32 srcY, int32 srcW, int32 srcH) {
+            absolute_desktop_batch_draw_rect(handle, destX, destY, srcX, srcY, srcW, srcH);
+        }
+
+        // One-off full sprite without changing the default atlas.
+        public void drawSprite(Sprite* sprite, int32 x, int32 y) {
+            absolute_desktop_batch_draw_sprite(handle, sprite.handle, x, y);
+        }
+
+        public void drawSpriteRect(Sprite* sprite, int32 destX, int32 destY, int32 srcX, int32 srcY, int32 srcW, int32 srcH) {
+            absolute_desktop_batch_draw_sprite_rect(handle, sprite.handle, destX, destY, srcX, srcY, srcW, srcH);
+        }
+
+        public void flush() {
+            absolute_desktop_batch_flush(handle);
+        }
+
+        public void end() {
+            absolute_desktop_batch_end(handle);
+        }
+
+        // Pending draws since last flush (0 after flush/end).
+        public int32 count() {
+            return absolute_desktop_batch_count(handle);
         }
     }
 }

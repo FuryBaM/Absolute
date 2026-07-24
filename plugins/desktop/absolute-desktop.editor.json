@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "plugin": "absolute.desktop",
   "namespaces": [
-    { "name": "Desktop", "documentation": "Native windows, input, timing, software framebuffer, sprites, and soft text." }
+    { "name": "Desktop", "documentation": "Native windows, input, timing, software framebuffer, sprites, soft text, and sprite batching." }
   ],
   "types": [
     {
@@ -49,6 +49,24 @@
         { "name": "destroy", "detail": "void destroy()" },
         { "name": "width", "detail": "int32 width()" },
         { "name": "height", "detail": "int32 height()" }
+      ]
+    },
+    {
+      "name": "Desktop.SpriteBatch",
+      "detail": "class Desktop.SpriteBatch",
+      "documentation": "Soft atlas/sprite draw queue. begin(window, atlas), drawRect/drawSprite, end() before present.",
+      "snippet": "auto ${1:batch} = new Desktop.SpriteBatch();\n$1.begin(${2:window}, ${3:atlas});\n$1.drawRect(${4:x}, ${5:y}, ${6:sx}, ${7:sy}, ${8:sw}, ${9:sh});\n$1.end();",
+      "members": [
+        { "name": "begin", "detail": "void begin(Window* window, Sprite* atlas)" },
+        { "name": "setAtlas", "detail": "void setAtlas(Sprite* atlas)" },
+        { "name": "draw", "detail": "void draw(int32 x, int32 y)" },
+        { "name": "drawRect", "detail": "void drawRect(int32 destX, int32 destY, int32 srcX, int32 srcY, int32 srcW, int32 srcH)" },
+        { "name": "drawSprite", "detail": "void drawSprite(Sprite* sprite, int32 x, int32 y)" },
+        { "name": "drawSpriteRect", "detail": "void drawSpriteRect(Sprite* sprite, int32 destX, int32 destY, int32 srcX, int32 srcY, int32 srcW, int32 srcH)" },
+        { "name": "flush", "detail": "void flush()" },
+        { "name": "end", "detail": "void end()" },
+        { "name": "count", "detail": "int32 count()" },
+        { "name": "destroy", "detail": "void destroy()" }
       ]
     },
     {

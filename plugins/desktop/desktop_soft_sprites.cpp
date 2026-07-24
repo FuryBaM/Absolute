@@ -3,12 +3,14 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <cstring>
 #include <fstream>
 #include <vector>
 
 extern "C" void absolute_desktop_blit(
     int64_t handle, int32_t destX, int32_t destY, int32_t width, int32_t height, const uint32_t* pixels);
+extern "C" void absolute_desktop_blit_strided(
+    int64_t handle, int32_t destX, int32_t destY, int32_t width, int32_t height,
+    const uint32_t* pixels, int32_t pitch);
 
 namespace {
     struct DesktopSprite {
@@ -219,13 +221,9 @@ extern "C" void absolute_desktop_sprite_draw_rect(
     if (srcY + srcH > sprite->height) srcH = sprite->height - srcY;
     if (srcW <= 0 || srcH <= 0) return;
 
-    std::vector<uint32_t> temp(static_cast<std::size_t>(srcW) * static_cast<std::size_t>(srcH));
-    for (int32_t row = 0; row < srcH; ++row) {
-        const uint32_t* src = sprite->pixels.data()
-            + static_cast<std::size_t>(srcY + row) * static_cast<std::size_t>(sprite->width)
-            + static_cast<std::size_t>(srcX);
-        uint32_t* dst = temp.data() + static_cast<std::size_t>(row) * static_cast<std::size_t>(srcW);
-        std::memcpy(dst, src, static_cast<std::size_t>(srcW) * sizeof(uint32_t));
-    }
-    absolute_desktop_blit(windowHandle, destX, destY, srcW, srcH, temp.data());
+    // Zero-copy atlas sub-rect blit via row pitch.
+    const uint32_t* origin = sprite->pixels.data()
+        + static_cast<std::size_t>(srcY) * static_cast<std::size_t>(sprite->width)
+        + static_cast<std::size_t>(srcX);
+    absolute_desktop_blit_strided(windowHandle, destX, destY, srcW, srcH, origin, sprite->width);
 }

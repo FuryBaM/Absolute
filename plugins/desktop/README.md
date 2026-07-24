@@ -61,8 +61,18 @@ examples\desktop\run.bat pong.abs
 - `sprite.colorKey(rgb)` — exact RGB → transparent `0` (e.g. magenta `Desktop.rgb(255, 0, 255)`)
 - `clear`, `pixel`, `fillRect`, `fillCircle`, `destroy`, `isValid`
 - `window.drawSprite(sprite, x, y)`
-- `window.drawSpriteRect(sprite, dx, dy, sx, sy, sw, sh)` — atlas / sub-rect blit
+- `window.drawSpriteRect(sprite, dx, dy, sx, sy, sw, sh)` — atlas / sub-rect blit (zero-copy pitch)
 - `sprite.drawText(x, y, text, color, scale)` — bake soft font into the sprite
+
+### Soft sprite batch / atlas
+- `new Desktop.SpriteBatch()` — queue many draws, flush in one pass
+- `batch.begin(window, atlas)` — bind window + default atlas
+- `batch.draw(x, y)` / `batch.drawRect(dx, dy, sx, sy, sw, sh)` — default atlas
+- `batch.drawSprite(sprite, x, y)` / `batch.drawSpriteRect(...)` — other sprites without rebinding
+- `batch.setAtlas(sprite)` — switch default atlas (flushes first)
+- `batch.flush()` / `batch.end()` — submit queue (`end` also clears binding)
+- `batch.count()` — pending entries (0 after flush/end); auto-flush at 8192
+- Example: `examples/desktop/batch.abs`
 
 ### Soft text (built-in 8×8 font)
 - Monospace ASCII 32–126; newline starts a new line; non-ASCII draws `?`
@@ -107,4 +117,5 @@ Call `window.close()` before leaving `main`. Native window handles are explicit
 resources; the current Absolute class model does not yet run RAII destructors.
 
 Examples: `examples/desktop/window.abs`, `pong.abs`, `sprites.abs`, `input.abs`,
-`image.abs` (BMP + atlas), `text.abs` (soft font HUD / typing).
+`image.abs` (BMP + atlas), `text.abs` (soft font HUD / typing),
+`batch.abs` (`SpriteBatch` + atlas tiles).
