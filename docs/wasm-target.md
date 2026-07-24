@@ -30,15 +30,16 @@ absolutec tests\wasm-export-only.abs --target wasm32-unknown-unknown --build-exe
 |------|--------|
 | `--target wasm32-... --sanitize=address` | Error |
 | `--build-exe --target` for non-wasm triples | Error |
-| tasks, `load`, FS, sockets on wasm | stubs / not functional |
-| Full WASI sysroot | Not shipped |
+| `load(.dll)` / desktop plugins on wasm | not available |
+| Full WASI sysroot / wasi-sdk libc | Not shipped |
+| Multi-threaded Absolute tasks on wasm | sync only (no worker pool yet) |
 
 ## Runtime and linking
 
 | Layer | Status |
 |-------|--------|
 | Host `Absolute-Runtime` | Native only |
-| `absolute_wasm_runtime.o` | Heap, managed, errors, sync tasks, virtual FS, env/process, net stubs |
+| `absolute_wasm_runtime.o` | Heap, managed, errors, sync tasks, virtual FS, env/process, host TCP/HTTP |
 | `ABSOLUTE_WASM_LIBS` | Extra space/`;`-separated objects to link |
 
 Supported profiles:
@@ -48,7 +49,8 @@ Supported profiles:
 3. **Managed objects** — `new` / `delete` (see `tests/wasm-managed.abs`).
 4. **Sync tasks** — `spawn`/`await` run immediately (see `tests/wasm-task.abs`).
 5. **Virtual FS** — in-memory `absolute_fs_*` (see `tests/wasm-fs.abs`).
-6. **Network** — stubs returning errors (not functional sockets).
+6. **HTTP** — host `absolute_http_get` with mocks or prefetch (see `tests/wasm-http.abs`).
+7. **TCP** — host `absolute_tcp_*` mocks or real OS sockets under Node (below).
 
 See the host matrix in [`platforms.md`](platforms.md) and
 [`examples/wasm/README.md`](../examples/wasm/README.md).
@@ -86,6 +88,7 @@ Common triples:
 - `tests/wasm-fs.abs` → `absolute.run-wasm-fs` (virtual FS round-trip)
 - `tests/wasm-http.abs` → `absolute.run-wasm-http` (host HTTP mock)
 - `tests/wasm-net.abs` → `absolute.run-wasm-net` (host TCP echo mock)
+- `tests/wasm-net-real.abs` → `absolute.run-wasm-net-real` (real localhost TCP via worker bridge)
 - IR/object checks + optional WASI/wasmtime smoke
 
 ## Host import
@@ -94,12 +97,37 @@ Common triples:
 |--------|--------|---------|
 | `absolute_log(ptr, len)` | `env` | UTF-8 console from `puts`/`printf` |
 | `absolute_http_get(url, out, cap)` | `env` | Host HTTP GET (or mocks) into linear memory |
-| `absolute_tcp_*` | `env` | Host TCP table (mocks or future real sockets) |
+| `absolute_tcp_*` | `env` | Host TCP: mocks and/or real OS sockets (Node) |
 
 Node helpers:
 
 - `tools/absolute-wasm-host.js` — `instantiateAbsoluteWasm`
+- `tools/absolute-wasm-tcp-worker.js` — background TCP for blocking imports
 - `tools/absolute-wasm-run.js` — CLI runner for `main` / exports
+
+### Real TCP (Node)
+
+Wasm imports are synchronous, so real sockets run on a `worker_threads` worker
+and the main thread blocks with `SharedArrayBuffer` + `Atomics.wait` until the
+worker finishes each op (`connect` / `send` / `receive` / …).
+
+| Option | Behavior |
+|--------|----------|
+| `tcpMocks: { "host:port": { mode: "echo" } }` | Deterministic unit-test table (no OS sockets) |
+| `forceTcpMocks: true` | Always use mocks |
+| `allowNetwork: true` (default when no mocks) | Real OS TCP via the worker bridge |
+| `host.shutdown()` | Close sockets and terminate the TCP worker |
+
+Limits:
+
+- **Same-thread peer servers deadlock.** Because `Atomics.wait` freezes the
+  main Node event loop, an echo/listen server on that same thread will never
+  process accept/data while wasm is blocked in a TCP import. Put the peer in
+  another process/worker (as `run-wasm-net-real.cmake` does), or talk to an
+  external host.
+- Browser embeds still need their own `absolute_tcp_*` implementation (or mocks);
+  the worker bridge is Node-oriented.
+- UDP remains unavailable on wasm.
 
 WASI console build (`absolute_wasm_runtime_wasi.o`) uses
 `wasi_snapshot_preview1.fd_write` instead of `env.absolute_log` so
@@ -107,9 +135,9 @@ WASI console build (`absolute_wasm_runtime_wasi.o`) uses
 
 ## Next steps (not done)
 
-1. Real sockets / HTTP on wasm or WASI.
-2. Multi-threaded tasks / worker pool.
-3. Optional wasi-sdk sysroot and wasmtime-native host (CI already runs Node wasm tests on Windows LLVM job).
+1. Multi-threaded Absolute tasks / SharedArrayBuffer worker pool.
+2. Optional wasi-sdk sysroot and richer WASI networking.
+3. Browser-side TCP/WebSocket bridge equivalent to the Node worker.
 
 ## Acceptance criteria progress
 

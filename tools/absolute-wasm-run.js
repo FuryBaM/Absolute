@@ -70,23 +70,33 @@ async function main() {
         process.exit(1);
     }
     const bytes = fs.readFileSync(modulePath);
-    const { exports, logs } = await instantiateAbsoluteWasm(bytes, {
+    const { exports, logs, host } = await instantiateAbsoluteWasm(bytes, {
         captureLogs: false,
         httpMocks: options.httpMocks,
     });
+    const shutdown = () => {
+        try {
+            if (host && typeof host.shutdown === 'function') host.shutdown();
+        } catch (_) { /* ignore */ }
+    };
     const fn = exports[options.exportName];
     if (typeof fn !== 'function') {
+        shutdown();
         console.error(`export '${options.exportName}' not found; available:`,
             Object.keys(exports).filter((n) => !n.startsWith('__')));
         process.exit(2);
     }
-    const result = fn(...options.args);
-    if (typeof result === 'number' && options.exportName === 'main') {
-        process.exitCode = result | 0;
-    } else if (result !== undefined) {
-        console.log(String(result));
+    try {
+        const result = fn(...options.args);
+        if (typeof result === 'number' && options.exportName === 'main') {
+            process.exitCode = result | 0;
+        } else if (result !== undefined) {
+            console.log(String(result));
+        }
+        void logs;
+    } finally {
+        shutdown();
     }
-    void logs;
 }
 
 main().catch((error) => {

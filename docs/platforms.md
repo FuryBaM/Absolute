@@ -67,10 +67,12 @@ job.
 Experimental target via `absolutec --target wasm32-unknown-unknown`:
 
 - `--emit-llvm` / `--emit-object` / `--build-exe` (`wasm-ld`)
-- wasm runtime subset: heap, managed pointers, errors, console no-ops
+- wasm runtime: heap, managed pointers, errors, sync tasks, virtual FS, env/process
+- Node host imports: console, HTTP mocks/prefetch, TCP mocks **or** real OS sockets
+  (worker + `Atomics.wait` bridge; see `wasm-target.md`)
 - Node engine smoke tests; browser demo under `examples/wasm/`
 
-Tasks, FS, sockets, and dynamic `load` are not ported yet. See
+Dynamic `load`, multi-thread tasks, and full WASI sysroot are not ported yet. See
 [`wasm-target.md`](wasm-target.md).
 
 ## Related docs

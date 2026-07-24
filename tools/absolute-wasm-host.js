@@ -10,7 +10,17 @@
 
 const http = require('http');
 const https = require('https');
-const net = require('net');
+const path = require('path');
+const { Worker } = require('worker_threads');
+
+const OP_CONNECT = 1;
+const OP_LISTEN = 2;
+const OP_ACCEPT = 3;
+const OP_SEND = 4;
+const OP_RECEIVE = 5;
+const OP_CLOSE = 6;
+const OP_PORT = 7;
+const OP_SHUTDOWN = 8;
 
 function readCString(memory, ptr) {
     const view = new Uint8Array(memory.buffer);
@@ -56,7 +66,7 @@ function httpGetSync(url, maxBytes) {
     });
 }
 
-function createTcpTable(options = {}) {
+function createMockTcpTable(options = {}) {
     /** @type {Map<number, any>} */
     const sockets = new Map();
     let nextId = 1;
@@ -88,32 +98,21 @@ function createTcpTable(options = {}) {
                     });
                 }
             }
-            if (!options.allowNetwork) return -1;
-            // Real connect is async; for determinism require mocks in tests.
             return -1;
         },
-
         listen(host, port, backlog) {
             void backlog;
             const key = mockKey(host || '127.0.0.1', port);
             if (Object.prototype.hasOwnProperty.call(mocks, key) && mocks[key].mode === 'listen-echo') {
-                return allocId({
-                    kind: 'mock-listen-echo',
-                    port,
-                    pending: [],
-                });
+                return allocId({ kind: 'mock-listen-echo', port, pending: [] });
             }
-            if (!options.allowNetwork) return -1;
             return -1;
         },
-
         accept(handle) {
             const server = sockets.get(handle);
             if (!server || server.kind !== 'mock-listen-echo') return -1;
-            // Create a peer echo client for each accept.
             return allocId({ kind: 'mock-echo', buffer: Buffer.alloc(0), port: server.port });
         },
-
         send(handle, text) {
             const socket = sockets.get(handle);
             if (!socket) return 0;
@@ -128,7 +127,6 @@ function createTcpTable(options = {}) {
             }
             return 0;
         },
-
         receive(handle, maxBytes) {
             const socket = sockets.get(handle);
             if (!socket) return null;
@@ -145,16 +143,109 @@ function createTcpTable(options = {}) {
             }
             return null;
         },
-
         port(handle) {
             const socket = sockets.get(handle);
             return socket && typeof socket.port === 'number' ? socket.port : -1;
         },
-
         close(handle) {
             sockets.delete(handle);
         },
+        shutdown() {},
     };
+}
+
+function createRealTcpBridge() {
+    const sab = new SharedArrayBuffer(64 + 65536);
+    const i32 = new Int32Array(sab, 0, 16);
+    const bytes = new Uint8Array(sab, 64);
+    const worker = new Worker(path.join(__dirname, 'absolute-wasm-tcp-worker.js'), {
+        workerData: { sab },
+    });
+    // Allow the host process to exit when no other work remains; call shutdown()
+    // for an orderly close of sockets + worker.
+    if (typeof worker.unref === 'function') worker.unref();
+    worker.on('error', (error) => {
+        if (typeof console !== 'undefined') console.error('absolute wasm tcp worker error', error);
+    });
+
+    function call(op, arg0, arg1, payload) {
+        const data = Buffer.from(payload || '', 'utf8');
+        const n = Math.min(data.length, bytes.length);
+        bytes.set(data.subarray(0, n), 0);
+        i32[1] = op;
+        i32[2] = arg0 | 0;
+        i32[3] = arg1 | 0;
+        i32[4] = -1;
+        i32[5] = n;
+        Atomics.store(i32, 0, 1); // request
+        Atomics.notify(i32, 0, 1);
+        // Wait until worker marks done (2).
+        while (Atomics.load(i32, 0) === 1) {
+            const wait = Atomics.wait(i32, 0, 1, 15000);
+            if (wait === 'timed-out') {
+                Atomics.store(i32, 0, 0);
+                Atomics.notify(i32, 0, 1);
+                return { result: -1, payload: Buffer.alloc(0) };
+            }
+        }
+        const result = i32[4] | 0;
+        const plen = i32[5] | 0;
+        const out = Buffer.from(bytes.subarray(0, Math.max(0, plen)));
+        Atomics.store(i32, 0, 0); // idle for next call
+        Atomics.notify(i32, 0, 1);
+        return { result, payload: out };
+    }
+
+    return {
+        connect(host, port) {
+            return call(OP_CONNECT, port, 0, host).result;
+        },
+        listen(host, port, backlog) {
+            return call(OP_LISTEN, port, backlog || 16, host || '127.0.0.1').result;
+        },
+        accept(handle) {
+            return call(OP_ACCEPT, handle, 0, '').result;
+        },
+        send(handle, text) {
+            return call(OP_SEND, handle, 0, text || '').result;
+        },
+        receive(handle, maxBytes) {
+            const { result, payload } = call(OP_RECEIVE, handle, maxBytes, '');
+            if (result < 0) return null;
+            return payload;
+        },
+        port(handle) {
+            return call(OP_PORT, handle, 0, '').result;
+        },
+        close(handle) {
+            call(OP_CLOSE, handle, 0, '');
+        },
+        shutdown() {
+            try {
+                call(OP_SHUTDOWN, 0, 0, '');
+            } catch (_) { /* ignore */ }
+            try {
+                worker.terminate();
+            } catch (_) { /* ignore */ }
+        },
+    };
+}
+
+function createTcpTable(options = {}) {
+    const mocks = options.tcpMocks || Object.create(null);
+    const hasMocks = Object.keys(mocks).length > 0;
+    if (hasMocks || options.forceTcpMocks) {
+        return createMockTcpTable(options);
+    }
+    if (options.allowNetwork === false) {
+        return createMockTcpTable(options);
+    }
+    // Default: real OS sockets via worker_threads (Node only).
+    try {
+        return createRealTcpBridge();
+    } catch (_) {
+        return createMockTcpTable(options);
+    }
 }
 
 function createAbsoluteImports(options = {}) {
@@ -164,7 +255,17 @@ function createAbsoluteImports(options = {}) {
     /** @type {WebAssembly.Memory | null} */
     let memory = null;
     const mocks = options.httpMocks || Object.create(null);
-    const tcp = createTcpTable(options);
+    // Prefer explicit mocks for unit tests; real sockets when allowNetwork/realTcp.
+    const tcpOptions = {
+        ...options,
+        forceTcpMocks: options.forceTcpMocks || (options.tcpMocks && Object.keys(options.tcpMocks).length > 0),
+        allowNetwork: options.allowNetwork !== false && !options.forceTcpMocks,
+    };
+    if (options.tcpMocks && Object.keys(options.tcpMocks).length > 0) {
+        tcpOptions.allowNetwork = false;
+        tcpOptions.forceTcpMocks = true;
+    }
+    const tcp = createTcpTable(tcpOptions);
 
     const env = {
         absolute_log(ptr, len) {
@@ -239,6 +340,11 @@ function createAbsoluteImports(options = {}) {
     return {
         imports: { env },
         logs,
+        shutdown() {
+            try {
+                if (tcp && typeof tcp.shutdown === 'function') tcp.shutdown();
+            } catch (_) { /* ignore */ }
+        },
         bind(instance) {
             memory = instance.exports.memory || null;
             if (!memory) throw new Error('Absolute wasm module did not export memory');

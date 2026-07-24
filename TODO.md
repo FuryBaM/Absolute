@@ -528,7 +528,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   TCP connect/send/recv mocks), WASI console object, `absolute-wasm-run.js`,
   tests export/smoke/managed/task/fs/http/net, browser demo, Windows+Linux CI
   wasm jobs (wasmtime installed on Linux for WASI smoke when linked).
-- [ ] wasm multi-thread workers / SharedArrayBuffer pool; full wasi-sdk libc sysroot.
+- [x] Real OS TCP for wasm under Node: worker_threads + SharedArrayBuffer/Atomics
+  bridge (`tools/absolute-wasm-tcp-worker.js`), test `wasm-net-real` with local
+  echo server in a dedicated worker (same-thread peers deadlock under
+  `Atomics.wait`); mock TCP remains for deterministic unit tests.
+- [ ] wasm multi-thread task workers; full wasi-sdk libc sysroot.
 
 ### IDE, debugger и developer tools
 
