@@ -241,6 +241,12 @@ extern "C" int32_t absolute_desktop_is_open(int64_t handle) {
     return state && state->open && state->window ? 1 : 0;
 }
 
+// Native OS window handle for GPU backends (HWND on Win32).
+extern "C" void* absolute_desktop_native_window(int64_t handle) {
+    DesktopWindow* state = FromHandle(handle);
+    return state ? static_cast<void*>(state->window) : nullptr;
+}
+
 extern "C" void absolute_desktop_set_title(int64_t handle, const char* title) {
     DesktopWindow* state = FromHandle(handle);
     if (state && state->window) SetWindowTextW(state->window, ToWide(title).c_str());

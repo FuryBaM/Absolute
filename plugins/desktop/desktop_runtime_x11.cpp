@@ -207,6 +207,13 @@ extern "C" int32_t absolute_desktop_is_open(int64_t handle) {
     return state && state->open && state->window ? 1 : 0;
 }
 
+// Native OS window id for future GLX/Vulkan backends (X11 Window as void*).
+extern "C" void* absolute_desktop_native_window(int64_t handle) {
+    DesktopWindow* state = FromHandle(handle);
+    if (!state) return nullptr;
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(state->window));
+}
+
 extern "C" void absolute_desktop_set_title(int64_t handle, const char* title) {
     DesktopWindow* state = FromHandle(handle);
     if (state && state->display && state->window)

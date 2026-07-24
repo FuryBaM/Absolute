@@ -499,13 +499,20 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Soft 2D sprite batch / atlas batch: `Desktop.SpriteBatch` (`begin` /
   `draw` / `drawRect` / `drawSprite` / `setAtlas` / `flush` / `end`),
   zero-copy `drawSpriteRect` via strided blit; example `examples/desktop/batch.abs`.
-- [ ] Добавить OpenGL/Vulkan/Direct3D backend либо общий RHI.
-- [ ] Добавить GPU buffers, textures, samplers, pipelines и shader reflection.
+- [x] Минимальный OpenGL RHI (`Desktop.Gpu`): Windows WGL + OpenGL 3.3 core
+  (legacy fallback), clear/present, demo triangle, GLSL shaders, interleaved
+  pos+color vertex buffers, texture-from-sprite upload; Linux stub until GLX.
+  Example `examples/desktop/triangle.abs`.
+- [x] Базовые GPU buffers / textures / draw path (без samplers/pipelines object
+  model и без shader reflection — reflection + bind layout остаются open).
+- [x] GPU triangle example: `examples/desktop/triangle.abs`.
+- [ ] Добавить GPU sprite scene example (texture + textured quad pipeline).
+- [ ] Расширить RHI: samplers, pipeline objects, index buffers, multi-backend
+  (Vulkan/D3D12) поверх того же Absolute API.
 - [ ] Добавить загрузку PNG, TTF/внешних шрифтов, моделей и аудио
   (BMP + built-in soft font уже есть).
 - [ ] Добавить базовый UI toolkit для desktop-приложений.
 - [ ] Добавить audio output/mixer.
-- [ ] Добавить GPU triangle / sprite scene examples.
 - [ ] Расширить `absolute.shader` от opaque DSL-stub к reflection + RHI bind
   (SPIR-V/DXIL/Metal IR) поверх выбранного GPU backend.
 

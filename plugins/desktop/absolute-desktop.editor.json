@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "plugin": "absolute.desktop",
   "namespaces": [
-    { "name": "Desktop", "documentation": "Native windows, input, timing, software framebuffer, sprites, soft text, and sprite batching." }
+    { "name": "Desktop", "documentation": "Native windows, input, timing, software framebuffer, sprites, soft text, sprite batching, and OpenGL GPU." }
   ],
   "types": [
     {
@@ -74,6 +74,26 @@
       "detail": "class Desktop.FixedStep",
       "documentation": "Fixed timestep accumulator for deterministic simulation.",
       "snippet": "new Desktop.FixedStep(${1:60.0})"
+    },
+    {
+      "name": "Desktop.Gpu",
+      "detail": "class Desktop.Gpu",
+      "documentation": "Minimal OpenGL RHI (Windows WGL). clear/drawDemoTriangle/present; createShader/createVertexBuffer/draw.",
+      "snippet": "auto ${1:gpu} = new Desktop.Gpu(${2:window});\nif (!$1.isValid()) { println($1.lastError()); return 1; }\n$1.clear(0.06, 0.07, 0.12, 1.0);\n$1.drawDemoTriangle(Desktop.time() as float);\n$1.present();",
+      "members": [
+        { "name": "isValid", "detail": "bool isValid()" },
+        { "name": "backend", "detail": "string backend()" },
+        { "name": "lastError", "detail": "string lastError()" },
+        { "name": "makeCurrent", "detail": "void makeCurrent()" },
+        { "name": "clear", "detail": "void clear(float r, float g, float b, float a)" },
+        { "name": "present", "detail": "void present()" },
+        { "name": "drawDemoTriangle", "detail": "void drawDemoTriangle(float timeSeconds)" },
+        { "name": "createShader", "detail": "int64 createShader(string vertexSource, string fragmentSource)" },
+        { "name": "createVertexBuffer", "detail": "int64 createVertexBuffer(raw float* data, int32 floatCount)" },
+        { "name": "draw", "detail": "void draw(int64 shader, int64 buffer, int32 vertexCount)" },
+        { "name": "createTextureFromSprite", "detail": "int64 createTextureFromSprite(Sprite* sprite)" },
+        { "name": "destroy", "detail": "void destroy()" }
+      ]
     }
   ],
   "functions": [
@@ -90,6 +110,11 @@
       "label": "desktop window loop",
       "detail": "Create a window and run an event/render loop",
       "body": "auto ${1:window} = new Desktop.Window(${2:\"Absolute\"}, ${3:800}, ${4:450}, true);\nwhile ($1.poll()) {\n    $1.clear(Desktop.rgb(18, 22, 32));\n    $1.drawText(16, 16, ${5:\"Hello\"}, Desktop.rgb(255, 255, 255), 2);\n    ${0}\n    $1.present();\n}\n$1.close();"
+    },
+    {
+      "label": "desktop gpu triangle",
+      "detail": "OpenGL rotating demo triangle",
+      "body": "auto ${1:window} = new Desktop.Window(${2:\"Absolute GPU\"}, ${3:800}, ${4:450}, true);\nauto ${5:gpu} = new Desktop.Gpu($1);\nif (!$5.isValid()) { println($5.lastError()); return 1; }\nwhile ($1.poll()) {\n    $5.clear(0.06, 0.07, 0.12, 1.0);\n    $5.drawDemoTriangle(Desktop.time() as float);\n    $5.present();\n}\n$5.destroy();\n$1.close();"
     }
   ]
 }

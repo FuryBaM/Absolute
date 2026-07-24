@@ -1,0 +1,37 @@
+// OpenGL RHI demo: rotating colored triangle.
+// Esc quit. Requires Windows WGL OpenGL (Desktop.Gpu).
+
+int32 main() {
+    auto window = new Desktop.Window("Absolute GPU Triangle", 800, 450, true);
+    if (!window.isOpen()) {
+        println("Could not create desktop window");
+        return 1;
+    }
+
+    auto gpu = new Desktop.Gpu(window);
+    if (!gpu.isValid()) {
+        println("OpenGL GPU context failed:");
+        println(gpu.lastError());
+        window.close();
+        return 1;
+    }
+
+    println("Desktop.Gpu backend:");
+    println(gpu.backend());
+
+    while (window.poll()) {
+        if (window.keyPressed(Desktop.KeyEscape())) {
+            window.close();
+        } else {
+            float t = Desktop.time() as float;
+            gpu.makeCurrent();
+            gpu.clear(0.06, 0.07, 0.12, 1.0);
+            gpu.drawDemoTriangle(t);
+            gpu.present();
+        }
+    }
+
+    gpu.destroy();
+    window.close();
+    return 0;
+}

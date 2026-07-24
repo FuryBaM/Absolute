@@ -19,7 +19,7 @@ file(WRITE "${OUTPUT}"
   \"library\": \"${PLUGIN_NAME}\",
   \"editor\": \"absolute-desktop.editor.json\",
   \"nativeLibraries\": [${NATIVE_LIBRARIES}],
-  \"provides\": [\"desktop.window\", \"desktop.framebuffer\", \"desktop.input\"],
+  \"provides\": [\"desktop.window\", \"desktop.framebuffer\", \"desktop.input\", \"desktop.gpu\"],
   \"dependencies\": {}
 }
 ")

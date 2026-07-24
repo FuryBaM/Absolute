@@ -5,6 +5,7 @@ extern "C" int64_t absolute_desktop_create(const char*, int32_t, int32_t, int32_
 extern "C" void absolute_desktop_destroy(int64_t) {}
 extern "C" int32_t absolute_desktop_poll(int64_t) { return 0; }
 extern "C" int32_t absolute_desktop_is_open(int64_t) { return 0; }
+extern "C" void* absolute_desktop_native_window(int64_t) { return nullptr; }
 extern "C" void absolute_desktop_set_title(int64_t, const char*) {}
 extern "C" int32_t absolute_desktop_width(int64_t) { return 0; }
 extern "C" int32_t absolute_desktop_height(int64_t) { return 0; }

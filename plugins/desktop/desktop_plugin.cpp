@@ -59,6 +59,24 @@ extern "C" void absolute_desktop_batch_draw_sprite_rect(int64 handle, int64 spri
 extern "C" void absolute_desktop_batch_flush(int64 handle);
 extern "C" void absolute_desktop_batch_end(int64 handle);
 extern "C" int32 absolute_desktop_batch_count(int64 handle);
+extern "C" int64 absolute_desktop_gpu_create(int64 windowHandle);
+extern "C" void absolute_desktop_gpu_destroy(int64 handle);
+extern "C" int32 absolute_desktop_gpu_is_valid(int64 handle);
+extern "C" string absolute_desktop_gpu_backend();
+extern "C" string absolute_desktop_gpu_last_error();
+extern "C" void absolute_desktop_gpu_make_current(int64 handle);
+extern "C" void absolute_desktop_gpu_clear(int64 handle, float r, float g, float b, float a);
+extern "C" void absolute_desktop_gpu_present(int64 handle);
+extern "C" void absolute_desktop_gpu_draw_demo_triangle(int64 handle, float timeSeconds);
+extern "C" int64 absolute_desktop_gpu_shader_create(int64 gpuHandle, string vertexSource, string fragmentSource);
+extern "C" void absolute_desktop_gpu_shader_destroy(int64 gpuHandle, int64 shaderHandle);
+extern "C" int64 absolute_desktop_gpu_buffer_create(int64 gpuHandle, raw float* data, int32 floatCount);
+extern "C" void absolute_desktop_gpu_buffer_destroy(int64 gpuHandle, int64 bufferHandle);
+extern "C" void absolute_desktop_gpu_draw(int64 gpuHandle, int64 shaderHandle, int64 bufferHandle, int32 vertexCount);
+extern "C" void absolute_desktop_gpu_set_uniform_f(int64 gpuHandle, int64 shaderHandle, string name, float value);
+extern "C" int64 absolute_desktop_gpu_texture_from_sprite(int64 gpuHandle, int64 spriteHandle);
+extern "C" void absolute_desktop_gpu_texture_destroy(int64 gpuHandle, int64 textureHandle);
+extern "C" void absolute_desktop_gpu_bind_texture(int64 gpuHandle, int64 textureHandle, int32 unit);
 extern "C" void absolute_desktop_draw_text(int64 windowHandle, int32 x, int32 y, string text, uint32 color, int32 scale);
 extern "C" int32 absolute_desktop_measure_text(string text, int32 scale);
 extern "C" int32 absolute_desktop_measure_text_height(string text, int32 scale);
@@ -498,6 +516,92 @@ namespace Desktop {
         // Pending draws since last flush (0 after flush/end).
         public int32 count() {
             return absolute_desktop_batch_count(handle);
+        }
+    }
+
+    // Minimal OpenGL RHI (Windows WGL, OpenGL 3.3 core when available).
+    // Soft framebuffer (clear/drawSprite/present) and GPU present are separate paths;
+    // use Gpu.clear / Gpu.present when rendering with OpenGL.
+    class Gpu {
+        public int64 handle;
+
+        public Gpu(Window* window) {
+            handle = absolute_desktop_gpu_create(window.handle);
+        }
+
+        public bool isValid() {
+            return handle != 0 && absolute_desktop_gpu_is_valid(handle) != 0;
+        }
+
+        public void destroy() {
+            if (handle != 0) {
+                absolute_desktop_gpu_destroy(handle);
+                handle = 0;
+            }
+        }
+
+        public string backend() {
+            return absolute_desktop_gpu_backend();
+        }
+
+        public string lastError() {
+            return absolute_desktop_gpu_last_error();
+        }
+
+        public void makeCurrent() {
+            absolute_desktop_gpu_make_current(handle);
+        }
+
+        public void clear(float r, float g, float b, float a) {
+            absolute_desktop_gpu_clear(handle, r, g, b, a);
+        }
+
+        public void present() {
+            absolute_desktop_gpu_present(handle);
+        }
+
+        // Built-in rotating RGB triangle (embedded shader + VBO).
+        public void drawDemoTriangle(float timeSeconds) {
+            absolute_desktop_gpu_draw_demo_triangle(handle, timeSeconds);
+        }
+
+        // GLSL 330 sources. Vertex layout for draw(): location0 vec3 pos, location1 vec3 color.
+        public int64 createShader(string vertexSource, string fragmentSource) {
+            return absolute_desktop_gpu_shader_create(handle, vertexSource, fragmentSource);
+        }
+
+        public void destroyShader(int64 shader) {
+            absolute_desktop_gpu_shader_destroy(handle, shader);
+        }
+
+        // Interleaved floats: [x,y,z,r,g,b] * N. floatCount must be multiple of 6.
+        public int64 createVertexBuffer(raw float* data, int32 floatCount) {
+            return absolute_desktop_gpu_buffer_create(handle, data, floatCount);
+        }
+
+        public void destroyBuffer(int64 buffer) {
+            absolute_desktop_gpu_buffer_destroy(handle, buffer);
+        }
+
+        public void draw(int64 shader, int64 buffer, int32 vertexCount) {
+            absolute_desktop_gpu_draw(handle, shader, buffer, vertexCount);
+        }
+
+        public void setUniformF(int64 shader, string name, float value) {
+            absolute_desktop_gpu_set_uniform_f(handle, shader, name, value);
+        }
+
+        // Upload soft Sprite pixels as RGBA8 texture (0 = transparent).
+        public int64 createTextureFromSprite(Sprite* sprite) {
+            return absolute_desktop_gpu_texture_from_sprite(handle, sprite.handle);
+        }
+
+        public void destroyTexture(int64 texture) {
+            absolute_desktop_gpu_texture_destroy(handle, texture);
+        }
+
+        public void bindTexture(int64 texture, int32 unit) {
+            absolute_desktop_gpu_bind_texture(handle, texture, unit);
         }
     }
 }
