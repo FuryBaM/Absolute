@@ -1,0 +1,188 @@
+// GPU textured sprite scene: ship + atlas stars via pipeline/bind/draw.
+// Esc quit. Arrows / WASD move the ship. Requires Windows OpenGL (Desktop.Gpu).
+
+// One axis-aligned textured quad (2 triangles, 6 verts) as pos3+uv2 (5 floats/vert).
+void writeQuad(float[] v, int32 base, float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1) {
+    // tri 1: TL, BL, BR
+    v[base + 0] = x0; v[base + 1] = y1; v[base + 2] = 0.0; v[base + 3] = u0; v[base + 4] = v1;
+    v[base + 5] = x0; v[base + 6] = y0; v[base + 7] = 0.0; v[base + 8] = u0; v[base + 9] = v0;
+    v[base + 10] = x1; v[base + 11] = y0; v[base + 12] = 0.0; v[base + 13] = u1; v[base + 14] = v0;
+    // tri 2: TL, BR, TR
+    v[base + 15] = x0; v[base + 16] = y1; v[base + 17] = 0.0; v[base + 18] = u0; v[base + 19] = v1;
+    v[base + 20] = x1; v[base + 21] = y0; v[base + 22] = 0.0; v[base + 23] = u1; v[base + 24] = v0;
+    v[base + 25] = x1; v[base + 26] = y1; v[base + 27] = 0.0; v[base + 28] = u1; v[base + 29] = v1;
+}
+
+int32 main() {
+    auto window = new Desktop.Window("Absolute GPU Sprites", 800, 450, false);
+    if (!window.isOpen()) {
+        println("Could not create desktop window");
+        return 1;
+    }
+
+    auto gpu = new Desktop.Gpu(window);
+    if (!gpu.isValid()) {
+        println("OpenGL GPU context failed:");
+        println(gpu.lastError());
+        window.close();
+        return 1;
+    }
+
+    auto shipSprite = new Desktop.Sprite(1, 1);
+    if (!shipSprite.loadBmp("examples/desktop/assets/ship.bmp")) {
+        if (!shipSprite.loadBmp("assets/ship.bmp")) {
+            println("Failed to load ship.bmp");
+            gpu.destroy();
+            window.close();
+            return 1;
+        }
+    }
+    shipSprite.colorKey(Desktop.rgb(255, 0, 255));
+
+    auto atlasSprite = new Desktop.Sprite(1, 1);
+    if (!atlasSprite.loadBmp("examples/desktop/assets/atlas.bmp")) {
+        if (!atlasSprite.loadBmp("assets/atlas.bmp")) {
+            println("Failed to load atlas.bmp");
+            shipSprite.destroy();
+            gpu.destroy();
+            window.close();
+            return 1;
+        }
+    }
+    atlasSprite.colorKey(Desktop.rgb(255, 0, 255));
+
+    auto shipTex = gpu.createTextureFromSprite(shipSprite);
+    auto atlasTex = gpu.createTextureFromSprite(atlasSprite);
+    if (shipTex == null || atlasTex == null) {
+        println("createTextureFromSprite failed:");
+        println(gpu.lastError());
+        shipSprite.destroy();
+        atlasSprite.destroy();
+        gpu.destroy();
+        window.close();
+        return 1;
+    }
+
+    string vs = "#version 330 core\nlayout(location = 0) in vec3 aPos;\nlayout(location = 1) in vec2 aUv;\nuniform vec2 uOffset;\nout vec2 vUv;\nvoid main() {\n    gl_Position = vec4(aPos.xy + uOffset, aPos.z, 1.0);\n    vUv = aUv;\n}\n";
+    string fs = "#version 330 core\nin vec2 vUv;\nuniform sampler2D uTex;\nout vec4 FragColor;\nvoid main() {\n    vec4 c = texture(uTex, vUv);\n    if (c.a < 0.01) discard;\n    FragColor = c;\n}\n";
+
+    auto shader = gpu.createShader(vs, fs);
+    auto layout = gpu.createLayoutPos3Uv2();
+    auto pipeline = gpu.createPipeline(shader, layout);
+    if (shader == null || layout == null || pipeline == null) {
+        println("shader/layout/pipeline failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    // Ship quad in NDC (centered; move via uOffset).
+    float shipHalfW = 0.08;
+    float shipHalfH = 0.06;
+    float[] shipVerts = new float[30];
+    writeQuad(shipVerts, 0, -shipHalfW, -shipHalfH, shipHalfW, shipHalfH, 0.0, 0.0, 1.0, 1.0);
+    auto shipBuffer = gpu.createVertexBuffer(shipVerts);
+
+    // Star field from atlas bottom row (4 tiles of 16x16 in a typical 64x32 atlas).
+    int32 starCount = 24;
+    float[] starVerts = new float[starCount * 30];
+    int32 i = 0;
+    while (i < starCount) {
+        float cx = -0.9 + (i as float) * 0.075;
+        float tileY = ((i * 7) % 15) as float;
+        float cy = -0.7 + tileY * 0.1;
+        float half = 0.03;
+        int32 tile = i % 4;
+        float u0 = (tile as float) * 0.25;
+        float u1 = u0 + 0.25;
+        float v0 = 0.0;
+        float v1 = 0.5;
+        writeQuad(starVerts, i * 30, cx - half, cy - half, cx + half, cy + half, u0, v0, u1, v1);
+        i = i + 1;
+    }
+    auto starBuffer = gpu.createVertexBuffer(starVerts);
+    if (shipBuffer == null || starBuffer == null) {
+        println("createVertexBuffer failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    auto fixed = new Desktop.FixedStep(60.0);
+    double shipX = 0.0;
+    double shipY = 0.0;
+    double starScroll = 0.0;
+
+    while (window.poll()) {
+        fixed.add(window.deltaTime());
+        while (fixed.shouldUpdate()) {
+            double step = fixed.step;
+            double velX = 0.0;
+            double velY = 0.0;
+            if (window.keyDown(Desktop.KeyLeft()) || window.keyDown(Desktop.KeyA())) {
+                velX = velX - 0.9;
+            }
+            if (window.keyDown(Desktop.KeyRight()) || window.keyDown(Desktop.KeyD())) {
+                velX = velX + 0.9;
+            }
+            if (window.keyDown(Desktop.KeyUp()) || window.keyDown(Desktop.KeyW())) {
+                velY = velY + 0.9;
+            }
+            if (window.keyDown(Desktop.KeyDown()) || window.keyDown(Desktop.KeyS())) {
+                velY = velY - 0.9;
+            }
+            shipX = shipX + velX * step;
+            shipY = shipY + velY * step;
+            if (shipX < -0.9) { shipX = -0.9; }
+            if (shipX > 0.9) { shipX = 0.9; }
+            if (shipY < -0.85) { shipY = -0.85; }
+            if (shipY > 0.85) { shipY = 0.85; }
+            starScroll = starScroll + step * 0.15;
+            fixed.consume();
+        }
+
+        if (window.keyPressed(Desktop.KeyEscape())) {
+            window.close();
+        } else {
+            float ox = shipX as float;
+            float oy = shipY as float;
+            double s = starScroll;
+            while (s > 1.0) {
+                s = s - 1.0;
+            }
+            float scroll = (s as float) * 0.2;
+
+            gpu.beginFrame();
+            gpu.clear(0.04, 0.05, 0.10, 1.0);
+            gpu.bind(pipeline);
+
+            // Stars
+            gpu.bind(starBuffer);
+            gpu.bind(atlasTex);
+            gpu.setUniformI("uTex", 0);
+            gpu.setUniform2F("uOffset", -scroll, 0.0);
+            gpu.draw(starCount * 6);
+
+            // Ship
+            gpu.bind(shipBuffer);
+            gpu.bind(shipTex);
+            gpu.setUniformI("uTex", 0);
+            gpu.setUniform2F("uOffset", ox, oy);
+            gpu.draw(6);
+
+            gpu.endFrame();
+            gpu.present();
+        }
+    }
+
+    starBuffer.destroy();
+    shipBuffer.destroy();
+    pipeline.destroy();
+    layout.destroy();
+    shader.destroy();
+    atlasTex.destroy();
+    shipTex.destroy();
+    atlasSprite.destroy();
+    shipSprite.destroy();
+    gpu.destroy();
+    window.close();
+    return 0;
+}

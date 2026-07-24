@@ -82,9 +82,13 @@ extern "C" void absolute_desktop_gpu_bind_pipeline(int64 gpuHandle, int64 pipeli
 extern "C" void absolute_desktop_gpu_bind_buffer(int64 gpuHandle, int64 bufferHandle);
 extern "C" void absolute_desktop_gpu_draw(int64 gpuHandle, int32 vertexCount);
 extern "C" void absolute_desktop_gpu_set_uniform_f(int64 gpuHandle, string name, float value);
+extern "C" void absolute_desktop_gpu_set_uniform_i(int64 gpuHandle, string name, int32 value);
+extern "C" void absolute_desktop_gpu_set_uniform_2f(int64 gpuHandle, string name, float x, float y);
 extern "C" int64 absolute_desktop_gpu_texture_from_sprite(int64 gpuHandle, int64 spriteHandle);
 extern "C" void absolute_desktop_gpu_texture_destroy(int64 gpuHandle, int64 textureHandle);
 extern "C" void absolute_desktop_gpu_bind_texture(int64 gpuHandle, int64 textureHandle, int32 unit);
+extern "C" int32 absolute_desktop_gpu_texture_width(int64 textureHandle);
+extern "C" int32 absolute_desktop_gpu_texture_height(int64 textureHandle);
 extern "C" void absolute_desktop_draw_text(int64 windowHandle, int32 x, int32 y, string text, uint32 color, int32 scale);
 extern "C" int32 absolute_desktop_measure_text(string text, int32 scale);
 extern "C" int32 absolute_desktop_measure_text_height(string text, int32 scale);
@@ -604,9 +608,33 @@ namespace Desktop {
         }
     }
 
+    class GpuTexture {
+        public int64 handle;
+        public int64 gpuHandle;
+
+        public bool isValid() {
+            return handle != 0;
+        }
+
+        public int32 width() {
+            return absolute_desktop_gpu_texture_width(handle);
+        }
+
+        public int32 height() {
+            return absolute_desktop_gpu_texture_height(handle);
+        }
+
+        public void destroy() {
+            if (handle != 0) {
+                absolute_desktop_gpu_texture_destroy(gpuHandle, handle);
+                handle = 0;
+            }
+        }
+    }
+
     // OpenGL RHI (Windows WGL, OpenGL 3.3 core when available).
     // Frame model:
-    //   beginFrame(); clear(...); bind(pipeline); bind(buffer); draw(n); endFrame(); present();
+    //   beginFrame(); clear(...); bind(pipeline); bind(buffer); bind(texture); draw(n); endFrame(); present();
     class Gpu {
         public int64 handle;
 
@@ -670,6 +698,17 @@ namespace Desktop {
             return layout;
         }
 
+        // Textured sprites: stride 20 bytes, loc0 = vec3 pos @0, loc1 = vec2 uv @12.
+        public VertexLayout* createLayoutPos3Uv2() {
+            auto layout = new VertexLayout(20);
+            if (!layout.isValid()) {
+                return null;
+            }
+            layout.add(0, 3, 0);
+            layout.add(1, 2, 12);
+            return layout;
+        }
+
         public GpuPipeline* createPipeline(GpuShader* shader, VertexLayout* layout) {
             if (shader == null || layout == null) {
                 return null;
@@ -712,6 +751,19 @@ namespace Desktop {
             }
         }
 
+        // Binds to texture unit 0.
+        public void bind(GpuTexture* texture) {
+            if (texture != null) {
+                absolute_desktop_gpu_bind_texture(handle, texture.handle, 0);
+            }
+        }
+
+        public void bindTexture(GpuTexture* texture, int32 unit) {
+            if (texture != null) {
+                absolute_desktop_gpu_bind_texture(handle, texture.handle, unit);
+            }
+        }
+
         public void draw(int32 vertexCount) {
             absolute_desktop_gpu_draw(handle, vertexCount);
         }
@@ -721,16 +773,26 @@ namespace Desktop {
             absolute_desktop_gpu_set_uniform_f(handle, name, value);
         }
 
-        public int64 createTextureFromSprite(Sprite* sprite) {
-            return absolute_desktop_gpu_texture_from_sprite(handle, sprite.handle);
+        public void setUniformI(string name, int32 value) {
+            absolute_desktop_gpu_set_uniform_i(handle, name, value);
         }
 
-        public void destroyTexture(int64 texture) {
-            absolute_desktop_gpu_texture_destroy(handle, texture);
+        public void setUniform2F(string name, float x, float y) {
+            absolute_desktop_gpu_set_uniform_2f(handle, name, x, y);
         }
 
-        public void bindTexture(int64 texture, int32 unit) {
-            absolute_desktop_gpu_bind_texture(handle, texture, unit);
+        public GpuTexture* createTextureFromSprite(Sprite* sprite) {
+            if (sprite == null) {
+                return null;
+            }
+            int64 h = absolute_desktop_gpu_texture_from_sprite(handle, sprite.handle);
+            if (h == 0) {
+                return null;
+            }
+            auto texture = new GpuTexture();
+            texture.handle = h;
+            texture.gpuHandle = handle;
+            return texture;
         }
     }
 }

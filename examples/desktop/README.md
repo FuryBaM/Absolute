@@ -42,6 +42,7 @@ pong.exe
 | `text.abs` | Built-in 8×8 soft font, scaled HUD, sprite-baked label, typing |
 | `batch.abs` | Soft `SpriteBatch`: 120 atlas tiles + ship in one flush |
 | `triangle.abs` | OpenGL RHI: shader + buffer + pipeline + bind/draw |
+| `gpu-sprites.abs` | Textured quads: ship + atlas stars (`GpuTexture`) |
 
 ## API highlights
 
@@ -52,7 +53,7 @@ pong.exe
 - **Sprites:** `Desktop.Sprite(w,h)`, `fillRect`/`fillCircle`/`clear`, `window.drawSprite(sprite,x,y)`
 - **Images:** `sprite.loadBmp(path)`, `colorKey(rgb)`, `drawSpriteRect(..., sx,sy,sw,sh)`
 - **Batch:** `Desktop.SpriteBatch`, `begin`/`drawRect`/`drawSprite`/`end`
-- **GPU:** `Desktop.Gpu`: `createShader` / `createVertexBuffer` / `createPipeline`, `beginFrame`/`bind`/`draw`/`endFrame`/`present`
+- **GPU:** `Desktop.Gpu`: shader/buffer/pipeline/texture, `beginFrame`/`bind`/`draw`/`endFrame`/`present`
 - **Text:** `window.drawText(x,y,text,color,scale)`, `Desktop.measureText`, `sprite.drawText`
 - **Keys:** `Desktop.KeyEscape()`, `KeySpace()`, `KeyW/A/S/D()`, arrows, …
 

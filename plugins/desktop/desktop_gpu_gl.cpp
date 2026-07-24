@@ -47,6 +47,9 @@ using GLintptr = ptrdiff_t;
 #define GL_TEXTURE_MAG_FILTER 0x2800
 #define GL_TEXTURE_WRAP_S 0x2802
 #define GL_TEXTURE_WRAP_T 0x2803
+#define GL_BLEND 0x0BE2
+#define GL_SRC_ALPHA 0x0302
+#define GL_ONE_MINUS_SRC_ALPHA 0x0303
 #define WGL_CONTEXT_MAJOR_VERSION_ARB 0x2091
 #define WGL_CONTEXT_MINOR_VERSION_ARB 0x2092
 #define WGL_CONTEXT_PROFILE_MASK_ARB 0x9126
@@ -73,6 +76,7 @@ namespace {
     using PFNGLGETUNIFORMLOCATION = GLint(APIENTRY*)(GLuint, const GLchar*);
     using PFNGLUNIFORM1F = void(APIENTRY*)(GLint, GLfloat);
     using PFNGLUNIFORM1I = void(APIENTRY*)(GLint, GLint);
+    using PFNGLUNIFORM2F = void(APIENTRY*)(GLint, GLfloat, GLfloat);
     using PFNGLGENBUFFERS = void(APIENTRY*)(GLsizei, GLuint*);
     using PFNGLBINDBUFFER = void(APIENTRY*)(GLenum, GLuint);
     using PFNGLBUFFERDATA = void(APIENTRY*)(GLenum, GLsizeiptr, const void*, GLenum);
@@ -93,6 +97,9 @@ namespace {
     using PFNGLTEXPARAMETERI = void(APIENTRY*)(GLenum, GLenum, GLint);
     using PFNGLDELETETEXTURES = void(APIENTRY*)(GLsizei, const GLuint*);
     using PFNGLACTIVETEXTURE = void(APIENTRY*)(GLenum);
+    using PFNGLENABLE = void(APIENTRY*)(GLenum);
+    using PFNGLDISABLE = void(APIENTRY*)(GLenum);
+    using PFNGLBLENDFUNC = void(APIENTRY*)(GLenum, GLenum);
 
     struct GlFns {
         PFNGLCREATESHADER CreateShader = nullptr;
@@ -111,6 +118,7 @@ namespace {
         PFNGLGETUNIFORMLOCATION GetUniformLocation = nullptr;
         PFNGLUNIFORM1F Uniform1f = nullptr;
         PFNGLUNIFORM1I Uniform1i = nullptr;
+        PFNGLUNIFORM2F Uniform2f = nullptr;
         PFNGLGENBUFFERS GenBuffers = nullptr;
         PFNGLBINDBUFFER BindBuffer = nullptr;
         PFNGLBUFFERDATA BufferData = nullptr;
@@ -131,6 +139,9 @@ namespace {
         PFNGLTEXPARAMETERI TexParameteri = nullptr;
         PFNGLDELETETEXTURES DeleteTextures = nullptr;
         PFNGLACTIVETEXTURE ActiveTexture = nullptr;
+        PFNGLENABLE Enable = nullptr;
+        PFNGLDISABLE Disable = nullptr;
+        PFNGLBLENDFUNC BlendFunc = nullptr;
         PFNWGLSWAPINTERVALEXT SwapIntervalEXT = nullptr;
     };
 
@@ -167,6 +178,7 @@ namespace {
         gl.GetUniformLocation = LoadProc<PFNGLGETUNIFORMLOCATION>("glGetUniformLocation");
         gl.Uniform1f = LoadProc<PFNGLUNIFORM1F>("glUniform1f");
         gl.Uniform1i = LoadProc<PFNGLUNIFORM1I>("glUniform1i");
+        gl.Uniform2f = LoadProc<PFNGLUNIFORM2F>("glUniform2f");
         gl.GenBuffers = LoadProc<PFNGLGENBUFFERS>("glGenBuffers");
         gl.BindBuffer = LoadProc<PFNGLBINDBUFFER>("glBindBuffer");
         gl.BufferData = LoadProc<PFNGLBUFFERDATA>("glBufferData");
@@ -187,6 +199,9 @@ namespace {
         gl.TexParameteri = LoadProc<PFNGLTEXPARAMETERI>("glTexParameteri");
         gl.DeleteTextures = LoadProc<PFNGLDELETETEXTURES>("glDeleteTextures");
         gl.ActiveTexture = LoadProc<PFNGLACTIVETEXTURE>("glActiveTexture");
+        gl.Enable = LoadProc<PFNGLENABLE>("glEnable");
+        gl.Disable = LoadProc<PFNGLDISABLE>("glDisable");
+        gl.BlendFunc = LoadProc<PFNGLBLENDFUNC>("glBlendFunc");
         gl.SwapIntervalEXT = LoadProc<PFNWGLSWAPINTERVALEXT>("wglSwapIntervalEXT");
 
         return gl.CreateShader && gl.ShaderSource && gl.CompileShader && gl.GetShaderiv
@@ -194,7 +209,8 @@ namespace {
             && gl.UseProgram && gl.GenBuffers && gl.BindBuffer && gl.BufferData
             && gl.GenVertexArrays && gl.BindVertexArray
             && gl.EnableVertexAttribArray && gl.VertexAttribPointer && gl.DrawArrays
-            && gl.Viewport && gl.ClearColor && gl.Clear;
+            && gl.Viewport && gl.ClearColor && gl.Clear
+            && gl.Enable && gl.BlendFunc && gl.Uniform1i && gl.Uniform2f;
     }
 
     GLuint CompileShader(const GlFns& gl, GLenum type, const char* source) {
@@ -526,6 +542,9 @@ extern "C" void absolute_desktop_gpu_begin_frame(int64_t handle) {
     device->boundBuffer = 0;
     device->attrsDirty = true;
     device->gl.BindVertexArray(device->defaultVao);
+    // Premultiplied-friendly alpha for soft sprites / BMP color keys.
+    device->gl.Enable(GL_BLEND);
+    device->gl.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 }
 
 extern "C" void absolute_desktop_gpu_end_frame(int64_t handle) {
@@ -727,10 +746,34 @@ extern "C" void absolute_desktop_gpu_set_uniform_f(
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     GpuPipeline* pipeline = device ? PipelineFromHandle(device->boundPipeline) : nullptr;
     if (!device || !pipeline || !name || !MakeCurrent(*device) || !pipeline->program) return;
+    device->gl.UseProgram(pipeline->program);
     const GLint loc = device->gl.GetUniformLocation(pipeline->program, name);
     if (loc >= 0) device->gl.Uniform1f(loc, value);
 }
 
+extern "C" void absolute_desktop_gpu_set_uniform_i(
+    int64_t gpuHandle, const char* name, int32_t value) {
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    GpuPipeline* pipeline = device ? PipelineFromHandle(device->boundPipeline) : nullptr;
+    if (!device || !pipeline || !name || !MakeCurrent(*device) || !pipeline->program) return;
+    if (!device->gl.Uniform1i) return;
+    device->gl.UseProgram(pipeline->program);
+    const GLint loc = device->gl.GetUniformLocation(pipeline->program, name);
+    if (loc >= 0) device->gl.Uniform1i(loc, value);
+}
+
+extern "C" void absolute_desktop_gpu_set_uniform_2f(
+    int64_t gpuHandle, const char* name, float x, float y) {
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    GpuPipeline* pipeline = device ? PipelineFromHandle(device->boundPipeline) : nullptr;
+    if (!device || !pipeline || !name || !MakeCurrent(*device) || !pipeline->program) return;
+    if (!device->gl.Uniform2f) return;
+    device->gl.UseProgram(pipeline->program);
+    const GLint loc = device->gl.GetUniformLocation(pipeline->program, name);
+    if (loc >= 0) device->gl.Uniform2f(loc, x, y);
+}
+
+// Upload soft sprite 0x00RRGGBB as RGBA8 (0 = transparent). Flip rows for GL origin.
 extern "C" int64_t absolute_desktop_gpu_texture_from_sprite(int64_t gpuHandle, int64_t spriteHandle) {
     GpuDevice* device = DeviceFromHandle(gpuHandle);
     DesktopSpriteView* sprite = SpriteFromHandle(spriteHandle);
@@ -746,12 +789,19 @@ extern "C" int64_t absolute_desktop_gpu_texture_from_sprite(int64_t gpuHandle, i
     const int32_t w = sprite->width;
     const int32_t h = sprite->height;
     std::vector<uint8_t> rgba(static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4u);
-    for (int32_t i = 0; i < w * h; ++i) {
-        const uint32_t c = sprite->pixels[static_cast<std::size_t>(i)];
-        rgba[static_cast<std::size_t>(i) * 4u + 0] = static_cast<uint8_t>((c >> 16) & 0xFF);
-        rgba[static_cast<std::size_t>(i) * 4u + 1] = static_cast<uint8_t>((c >> 8) & 0xFF);
-        rgba[static_cast<std::size_t>(i) * 4u + 2] = static_cast<uint8_t>(c & 0xFF);
-        rgba[static_cast<std::size_t>(i) * 4u + 3] = c == 0 ? 0 : 255;
+    for (int32_t y = 0; y < h; ++y) {
+        const int32_t srcY = h - 1 - y;
+        for (int32_t x = 0; x < w; ++x) {
+            const uint32_t c = sprite->pixels[
+                static_cast<std::size_t>(srcY) * static_cast<std::size_t>(w)
+                + static_cast<std::size_t>(x)];
+            const std::size_t di = (static_cast<std::size_t>(y) * static_cast<std::size_t>(w)
+                + static_cast<std::size_t>(x)) * 4u;
+            rgba[di + 0] = static_cast<uint8_t>((c >> 16) & 0xFF);
+            rgba[di + 1] = static_cast<uint8_t>((c >> 8) & 0xFF);
+            rgba[di + 2] = static_cast<uint8_t>(c & 0xFF);
+            rgba[di + 3] = c == 0 ? 0 : 255;
+        }
     }
 
     auto* texture = new GpuTexture();
@@ -760,13 +810,23 @@ extern "C" int64_t absolute_desktop_gpu_texture_from_sprite(int64_t gpuHandle, i
     GlFns& gl = device->gl;
     gl.GenTextures(1, &texture->id);
     gl.BindTexture(GL_TEXTURE_2D, texture->id);
-    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
     gl.BindTexture(GL_TEXTURE_2D, 0);
     return static_cast<int64_t>(reinterpret_cast<intptr_t>(texture));
+}
+
+extern "C" int32_t absolute_desktop_gpu_texture_width(int64_t textureHandle) {
+    const GpuTexture* texture = TextureFromHandle(textureHandle);
+    return texture ? texture->width : 0;
+}
+
+extern "C" int32_t absolute_desktop_gpu_texture_height(int64_t textureHandle) {
+    const GpuTexture* texture = TextureFromHandle(textureHandle);
+    return texture ? texture->height : 0;
 }
 
 extern "C" void absolute_desktop_gpu_texture_destroy(int64_t gpuHandle, int64_t textureHandle) {
@@ -818,8 +878,12 @@ extern "C" void absolute_desktop_gpu_bind_pipeline(int64_t, int64_t) {}
 extern "C" void absolute_desktop_gpu_bind_buffer(int64_t, int64_t) {}
 extern "C" void absolute_desktop_gpu_draw(int64_t, int32_t) {}
 extern "C" void absolute_desktop_gpu_set_uniform_f(int64_t, const char*, float) {}
+extern "C" void absolute_desktop_gpu_set_uniform_i(int64_t, const char*, int32_t) {}
+extern "C" void absolute_desktop_gpu_set_uniform_2f(int64_t, const char*, float, float) {}
 extern "C" int64_t absolute_desktop_gpu_texture_from_sprite(int64_t, int64_t) { return 0; }
 extern "C" void absolute_desktop_gpu_texture_destroy(int64_t, int64_t) {}
 extern "C" void absolute_desktop_gpu_bind_texture(int64_t, int64_t, int32_t) {}
+extern "C" int32_t absolute_desktop_gpu_texture_width(int64_t) { return 0; }
+extern "C" int32_t absolute_desktop_gpu_texture_height(int64_t) { return 0; }
 
 #endif

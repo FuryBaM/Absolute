@@ -91,8 +91,9 @@ Resources:
 - `createVertexBuffer(float[] vertices)` → `GpuBuffer*` (raw GPU VBO; layout is separate)
 - `new VertexLayout(strideBytes)` + `layout.add(location, components, offsetBytes)`
 - `createLayoutPos3Color3()` — stride 24, loc0 pos, loc1 color
+- `createLayoutPos3Uv2()` — stride 20, loc0 pos, loc1 uv (textured sprites)
 - `createPipeline(shader, layout)` → `GpuPipeline*` (program + vertex format; shader must outlive draws)
-- `createTextureFromSprite(sprite)` / `bindTexture` / `destroyTexture`
+- `createTextureFromSprite(sprite)` → `GpuTexture*` (RGBA8, flipped for GL; alpha from color key)
 
 Frame:
 ```absolute
@@ -105,14 +106,17 @@ gpu.beginFrame();
 gpu.clear(0.06, 0.07, 0.12, 1.0);
 gpu.bind(pipeline);
 gpu.bind(buffer);
-gpu.setUniformF("uTime", t); // optional, uses bound pipeline
-gpu.draw(3);
+gpu.bind(texture);              // optional textured path
+gpu.setUniformI("uTex", 0);
+gpu.setUniform2F("uOffset", x, y);
+gpu.draw(6);
 gpu.endFrame();
 gpu.present();
 ```
 
-- `bind` is overloaded for `GpuPipeline*` and `GpuBuffer*`
-- Example: `examples/desktop/triangle.abs`
+- `bind` is overloaded for `GpuPipeline*`, `GpuBuffer*`, and `GpuTexture*` (unit 0)
+- Alpha blending is enabled in `beginFrame`
+- Examples: `triangle.abs`, `gpu-sprites.abs`
 
 ### Game loop patterns
 
@@ -152,4 +156,5 @@ resources; the current Absolute class model does not yet run RAII destructors.
 
 Examples: `examples/desktop/window.abs`, `pong.abs`, `sprites.abs`, `input.abs`,
 `image.abs` (BMP + atlas), `text.abs` (soft font HUD / typing),
-`batch.abs` (`SpriteBatch` + atlas tiles), `triangle.abs` (OpenGL demo triangle).
+`batch.abs` (`SpriteBatch` + atlas tiles), `triangle.abs` (OpenGL pipeline),
+`gpu-sprites.abs` (textured ship + atlas).

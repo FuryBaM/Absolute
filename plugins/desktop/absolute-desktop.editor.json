@@ -87,16 +87,25 @@
         { "name": "createShader", "detail": "GpuShader* createShader(string vertexSource, string fragmentSource)" },
         { "name": "createVertexBuffer", "detail": "GpuBuffer* createVertexBuffer(float[] vertices)" },
         { "name": "createLayoutPos3Color3", "detail": "VertexLayout* createLayoutPos3Color3()" },
+        { "name": "createLayoutPos3Uv2", "detail": "VertexLayout* createLayoutPos3Uv2()" },
         { "name": "createPipeline", "detail": "GpuPipeline* createPipeline(GpuShader* shader, VertexLayout* layout)" },
+        { "name": "createTextureFromSprite", "detail": "GpuTexture* createTextureFromSprite(Sprite* sprite)" },
         { "name": "beginFrame", "detail": "void beginFrame()" },
         { "name": "endFrame", "detail": "void endFrame()" },
         { "name": "clear", "detail": "void clear(float r, float g, float b, float a)" },
-        { "name": "bind", "detail": "void bind(GpuPipeline* | GpuBuffer*)" },
+        { "name": "bind", "detail": "void bind(GpuPipeline* | GpuBuffer* | GpuTexture*)" },
         { "name": "draw", "detail": "void draw(int32 vertexCount)" },
         { "name": "setUniformF", "detail": "void setUniformF(string name, float value)" },
+        { "name": "setUniformI", "detail": "void setUniformI(string name, int32 value)" },
+        { "name": "setUniform2F", "detail": "void setUniform2F(string name, float x, float y)" },
         { "name": "present", "detail": "void present()" },
         { "name": "destroy", "detail": "void destroy()" }
       ]
+    },
+    {
+      "name": "Desktop.GpuTexture",
+      "detail": "class Desktop.GpuTexture",
+      "documentation": "GPU texture from soft Sprite (RGBA8, color-key alpha)."
     },
     {
       "name": "Desktop.VertexLayout",

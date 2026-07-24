@@ -506,8 +506,10 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   `VertexLayout` + `createPipeline(shader, layout)`, texture-from-sprite;
   samplers / index buffers / multi-backend still open.
 - [x] GPU triangle example uses full pipeline path: `examples/desktop/triangle.abs`.
-- [ ] Добавить GPU sprite scene example (texture + textured quad pipeline).
-- [ ] Расширить RHI: samplers, index buffers, multi-backend (Vulkan/D3D12)
+- [x] GPU sprite scene: `GpuTexture` + `createLayoutPos3Uv2` + alpha blend +
+  `setUniform2F` / `setUniformI`; example `examples/desktop/gpu-sprites.abs`
+  (ship + atlas stars, WASD).
+- [ ] Расширить RHI: samplers objects, index buffers, multi-backend (Vulkan/D3D12)
   поверх того же Absolute API.
 - [ ] Добавить загрузку PNG, TTF/внешних шрифтов, моделей и аудио
   (BMP + built-in soft font уже есть).
