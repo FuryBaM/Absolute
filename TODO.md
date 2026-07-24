@@ -532,9 +532,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   full RHI; example `examples/desktop/d3d-clear.abs`.
 - [x] D3D11 mesh RHI (Windows): HLSL `createShader`, VB/IB, pipeline + input
   layout (POSITION / TEXCOORDn), bind/draw/drawIndexed, uniforms via cbuffer b0
-  + D3DReflect; textures/samplers still OpenGL-only; examples `d3d-triangle.abs`,
-  `d3d-triangle-smoke.abs`.
-- [ ] D3D11 textures/samplers; Vulkan/D3D12 and SPIR-V·DXIL·Metal IR.
+  + D3DReflect; examples `d3d-triangle.abs`, `d3d-triangle-smoke.abs`.
+- [x] D3D11 textures/samplers: `createTextureFromSprite` (RGBA8 + color-key),
+  `createSampler` (nearest/linear, clamp/repeat/mirror), bind t0/s0; HLSL
+  `Texture2D` + `SamplerState`; examples `d3d-sprites.abs`, `d3d-sprites-smoke.abs`.
+- [ ] Vulkan/D3D12 backends and SPIR-V·DXIL·Metal IR.
 
 ### Native interop и платформы
 

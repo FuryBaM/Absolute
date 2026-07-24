@@ -1196,7 +1196,7 @@ namespace Desktop {
 
     // Multi-backend GPU RHI.
     // OpenGL (WGL/GLX): GLSL shaders + full buffer/pipeline/texture path.
-    // D3D11 (Windows): HLSL shaders + VB/IB/pipeline/draw; no textures yet.
+    // D3D11 (Windows): HLSL + VB/IB/pipeline/draw + texture/sampler.
     // Frame model:
     //   beginFrame(); clear(...); bind(pipeline); bind(vb); bind(ib); bind(tex); bind(sampler);
     //   draw(n) | drawIndexed(n); endFrame(); present();

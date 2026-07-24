@@ -1,7 +1,8 @@
 // D3D11 backend for Desktop.Gpu (Windows).
 // Supports: create/clear/present, HLSL shaders, vertex/index buffers,
 // pipelines (input layout), bind/draw/drawIndexed, float/int/float2 uniforms
-// via a dynamic cbuffer (register b0). Textures/samplers still OpenGL-only.
+// via cbuffer b0, textures (from soft sprite) + sampler objects.
+// HLSL: Texture2D t0 + SamplerState s0 (bindTexture/bindSampler units).
 
 #if !defined(_WIN32)
 
@@ -46,6 +47,14 @@ extern "C" void absolute_desktop_gpu_d3d11_set_uniform_f(int64_t, const char*, f
 extern "C" void absolute_desktop_gpu_d3d11_set_uniform_i(int64_t, const char*, int32_t) {}
 extern "C" void absolute_desktop_gpu_d3d11_set_uniform_2f(int64_t, const char*, float, float) {}
 extern "C" int32_t absolute_desktop_gpu_d3d11_is_resource(int64_t) { return 0; }
+extern "C" int64_t absolute_desktop_gpu_d3d11_texture_from_sprite(int64_t, int64_t) { return 0; }
+extern "C" void absolute_desktop_gpu_d3d11_texture_destroy(int64_t, int64_t) {}
+extern "C" int32_t absolute_desktop_gpu_d3d11_texture_width(int64_t) { return 0; }
+extern "C" int32_t absolute_desktop_gpu_d3d11_texture_height(int64_t) { return 0; }
+extern "C" void absolute_desktop_gpu_d3d11_bind_texture(int64_t, int64_t, int32_t) {}
+extern "C" int64_t absolute_desktop_gpu_d3d11_sampler_create(int64_t, int32_t, int32_t) { return 0; }
+extern "C" void absolute_desktop_gpu_d3d11_sampler_destroy(int64_t, int64_t) {}
+extern "C" void absolute_desktop_gpu_d3d11_bind_sampler(int64_t, int64_t, int32_t) {}
 
 #else
 
@@ -84,6 +93,8 @@ namespace {
     constexpr uint32_t kResBuffer = 0xD3115642u;   // 'D3VB'
     constexpr uint32_t kResIndex = 0xD3114942u;    // 'D3IB'
     constexpr uint32_t kResPipeline = 0xD311504Cu; // 'D3PL'
+    constexpr uint32_t kResTexture = 0xD3115445u;  // 'D3TE'
+    constexpr uint32_t kResSampler = 0xD3115341u;  // 'D3SA'
 
     uint32_t PeekRes(int64_t handle) {
         if (!handle) return 0;
@@ -195,6 +206,44 @@ namespace {
             ps = nullptr;
             shader = nullptr;
         }
+    };
+
+    struct D3D11Texture {
+        uint32_t magic = kResTexture;
+        ID3D11Texture2D* texture = nullptr;
+        ID3D11ShaderResourceView* srv = nullptr;
+        int32_t width = 0;
+        int32_t height = 0;
+
+        void Destroy() {
+            if (srv) {
+                srv->Release();
+                srv = nullptr;
+            }
+            if (texture) {
+                texture->Release();
+                texture = nullptr;
+            }
+        }
+    };
+
+    struct D3D11Sampler {
+        uint32_t magic = kResSampler;
+        ID3D11SamplerState* state = nullptr;
+
+        void Destroy() {
+            if (state) {
+                state->Release();
+                state = nullptr;
+            }
+        }
+    };
+
+    // Must match DesktopSprite in desktop_soft_sprites.cpp.
+    struct DesktopSpriteView {
+        int32_t width = 1;
+        int32_t height = 1;
+        std::vector<uint32_t> pixels;
     };
 
     struct D3D11Device {
@@ -359,8 +408,35 @@ namespace {
         return reinterpret_cast<D3D11Pipeline*>(static_cast<intptr_t>(handle));
     }
 
+    D3D11Texture* TextureFrom(int64_t handle) {
+        if (PeekRes(handle) != kResTexture) return nullptr;
+        return reinterpret_cast<D3D11Texture*>(static_cast<intptr_t>(handle));
+    }
+
+    D3D11Sampler* SamplerFrom(int64_t handle) {
+        if (PeekRes(handle) != kResSampler) return nullptr;
+        return reinterpret_cast<D3D11Sampler*>(static_cast<intptr_t>(handle));
+    }
+
+    DesktopSpriteView* SpriteFrom(int64_t handle) {
+        if (!handle) return nullptr;
+        return reinterpret_cast<DesktopSpriteView*>(static_cast<intptr_t>(handle));
+    }
+
     int64_t PtrToHandle(void* p) {
         return static_cast<int64_t>(reinterpret_cast<intptr_t>(p));
+    }
+
+    D3D11_FILTER FilterToD3D(int32_t filter) {
+        return filter == 1 ? D3D11_FILTER_MIN_MAG_MIP_LINEAR : D3D11_FILTER_MIN_MAG_MIP_POINT;
+    }
+
+    D3D11_TEXTURE_ADDRESS_MODE WrapToD3D(int32_t wrap) {
+        switch (wrap) {
+        case 1: return D3D11_TEXTURE_ADDRESS_WRAP;
+        case 2: return D3D11_TEXTURE_ADDRESS_MIRROR;
+        default: return D3D11_TEXTURE_ADDRESS_CLAMP;
+        }
     }
 
     ID3DBlob* CompileHlsl(const char* source, const char* entry, const char* target) {
@@ -650,12 +726,15 @@ extern "C" void absolute_desktop_gpu_d3d11_present(int64_t handle) {
 
 extern "C" void absolute_desktop_gpu_d3d11_unsupported(const char* what) {
     SetError(std::string("D3D11 backend: ") + (what ? what : "unsupported")
-        + " (textures/samplers still OpenGL-only; use HLSL for shaders)");
+        + " (use HLSL for shaders; Texture2D t0 + SamplerState s0)");
 }
 
 extern "C" int32_t absolute_desktop_gpu_d3d11_is_resource(int64_t handle) {
     const uint32_t m = PeekRes(handle);
-    return (m == kResShader || m == kResBuffer || m == kResIndex || m == kResPipeline) ? 1 : 0;
+    return (m == kResShader || m == kResBuffer || m == kResIndex || m == kResPipeline
+        || m == kResTexture || m == kResSampler)
+        ? 1
+        : 0;
 }
 
 extern "C" int64_t absolute_desktop_gpu_d3d11_shader_create(
@@ -977,6 +1056,157 @@ extern "C" void absolute_desktop_gpu_d3d11_set_uniform_2f(
     if (!pipe || !pipe->shader) return;
     const float v[2] = {x, y};
     WriteUniformBytes(pipe->shader, name, v, sizeof(v));
+}
+
+// Soft sprite 0x00RRGGBB → RGBA8 (0 = transparent). Flip rows to match GL UV origin.
+extern "C" int64_t absolute_desktop_gpu_d3d11_texture_from_sprite(
+    int64_t gpuHandle, int64_t spriteHandle) {
+    g_lastError.clear();
+    D3D11Device* dev = DeviceFrom(gpuHandle);
+    DesktopSpriteView* sprite = SpriteFrom(spriteHandle);
+    if (!dev || !dev->device || !sprite || sprite->pixels.empty()) {
+        SetError("D3D11 invalid sprite for texture upload");
+        return 0;
+    }
+    const int32_t w = sprite->width;
+    const int32_t h = sprite->height;
+    if (w <= 0 || h <= 0) {
+        SetError("D3D11 texture requires positive size");
+        return 0;
+    }
+
+    std::vector<uint8_t> rgba(static_cast<size_t>(w) * static_cast<size_t>(h) * 4u);
+    for (int32_t y = 0; y < h; ++y) {
+        const int32_t srcY = h - 1 - y;
+        for (int32_t x = 0; x < w; ++x) {
+            const uint32_t c = sprite->pixels[
+                static_cast<size_t>(srcY) * static_cast<size_t>(w)
+                + static_cast<size_t>(x)];
+            const size_t di = (static_cast<size_t>(y) * static_cast<size_t>(w)
+                + static_cast<size_t>(x)) * 4u;
+            rgba[di + 0] = static_cast<uint8_t>((c >> 16) & 0xFF);
+            rgba[di + 1] = static_cast<uint8_t>((c >> 8) & 0xFF);
+            rgba[di + 2] = static_cast<uint8_t>(c & 0xFF);
+            rgba[di + 3] = c == 0 ? 0 : 255;
+        }
+    }
+
+    auto* tex = new D3D11Texture();
+    tex->width = w;
+    tex->height = h;
+
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = static_cast<UINT>(w);
+    td.Height = static_cast<UINT>(h);
+    td.MipLevels = 1;
+    td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_IMMUTABLE;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA sd{};
+    sd.pSysMem = rgba.data();
+    sd.SysMemPitch = static_cast<UINT>(w * 4);
+
+    HRESULT hr = dev->device->CreateTexture2D(&td, &sd, &tex->texture);
+    if (FAILED(hr) || !tex->texture) {
+        SetError("D3D11 CreateTexture2D failed");
+        delete tex;
+        return 0;
+    }
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvd{};
+    srvd.Format = td.Format;
+    srvd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srvd.Texture2D.MipLevels = 1;
+    hr = dev->device->CreateShaderResourceView(tex->texture, &srvd, &tex->srv);
+    if (FAILED(hr) || !tex->srv) {
+        SetError("D3D11 CreateShaderResourceView failed");
+        tex->Destroy();
+        delete tex;
+        return 0;
+    }
+    return PtrToHandle(tex);
+}
+
+extern "C" void absolute_desktop_gpu_d3d11_texture_destroy(
+    int64_t /*gpuHandle*/, int64_t textureHandle) {
+    D3D11Texture* tex = TextureFrom(textureHandle);
+    if (!tex) return;
+    tex->Destroy();
+    delete tex;
+}
+
+extern "C" int32_t absolute_desktop_gpu_d3d11_texture_width(int64_t textureHandle) {
+    const D3D11Texture* tex = TextureFrom(textureHandle);
+    return tex ? tex->width : 0;
+}
+
+extern "C" int32_t absolute_desktop_gpu_d3d11_texture_height(int64_t textureHandle) {
+    const D3D11Texture* tex = TextureFrom(textureHandle);
+    return tex ? tex->height : 0;
+}
+
+extern "C" void absolute_desktop_gpu_d3d11_bind_texture(
+    int64_t gpuHandle, int64_t textureHandle, int32_t unit) {
+    D3D11Device* dev = DeviceFrom(gpuHandle);
+    D3D11Texture* tex = TextureFrom(textureHandle);
+    if (!dev || !dev->context || !tex || !tex->srv) return;
+    if (unit < 0) unit = 0;
+    ID3D11ShaderResourceView* srvs[] = {tex->srv};
+    dev->context->PSSetShaderResources(static_cast<UINT>(unit), 1, srvs);
+    // Also bind to VS for completeness (rarely needed for sprites).
+    dev->context->VSSetShaderResources(static_cast<UINT>(unit), 1, srvs);
+}
+
+// filter: 0 nearest, 1 linear. wrap: 0 clamp, 1 repeat, 2 mirror.
+extern "C" int64_t absolute_desktop_gpu_d3d11_sampler_create(
+    int64_t gpuHandle, int32_t filter, int32_t wrap) {
+    g_lastError.clear();
+    D3D11Device* dev = DeviceFrom(gpuHandle);
+    if (!dev || !dev->device) {
+        SetError("D3D11 sampler requires valid GPU");
+        return 0;
+    }
+
+    D3D11_SAMPLER_DESC sd{};
+    sd.Filter = FilterToD3D(filter);
+    sd.AddressU = WrapToD3D(wrap);
+    sd.AddressV = WrapToD3D(wrap);
+    sd.AddressW = WrapToD3D(wrap);
+    sd.MaxAnisotropy = 1;
+    sd.ComparisonFunc = D3D11_COMPARISON_NEVER;
+    sd.MinLOD = 0;
+    sd.MaxLOD = D3D11_FLOAT32_MAX;
+
+    auto* sampler = new D3D11Sampler();
+    HRESULT hr = dev->device->CreateSamplerState(&sd, &sampler->state);
+    if (FAILED(hr) || !sampler->state) {
+        SetError("D3D11 CreateSamplerState failed");
+        delete sampler;
+        return 0;
+    }
+    return PtrToHandle(sampler);
+}
+
+extern "C" void absolute_desktop_gpu_d3d11_sampler_destroy(
+    int64_t /*gpuHandle*/, int64_t samplerHandle) {
+    D3D11Sampler* sampler = SamplerFrom(samplerHandle);
+    if (!sampler) return;
+    sampler->Destroy();
+    delete sampler;
+}
+
+extern "C" void absolute_desktop_gpu_d3d11_bind_sampler(
+    int64_t gpuHandle, int64_t samplerHandle, int32_t unit) {
+    D3D11Device* dev = DeviceFrom(gpuHandle);
+    D3D11Sampler* sampler = SamplerFrom(samplerHandle);
+    if (!dev || !dev->context || !sampler || !sampler->state) return;
+    if (unit < 0) unit = 0;
+    ID3D11SamplerState* ss[] = {sampler->state};
+    dev->context->PSSetSamplers(static_cast<UINT>(unit), 1, ss);
+    dev->context->VSSetSamplers(static_cast<UINT>(unit), 1, ss);
 }
 
 #endif
