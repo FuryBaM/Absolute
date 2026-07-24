@@ -675,22 +675,47 @@ namespace {
         generator.GenerateObject(program, compilation.moduleName, object.string(),
             false, targetTriple);
 
-        // Pure export "C" modules link without a WASI sysroot. Host
-        // Absolute-Runtime is not wasm-compatible; undefined absolute_* symbols
-        // fail the link with a wasm-ld diagnostic.
-        const int status = RunProcess(wasmLd, {
+        std::vector<std::string> linkArgs = {
             "--no-entry",
             "--export-all",
             object.string(),
-            "-o",
-            modulePath.string(),
-        });
+        };
+#ifdef ABSOLUTE_WASM_SHIM_OBJECT
+        {
+            const fs::path shim(ABSOLUTE_WASM_SHIM_OBJECT);
+            if (fs::exists(shim))
+                linkArgs.push_back(shim.string());
+        }
+#endif
+        // Optional override / additional objects (space-separated paths).
+        if (const char* extra = std::getenv("ABSOLUTE_WASM_LIBS")) {
+            std::string text = extra;
+            size_t start = 0;
+            while (start < text.size()) {
+                while (start < text.size() && (text[start] == ' ' || text[start] == ';'))
+                    ++start;
+                size_t end = start;
+                while (end < text.size() && text[end] != ' ' && text[end] != ';')
+                    ++end;
+                if (end > start) {
+                    const fs::path lib(text.substr(start, end - start));
+                    if (fs::exists(lib))
+                        linkArgs.push_back(lib.string());
+                }
+                start = end;
+            }
+        }
+        linkArgs.push_back("-o");
+        linkArgs.push_back(modulePath.string());
+
+        // Console/assert lower to puts/printf/abort (shim). Host Absolute-Runtime
+        // (managed heap, tasks, load, FS) is still not wasm-compatible.
+        const int status = RunProcess(wasmLd, linkArgs);
         if (status != 0) {
             throw std::runtime_error(
                 "wasm-ld failed with exit code " + std::to_string(status) +
-                ". Programs that call Absolute host runtime (println, managed heap, tasks, load) "
-                "cannot link for wasm yet; use export \"C\"-only modules or emit-object "
-                "(docs/wasm-target.md)");
+                ". Provide a wasm runtime for missing symbols, use export \"C\"-only modules, "
+                "or --emit-object (docs/wasm-target.md)");
         }
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - startTime).count();

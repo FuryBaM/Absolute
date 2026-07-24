@@ -1411,15 +1411,6 @@ if(BUILD_TESTING)
                 --target wasm32-unknown-unknown
                 --emit-object -o "${CMAKE_BINARY_DIR}/wasm-smoke.o"
         )
-        # Host-runtime programs still cannot link for wasm (missing absolute_*).
-        add_test(
-            NAME absolute.wasm-host-runtime-link-rejected
-            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/wasm-smoke.abs"
-                --target wasm32-unknown-unknown
-                --build-exe -o "${CMAKE_BINARY_DIR}/wasm-smoke.wasm"
-        )
-        set_tests_properties(absolute.wasm-host-runtime-link-rejected PROPERTIES WILL_FAIL TRUE)
-
         find_program(ABSOLUTE_NODE_FOR_WASM NAMES node nodejs)
         find_program(ABSOLUTE_WASM_LD_FOR_TEST NAMES wasm-ld wasm-ld.exe
             HINTS
@@ -1435,6 +1426,17 @@ if(BUILD_TESTING)
                     -DNODE=${ABSOLUTE_NODE_FOR_WASM}
                     -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-export.cmake"
             )
+            if(ABSOLUTE_WASM_SHIM_OBJECT)
+                add_test(
+                    NAME absolute.run-wasm-smoke
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-smoke.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-smoke.wasm
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-smoke.cmake"
+                )
+            endif()
         endif()
 
         add_test(

@@ -64,6 +64,13 @@ if(TARGET Absolute-CodeGen)
     else()
         message(STATUS "wasm-ld not found; WebAssembly --build-exe will search PATH at runtime")
     endif()
+    if(ABSOLUTE_WASM_SHIM_OBJECT)
+        target_compile_definitions(Absolute-Compiler PRIVATE
+            ABSOLUTE_WASM_SHIM_OBJECT="${ABSOLUTE_WASM_SHIM_OBJECT}")
+        if(TARGET Absolute-Runtime-WasmShim)
+            add_dependencies(Absolute-Compiler Absolute-Runtime-WasmShim)
+        endif()
+    endif()
     add_dependencies(Absolute-Compiler Absolute-Runtime)
 endif()
 

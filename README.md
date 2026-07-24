@@ -482,7 +482,9 @@ absolutec program.abs --target wasm32-unknown-unknown --emit-llvm -o program.ll
 absolutec tests\wasm-export-only.abs --target wasm32-unknown-unknown --build-exe -o out.wasm
 ```
 
-Programs that use the host Absolute runtime cannot link for wasm yet. See
+Export-only modules and simple `println`/`assert` programs link with the wasm
+console shim. Managed heap, tasks, and FS still need a full runtime port. Browser
+demo: [`examples/wasm/`](examples/wasm/). See
 [`docs/wasm-target.md`](docs/wasm-target.md).
 
 Generate a native object without linking it:

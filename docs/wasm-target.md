@@ -17,8 +17,13 @@ absolutec tests\wasm-export-only.abs --target wasm32-unknown-unknown --build-exe
 - `--build-exe` for wasm runs `wasm-ld --no-entry --export-all` (found via
   `ABSOLUTE_WASM_LD`, configure-time LLVM tools, PATH, or
   `.absolute/toolchains/llvm-*/bin/wasm-ld`).
-- Pure `export "C"` modules (no `println` / managed heap / tasks) produce a
-  loadable `.wasm` (see `tests/wasm-export-only.abs` + Node runner).
+- Pure `export "C"` modules produce a loadable `.wasm`
+  (`tests/wasm-export-only.abs` + Node runner).
+- Programs that lower to `puts` / `printf` / `abort` / `snprintf` (for example
+  `println` and `assert`) link against the optional **wasm console shim**
+  `Absolute-Runtime/wasm/absolute_wasm_shim.c` (built with
+  `clang --target=wasm32-unknown-unknown` when available).
+- Browser demo: `examples/wasm/` (static HTML + `loader.js`).
 
 ## What is rejected or unsupported
 
@@ -26,22 +31,25 @@ absolutec tests\wasm-export-only.abs --target wasm32-unknown-unknown --build-exe
 |------|--------|
 | `--target wasm32-... --sanitize=address` | Error |
 | `--build-exe --target` for non-wasm triples | Error |
-| wasm module that calls host Absolute runtime | `wasm-ld` undefined-symbol failure |
-| Full WASI / browser app runtime | Not shipped |
+| managed heap, tasks, `load`, FS, sockets on wasm | undefined symbols / no shim |
+| Full WASI sysroot / Absolute-Runtime port | Not shipped |
 
 ## Runtime and linking
 
-Host `Absolute-Runtime` is **not** wasm-compatible. Programs that use
-`println`, `assert` (runtime path), managed pointers, `load`, tasks, etc. will
-not link until a wasm runtime port exists.
+| Layer | Status |
+|-------|--------|
+| Host `Absolute-Runtime` | Native only |
+| `absolute_wasm_shim.o` | Minimal no-op I/O + `abort` trap + libc mem helpers |
+| `ABSOLUTE_WASM_LIBS` | Extra space/`;`-separated objects to link |
 
-Supported link profile today:
+Supported profiles:
 
-1. Absolute source with only `export "C"` functions and Absolute scalars.
-2. `absolutec --target wasm32-unknown-unknown --build-exe -o mod.wasm`
-3. Load in Node / browser / wasmtime with no imports (memory is exported).
+1. **Export-only** — `export "C"` scalars, no host runtime calls.
+2. **Console/assert** — `println` / `assert` / pure scalars with the wasm shim.
+3. Load in Node / browser with **empty imports** (`WebAssembly.instantiate(bytes, {})`).
 
-See the host matrix in [`platforms.md`](platforms.md).
+See the host matrix in [`platforms.md`](platforms.md) and
+[`examples/wasm/README.md`](../examples/wasm/README.md).
 
 ## Type / feature guidance
 
@@ -69,21 +77,21 @@ Common triples:
 
 ## Tests
 
-- `tests/wasm-smoke.abs` — IR/object + host-runtime link rejection
-- `tests/wasm-export-only.abs` + `absolute.run-wasm-export` (build + Node)
-- `absolute.emit-wasm-smoke-ir` / `check-wasm-smoke-ir` / `emit-wasm-smoke-object`
+- `tests/wasm-export-only.abs` → `absolute.run-wasm-export`
+- `tests/wasm-smoke.abs` → `absolute.run-wasm-smoke` (shim + `main` + `wasm_add`)
+- IR/object checks: `emit-wasm-smoke-ir`, `check-wasm-smoke-ir`, `emit-wasm-smoke-object`
 
 ## Next steps (not done)
 
-1. Minimal Absolute-Runtime subset compiled for wasm32/WASI.
-2. Optional wasi-sdk sysroot integration for `main` + libc.
-3. Dedicated CI job installing wasmtime (Node runner already covers export smoke when tools exist).
-4. Browser demo loader.
+1. Real managed-heap / task / FS Absolute-Runtime for wasm32 or WASI.
+2. Optional wasi-sdk sysroot for full libc.
+3. Dedicated wasmtime CI job (Node already covers smoke when tools exist).
 
 ## Acceptance criteria progress
 
 - [x] Explicit CLI/target selection (`--target`)
 - [x] Documented wasm emit/link limits (this file)
-- [x] Engine smoke: Node WebAssembly for export-only modules (`run-wasm-export`)
-- [x] Clear errors for ASan / non-wasm cross `--build-exe` / host-runtime link failures
+- [x] Engine smoke: Node for export-only and console/assert modules
+- [x] Browser loader example (`examples/wasm`)
+- [x] Clear errors for ASan / non-wasm cross `--build-exe`
 - [x] Host backends remain default when `--target` is omitted

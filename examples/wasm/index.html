@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Absolute WebAssembly demo</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #e8eef7; background: #0f1419; }
+    body { max-width: 40rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+    h1 { font-size: 1.35rem; font-weight: 600; }
+    code, pre { font-family: ui-monospace, Consolas, monospace; font-size: 0.9rem; }
+    pre { background: #1a222c; padding: 0.75rem 1rem; border-radius: 8px; overflow: auto; }
+    button { background: #3d7eff; color: #fff; border: 0; border-radius: 6px; padding: 0.5rem 0.9rem; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    #log { white-space: pre-wrap; min-height: 4rem; }
+    .ok { color: #6dffa8; }
+    .err { color: #ff8e8e; }
+  </style>
+</head>
+<body>
+  <h1>Absolute → WebAssembly</h1>
+  <p>
+    Loads an export-only module built with
+    <code>absolutec --target wasm32-unknown-unknown --build-exe</code>.
+    No imports required.
+  </p>
+  <p>
+    <input type="file" id="file" accept=".wasm,application/wasm" />
+    <button id="run" disabled>Run wasm_add(20, 22)</button>
+  </p>
+  <pre id="log">Drop or choose a <code>.wasm</code> file (for example <code>wasm-export-only.wasm</code>).</pre>
+  <script type="module" src="./loader.js"></script>
+</body>
+</html>
