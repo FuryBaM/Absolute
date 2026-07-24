@@ -215,4 +215,4 @@ Examples: `examples/desktop/window.abs`, `pong.abs`, `sprites.abs`, `input.abs`,
 `image.abs` (BMP + atlas), `text.abs` (soft font HUD / typing),
 `batch.abs` (`SpriteBatch` + atlas tiles), `triangle.abs` (OpenGL pipeline),
 `gpu-sprites.abs` (textured ship + atlas), `image-png.abs` (PNG `loadImage`),
-`font.abs`, `audio.abs`, `ui.abs`, `mesh.abs` (OBJ + lit GPU cube).
+`font.abs`, `audio.abs`, `ui.abs`, `mesh.abs`, `shader-rhi.abs` (shader plugin → Gpu).

@@ -522,9 +522,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   GPU upload helpers + `createLayoutPos3Normal3Uv2`; example `mesh.abs` + `cube.obj`.
 - [x] Базовый soft UI toolkit: `Desktop.Ui` + `UiTheme` (immediate-mode
   panel/label/button/checkbox/slider/progress); example `examples/desktop/ui.abs`.
-- [ ] Расширить `absolute.shader` от opaque DSL-stub к reflection + RHI bind
-  (SPIR-V/DXIL/Metal IR) поверх выбранного GPU backend.
-- [ ] Multi-backend RHI (Vulkan/D3D12) поверх того же Absolute API.
+- [x] `absolute.shader` reflection + RHI bind (OpenGL): typed input/output/uniform,
+  generated GLSL 330, LLVM reflection + `absolute_shader_glsl_*` accessors,
+  `Desktop.Gpu.createLayout3Attr` + example `shader-rhi.abs`. SPIR-V/DXIL/Metal
+  and multi-backend still open.
+- [ ] Multi-backend RHI (Vulkan/D3D12) / SPIR-V·DXIL·Metal IR backends.
 
 ### Native interop и платформы
 

@@ -22,8 +22,8 @@ int32 main() {
     string vertexSource = "#version 330 core\nlayout(location = 0) in vec3 aPos;\nlayout(location = 1) in vec3 aColor;\nuniform float uTime;\nout vec3 vColor;\nvoid main() {\n    float c = cos(uTime);\n    float s = sin(uTime);\n    vec2 p = vec2(aPos.x * c - aPos.y * s, aPos.x * s + aPos.y * c);\n    gl_Position = vec4(p * 0.7, aPos.z, 1.0);\n    vColor = aColor;\n}\n";
     string fragmentSource = "#version 330 core\nin vec3 vColor;\nout vec4 FragColor;\nvoid main() {\n    FragColor = vec4(vColor, 1.0);\n}\n";
 
-    auto shader = gpu.createShader(vertexSource, fragmentSource);
-    if (shader == null) {
+    auto program = gpu.createShader(vertexSource, fragmentSource);
+    if (program == null) {
         println("createShader failed:");
         println(gpu.lastError());
         gpu.destroy();
@@ -44,7 +44,7 @@ int32 main() {
     if (buffer == null) {
         println("createVertexBuffer failed:");
         println(gpu.lastError());
-        shader.destroy();
+        program.destroy();
         gpu.destroy();
         window.close();
         return 1;
@@ -55,19 +55,19 @@ int32 main() {
         println("createLayout failed:");
         println(gpu.lastError());
         buffer.destroy();
-        shader.destroy();
+        program.destroy();
         gpu.destroy();
         window.close();
         return 1;
     }
 
-    auto pipeline = gpu.createPipeline(shader, layout);
+    auto pipeline = gpu.createPipeline(program, layout);
     if (pipeline == null) {
         println("createPipeline failed:");
         println(gpu.lastError());
         layout.destroy();
         buffer.destroy();
-        shader.destroy();
+        program.destroy();
         gpu.destroy();
         window.close();
         return 1;
@@ -93,7 +93,7 @@ int32 main() {
     pipeline.destroy();
     layout.destroy();
     buffer.destroy();
-    shader.destroy();
+    program.destroy();
     gpu.destroy();
     window.close();
     return 0;

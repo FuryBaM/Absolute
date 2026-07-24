@@ -79,11 +79,11 @@ int32 main() {
     string vs = "#version 330 core\nlayout(location = 0) in vec3 aPos;\nlayout(location = 1) in vec2 aUv;\nuniform vec2 uOffset;\nout vec2 vUv;\nvoid main() {\n    gl_Position = vec4(aPos.xy + uOffset, aPos.z, 1.0);\n    vUv = aUv;\n}\n";
     string fs = "#version 330 core\nin vec2 vUv;\nuniform sampler2D uTex;\nout vec4 FragColor;\nvoid main() {\n    vec4 c = texture(uTex, vUv);\n    if (c.a < 0.01) discard;\n    FragColor = c;\n}\n";
 
-    auto shader = gpu.createShader(vs, fs);
+    auto program = gpu.createShader(vs, fs);
     auto layout = gpu.createLayoutPos3Uv2();
-    auto pipeline = gpu.createPipeline(shader, layout);
-    if (shader == null || layout == null || pipeline == null) {
-        println("shader/layout/pipeline failed:");
+    auto pipeline = gpu.createPipeline(program, layout);
+    if (program == null || layout == null || pipeline == null) {
+        println("program/layout/pipeline failed:");
         println(gpu.lastError());
         return 1;
     }
@@ -197,7 +197,7 @@ int32 main() {
     shipBuffer.destroy();
     pipeline.destroy();
     layout.destroy();
-    shader.destroy();
+    program.destroy();
     sampler.destroy();
     atlasTex.destroy();
     shipTex.destroy();

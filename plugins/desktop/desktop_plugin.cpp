@@ -1234,10 +1234,12 @@ namespace Desktop {
             if (h == 0) {
                 return null;
             }
-            auto shader = new GpuShader();
-            shader.handle = h;
-            shader.gpuHandle = handle;
-            return shader;
+            // Note: cannot name locals `shader` when absolute.shader plugin is loaded
+            // (opaque keyword). Use `program` instead.
+            auto program = new GpuShader();
+            program.handle = h;
+            program.gpuHandle = handle;
+            return program;
         }
 
         // Upload interleaved floats (interpreted later by VertexLayout / Pipeline).
@@ -1316,6 +1318,36 @@ namespace Desktop {
             return layout;
         }
 
+        // Sequential tightly-packed float attributes (for shader reflection layouts).
+        // components0..2 are float counts per location 0..2 (e.g. 3,3,2 for mesh).
+        public VertexLayout* createLayout3Attr(int32 components0, int32 components1, int32 components2) {
+            if (components0 <= 0) {
+                return null;
+            }
+            int32 strideFloats = components0;
+            if (components1 > 0) {
+                strideFloats = strideFloats + components1;
+            }
+            if (components2 > 0) {
+                strideFloats = strideFloats + components2;
+            }
+            auto layout = new VertexLayout(strideFloats * 4);
+            if (!layout.isValid()) {
+                return null;
+            }
+            int32 offset = 0;
+            layout.add(0, components0, offset);
+            offset = offset + components0 * 4;
+            if (components1 > 0) {
+                layout.add(1, components1, offset);
+                offset = offset + components1 * 4;
+            }
+            if (components2 > 0) {
+                layout.add(2, components2, offset);
+            }
+            return layout;
+        }
+
         // Upload CPU Mesh data to GPU buffers.
         public GpuBuffer* createVertexBufferFromMesh(Mesh* mesh) {
             if (mesh == null || !mesh.isValid()) {
@@ -1345,11 +1377,11 @@ namespace Desktop {
             return buffer;
         }
 
-        public GpuPipeline* createPipeline(GpuShader* shader, VertexLayout* layout) {
-            if (shader == null || layout == null) {
+        public GpuPipeline* createPipeline(GpuShader* program, VertexLayout* layout) {
+            if (program == null || layout == null) {
                 return null;
             }
-            int64 h = absolute_desktop_gpu_pipeline_create(handle, shader.handle, layout.handle);
+            int64 h = absolute_desktop_gpu_pipeline_create(handle, program.handle, layout.handle);
             if (h == 0) {
                 return null;
             }
