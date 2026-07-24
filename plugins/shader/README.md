@@ -39,8 +39,11 @@ auto program = gpu.createShader(
 | `input [type] name;` | Vertex attribute (or fragment varying). Types: `float`, `float2`/`vec2`, `float3`/`vec3`, `float4`/`vec4`, `int`. Untyped names keep legacy inference (`position`→float3, `uv`→float2, …). |
 | `output [type] name;` | Stage output (`clipPosition` → `gl_Position` in generated VS). |
 | `uniform [type] name;` | Uniform (bound via `gpu.setUniformF` / `setUniformI`). |
+| `code { ... }` | Optional **full GLSL** body for the stage. Nested `{`/`}` supported. If omitted, a default mesh-style body is generated. `#version 330 core` is always prepended when missing. **Do not write `#...` in the body** — Absolute’s lexer rejects `#`. |
 
 `@shader.stage(Name)` must match the block stage name.
+
+**Note:** when this plugin is loaded, `shader` is a global keyword — do not use `shader` as an Absolute variable name (use `program` instead).
 
 ## Emitted symbols (per stage, e.g. `Vertex`)
 
@@ -57,18 +60,24 @@ auto program = gpu.createShader(
 | `absolute_shader_vertex_stride_floats_Vertex()` | packed float stride |
 | `absolute.shader.Vertex` | empty void stub (compat) |
 
-Generated GLSL is a default lit mesh pipeline (Y-rotation when `uTime` is present).
+Without `code { }`, generated GLSL is a default lit mesh pipeline (Y-rotation when `uTime` is present).
 
-## RHI bind example
+## RHI bind examples
 
 ```powershell
 absolutec examples/desktop/shader-rhi.abs `
   --plugin path/to/absolute-desktop.absplugin `
   --plugin path/to/absolute-shader.dll `
   --build-exe -o shader-rhi.exe
+
+# Custom GLSL body:
+absolutec examples/desktop/shader-code.abs `
+  --plugin path/to/absolute-desktop.absplugin `
+  --plugin path/to/absolute-shader.dll `
+  --build-exe -o shader-code.exe
 ```
 
-See `examples/desktop/shader-rhi.abs`.
+See `examples/desktop/shader-rhi.abs` and `shader-code.abs`.
 
 ## Build plugin
 

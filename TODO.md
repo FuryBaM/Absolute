@@ -523,10 +523,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Базовый soft UI toolkit: `Desktop.Ui` + `UiTheme` (immediate-mode
   panel/label/button/checkbox/slider/progress); example `examples/desktop/ui.abs`.
 - [x] `absolute.shader` reflection + RHI bind (OpenGL): typed input/output/uniform,
-  generated GLSL 330, LLVM reflection + `absolute_shader_glsl_*` accessors,
-  `Desktop.Gpu.createLayout3Attr` + example `shader-rhi.abs`. SPIR-V/DXIL/Metal
-  and multi-backend still open.
-- [ ] Multi-backend RHI (Vulkan/D3D12) / SPIR-V·DXIL·Metal IR backends.
+  generated GLSL 330, optional `code { ... }` raw GLSL body, LLVM reflection +
+  `absolute_shader_glsl_*` accessors, `Desktop.Gpu.createLayout3Attr`;
+  examples `shader-rhi.abs`, `shader-code.abs`.
+- [ ] Multi-backend RHI (Vulkan/D3D12) / SPIR-V·DXIL·Metal; Linux GLX Gpu
+  (`native_display` hook ready).
 
 ### Native interop и платформы
 

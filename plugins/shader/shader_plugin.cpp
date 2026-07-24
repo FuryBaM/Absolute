@@ -33,6 +33,7 @@ namespace {
         std::vector<ShaderVar> inputs;
         std::vector<ShaderVar> outputs;
         std::vector<ShaderVar> uniforms;
+        std::string userGlsl; // optional full GLSL from `code { ... }`
         std::string debugText;
         std::string moduleIr;
         std::string glslSource;
@@ -211,10 +212,76 @@ namespace {
             }
             if (token->kind != ABSOLUTE_SYNTAX_TOKEN_IDENTIFIER &&
                 token->kind != ABSOLUTE_SYNTAX_TOKEN_KEYWORD)
-                return Fail(result, "expected 'input', 'output', 'uniform', or '}'");
+                return Fail(result, "expected 'input', 'output', 'uniform', 'code', or '}'");
+
+            // Optional raw GLSL body: code { ... } with nested-brace matching.
+            // Body is the complete stage source (optionally without #version).
+            if (declaration == "code") {
+                Consume(parser, token->kind, nullptr);
+                if (!Consume(parser, ABSOLUTE_SYNTAX_TOKEN_BRACKET, "{"))
+                    return Fail(result, "expected '{' after code");
+                int depth = 1;
+                std::ostringstream body;
+                bool needSpace = false;
+                while (depth > 0) {
+                    const AbsoluteSyntaxTokenV1* t = parser->peek(parser->context, 0);
+                    if (!t) return Fail(result, "unterminated code block");
+                    const std::string text = TokenText(t);
+                    if (t->kind == ABSOLUTE_SYNTAX_TOKEN_BRACKET && text == "{") {
+                        ++depth;
+                        if (needSpace) body << ' ';
+                        body << '{';
+                        needSpace = false;
+                        Consume(parser, ABSOLUTE_SYNTAX_TOKEN_BRACKET, nullptr);
+                        continue;
+                    }
+                    if (t->kind == ABSOLUTE_SYNTAX_TOKEN_BRACKET && text == "}") {
+                        --depth;
+                        if (depth == 0) {
+                            Consume(parser, ABSOLUTE_SYNTAX_TOKEN_BRACKET, nullptr);
+                            break;
+                        }
+                        body << '}';
+                        needSpace = true;
+                        Consume(parser, ABSOLUTE_SYNTAX_TOKEN_BRACKET, nullptr);
+                        continue;
+                    }
+                    // Reconstruct source-ish text for GLSL.
+                    if (t->kind == ABSOLUTE_SYNTAX_TOKEN_STRING) {
+                        if (needSpace) body << ' ';
+                        body << '"' << text << '"';
+                        needSpace = true;
+                    } else if (t->kind == ABSOLUTE_SYNTAX_TOKEN_DELIMITER &&
+                               (text == ";" || text == "," || text == ".")) {
+                        body << text;
+                        needSpace = text == ";" || text == ",";
+                    } else if (t->kind == ABSOLUTE_SYNTAX_TOKEN_OPERATOR ||
+                               t->kind == ABSOLUTE_SYNTAX_TOKEN_BRACKET) {
+                        if (text == "(" || text == "[" || text == "<") {
+                            body << text;
+                            needSpace = false;
+                        } else if (text == ")" || text == "]" || text == ">") {
+                            body << text;
+                            needSpace = true;
+                        } else {
+                            if (needSpace) body << ' ';
+                            body << text;
+                            needSpace = true;
+                        }
+                    } else {
+                        if (needSpace) body << ' ';
+                        body << text;
+                        needSpace = true;
+                    }
+                    // Consume whatever kind this token is.
+                    parser->consume(parser->context, 0xFFFFFFFFu, nullptr);
+                }
+                node->userGlsl = body.str();
+                continue;
+            }
 
             if (declaration != "input" && declaration != "output" && declaration != "uniform")
-                return Fail(result, "expected 'input', 'output', 'uniform', or '}' in shader block");
+                return Fail(result, "expected 'input', 'output', 'uniform', 'code', or '}' in shader block");
 
             Consume(parser, token->kind, nullptr);
             ShaderVar var{};
@@ -236,7 +303,8 @@ namespace {
         shader.debugText = "shader " + shader.stage + " (inputs=" +
             std::to_string(shader.inputs.size()) + ", outputs=" +
             std::to_string(shader.outputs.size()) + ", uniforms=" +
-            std::to_string(shader.uniforms.size()) + ")";
+            std::to_string(shader.uniforms.size()) +
+            (shader.userGlsl.empty() ? ", codegen=auto" : ", codegen=code") + ")";
         return shader.debugText.c_str();
     }
 
@@ -310,6 +378,19 @@ namespace {
     }
 
     std::string GenerateGlsl(const ShaderNode& shader) {
+        // Custom body from `code { ... }` is treated as complete stage source.
+        if (!shader.userGlsl.empty()) {
+            std::string g = shader.userGlsl;
+            // Trim leading whitespace for version check.
+            std::size_t i = 0;
+            while (i < g.size() && (g[i] == ' ' || g[i] == '\n' || g[i] == '\r' || g[i] == '\t')) ++i;
+            if (g.compare(i, 8, "#version") != 0) {
+                g = "#version 330 core\n" + g;
+            }
+            if (g.empty() || g.back() != '\n') g.push_back('\n');
+            return g;
+        }
+
         std::ostringstream g;
         g << "#version 330 core\n";
         const bool isVertex = shader.stage == "Vertex" || shader.stage == "vertex" || shader.stage == "VS";

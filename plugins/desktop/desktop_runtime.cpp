@@ -247,6 +247,11 @@ extern "C" void* absolute_desktop_native_window(int64_t handle) {
     return state ? static_cast<void*>(state->window) : nullptr;
 }
 
+// Native display connection (unused on Win32; Display* on X11).
+extern "C" void* absolute_desktop_native_display(int64_t) {
+    return nullptr;
+}
+
 extern "C" void absolute_desktop_set_title(int64_t handle, const char* title) {
     DesktopWindow* state = FromHandle(handle);
     if (state && state->window) SetWindowTextW(state->window, ToWide(title).c_str());
