@@ -19,9 +19,45 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Host log hook — must be provided by the embedder (see tools/absolute-wasm-host.js). */
+#if defined(ABSOLUTE_WASM_USE_WASI)
+/* WASI preview1 stdout — works with wasmtime / wasmer without a custom host. */
+typedef struct absolute_wasi_ciovec {
+    const void* buf;
+    size_t buf_len;
+} absolute_wasi_ciovec;
+
+__attribute__((import_module("wasi_snapshot_preview1"), import_name("fd_write")))
+int32_t absolute_wasi_fd_write(int32_t fd, const absolute_wasi_ciovec* iovs,
+    size_t iovs_len, size_t* nwritten);
+
+void absolute_host_log(const uint8_t* data, int32_t length) {
+    if (!data || length <= 0)
+        return;
+    absolute_wasi_ciovec iov;
+    iov.buf = data;
+    iov.buf_len = (size_t)length;
+    size_t written = 0;
+    (void)absolute_wasi_fd_write(1, &iov, 1, &written);
+}
+#else
+/* Custom host hook (Node/browser): tools/absolute-wasm-host.js */
 __attribute__((import_module("env"), import_name("absolute_log")))
 void absolute_host_log(const uint8_t* data, int32_t length);
+#endif
+
+/* Optional host HTTP GET: writes response body into out[0..out_cap).
+ * Returns bytes written, or -1 on error. Not available under pure WASI. */
+#if !defined(ABSOLUTE_WASM_USE_WASI)
+__attribute__((import_module("env"), import_name("absolute_http_get")))
+int32_t absolute_host_http_get(const char* url, uint8_t* out, int32_t out_cap);
+#else
+static int32_t absolute_host_http_get(const char* url, uint8_t* out, int32_t out_cap) {
+    (void)url;
+    (void)out;
+    (void)out_cap;
+    return -1;
+}
+#endif
 
 static void host_log_cstr(const char* text) {
     if (!text)
@@ -30,6 +66,13 @@ static void host_log_cstr(const char* text) {
     while (text[n])
         ++n;
     absolute_host_log((const uint8_t*)text, (int32_t)n);
+}
+
+/* Absolute-callable HTTP helper (host-backed). */
+int32_t absolute_http_get(const char* url, uint8_t* out, int32_t out_cap) {
+    if (!url || !out || out_cap <= 0)
+        return -1;
+    return absolute_host_http_get(url, out, out_cap);
 }
 
 /* ---------- heap ---------- */

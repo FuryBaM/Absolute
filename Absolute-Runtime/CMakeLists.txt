@@ -54,28 +54,51 @@ if(NOT ABSOLUTE_WASM_CLANG)
     find_program(ABSOLUTE_WASM_CLANG NAMES clang clang.exe clang-18 clang-19)
 endif()
 if(ABSOLUTE_WASM_CLANG)
+    set(ABSOLUTE_WASM_RT_FLAGS
+        --target=wasm32-unknown-unknown
+        -O2
+        -std=c11
+        -fno-builtin-malloc
+        -fno-builtin-calloc
+        -fno-builtin-realloc
+        -fno-builtin-free
+    )
     add_custom_command(
         OUTPUT "${ABSOLUTE_WASM_SHIM_OBJECT}"
         COMMAND "${ABSOLUTE_WASM_CLANG}"
-            --target=wasm32-unknown-unknown
+            ${ABSOLUTE_WASM_RT_FLAGS}
             -c "${ABSOLUTE_WASM_RT_SOURCE}"
             -o "${ABSOLUTE_WASM_SHIM_OBJECT}"
-            -O2
-            -std=c11
-            -fno-builtin-malloc
-            -fno-builtin-calloc
-            -fno-builtin-realloc
-            -fno-builtin-free
         DEPENDS "${ABSOLUTE_WASM_RT_SOURCE}"
-        COMMENT "Building Absolute wasm runtime (heap/managed/errors)"
+            "${CMAKE_CURRENT_SOURCE_DIR}/wasm/absolute_wasm_platform.c"
+        COMMENT "Building Absolute wasm runtime (host env.absolute_log)"
         VERBATIM
     )
-    add_custom_target(Absolute-Runtime-WasmShim ALL DEPENDS "${ABSOLUTE_WASM_SHIM_OBJECT}")
+    set(ABSOLUTE_WASM_WASI_OBJECT "${CMAKE_BINARY_DIR}/absolute_wasm_runtime_wasi.o")
+    add_custom_command(
+        OUTPUT "${ABSOLUTE_WASM_WASI_OBJECT}"
+        COMMAND "${ABSOLUTE_WASM_CLANG}"
+            ${ABSOLUTE_WASM_RT_FLAGS}
+            -DABSOLUTE_WASM_USE_WASI=1
+            -c "${ABSOLUTE_WASM_RT_SOURCE}"
+            -o "${ABSOLUTE_WASM_WASI_OBJECT}"
+        DEPENDS "${ABSOLUTE_WASM_RT_SOURCE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/wasm/absolute_wasm_platform.c"
+        COMMENT "Building Absolute wasm runtime (WASI fd_write console)"
+        VERBATIM
+    )
+    add_custom_target(Absolute-Runtime-WasmShim ALL
+        DEPENDS "${ABSOLUTE_WASM_SHIM_OBJECT}" "${ABSOLUTE_WASM_WASI_OBJECT}")
     set(ABSOLUTE_WASM_SHIM_OBJECT "${ABSOLUTE_WASM_SHIM_OBJECT}" CACHE FILEPATH
-        "wasm32 Absolute runtime object (heap, managed, errors, libc helpers)" FORCE)
-    message(STATUS "Absolute wasm runtime: ${ABSOLUTE_WASM_SHIM_OBJECT} (clang=${ABSOLUTE_WASM_CLANG})")
+        "wasm32 Absolute runtime object (host imports)" FORCE)
+    set(ABSOLUTE_WASM_WASI_OBJECT "${ABSOLUTE_WASM_WASI_OBJECT}" CACHE FILEPATH
+        "wasm32 Absolute runtime object (WASI console)" FORCE)
+    message(STATUS "Absolute wasm runtime: ${ABSOLUTE_WASM_SHIM_OBJECT}")
+    message(STATUS "Absolute wasm WASI runtime: ${ABSOLUTE_WASM_WASI_OBJECT}")
 else()
     set(ABSOLUTE_WASM_SHIM_OBJECT "" CACHE FILEPATH
-        "wasm32 Absolute runtime object (heap, managed, errors, libc helpers)" FORCE)
+        "wasm32 Absolute runtime object (host imports)" FORCE)
+    set(ABSOLUTE_WASM_WASI_OBJECT "" CACHE FILEPATH
+        "wasm32 Absolute runtime object (WASI console)" FORCE)
     message(STATUS "clang for wasm32 not found; Absolute wasm runtime will not be built")
 endif()

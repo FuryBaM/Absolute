@@ -1,0 +1,25 @@
+// Host-backed HTTP GET via env.absolute_http_get (see tools/absolute-wasm-host.js).
+extern "C" int32 absolute_http_get(string url, raw uint8* buffer, int32 capacity);
+
+export "C" int32 wasm_http_probe() {
+    uint8 buffer[64];
+    int32 n = absolute_http_get("https://example.test/hello", &buffer[0], 64);
+    if (n < 5) {
+        return 1;
+    }
+    // Expect mock body "hello"
+    if (buffer[0] != 104) { // 'h'
+        return 2;
+    }
+    if (buffer[1] != 101) { // 'e'
+        return 3;
+    }
+    return 0;
+}
+
+int32 main() {
+    int32 code = wasm_http_probe();
+    assert(code == 0, "wasm http mock");
+    println("wasm-http=ok");
+    return 0;
+}

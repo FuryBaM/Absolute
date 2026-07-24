@@ -91,8 +91,16 @@ Common triples:
 | Import | Module | Purpose |
 |--------|--------|---------|
 | `absolute_log(ptr, len)` | `env` | UTF-8 console from `puts`/`printf` |
+| `absolute_http_get(url, out, cap)` | `env` | Host HTTP GET (or mocks) into linear memory |
 
-Node helper: `tools/absolute-wasm-host.js` (`instantiateAbsoluteWasm`).
+Node helpers:
+
+- `tools/absolute-wasm-host.js` — `instantiateAbsoluteWasm`
+- `tools/absolute-wasm-run.js` — CLI runner for `main` / exports
+
+WASI console build (`absolute_wasm_runtime_wasi.o`) uses
+`wasi_snapshot_preview1.fd_write` instead of `env.absolute_log` so
+`wasmtime run --invoke main module.wasm` works when the WASI object is linked.
 
 ## Next steps (not done)
 

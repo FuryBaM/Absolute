@@ -16,14 +16,31 @@ function log(message, className = '') {
   logEl.className = className;
 }
 
+function readCString(ptr) {
+  const view = new Uint8Array(memory.buffer);
+  let end = Number(ptr) >>> 0;
+  while (end < view.length && view[end] !== 0) end += 1;
+  return decoder.decode(view.subarray(Number(ptr) >>> 0, end));
+}
+
 function createImports() {
   return {
     env: {
       absolute_log(ptr, len) {
         if (!memory) return;
         const view = new Uint8Array(memory.buffer, Number(ptr) >>> 0, Number(len) >>> 0);
-        const text = decoder.decode(view);
-        logEl.textContent += text;
+        logEl.textContent += decoder.decode(view);
+      },
+      absolute_http_get(urlPtr, outPtr, outCap) {
+        if (!memory) return -1;
+        const url = readCString(urlPtr);
+        const mock = window.__ABSOLUTE_HTTP_MOCKS && window.__ABSOLUTE_HTTP_MOCKS[url];
+        if (mock == null) return -1;
+        const body = new TextEncoder().encode(String(mock));
+        const view = new Uint8Array(memory.buffer);
+        const n = Math.min(body.length, Number(outCap) | 0);
+        view.set(body.subarray(0, n), Number(outPtr) >>> 0);
+        return n;
       },
     },
   };
