@@ -537,9 +537,12 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   `createSampler` (nearest/linear, clamp/repeat/mirror), bind t0/s0; HLSL
   `Texture2D` + `SamplerState`; examples `d3d-sprites.abs`, `d3d-sprites-smoke.abs`.
 - [x] D3D12 multi-backend (Windows): `BackendD3D12` clear/present (command queue,
-  FLIP_DISCARD swap chain, RTV heap, fence); mesh RHI still GL/D3D11; examples
-  `d3d12-clear.abs`, `d3d12-clear-smoke.abs`.
-- [ ] D3D12 mesh RHI; Vulkan backend and SPIR-V·DXIL·Metal IR.
+  FLIP_DISCARD swap chain, RTV heap, fence); examples `d3d12-clear.abs`,
+  `d3d12-clear-smoke.abs`.
+- [x] D3D12 mesh RHI: HLSL shaders, root CBV b0, upload-heap VB/IB, PSO + input
+  layout (POSITION/TEXCOORDn), draw/drawIndexed, uniforms; textures still
+  GL/D3D11; examples `d3d12-triangle.abs`, `d3d12-triangle-smoke.abs`.
+- [ ] D3D12 textures/samplers; Vulkan backend and SPIR-V·DXIL·Metal IR.
 
 ### Native interop и платформы
 

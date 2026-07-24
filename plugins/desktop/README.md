@@ -139,8 +139,8 @@ Windows GDI (ClearType raster → soft buffer). Non-Windows: create returns inva
 - **OpenGL (full RHI):** Windows WGL (`opengl-wgl`), Linux GLX (`opengl-glx`)
 - **D3D11 (Windows):** full sprite-capable path (`backend()` → `d3d11`):
   HLSL, VB/IB, pipeline, draw, textures + samplers
-- **D3D12 (Windows):** clear/present only (`backend()` → `d3d12`);
-  mesh resource APIs return null with `lastError`
+- **D3D12 (Windows):** clear/present + mesh path (`backend()` → `d3d12`):
+  HLSL, root CBV b0, VB/IB, PSO, draw/drawIndexed; textures still GL/D3D11
 - **Vertex semantics (D3D11):** location 0 → `POSITION`; location n → `TEXCOORDn-1`
 - Soft `window.present()` and `gpu.present()` are separate paths
 - Per-device: `gpu.backend()` → `opengl-wgl` / `opengl-glx` / `d3d11` / `d3d12` / `none`
@@ -182,7 +182,7 @@ gpu.present();
 - Alpha blending on in `beginFrame`
 - Examples: `triangle.abs` / `gpu-sprites.abs` (OpenGL GLSL),
   `d3d-clear.abs` / `d3d-triangle.abs` / `d3d-sprites.abs` (D3D11),
-  `d3d12-clear.abs` (D3D12 clear/present)
+  `d3d12-clear.abs` / `d3d12-triangle.abs` (D3D12)
 
 ### Game loop patterns
 
