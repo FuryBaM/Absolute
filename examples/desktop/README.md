@@ -4,6 +4,14 @@ Requires the `absolute.desktop` plugin (Win32 on Windows, X11 on Linux).
 
 ## Build plugin
 
+First-time Windows setup (downloads portable LLVM 18 into `.absolute\toolchains`):
+
+```bat
+build-windows.bat --bootstrap -NoTest
+```
+
+Later rebuilds:
+
 ```bat
 build-windows.bat -NoTest
 cmake --build .absolute\build\windows-release --config Release --target Absolute-Desktop-Plugin
@@ -15,18 +23,29 @@ Plugin output is typically:
 
 ## Run demos
 
+Native Windows is the default path (no WSL required). `run.bat` loads the MSVC
+environment, finds `absolutec` + the desktop plugin under
+`.absolute\build\windows-release`, builds the example with `--build-exe`, and runs it.
+
 ```bat
 examples\desktop\run.bat
 examples\desktop\run.bat pong.abs
+examples\desktop\run.bat -Source d3d-triangle.abs -Output .absolute\bin\d3d-triangle.exe -NoRun
 ```
 
-Or with a native Release `absolutec`:
+Optional legacy hybrid pipeline (Linux LLVM in WSL + MSVC link):
 
 ```bat
-.set ABSOLUTEC=.absolute\build\windows-release\Release\absolutec.exe
-%ABSOLUTEC% examples\desktop\window.abs --plugin ...\absolute-desktop.absplugin --build-exe -o window.exe
+examples\desktop\run.bat -Backend wsl
+```
+
+Or invoke a native Release `absolutec` directly:
+
+```bat
+set ABSOLUTEC=.absolute\build\windows-release\Release\absolutec.exe
+%ABSOLUTEC% examples\desktop\window.abs --plugin .absolute\build\windows-release\plugins\desktop\Release\absolute-desktop.absplugin --build-exe -o window.exe
 window.exe
-%ABSOLUTEC% examples\desktop\pong.abs --plugin ...\absolute-desktop.absplugin --build-exe -o pong.exe
+%ABSOLUTEC% examples\desktop\pong.abs --plugin .absolute\build\windows-release\plugins\desktop\Release\absolute-desktop.absplugin --build-exe -o pong.exe
 pong.exe
 ```
 

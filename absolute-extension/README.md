@@ -38,7 +38,7 @@ See also [docs/debugging.md](https://github.com/FuryBaM/Absolute/blob/main/docs/
 | `absolute.editorMetadata` | Editor-only `*.editor.json` sidecars |
 | `absolute.debugger` | `auto` / `cppvsdbg` / `cppdbg` |
 
-Example for this repository's Windows + WSL desktop pipeline:
+Example for this repository's native Windows desktop pipeline (no WSL required):
 
 ```json
 {
@@ -46,6 +46,8 @@ Example for this repository's Windows + WSL desktop pipeline:
   "absolute.compilerPath": "${workspaceFolder}\\.absolute\\build\\windows-release\\Release\\absolutec.exe"
 }
 ```
+
+First-time setup: `build-windows.bat --bootstrap -NoTest` from the repo root.
 
 ## Architecture
 
