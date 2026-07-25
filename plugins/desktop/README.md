@@ -134,7 +134,8 @@ Windows GDI (ClearType raster → soft buffer). Non-Windows: create returns inva
 
 ### GPU RHI (`Desktop.Gpu`)
 - **Constructor:** `new Desktop.Gpu(window, backend)` where backend is
-  `BackendAuto` (0), `BackendOpenGL` (1), `BackendD3D11` (2), `BackendD3D12` (3)
+  `BackendAuto` (0), `BackendOpenGL` (1), `BackendD3D11` (2), `BackendD3D12` (3),
+  `BackendVulkan` (4)
 - **BackendAuto:** OpenGL first; on Windows falls back to D3D11 if GL fails
 - **OpenGL (full RHI):** Windows WGL (`opengl-wgl`), Linux GLX (`opengl-glx`)
 - **D3D11 (Windows):** full sprite-capable path (`backend()` → `d3d11`):
@@ -142,9 +143,14 @@ Windows GDI (ClearType raster → soft buffer). Non-Windows: create returns inva
 - **D3D12 (Windows):** full sprite-capable path (`backend()` → `d3d12`):
   HLSL, root CBV b0 + SRV t0 + Sampler s0, VB/IB, PSO, draw/drawIndexed,
   textures (`createTextureFromSprite`) + samplers
-- **Vertex semantics (D3D11):** location 0 → `POSITION`; location n → `TEXCOORDn-1`
+- **Vulkan:** full sprite-capable path (`backend()` → `vulkan`): HLSL via
+  portable DXC→SPIR-V (`.absolute/toolchains/dxc-spirv` or `ABSOLUTE_DXC`),
+  UBO b0 + sampled image t0 + sampler s0; requires `vulkan-1` runtime and
+  headers under `.absolute/toolchains/vulkan-headers`
+- **Vertex semantics (D3D/Vulkan HLSL):** location 0 → `POSITION`; location n → `TEXCOORDn-1`
 - Soft `window.present()` and `gpu.present()` are separate paths
-- Per-device: `gpu.backend()` → `opengl-wgl` / `opengl-glx` / `d3d11` / `d3d12` / `none`
+- Per-device: `gpu.backend()` → `opengl-wgl` / `opengl-glx` / `d3d11` / `d3d12` /
+  `vulkan` / `none`
 
 Resources:
 - `createShader(vs, fs)` → `GpuShader*`
@@ -183,7 +189,8 @@ gpu.present();
 - Alpha blending on in `beginFrame`
 - Examples: `triangle.abs` / `gpu-sprites.abs` (OpenGL GLSL),
   `d3d-clear.abs` / `d3d-triangle.abs` / `d3d-sprites.abs` (D3D11),
-  `d3d12-clear.abs` / `d3d12-triangle.abs` / `d3d12-sprites.abs` (D3D12)
+  `d3d12-clear.abs` / `d3d12-triangle.abs` / `d3d12-sprites.abs` (D3D12),
+  `vulkan-triangle.abs` / `vulkan-sprites.abs` (Vulkan)
 
 ### Game loop patterns
 

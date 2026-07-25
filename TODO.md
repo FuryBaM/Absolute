@@ -546,7 +546,14 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   `createTextureFromSprite` (RGBA8 color-key), `createSampler`
   (nearest/linear, clamp/repeat/mirror), bind on draw; examples
   `d3d12-sprites.abs`, `d3d12-sprites-smoke.abs`.
-- [ ] Vulkan backend and SPIR-V·DXIL·Metal IR.
+- [x] Vulkan backend (`BackendVulkan` = 4): Win32 surface + swapchain,
+  dynamic `vulkan-1.dll`, HLSL→SPIR-V via portable DXC
+  (`.absolute/toolchains/dxc-spirv` or `ABSOLUTE_DXC`), mesh RHI
+  (VB/IB/pipeline/draw/drawIndexed), UBO b0 + sampled image t0 +
+  sampler s0, textures from soft sprites; examples
+  `vulkan-triangle.abs`, `vulkan-triangle-smoke.abs`,
+  `vulkan-sprites.abs`, `vulkan-sprites-smoke.abs`.
+- [ ] SPIR-V·DXIL·Metal IR as first-class artifact kinds beyond host GPU paths.
 
 ### Native interop и платформы
 

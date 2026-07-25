@@ -6,6 +6,7 @@
 constexpr uint32_t kAbsoluteGpuMagicGL = 0x314C4731u;    // '1GL1'
 constexpr uint32_t kAbsoluteGpuMagicD3D11 = 0x31443344u; // 'D3D1'
 constexpr uint32_t kAbsoluteGpuMagicD3D12 = 0x32443344u; // 'D3D2'
+constexpr uint32_t kAbsoluteGpuMagicVK = 0x314B5631u;    // '1VK1'
 
 inline uint32_t AbsoluteGpuPeekMagic(int64_t handle) {
     if (!handle) return 0;
@@ -18,6 +19,10 @@ inline bool AbsoluteGpuIsD3D11(int64_t handle) {
 
 inline bool AbsoluteGpuIsD3D12(int64_t handle) {
     return AbsoluteGpuPeekMagic(handle) == kAbsoluteGpuMagicD3D12;
+}
+
+inline bool AbsoluteGpuIsVK(int64_t handle) {
+    return AbsoluteGpuPeekMagic(handle) == kAbsoluteGpuMagicVK;
 }
 
 inline bool AbsoluteGpuIsGL(int64_t handle) {

@@ -44,10 +44,23 @@ add_library(Absolute-Desktop-Runtime STATIC
     desktop_gpu_gl.cpp
     desktop_gpu_d3d11.cpp
     desktop_gpu_d3d12.cpp
+    desktop_gpu_vulkan.cpp
     desktop_audio.cpp
     desktop_mesh_obj.cpp
 )
 target_compile_features(Absolute-Desktop-Runtime PRIVATE cxx_std_20)
+
+# Vulkan backend: headers under .absolute/toolchains/vulkan-headers (portable),
+# runtime load of vulkan-1.dll / libvulkan.so — no full LunarG SDK required.
+set(ABSOLUTE_VULKAN_HEADERS "${CMAKE_SOURCE_DIR}/.absolute/toolchains/vulkan-headers/include")
+if(EXISTS "${ABSOLUTE_VULKAN_HEADERS}/vulkan/vulkan.h")
+    message(STATUS "absolute.desktop GPU: Vulkan headers found")
+    target_compile_definitions(Absolute-Desktop-Runtime PRIVATE ABSOLUTE_DESKTOP_HAS_VULKAN=1)
+    target_include_directories(Absolute-Desktop-Runtime PRIVATE "${ABSOLUTE_VULKAN_HEADERS}")
+else()
+    message(STATUS "absolute.desktop GPU: Vulkan headers missing (place under .absolute/toolchains/vulkan-headers)")
+endif()
+
 if(WIN32)
     target_compile_definitions(Absolute-Desktop-Runtime PRIVATE UNICODE _UNICODE)
     target_link_libraries(Absolute-Desktop-Runtime PUBLIC opengl32 windowscodecs ole32 winmm d3d11 d3d12 dxgi d3dcompiler dxguid)

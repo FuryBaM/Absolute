@@ -16,7 +16,7 @@ extern "C" void* absolute_desktop_native_display(int64_t handle);
 extern "C" int32_t absolute_desktop_width(int64_t handle);
 extern "C" int32_t absolute_desktop_height(int64_t handle);
 
-// D3D11 backend (Windows) — mesh RHI (HLSL) + textures.
+// D3D11 backend (Windows) Р Р†Р вЂљРІР‚Сњ mesh RHI (HLSL) + textures.
 extern "C" int64_t absolute_desktop_gpu_d3d11_create(int64_t windowHandle);
 extern "C" void absolute_desktop_gpu_d3d11_destroy(int64_t handle);
 extern "C" int32_t absolute_desktop_gpu_d3d11_is_valid(int64_t handle);
@@ -28,7 +28,7 @@ extern "C" void absolute_desktop_gpu_d3d11_clear(int64_t handle, float r, float 
 extern "C" void absolute_desktop_gpu_d3d11_present(int64_t handle);
 extern "C" void absolute_desktop_gpu_d3d11_unsupported(const char* what);
 
-// D3D12 backend (Windows) — clear/present + mesh RHI (HLSL).
+// D3D12 backend (Windows) Р Р†Р вЂљРІР‚Сњ clear/present + mesh RHI (HLSL).
 extern "C" int64_t absolute_desktop_gpu_d3d12_create(int64_t windowHandle);
 extern "C" void absolute_desktop_gpu_d3d12_destroy(int64_t handle);
 extern "C" int32_t absolute_desktop_gpu_d3d12_is_valid(int64_t handle);
@@ -118,6 +118,58 @@ extern "C" void absolute_desktop_gpu_d3d12_bind_texture(
     int64_t gpuHandle, int64_t textureHandle, int32_t unit);
 extern "C" int64_t absolute_desktop_gpu_d3d12_sampler_create(
     int64_t gpuHandle, int32_t filter, int32_t wrap);
+
+// Vulkan backend (HLSLР Р†РІР‚В РІР‚в„ўSPIR-V via DXC, mesh + textures).
+extern "C" int64_t absolute_desktop_gpu_vk_create(int64_t windowHandle);
+extern "C" void absolute_desktop_gpu_vk_destroy(int64_t handle);
+extern "C" int32_t absolute_desktop_gpu_vk_is_valid(int64_t handle);
+extern "C" const char* absolute_desktop_gpu_vk_backend();
+extern "C" const char* absolute_desktop_gpu_vk_last_error();
+extern "C" void absolute_desktop_gpu_vk_begin_frame(int64_t handle);
+extern "C" void absolute_desktop_gpu_vk_end_frame(int64_t handle);
+extern "C" void absolute_desktop_gpu_vk_clear(int64_t handle, float r, float g, float b, float a);
+extern "C" void absolute_desktop_gpu_vk_present(int64_t handle);
+extern "C" int32_t absolute_desktop_gpu_vk_is_resource(int64_t handle);
+extern "C" int64_t absolute_desktop_gpu_vk_shader_create(
+    int64_t gpuHandle, const char* vertexSource, const char* fragmentSource);
+extern "C" void absolute_desktop_gpu_vk_shader_destroy(int64_t gpuHandle, int64_t shaderHandle);
+extern "C" int64_t absolute_desktop_gpu_vk_buffer_create(
+    int64_t gpuHandle, const float* data, int32_t floatCount);
+extern "C" void absolute_desktop_gpu_vk_buffer_destroy(int64_t gpuHandle, int64_t bufferHandle);
+extern "C" int32_t absolute_desktop_gpu_vk_buffer_float_count(int64_t bufferHandle);
+extern "C" int64_t absolute_desktop_gpu_vk_index_buffer_create(
+    int64_t gpuHandle, const int32_t* indices, int32_t indexCount);
+extern "C" void absolute_desktop_gpu_vk_index_buffer_destroy(int64_t gpuHandle, int64_t bufferHandle);
+extern "C" int32_t absolute_desktop_gpu_vk_index_buffer_count(int64_t bufferHandle);
+extern "C" int64_t absolute_desktop_gpu_vk_pipeline_create(
+    int64_t gpuHandle,
+    int64_t shaderHandle,
+    int32_t strideBytes,
+    const int32_t* locations,
+    const int32_t* components,
+    const int32_t* offsets,
+    int32_t attrCount);
+extern "C" void absolute_desktop_gpu_vk_pipeline_destroy(int64_t gpuHandle, int64_t pipelineHandle);
+extern "C" void absolute_desktop_gpu_vk_bind_pipeline(int64_t gpuHandle, int64_t pipelineHandle);
+extern "C" void absolute_desktop_gpu_vk_bind_buffer(int64_t gpuHandle, int64_t bufferHandle);
+extern "C" void absolute_desktop_gpu_vk_bind_index_buffer(int64_t gpuHandle, int64_t bufferHandle);
+extern "C" void absolute_desktop_gpu_vk_draw(int64_t gpuHandle, int32_t vertexCount);
+extern "C" void absolute_desktop_gpu_vk_draw_indexed(int64_t gpuHandle, int32_t indexCount);
+extern "C" void absolute_desktop_gpu_vk_set_uniform_f(int64_t gpuHandle, const char* name, float value);
+extern "C" void absolute_desktop_gpu_vk_set_uniform_i(int64_t gpuHandle, const char* name, int32_t value);
+extern "C" void absolute_desktop_gpu_vk_set_uniform_2f(
+    int64_t gpuHandle, const char* name, float x, float y);
+extern "C" int64_t absolute_desktop_gpu_vk_texture_from_sprite(int64_t gpuHandle, int64_t spriteHandle);
+extern "C" void absolute_desktop_gpu_vk_texture_destroy(int64_t gpuHandle, int64_t textureHandle);
+extern "C" int32_t absolute_desktop_gpu_vk_texture_width(int64_t textureHandle);
+extern "C" int32_t absolute_desktop_gpu_vk_texture_height(int64_t textureHandle);
+extern "C" void absolute_desktop_gpu_vk_bind_texture(
+    int64_t gpuHandle, int64_t textureHandle, int32_t unit);
+extern "C" int64_t absolute_desktop_gpu_vk_sampler_create(
+    int64_t gpuHandle, int32_t filter, int32_t wrap);
+extern "C" void absolute_desktop_gpu_vk_sampler_destroy(int64_t gpuHandle, int64_t samplerHandle);
+extern "C" void absolute_desktop_gpu_vk_bind_sampler(
+    int64_t gpuHandle, int64_t samplerHandle, int32_t unit);
 extern "C" void absolute_desktop_gpu_d3d12_sampler_destroy(int64_t gpuHandle, int64_t samplerHandle);
 extern "C" void absolute_desktop_gpu_d3d12_bind_sampler(
     int64_t gpuHandle, int64_t samplerHandle, int32_t unit);
@@ -844,9 +896,12 @@ static int64_t CreateOpenGlDevice(int64_t windowHandle) {
     return DeviceToHandle(device);
 }
 
-// backend: 0=auto (GL then D3D11 on Windows), 1=OpenGL, 2=D3D11, 3=D3D12
+// backend: 0=auto (GL then D3D11 on Windows), 1=OpenGL, 2=D3D11, 3=D3D12, 4=Vulkan
 extern "C" int64_t absolute_desktop_gpu_create_backend(int64_t windowHandle, int32_t backend) {
     g_lastError.clear();
+    if (backend == 4) {
+        return absolute_desktop_gpu_vk_create(windowHandle);
+    }
     if (backend == 3) {
 #if defined(_WIN32)
         return absolute_desktop_gpu_d3d12_create(windowHandle);
@@ -866,7 +921,7 @@ extern "C" int64_t absolute_desktop_gpu_create_backend(int64_t windowHandle, int
     if (backend == 1) {
         return CreateOpenGlDevice(windowHandle);
     }
-    // Auto: prefer OpenGL, fall back to D3D11 on Windows (not D3D12 — explicit only).
+    // Auto: prefer OpenGL, fall back to D3D11 on Windows (not D3D12/Vulkan Р Р†Р вЂљРІР‚Сњ explicit only).
     const int64_t gl = CreateOpenGlDevice(windowHandle);
     if (gl != 0) return gl;
 #if defined(_WIN32)
@@ -884,6 +939,10 @@ extern "C" int64_t absolute_desktop_gpu_create(int64_t windowHandle) {
 }
 
 extern "C" void absolute_desktop_gpu_destroy(int64_t handle) {
+    if (AbsoluteGpuIsVK(handle)) {
+        absolute_desktop_gpu_vk_destroy(handle);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(handle)) {
         absolute_desktop_gpu_d3d12_destroy(handle);
         return;
@@ -899,6 +958,7 @@ extern "C" void absolute_desktop_gpu_destroy(int64_t handle) {
 }
 
 extern "C" int32_t absolute_desktop_gpu_is_valid(int64_t handle) {
+    if (AbsoluteGpuIsVK(handle)) return absolute_desktop_gpu_vk_is_valid(handle);
     if (AbsoluteGpuIsD3D12(handle)) return absolute_desktop_gpu_d3d12_is_valid(handle);
     if (AbsoluteGpuIsD3D11(handle)) return absolute_desktop_gpu_d3d11_is_valid(handle);
     const GpuDevice* device = DeviceFromHandle(handle);
@@ -906,7 +966,7 @@ extern "C" int32_t absolute_desktop_gpu_is_valid(int64_t handle) {
 }
 
 extern "C" const char* absolute_desktop_gpu_backend() {
-    // Note: no handle — returns default GL backend name. Prefer backend of a live device
+    // Note: no handle Р Р†Р вЂљРІР‚Сњ returns default GL backend name. Prefer backend of a live device
     // via last created path; kept for Absolute prelude compatibility.
 #if defined(ABSOLUTE_GPU_WGL)
     return "opengl-wgl";
@@ -919,6 +979,7 @@ extern "C" const char* absolute_desktop_gpu_backend() {
 
 // Per-device backend string.
 extern "C" const char* absolute_desktop_gpu_backend_of(int64_t handle) {
+    if (AbsoluteGpuIsVK(handle)) return absolute_desktop_gpu_vk_backend();
     if (AbsoluteGpuIsD3D12(handle)) return absolute_desktop_gpu_d3d12_backend();
     if (AbsoluteGpuIsD3D11(handle)) return absolute_desktop_gpu_d3d11_backend();
     if (AbsoluteGpuIsGL(handle)) {
@@ -934,14 +995,20 @@ extern "C" const char* absolute_desktop_gpu_backend_of(int64_t handle) {
 }
 
 extern "C" const char* absolute_desktop_gpu_last_error() {
-    // Prefer most recent non-empty backend error (GL first, then D3D11, D3D12).
+    // Prefer most recent non-empty backend error (GL first, then D3D/Vulkan).
     if (!g_lastError.empty()) return g_lastError.c_str();
     const char* d11 = absolute_desktop_gpu_d3d11_last_error();
     if (d11 && d11[0]) return d11;
-    return absolute_desktop_gpu_d3d12_last_error();
+    const char* d12 = absolute_desktop_gpu_d3d12_last_error();
+    if (d12 && d12[0]) return d12;
+    return absolute_desktop_gpu_vk_last_error();
 }
 
 extern "C" void absolute_desktop_gpu_begin_frame(int64_t handle) {
+    if (AbsoluteGpuIsVK(handle)) {
+        absolute_desktop_gpu_vk_begin_frame(handle);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(handle)) {
         absolute_desktop_gpu_d3d12_begin_frame(handle);
         return;
@@ -973,6 +1040,10 @@ extern "C" void absolute_desktop_gpu_begin_frame(int64_t handle) {
 }
 
 extern "C" void absolute_desktop_gpu_end_frame(int64_t handle) {
+    if (AbsoluteGpuIsVK(handle)) {
+        absolute_desktop_gpu_vk_end_frame(handle);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(handle)) {
         absolute_desktop_gpu_d3d12_end_frame(handle);
         return;
@@ -999,6 +1070,10 @@ extern "C" void absolute_desktop_gpu_end_frame(int64_t handle) {
 }
 
 extern "C" void absolute_desktop_gpu_clear(int64_t handle, float r, float g, float b, float a) {
+    if (AbsoluteGpuIsVK(handle)) {
+        absolute_desktop_gpu_vk_clear(handle, r, g, b, a);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(handle)) {
         absolute_desktop_gpu_d3d12_clear(handle, r, g, b, a);
         return;
@@ -1014,6 +1089,10 @@ extern "C" void absolute_desktop_gpu_clear(int64_t handle, float r, float g, flo
 }
 
 extern "C" void absolute_desktop_gpu_present(int64_t handle) {
+    if (AbsoluteGpuIsVK(handle)) {
+        absolute_desktop_gpu_vk_present(handle);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(handle)) {
         absolute_desktop_gpu_d3d12_present(handle);
         return;
@@ -1064,6 +1143,9 @@ extern "C" void absolute_desktop_gpu_layout_destroy(int64_t layoutHandle) {
 
 extern "C" int64_t absolute_desktop_gpu_shader_create(
     int64_t gpuHandle, const char* vertexSource, const char* fragmentSource) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        return absolute_desktop_gpu_vk_shader_create(gpuHandle, vertexSource, fragmentSource);
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         return absolute_desktop_gpu_d3d12_shader_create(gpuHandle, vertexSource, fragmentSource);
     }
@@ -1093,6 +1175,10 @@ extern "C" int64_t absolute_desktop_gpu_shader_create(
 }
 
 extern "C" void absolute_desktop_gpu_shader_destroy(int64_t gpuHandle, int64_t shaderHandle) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        absolute_desktop_gpu_vk_shader_destroy(gpuHandle, shaderHandle);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         absolute_desktop_gpu_d3d12_shader_destroy(gpuHandle, shaderHandle);
         return;
@@ -1112,6 +1198,9 @@ extern "C" void absolute_desktop_gpu_shader_destroy(int64_t gpuHandle, int64_t s
 
 extern "C" int64_t absolute_desktop_gpu_buffer_create(
     int64_t gpuHandle, const float* data, int32_t floatCount) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        return absolute_desktop_gpu_vk_buffer_create(gpuHandle, data, floatCount);
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         return absolute_desktop_gpu_d3d12_buffer_create(gpuHandle, data, floatCount);
     }
@@ -1137,6 +1226,10 @@ extern "C" int64_t absolute_desktop_gpu_buffer_create(
 }
 
 extern "C" void absolute_desktop_gpu_buffer_destroy(int64_t gpuHandle, int64_t bufferHandle) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        absolute_desktop_gpu_vk_buffer_destroy(gpuHandle, bufferHandle);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         absolute_desktop_gpu_d3d12_buffer_destroy(gpuHandle, bufferHandle);
         return;
@@ -1159,6 +1252,9 @@ extern "C" void absolute_desktop_gpu_buffer_destroy(int64_t gpuHandle, int64_t b
 }
 
 extern "C" int32_t absolute_desktop_gpu_buffer_float_count(int64_t bufferHandle) {
+    if (absolute_desktop_gpu_vk_is_resource(bufferHandle)) {
+        return absolute_desktop_gpu_vk_buffer_float_count(bufferHandle);
+    }
     if (absolute_desktop_gpu_d3d12_is_resource(bufferHandle)) {
         return absolute_desktop_gpu_d3d12_buffer_float_count(bufferHandle);
     }
@@ -1172,7 +1268,7 @@ extern "C" int32_t absolute_desktop_gpu_buffer_float_count(int64_t bufferHandle)
 extern "C" int64_t absolute_desktop_gpu_pipeline_create(
     int64_t gpuHandle, int64_t shaderHandle, int64_t layoutHandle) {
     GpuLayout* layout = LayoutFromHandle(layoutHandle);
-    if (AbsoluteGpuIsD3D12(gpuHandle) || AbsoluteGpuIsD3D11(gpuHandle)) {
+    if (AbsoluteGpuIsVK(gpuHandle) || AbsoluteGpuIsD3D12(gpuHandle) || AbsoluteGpuIsD3D11(gpuHandle)) {
         if (!layout || layout->strideBytes <= 0 || layout->attrs.empty()) {
             SetError("createPipeline layout needs stride and at least one attribute");
             return 0;
@@ -1187,6 +1283,16 @@ extern "C" int64_t absolute_desktop_gpu_pipeline_create(
             locations.push_back(a.location);
             components.push_back(a.components);
             offsets.push_back(a.offsetBytes);
+        }
+        if (AbsoluteGpuIsVK(gpuHandle)) {
+            return absolute_desktop_gpu_vk_pipeline_create(
+                gpuHandle,
+                shaderHandle,
+                layout->strideBytes,
+                locations.data(),
+                components.data(),
+                offsets.data(),
+                static_cast<int32_t>(locations.size()));
         }
         if (AbsoluteGpuIsD3D12(gpuHandle)) {
             return absolute_desktop_gpu_d3d12_pipeline_create(
@@ -1225,6 +1331,10 @@ extern "C" int64_t absolute_desktop_gpu_pipeline_create(
 }
 
 extern "C" void absolute_desktop_gpu_pipeline_destroy(int64_t gpuHandle, int64_t pipelineHandle) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        absolute_desktop_gpu_vk_pipeline_destroy(gpuHandle, pipelineHandle);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         absolute_desktop_gpu_d3d12_pipeline_destroy(gpuHandle, pipelineHandle);
         return;
@@ -1240,11 +1350,15 @@ extern "C" void absolute_desktop_gpu_pipeline_destroy(int64_t gpuHandle, int64_t
         device->boundPipeline = 0;
         device->attrsDirty = true;
     }
-    // Program is owned by GpuShader — do not delete here.
+    // Program is owned by GpuShader Р Р†Р вЂљРІР‚Сњ do not delete here.
     delete pipeline;
 }
 
 extern "C" void absolute_desktop_gpu_bind_pipeline(int64_t gpuHandle, int64_t pipelineHandle) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        absolute_desktop_gpu_vk_bind_pipeline(gpuHandle, pipelineHandle);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         absolute_desktop_gpu_d3d12_bind_pipeline(gpuHandle, pipelineHandle);
         return;
@@ -1260,6 +1374,10 @@ extern "C" void absolute_desktop_gpu_bind_pipeline(int64_t gpuHandle, int64_t pi
 }
 
 extern "C" void absolute_desktop_gpu_bind_buffer(int64_t gpuHandle, int64_t bufferHandle) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        absolute_desktop_gpu_vk_bind_buffer(gpuHandle, bufferHandle);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         absolute_desktop_gpu_d3d12_bind_buffer(gpuHandle, bufferHandle);
         return;
@@ -1276,6 +1394,9 @@ extern "C" void absolute_desktop_gpu_bind_buffer(int64_t gpuHandle, int64_t buff
 
 extern "C" int64_t absolute_desktop_gpu_index_buffer_create(
     int64_t gpuHandle, const int32_t* indices, int32_t indexCount) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        return absolute_desktop_gpu_vk_index_buffer_create(gpuHandle, indices, indexCount);
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         return absolute_desktop_gpu_d3d12_index_buffer_create(gpuHandle, indices, indexCount);
     }
@@ -1330,6 +1451,9 @@ extern "C" void absolute_desktop_gpu_index_buffer_destroy(int64_t gpuHandle, int
 }
 
 extern "C" int32_t absolute_desktop_gpu_index_buffer_count(int64_t bufferHandle) {
+    if (absolute_desktop_gpu_vk_is_resource(bufferHandle)) {
+        return absolute_desktop_gpu_vk_index_buffer_count(bufferHandle);
+    }
     if (absolute_desktop_gpu_d3d12_is_resource(bufferHandle)) {
         return absolute_desktop_gpu_d3d12_index_buffer_count(bufferHandle);
     }
@@ -1341,6 +1465,10 @@ extern "C" int32_t absolute_desktop_gpu_index_buffer_count(int64_t bufferHandle)
 }
 
 extern "C" void absolute_desktop_gpu_bind_index_buffer(int64_t gpuHandle, int64_t bufferHandle) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        absolute_desktop_gpu_vk_bind_index_buffer(gpuHandle, bufferHandle);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         absolute_desktop_gpu_d3d12_bind_index_buffer(gpuHandle, bufferHandle);
         return;
@@ -1355,6 +1483,10 @@ extern "C" void absolute_desktop_gpu_bind_index_buffer(int64_t gpuHandle, int64_
 }
 
 extern "C" void absolute_desktop_gpu_draw(int64_t gpuHandle, int32_t vertexCount) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        absolute_desktop_gpu_vk_draw(gpuHandle, vertexCount);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         absolute_desktop_gpu_d3d12_draw(gpuHandle, vertexCount);
         return;
@@ -1376,6 +1508,10 @@ extern "C" void absolute_desktop_gpu_draw(int64_t gpuHandle, int32_t vertexCount
 }
 
 extern "C" void absolute_desktop_gpu_draw_indexed(int64_t gpuHandle, int32_t indexCount) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        absolute_desktop_gpu_vk_draw_indexed(gpuHandle, indexCount);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         absolute_desktop_gpu_d3d12_draw_indexed(gpuHandle, indexCount);
         return;
@@ -1406,6 +1542,9 @@ extern "C" void absolute_desktop_gpu_draw_indexed(int64_t gpuHandle, int32_t ind
 // filter: 0 nearest, 1 linear. wrap: 0 clamp, 1 repeat, 2 mirror.
 extern "C" int64_t absolute_desktop_gpu_sampler_create_on(
     int64_t gpuHandle, int32_t filter, int32_t wrap) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        return absolute_desktop_gpu_vk_sampler_create(gpuHandle, filter, wrap);
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         return absolute_desktop_gpu_d3d12_sampler_create(gpuHandle, filter, wrap);
     }
@@ -1434,6 +1573,10 @@ extern "C" int64_t absolute_desktop_gpu_sampler_create_on(
 }
 
 extern "C" void absolute_desktop_gpu_sampler_destroy(int64_t gpuHandle, int64_t samplerHandle) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        absolute_desktop_gpu_vk_sampler_destroy(gpuHandle, samplerHandle);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         absolute_desktop_gpu_d3d12_sampler_destroy(gpuHandle, samplerHandle);
         return;
@@ -1456,6 +1599,10 @@ extern "C" void absolute_desktop_gpu_sampler_destroy(int64_t gpuHandle, int64_t 
 
 extern "C" void absolute_desktop_gpu_bind_sampler(
     int64_t gpuHandle, int64_t samplerHandle, int32_t unit) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        absolute_desktop_gpu_vk_bind_sampler(gpuHandle, samplerHandle, unit);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         absolute_desktop_gpu_d3d12_bind_sampler(gpuHandle, samplerHandle, unit);
         return;
@@ -1474,6 +1621,10 @@ extern "C" void absolute_desktop_gpu_bind_sampler(
 
 extern "C" void absolute_desktop_gpu_set_uniform_f(
     int64_t gpuHandle, const char* name, float value) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        absolute_desktop_gpu_vk_set_uniform_f(gpuHandle, name, value);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         absolute_desktop_gpu_d3d12_set_uniform_f(gpuHandle, name, value);
         return;
@@ -1492,6 +1643,10 @@ extern "C" void absolute_desktop_gpu_set_uniform_f(
 
 extern "C" void absolute_desktop_gpu_set_uniform_i(
     int64_t gpuHandle, const char* name, int32_t value) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        absolute_desktop_gpu_vk_set_uniform_i(gpuHandle, name, value);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         absolute_desktop_gpu_d3d12_set_uniform_i(gpuHandle, name, value);
         return;
@@ -1511,6 +1666,10 @@ extern "C" void absolute_desktop_gpu_set_uniform_i(
 
 extern "C" void absolute_desktop_gpu_set_uniform_2f(
     int64_t gpuHandle, const char* name, float x, float y) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        absolute_desktop_gpu_vk_set_uniform_2f(gpuHandle, name, x, y);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         absolute_desktop_gpu_d3d12_set_uniform_2f(gpuHandle, name, x, y);
         return;
@@ -1530,6 +1689,9 @@ extern "C" void absolute_desktop_gpu_set_uniform_2f(
 
 // Upload soft sprite 0x00RRGGBB as RGBA8 (0 = transparent). Flip rows for GL origin.
 extern "C" int64_t absolute_desktop_gpu_texture_from_sprite(int64_t gpuHandle, int64_t spriteHandle) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        return absolute_desktop_gpu_vk_texture_from_sprite(gpuHandle, spriteHandle);
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         return absolute_desktop_gpu_d3d12_texture_from_sprite(gpuHandle, spriteHandle);
     }
@@ -1581,6 +1743,9 @@ extern "C" int64_t absolute_desktop_gpu_texture_from_sprite(int64_t gpuHandle, i
 }
 
 extern "C" int32_t absolute_desktop_gpu_texture_width(int64_t textureHandle) {
+    if (absolute_desktop_gpu_vk_is_resource(textureHandle)) {
+        return absolute_desktop_gpu_vk_texture_width(textureHandle);
+    }
     if (absolute_desktop_gpu_d3d12_is_resource(textureHandle)) {
         return absolute_desktop_gpu_d3d12_texture_width(textureHandle);
     }
@@ -1592,6 +1757,9 @@ extern "C" int32_t absolute_desktop_gpu_texture_width(int64_t textureHandle) {
 }
 
 extern "C" int32_t absolute_desktop_gpu_texture_height(int64_t textureHandle) {
+    if (absolute_desktop_gpu_vk_is_resource(textureHandle)) {
+        return absolute_desktop_gpu_vk_texture_height(textureHandle);
+    }
     if (absolute_desktop_gpu_d3d12_is_resource(textureHandle)) {
         return absolute_desktop_gpu_d3d12_texture_height(textureHandle);
     }
@@ -1603,6 +1771,10 @@ extern "C" int32_t absolute_desktop_gpu_texture_height(int64_t textureHandle) {
 }
 
 extern "C" void absolute_desktop_gpu_texture_destroy(int64_t gpuHandle, int64_t textureHandle) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        absolute_desktop_gpu_vk_texture_destroy(gpuHandle, textureHandle);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         absolute_desktop_gpu_d3d12_texture_destroy(gpuHandle, textureHandle);
         return;
@@ -1622,6 +1794,10 @@ extern "C" void absolute_desktop_gpu_texture_destroy(int64_t gpuHandle, int64_t 
 
 extern "C" void absolute_desktop_gpu_bind_texture(
     int64_t gpuHandle, int64_t textureHandle, int32_t unit) {
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        absolute_desktop_gpu_vk_bind_texture(gpuHandle, textureHandle, unit);
+        return;
+    }
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
         absolute_desktop_gpu_d3d12_bind_texture(gpuHandle, textureHandle, unit);
         return;
