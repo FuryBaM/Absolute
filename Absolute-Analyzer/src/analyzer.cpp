@@ -1330,7 +1330,7 @@ namespace Absolute {
         return {};
     }
 
-    std::optional<std::vector<std::string>> Analyzer::ConstructorParameterTypes(
+    std::vector<Analyzer::MemberSignature> Analyzer::ConstructorsOf(
         const std::string& typeName) const {
         std::string definitionName = typeName;
         std::unordered_map<std::string, std::string> substitutions;
@@ -1342,14 +1342,83 @@ namespace Absolute {
             if (definition != types.end() &&
                 definition->second.genericParameters.size() == genericArguments.size())
                 for (size_t index = 0; index < genericArguments.size(); ++index)
-                    substitutions.emplace(definition->second.genericParameters[index], genericArguments[index]);
+                    substitutions.emplace(definition->second.genericParameters[index],
+                        genericArguments[index]);
         }
         const auto found = types.find(definitionName);
-        if (found == types.end() || !found->second.constructor) return std::nullopt;
-        std::vector<std::string> parameters = found->second.constructor->parameterTypes;
-        for (std::string& parameter : parameters)
-            parameter = SubstituteGenericType(parameter, substitutions);
-        return parameters;
+        if (found == types.end()) return {};
+        std::vector<MemberSignature> constructors = found->second.constructors;
+        for (MemberSignature& constructor : constructors)
+            for (std::string& parameter : constructor.parameterTypes)
+                parameter = SubstituteGenericType(parameter, substitutions);
+        return constructors;
+    }
+
+    std::optional<std::vector<std::string>> Analyzer::ConstructorParameterTypes(
+        const std::string& typeName) const {
+        // Used for implicit base()/default construction: prefer a zero-argument constructor.
+        const std::vector<MemberSignature> constructors = ConstructorsOf(typeName);
+        if (constructors.empty()) return std::vector<std::string>{}; // synthetic default
+        for (const MemberSignature& constructor : constructors)
+            if (constructor.parameterTypes.empty()) return constructor.parameterTypes;
+        // No zero-arg overload — return first constructor's params so callers can diagnose.
+        return constructors.front().parameterTypes;
+    }
+
+    const Analyzer::MemberSignature* Analyzer::SelectConstructor(
+        const std::vector<MemberSignature>& constructors,
+        const std::vector<Result>& arguments,
+        const std::string& displayName,
+        const std::unordered_map<std::string, std::string>& substitutions) {
+        if (constructors.empty()) {
+            if (!arguments.empty())
+                Report("constructor of '" + displayName + "' expects 0 argument(s), got " +
+                    std::to_string(arguments.size()), "E_CONSTRUCTOR_ARGUMENT_COUNT");
+            return nullptr;
+        }
+        const MemberSignature* best = nullptr;
+        int bestCost = std::numeric_limits<int>::max();
+        bool ambiguous = false;
+        for (const MemberSignature& candidate : constructors) {
+            std::vector<std::string> parameters = candidate.parameterTypes;
+            for (std::string& parameter : parameters)
+                parameter = SubstituteGenericType(parameter, substitutions);
+            if (parameters.size() != arguments.size()) continue;
+            int cost = 0;
+            bool applicable = true;
+            for (size_t index = 0; index < arguments.size(); ++index) {
+                const std::string expected = ValueReferenceBaseType(parameters[index]);
+                const int conversion = ConversionCost(expected, arguments[index].type);
+                if (conversion < 0) {
+                    applicable = false;
+                    break;
+                }
+                cost += conversion;
+            }
+            if (!applicable) continue;
+            if (cost < bestCost) {
+                best = &candidate;
+                bestCost = cost;
+                ambiguous = false;
+            }
+            else if (cost == bestCost) ambiguous = true;
+        }
+        if (!best) {
+            std::string typesText;
+            for (size_t index = 0; index < arguments.size(); ++index) {
+                if (index) typesText += ", ";
+                typesText += arguments[index].type;
+            }
+            Report("no overload of constructor '" + displayName + "' accepts (" + typesText + ")",
+                "E_NO_MATCHING_CONSTRUCTOR");
+            return nullptr;
+        }
+        if (ambiguous) {
+            Report("call to overloaded constructor '" + displayName + "' is ambiguous",
+                "E_AMBIGUOUS_CONSTRUCTOR");
+            return nullptr;
+        }
+        return best;
     }
 
     std::string Analyzer::ExtractIdentifier(Expression* expression) const {

@@ -42,6 +42,15 @@
         llvm::Function* DeclareMethodFunction(const ClassMethod& method);
 
         bool ClassNeedsConstructor(const ClassInfo& info) const;
+        std::string ConstructorLinkName(const std::string& typeName,
+            const std::vector<std::string>& parameterTypes) const;
+        std::vector<std::string> ConstructorParameterTypeNames(
+            ConstructorDeclStmt* constructor,
+            const std::unordered_map<std::string, std::string>& substitutions);
+        llvm::Function* LookupConstructorFunction(
+            const std::string& typeName, Expression* call);
+        llvm::Function* DeclareConstructorFunction(
+            ClassInfo& info, ConstructorDeclStmt* constructor);
 
         bool RuntimeTypeDerivesFrom(const std::string& type, const std::string& base) const;
 

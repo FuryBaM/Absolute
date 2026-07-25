@@ -20,6 +20,7 @@
         void EmitMethod(ClassInfo& info, const ClassMethod& method);
 
         void EmitConstructor(ClassInfo& info);
+        void EmitConstructorOverload(ClassInfo& info, ConstructorDeclStmt* constructor);
 
         void EmitClassBodies(ClassInfo& info);
 

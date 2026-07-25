@@ -213,21 +213,23 @@ namespace Absolute {
             const std::string typeName = ExtractIdentifier(expr->base.get());
             if (!IsKnownType(typeName) || !types.contains(typeName))
                 Report("unknown constructible type '" + typeName + "'");
-            const auto found = types.find(typeName);
-            const std::vector<std::string> expected = found != types.end() && found->second.constructor
-                ? found->second.constructor->parameterTypes : std::vector<std::string>{};
-            if (found != types.end() && found->second.constructor)
-                RequireAccess(found->second.constructor->access, typeName,
-                    typeName, found->second.constructor->symbol);
-            if (expr->arguments.size() != expected.size())
-                Report("constructor of '" + typeName + "' expects " + std::to_string(expected.size()) +
-                    " argument(s), got " + std::to_string(expr->arguments.size()));
+            std::vector<Result> evaluated;
+            evaluated.reserve(expr->arguments.size());
+            for (const auto& argument : expr->arguments)
+                evaluated.push_back(Evaluate(argument.get()));
+            std::vector<MemberSignature> constructors = ConstructorsOf(typeName);
+            const MemberSignature* selected = SelectConstructor(
+                constructors, evaluated, typeName);
+            std::vector<std::string> expected;
+            if (selected) {
+                RequireAccess(selected->access, typeName, typeName, selected->symbol);
+                expected = selected->parameterTypes;
+            }
             for (size_t i = 0; i < expr->arguments.size(); ++i) {
                 const std::string expectedType = i < expected.size()
                     ? expected[i] : std::string{};
                 const std::string expectedValueType = ValueReferenceBaseType(expectedType);
-                const Result argument = EvaluateExpected(
-                    expr->arguments[i].get(), expectedValueType);
+                const Result& argument = evaluated[i];
                 if (i < expected.size() && !IsAssignable(expectedValueType, argument.type))
                     Report("constructor argument " + std::to_string(i + 1) + " has type '" + argument.type +
                         "', expected '" + expectedValueType + "'");
@@ -243,6 +245,7 @@ namespace Absolute {
                 }
             }
             Save(expr, {InvalidSymbolId, typeName.empty() ? "error" : typeName, false});
+            if (selected) expressionInfo[expr].parameterTypes = expected;
             return;
         }
 

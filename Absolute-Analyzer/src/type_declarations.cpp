@@ -223,9 +223,10 @@ namespace Absolute {
                 }
             }
         if (stmt->body) stmt->body->Accept(*this);
-        if (!types[typeName].constructor) {
+        if (types[typeName].constructors.empty()) {
             const std::string baseClass = DirectBaseClass(typeName);
             const auto baseParameters = ConstructorParameterTypes(baseClass);
+            // Synthetic zero-arg ctor needs a zero-arg (or synthetic) base constructor.
             if (!baseClass.empty() && baseParameters && !baseParameters->empty())
                 Report("implicit constructor of '" + typeName + "' cannot call base constructor '" +
                     baseClass + "' without arguments; declare a constructor with base(...)",
@@ -423,14 +424,35 @@ namespace Absolute {
             return;
         }
         if (phase == Phase::CollectDeclarations) {
-            if (types[currentType].constructor) Report("constructor of '" + currentType + "' is already declared");
-            else {
-                MemberSignature constructor{SymbolKind::Constructor, currentType,
-                    ResolveParameterTypes(stmt->parameters)};
-                constructor.access = DeclaredAccess(*stmt);
-                constructor.owner = currentType;
-                types[currentType].constructor = std::move(constructor);
+            MemberSignature constructor{SymbolKind::Constructor, currentType,
+                ResolveParameterTypes(stmt->parameters)};
+            constructor.access = DeclaredAccess(*stmt);
+            constructor.owner = currentType;
+            auto& overloads = types[currentType].constructors;
+            const bool collision = std::any_of(overloads.begin(), overloads.end(),
+                [&](const MemberSignature& existing) {
+                    return existing.parameterTypes == constructor.parameterTypes;
+                });
+            if (collision) {
+                Report("constructor of '" + currentType +
+                    "' already has an overload with this signature",
+                    "E_CONSTRUCTOR_REDEFINITION");
+                return;
             }
+            const auto declared = table.Declare(SymbolKind::Constructor,
+                currentType + ".__ctor", currentType, constructor.parameterTypes);
+            if (!declared) {
+                Report("constructor of '" + currentType +
+                    "' already has an overload with this signature",
+                    "E_CONSTRUCTOR_REDEFINITION");
+                return;
+            }
+            constructor.symbol = *declared;
+            if (Symbol* symbol = table.Get(*declared)) {
+                symbol->access = constructor.access;
+                symbol->memberOwner = currentType;
+            }
+            overloads.push_back(std::move(constructor));
             return;
         }
         ValidateAccessModifiers(*stmt, true, "constructor");
@@ -483,47 +505,59 @@ namespace Absolute {
             for (const auto& argument : stmt->baseArguments) Evaluate(argument.get());
         }
         else if (!baseClass.empty()) {
-            const auto declaredParameters = ConstructorParameterTypes(baseClass);
+            std::vector<MemberSignature> baseConstructors = ConstructorsOf(baseClass);
             std::string baseDefinition = baseClass;
             std::string genericBase;
             std::vector<std::string> genericArguments;
             if (ParseGenericTypeName(baseClass, genericBase, genericArguments))
                 baseDefinition = genericBase;
-            if (const auto base = types.find(baseDefinition);
-                base != types.end() && base->second.constructor)
-                RequireAccess(base->second.constructor->access, baseDefinition,
-                    baseDefinition, base->second.constructor->symbol);
-            const std::vector<std::string> expected = declaredParameters.value_or(
-                std::vector<std::string>{});
-            if (!stmt->hasExplicitBaseCall && declaredParameters && !expected.empty()) {
-                Report("constructor of '" + currentType + "' must call base(...) with " +
-                    std::to_string(expected.size()) + " argument(s)", "E_BASE_CONSTRUCTOR_REQUIRED");
+            if (!stmt->hasExplicitBaseCall) {
+                // Implicit base() requires a zero-arg (or synthetic) base constructor.
+                bool hasZeroArg = baseConstructors.empty();
+                for (const MemberSignature& constructor : baseConstructors)
+                    if (constructor.parameterTypes.empty()) {
+                        hasZeroArg = true;
+                        RequireAccess(constructor.access, baseDefinition,
+                            baseDefinition, constructor.symbol);
+                        break;
+                    }
+                if (!hasZeroArg)
+                    Report("constructor of '" + currentType +
+                        "' must call base(...) (base has no zero-argument constructor)",
+                        "E_BASE_CONSTRUCTOR_REQUIRED");
             }
             if (stmt->hasExplicitBaseCall) {
-                if (stmt->baseArguments.size() != expected.size())
-                    Report("base constructor of '" + baseClass + "' expects " +
-                        std::to_string(expected.size()) + " argument(s), got " +
-                        std::to_string(stmt->baseArguments.size()), "E_BASE_ARGUMENT_COUNT");
-                for (size_t index = 0; index < stmt->baseArguments.size(); ++index) {
-                    const std::string expectedType = index < expected.size() ? expected[index] : std::string{};
-                    const std::string expectedValueType = ValueReferenceBaseType(expectedType);
-                    const Result argument = EvaluateExpected(
-                        stmt->baseArguments[index].get(), expectedValueType);
-                    if (!expectedType.empty() && !IsAssignable(expectedValueType, argument.type))
-                        Report("base constructor argument " + std::to_string(index + 1) +
-                            " has type '" + argument.type + "', expected '" + expectedValueType + "'",
-                            "E_BASE_ARGUMENT_TYPE", argument.symbol);
-                    if (IsValueReferenceType(expectedType) &&
-                        !IsConstValueReferenceType(expectedType)) {
-                        if (!argument.isLValue)
-                            Report("mutable reference base constructor argument " +
-                                std::to_string(index + 1) + " requires an lvalue",
-                                "E_VALUE_REF_REQUIRES_LVALUE", argument.symbol);
-                        else if (IsConstMutationTarget(
-                            stmt->baseArguments[index].get(), argument))
-                            Report("mutable reference base constructor argument " +
-                                std::to_string(index + 1) + " cannot borrow a const value",
-                                "E_VALUE_REF_CONST_ARGUMENT", argument.symbol);
+                std::vector<Result> baseArgs;
+                baseArgs.reserve(stmt->baseArguments.size());
+                for (const auto& argument : stmt->baseArguments)
+                    baseArgs.push_back(Evaluate(argument.get()));
+                const MemberSignature* selected = SelectConstructor(
+                    baseConstructors, baseArgs, baseClass);
+                if (selected)
+                    RequireAccess(selected->access, baseDefinition,
+                        baseDefinition, selected->symbol);
+                if (selected) {
+                    for (size_t index = 0; index < stmt->baseArguments.size(); ++index) {
+                        const std::string expectedType = index < selected->parameterTypes.size()
+                            ? selected->parameterTypes[index] : std::string{};
+                        const std::string expectedValueType = ValueReferenceBaseType(expectedType);
+                        const Result& argument = baseArgs[index];
+                        if (!expectedType.empty() && !IsAssignable(expectedValueType, argument.type))
+                            Report("base constructor argument " + std::to_string(index + 1) +
+                                " has type '" + argument.type + "', expected '" + expectedValueType + "'",
+                                "E_BASE_ARGUMENT_TYPE", argument.symbol);
+                        if (IsValueReferenceType(expectedType) &&
+                            !IsConstValueReferenceType(expectedType)) {
+                            if (!argument.isLValue)
+                                Report("mutable reference base constructor argument " +
+                                    std::to_string(index + 1) + " requires an lvalue",
+                                    "E_VALUE_REF_REQUIRES_LVALUE", argument.symbol);
+                            else if (IsConstMutationTarget(
+                                stmt->baseArguments[index].get(), argument))
+                                Report("mutable reference base constructor argument " +
+                                    std::to_string(index + 1) + " cannot borrow a const value",
+                                    "E_VALUE_REF_CONST_ARGUMENT", argument.symbol);
+                        }
                     }
                 }
             }

@@ -26,10 +26,10 @@ namespace Absolute {
         if (const auto found = scopes.back().find(name); found != scopes.back().end()) {
             const Symbol* existing = Get(found->second);
             const bool callable = kind == SymbolKind::Function || kind == SymbolKind::Method ||
-                kind == SymbolKind::Indexer;
+                kind == SymbolKind::Indexer || kind == SymbolKind::Constructor;
             const bool existingCallable = existing &&
                 (existing->kind == SymbolKind::Function || existing->kind == SymbolKind::Method ||
-                    existing->kind == SymbolKind::Indexer);
+                    existing->kind == SymbolKind::Indexer || existing->kind == SymbolKind::Constructor);
             if (!callable || !existingCallable) return std::nullopt;
             const auto sameParameterStorage = [](const std::string& left,
                 const std::string& right) {
@@ -39,7 +39,7 @@ namespace Absolute {
             for (const Symbol& symbol : symbols) {
                 if (symbol.scopeDepth == ScopeDepth() && symbol.name == name &&
                     (symbol.kind == SymbolKind::Function || symbol.kind == SymbolKind::Method ||
-                        symbol.kind == SymbolKind::Indexer) &&
+                        symbol.kind == SymbolKind::Indexer || symbol.kind == SymbolKind::Constructor) &&
                     symbol.parameterTypes.size() == parameterTypes.size() &&
                     std::equal(symbol.parameterTypes.begin(), symbol.parameterTypes.end(),
                         parameterTypes.begin(), sameParameterStorage))

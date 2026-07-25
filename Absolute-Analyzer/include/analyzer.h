@@ -187,7 +187,8 @@ namespace Absolute {
 
         struct TypeDefinition {
             std::unordered_map<std::string, std::vector<MemberSignature>> members;
-            std::optional<MemberSignature> constructor;
+            // Overloaded constructors (unique parameter-type signatures).
+            std::vector<MemberSignature> constructors;
             std::vector<std::string> parents;
             std::vector<std::string> enumMembers;
             TypeKind kind = TypeKind::Other;
@@ -450,8 +451,15 @@ namespace Absolute {
             const std::vector<std::string>& parameterTypes) const;
         void ValidateInterfaceImplementation(const std::string& className);
         std::string DirectBaseClass(const std::string& className) const;
+        // Zero-argument constructor parameters when one exists (nullopt = no zero-arg ctor).
         std::optional<std::vector<std::string>> ConstructorParameterTypes(
             const std::string& typeName) const;
+        std::vector<MemberSignature> ConstructorsOf(const std::string& typeName) const;
+        const MemberSignature* SelectConstructor(
+            const std::vector<MemberSignature>& constructors,
+            const std::vector<Result>& arguments,
+            const std::string& displayName,
+            const std::unordered_map<std::string, std::string>& substitutions = {});
         std::vector<SymbolId> FindFunctionCandidates(const std::string& name) const;
         std::vector<SymbolId> FindExtensionCandidates(const std::string& name) const;
         SymbolId SelectOverload(const std::vector<SymbolId>& candidates,

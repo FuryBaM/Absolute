@@ -362,10 +362,10 @@ namespace Absolute {
         builder.ClearInsertionPoint();
     }
 
-    void CodeGenerator::Impl::EmitConstructor(ClassInfo& info) {
-        if (!ClassNeedsConstructor(info)) return;
-        llvm::Function* function = DeclareConstructorFunction(info);
-        if (!function->empty()) return;
+    void CodeGenerator::Impl::EmitConstructorOverload(
+        ClassInfo& info, ConstructorDeclStmt* constructor) {
+        llvm::Function* function = DeclareConstructorFunction(info, constructor);
+        if (!function || !function->empty()) return;
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
         builder.SetInsertPoint(entry);
         PushScope();
@@ -377,32 +377,74 @@ namespace Absolute {
         currentClassName = info.name;
         currentThis = function->getArg(0);
         currentReturnTypeName = "void";
-        if (info.constructor)
-            for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
+        if (constructor)
+            for (size_t index = 0; index < constructor->parameters.size(); ++index)
                 BindCallableParameter(*function->getArg(static_cast<unsigned>(index + 1)),
-                    *info.constructor->parameters[index]);
+                    *constructor->parameters[index]);
         if (!info.baseClass.empty()) {
             auto base = classes.find(info.baseClass);
             if (base == classes.end()) Fail("missing base class '" + info.baseClass + "'");
             if (ClassNeedsConstructor(base->second)) {
-                llvm::Function* baseConstructor = module->getFunction(info.baseClass + ".__ctor");
-                if (!baseConstructor) Fail("missing base constructor for '" + info.baseClass + "'");
-                std::vector<llvm::Value*> arguments;
-                std::vector<std::string> parameterTypes;
-                if (base->second.constructor) {
-                    for (const auto& parameter : base->second.constructor->parameters)
-                        parameterTypes.push_back(SubstituteCodegenType(
-                            CallableParameterTypeName(*parameter), base->second.substitutions));
+                std::vector<std::string> baseParameterTypes;
+                if (constructor && constructor->hasExplicitBaseCall) {
+                    // Match base overload by evaluated argument types from semantic info when present.
+                    for (const auto& argument : constructor->baseArguments) {
+                        if (const ExpressionInfo* infoArg = analyzer
+                            ? analyzer->GetExpressionInfo(*argument) : nullptr)
+                            baseParameterTypes.push_back(infoArg->type);
+                        else
+                            baseParameterTypes.push_back(SemanticType(argument.get()));
+                    }
+                    // Prefer exact base constructor signature sizes when unique match by arity.
+                    if (base->second.constructors.size() == 1) {
+                        baseParameterTypes = ConstructorParameterTypeNames(
+                            base->second.constructors.front(), base->second.substitutions);
+                    }
+                    else {
+                        for (ConstructorDeclStmt* baseCtor : base->second.constructors) {
+                            auto candidate = ConstructorParameterTypeNames(
+                                baseCtor, base->second.substitutions);
+                            if (candidate.size() == constructor->baseArguments.size()) {
+                                baseParameterTypes = std::move(candidate);
+                                break;
+                            }
+                        }
+                    }
                 }
-                if (info.constructor && info.constructor->hasExplicitBaseCall) {
+                else if (base->second.constructors.empty()) {
+                    baseParameterTypes.clear();
+                }
+                else {
+                    for (ConstructorDeclStmt* baseCtor : base->second.constructors) {
+                        auto candidate = ConstructorParameterTypeNames(
+                            baseCtor, base->second.substitutions);
+                        if (candidate.empty()) {
+                            baseParameterTypes = std::move(candidate);
+                            break;
+                        }
+                    }
+                }
+                llvm::Function* baseConstructor = module->getFunction(
+                    ConstructorLinkName(info.baseClass, baseParameterTypes));
+                if (!baseConstructor && base->second.constructors.size() == 1) {
+                    baseConstructor = module->getFunction(ConstructorLinkName(
+                        info.baseClass,
+                        ConstructorParameterTypeNames(
+                            base->second.constructors.front(), base->second.substitutions)));
+                }
+                if (!baseConstructor)
+                    Fail("missing base constructor for '" + info.baseClass + "'");
+                std::vector<llvm::Value*> arguments;
+                std::vector<std::string> parameterTypes = baseParameterTypes;
+                if (constructor && constructor->hasExplicitBaseCall) {
                     for (size_t index = 0;
-                        index < info.constructor->baseArguments.size(); ++index) {
+                        index < constructor->baseArguments.size(); ++index) {
                         const std::string parameterType = index < parameterTypes.size()
                             ? parameterTypes[index] : std::string{};
                         std::vector<llvm::Value*> temporaryArrays;
                         std::vector<llvm::Value*> temporaryClosures;
                         arguments.push_back(EvaluateCallArgument(
-                            info.constructor->baseArguments[index].get(),
+                            constructor->baseArguments[index].get(),
                             temporaryArrays, temporaryClosures, parameterType));
                     }
                 }
@@ -411,7 +453,7 @@ namespace Absolute {
                 EmitExceptionCheck();
             }
         }
-        if (info.constructor && info.constructor->body) info.constructor->body->Accept(visitor);
+        if (constructor && constructor->body) constructor->body->Accept(visitor);
         FinishClassCallable(*function);
         PopScope();
         currentClassName = oldClass;
@@ -419,6 +461,16 @@ namespace Absolute {
         currentReturnTypeName = oldReturn;
         currentGenericSubstitutions = oldSubstitutions;
         builder.ClearInsertionPoint();
+    }
+
+    void CodeGenerator::Impl::EmitConstructor(ClassInfo& info) {
+        if (!ClassNeedsConstructor(info)) return;
+        if (info.constructors.empty()) {
+            EmitConstructorOverload(info, nullptr);
+            return;
+        }
+        for (ConstructorDeclStmt* constructor : info.constructors)
+            EmitConstructorOverload(info, constructor);
     }
 
     void CodeGenerator::Impl::EmitClassBodies(ClassInfo& info) {
@@ -533,31 +585,40 @@ namespace Absolute {
     }
 
     void CodeGenerator::Impl::EmitStructConstructor(StructInfo& info) {
-        if (!info.constructor) return;
-        llvm::Function* function = DeclareConstructorFunction(info);
-        if (!function->empty()) return;
-        llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
-        builder.SetInsertPoint(entry);
-        PushScope();
-        const std::string oldClass = currentClassName;
-        llvm::Value* oldThis = currentThis;
-        const std::string oldReturn = currentReturnTypeName;
-        const auto oldSubstitutions = currentGenericSubstitutions;
-        currentGenericSubstitutions = info.substitutions;
-        currentClassName = info.name;
-        currentThis = function->getArg(0);
-        currentReturnTypeName = "void";
-        for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
-            BindCallableParameter(*function->getArg(static_cast<unsigned>(index + 1)),
-                *info.constructor->parameters[index]);
-        if (info.constructor->body) info.constructor->body->Accept(visitor);
-        FinishClassCallable(*function);
-        PopScope();
-        currentClassName = oldClass;
-        currentThis = oldThis;
-        currentReturnTypeName = oldReturn;
-        currentGenericSubstitutions = oldSubstitutions;
-        builder.ClearInsertionPoint();
+        if (info.constructors.empty()) return;
+        for (ConstructorDeclStmt* constructor : info.constructors) {
+            std::vector<std::string> parameterTypes =
+                ConstructorParameterTypeNames(constructor, info.substitutions);
+            llvm::Function* function = module->getFunction(
+                ConstructorLinkName(info.name, parameterTypes));
+            if (!function) function = DeclareConstructorFunction(info);
+            if (!function || !function->empty()) continue;
+            // Re-fetch the overload we are emitting.
+            function = module->getFunction(ConstructorLinkName(info.name, parameterTypes));
+            if (!function || !function->empty()) continue;
+            llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+            builder.SetInsertPoint(entry);
+            PushScope();
+            const std::string oldClass = currentClassName;
+            llvm::Value* oldThis = currentThis;
+            const std::string oldReturn = currentReturnTypeName;
+            const auto oldSubstitutions = currentGenericSubstitutions;
+            currentGenericSubstitutions = info.substitutions;
+            currentClassName = info.name;
+            currentThis = function->getArg(0);
+            currentReturnTypeName = "void";
+            for (size_t index = 0; index < constructor->parameters.size(); ++index)
+                BindCallableParameter(*function->getArg(static_cast<unsigned>(index + 1)),
+                    *constructor->parameters[index]);
+            if (constructor->body) constructor->body->Accept(visitor);
+            FinishClassCallable(*function);
+            PopScope();
+            currentClassName = oldClass;
+            currentThis = oldThis;
+            currentReturnTypeName = oldReturn;
+            currentGenericSubstitutions = oldSubstitutions;
+            builder.ClearInsertionPoint();
+        }
     }
 
     void CodeGenerator::Impl::EmitStructBodies(StructInfo& info) {

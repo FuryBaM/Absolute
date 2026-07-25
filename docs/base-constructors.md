@@ -54,5 +54,31 @@ Constructing `Leaf` calls `Root()`, then the synthetic `Middle()` body, and
 finally the synthetic `Leaf()` body. Base-constructor failures use the normal
 exception propagation path, so the derived body does not run after a failure.
 
-Absolute currently supports one constructor declaration per class. Constructor
-overloads and named base-constructor selection remain future language work.
+## Constructor overloads
+
+Classes and structs may declare multiple constructors with distinct parameter
+type lists (same rules as method overloads). Calls select the best applicable
+constructor; ambiguity and no-match are semantic errors
+(`E_AMBIGUOUS_CONSTRUCTOR`, `E_NO_MATCHING_CONSTRUCTOR`).
+
+```absolute
+class Point {
+    public int32 x;
+    public int32 y;
+
+    public Point() { x = 0; y = 0; }
+    public Point(int32 v) { x = v; y = v; }
+    public Point(int32 px, int32 py) { x = px; y = py; }
+}
+
+Point* a = new Point();
+Point* b = new Point(3);
+Point* c = new Point(1, 2);
+```
+
+`base(...)` in a derived constructor participates in the same overload
+resolution against the direct base class constructors. Implicit `base()` still
+requires a zero-argument (or synthetic) base constructor.
+
+LLVM symbols are mangled with parameter types via the same `CallableKey`
+scheme as methods (`Type.__ctor`, `Type.__ctor$int32`, …).

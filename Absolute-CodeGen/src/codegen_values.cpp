@@ -473,14 +473,15 @@ namespace Absolute {
         if (classAllocation) {
             Impl::ClassInfo& info = impl->classes.at(pointeeType);
             impl->InitializeObject(pointer, info);
-            if (llvm::Function* constructor = impl->module->getFunction(info.name + ".__ctor")) {
+            if (llvm::Function* constructor = impl->LookupConstructorFunction(info.name, expr)) {
                 std::vector<llvm::Value*> arguments;
                 std::vector<std::string> parameterTypes;
-                if (info.constructor) {
-                    for (const auto& parameter : info.constructor->parameters)
-                        parameterTypes.push_back(SubstituteCodegenType(
-                            impl->CallableParameterTypeName(*parameter), info.substitutions));
-                }
+                if (const ExpressionInfo* callInfo = impl->analyzer
+                    ? impl->analyzer->GetExpressionInfo(*expr) : nullptr)
+                    parameterTypes = callInfo->parameterTypes;
+                else if (info.constructors.size() == 1)
+                    parameterTypes = impl->ConstructorParameterTypeNames(
+                        info.constructors.front(), info.substitutions);
                 std::vector<llvm::Value*> temporaryArrays;
                 std::vector<llvm::Value*> temporaryClosures;
                 for (size_t index = 0; index < expr->arguments.size(); ++index)
@@ -493,8 +494,8 @@ namespace Absolute {
                     rawAllocation ? nullptr : result,
                     rawAllocation ? pointer : nullptr);
             }
-            else if (!expr->arguments.empty())
-                impl->Fail("class '" + info.name + "' has no constructor");
+            else if (!expr->arguments.empty() || !info.constructors.empty())
+                impl->Fail("class '" + info.name + "' has no matching constructor");
             impl->value = result;
             impl->valueCreatesManagedOwner = !rawAllocation;
             impl->valueManagedPointee = rawAllocation ? nullptr : pointer;
@@ -504,14 +505,17 @@ namespace Absolute {
         if (structAllocation) {
             Impl::StructInfo& info = impl->structs.at(pointeeType);
             impl->InitializeObject(pointer, info);
-            if (info.constructor) {
-                llvm::Function* constructor = impl->module->getFunction(info.name + ".__ctor");
+            if (!info.constructors.empty()) {
+                llvm::Function* constructor = impl->LookupConstructorFunction(info.name, expr);
                 if (!constructor) impl->Fail("missing constructor for '" + info.name + "'");
                 std::vector<llvm::Value*> arguments;
                 std::vector<std::string> parameterTypes;
-                for (const auto& parameter : info.constructor->parameters)
-                    parameterTypes.push_back(SubstituteCodegenType(
-                        impl->CallableParameterTypeName(*parameter), info.substitutions));
+                if (const ExpressionInfo* callInfo = impl->analyzer
+                    ? impl->analyzer->GetExpressionInfo(*expr) : nullptr)
+                    parameterTypes = callInfo->parameterTypes;
+                else if (info.constructors.size() == 1)
+                    parameterTypes = impl->ConstructorParameterTypeNames(
+                        info.constructors.front(), info.substitutions);
                 std::vector<llvm::Value*> temporaryArrays;
                 std::vector<llvm::Value*> temporaryClosures;
                 for (size_t index = 0; index < expr->arguments.size(); ++index)
@@ -644,15 +648,10 @@ namespace Absolute {
             return;
         }
         llvm::StructType* llvmType = nullptr;
-        std::string constructorName;
-        if (auto found = impl->classes.find(typeName); found != impl->classes.end()) {
+        if (auto found = impl->classes.find(typeName); found != impl->classes.end())
             llvmType = found->second.llvmType;
-            constructorName = found->second.name + ".__ctor";
-        }
-        else if (auto found = impl->structs.find(typeName); found != impl->structs.end()) {
+        else if (auto found = impl->structs.find(typeName); found != impl->structs.end())
             llvmType = found->second.llvmType;
-            constructorName = found->second.name + ".__ctor";
-        }
         else impl->Fail("type '" + typeName + "' is not a class or struct");
 
         llvm::AllocaInst* address = impl->CreateEntryAlloca(*function, llvmType, name);
@@ -663,8 +662,10 @@ namespace Absolute {
             llvm::Value* initial = impl->Coerce(impl->Evaluate(expr->value.get()), llvmType);
             impl->builder.CreateStore(initial, address);
         }
-        else if (llvm::Function* constructor = impl->module->getFunction(constructorName);
+        else if (llvm::Function* constructor =
+            impl->module->getFunction(impl->ConstructorLinkName(typeName, {}));
             constructor && constructor->arg_size() == 1) {
+            // Zero-argument constructor (declared or synthetic).
             impl->builder.CreateCall(constructor, {address});
             impl->EmitExceptionCheck();
         }

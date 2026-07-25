@@ -579,22 +579,41 @@ namespace Absolute {
             Report("primitive allocation accepts at most one initializer");
         std::vector<std::string> parameters;
         if (!primitive) {
-            const auto found = types.find(definitionName);
-            if (found != types.end() && found->second.constructor) {
-                RequireAccess(found->second.constructor->access, definitionName,
-                    definitionName, found->second.constructor->symbol);
-                parameters = found->second.constructor->parameterTypes;
+            std::vector<Result> evaluated;
+            evaluated.reserve(expr->arguments.size());
+            for (const auto& argument : expr->arguments)
+                evaluated.push_back(Evaluate(argument.get()));
+            std::vector<MemberSignature> constructors = ConstructorsOf(constructedType);
+            const MemberSignature* selected = SelectConstructor(
+                constructors, evaluated, constructedType, substitutions);
+            if (selected) {
+                RequireAccess(selected->access, definitionName,
+                    definitionName, selected->symbol);
+                parameters = selected->parameterTypes;
                 for (std::string& parameter : parameters)
                     parameter = SubstituteGenericType(parameter, substitutions);
             }
-            if (expr->arguments.size() != parameters.size())
-                Report("constructor of '" + constructedType + "' expects " +
-                    std::to_string(parameters.size()) + " argument(s), got " +
-                    std::to_string(expr->arguments.size()));
+            for (size_t index = 0; index < expr->arguments.size(); ++index) {
+                const std::string expected = index < parameters.size()
+                    ? ValueReferenceBaseType(parameters[index]) : std::string{};
+                const Result& value = evaluated[index];
+                if (!expected.empty() && !IsAssignable(expected, value.type))
+                    Report("constructor argument " + std::to_string(index + 1) + " has type '" +
+                        value.type + "', expected '" + expected + "'");
+                CheckManagedMoveArgument(value, expected, index, "constructor");
+            }
+            Result allocation{InvalidSymbolId,
+                (rawAllocation ? "raw " : "") + constructedType + "*", false,
+                !rawAllocation, false, InitializationState::Initialized,
+                PointerValidity::Live, InvalidSymbolId};
+            allocation.createsRawOwner = rawAllocation;
+            Save(expr, std::move(allocation));
+            if (!parameters.empty() || selected)
+                expressionInfo[expr].parameterTypes = parameters;
+            return;
         }
         for (size_t index = 0; index < expr->arguments.size(); ++index) {
-            const std::string expected = primitive ? constructedType :
-                (index < parameters.size() ? parameters[index] : std::string{});
+            const std::string expected = constructedType;
             const Result value = EvaluateExpected(expr->arguments[index].get(), expected);
             if (!expected.empty() && !IsAssignable(expected, value.type))
                 Report("constructor argument " + std::to_string(index + 1) + " has type '" +
@@ -704,10 +723,16 @@ namespace Absolute {
             definition != types.end() && definition->second.kind == TypeKind::Interface)
             Report("interface '" + type + "' must be used through raw or managed pointer");
         else if (!expr->value) {
+            // Default stack construction uses the zero-argument constructor.
             if (const auto definition = types.find(definitionName);
-                definition != types.end() && definition->second.constructor)
-                RequireAccess(definition->second.constructor->access, definitionName,
-                    definitionName, definition->second.constructor->symbol);
+                definition != types.end()) {
+                for (const MemberSignature& constructor : definition->second.constructors) {
+                    if (!constructor.parameterTypes.empty()) continue;
+                    RequireAccess(constructor.access, definitionName,
+                        definitionName, constructor.symbol);
+                    break;
+                }
+            }
         }
         Result value;
         if (expr->value) value = Evaluate(expr->value.get());

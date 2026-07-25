@@ -216,8 +216,7 @@ namespace Absolute {
             else if (auto* method = dynamic_cast<FunctionDeclStmt*>(member.get()))
                 info.ownMethods.push_back(method);
             else if (auto* constructor = dynamic_cast<ConstructorDeclStmt*>(member.get())) {
-                if (info.constructor) Fail("class '" + name + "' has multiple constructors");
-                info.constructor = constructor;
+                info.constructors.push_back(constructor);
             }
         }
         classes.emplace(name, std::move(info));
@@ -262,8 +261,7 @@ namespace Absolute {
             else if (auto* method = dynamic_cast<FunctionDeclStmt*>(member.get()))
                 info.ownMethods.push_back(method);
             else if (auto* constructor = dynamic_cast<ConstructorDeclStmt*>(member.get())) {
-                if (info.constructor) Fail("struct '" + name + "' has multiple constructors");
-                info.constructor = constructor;
+                info.constructors.push_back(constructor);
             }
         }
         structs.emplace(name, std::move(info));
@@ -832,10 +830,60 @@ namespace Absolute {
 
 
     bool CodeGenerator::Impl::ClassNeedsConstructor(const ClassInfo& info) const {
-        if (info.constructor) return true;
+        if (!info.constructors.empty()) return true;
         if (info.baseClass.empty()) return false;
         const auto base = classes.find(info.baseClass);
         return base != classes.end() && ClassNeedsConstructor(base->second);
+    }
+
+    std::vector<std::string> CodeGenerator::Impl::ConstructorParameterTypeNames(
+        ConstructorDeclStmt* constructor,
+        const std::unordered_map<std::string, std::string>& substitutions) {
+        std::vector<std::string> parameterTypes;
+        if (!constructor) return parameterTypes;
+        parameterTypes.reserve(constructor->parameters.size());
+        for (const auto& parameter : constructor->parameters)
+            parameterTypes.push_back(SubstituteCodegenType(
+                CallableParameterTypeName(*parameter), substitutions));
+        return parameterTypes;
+    }
+
+    std::string CodeGenerator::Impl::ConstructorLinkName(
+        const std::string& typeName,
+        const std::vector<std::string>& parameterTypes) const {
+        return CallableKey(typeName + ".__ctor", parameterTypes);
+    }
+
+    llvm::Function* CodeGenerator::Impl::LookupConstructorFunction(
+        const std::string& typeName, Expression* call) {
+        std::vector<std::string> parameterTypes;
+        if (analyzer && call) {
+            if (const ExpressionInfo* info = analyzer->GetExpressionInfo(*call))
+                parameterTypes = info->parameterTypes;
+        }
+        if (llvm::Function* function =
+            module->getFunction(ConstructorLinkName(typeName, parameterTypes)))
+            return function;
+        // Fallback: unique constructor on the type.
+        if (const auto found = classes.find(typeName); found != classes.end()) {
+            if (found->second.constructors.size() == 1) {
+                const auto params = ConstructorParameterTypeNames(
+                    found->second.constructors.front(), found->second.substitutions);
+                return module->getFunction(ConstructorLinkName(typeName, params));
+            }
+            if (found->second.constructors.empty())
+                return module->getFunction(ConstructorLinkName(typeName, {}));
+        }
+        if (const auto found = structs.find(typeName); found != structs.end()) {
+            if (found->second.constructors.size() == 1) {
+                const auto params = ConstructorParameterTypeNames(
+                    found->second.constructors.front(), found->second.substitutions);
+                return module->getFunction(ConstructorLinkName(typeName, params));
+            }
+            if (found->second.constructors.empty())
+                return module->getFunction(ConstructorLinkName(typeName, {}));
+        }
+        return nullptr;
     }
 
     bool CodeGenerator::Impl::RuntimeTypeDerivesFrom(
@@ -887,62 +935,68 @@ namespace Absolute {
         return result;
     }
 
-    llvm::Function* CodeGenerator::Impl::DeclareConstructorFunction(ClassInfo& info) {
-        if (!ClassNeedsConstructor(info)) return nullptr;
+    llvm::Function* CodeGenerator::Impl::DeclareConstructorFunction(
+        ClassInfo& info, ConstructorDeclStmt* constructor) {
+        if (!constructor && !ClassNeedsConstructor(info)) return nullptr;
+        std::vector<std::string> parameterTypes =
+            ConstructorParameterTypeNames(constructor, info.substitutions);
         std::vector<llvm::Type*> parameters{builder.getPtrTy()};
-        if (info.constructor)
-            for (const auto& parameter : info.constructor->parameters)
-                parameters.push_back(AbiParameterType(SubstituteCodegenType(
-                    CallableParameterTypeName(*parameter), info.substitutions)));
+        for (const std::string& parameterType : parameterTypes)
+            parameters.push_back(AbiParameterType(parameterType));
         llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
-        const std::string name = info.name + ".__ctor";
-        llvm::Function* function = module->getFunction(name);
-        if (!function)
-            function = llvm::Function::Create(type, llvm::Function::ExternalLinkage, name, *module);
-        function->setCallingConv(llvm::CallingConv::C);
-        if (info.constructor) ApplyCallableAttributes(*function, *info.constructor);
-        if (info.constructor) {
-            std::vector<std::string> parameterTypes;
-            for (const auto& parameter : info.constructor->parameters)
-                parameterTypes.push_back(SubstituteCodegenType(
-                    CallableParameterTypeName(*parameter), info.substitutions));
-            ApplyValueReferenceParameterAttributes(*function, 1, parameterTypes);
-        }
-        function->getArg(0)->setName("this");
-        if (info.constructor)
-            for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
-                function->getArg(static_cast<unsigned>(index + 1))->setName(
-                    IdentifierName(info.constructor->parameters[index]->name.get()));
-        return function;
-    }
-
-    llvm::Function* CodeGenerator::Impl::DeclareConstructorFunction(StructInfo& info) {
-        if (!info.constructor) return nullptr;
-        std::vector<llvm::Type*> parameters{builder.getPtrTy()};
-        for (const auto& parameter : info.constructor->parameters)
-            parameters.push_back(AbiParameterType(SubstituteCodegenType(
-                CallableParameterTypeName(*parameter), info.substitutions)));
-        llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
-        const std::string name = info.name + ".__ctor";
+        const std::string name = ConstructorLinkName(info.name, parameterTypes);
         llvm::Function* function = module->getFunction(name);
         if (!function)
             function = llvm::Function::Create(type, llvm::Function::ExternalLinkage, name, *module);
         if (function->getFunctionType() != type)
             Fail("conflicting constructor declaration '" + name + "'");
         function->setCallingConv(llvm::CallingConv::C);
-        ApplyCallableAttributes(*function, *info.constructor);
-        {
-            std::vector<std::string> parameterTypes;
-            for (const auto& parameter : info.constructor->parameters)
-                parameterTypes.push_back(SubstituteCodegenType(
-                    CallableParameterTypeName(*parameter), info.substitutions));
-            ApplyValueReferenceParameterAttributes(*function, 1, parameterTypes);
-        }
+        if (constructor) ApplyCallableAttributes(*function, *constructor);
+        ApplyValueReferenceParameterAttributes(*function, 1, parameterTypes);
         function->getArg(0)->setName("this");
-        for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
-            function->getArg(static_cast<unsigned>(index + 1))->setName(
-                IdentifierName(info.constructor->parameters[index]->name.get()));
+        if (constructor)
+            for (size_t index = 0; index < constructor->parameters.size(); ++index)
+                function->getArg(static_cast<unsigned>(index + 1))->setName(
+                    IdentifierName(constructor->parameters[index]->name.get()));
         return function;
+    }
+
+    llvm::Function* CodeGenerator::Impl::DeclareConstructorFunction(ClassInfo& info) {
+        if (!info.constructors.empty()) {
+            llvm::Function* last = nullptr;
+            for (ConstructorDeclStmt* constructor : info.constructors)
+                last = DeclareConstructorFunction(info, constructor);
+            return last;
+        }
+        return DeclareConstructorFunction(info, nullptr);
+    }
+
+    llvm::Function* CodeGenerator::Impl::DeclareConstructorFunction(StructInfo& info) {
+        if (info.constructors.empty()) return nullptr;
+        llvm::Function* last = nullptr;
+        for (ConstructorDeclStmt* constructor : info.constructors) {
+            std::vector<std::string> parameterTypes =
+                ConstructorParameterTypeNames(constructor, info.substitutions);
+            std::vector<llvm::Type*> parameters{builder.getPtrTy()};
+            for (const std::string& parameterType : parameterTypes)
+                parameters.push_back(AbiParameterType(parameterType));
+            llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
+            const std::string name = ConstructorLinkName(info.name, parameterTypes);
+            llvm::Function* function = module->getFunction(name);
+            if (!function)
+                function = llvm::Function::Create(type, llvm::Function::ExternalLinkage, name, *module);
+            if (function->getFunctionType() != type)
+                Fail("conflicting constructor declaration '" + name + "'");
+            function->setCallingConv(llvm::CallingConv::C);
+            ApplyCallableAttributes(*function, *constructor);
+            ApplyValueReferenceParameterAttributes(*function, 1, parameterTypes);
+            function->getArg(0)->setName("this");
+            for (size_t index = 0; index < constructor->parameters.size(); ++index)
+                function->getArg(static_cast<unsigned>(index + 1))->setName(
+                    IdentifierName(constructor->parameters[index]->name.get()));
+            last = function;
+        }
+        return last;
     }
 
     llvm::Function* CodeGenerator::Impl::DeclareClassDestructor(ClassInfo& info) {

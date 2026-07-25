@@ -63,7 +63,8 @@
             std::vector<InstanceDeclExpr*> ownStaticObjectFields;
             std::vector<FunctionDeclStmt*> ownMethods;
             std::vector<PropertyDeclStmt*> ownProperties;
-            ConstructorDeclStmt* constructor = nullptr;
+            // Overloaded constructors; empty means synthetic zero-arg if base needs one.
+            std::vector<ConstructorDeclStmt*> constructors;
             std::vector<ClassField> fields;
             std::unordered_map<std::string, ClassField> fieldByName;
             std::vector<StaticField> staticFields;
@@ -88,7 +89,7 @@
             std::vector<InstanceDeclExpr*> ownStaticObjectFields;
             std::vector<FunctionDeclStmt*> ownMethods;
             std::vector<PropertyDeclStmt*> ownProperties;
-            ConstructorDeclStmt* constructor = nullptr;
+            std::vector<ConstructorDeclStmt*> constructors;
             std::vector<ClassField> fields;
             std::unordered_map<std::string, ClassField> fieldByName;
             std::vector<StaticField> staticFields;

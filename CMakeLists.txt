@@ -711,6 +711,15 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.base-constructor-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
+        NAME absolute.constructor-overloads-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/constructor-overloads.abs"
+    )
+    add_test(
+        NAME absolute.constructor-overload-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/constructor-overload-errors.abs"
+    )
+    set_tests_properties(absolute.constructor-overload-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.access-control-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/access-control.abs"
     )
@@ -848,6 +857,22 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-base-constructors PROPERTIES
             FIXTURES_REQUIRED absolute-base-constructors-executable
             PASS_REGULAR_EXPRESSION "base-constructors=ok"
+        )
+        add_test(
+            NAME absolute.build-constructor-overloads
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/constructor-overloads.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/constructor-overloads${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-constructor-overloads PROPERTIES
+            FIXTURES_SETUP absolute-constructor-overloads-executable
+        )
+        add_test(
+            NAME absolute.run-constructor-overloads
+            COMMAND "${CMAKE_BINARY_DIR}/constructor-overloads${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-constructor-overloads PROPERTIES
+            FIXTURES_REQUIRED absolute-constructor-overloads-executable
+            PASS_REGULAR_EXPRESSION "constructor-overloads=ok"
         )
         add_test(
             NAME absolute.build-access-control
