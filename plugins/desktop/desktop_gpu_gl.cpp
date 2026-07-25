@@ -110,6 +110,17 @@ extern "C" int64_t absolute_desktop_gpu_d3d11_sampler_create(
 extern "C" void absolute_desktop_gpu_d3d11_sampler_destroy(int64_t gpuHandle, int64_t samplerHandle);
 extern "C" void absolute_desktop_gpu_d3d11_bind_sampler(
     int64_t gpuHandle, int64_t samplerHandle, int32_t unit);
+extern "C" int64_t absolute_desktop_gpu_d3d12_texture_from_sprite(int64_t gpuHandle, int64_t spriteHandle);
+extern "C" void absolute_desktop_gpu_d3d12_texture_destroy(int64_t gpuHandle, int64_t textureHandle);
+extern "C" int32_t absolute_desktop_gpu_d3d12_texture_width(int64_t textureHandle);
+extern "C" int32_t absolute_desktop_gpu_d3d12_texture_height(int64_t textureHandle);
+extern "C" void absolute_desktop_gpu_d3d12_bind_texture(
+    int64_t gpuHandle, int64_t textureHandle, int32_t unit);
+extern "C" int64_t absolute_desktop_gpu_d3d12_sampler_create(
+    int64_t gpuHandle, int32_t filter, int32_t wrap);
+extern "C" void absolute_desktop_gpu_d3d12_sampler_destroy(int64_t gpuHandle, int64_t samplerHandle);
+extern "C" void absolute_desktop_gpu_d3d12_bind_sampler(
+    int64_t gpuHandle, int64_t samplerHandle, int32_t unit);
 
 #if defined(_WIN32)
 #define ABSOLUTE_GPU_WGL 1
@@ -1396,8 +1407,7 @@ extern "C" void absolute_desktop_gpu_draw_indexed(int64_t gpuHandle, int32_t ind
 extern "C" int64_t absolute_desktop_gpu_sampler_create_on(
     int64_t gpuHandle, int32_t filter, int32_t wrap) {
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
-        absolute_desktop_gpu_d3d12_unsupported("createSampler");
-        return 0;
+        return absolute_desktop_gpu_d3d12_sampler_create(gpuHandle, filter, wrap);
     }
     if (AbsoluteGpuIsD3D11(gpuHandle)) {
         return absolute_desktop_gpu_d3d11_sampler_create(gpuHandle, filter, wrap);
@@ -1424,6 +1434,10 @@ extern "C" int64_t absolute_desktop_gpu_sampler_create_on(
 }
 
 extern "C" void absolute_desktop_gpu_sampler_destroy(int64_t gpuHandle, int64_t samplerHandle) {
+    if (AbsoluteGpuIsD3D12(gpuHandle)) {
+        absolute_desktop_gpu_d3d12_sampler_destroy(gpuHandle, samplerHandle);
+        return;
+    }
     if (AbsoluteGpuIsD3D11(gpuHandle)) {
         absolute_desktop_gpu_d3d11_sampler_destroy(gpuHandle, samplerHandle);
         return;
@@ -1442,6 +1456,10 @@ extern "C" void absolute_desktop_gpu_sampler_destroy(int64_t gpuHandle, int64_t 
 
 extern "C" void absolute_desktop_gpu_bind_sampler(
     int64_t gpuHandle, int64_t samplerHandle, int32_t unit) {
+    if (AbsoluteGpuIsD3D12(gpuHandle)) {
+        absolute_desktop_gpu_d3d12_bind_sampler(gpuHandle, samplerHandle, unit);
+        return;
+    }
     if (AbsoluteGpuIsD3D11(gpuHandle)) {
         absolute_desktop_gpu_d3d11_bind_sampler(gpuHandle, samplerHandle, unit);
         return;
@@ -1513,8 +1531,7 @@ extern "C" void absolute_desktop_gpu_set_uniform_2f(
 // Upload soft sprite 0x00RRGGBB as RGBA8 (0 = transparent). Flip rows for GL origin.
 extern "C" int64_t absolute_desktop_gpu_texture_from_sprite(int64_t gpuHandle, int64_t spriteHandle) {
     if (AbsoluteGpuIsD3D12(gpuHandle)) {
-        absolute_desktop_gpu_d3d12_unsupported("createTextureFromSprite");
-        return 0;
+        return absolute_desktop_gpu_d3d12_texture_from_sprite(gpuHandle, spriteHandle);
     }
     if (AbsoluteGpuIsD3D11(gpuHandle)) {
         return absolute_desktop_gpu_d3d11_texture_from_sprite(gpuHandle, spriteHandle);
@@ -1564,6 +1581,9 @@ extern "C" int64_t absolute_desktop_gpu_texture_from_sprite(int64_t gpuHandle, i
 }
 
 extern "C" int32_t absolute_desktop_gpu_texture_width(int64_t textureHandle) {
+    if (absolute_desktop_gpu_d3d12_is_resource(textureHandle)) {
+        return absolute_desktop_gpu_d3d12_texture_width(textureHandle);
+    }
     if (absolute_desktop_gpu_d3d11_is_resource(textureHandle)) {
         return absolute_desktop_gpu_d3d11_texture_width(textureHandle);
     }
@@ -1572,6 +1592,9 @@ extern "C" int32_t absolute_desktop_gpu_texture_width(int64_t textureHandle) {
 }
 
 extern "C" int32_t absolute_desktop_gpu_texture_height(int64_t textureHandle) {
+    if (absolute_desktop_gpu_d3d12_is_resource(textureHandle)) {
+        return absolute_desktop_gpu_d3d12_texture_height(textureHandle);
+    }
     if (absolute_desktop_gpu_d3d11_is_resource(textureHandle)) {
         return absolute_desktop_gpu_d3d11_texture_height(textureHandle);
     }
@@ -1580,6 +1603,10 @@ extern "C" int32_t absolute_desktop_gpu_texture_height(int64_t textureHandle) {
 }
 
 extern "C" void absolute_desktop_gpu_texture_destroy(int64_t gpuHandle, int64_t textureHandle) {
+    if (AbsoluteGpuIsD3D12(gpuHandle)) {
+        absolute_desktop_gpu_d3d12_texture_destroy(gpuHandle, textureHandle);
+        return;
+    }
     if (AbsoluteGpuIsD3D11(gpuHandle)) {
         absolute_desktop_gpu_d3d11_texture_destroy(gpuHandle, textureHandle);
         return;
@@ -1595,6 +1622,10 @@ extern "C" void absolute_desktop_gpu_texture_destroy(int64_t gpuHandle, int64_t 
 
 extern "C" void absolute_desktop_gpu_bind_texture(
     int64_t gpuHandle, int64_t textureHandle, int32_t unit) {
+    if (AbsoluteGpuIsD3D12(gpuHandle)) {
+        absolute_desktop_gpu_d3d12_bind_texture(gpuHandle, textureHandle, unit);
+        return;
+    }
     if (AbsoluteGpuIsD3D11(gpuHandle)) {
         absolute_desktop_gpu_d3d11_bind_texture(gpuHandle, textureHandle, unit);
         return;

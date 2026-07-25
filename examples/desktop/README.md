@@ -78,6 +78,8 @@ pong.exe
 | `d3d12-clear-smoke.abs` | Non-interactive D3D12 clear check |
 | `d3d12-triangle.abs` | D3D12 HLSL triangle + VB/PSO/draw |
 | `d3d12-triangle-smoke.abs` | Non-interactive D3D12 triangle resource check |
+| `d3d12-sprites.abs` | D3D12 textured ship + sampler + WASD |
+| `d3d12-sprites-smoke.abs` | Non-interactive D3D12 texture/sampler draw |
 
 ## API highlights
 
@@ -88,8 +90,8 @@ pong.exe
 - **Sprites:** `Desktop.Sprite(w,h)`, `fillRect`/`fillCircle`/`clear`, `window.drawSprite(sprite,x,y)`
 - **Images:** `loadBmp` / `loadPng` / `loadImage`, `colorKey`, `drawSpriteRect`
 - **Batch:** `Desktop.SpriteBatch`, `begin`/`drawRect`/`drawSprite`/`end`
-- **GPU:** `Desktop.Gpu(window, backend)`: OpenGL full RHI, D3D11/D3D12 mesh RHI
-  (D3D12 textures later); `BackendAuto` / `OpenGL` / `D3D11` / `D3D12`
+- **GPU:** `Desktop.Gpu(window, backend)`: OpenGL full RHI, D3D11/D3D12 full mesh
+  + textures/samplers; `BackendAuto` / `OpenGL` / `D3D11` / `D3D12`
 - **Text:** built-in 8×8 `drawText`; `Desktop.Font` + `drawFontText` / `measure`
 - **Audio:** `Desktop.Audio` + `loadWav` / `play` / `playLoop` / `stopAll`
 - **UI:** `Desktop.Ui` button/checkbox/slider/progress

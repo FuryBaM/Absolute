@@ -542,7 +542,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] D3D12 mesh RHI: HLSL shaders, root CBV b0, upload-heap VB/IB, PSO + input
   layout (POSITION/TEXCOORDn), draw/drawIndexed, uniforms; textures still
   GL/D3D11; examples `d3d12-triangle.abs`, `d3d12-triangle-smoke.abs`.
-- [ ] D3D12 textures/samplers; Vulkan backend and SPIR-V·DXIL·Metal IR.
+- [x] D3D12 textures/samplers: root SRV t0 + Sampler s0, DEFAULT+upload
+  `createTextureFromSprite` (RGBA8 color-key), `createSampler`
+  (nearest/linear, clamp/repeat/mirror), bind on draw; examples
+  `d3d12-sprites.abs`, `d3d12-sprites-smoke.abs`.
+- [ ] Vulkan backend and SPIR-V·DXIL·Metal IR.
 
 ### Native interop и платформы
 

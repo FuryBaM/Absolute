@@ -2,7 +2,7 @@
 // Lifecycle: create / beginFrame / clear / endFrame / present.
 // Mesh RHI: HLSL shaders, VB/IB (upload heaps), PSO + input layout,
 // draw/drawIndexed, float/int/float2 uniforms via root CBV b0.
-// Textures/samplers not yet (use D3D11 / OpenGL).
+// Textures/samplers: soft-sprite RGBA8 upload, SRV t0 + Sampler s0.
 
 #if !defined(_WIN32)
 
@@ -47,6 +47,14 @@ extern "C" void absolute_desktop_gpu_d3d12_set_uniform_f(int64_t, const char*, f
 extern "C" void absolute_desktop_gpu_d3d12_set_uniform_i(int64_t, const char*, int32_t) {}
 extern "C" void absolute_desktop_gpu_d3d12_set_uniform_2f(int64_t, const char*, float, float) {}
 extern "C" int32_t absolute_desktop_gpu_d3d12_is_resource(int64_t) { return 0; }
+extern "C" int64_t absolute_desktop_gpu_d3d12_texture_from_sprite(int64_t, int64_t) { return 0; }
+extern "C" void absolute_desktop_gpu_d3d12_texture_destroy(int64_t, int64_t) {}
+extern "C" int32_t absolute_desktop_gpu_d3d12_texture_width(int64_t) { return 0; }
+extern "C" int32_t absolute_desktop_gpu_d3d12_texture_height(int64_t) { return 0; }
+extern "C" void absolute_desktop_gpu_d3d12_bind_texture(int64_t, int64_t, int32_t) {}
+extern "C" int64_t absolute_desktop_gpu_d3d12_sampler_create(int64_t, int32_t, int32_t) { return 0; }
+extern "C" void absolute_desktop_gpu_d3d12_sampler_destroy(int64_t, int64_t) {}
+extern "C" void absolute_desktop_gpu_d3d12_bind_sampler(int64_t, int64_t, int32_t) {}
 
 #else
 
@@ -84,11 +92,18 @@ namespace {
     }
 
     constexpr UINT kFrameCount = 2;
+    constexpr UINT kMaxSrvDescriptors = 64;
+    constexpr UINT kMaxSamplerDescriptors = 16;
+    constexpr UINT kRootCbv = 0;
+    constexpr UINT kRootSrvTable = 1;
+    constexpr UINT kRootSamplerTable = 2;
 
     constexpr uint32_t kResShader = 0xD3125348u;   // 'D2SH'
     constexpr uint32_t kResBuffer = 0xD3125642u;   // 'D2VB'
     constexpr uint32_t kResIndex = 0xD3124942u;    // 'D2IB'
     constexpr uint32_t kResPipeline = 0xD312504Cu; // 'D2PL'
+    constexpr uint32_t kResTexture = 0xD3125445u;  // 'D2TE'
+    constexpr uint32_t kResSampler = 0xD3125341u;  // 'D2SA'
 
     uint32_t PeekRes(int64_t handle) {
         if (!handle) return 0;
@@ -218,6 +233,39 @@ namespace {
         }
     };
 
+    struct D3D12Texture {
+        uint32_t magic = kResTexture;
+        ComPtr<ID3D12Resource> resource;
+        int32_t width = 0;
+        int32_t height = 0;
+        int32_t srvIndex = -1;
+        D3D12_CPU_DESCRIPTOR_HANDLE srvCpu{};
+        D3D12_GPU_DESCRIPTOR_HANDLE srvGpu{};
+
+        void Destroy() {
+            resource.Reset();
+            srvIndex = -1;
+        }
+    };
+
+    struct D3D12Sampler {
+        uint32_t magic = kResSampler;
+        int32_t samplerIndex = -1;
+        D3D12_CPU_DESCRIPTOR_HANDLE cpu{};
+        D3D12_GPU_DESCRIPTOR_HANDLE gpu{};
+
+        void Destroy() {
+            samplerIndex = -1;
+        }
+    };
+
+    // Must match DesktopSprite in desktop_soft_sprites.cpp.
+    struct DesktopSpriteView {
+        int32_t width = 1;
+        int32_t height = 1;
+        std::vector<uint32_t> pixels;
+    };
+
     struct D3D12Device {
         uint32_t magic = kAbsoluteGpuMagicD3D12;
         int64_t windowHandle = 0;
@@ -227,6 +275,8 @@ namespace {
         ComPtr<ID3D12CommandQueue> queue;
         ComPtr<IDXGISwapChain3> swap;
         ComPtr<ID3D12DescriptorHeap> rtvHeap;
+        ComPtr<ID3D12DescriptorHeap> srvHeap;
+        ComPtr<ID3D12DescriptorHeap> samplerHeap;
         ComPtr<ID3D12Resource> renderTargets[kFrameCount];
         ComPtr<ID3D12CommandAllocator> allocators[kFrameCount];
         ComPtr<ID3D12GraphicsCommandList> cmdList;
@@ -235,9 +285,13 @@ namespace {
         HANDLE fenceEvent = nullptr;
 
         UINT rtvDescriptorSize = 0;
+        UINT srvDescriptorSize = 0;
+        UINT samplerDescriptorSize = 0;
         UINT frameIndex = 0;
         UINT64 fenceValues[kFrameCount] = {};
         UINT64 fenceValue = 0;
+        bool srvUsed[kMaxSrvDescriptors] = {};
+        bool samplerUsed[kMaxSamplerDescriptors] = {};
 
         bool valid = false;
         bool inFrame = false;
@@ -248,6 +302,11 @@ namespace {
         int64_t boundPipeline = 0;
         int64_t boundBuffer = 0;
         int64_t boundIndexBuffer = 0;
+        int64_t boundTexture = 0;
+        int64_t boundSampler = 0;
+        // Default 1x1 white + nearest/clamp so non-textured draws still have valid tables.
+        D3D12Texture* defaultTexture = nullptr;
+        D3D12Sampler* defaultSampler = nullptr;
 
         D3D12_CPU_DESCRIPTOR_HANDLE RtvHandle(UINT index) const {
             D3D12_CPU_DESCRIPTOR_HANDLE h = rtvHeap->GetCPUDescriptorHandleForHeapStart();
@@ -321,15 +380,40 @@ namespace {
         }
 
         bool CreateRootSignature() {
-            D3D12_ROOT_PARAMETER rp{};
-            rp.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-            rp.Descriptor.ShaderRegister = 0;
-            rp.Descriptor.RegisterSpace = 0;
-            rp.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+            // b0 CBV + t0 SRV table + s0 sampler table (matches D3D11 sprite path).
+            D3D12_DESCRIPTOR_RANGE srvRange{};
+            srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+            srvRange.NumDescriptors = 1;
+            srvRange.BaseShaderRegister = 0;
+            srvRange.RegisterSpace = 0;
+            srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+            D3D12_DESCRIPTOR_RANGE samplerRange{};
+            samplerRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
+            samplerRange.NumDescriptors = 1;
+            samplerRange.BaseShaderRegister = 0;
+            samplerRange.RegisterSpace = 0;
+            samplerRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+            D3D12_ROOT_PARAMETER params[3]{};
+            params[kRootCbv].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+            params[kRootCbv].Descriptor.ShaderRegister = 0;
+            params[kRootCbv].Descriptor.RegisterSpace = 0;
+            params[kRootCbv].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+            params[kRootSrvTable].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            params[kRootSrvTable].DescriptorTable.NumDescriptorRanges = 1;
+            params[kRootSrvTable].DescriptorTable.pDescriptorRanges = &srvRange;
+            params[kRootSrvTable].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+            params[kRootSamplerTable].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            params[kRootSamplerTable].DescriptorTable.NumDescriptorRanges = 1;
+            params[kRootSamplerTable].DescriptorTable.pDescriptorRanges = &samplerRange;
+            params[kRootSamplerTable].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
             D3D12_ROOT_SIGNATURE_DESC rsd{};
-            rsd.NumParameters = 1;
-            rsd.pParameters = &rp;
+            rsd.NumParameters = 3;
+            rsd.pParameters = params;
             rsd.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
             ComPtr<ID3DBlob> sig;
@@ -354,9 +438,99 @@ namespace {
             return true;
         }
 
+        bool CreateShaderHeaps() {
+            D3D12_DESCRIPTOR_HEAP_DESC srvDesc{};
+            srvDesc.NumDescriptors = kMaxSrvDescriptors;
+            srvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+            srvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+            HRESULT hr = device->CreateDescriptorHeap(&srvDesc, IID_PPV_ARGS(&srvHeap));
+            if (FAILED(hr) || !srvHeap) {
+                SetError("CreateDescriptorHeap (SRV) failed");
+                return false;
+            }
+            srvDescriptorSize =
+                device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+            D3D12_DESCRIPTOR_HEAP_DESC sampDesc{};
+            sampDesc.NumDescriptors = kMaxSamplerDescriptors;
+            sampDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
+            sampDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+            hr = device->CreateDescriptorHeap(&sampDesc, IID_PPV_ARGS(&samplerHeap));
+            if (FAILED(hr) || !samplerHeap) {
+                SetError("CreateDescriptorHeap (sampler) failed");
+                return false;
+            }
+            samplerDescriptorSize =
+                device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+            std::memset(srvUsed, 0, sizeof(srvUsed));
+            std::memset(samplerUsed, 0, sizeof(samplerUsed));
+            return true;
+        }
+
+        bool AllocSrvSlot(int32_t* outIndex, D3D12_CPU_DESCRIPTOR_HANDLE* cpu, D3D12_GPU_DESCRIPTOR_HANDLE* gpu) {
+            for (UINT i = 0; i < kMaxSrvDescriptors; ++i) {
+                if (srvUsed[i]) continue;
+                srvUsed[i] = true;
+                *outIndex = static_cast<int32_t>(i);
+                *cpu = srvHeap->GetCPUDescriptorHandleForHeapStart();
+                cpu->ptr += static_cast<SIZE_T>(i) * static_cast<SIZE_T>(srvDescriptorSize);
+                *gpu = srvHeap->GetGPUDescriptorHandleForHeapStart();
+                gpu->ptr += static_cast<SIZE_T>(i) * static_cast<SIZE_T>(srvDescriptorSize);
+                return true;
+            }
+            SetError("D3D12 SRV descriptor heap exhausted");
+            return false;
+        }
+
+        void FreeSrvSlot(int32_t index) {
+            if (index >= 0 && static_cast<UINT>(index) < kMaxSrvDescriptors) {
+                srvUsed[static_cast<UINT>(index)] = false;
+            }
+        }
+
+        bool AllocSamplerSlot(
+            int32_t* outIndex, D3D12_CPU_DESCRIPTOR_HANDLE* cpu, D3D12_GPU_DESCRIPTOR_HANDLE* gpu) {
+            for (UINT i = 0; i < kMaxSamplerDescriptors; ++i) {
+                if (samplerUsed[i]) continue;
+                samplerUsed[i] = true;
+                *outIndex = static_cast<int32_t>(i);
+                *cpu = samplerHeap->GetCPUDescriptorHandleForHeapStart();
+                cpu->ptr += static_cast<SIZE_T>(i) * static_cast<SIZE_T>(samplerDescriptorSize);
+                *gpu = samplerHeap->GetGPUDescriptorHandleForHeapStart();
+                gpu->ptr += static_cast<SIZE_T>(i) * static_cast<SIZE_T>(samplerDescriptorSize);
+                return true;
+            }
+            SetError("D3D12 sampler descriptor heap exhausted");
+            return false;
+        }
+
+        void FreeSamplerSlot(int32_t index) {
+            if (index >= 0 && static_cast<UINT>(index) < kMaxSamplerDescriptors) {
+                samplerUsed[static_cast<UINT>(index)] = false;
+            }
+        }
+
+        void BindDescriptorHeaps() {
+            if (!cmdOpen || !cmdList || !srvHeap || !samplerHeap) return;
+            ID3D12DescriptorHeap* heaps[] = {srvHeap.Get(), samplerHeap.Get()};
+            cmdList->SetDescriptorHeaps(2, heaps);
+        }
+
         void Destroy() {
             if (valid) WaitIdle();
             cmdOpen = false;
+            if (defaultTexture) {
+                FreeSrvSlot(defaultTexture->srvIndex);
+                defaultTexture->Destroy();
+                delete defaultTexture;
+                defaultTexture = nullptr;
+            }
+            if (defaultSampler) {
+                FreeSamplerSlot(defaultSampler->samplerIndex);
+                defaultSampler->Destroy();
+                delete defaultSampler;
+                defaultSampler = nullptr;
+            }
             ReleaseRenderTargets();
             cmdList.Reset();
             for (UINT i = 0; i < kFrameCount; ++i) {
@@ -365,6 +539,8 @@ namespace {
             }
             rootSig.Reset();
             rtvHeap.Reset();
+            srvHeap.Reset();
+            samplerHeap.Reset();
             swap.Reset();
             queue.Reset();
             fence.Reset();
@@ -379,6 +555,8 @@ namespace {
             boundPipeline = 0;
             boundBuffer = 0;
             boundIndexBuffer = 0;
+            boundTexture = 0;
+            boundSampler = 0;
         }
     };
 
@@ -407,6 +585,33 @@ namespace {
         return reinterpret_cast<D3D12Pipeline*>(static_cast<intptr_t>(handle));
     }
 
+    D3D12Texture* TextureFrom(int64_t handle) {
+        if (PeekRes(handle) != kResTexture) return nullptr;
+        return reinterpret_cast<D3D12Texture*>(static_cast<intptr_t>(handle));
+    }
+
+    D3D12Sampler* SamplerFrom(int64_t handle) {
+        if (PeekRes(handle) != kResSampler) return nullptr;
+        return reinterpret_cast<D3D12Sampler*>(static_cast<intptr_t>(handle));
+    }
+
+    DesktopSpriteView* SpriteFrom(int64_t handle) {
+        if (!handle) return nullptr;
+        return reinterpret_cast<DesktopSpriteView*>(static_cast<intptr_t>(handle));
+    }
+
+    D3D12_FILTER FilterToD3D12(int32_t filter) {
+        return filter == 1 ? D3D12_FILTER_MIN_MAG_MIP_LINEAR : D3D12_FILTER_MIN_MAG_MIP_POINT;
+    }
+
+    D3D12_TEXTURE_ADDRESS_MODE WrapToD3D12(int32_t wrap) {
+        switch (wrap) {
+        case 1: return D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        case 2: return D3D12_TEXTURE_ADDRESS_MODE_MIRROR;
+        default: return D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        }
+    }
+
     void Transition(
         ID3D12GraphicsCommandList* list,
         ID3D12Resource* resource,
@@ -420,6 +625,142 @@ namespace {
         b.Transition.StateAfter = after;
         b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
         list->ResourceBarrier(1, &b);
+    }
+
+    // Upload RGBA8 into a DEFAULT texture via a one-shot command list (must not be mid-frame).
+    bool CreateTextureFromRgba(
+        D3D12Device* dev,
+        int32_t width,
+        int32_t height,
+        const uint8_t* rgba,
+        D3D12Texture** outTex) {
+        if (!dev || !dev->device || !dev->cmdList || !rgba || width <= 0 || height <= 0 || !outTex) {
+            SetError("D3D12 texture create: invalid arguments");
+            return false;
+        }
+        if (dev->cmdOpen) {
+            SetError("D3D12 createTextureFromSprite cannot run during an open frame");
+            return false;
+        }
+
+        auto* tex = new D3D12Texture();
+        tex->width = width;
+        tex->height = height;
+        if (!dev->AllocSrvSlot(&tex->srvIndex, &tex->srvCpu, &tex->srvGpu)) {
+            delete tex;
+            return false;
+        }
+
+        D3D12_HEAP_PROPERTIES defaultHeap{};
+        defaultHeap.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC texDesc{};
+        texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        texDesc.Width = static_cast<UINT64>(width);
+        texDesc.Height = static_cast<UINT>(height);
+        texDesc.DepthOrArraySize = 1;
+        texDesc.MipLevels = 1;
+        texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        texDesc.SampleDesc.Count = 1;
+        texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+        HRESULT hr = dev->device->CreateCommittedResource(
+            &defaultHeap,
+            D3D12_HEAP_FLAG_NONE,
+            &texDesc,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            nullptr,
+            IID_PPV_ARGS(&tex->resource));
+        if (FAILED(hr) || !tex->resource) {
+            SetError("D3D12 CreateCommittedResource (texture) failed");
+            dev->FreeSrvSlot(tex->srvIndex);
+            delete tex;
+            return false;
+        }
+
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT layout{};
+        UINT numRows = 0;
+        UINT64 rowSize = 0;
+        UINT64 uploadSize = 0;
+        dev->device->GetCopyableFootprints(
+            &texDesc, 0, 1, 0, &layout, &numRows, &rowSize, &uploadSize);
+
+        ComPtr<ID3D12Resource> upload;
+        void* mapped = nullptr;
+        if (!CreateUploadBuffer(dev->device.Get(), uploadSize, upload, &mapped) || !mapped) {
+            SetError("D3D12 texture upload buffer failed");
+            dev->FreeSrvSlot(tex->srvIndex);
+            tex->Destroy();
+            delete tex;
+            return false;
+        }
+
+        auto* dstBase = static_cast<uint8_t*>(mapped);
+        const UINT rowPitch = layout.Footprint.RowPitch;
+        const UINT srcPitch = static_cast<UINT>(width) * 4u;
+        for (UINT y = 0; y < static_cast<UINT>(height); ++y) {
+            std::memcpy(
+                dstBase + static_cast<size_t>(y) * rowPitch,
+                rgba + static_cast<size_t>(y) * srcPitch,
+                srcPitch);
+        }
+        upload->Unmap(0, nullptr);
+
+        dev->WaitIdle();
+        hr = dev->allocators[0]->Reset();
+        if (FAILED(hr)) {
+            SetError("D3D12 texture upload allocator reset failed");
+            dev->FreeSrvSlot(tex->srvIndex);
+            tex->Destroy();
+            delete tex;
+            return false;
+        }
+        hr = dev->cmdList->Reset(dev->allocators[0].Get(), nullptr);
+        if (FAILED(hr)) {
+            SetError("D3D12 texture upload command list reset failed");
+            dev->FreeSrvSlot(tex->srvIndex);
+            tex->Destroy();
+            delete tex;
+            return false;
+        }
+
+        D3D12_TEXTURE_COPY_LOCATION dst{};
+        dst.pResource = tex->resource.Get();
+        dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        dst.SubresourceIndex = 0;
+
+        D3D12_TEXTURE_COPY_LOCATION src{};
+        src.pResource = upload.Get();
+        src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        src.PlacedFootprint = layout;
+
+        dev->cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        Transition(
+            dev->cmdList.Get(),
+            tex->resource.Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        hr = dev->cmdList->Close();
+        if (FAILED(hr)) {
+            SetError("D3D12 texture upload command list close failed");
+            dev->FreeSrvSlot(tex->srvIndex);
+            tex->Destroy();
+            delete tex;
+            return false;
+        }
+        ID3D12CommandList* lists[] = {dev->cmdList.Get()};
+        dev->queue->ExecuteCommandLists(1, lists);
+        dev->WaitIdle();
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvd{};
+        srvd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        srvd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srvd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvd.Texture2D.MipLevels = 1;
+        dev->device->CreateShaderResourceView(tex->resource.Get(), &srvd, tex->srvCpu);
+
+        *outTex = tex;
+        return true;
     }
 
     ID3DBlob* CompileHlsl(const char* source, const char* entry, const char* target) {
@@ -652,7 +993,7 @@ extern "C" int64_t absolute_desktop_gpu_d3d12_create(int64_t windowHandle) {
     dev->rtvDescriptorSize =
         dev->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
-    if (!dev->CreateRenderTargets() || !dev->CreateRootSignature()) {
+    if (!dev->CreateRenderTargets() || !dev->CreateRootSignature() || !dev->CreateShaderHeaps()) {
         delete dev;
         return 0;
     }
@@ -692,6 +1033,35 @@ extern "C" int64_t absolute_desktop_gpu_d3d12_create(int64_t windowHandle) {
         SetError("CreateEvent failed");
         delete dev;
         return 0;
+    }
+
+    // Default white pixel + nearest/clamp sampler for draws without user binds.
+    {
+        const uint8_t white[4] = {255, 255, 255, 255};
+        D3D12Texture* defTex = nullptr;
+        if (!CreateTextureFromRgba(dev, 1, 1, white, &defTex) || !defTex) {
+            delete dev;
+            return 0;
+        }
+        dev->defaultTexture = defTex;
+
+        D3D12_SAMPLER_DESC sd{};
+        sd.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+        sd.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sd.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sd.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sd.MaxAnisotropy = 1;
+        sd.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+        sd.MinLOD = 0;
+        sd.MaxLOD = D3D12_FLOAT32_MAX;
+        auto* defSamp = new D3D12Sampler();
+        if (!dev->AllocSamplerSlot(&defSamp->samplerIndex, &defSamp->cpu, &defSamp->gpu)) {
+            delete defSamp;
+            delete dev;
+            return 0;
+        }
+        dev->device->CreateSampler(&sd, defSamp->cpu);
+        dev->defaultSampler = defSamp;
     }
 
     dev->valid = true;
@@ -740,6 +1110,8 @@ extern "C" void absolute_desktop_gpu_d3d12_begin_frame(int64_t handle) {
     dev->boundPipeline = 0;
     dev->boundBuffer = 0;
     dev->boundIndexBuffer = 0;
+    dev->boundTexture = 0;
+    dev->boundSampler = 0;
 
     Transition(
         dev->cmdList.Get(),
@@ -765,6 +1137,7 @@ extern "C" void absolute_desktop_gpu_d3d12_begin_frame(int64_t handle) {
     if (dev->rootSig) {
         dev->cmdList->SetGraphicsRootSignature(dev->rootSig.Get());
     }
+    dev->BindDescriptorHeaps();
     dev->inFrame = true;
 }
 
@@ -825,12 +1198,15 @@ extern "C" void absolute_desktop_gpu_d3d12_present(int64_t handle) {
 
 extern "C" void absolute_desktop_gpu_d3d12_unsupported(const char* what) {
     SetError(std::string("D3D12 backend: ") + (what ? what : "unsupported")
-        + " (textures/samplers still OpenGL/D3D11; use HLSL for shaders)");
+        + " (use HLSL for shaders; Texture2D t0 + SamplerState s0)");
 }
 
 extern "C" int32_t absolute_desktop_gpu_d3d12_is_resource(int64_t handle) {
     const uint32_t m = PeekRes(handle);
-    return (m == kResShader || m == kResBuffer || m == kResIndex || m == kResPipeline) ? 1 : 0;
+    return (m == kResShader || m == kResBuffer || m == kResIndex || m == kResPipeline
+        || m == kResTexture || m == kResSampler)
+        ? 1
+        : 0;
 }
 
 extern "C" int64_t absolute_desktop_gpu_d3d12_shader_create(
@@ -1092,10 +1468,23 @@ static bool BindDrawState(D3D12Device* dev, D3D12Pipeline* pipe, D3D12Buffer* vb
     if (dev->rootSig) {
         dev->cmdList->SetGraphicsRootSignature(dev->rootSig.Get());
     }
+    dev->BindDescriptorHeaps();
     if (pipe->cbuffer) {
         dev->cmdList->SetGraphicsRootConstantBufferView(
-            0, pipe->cbuffer->GetGPUVirtualAddress());
+            kRootCbv, pipe->cbuffer->GetGPUVirtualAddress());
     }
+
+    D3D12Texture* tex = TextureFrom(dev->boundTexture);
+    if (!tex) tex = dev->defaultTexture;
+    D3D12Sampler* samp = SamplerFrom(dev->boundSampler);
+    if (!samp) samp = dev->defaultSampler;
+    if (tex) {
+        dev->cmdList->SetGraphicsRootDescriptorTable(kRootSrvTable, tex->srvGpu);
+    }
+    if (samp) {
+        dev->cmdList->SetGraphicsRootDescriptorTable(kRootSamplerTable, samp->gpu);
+    }
+
     D3D12_VERTEX_BUFFER_VIEW vbv = vb->view;
     vbv.StrideInBytes = static_cast<UINT>(pipe->strideBytes);
     dev->cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -1157,6 +1546,130 @@ extern "C" void absolute_desktop_gpu_d3d12_set_uniform_2f(
     if (!pipe || !pipe->shader) return;
     const float v[2] = {x, y};
     WriteUniformBytes(pipe->shader, name, v, sizeof(v));
+}
+
+// Soft sprite 0x00RRGGBB → RGBA8 (0 = transparent). Flip rows to match GL UV origin.
+extern "C" int64_t absolute_desktop_gpu_d3d12_texture_from_sprite(
+    int64_t gpuHandle, int64_t spriteHandle) {
+    g_lastError.clear();
+    D3D12Device* dev = DeviceFrom(gpuHandle);
+    DesktopSpriteView* sprite = SpriteFrom(spriteHandle);
+    if (!dev || !dev->device || !sprite || sprite->pixels.empty()) {
+        SetError("D3D12 invalid sprite for texture upload");
+        return 0;
+    }
+    const int32_t w = sprite->width;
+    const int32_t h = sprite->height;
+    if (w <= 0 || h <= 0) {
+        SetError("D3D12 texture requires positive size");
+        return 0;
+    }
+
+    std::vector<uint8_t> rgba(static_cast<size_t>(w) * static_cast<size_t>(h) * 4u);
+    for (int32_t y = 0; y < h; ++y) {
+        const int32_t srcY = h - 1 - y;
+        for (int32_t x = 0; x < w; ++x) {
+            const uint32_t c = sprite->pixels[
+                static_cast<size_t>(srcY) * static_cast<size_t>(w)
+                + static_cast<size_t>(x)];
+            const size_t di = (static_cast<size_t>(y) * static_cast<size_t>(w)
+                + static_cast<size_t>(x)) * 4u;
+            rgba[di + 0] = static_cast<uint8_t>((c >> 16) & 0xFF);
+            rgba[di + 1] = static_cast<uint8_t>((c >> 8) & 0xFF);
+            rgba[di + 2] = static_cast<uint8_t>(c & 0xFF);
+            rgba[di + 3] = c == 0 ? 0 : 255;
+        }
+    }
+
+    D3D12Texture* tex = nullptr;
+    if (!CreateTextureFromRgba(dev, w, h, rgba.data(), &tex) || !tex) {
+        return 0;
+    }
+    return PtrToHandle(tex);
+}
+
+extern "C" void absolute_desktop_gpu_d3d12_texture_destroy(
+    int64_t gpuHandle, int64_t textureHandle) {
+    D3D12Device* dev = DeviceFrom(gpuHandle);
+    D3D12Texture* tex = TextureFrom(textureHandle);
+    if (!tex) return;
+    if (dev && dev->defaultTexture == tex) return; // never free default via API
+    if (dev && dev->boundTexture == textureHandle) dev->boundTexture = 0;
+    if (dev) {
+        dev->WaitIdle();
+        dev->FreeSrvSlot(tex->srvIndex);
+    }
+    tex->Destroy();
+    delete tex;
+}
+
+extern "C" int32_t absolute_desktop_gpu_d3d12_texture_width(int64_t textureHandle) {
+    const D3D12Texture* tex = TextureFrom(textureHandle);
+    return tex ? tex->width : 0;
+}
+
+extern "C" int32_t absolute_desktop_gpu_d3d12_texture_height(int64_t textureHandle) {
+    const D3D12Texture* tex = TextureFrom(textureHandle);
+    return tex ? tex->height : 0;
+}
+
+extern "C" void absolute_desktop_gpu_d3d12_bind_texture(
+    int64_t gpuHandle, int64_t textureHandle, int32_t /*unit*/) {
+    D3D12Device* dev = DeviceFrom(gpuHandle);
+    if (!dev) return;
+    // unit > 0 not supported yet (root table is fixed to t0).
+    dev->boundTexture = textureHandle;
+}
+
+// filter: 0 nearest, 1 linear. wrap: 0 clamp, 1 repeat, 2 mirror.
+extern "C" int64_t absolute_desktop_gpu_d3d12_sampler_create(
+    int64_t gpuHandle, int32_t filter, int32_t wrap) {
+    g_lastError.clear();
+    D3D12Device* dev = DeviceFrom(gpuHandle);
+    if (!dev || !dev->device || !dev->samplerHeap) {
+        SetError("D3D12 sampler requires valid GPU");
+        return 0;
+    }
+
+    auto* sampler = new D3D12Sampler();
+    if (!dev->AllocSamplerSlot(&sampler->samplerIndex, &sampler->cpu, &sampler->gpu)) {
+        delete sampler;
+        return 0;
+    }
+
+    D3D12_SAMPLER_DESC sd{};
+    sd.Filter = FilterToD3D12(filter);
+    sd.AddressU = WrapToD3D12(wrap);
+    sd.AddressV = WrapToD3D12(wrap);
+    sd.AddressW = WrapToD3D12(wrap);
+    sd.MaxAnisotropy = 1;
+    sd.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+    sd.MinLOD = 0;
+    sd.MaxLOD = D3D12_FLOAT32_MAX;
+    dev->device->CreateSampler(&sd, sampler->cpu);
+    return PtrToHandle(sampler);
+}
+
+extern "C" void absolute_desktop_gpu_d3d12_sampler_destroy(
+    int64_t gpuHandle, int64_t samplerHandle) {
+    D3D12Device* dev = DeviceFrom(gpuHandle);
+    D3D12Sampler* sampler = SamplerFrom(samplerHandle);
+    if (!sampler) return;
+    if (dev && dev->defaultSampler == sampler) return;
+    if (dev && dev->boundSampler == samplerHandle) dev->boundSampler = 0;
+    if (dev) {
+        dev->WaitIdle();
+        dev->FreeSamplerSlot(sampler->samplerIndex);
+    }
+    sampler->Destroy();
+    delete sampler;
+}
+
+extern "C" void absolute_desktop_gpu_d3d12_bind_sampler(
+    int64_t gpuHandle, int64_t samplerHandle, int32_t /*unit*/) {
+    D3D12Device* dev = DeviceFrom(gpuHandle);
+    if (!dev) return;
+    dev->boundSampler = samplerHandle;
 }
 
 #endif
