@@ -457,7 +457,7 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   `measure`, `bench`, старый `Time.*` сохранён совместимыми обёртками.
 - [x] Добавить базовые collections: `Vector`, `Map` и `Set`.
 - [ ] **Следующее: определить стабильную структуру standard library и правила
-  версионирования.**
+  версионирования** (package layout, semver for `std.*`, stability tiers).
 - [x] Добавить интерполяцию строк `"${var}"`: каноничное обессахаривание (desugaring) строк с выражениями `${...}` на этапе парсера в вызовы встроенной функции `format(...)` с экранированием `\$`.
 - [x] Добавить `std.string`: `StringBuilder` для эффективного накопления строк, UTF-8 и декодирование/кодирование Unicode кодовых точек, изменение регистра (ASCII + Unicode basic plane), `trim`/`trimStart`/`trimEnd`, `startsWith`/`endsWith`/`contains`, `indexOf`/`lastIndexOf`, `replace`, `substring` и `join`.
 - [x] Добавить `std.env`: чтение, запись, удаление и проверка переменных окружения UTF-8 с диагностикой ошибок.
@@ -553,7 +553,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   sampler s0, textures from soft sprites; examples
   `vulkan-triangle.abs`, `vulkan-triangle-smoke.abs`,
   `vulkan-sprites.abs`, `vulkan-sprites-smoke.abs`.
-- [ ] SPIR-V·DXIL·Metal IR as first-class artifact kinds beyond host GPU paths.
+- [x] SPIR-V·DXIL·Metal IR as first-class artifact kinds beyond host GPU paths:
+  `ABSOLUTE_ARTIFACT_METAL_IR` + target triples in `plugin_api.h`;
+  `absolute.shader` emits GLSL/HLSL/MSL source and optional SPIR-V/DXIL
+  binaries (DXC) with module accessors; Metal AIR reserved (`has=0`);
+  example `shader-multi-ir-smoke.abs`.
 
 ### Native interop и платформы
 

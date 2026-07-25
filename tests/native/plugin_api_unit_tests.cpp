@@ -65,10 +65,39 @@ void TestP2ArtifactsAndBackends() {
     artifact.struct_size = sizeof(AbsoluteArtifactV1);
     artifact.kind = ABSOLUTE_ARTIFACT_SPIRV;
     artifact.file_path = "shader.spv";
-    artifact.target_triple = "spirv64-unknown-unknown";
+    artifact.target_triple = ABSOLUTE_TARGET_TRIPLE_SPIRV;
 
     assert(artifact.kind == ABSOLUTE_ARTIFACT_SPIRV);
-    assert(std::string(artifact.target_triple) == "spirv64-unknown-unknown");
+    assert(std::string(artifact.target_triple) == ABSOLUTE_TARGET_TRIPLE_SPIRV);
+
+    // GPU IR kinds are first-class and distinct from host object paths.
+    assert(ABSOLUTE_ARTIFACT_SPIRV == 5);
+    assert(ABSOLUTE_ARTIFACT_DXIL == 6);
+    assert(ABSOLUTE_ARTIFACT_SOURCE_TEXT == 10);
+    assert(ABSOLUTE_ARTIFACT_METAL_IR == 12);
+    assert(std::string(ABSOLUTE_TARGET_TRIPLE_DXIL) == "dxil-ms-dx");
+    assert(std::string(ABSOLUTE_TARGET_TRIPLE_METAL) == "metal");
+    assert(std::string(ABSOLUTE_TARGET_TRIPLE_HLSL) == "hlsl");
+    assert(std::string(ABSOLUTE_TARGET_TRIPLE_MSL) == "msl");
+    assert(std::string(ABSOLUTE_TARGET_TRIPLE_GLSL) == "glsl");
+
+    AbsoluteArtifactV1 dxil{};
+    dxil.struct_size = sizeof(AbsoluteArtifactV1);
+    dxil.kind = ABSOLUTE_ARTIFACT_DXIL;
+    dxil.target_triple = ABSOLUTE_TARGET_TRIPLE_DXIL;
+    assert(dxil.kind == ABSOLUTE_ARTIFACT_DXIL);
+
+    AbsoluteArtifactV1 metalIr{};
+    metalIr.struct_size = sizeof(AbsoluteArtifactV1);
+    metalIr.kind = ABSOLUTE_ARTIFACT_METAL_IR;
+    metalIr.target_triple = ABSOLUTE_TARGET_TRIPLE_METAL;
+    assert(metalIr.kind == ABSOLUTE_ARTIFACT_METAL_IR);
+
+    AbsoluteArtifactV1 hlslText{};
+    hlslText.struct_size = sizeof(AbsoluteArtifactV1);
+    hlslText.kind = ABSOLUTE_ARTIFACT_SOURCE_TEXT;
+    hlslText.target_triple = ABSOLUTE_TARGET_TRIPLE_HLSL;
+    assert(hlslText.kind == ABSOLUTE_ARTIFACT_SOURCE_TEXT);
 
     AbsoluteBackendDescriptorV1 backend{};
     backend.struct_size = sizeof(AbsoluteBackendDescriptorV1);

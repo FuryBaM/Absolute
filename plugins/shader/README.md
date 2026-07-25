@@ -1,8 +1,20 @@
-# `absolute.shader` — reflection + GLSL for RHI bind
+# `absolute.shader` — multi-target GPU IR
 
-Opaque plugin AST for shader stages. Declares typed inputs/outputs/uniforms,
-emits **reflection metadata** and **GLSL 330** source into the Absolute module
-for binding with `Desktop.Gpu` (OpenGL backend).
+Opaque plugin AST for shader stages. Declares typed inputs/outputs/uniforms and
+emits **first-class GPU IR** into the Absolute module:
+
+| IR | Kind | Accessor (per stage, e.g. `Vertex`) |
+|----|------|--------------------------------------|
+| GLSL 330 | `SOURCE_TEXT` / `glsl` | `absolute_shader_glsl_Vertex()` |
+| HLSL | `SOURCE_TEXT` / `hlsl` | `absolute_shader_hlsl_Vertex()` |
+| MSL (Metal source) | `SOURCE_TEXT` / `msl` | `absolute_shader_msl_Vertex()` |
+| SPIR-V | `ABSOLUTE_ARTIFACT_SPIRV` | `absolute_shader_spirv_Vertex()` + `_size` / `_has` |
+| DXIL | `ABSOLUTE_ARTIFACT_DXIL` | `absolute_shader_dxil_Vertex()` + `_size` / `_has` |
+| Metal IR (AIR) | `ABSOLUTE_ARTIFACT_METAL_IR` | reserved (`_has` is 0 until metallib is wired) |
+
+SPIR-V and DXIL are produced at emit-time with portable **DXC** when available
+(`.absolute/toolchains/dxc-spirv` or `ABSOLUTE_DXC`). Without DXC, source IR
+still emits and binary sizes are 0.
 
 ```absolute
 @shader.stage(Vertex)
@@ -25,11 +37,20 @@ shader Fragment {
 }
 
 extern "C" string absolute_shader_glsl_Vertex();
-extern "C" string absolute_shader_glsl_Fragment();
+extern "C" string absolute_shader_hlsl_Vertex();
+extern "C" string absolute_shader_msl_Vertex();
+extern "C" int32 absolute_shader_has_spirv_Vertex();
+extern "C" int32 absolute_shader_spirv_size_Vertex();
 
+// OpenGL RHI (GLSL):
 auto program = gpu.createShader(
     absolute_shader_glsl_Vertex(),
     absolute_shader_glsl_Fragment());
+
+// D3D11 / D3D12 / Vulkan RHI (HLSL):
+auto programD3D = gpu.createShader(
+    absolute_shader_hlsl_Vertex(),
+    absolute_shader_hlsl_Fragment());
 ```
 
 ## DSL
@@ -37,9 +58,9 @@ auto program = gpu.createShader(
 | Declaration | Meaning |
 |-------------|---------|
 | `input [type] name;` | Vertex attribute (or fragment varying). Types: `float`, `float2`/`vec2`, `float3`/`vec3`, `float4`/`vec4`, `int`. Untyped names keep legacy inference (`position`→float3, `uv`→float2, …). |
-| `output [type] name;` | Stage output (`clipPosition` → `gl_Position` in generated VS). |
-| `uniform [type] name;` | Uniform (bound via `gpu.setUniformF` / `setUniformI`). |
-| `code { ... }` | Optional **full GLSL** body for the stage. Nested `{`/`}` supported. If omitted, a default mesh-style body is generated. `#version 330 core` is always prepended when missing. **Do not write `#...` in the body** — Absolute’s lexer rejects `#`. |
+| `output [type] name;` | Stage output (`clipPosition` → `gl_Position` / `SV_POSITION` / `[[position]]`). |
+| `uniform [type] name;` | Uniform / cbuffer field (bound via `gpu.setUniformF` / `setUniformI`). |
+| `code { ... }` | Optional **full GLSL** body for the stage. Nested `{`/`}` supported. If omitted, a default mesh-style body is generated for GLSL/HLSL/MSL. `#version 330 core` is always prepended when missing. **Do not write `#...` in the body** — Absolute’s lexer rejects `#`. Custom `code` skips HLSL→SPIR-V/DXIL auto-compile. |
 
 `@shader.stage(Name)` must match the block stage name.
 
@@ -50,17 +71,21 @@ auto program = gpu.createShader(
 | Symbol | Role |
 |--------|------|
 | `@absolute.shader.Vertex.input_count` | constant i32 |
-| `@absolute.shader.Vertex.output_count` | constant i32 |
-| `@absolute.shader.Vertex.uniform_count` | constant i32 |
-| `@absolute.shader.Vertex.input.N.location/components` | reflection |
-| `@absolute.shader.Vertex.glsl` | private GLSL string |
-| `absolute_shader_glsl_Vertex()` | `i8*` / Absolute `string` GLSL source |
+| `@absolute.shader.Vertex.glsl` / `.hlsl` / `.msl` | private source text |
+| `@absolute.shader.Vertex.spirv` / `.dxil` / `.metal_ir` | private binary blobs |
+| `absolute_shader_glsl_Vertex()` | GLSL source string |
+| `absolute_shader_hlsl_Vertex()` | HLSL source string |
+| `absolute_shader_msl_Vertex()` | MSL source string |
+| `absolute_shader_*_size_Vertex()` | byte length (source without NUL; binary raw size) |
+| `absolute_shader_has_spirv_Vertex()` | 1 if SPIR-V produced |
+| `absolute_shader_has_dxil_Vertex()` | 1 if DXIL produced |
+| `absolute_shader_has_metal_ir_Vertex()` | 1 if Metal AIR produced (currently 0) |
 | `absolute_shader_input_count_Vertex()` | reflection |
 | `absolute_shader_input_components_Vertex(i32)` | reflection |
 | `absolute_shader_vertex_stride_floats_Vertex()` | packed float stride |
-| `absolute.shader.Vertex` | empty void stub (compat) |
+| `absolute_shader_artifact_kind_{spirv,dxil,metal_ir,source_text}()` | `AbsoluteArtifactKindV1` constants |
 
-Without `code { }`, generated GLSL is a default lit mesh pipeline (Y-rotation when `uTime` is present).
+Without `code { }`, generated bodies implement a default lit mesh pipeline (Y-rotation when `uTime` is present).
 
 ## RHI bind examples
 
@@ -70,14 +95,13 @@ absolutec examples/desktop/shader-rhi.abs `
   --plugin path/to/absolute-shader.dll `
   --build-exe -o shader-rhi.exe
 
-# Custom GLSL body:
-absolutec examples/desktop/shader-code.abs `
-  --plugin path/to/absolute-desktop.absplugin `
+# Multi-IR smoke (no window):
+absolutec examples/desktop/shader-multi-ir-smoke.abs `
   --plugin path/to/absolute-shader.dll `
-  --build-exe -o shader-code.exe
+  --build-exe -o shader-multi-ir-smoke.exe
 ```
 
-See `examples/desktop/shader-rhi.abs` and `shader-code.abs`.
+See `examples/desktop/shader-rhi.abs`, `shader-code.abs`, and `shader-multi-ir-smoke.abs`.
 
 ## Build plugin
 

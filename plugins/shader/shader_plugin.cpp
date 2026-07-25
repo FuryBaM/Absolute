@@ -1,14 +1,26 @@
 // absolute.shader — opaque DSL with typed I/O, uniforms, reflection metadata,
-// and generated GLSL 330 for Desktop.Gpu RHI bind (OpenGL backend).
+// and multi-target GPU IR:
+//   GLSL 330 (OpenGL), HLSL (D3D/Vulkan), MSL (Metal source),
+//   optional SPIR-V / DXIL binaries via portable DXC when available.
+// Metal AIR (ABSOLUTE_ARTIFACT_METAL_IR) is reserved; MSL source is always emitted.
 
 #include "plugin_api.h"
 
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
+#include <fstream>
 #include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
 
 namespace {
     enum class ShaderTypeKind {
@@ -37,6 +49,12 @@ namespace {
         std::string debugText;
         std::string moduleIr;
         std::string glslSource;
+        std::string hlslSource;
+        std::string mslSource;
+        std::vector<uint8_t> spirvBytes;
+        std::vector<uint8_t> dxilBytes;
+        // Metal IR (AIR) — empty unless an external metallib tool is wired later.
+        std::vector<uint8_t> metalIrBytes;
     };
 
     thread_local std::string lastError;
@@ -111,6 +129,38 @@ namespace {
         case ShaderTypeKind::Int1: return "int";
         default: return "vec3";
         }
+    }
+
+    const char* HlslType(const ShaderVar& var) {
+        switch (var.kind) {
+        case ShaderTypeKind::Float1: return "float";
+        case ShaderTypeKind::Float2: return "float2";
+        case ShaderTypeKind::Float3: return "float3";
+        case ShaderTypeKind::Float4: return "float4";
+        case ShaderTypeKind::Int1: return "int";
+        default: return "float3";
+        }
+    }
+
+    // Metal Shading Language scalar/vector names match HLSL-style floatN.
+    const char* MslType(const ShaderVar& var) { return HlslType(var); }
+
+    bool IsVertexStage(const std::string& stage) {
+        return stage == "Vertex" || stage == "vertex" || stage == "VS" || stage == "vs";
+    }
+
+    bool IsFragmentStage(const std::string& stage) {
+        return stage == "Fragment" || stage == "fragment" || stage == "FS" || stage == "fs"
+            || stage == "Pixel" || stage == "pixel" || stage == "PS" || stage == "ps";
+    }
+
+    // D3D/Vulkan HLSL: location 0 → POSITION; location n → TEXCOORDn-1.
+    void HlslSemanticForLocation(int32_t location, std::string& semantic) {
+        if (location <= 0) {
+            semantic = "POSITION";
+            return;
+        }
+        semantic = "TEXCOORD" + std::to_string(location - 1);
     }
 
     bool IsTypeToken(const std::string& text) {
@@ -521,6 +571,223 @@ namespace {
         return g.str();
     }
 
+    std::string GenerateHlsl(const ShaderNode& shader) {
+        // `code { }` is GLSL-oriented; for HLSL emit a note stub so D3D paths still link.
+        if (!shader.userGlsl.empty()) {
+            return std::string(
+                "// absolute.shader: custom code { } is GLSL; HLSL auto-gen skipped\n"
+                "float4 main() : SV_TARGET { return float4(1,0,1,1); }\n");
+        }
+
+        std::ostringstream h;
+        const bool isVertex = IsVertexStage(shader.stage);
+        const bool isFragment = IsFragmentStage(shader.stage);
+
+        if (!shader.uniforms.empty()) {
+            h << "cbuffer Frame : register(b0) {\n";
+            for (const ShaderVar& u : shader.uniforms) {
+                h << "  " << HlslType(u) << " " << u.name << ";\n";
+            }
+            h << "};\n";
+        }
+
+        if (isVertex) {
+            h << "struct VSIn {\n";
+            for (const ShaderVar& in : shader.inputs) {
+                std::string sem;
+                HlslSemanticForLocation(in.location, sem);
+                h << "  " << HlslType(in) << " " << in.name << " : " << sem << ";\n";
+            }
+            h << "};\nstruct VSOut {\n";
+            int tex = 0;
+            for (const ShaderVar& out : shader.outputs) {
+                if (out.name == "clipPosition" || out.name == "gl_Position") {
+                    h << "  float4 " << out.name << " : SV_POSITION;\n";
+                } else {
+                    h << "  " << HlslType(out) << " " << out.name << " : TEXCOORD" << tex++ << ";\n";
+                }
+            }
+            if (shader.outputs.empty()) {
+                h << "  float4 pos : SV_POSITION;\n";
+            }
+            h << "};\nVSOut main(VSIn i) {\n  VSOut o;\n";
+            const ShaderVar* pos = FindInput(shader, "position");
+            if (!pos) pos = FindInput(shader, "aPos");
+            if (!pos && !shader.inputs.empty()) pos = &shader.inputs[0];
+            const bool hasTime = HasUniform(shader, "uTime");
+            const bool hasScale = HasUniform(shader, "uScale");
+            if (pos && pos->components >= 3) {
+                h << "  float3 p = i." << pos->name << ";\n";
+                if (hasScale) h << "  p *= uScale;\n";
+                if (hasTime) {
+                    h << "  float c = cos(uTime); float s = sin(uTime);\n";
+                    h << "  float px = p.x * c + p.z * s; float pz = -p.x * s + p.z * c;\n";
+                    h << "  p = float3(px, p.y, pz);\n";
+                }
+                h << "  float z = p.z + 2.8;\n";
+                h << "  float4 clip = float4(p.x / z * 1.7, p.y / z * 1.7, p.z * 0.05, 1.0);\n";
+            } else {
+                h << "  float4 clip = float4(0,0,0,1);\n";
+            }
+            for (const ShaderVar& out : shader.outputs) {
+                if (out.name == "clipPosition" || out.name == "gl_Position") {
+                    h << "  o." << out.name << " = clip;\n";
+                } else if (out.name == "vNormal" || out.name.find("Normal") != std::string::npos) {
+                    const ShaderVar* nrm = FindInput(shader, "normal");
+                    if (!nrm) nrm = FindInput(shader, "aNormal");
+                    if (nrm) h << "  o." << out.name << " = i." << nrm->name << ";\n";
+                    else h << "  o." << out.name << " = float3(0,1,0);\n";
+                } else if (out.name == "vUv" || out.name.find("uv") != std::string::npos
+                    || out.name.find("Uv") != std::string::npos) {
+                    const ShaderVar* uv = FindInput(shader, "uv");
+                    if (!uv) uv = FindInput(shader, "aUv");
+                    if (uv) h << "  o." << out.name << " = i." << uv->name << ";\n";
+                    else h << "  o." << out.name << " = float2(0,0);\n";
+                } else if (out.components == 4) {
+                    h << "  o." << out.name << " = float4(1,1,1,1);\n";
+                } else if (out.components == 3) {
+                    h << "  o." << out.name << " = float3(0,0,0);\n";
+                } else if (out.components == 2) {
+                    h << "  o." << out.name << " = float2(0,0);\n";
+                } else {
+                    h << "  o." << out.name << " = 0;\n";
+                }
+            }
+            if (shader.outputs.empty()) h << "  o.pos = clip;\n";
+            h << "  return o;\n}\n";
+            return h.str();
+        }
+
+        if (isFragment) {
+            h << "struct PSIn {\n  float4 pos : SV_POSITION;\n";
+            int tex = 0;
+            for (const ShaderVar& in : shader.inputs) {
+                h << "  " << HlslType(in) << " " << in.name << " : TEXCOORD" << tex++ << ";\n";
+            }
+            h << "};\nfloat4 main(PSIn i) : SV_TARGET {\n";
+            const ShaderVar* nrm = nullptr;
+            const ShaderVar* uv = nullptr;
+            for (const ShaderVar& in : shader.inputs) {
+                if (in.name == "vNormal" || in.name.find("ormal") != std::string::npos) nrm = &in;
+                if (in.name == "vUv" || in.name == "uv" || in.name.find("Uv") != std::string::npos) uv = &in;
+            }
+            h << "  float3 L = normalize(float3(0.35, 0.85, 0.4));\n";
+            if (nrm) h << "  float ndl = max(dot(normalize(i." << nrm->name << "), L), 0.0);\n";
+            else h << "  float ndl = 0.7;\n";
+            h << "  float amb = 0.18;\n";
+            if (uv) {
+                h << "  float3 base = lerp(float3(0.35, 0.55, 0.95), float3(0.95, 0.75, 0.35), "
+                  << "i." << uv->name << ".x * 0.35 + i." << uv->name << ".y * 0.25);\n";
+            } else {
+                h << "  float3 base = float3(0.55, 0.65, 0.9);\n";
+            }
+            h << "  float3 col = base * (amb + ndl * 0.9);\n";
+            h << "  return float4(col, 1.0);\n}\n";
+            return h.str();
+        }
+
+        h << "float4 main() : SV_TARGET { return float4(1,0,1,1); }\n";
+        return h.str();
+    }
+
+    std::string GenerateMsl(const ShaderNode& shader) {
+        if (!shader.userGlsl.empty()) {
+            return std::string(
+                "// absolute.shader: custom code { } is GLSL; MSL auto-gen skipped\n"
+                "#include <metal_stdlib>\nusing namespace metal;\n"
+                "fragment float4 main() { return float4(1,0,1,1); }\n");
+        }
+        std::ostringstream m;
+        m << "#include <metal_stdlib>\nusing namespace metal;\n";
+        const bool isVertex = IsVertexStage(shader.stage);
+        const bool isFragment = IsFragmentStage(shader.stage);
+
+        if (isVertex) {
+            m << "struct VSIn {\n";
+            for (const ShaderVar& in : shader.inputs) {
+                m << "  " << MslType(in) << " " << in.name << " [[attribute(" << in.location << ")]];\n";
+            }
+            m << "};\nstruct VSOut {\n  float4 position [[position]];\n";
+            for (const ShaderVar& out : shader.outputs) {
+                if (out.name == "clipPosition" || out.name == "gl_Position") continue;
+                m << "  " << MslType(out) << " " << out.name << ";\n";
+            }
+            m << "};\n";
+            if (!shader.uniforms.empty()) {
+                m << "struct Frame {\n";
+                for (const ShaderVar& u : shader.uniforms) {
+                    m << "  " << MslType(u) << " " << u.name << ";\n";
+                }
+                m << "};\n";
+            }
+            m << "vertex VSOut main(VSIn i [[stage_in]]";
+            if (!shader.uniforms.empty()) m << ", constant Frame& frame [[buffer(0)]]";
+            m << ") {\n  VSOut o;\n";
+            const ShaderVar* pos = FindInput(shader, "position");
+            if (!pos && !shader.inputs.empty()) pos = &shader.inputs[0];
+            if (pos) {
+                m << "  float3 p = i." << pos->name << ";\n";
+                if (HasUniform(shader, "uScale")) m << "  p *= frame.uScale;\n";
+                if (HasUniform(shader, "uTime")) {
+                    m << "  float c = cos(frame.uTime); float s = sin(frame.uTime);\n";
+                    m << "  float px = p.x * c + p.z * s; float pz = -p.x * s + p.z * c;\n";
+                    m << "  p = float3(px, p.y, pz);\n";
+                }
+                m << "  float z = p.z + 2.8;\n";
+                m << "  o.position = float4(p.x / z * 1.7, p.y / z * 1.7, p.z * 0.05, 1.0);\n";
+            } else {
+                m << "  o.position = float4(0,0,0,1);\n";
+            }
+            for (const ShaderVar& out : shader.outputs) {
+                if (out.name == "clipPosition" || out.name == "gl_Position") continue;
+                if (out.name.find("ormal") != std::string::npos) {
+                    const ShaderVar* nrm = FindInput(shader, "normal");
+                    if (nrm) m << "  o." << out.name << " = i." << nrm->name << ";\n";
+                    else m << "  o." << out.name << " = float3(0,1,0);\n";
+                } else if (out.name.find("uv") != std::string::npos || out.name.find("Uv") != std::string::npos) {
+                    const ShaderVar* uv = FindInput(shader, "uv");
+                    if (uv) m << "  o." << out.name << " = i." << uv->name << ";\n";
+                    else m << "  o." << out.name << " = float2(0,0);\n";
+                } else if (out.components == 3) {
+                    m << "  o." << out.name << " = float3(0,0,0);\n";
+                } else if (out.components == 2) {
+                    m << "  o." << out.name << " = float2(0,0);\n";
+                } else {
+                    m << "  o." << out.name << " = 0;\n";
+                }
+            }
+            m << "  return o;\n}\n";
+            return m.str();
+        }
+
+        if (isFragment) {
+            m << "struct FSIn {\n  float4 position [[position]];\n";
+            for (const ShaderVar& in : shader.inputs) {
+                m << "  " << MslType(in) << " " << in.name << ";\n";
+            }
+            m << "};\nfragment float4 main(FSIn i [[stage_in]]) {\n";
+            m << "  float3 L = normalize(float3(0.35, 0.85, 0.4));\n";
+            const ShaderVar* nrm = nullptr;
+            const ShaderVar* uv = nullptr;
+            for (const ShaderVar& in : shader.inputs) {
+                if (in.name.find("ormal") != std::string::npos) nrm = &in;
+                if (in.name.find("uv") != std::string::npos || in.name.find("Uv") != std::string::npos) uv = &in;
+            }
+            if (nrm) m << "  float ndl = max(dot(normalize(i." << nrm->name << "), L), 0.0);\n";
+            else m << "  float ndl = 0.7;\n";
+            m << "  float3 base = float3(0.55, 0.65, 0.9);\n";
+            if (uv) {
+                m << "  base = mix(float3(0.35, 0.55, 0.95), float3(0.95, 0.75, 0.35), "
+                  << "i." << uv->name << ".x * 0.35 + i." << uv->name << ".y * 0.25);\n";
+            }
+            m << "  return float4(base * (0.18 + ndl * 0.9), 1.0);\n}\n";
+            return m.str();
+        }
+
+        m << "fragment float4 main() { return float4(1,0,1,1); }\n";
+        return m.str();
+    }
+
     std::string MangleStage(const std::string& stage) {
         // Keep alnum only for symbol safety.
         std::string out;
@@ -528,6 +795,157 @@ namespace {
             if (std::isalnum(static_cast<unsigned char>(c)) || c == '_') out.push_back(c);
         }
         return out.empty() ? "Stage" : out;
+    }
+
+    std::string FindDxcPath() {
+        if (const char* env = std::getenv("ABSOLUTE_DXC")) {
+#if defined(_WIN32)
+            if (GetFileAttributesA(env) != INVALID_FILE_ATTRIBUTES) return env;
+#else
+            if (env[0]) return env;
+#endif
+        }
+#if defined(_WIN32)
+        char modulePath[MAX_PATH]{};
+        HMODULE hm = nullptr;
+        GetModuleHandleExA(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCSTR>(&FindDxcPath),
+            &hm);
+        if (hm) GetModuleFileNameA(hm, modulePath, MAX_PATH);
+        std::string dir = modulePath;
+        for (int up = 0; up < 10; ++up) {
+            const size_t slash = dir.find_last_of("\\/");
+            if (slash == std::string::npos) break;
+            dir = dir.substr(0, slash);
+            const std::string dxc = dir + "\\.absolute\\toolchains\\dxc-spirv\\bin\\x64\\dxc.exe";
+            if (GetFileAttributesA(dxc.c_str()) != INVALID_FILE_ATTRIBUTES) return dxc;
+        }
+#endif
+        return {};
+    }
+
+    bool CompileHlslWithDxc(
+        const std::string& hlsl,
+        const char* profile,
+        bool spirv,
+        std::vector<uint8_t>& outBytes) {
+        outBytes.clear();
+        if (hlsl.empty()) return false;
+        const std::string dxc = FindDxcPath();
+        if (dxc.empty()) return false;
+
+#if defined(_WIN32)
+        char tempPath[MAX_PATH]{};
+        GetTempPathA(MAX_PATH, tempPath);
+        char hlslFile[MAX_PATH]{};
+        GetTempFileNameA(tempPath, "ash", 0, hlslFile);
+        const std::string outFile = std::string(hlslFile) + (spirv ? ".spv" : ".dxil");
+        {
+            std::ofstream f(hlslFile, std::ios::binary);
+            f.write(hlsl.data(), static_cast<std::streamsize>(hlsl.size()));
+        }
+        std::string cmd = "\"";
+        cmd += dxc;
+        cmd += "\" -T ";
+        cmd += profile;
+        cmd += " -E main ";
+        if (spirv) {
+            cmd += "-spirv -fspv-target-env=vulkan1.1 -fvk-use-dx-layout "
+                   "-fvk-b-shift 0 0 -fvk-t-shift 1 0 -fvk-s-shift 2 0 ";
+        }
+        cmd += "-Fo \"";
+        cmd += outFile;
+        cmd += "\" \"";
+        cmd += hlslFile;
+        cmd += "\"";
+
+        STARTUPINFOA si{};
+        si.cb = sizeof(si);
+        PROCESS_INFORMATION pi{};
+        std::vector<char> cmdline(cmd.begin(), cmd.end());
+        cmdline.push_back('\0');
+        if (!CreateProcessA(
+                nullptr, cmdline.data(), nullptr, nullptr, FALSE,
+                CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+            DeleteFileA(hlslFile);
+            return false;
+        }
+        WaitForSingleObject(pi.hProcess, 60000);
+        DWORD code = 1;
+        GetExitCodeProcess(pi.hProcess, &code);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        DeleteFileA(hlslFile);
+        if (code != 0) {
+            DeleteFileA(outFile.c_str());
+            return false;
+        }
+        std::ifstream in(outFile, std::ios::binary);
+        if (!in) {
+            DeleteFileA(outFile.c_str());
+            return false;
+        }
+        in.seekg(0, std::ios::end);
+        const auto n = static_cast<size_t>(in.tellg());
+        in.seekg(0, std::ios::beg);
+        outBytes.resize(n);
+        if (n) in.read(reinterpret_cast<char*>(outBytes.data()), static_cast<std::streamsize>(n));
+        DeleteFileA(outFile.c_str());
+        return !outBytes.empty();
+#else
+        (void)profile;
+        (void)spirv;
+        return false;
+#endif
+    }
+
+    std::string EscapeLlvmBytes(const std::vector<uint8_t>& bytes) {
+        std::string out;
+        out.reserve(bytes.size() * 4);
+        for (uint8_t c : bytes) {
+            char buf[5];
+            std::snprintf(buf, sizeof(buf), "\\%02X", static_cast<unsigned>(c));
+            out += buf;
+        }
+        return out;
+    }
+
+    void EmitStringConstant(
+        std::ostringstream& ir,
+        const std::string& stage,
+        const char* field,
+        const std::string& text) {
+        const size_t n = text.size() + 1;
+        ir << "@absolute.shader." << stage << "." << field << " = private constant [" << n
+           << " x i8] c\"" << EscapeLlvmString(text) << "\\00\"\n";
+        ir << "define i8* @absolute_shader_" << field << "_" << stage << "() {\n";
+        ir << "entry:\n  %p = getelementptr inbounds [" << n << " x i8], [" << n
+           << " x i8]* @absolute.shader." << stage << "." << field << ", i64 0, i64 0\n";
+        ir << "  ret i8* %p\n}\n";
+        ir << "define i32 @absolute_shader_" << field << "_size_" << stage << "() {\n";
+        ir << "entry:\n  ret i32 " << static_cast<int32_t>(text.size()) << "\n}\n";
+    }
+
+    void EmitBinaryConstant(
+        std::ostringstream& ir,
+        const std::string& stage,
+        const char* field,
+        const std::vector<uint8_t>& bytes) {
+        // Always emit a least a 1-byte zero blob so symbols exist when IR is unavailable.
+        std::vector<uint8_t> payload = bytes;
+        if (payload.empty()) payload.push_back(0);
+        const size_t n = payload.size();
+        ir << "@absolute.shader." << stage << "." << field << " = private constant [" << n
+           << " x i8] c\"" << EscapeLlvmBytes(payload) << "\"\n";
+        ir << "define i8* @absolute_shader_" << field << "_" << stage << "() {\n";
+        ir << "entry:\n  %p = getelementptr inbounds [" << n << " x i8], [" << n
+           << " x i8]* @absolute.shader." << stage << "." << field << ", i64 0, i64 0\n";
+        ir << "  ret i8* %p\n}\n";
+        ir << "define i32 @absolute_shader_" << field << "_size_" << stage << "() {\n";
+        ir << "entry:\n  ret i32 " << static_cast<int32_t>(bytes.size()) << "\n}\n";
+        ir << "define i32 @absolute_shader_has_" << field << "_" << stage << "() {\n";
+        ir << "entry:\n  ret i32 " << (bytes.empty() ? 0 : 1) << "\n}\n";
     }
 
     int32_t EmitShaderLlvm(void* payload, const AbsoluteOpaqueLlvmContextV1* context,
@@ -540,13 +958,28 @@ namespace {
         }
 
         shader.glslSource = GenerateGlsl(shader);
+        shader.hlslSource = GenerateHlsl(shader);
+        shader.mslSource = GenerateMsl(shader);
+
+        const bool isVertex = IsVertexStage(shader.stage);
+        const bool isFragment = IsFragmentStage(shader.stage);
+        const char* profile = isVertex ? "vs_6_0" : (isFragment ? "ps_6_0" : "ps_6_0");
+        if (!shader.userGlsl.empty()) {
+            // Custom GLSL body is not HLSL — skip DXC.
+            shader.spirvBytes.clear();
+            shader.dxilBytes.clear();
+        } else {
+            CompileHlslWithDxc(shader.hlslSource, profile, true, shader.spirvBytes);
+            CompileHlslWithDxc(shader.hlslSource, profile, false, shader.dxilBytes);
+        }
+        shader.metalIrBytes.clear(); // Metal AIR requires metallib; MSL source is the portable form.
+
         const std::string stage = MangleStage(shader.stage);
-        const std::string escapedGlsl = EscapeLlvmString(shader.glslSource);
-        const size_t glslBytes = shader.glslSource.size() + 1;
 
         std::ostringstream ir;
         ir << "; ModuleID = 'absolute.shader." << stage << "'\n";
         ir << "source_filename = \"absolute.shader." << stage << "\"\n";
+        ir << "; Multi-target GPU IR: GLSL/HLSL/MSL source + optional SPIR-V/DXIL (DXC)\n";
 
         // Legacy reflection counts (tests + tooling).
         ir << "@absolute.shader." << stage << ".input_count = constant i32 "
@@ -570,20 +1003,19 @@ namespace {
                << (in.name.size() + 1) << " x i8] c\"" << en << "\\00\"\n";
         }
 
-        // GLSL source for Desktop.Gpu.createShader.
-        ir << "@absolute.shader." << stage << ".glsl = private constant [" << glslBytes
-           << " x i8] c\"" << escapedGlsl << "\\00\"\n";
+        // First-class source IR blobs (null-terminated strings).
+        EmitStringConstant(ir, stage, "glsl", shader.glslSource);
+        EmitStringConstant(ir, stage, "hlsl", shader.hlslSource);
+        EmitStringConstant(ir, stage, "msl", shader.mslSource);
+
+        // First-class binary IR blobs (SPIR-V, DXIL, Metal IR placeholder).
+        EmitBinaryConstant(ir, stage, "spirv", shader.spirvBytes);
+        EmitBinaryConstant(ir, stage, "dxil", shader.dxilBytes);
+        EmitBinaryConstant(ir, stage, "metal_ir", shader.metalIrBytes);
 
         // Stub entry (legacy).
         ir << "define void @absolute.shader." << stage << "() {\n";
         ir << "entry:\n  ret void\n}\n";
-
-        // C ABI getters for Absolute RHI bind.
-        ir << "define i8* @absolute_shader_glsl_" << stage << "() {\n";
-        ir << "entry:\n";
-        ir << "  %p = getelementptr inbounds [" << glslBytes << " x i8], [" << glslBytes
-           << " x i8]* @absolute.shader." << stage << ".glsl, i64 0, i64 0\n";
-        ir << "  ret i8* %p\n}\n";
 
         ir << "define i32 @absolute_shader_input_count_" << stage << "() {\n";
         ir << "entry:\n  ret i32 " << shader.inputs.size() << "\n}\n";
@@ -611,11 +1043,25 @@ namespace {
         }
         ir << "  ret i32 0\n}\n";
 
-        // Stride in bytes for sequential tightly-packed float attributes.
+        // Stride in floats for sequential tightly-packed float attributes.
         int32_t strideFloats = 0;
         for (const ShaderVar& in : shader.inputs) strideFloats += in.components;
         ir << "define i32 @absolute_shader_vertex_stride_floats_" << stage << "() {\n";
         ir << "entry:\n  ret i32 " << strideFloats << "\n}\n";
+
+        // Artifact kind constants once per module (avoid multi-stage ODR clashes).
+        static thread_local bool emittedArtifactKinds = false;
+        if (!emittedArtifactKinds) {
+            ir << "define i32 @absolute_shader_artifact_kind_spirv() {\nentry:\n  ret i32 "
+               << static_cast<int>(ABSOLUTE_ARTIFACT_SPIRV) << "\n}\n";
+            ir << "define i32 @absolute_shader_artifact_kind_dxil() {\nentry:\n  ret i32 "
+               << static_cast<int>(ABSOLUTE_ARTIFACT_DXIL) << "\n}\n";
+            ir << "define i32 @absolute_shader_artifact_kind_metal_ir() {\nentry:\n  ret i32 "
+               << static_cast<int>(ABSOLUTE_ARTIFACT_METAL_IR) << "\n}\n";
+            ir << "define i32 @absolute_shader_artifact_kind_source_text() {\nentry:\n  ret i32 "
+               << static_cast<int>(ABSOLUTE_ARTIFACT_SOURCE_TEXT) << "\n}\n";
+            emittedArtifactKinds = true;
+        }
 
         shader.moduleIr = ir.str();
         if (moduleIr) *moduleIr = shader.moduleIr.c_str();

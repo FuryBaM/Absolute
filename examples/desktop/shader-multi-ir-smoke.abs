@@ -1,0 +1,96 @@
+// Non-interactive: absolute.shader multi-target IR accessors (GLSL/HLSL/MSL + SPIR-V/DXIL).
+// Requires absolute-shader plugin. No window / GPU context.
+
+@shader.stage(Vertex)
+shader Vertex {
+    input float3 position;
+    input float3 normal;
+    input float2 uv;
+    uniform float uTime;
+    output float4 clipPosition;
+    output float3 vNormal;
+    output float2 vUv;
+}
+
+@shader.stage(Fragment)
+shader Fragment {
+    input float3 vNormal;
+    input float2 vUv;
+    output float4 FragColor;
+}
+
+extern "C" string absolute_shader_glsl_Vertex();
+extern "C" string absolute_shader_hlsl_Vertex();
+extern "C" string absolute_shader_msl_Vertex();
+extern "C" string absolute_shader_glsl_Fragment();
+extern "C" string absolute_shader_hlsl_Fragment();
+extern "C" string absolute_shader_msl_Fragment();
+extern "C" int32 absolute_shader_glsl_size_Vertex();
+extern "C" int32 absolute_shader_hlsl_size_Vertex();
+extern "C" int32 absolute_shader_msl_size_Vertex();
+extern "C" int32 absolute_shader_spirv_size_Vertex();
+extern "C" int32 absolute_shader_dxil_size_Vertex();
+extern "C" int32 absolute_shader_has_spirv_Vertex();
+extern "C" int32 absolute_shader_has_dxil_Vertex();
+extern "C" int32 absolute_shader_has_metal_ir_Vertex();
+extern "C" int32 absolute_shader_artifact_kind_spirv();
+extern "C" int32 absolute_shader_artifact_kind_dxil();
+extern "C" int32 absolute_shader_artifact_kind_metal_ir();
+extern "C" int32 absolute_shader_artifact_kind_source_text();
+
+int32 main() {
+    string glsl = absolute_shader_glsl_Vertex();
+    string hlsl = absolute_shader_hlsl_Vertex();
+    string msl = absolute_shader_msl_Vertex();
+    string fglsl = absolute_shader_glsl_Fragment();
+    string fhlsl = absolute_shader_hlsl_Fragment();
+    string fmsl = absolute_shader_msl_Fragment();
+
+    int32 glslN = absolute_shader_glsl_size_Vertex();
+    int32 hlslN = absolute_shader_hlsl_size_Vertex();
+    int32 mslN = absolute_shader_msl_size_Vertex();
+    int32 spirvN = absolute_shader_spirv_size_Vertex();
+    int32 dxilN = absolute_shader_dxil_size_Vertex();
+    int32 hasSpirv = absolute_shader_has_spirv_Vertex();
+    int32 hasDxil = absolute_shader_has_dxil_Vertex();
+    int32 hasMetal = absolute_shader_has_metal_ir_Vertex();
+
+    println("artifact kinds");
+    println(absolute_shader_artifact_kind_spirv());
+    println(absolute_shader_artifact_kind_dxil());
+    println(absolute_shader_artifact_kind_metal_ir());
+    println(absolute_shader_artifact_kind_source_text());
+
+    println("source sizes");
+    println(glslN);
+    println(hlslN);
+    println(mslN);
+    println("binary sizes / flags");
+    println(spirvN);
+    println(dxilN);
+    println(hasSpirv);
+    println(hasDxil);
+    println(hasMetal);
+
+    if (glslN <= 0 || hlslN <= 0 || mslN <= 0) {
+        println("missing source IR");
+        return 1;
+    }
+    // Force-use fragment sources so they are not optimized away.
+    if (fglsl == "" || fhlsl == "" || fmsl == "") {
+        println("missing fragment source IR");
+        return 1;
+    }
+    // SPIR-V / DXIL require portable DXC; still OK if absent (sizes 0, has=0).
+    if (hasMetal != 0) {
+        println("unexpected metal IR without metallib pipeline");
+        return 1;
+    }
+    if (glsl == "" || hlsl == "" || msl == "") {
+        println("empty IR strings");
+        return 1;
+    }
+
+    println("shader-multi-ir-smoke OK");
+    return 0;
+}

@@ -326,20 +326,34 @@ typedef struct AbsoluteVirtualModuleTableV1 {
 
 typedef const AbsoluteVirtualModuleTableV1* (*AbsolutePluginVirtualModulesV1)(void);
 
+// First-class backend/plugin artifact kinds. GPU shading IR (SPIR-V, DXIL,
+// Metal IR) and shading language source (GLSL/HLSL/MSL as SOURCE_TEXT with a
+// target_triple such as "glsl", "hlsl", "msl") are intentionally separate from
+// host CPU object/executable paths so plugins can emit multi-target GPU blobs
+// without going through Desktop.Gpu.
 typedef enum AbsoluteArtifactKindV1 {
     ABSOLUTE_ARTIFACT_LLVM_IR = 0,
     ABSOLUTE_ARTIFACT_LLVM_BITCODE = 1,
     ABSOLUTE_ARTIFACT_OBJECT = 2,
     ABSOLUTE_ARTIFACT_STATIC_LIB = 3,
     ABSOLUTE_ARTIFACT_SHARED_LIB = 4,
-    ABSOLUTE_ARTIFACT_SPIRV = 5,
-    ABSOLUTE_ARTIFACT_DXIL = 6,
+    ABSOLUTE_ARTIFACT_SPIRV = 5,        // SPIR-V binary (Vulkan / OpenCL / etc.)
+    ABSOLUTE_ARTIFACT_DXIL = 6,         // DXIL container (DirectX 12)
     ABSOLUTE_ARTIFACT_PTX = 7,
     ABSOLUTE_ARTIFACT_CUBIN = 8,
     ABSOLUTE_ARTIFACT_AMDGPU = 9,
-    ABSOLUTE_ARTIFACT_SOURCE_TEXT = 10,
-    ABSOLUTE_ARTIFACT_CUSTOM_BINARY = 11
+    ABSOLUTE_ARTIFACT_SOURCE_TEXT = 10, // GLSL / HLSL / MSL / other text IR
+    ABSOLUTE_ARTIFACT_CUSTOM_BINARY = 11,
+    ABSOLUTE_ARTIFACT_METAL_IR = 12      // Metal AIR / .metallib bytes (when available)
 } AbsoluteArtifactKindV1;
+
+// Conventional target_triple strings for GPU source/binary artifacts.
+#define ABSOLUTE_TARGET_TRIPLE_SPIRV   "spirv-unknown-unknown"
+#define ABSOLUTE_TARGET_TRIPLE_DXIL    "dxil-ms-dx"
+#define ABSOLUTE_TARGET_TRIPLE_METAL   "metal"
+#define ABSOLUTE_TARGET_TRIPLE_GLSL    "glsl"
+#define ABSOLUTE_TARGET_TRIPLE_HLSL    "hlsl"
+#define ABSOLUTE_TARGET_TRIPLE_MSL     "msl"
 
 typedef struct AbsoluteArtifactV1 {
     uint32_t struct_size;
