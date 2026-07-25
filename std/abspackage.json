@@ -1,0 +1,40 @@
+{
+  "name": "absolute.std",
+  "version": "0.1.0",
+  "type": "lib",
+  "description": "Absolute standard library (std.*). Layout and SemVer policy: docs/standard-library.md",
+  "sources": [
+    "."
+  ],
+  "modules": {
+    "std.assert": "assert.abs",
+    "std.binary": "binary.abs",
+    "std.concurrent": ["concurrent.abs", "concurrent/capsule.abs"],
+    "std.collections": [
+      "collections/vector.abs",
+      "collections/map.abs",
+      "collections/set.abs",
+      "collections/channel.abs",
+      "collections/algorithms.abs"
+    ],
+    "std.datetime": "datetime.abs",
+    "std.env": "env.abs",
+    "std.fs": "fs.abs",
+    "std.http": "http.abs",
+    "std.json": "json.abs",
+    "std.log": "log.abs",
+    "std.net": "net.abs",
+    "std.process": "process.abs",
+    "std.random": "random.abs",
+    "std.task": "task.abs",
+    "std.testing": "testing.abs",
+    "std.time": "time.abs",
+    "std.text": "string.abs",
+    "std.uri": "uri.abs"
+  },
+  "stability": {
+    "tier": "preview-stable",
+    "document": "docs/standard-library.md"
+  },
+  "dependencies": {}
+}

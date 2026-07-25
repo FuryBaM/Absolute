@@ -456,8 +456,10 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   `Milliseconds`, `Seconds`); основной API — `now`, `mono`, `elapsed`, `sleep`,
   `measure`, `bench`, старый `Time.*` сохранён совместимыми обёртками.
 - [x] Добавить базовые collections: `Vector`, `Map` и `Set`.
-- [ ] **Следующее: определить стабильную структуру standard library и правила
-  версионирования** (package layout, semver for `std.*`, stability tiers).
+- [x] Определить стабильную структуру standard library и правила
+  версионирования: package `absolute.std` (`std/abspackage.json` 0.1.0),
+  namespace↔file map, SemVer + tiers Stable/Experimental/Internal,
+  pre-1.0 policy; normative doc `docs/standard-library.md`.
 - [x] Добавить интерполяцию строк `"${var}"`: каноничное обессахаривание (desugaring) строк с выражениями `${...}` на этапе парсера в вызовы встроенной функции `format(...)` с экранированием `\$`.
 - [x] Добавить `std.string`: `StringBuilder` для эффективного накопления строк, UTF-8 и декодирование/кодирование Unicode кодовых точек, изменение регистра (ASCII + Unicode basic plane), `trim`/`trimStart`/`trimEnd`, `startsWith`/`endsWith`/`contains`, `indexOf`/`lastIndexOf`, `replace`, `substring` и `join`.
 - [x] Добавить `std.env`: чтение, запись, удаление и проверка переменных окружения UTF-8 с диагностикой ошибок.
@@ -675,6 +677,7 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [ ] Для каждой заявленной возможности есть semantic, error, LLVM emit и runtime test.
 - [ ] Документация не называет экспериментальную возможность стабильной.
 - [ ] Примеры собираются на Windows и Linux одной командой.
-- [ ] Публичные ABI и plugin ABI имеют версию и compatibility policy.
+- [x] Публичные ABI и plugin ABI имеют версию и compatibility policy
+  (plugins: `.absplugin` + SemVer; std: `absolute.std` + `docs/standard-library.md`).
 - [ ] Ошибки компилятора всегда содержат файл, строку, колонку и понятный diagnostic code.
 - [ ] Есть минимум один реальный desktop/game example и одна reusable library на Absolute.

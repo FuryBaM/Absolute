@@ -1116,6 +1116,13 @@ assert(tracked.evaluate(40) == 42);
 delete unsafe;
 ```
 
+## Standard library
+
+The in-tree standard library lives under `std/` and is packaged as
+**`absolute.std`**. Namespace layout, import rules, SemVer, and stability tiers
+are defined in [`docs/standard-library.md`](docs/standard-library.md). Package
+identity: [`std/abspackage.json`](std/abspackage.json).
+
 ## Filesystem and TCP
 
 `std/fs.abs` provides UTF-8 path helpers, whole-file text operations, directory
