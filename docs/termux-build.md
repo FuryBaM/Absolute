@@ -19,9 +19,9 @@ bash build-termux.sh --bootstrap
 ```
 
 `--bootstrap` installs Clang, CMake, Ninja, LLVM, the matching
-`libllvm-static` component archives, LLD, Node.js, and the native libraries
-needed by LLVM. It does not run a full `pkg upgrade` unless `--upgrade` is also
-supplied.
+`libllvm-static` component archives, `llvm-tools`, LLD, Node.js, and the native
+libraries needed by LLVM. It does not run a full `pkg upgrade` unless
+`--upgrade` is also supplied.
 
 The compiler is written under:
 
@@ -98,10 +98,12 @@ file.
 
 ## LLVM package troubleshooting
 
-Termux splits the LLVM shared runtime and component archives into separate
-packages. `LLVMConfig.cmake` exports component targets such as
-`LLVMDemangle`, so a full Absolute backend build needs `libllvm-static` even
-though `clang`, `llvm`, and `libllvm` are already installed.
+Termux splits LLVM into several packages. A full Absolute backend build needs:
+
+- `llvm` for `llvm-config` and the CMake package;
+- `libllvm-static` for component archives such as `libLLVMDemangle.a`;
+- `llvm-tools` for development executables exported by `LLVMConfig.cmake`,
+  including `FileCheck`.
 
 If CMake reports that `libLLVMDemangle.a` does not exist, repair the toolchain
 and restart configuration:
@@ -112,14 +114,23 @@ pkg install libllvm-static
 bash build-termux.sh --clean
 ```
 
+If CMake reports that `$PREFIX/bin/FileCheck` does not exist:
+
+```bash
+pkg update
+pkg install llvm-tools
+bash build-termux.sh --clean
+```
+
 If the previous configure stopped in LLVM's `FindFFI.cmake` with
 `C: needs to be enabled before use`, update the Absolute branch. The CodeGen
 subproject enables both C and C++ because LLVM performs a small C compile/link
 check while locating libffi.
 
-The bootstrap and build scripts now check for
-`$PREFIX/lib/libLLVMDemangle.a` before starting CMake and print the package
-command directly instead of letting LLVM fail several screens later.
+The bootstrap and build scripts check both the static component archive and
+`FileCheck` before starting CMake, so an incomplete Termux LLVM split package is
+reported with the exact package command instead of a failure deep inside
+`LLVMExports.cmake`.
 
 ## Notes
 
