@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    cat <<'USAGE'
+Usage: bash scripts/termux/bootstrap-termux.sh [options]
+
+Options:
+  --upgrade       Upgrade installed Termux packages before installing dependencies.
+  --no-update     Skip `pkg update`.
+  --no-node       Do not install Node.js (WASM run/tests will be unavailable).
+  --ccache        Install ccache for cached compiler builds.
+  -h, --help      Show this help.
+USAGE
+}
+
+update_packages=1
+upgrade_packages=0
+with_node=1
+with_ccache=0
+
+while (($#)); do
+    case "$1" in
+        --upgrade) upgrade_packages=1 ;;
+        --no-update) update_packages=0 ;;
+        --no-node) with_node=0 ;;
+        --ccache) with_ccache=1 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+    esac
+    shift
+done
+
+if ! command -v pkg >/dev/null 2>&1; then
+    echo "This bootstrap script must be run inside Termux (the pkg command was not found)." >&2
+    exit 1
+fi
+
+if [[ -z "${PREFIX:-}" || ! -d "${PREFIX:-}" ]]; then
+    echo "Termux PREFIX is not available. Start a normal Termux shell and try again." >&2
+    exit 1
+fi
+
+if ((update_packages)); then
+    pkg update -y
+fi
+if ((upgrade_packages)); then
+    pkg upgrade -y
+fi
+
+packages=(
+    git
+    clang
+    cmake
+    ninja
+    llvm
+    lld
+    make
+    pkg-config
+    python
+    libxml2
+    zlib
+    zstd
+)
+if ((with_node)); then
+    packages+=(nodejs)
+fi
+if ((with_ccache)); then
+    packages+=(ccache)
+fi
+
+pkg install -y "${packages[@]}"
+
+llvm_dir=""
+if command -v llvm-config >/dev/null 2>&1; then
+    llvm_dir="$(llvm-config --cmakedir 2>/dev/null || true)"
+fi
+if [[ -z "$llvm_dir" || ! -f "$llvm_dir/LLVMConfig.cmake" ]]; then
+    for candidate in \
+        "$PREFIX/lib/cmake/llvm" \
+        "$PREFIX/lib/llvm/cmake"; do
+        if [[ -f "$candidate/LLVMConfig.cmake" ]]; then
+            llvm_dir="$candidate"
+            break
+        fi
+    done
+fi
+
+if [[ -z "$llvm_dir" || ! -f "$llvm_dir/LLVMConfig.cmake" ]]; then
+    echo "Dependencies were installed, but LLVMConfig.cmake was not found." >&2
+    echo "Check: llvm-config --cmakedir" >&2
+    exit 1
+fi
+
+llvm_version="$(llvm-config --version 2>/dev/null || echo unknown)"
+echo
+echo "Termux toolchain is ready."
+echo "  PREFIX:    $PREFIX"
+echo "  Clang:     $(clang --version | head -n 1)"
+echo "  LLVM:      $llvm_version"
+echo "  LLVM_DIR:  $llvm_dir"
+echo
+echo "Next:"
+echo "  bash build-termux.sh"
