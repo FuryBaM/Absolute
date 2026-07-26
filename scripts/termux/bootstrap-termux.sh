@@ -54,6 +54,7 @@ packages=(
     cmake
     ninja
     llvm
+    llvm-tools
     libllvm-static
     lld
     make
@@ -102,6 +103,13 @@ if [[ ! -f "$PREFIX/lib/libLLVMDemangle.a" ]]; then
     exit 1
 fi
 
+if [[ ! -x "$PREFIX/bin/FileCheck" ]]; then
+    echo "Termux LLVM CMake metadata references FileCheck, but the executable is missing." >&2
+    echo "Expected: $PREFIX/bin/FileCheck" >&2
+    echo "Install the matching package with: pkg install llvm-tools" >&2
+    exit 1
+fi
+
 llvm_version="$(llvm-config --version 2>/dev/null || echo unknown)"
 echo
 echo "Termux toolchain is ready."
@@ -110,6 +118,7 @@ echo "  Clang:        $(clang --version | head -n 1)"
 echo "  LLVM:         $llvm_version"
 echo "  LLVM_DIR:     $llvm_dir"
 echo "  LLVM static:  $PREFIX/lib/libLLVMDemangle.a"
+echo "  LLVM tools:   $PREFIX/bin/FileCheck"
 echo
 echo "Next:"
 echo "  bash build-termux.sh"
