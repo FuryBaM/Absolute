@@ -6,6 +6,7 @@
  *
  *   node tools/absolute-wasm-run.js path/to/module.wasm
  *   node tools/absolute-wasm-run.js module.wasm --export wasm_add --args 20,22
+ *   node tools/absolute-wasm-run.js module.wasm -- --mode=release input.txt
  */
 
 const fs = require('fs');
@@ -14,7 +15,8 @@ const { instantiateAbsoluteWasm } = require('./absolute-wasm-host.js');
 
 function usage() {
     console.error(`Usage:
-  absolute-wasm-run <module.wasm> [--export name] [--args a,b,c] [--http-mock url=body]
+  absolute-wasm-run <module.wasm> [--export name] [--args a,b,c]
+                    [--guest-arg value] [--http-mock url=body] [-- guest args...]
 `);
 }
 
@@ -23,11 +25,16 @@ function parseArgs(argv) {
         module: null,
         exportName: 'main',
         args: [],
+        guestArgs: [],
         httpMocks: Object.create(null),
     };
     const args = argv.slice();
     while (args.length) {
         const arg = args.shift();
+        if (arg === '--') {
+            options.guestArgs.push(...args);
+            break;
+        }
         if (arg === '-h' || arg === '--help') {
             usage();
             process.exit(0);
@@ -42,6 +49,11 @@ function parseArgs(argv) {
                 if (/^-?\d+$/.test(part)) return Number(part);
                 return part;
             });
+            continue;
+        }
+        if (arg === '--guest-arg') {
+            if (!args.length) throw new Error('--guest-arg expects a value');
+            options.guestArgs.push(args.shift());
             continue;
         }
         if (arg === '--http-mock') {
@@ -73,6 +85,8 @@ async function main() {
     const { exports, logs, host } = await instantiateAbsoluteWasm(bytes, {
         captureLogs: false,
         httpMocks: options.httpMocks,
+        executable: modulePath,
+        args: options.guestArgs,
     });
     const shutdown = () => {
         try {

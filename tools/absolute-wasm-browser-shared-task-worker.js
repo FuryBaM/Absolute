@@ -36,6 +36,11 @@ function makeImports() {
     return {
         env: {
             memory: sharedMemory,
+            absolute_time_unix_nanos() { return BigInt(Date.now()) * 1000000n; },
+            absolute_time_monotonic_nanos() { return BigInt(Math.floor(performance.now() * 1000000)); },
+            absolute_random_entropy() { return BigInt(Date.now()) ^ 0xa5a5f00dn; },
+            absolute_process_args_count() { return 1; },
+            absolute_process_arg_copy() { return -1; },
             absolute_log() {},
             absolute_http_get() { return -1; },
             absolute_tcp_connect() { return -1; },

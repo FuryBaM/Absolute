@@ -21,6 +21,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+size_t strlen(const char* text);
+int strncmp(const char* a, const char* b, size_t n);
+
 #if defined(ABSOLUTE_WASM_USE_WASI)
 /* WASI preview1 — wasmtime / Node WASI / wasmer without a custom Absolute host. */
 typedef struct absolute_wasi_ciovec {
@@ -372,7 +375,35 @@ int puts(const char* text) {
     return 0;
 }
 
-/* Minimal formatter: supports %s %d %i %u %lld %llu %% only (Absolute assert/println). */
+static void format_putc(char* out, size_t cap, size_t* offset, char value) {
+    if (out && *offset + 1 < cap)
+        out[*offset] = value;
+    ++*offset;
+}
+
+static void format_unsigned(
+    char* out,
+    size_t cap,
+    size_t* offset,
+    uint64_t value,
+    unsigned base,
+    int width,
+    char padding
+) {
+    static const char digits[] = "0123456789abcdef";
+    char scratch[32];
+    int count = 0;
+    do {
+        scratch[count++] = digits[value % base];
+        value /= base;
+    } while (value && count < (int)sizeof(scratch));
+    while (width-- > count)
+        format_putc(out, cap, offset, padding);
+    while (count--)
+        format_putc(out, cap, offset, scratch[count]);
+}
+
+/* Small, freestanding formatter used by the runtime and std implementations. */
 static int format_into(char* out, size_t cap, const char* format, va_list args) {
     size_t o = 0;
     if (!format)
@@ -386,66 +417,62 @@ static int format_into(char* out, size_t cap, const char* format, va_list args) 
         }
         ++i;
         if (format[i] == '%') {
-            if (out && o + 1 < cap)
-                out[o] = '%';
-            ++o;
+            format_putc(out, cap, &o, '%');
             continue;
+        }
+        char padding = ' ';
+        int width = 0;
+        if (format[i] == '0') {
+            padding = '0';
+            ++i;
+        }
+        while (format[i] >= '0' && format[i] <= '9') {
+            width = width * 10 + format[i] - '0';
+            ++i;
+        }
+        int long_count = 0;
+        while (format[i] == 'l') {
+            ++long_count;
+            ++i;
         }
         if (format[i] == 's') {
             const char* s = va_arg(args, const char*);
             if (!s)
                 s = "(null)";
+            int length = (int)strlen(s);
+            while (width-- > length)
+                format_putc(out, cap, &o, padding);
             for (size_t k = 0; s[k]; ++k) {
-                if (out && o + 1 < cap)
-                    out[o] = s[k];
-                ++o;
+                format_putc(out, cap, &o, s[k]);
             }
+            continue;
+        }
+        if (format[i] == 'c') {
+            format_putc(out, cap, &o, (char)va_arg(args, int));
             continue;
         }
         if (format[i] == 'd' || format[i] == 'i') {
-            int value = va_arg(args, int);
-            char tmp[16];
-            int n = 0;
-            unsigned u;
+            int64_t value = long_count ? va_arg(args, int64_t) : va_arg(args, int);
+            uint64_t magnitude;
             if (value < 0) {
-                if (out && o + 1 < cap)
-                    out[o] = '-';
-                ++o;
-                u = (unsigned)(-(value + 1)) + 1u;
+                format_putc(out, cap, &o, '-');
+                if (width > 0)
+                    --width;
+                magnitude = (uint64_t)(-(value + 1)) + 1u;
             } else {
-                u = (unsigned)value;
+                magnitude = (uint64_t)value;
             }
-            if (u == 0)
-                tmp[n++] = '0';
-            while (u) {
-                tmp[n++] = (char)('0' + (u % 10));
-                u /= 10;
-            }
-            while (n--) {
-                if (out && o + 1 < cap)
-                    out[o] = tmp[n];
-                ++o;
-            }
+            format_unsigned(out, cap, &o, magnitude, 10, width, padding);
             continue;
         }
-        if (format[i] == 'u') {
-            unsigned u = va_arg(args, unsigned);
-            char tmp[16];
-            int n = 0;
-            if (u == 0)
-                tmp[n++] = '0';
-            while (u) {
-                tmp[n++] = (char)('0' + (u % 10));
-                u /= 10;
-            }
-            while (n--) {
-                if (out && o + 1 < cap)
-                    out[o] = tmp[n];
-                ++o;
-            }
+        if (format[i] == 'u' || format[i] == 'x') {
+            uint64_t value = long_count ? va_arg(args, uint64_t) : va_arg(args, unsigned);
+            format_unsigned(out, cap, &o, value, format[i] == 'x' ? 16 : 10, width, padding);
             continue;
         }
-        /* Fallback: skip unknown specifier. */
+        /* Keep unsupported directives visible instead of silently deleting them. */
+        format_putc(out, cap, &o, '%');
+        format_putc(out, cap, &o, format[i]);
     }
     if (out && cap > 0)
         out[o < cap ? o : cap - 1] = '\0';
@@ -462,10 +489,11 @@ int printf(const char* format, ...) {
     return n;
 }
 
-int snprintf(char* buffer, size_t size, const char* format, ...) {
+/* Absolute LLVM models buffer sizes as i64 on every target, including wasm32. */
+int snprintf(char* buffer, uint64_t size, const char* format, ...) {
     va_list args;
     va_start(args, format);
-    int n = format_into(buffer, size, format, args);
+    int n = format_into(buffer, (size_t)size, format, args);
     va_end(args);
     return n;
 }
@@ -537,6 +565,17 @@ int strcmp(const char* a, const char* b) {
         ++b;
     }
     return (unsigned char)*a - (unsigned char)*b;
+}
+
+int strncmp(const char* a, const char* b, size_t n) {
+    if (n == 0) return 0;
+    if (!a) a = "";
+    if (!b) b = "";
+    while (n-- && *a && *a == *b) {
+        if (n == 0) return 0;
+        ++a; ++b;
+    }
+    return (int)(unsigned char)*a - (int)(unsigned char)*b;
 }
 
 /* ---------- managed pointers ---------- */
@@ -888,4 +927,7 @@ void absolute_task_destroy(void* handle) {
 
 /* Platform services: virtual FS, env, process, network stubs, capsules. */
 #include "absolute_wasm_platform.c"
+
+/* Remaining std runtime services implemented without a native libc. */
+#include "absolute_wasm_std.c"
 

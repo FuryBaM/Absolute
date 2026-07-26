@@ -39,7 +39,7 @@ const wasmPath = process.argv[3];
 // freezes the main event loop. A same-thread echo server would never reply.
 function startEchoServerWorker() {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(\`
+    const worker = new Worker(`
       const { parentPort } = require('worker_threads');
       const net = require('net');
       const server = net.createServer((socket) => {
@@ -49,7 +49,7 @@ function startEchoServerWorker() {
       server.listen(0, '127.0.0.1', () => {
         parentPort.postMessage({ port: server.address().port });
       });
-    \`, { eval: true });
+    `, { eval: true });
     worker.once('message', (msg) => {
       if (msg && msg.error) reject(new Error(msg.error));
       else resolve({ worker, port: msg.port });

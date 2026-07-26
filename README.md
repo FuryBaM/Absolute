@@ -579,6 +579,7 @@ WASI preview1 services, and optional shared-memory modules.
 REM Build (host env imports: Node/browser)
 absolutec tests\wasm-smoke.abs --target wasm32-unknown-unknown --build-exe -o out.wasm
 node tools\absolute-wasm-run.js out.wasm
+node tools\absolute-wasm-run.js out.wasm -- --mode=release input.txt
 
 REM Developer helper (build / run / ctest -R wasm)
 absolute wasm build tests\wasm-smoke.abs -o out.wasm

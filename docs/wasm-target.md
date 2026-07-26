@@ -19,7 +19,9 @@ absolutec tests\wasm-export-only.abs --target wasm32-unknown-unknown --build-exe
   `.absolute/toolchains/llvm-*/bin/wasm-ld`).
 - Pure `export "C"` modules produce a loadable `.wasm`
   (`tests/wasm-export-only.abs` + Node runner).
-- Console helpers and managed pointers link against
+- Console helpers, managed pointers, JSON, binary serialization, datetime,
+  random, atomics/mutexes, cancellation tokens, virtual FS, env/process args
+  and task services link against
   `Absolute-Runtime/wasm/absolute_wasm_runtime.c` (built with
   `clang --target=wasm32-unknown-unknown` when available).
 - Browser demo: `examples/wasm/` (static HTML + `loader.js`).
@@ -32,14 +34,16 @@ absolutec tests\wasm-export-only.abs --target wasm32-unknown-unknown --build-exe
 | `--build-exe --target` for non-wasm triples | Error |
 | `load(.dll)` / desktop plugins on wasm | not available |
 | Full WASI sysroot / wasi-sdk libc | Not shipped |
-| Shared-memory pthread-style wasm threads | not yet (worker pool uses isolated instances) |
+| pthread / wasi-threads ABI and TLS | Not available; use Absolute task workers |
+| `std.process.run`, dynamic libraries, UDP | Not available in sandboxed wasm |
+| Blocking `std.time.sleep` in a reactor | Cooperative no-op; schedule in the host |
 
 ## Runtime and linking
 
 | Layer | Status |
 |-------|--------|
 | Host `Absolute-Runtime` | Native only |
-| `absolute_wasm_runtime.o` | Heap, managed, errors, sync tasks, virtual FS, env/process, host TCP/HTTP |
+| `absolute_wasm_runtime.o` | Full Absolute std ABI, managed heap, VFS, host clocks/random/args, tasks, TCP/HTTP |
 | `ABSOLUTE_WASM_LIBS` | Extra space/`;`-separated objects to link |
 
 Supported profiles:
@@ -63,8 +67,9 @@ Prefer for wasm-facing surfaces:
 - scalars, enums, `raw T*`, `string` as C pointer, `cfunc` / `export "C"`;
 - no reliance on Win32/X11, `load(.dll)`, or host ASan.
 
-Managed pointers, Absolute exceptions, and the task runtime need a dedicated
-wasm runtime design before they can be considered portable across engines.
+Managed pointers, Absolute exceptions and tasks are provided by the selected
+Absolute wasm runtime profile. Do not link a module that uses them without one
+of the runtime objects.
 
 Language C ABI rules still apply: [`native-c-abi.md`](native-c-abi.md).
 
@@ -101,15 +106,32 @@ Common triples:
 
 ## Host import
 
+The end-to-end `absolute.run-wasm-full-runtime` regression covers clocks,
+entropy and launch arguments together with JSON, binary serialization,
+datetime, VFS, atomics, mutexes and cancellation.
+
 | Import | Module | Purpose |
 |--------|--------|---------|
 | `absolute_log(ptr, len)` | `env` | UTF-8 console from `puts`/`printf` |
 | `absolute_http_get(url, out, cap)` | `env` | Host HTTP GET (or mocks) into linear memory |
 | `absolute_tcp_*` | `env` | Host TCP: mocks and/or real OS sockets (Node) |
+| `absolute_time_unix_nanos` / `absolute_time_monotonic_nanos` | `env` | Host clocks |
+| `absolute_random_entropy` | `env` | Host entropy seed |
+| `absolute_process_args_count` / `absolute_process_arg_copy` | `env` | Launch arguments for `std.env` |
 | `absolute_task_pool_size` | `env` | `0` = sync tasks; `>0` = host worker pool |
 | `absolute_task_enqueue` / `absolute_task_await_job` | `env` | Offload spawn/await to workers |
 
 Node helpers:
+
+Pass launch arguments to `std.env` independently from scalar arguments used to
+invoke an exported function:
+
+```bat
+node tools\absolute-wasm-run.js app.wasm -- --mode=release input.txt
+```
+
+Embedding code uses
+`instantiateAbsoluteWasm(bytes, { args: ["--mode=release", "input.txt"] })`.
 
 - `tools/absolute-wasm-host.js` — `instantiateAbsoluteWasm`
 - `tools/absolute-wasm-tcp-worker.js` — background TCP for blocking imports

@@ -82,6 +82,7 @@ if(ABSOLUTE_WASM_CLANG)
         -fno-builtin-calloc
         -fno-builtin-realloc
         -fno-builtin-free
+        -fno-builtin-snprintf
     )
     set(ABSOLUTE_WASM_RT_SHARED_FLAGS
         ${ABSOLUTE_WASM_RT_FLAGS}
@@ -97,6 +98,7 @@ if(ABSOLUTE_WASM_CLANG)
             -o "${ABSOLUTE_WASM_SHIM_OBJECT}"
         DEPENDS "${ABSOLUTE_WASM_RT_SOURCE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/wasm/absolute_wasm_platform.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/wasm/absolute_wasm_std.c"
         COMMENT "Building Absolute wasm runtime (host env.absolute_log)"
         VERBATIM
     )
@@ -110,6 +112,7 @@ if(ABSOLUTE_WASM_CLANG)
             -o "${ABSOLUTE_WASM_WASI_OBJECT}"
         DEPENDS "${ABSOLUTE_WASM_RT_SOURCE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/wasm/absolute_wasm_platform.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/wasm/absolute_wasm_std.c"
         COMMENT "Building Absolute wasm runtime (WASI fd_write console)"
         VERBATIM
     )
@@ -122,6 +125,7 @@ if(ABSOLUTE_WASM_CLANG)
             -o "${ABSOLUTE_WASM_SHARED_OBJECT}"
         DEPENDS "${ABSOLUTE_WASM_RT_SOURCE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/wasm/absolute_wasm_platform.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/wasm/absolute_wasm_std.c"
         COMMENT "Building Absolute wasm runtime (shared-memory + atomics heap lock)"
         VERBATIM
     )

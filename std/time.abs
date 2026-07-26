@@ -124,9 +124,9 @@ namespace std.time {
     }
 }
 
-// Compatibility wrappers for the original std.time API. New code should use
-// std.time and unit-explicit function names.
-namespace Time {
+// Legacy wrappers for the original std.time API. The old global name `Time`
+// collided with std.datetime.Time when both modules were imported.
+namespace LegacyTime {
     int64 unixSeconds() {
         return std.time.unixSeconds();
     }

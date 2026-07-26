@@ -120,6 +120,11 @@ export function createBrowserAbsoluteImports(options = {}) {
     const capture = options.captureLogs === true;
     const logs = [];
     const decoder = new TextDecoder('utf-8');
+    const encoder = new TextEncoder();
+    const launchArgs = [
+        String(options.executable || 'absolutec-wasm'),
+        ...((options.args || []).map((value) => String(value))),
+    ];
     let memory = null;
     const mocks = options.httpMocks || Object.create(null);
     const httpCache = options._httpCache || options.httpCache || Object.create(null);
@@ -127,6 +132,26 @@ export function createBrowserAbsoluteImports(options = {}) {
     const onLog = typeof options.onLog === 'function' ? options.onLog : null;
 
     const env = {
+        absolute_time_unix_nanos() { return BigInt(Date.now()) * 1000000n; },
+        absolute_time_monotonic_nanos() { return BigInt(Math.floor(performance.now() * 1000000)); },
+        absolute_random_entropy() {
+            const values = new BigUint64Array(1);
+            crypto.getRandomValues(values);
+            return values[0];
+        },
+        absolute_process_args_count() { return launchArgs.length; },
+        absolute_process_arg_copy(index, outputPtr, capacity) {
+            const i = Number(index) | 0;
+            const cap = Number(capacity) | 0;
+            if (!memory || i < 0 || i >= launchArgs.length || cap <= 0) return -1;
+            const bytes = encoder.encode(launchArgs[i]);
+            const count = Math.min(bytes.length, cap - 1);
+            const view = new Uint8Array(memory.buffer);
+            const output = Number(outputPtr) >>> 0;
+            view.set(bytes.subarray(0, count), output);
+            view[output + count] = 0;
+            return count;
+        },
         absolute_log(ptr, len) {
             if (!memory) return;
             const view = new Uint8Array(memory.buffer, Number(ptr) >>> 0, Number(len) >>> 0);

@@ -663,6 +663,12 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   `env.memory`, nested `absolute-wasm-browser-shared-task-worker.js`,
   `taskPoolMode: 'shared'|'isolated'`; wiring checked in
   `run-wasm-browser-task-pool`.
+- [x] Complete wasm/std ABI parity: JSON, binary serialization, datetime,
+  atomics/mutexes, cancellation and task delay implementations; Node/browser
+  host clocks, entropy and `std.env` launch arguments; ABI audit reports zero
+  missing `absolute_*` symbols; end-to-end `run-wasm-full-runtime` regression.
+- [x] Remove the `std.time` / `std.datetime` import collision by renaming the
+  legacy global compatibility namespace to `LegacyTime`.
 - [x] Larger wasi-libc kits: `STRTOL` + `STRTOD` (default), dual probe, kit
   registry in `AbsoluteWasiLibcExtras.cmake`, `WASI_LIBC_KIT` switch.
 - [ ] Guest-on-libc mode (drop Absolute malloc; size_t ABI); wasi-threads/TLS;

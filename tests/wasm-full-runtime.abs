@@ -1,0 +1,90 @@
+// End-to-end WASM std/runtime contract. This intentionally exercises services
+// that previously compiled but failed to link because their runtime ABI was absent.
+import "../std/binary.abs";
+import "../std/concurrent.abs";
+import "../std/datetime.abs";
+import "../std/env.abs";
+import "../std/fs.abs";
+import "../std/json.abs";
+import "../std/random.abs";
+import "../std/task.abs";
+import "../std/time.abs";
+
+int32 main() {
+    assert(std.time.now(std.time.Unit.Milliseconds) > 0, "host wall clock");
+    assert(std.time.mono(std.time.Unit.Nanoseconds) > 0, "host monotonic clock");
+    assert(std.random.entropy() != 0, "host random entropy");
+
+    assert(std.env.argsCount() == 3, "host launch argument count");
+    assert(std.env.parameter("mode") == "full", "inline launch parameter");
+    assert(std.env.flag("verbose"), "launch flag");
+    assert(std.env.argAt(2) == "payload", "positional launch argument");
+
+    std.fs.writeText("/runtime/state.txt", "wasm-runtime");
+    assert(std.fs.readText("/runtime/state.txt") == "wasm-runtime", "virtual filesystem");
+    assert(std.fs.join("/runtime/assets", "../state.txt") == "/runtime/state.txt", "portable path join");
+
+    std.binary.BinaryWriter* writer = new std.binary.BinaryWriter();
+    writer.writeByte(171 as uint8);
+    writer.writeInt16(-1234 as int16);
+    writer.writeInt32(123456789);
+    writer.writeInt64(9876543210);
+    writer.writeFloat(1.25 as float);
+    writer.writeDouble(3.5);
+    writer.writeString("Absolute WASM");
+    assert(writer.toHexString() != "", "binary hex");
+
+    std.binary.BinaryReader* reader = new std.binary.BinaryReader(writer.getData(), writer.size());
+    assert(reader.readByte() == (171 as uint8), "binary byte");
+    assert(reader.readInt16() == (-1234 as int16), "binary int16");
+    assert(reader.readInt32() == 123456789, "binary int32");
+    assert(reader.readInt64() == 9876543210, "binary int64");
+    assert(reader.readFloat() == (1.25 as float), "binary float");
+    assert(reader.readDouble() == 3.5, "binary double");
+    assert(reader.readString() == "Absolute WASM", "binary string");
+    assert(reader.isEof(), "binary eof");
+    reader.dispose();
+    writer.dispose();
+
+    std.json.JsonValue* root = std.json.parse(
+        "{\"message\":\"Привет 😈\",\"values\":[1,2.5,true,null],\"nested\":{\"ok\":true}}");
+    assert(root != null && root.isObject(), "json parse");
+    assert(root.getStringOr("message", "") == "Привет 😈", "json UTF-8");
+    std.json.JsonValue* values = root.getProp("values");
+    assert(values != null && values.size() == 4, "json array");
+    std.json.JsonValue* decimal = values.getAt(1);
+    assert(decimal != null && decimal.asDouble() == 2.5, "json decimal");
+    assert(root.stringify() ==
+        "{\"message\":\"Привет 😈\",\"nested\":{\"ok\":true},\"values\":[1,2.5,true,null]}",
+        "json stable stringify");
+    root.dispose();
+
+    Date date = std.datetime.createDate(2026, 7, 26);
+    Time time = std.datetime.createTime(14, 5, 6, 7);
+    DateTime stamp = std.datetime.createDateTime(date, time, std.datetime.createZone(300, "+05:00"));
+    string iso = std.datetime.formatIso(stamp);
+    assert(iso == "2026-07-26T14:05:06.007+05:00", "datetime format");
+    DateTime parsed = std.datetime.parseIso(iso);
+    assert(parsed.date.year == 2026 && parsed.time.millisecond == 7, "datetime parse");
+
+    std.concurrent.AtomicInt* atomic = new std.concurrent.AtomicInt(10);
+    assert(atomic.fetchAdd(5) == 10 && atomic.load() == 15, "atomic add/load");
+    assert(atomic.compareExchange(15, 22) && atomic.load() == 22, "atomic compare exchange");
+    atomic.dispose();
+
+    std.concurrent.Mutex* mutex = new std.concurrent.Mutex();
+    assert(mutex.tryLock(), "mutex try lock");
+    mutex.unlock();
+    mutex.lock();
+    mutex.unlock();
+    mutex.dispose();
+
+    std.task.CancellationToken* cancellation = new std.task.CancellationToken();
+    assert(!cancellation.isCancelled(), "cancellation initial state");
+    cancellation.cancel();
+    assert(cancellation.isCancelled(), "cancellation state");
+    cancellation.dispose();
+
+    println("wasm-full-runtime=ok");
+    return 0;
+}

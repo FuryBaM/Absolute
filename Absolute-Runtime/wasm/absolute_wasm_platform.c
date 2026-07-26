@@ -1227,6 +1227,20 @@ int32_t absolute_env_remove(const char* name) {
 static char g_process_error[64];
 static char g_process_exe[] = "absolutec-wasm";
 static char g_process_host[] = "wasm";
+static char g_process_arg_scratch[1024];
+
+#if !defined(ABSOLUTE_WASM_USE_WASI)
+__attribute__((import_module("env"), import_name("absolute_time_unix_nanos")))
+int64_t absolute_host_time_unix_nanos(void);
+__attribute__((import_module("env"), import_name("absolute_time_monotonic_nanos")))
+int64_t absolute_host_time_monotonic_nanos(void);
+__attribute__((import_module("env"), import_name("absolute_random_entropy")))
+uint64_t absolute_host_random_entropy(void);
+__attribute__((import_module("env"), import_name("absolute_process_args_count")))
+int32_t absolute_host_process_args_count(void);
+__attribute__((import_module("env"), import_name("absolute_process_arg_copy")))
+int32_t absolute_host_process_arg_copy(int32_t index, char* output, int32_t capacity);
+#endif
 
 #if defined(ABSOLUTE_WASM_USE_WASI)
 enum { ABSOLUTE_WASI_MAX_ARGS = 64, ABSOLUTE_WASI_ARGV_BUF = 4096 };
@@ -1330,6 +1344,10 @@ const char* absolute_process_executable_path(void) {
     wasi_load_args();
     if (g_wasi_argc > 0 && g_wasi_argv[0] && g_wasi_argv[0][0])
         return g_wasi_argv[0];
+#else
+    if (absolute_host_process_arg_copy(0, g_process_arg_scratch,
+            (int32_t)sizeof(g_process_arg_scratch)) >= 0)
+        return g_process_arg_scratch;
 #endif
     return g_process_exe;
 }
@@ -1349,7 +1367,7 @@ int32_t absolute_process_args_count(void) {
     wasi_load_args();
     return g_wasi_argc;
 #else
-    return 0;
+    return absolute_host_process_args_count();
 #endif
 }
 const char* absolute_process_arg_at(int32_t index) {
@@ -1359,8 +1377,10 @@ const char* absolute_process_arg_at(int32_t index) {
         return "";
     return g_wasi_argv[index];
 #else
-    (void)index;
-    return "";
+    if (index < 0 || absolute_host_process_arg_copy(index, g_process_arg_scratch,
+            (int32_t)sizeof(g_process_arg_scratch)) < 0)
+        return "";
+    return g_process_arg_scratch;
 #endif
 }
 
@@ -1817,7 +1837,7 @@ int64_t absolute_time_unix_nanos(void) {
         return 0;
     return (int64_t)ts;
 #else
-    return 0;
+    return absolute_host_time_unix_nanos();
 #endif
 }
 
@@ -1836,7 +1856,7 @@ int64_t absolute_time_monotonic_nanos(void) {
         return 0;
     return (int64_t)ts;
 #else
-    return 0;
+    return absolute_host_time_monotonic_nanos();
 #endif
 }
 
@@ -1889,7 +1909,12 @@ uint64_t absolute_random_entropy(void) {
     if (absolute_wasi_random_get((uint8_t*)&value, sizeof(value)) == 0 && value != 0)
         return value;
 #endif
-    /* Fallback constant seed material for host-import builds without entropy. */
+#if !defined(ABSOLUTE_WASM_USE_WASI)
+    {
+        uint64_t value = absolute_host_random_entropy();
+        if (value != 0) return value;
+    }
+#endif
     return 0xA5A5F00D1234C0DEULL ^ (uint64_t)(uintptr_t)&absolute_random_entropy;
 }
 

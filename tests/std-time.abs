@@ -40,8 +40,8 @@ int32 main() {
     assert(std.time.unixMilliseconds() > 0 &&
         std.time.monotonicNanoseconds() > 0,
         "long compatibility helpers must remain usable");
-    Time.sleep(0);
-    assert(Time.unixSeconds() > 0 && Time.monotonic() > 0,
+    LegacyTime.sleep(0);
+    assert(LegacyTime.unixSeconds() > 0 && LegacyTime.monotonic() > 0,
         "legacy Time wrappers must remain usable");
 
     println("std-time=ok");

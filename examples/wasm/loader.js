@@ -125,6 +125,11 @@ function createMainImports() {
   const tcp = createMockTcp(defaultTcpMocks());
   return {
     env: {
+      absolute_time_unix_nanos() { return BigInt(Date.now()) * 1000000n; },
+      absolute_time_monotonic_nanos() { return BigInt(Math.floor(performance.now() * 1000000)); },
+      absolute_random_entropy() { return BigInt(Date.now()) ^ 0xa5a5f00dn; },
+      absolute_process_args_count() { return 1; },
+      absolute_process_arg_copy() { return -1; },
       absolute_log(ptr, len) {
         if (!memory) return;
         const view = new Uint8Array(memory.buffer, Number(ptr) >>> 0, Number(len) >>> 0);

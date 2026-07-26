@@ -383,9 +383,26 @@ function createBrowserTaskPool(wasmBytes, workerCount, poolOptions = {}) {
 function createImports(options, tcpTable, pool) {
     const httpMocks = options.httpMocks || Object.create(null);
     const httpCache = options.httpCache || Object.create(null);
+    const launchArgs = [String(options.executable || 'absolutec-wasm'), ...((options.args || []).map(String))];
 
     return {
         env: {
+            absolute_time_unix_nanos() { return BigInt(Date.now()) * 1000000n; },
+            absolute_time_monotonic_nanos() { return BigInt(Math.floor(performance.now() * 1000000)); },
+            absolute_random_entropy() { return BigInt(Date.now()) ^ 0xa5a5f00dn; },
+            absolute_process_args_count() { return launchArgs.length; },
+            absolute_process_arg_copy(index, outputPtr, capacity) {
+                const i = Number(index) | 0;
+                const cap = Number(capacity) | 0;
+                if (!memory || i < 0 || i >= launchArgs.length || cap <= 0) return -1;
+                const bytes = new TextEncoder().encode(launchArgs[i]);
+                const count = Math.min(bytes.length, cap - 1);
+                const view = new Uint8Array(memory.buffer);
+                const output = Number(outputPtr) >>> 0;
+                view.set(bytes.subarray(0, count), output);
+                view[output + count] = 0;
+                return count;
+            },
             absolute_log(ptr, len) {
                 if (!memory) return;
                 const view = new Uint8Array(memory.buffer, Number(ptr) >>> 0, Number(len) >>> 0);

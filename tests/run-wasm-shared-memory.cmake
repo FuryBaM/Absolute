@@ -97,11 +97,11 @@ const { instantiateAbsoluteWasm } = require(process.argv[2]);
     const markerAt = 64; // low addresses are wasm internals; use a free-ish scratch region
     const view = new Int32Array(sab, markerAt, 1);
     Atomics.store(view, 0, 0);
-    const worker = new Worker(\`
+      const worker = new Worker(`
       const { workerData } = require('worker_threads');
       const view = new Int32Array(workerData.sab, workerData.offset, 1);
       for (let i = 0; i < 1000; i++) Atomics.add(view, 0, 1);
-    \`, { eval: true, workerData: { sab, offset: markerAt } });
+      `, { eval: true, workerData: { sab, offset: markerAt } });
     for (let i = 0; i < 1000; i++) Atomics.add(view, 0, 1);
     await new Promise((resolve, reject) => {
       worker.on('exit', resolve);
