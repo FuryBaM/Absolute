@@ -41,11 +41,13 @@ Only two cross-domain representations exist:
 1. an immutable message value/blob, copied or backed by read-only storage;
 2. a sealed transfer capsule containing a unique object graph.
 
-A capsule is not constructed by applying `move` to an arbitrary pointer graph.
-Its opaque storage is isolated from creation and never exposes ordinary pointer
-aliases. Sending it atomically rehomes the graph in the receiver domain. The
-sender's old capability is unusable at runtime, independently of analyzer
-diagnostics. One-shot task results use the same envelope in the opposite direction.
+A capsule is constructed only by the explicit `seal(move(owner))` operation,
+not by casting a pointer or integer. Sealing rotates the root managed handle
+generation, so ordinary aliases retained by the sender expire at runtime.
+`std.concurrent.TransferChannel<T>` transports the opaque one-shot capsule and
+`unseal<T>` establishes the receiver's new owner. A failed send restores the
+capsule to the caller; destroying a channel also destroys queued capsules.
+One-shot task results use the same ownership direction.
 
 Shared mutable facilities are separate opaque capabilities such as atomics,
 mutex cells, semaphores, actors, and services. Their internal value cannot be

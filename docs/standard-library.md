@@ -54,6 +54,7 @@ std/
   concurrent.abs           # std.concurrent (atomics, mutex)
   concurrent/
     capsule.abs            # std.concurrent transfer capsule helpers
+    transfer_channel.abs   # one-shot managed-owner TransferChannel<T>
   collections/
     vector.abs             # std.collections.Vector
     deque.abs              # Deque<T>, Queue<T>, Stack<T>
@@ -61,7 +62,7 @@ std/
     hash_map.abs           # open-addressed HashMap<K,V>, HashSet<T>
     map.abs                # std.collections.Map
     set.abs                # std.collections.Set
-    channel.abs            # std.collections.Channel
+    channel.abs            # codec-based std.collections.Channel<T>
     algorithms.abs         # std.collections algorithms
   datetime.abs             # std.datetime
   env.abs                  # std.env
@@ -88,7 +89,7 @@ std/
 | `std.binary` | `std/binary.abs` | `BinaryReader` / `BinaryWriter` |
 | `std.core` | `std/core.abs` | Common application imports; it does not introduce another namespace |
 | `std.collections` | `std/collections/*.abs` | Split across files; import any file that defines the needed type |
-| `std.concurrent` | `std/concurrent.abs`, `std/concurrent/capsule.abs` | Atomics, mutex, isolate capsules |
+| `std.concurrent` | `std/concurrent.abs`, `std/concurrent/*.abs` | Atomics, mutex, isolate capsules and ownership-transfer channels |
 | `std.datetime` | `std/datetime.abs` | Calendar / timezone |
 | `std.env` | `std/env.abs` | Environment variables and launch arguments |
 | `std.fs` | `std/fs.abs` | Paths and `File` |
@@ -141,6 +142,43 @@ Current Stable modules (0.x: *preview-stable* — see versioning note):
 - `std.random`, `std.json`, `std.binary`
 - `std.net`, `std.uri`, `std.http`
 - `std.datetime`, `std.task`, `std.concurrent`
+
+### Typed channels and ownership transfer
+
+`std.collections.Channel<T>` carries copyable messages through explicit
+`func<int64, T>` / `func<T, int64>` codecs. The `std.collections.channels`
+factories provide ready-to-use `int64`, `int32`, and Boolean channels.
+`receive()` throws when a closed channel is empty; `receiveWith()` reports that
+state as `false`, while `tryReceive()` never blocks.
+
+```absolute
+import std.collections.channel;
+
+std.collections.Channel<int32>* events =
+    std.collections.channels.int32Values(32);
+events.send(42);
+int32 event = events.receive();
+```
+
+Managed pointers are not encoded as integers. Move the unique owner into a
+capsule and send that capsule through `std.concurrent.TransferChannel<T>`:
+
+```absolute
+import std.concurrent.transfer_channel;
+
+std.concurrent.TransferChannel<Job>* jobs =
+    new std.concurrent.TransferChannel<Job>();
+Job* owner = new Job();
+std.concurrent.Transfer<Job>* envelope =
+    new std.concurrent.Transfer<Job>(seal(move(owner)));
+jobs.send(envelope);
+Job* received = jobs.receive();
+```
+
+`seal` requires `move(owner)`, immediately expires the sender's managed aliases,
+and returns an opaque one-shot capsule handle. A successful send empties the
+typed `Transfer<T>` capsule; a rejected send restores it. Closing or destroying a transfer
+channel destroys every queued owner that was not received.
 
 ### Launch arguments through `std.env`
 
@@ -328,7 +366,7 @@ implemented.
 | `std.net` / `std.uri` / `std.http` | Networking stack |
 | `std.collections` | Dynamic, deque/queue/stack, priority, hash, and channel collections |
 | `std.hash` | Portable hashing/equality helpers for standard key types |
-| `std.concurrent` | Shared concurrent capabilities (atomics, mutex, capsules) |
+| `std.concurrent` | Shared concurrent capabilities (atomics, mutex, capsules, ownership-transfer channels) |
 | `std.task` | Task metadata / scheduling queries |
 | `std.text` | String building and Unicode helpers |
 | `std.json` / `std.binary` | Serialization |

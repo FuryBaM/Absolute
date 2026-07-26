@@ -1,0 +1,25 @@
+import "../std/concurrent/transfer_channel.abs";
+
+class TransferValue {
+    public int32 value;
+}
+
+class OtherTransferValue {
+    public int32 value;
+}
+
+void main() {
+    TransferValue* owner = new TransferValue();
+    raw void* borrowedSeal = seal(owner);
+
+    raw void* validCapsule = seal(move(owner));
+    TransferValue* wrongInput = unseal<TransferValue>(42);
+    TransferValue* missingType = unseal(validCapsule);
+
+    TransferValue* typedOwner = new TransferValue();
+    std.concurrent.Transfer<TransferValue>* typedMessage =
+        new std.concurrent.Transfer<TransferValue>(seal(move(typedOwner)));
+    std.concurrent.TransferChannel<OtherTransferValue>* wrongChannel =
+        new std.concurrent.TransferChannel<OtherTransferValue>();
+    wrongChannel.send(typedMessage);
+}

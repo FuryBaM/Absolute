@@ -646,6 +646,15 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/async-concurrency-advanced.abs"
     )
     add_test(
+        NAME absolute.std-typed-channel-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-typed-channel.abs"
+    )
+    add_test(
+        NAME absolute.ownership-transfer-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-transfer-errors.abs"
+    )
+    set_tests_properties(absolute.ownership-transfer-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.array-copy-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-copy-errors.abs"
     )
@@ -1600,6 +1609,17 @@ if(BUILD_TESTING)
                         -DSOURCE=${PROJECT_SOURCE_DIR}/tests/std-hash-collections.abs
                         -DOUTPUT=${CMAKE_BINARY_DIR}/std-hash-collections.wasm
                         -DMARKER=std-hash-collections=ok
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-marker.cmake"
+                )
+                add_test(
+                    NAME absolute.run-wasm-std-typed-channel
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/std-typed-channel.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/std-typed-channel.wasm
+                        -DMARKER=std-typed-channel=ok
                         -DNODE=${ABSOLUTE_NODE_FOR_WASM}
                         -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-marker.cmake"
@@ -3044,6 +3064,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-async-concurrency-advanced PROPERTIES
             FIXTURES_REQUIRED absolute-async-concurrency-advanced-executable
             PASS_REGULAR_EXPRESSION "async-concurrency-advanced=ok"
+        )
+        add_test(
+            NAME absolute.build-std-typed-channel
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-typed-channel.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-typed-channel-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-typed-channel PROPERTIES
+            FIXTURES_SETUP absolute-std-typed-channel-executable
+        )
+        add_test(NAME absolute.run-std-typed-channel
+            COMMAND "${CMAKE_BINARY_DIR}/std-typed-channel-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-typed-channel PROPERTIES
+            FIXTURES_REQUIRED absolute-std-typed-channel-executable
+            PASS_REGULAR_EXPRESSION "std-typed-channel=ok"
         )
     endif()
 endif()

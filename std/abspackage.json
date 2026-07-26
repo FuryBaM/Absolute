@@ -10,7 +10,11 @@
     "std.core": "core.abs",
     "std.assert": "assert.abs",
     "std.binary": "binary.abs",
-    "std.concurrent": ["concurrent.abs", "concurrent/capsule.abs"],
+    "std.concurrent": [
+      "concurrent.abs",
+      "concurrent/capsule.abs",
+      "concurrent/transfer_channel.abs"
+    ],
     "std.collections": [
       "collections/vector.abs",
       "collections/deque.abs",

@@ -17,6 +17,18 @@ namespace std.concurrent {
             return ptr;
         }
 
+        public bool isEmpty() {
+            return handle == null;
+        }
+
+        // Restores a capsule after a channel rejected a send.
+        public void restore(raw void* capsulePtr) {
+            if (handle != null || capsulePtr == null) {
+                throw new Error("Capsule restore requires an empty capsule and a valid handle");
+            }
+            handle = capsulePtr;
+        }
+
         public uint64 unwrap() {
             if (handle == null) {
                 return 0 as uint64;
@@ -31,6 +43,14 @@ namespace std.concurrent {
                 absolute_capsule_destroy(handle);
                 handle = null;
             }
+        }
+    }
+
+    // Typed capsule facade used by TransferChannel<T>. Construct it only from
+    // seal(move(owner)); the raw Capsule base remains available for FFI code.
+    class Transfer<T> : Capsule {
+        public Transfer(raw void* capsulePtr) {
+            base(capsulePtr);
         }
     }
 

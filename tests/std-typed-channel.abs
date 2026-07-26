@@ -1,0 +1,98 @@
+import "../std/collections/channel.abs";
+import "../std/concurrent/transfer_channel.abs";
+
+class ChannelPayload {
+    public int64 value;
+
+    public ChannelPayload(int64 initialValue) {
+        value = initialValue;
+    }
+}
+
+async int64 transferProducerTask(int64 channelAddress) {
+    raw void* channel = channelAddress as raw void*;
+    ChannelPayload* payload = new ChannelPayload(84);
+    raw void* capsule = seal(move(payload));
+    assert(absolute_transfer_channel_send(channel, capsule),
+        "task transfer send");
+    return 1;
+}
+
+async int32 main() {
+    func<int64, int64> identity = fn(int64 value) => value;
+    std.collections.Channel<int64>* unbounded =
+        new std.collections.Channel<int64>(identity, identity);
+    assert(unbounded.send(7 as int64), "custom codec channel send");
+    assert(unbounded.receive() == 7, "custom codec channel receive");
+
+    std.collections.Channel<int32>* values =
+        std.collections.channels.int32Values(2);
+    assert(values.count == 0, "typed channel initially empty");
+    assert(values.send(20), "typed channel first send");
+    assert(values.trySend(22), "typed channel second send");
+    assert(!values.trySend(99), "bounded typed channel rejects full trySend");
+    assert(values.count == 2, "typed channel count");
+    assert(values.receive() == 20, "typed channel ordered receive");
+
+    assert(values.receive() == 22, "typed channel decoded value");
+    func<void, int32> ignore = fn(int32 value) -> void {};
+    assert(!values.tryReceive(ignore), "typed channel empty tryReceive");
+    values.close();
+    assert(values.isClosed(), "typed channel close");
+    assert(!values.receiveWith(ignore), "closed empty checked receive");
+
+    std.concurrent.TransferChannel<ChannelPayload>* transfers =
+        new std.concurrent.TransferChannel<ChannelPayload>(1);
+    ChannelPayload* payload = new ChannelPayload(42);
+    ChannelPayload* oldAlias = payload;
+    std.concurrent.Transfer<ChannelPayload>* message =
+        new std.concurrent.Transfer<ChannelPayload>(seal(move(payload)));
+    assert(!oldAlias, "seal expires sender aliases");
+    assert(transfers.send(message), "ownership transfer send");
+    assert(message.isEmpty(), "successful send consumes capsule");
+
+    ChannelPayload* fullPayload = new ChannelPayload(43);
+    std.concurrent.Transfer<ChannelPayload>* fullMessage =
+        new std.concurrent.Transfer<ChannelPayload>(seal(move(fullPayload)));
+    assert(!transfers.trySend(fullMessage), "full transfer channel rejects trySend");
+    assert(!fullMessage.isEmpty(), "failed trySend restores capsule");
+
+    ChannelPayload* restored = transfers.receive();
+    assert(restored != null, "ownership transfer receive");
+    assert(restored.value == 42, "ownership transfer preserves object");
+    delete restored;
+    assert(transfers.send(fullMessage), "restored capsule can be sent again");
+    ChannelPayload* retried = transfers.receive();
+    assert(retried.value == 43, "retried transfer preserves object");
+    delete retried;
+
+    ChannelPayload* rejectedPayload = new ChannelPayload(7);
+    std.concurrent.Transfer<ChannelPayload>* rejected =
+        new std.concurrent.Transfer<ChannelPayload>(seal(move(rejectedPayload)));
+    transfers.close();
+    assert(!transfers.send(rejected), "closed transfer channel rejects send");
+    assert(!rejected.isEmpty(), "rejected send restores capsule");
+
+    {
+        std.concurrent.TransferChannel<ChannelPayload>* cleanupChannel =
+            new std.concurrent.TransferChannel<ChannelPayload>(1);
+        ChannelPayload* queuedOwner = new ChannelPayload(11);
+        std.concurrent.Transfer<ChannelPayload>* queuedMessage =
+            new std.concurrent.Transfer<ChannelPayload>(seal(move(queuedOwner)));
+        assert(cleanupChannel.send(queuedMessage), "queued transfer for cleanup");
+    }
+
+    raw void* taskChannel = absolute_transfer_channel_create(1);
+    task<int64> producer =
+        spawn transferProducerTask(taskChannel as int64);
+    raw void* taskCapsule = absolute_transfer_channel_receive(taskChannel);
+    ChannelPayload* fromTask = unseal<ChannelPayload>(taskCapsule);
+    assert(fromTask.value == 84, "ownership crosses task boundary");
+    assert(await producer == 1, "transfer producer completed");
+    delete fromTask;
+    absolute_transfer_channel_close(taskChannel);
+    absolute_transfer_channel_destroy(taskChannel);
+
+    println("std-typed-channel=ok");
+    return 0;
+}

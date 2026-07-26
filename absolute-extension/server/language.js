@@ -11,7 +11,7 @@ const CORE_KEYWORDS = [
     'sealed', 'internal', 'virtual', 'override', 'const', 'static', 'auto', 'async', 'await',
     'catch', 'finally', 'try', 'throw', 'yield', 'get', 'set', 'operator', 'extension',
     'extern', 'export', 'raw', 'weak', 'ref', 'defer', 'match', 'fn', 'func', 'interface',
-    'base', 'is', 'as', 'move', 'copy', 'spawn', 'task'
+    'base', 'is', 'as', 'move', 'copy', 'seal', 'unseal', 'spawn', 'task'
 ];
 
 const CORE_TYPES = [
@@ -27,6 +27,14 @@ const CORE_HOVER = {
     weak: ['weak managed reference', 'Non-owning observer that expires when the strong owner is destroyed.'],
     move: ['ownership transfer', 'Transfers an owning value and leaves the source moved-from.'],
     copy: ['explicit owning copy', 'Creates a distinct owning copy when the value supports copying.'],
+    seal: [
+        'raw void* seal<T>(T* movedOwner)',
+        'Consumes `move(owner)`, expires sender aliases, and creates an opaque one-shot transfer capsule.'
+    ],
+    unseal: [
+        'T* unseal<T>(raw void* capsule)',
+        'Consumes a transfer capsule and establishes the receiver as the new managed owner.'
+    ],
     defer: ['deferred action', 'Runs at scope exit, including return, break, continue, and exception cleanup.'],
     namespace: ['namespace declaration', 'Groups related types and functions under a qualified name.'],
     extern: ['native declaration', 'Declares an externally implemented ABI function. Plugin users normally receive these through a prelude.'],

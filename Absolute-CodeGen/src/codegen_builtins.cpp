@@ -107,6 +107,36 @@ namespace Absolute {
             return;
         }
 
+        if (name == "seal") {
+            if (expression.arguments.size() != 1)
+                Fail("seal expects exactly one moved managed owner");
+            llvm::Value* handle = Coerce(
+                Evaluate(expression.arguments.front().get()), builder.getInt64Ty());
+            llvm::FunctionType* capsuleCreateType = llvm::FunctionType::get(
+                builder.getPtrTy(), {builder.getInt64Ty()}, false);
+            value = builder.CreateCall(
+                module->getOrInsertFunction("absolute_capsule_create", capsuleCreateType),
+                {handle}, "capsule.sealed");
+            valueCreatesManagedOwner = false;
+            valueManagedPointee = nullptr;
+            return;
+        }
+
+        if (name == "unseal") {
+            if (expression.arguments.size() != 1)
+                Fail("unseal expects exactly one raw capsule");
+            llvm::Value* capsule = Coerce(
+                Evaluate(expression.arguments.front().get()), builder.getPtrTy());
+            llvm::FunctionType* capsuleUnwrapType = llvm::FunctionType::get(
+                builder.getInt64Ty(), {builder.getPtrTy()}, false);
+            value = builder.CreateCall(
+                module->getOrInsertFunction("absolute_capsule_unwrap", capsuleUnwrapType),
+                {capsule}, "capsule.unsealed");
+            valueCreatesManagedOwner = true;
+            valueManagedPointee = nullptr;
+            return;
+        }
+
         if (name == "copy") {
             if (expression.arguments.size() != 1)
                 Fail("copy expects exactly one array or slice argument");

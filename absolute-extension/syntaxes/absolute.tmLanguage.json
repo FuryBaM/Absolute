@@ -6,7 +6,7 @@
       "name": "storage.type.absolute"
     },
     {
-      "match": "\\b(if|else|switch|case|default|for|while|foreach|in|do|break|continue|new|delete|using|namespace|import|return|true|false|null|class|struct|enum|group|this|public|private|protected|sealed|internal|virtual|override|const|static|auto|async|await|catch|finally|try|throw|yield|get|set|operator|extension|extern|export|raw|weak|ref)\\b",
+      "match": "\\b(if|else|switch|case|default|for|while|foreach|in|do|break|continue|new|delete|using|namespace|import|return|true|false|null|class|struct|enum|group|interface|this|base|public|private|protected|sealed|internal|virtual|override|const|static|auto|async|await|spawn|task|catch|finally|try|throw|yield|get|set|operator|extension|extern|export|raw|weak|ref|defer|match|fn|func|is|as|move|copy|seal|unseal)\\b",
       "name": "keyword.control.absolute"
     },
     {

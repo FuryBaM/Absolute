@@ -494,7 +494,9 @@ Task-isolate, закрытый message envelope и transfer capsule описан
     - [x] Закрыть CodeGen ABI для callback-полей в generic-классах с несколькими
       параметрами и virtual override value-type параметров в generic-наследниках;
       добавить отдельные semantic/native/WASM regression-тесты.
-  - [ ] Типизированный `Channel<T>` с явной моделью передачи ownership между tasks.
+  - [x] Типизированный `Channel<T>` с явной моделью передачи ownership между tasks:
+    codec-based value messages, checked close/receive semantics, `seal(move(owner))`
+    and one-shot `std.concurrent.TransferChannel<T>` with native/WASM regressions.
 - [ ] P0 data / I/O:
   - [ ] `std.bytes.ByteBuffer`: position/limit/capacity, slices и endian-aware primitives.
   - [ ] `std.io`: `Reader`, `Writer`, buffered streams и memory streams.

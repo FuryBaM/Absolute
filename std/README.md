@@ -63,6 +63,28 @@ std.collections.HashMap<string, int32>* scores =
 scores["Absolute"] = 42;
 ```
 
+Typed channels use an explicit 64-bit codec. Standard factories cover common
+primitive messages:
+
+```absolute
+std.collections.Channel<int32>* events =
+    std.collections.channels.int32Values(16);
+events.send(42);
+println(events.receive());
+```
+
+Managed objects cross a task boundary through a one-shot transfer capsule:
+
+```absolute
+std.concurrent.TransferChannel<Job>* jobs =
+    new std.concurrent.TransferChannel<Job>();
+Job* owner = new Job();
+std.concurrent.Transfer<Job>* message =
+    new std.concurrent.Transfer<Job>(seal(move(owner)));
+jobs.send(message);
+Job* received = jobs.receive();
+```
+
 ## Modules
 
 See the namespace ↔ file map in `docs/standard-library.md`.

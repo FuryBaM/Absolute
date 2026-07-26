@@ -27,6 +27,8 @@ extern "C" std::uint64_t absolute_error_type();
 extern "C" std::uint64_t absolute_error_take();
 extern "C" void absolute_error_set(std::uint64_t handle, std::uint64_t type);
 extern "C" void absolute_managed_destroy(std::uint64_t handle);
+extern "C" void absolute_capsule_destroy(void* capsule);
+extern "C" bool absolute_channel_receive_checked(void* channel, std::int64_t* value);
 
 namespace {
     using TaskEntry = void (*)(void*);
@@ -258,6 +260,15 @@ namespace {
         std::int32_t capacity = 0;
         bool closed = false;
     };
+
+    struct TransferChannelImpl {
+        std::mutex mutex;
+        std::condition_variable cv_send;
+        std::condition_variable cv_recv;
+        std::deque<void*> queue;
+        std::int32_t capacity = 0;
+        bool closed = false;
+    };
 }
 
 extern "C" void absolute_task_delay(std::int32_t ms) {
@@ -351,17 +362,23 @@ extern "C" bool absolute_channel_try_send(void* ch, std::int64_t val) {
 }
 
 extern "C" std::int64_t absolute_channel_receive(void* ch) {
-    if (!ch) return 0;
+    std::int64_t value = 0;
+    absolute_channel_receive_checked(ch, &value);
+    return value;
+}
+
+extern "C" bool absolute_channel_receive_checked(void* ch, std::int64_t* outVal) {
+    if (!ch || !outVal) return false;
     ChannelImpl* channel = static_cast<ChannelImpl*>(ch);
     std::unique_lock lock(channel->mutex);
     channel->cv_recv.wait(lock, [&] {
         return channel->closed || !channel->queue.empty();
     });
-    if (channel->queue.empty()) return 0;
-    std::int64_t val = channel->queue.front();
+    if (channel->queue.empty()) return false;
+    *outVal = channel->queue.front();
     channel->queue.pop_front();
     channel->cv_send.notify_one();
-    return val;
+    return true;
 }
 
 extern "C" bool absolute_channel_try_receive(void* ch, std::int64_t* outVal) {
@@ -393,9 +410,107 @@ extern "C" bool absolute_channel_is_closed(void* ch) {
     return channel->closed;
 }
 
+extern "C" std::int32_t absolute_channel_count(void* ch) {
+    if (!ch) return 0;
+    ChannelImpl* channel = static_cast<ChannelImpl*>(ch);
+    std::lock_guard lock(channel->mutex);
+    return static_cast<std::int32_t>(channel->queue.size());
+}
+
 extern "C" void absolute_channel_destroy(void* ch) {
     if (!ch) return;
     delete static_cast<ChannelImpl*>(ch);
+}
+
+extern "C" void* absolute_transfer_channel_create(std::int32_t capacity) {
+    TransferChannelImpl* channel = new TransferChannelImpl();
+    channel->capacity = capacity > 0 ? capacity : 0;
+    return channel;
+}
+
+extern "C" bool absolute_transfer_channel_send(void* ch, void* capsule) {
+    if (!ch || !capsule) return false;
+    TransferChannelImpl* channel = static_cast<TransferChannelImpl*>(ch);
+    std::unique_lock lock(channel->mutex);
+    channel->cv_send.wait(lock, [&] {
+        return channel->closed || channel->capacity == 0 ||
+            static_cast<std::int32_t>(channel->queue.size()) < channel->capacity;
+    });
+    if (channel->closed) return false;
+    channel->queue.push_back(capsule);
+    channel->cv_recv.notify_one();
+    return true;
+}
+
+extern "C" bool absolute_transfer_channel_try_send(void* ch, void* capsule) {
+    if (!ch || !capsule) return false;
+    TransferChannelImpl* channel = static_cast<TransferChannelImpl*>(ch);
+    std::lock_guard lock(channel->mutex);
+    if (channel->closed) return false;
+    if (channel->capacity > 0 &&
+        static_cast<std::int32_t>(channel->queue.size()) >= channel->capacity)
+        return false;
+    channel->queue.push_back(capsule);
+    channel->cv_recv.notify_one();
+    return true;
+}
+
+extern "C" void* absolute_transfer_channel_receive(void* ch) {
+    if (!ch) return nullptr;
+    TransferChannelImpl* channel = static_cast<TransferChannelImpl*>(ch);
+    std::unique_lock lock(channel->mutex);
+    channel->cv_recv.wait(lock, [&] {
+        return channel->closed || !channel->queue.empty();
+    });
+    if (channel->queue.empty()) return nullptr;
+    void* capsule = channel->queue.front();
+    channel->queue.pop_front();
+    channel->cv_send.notify_one();
+    return capsule;
+}
+
+extern "C" void* absolute_transfer_channel_try_receive(void* ch) {
+    if (!ch) return nullptr;
+    TransferChannelImpl* channel = static_cast<TransferChannelImpl*>(ch);
+    std::lock_guard lock(channel->mutex);
+    if (channel->queue.empty()) return nullptr;
+    void* capsule = channel->queue.front();
+    channel->queue.pop_front();
+    channel->cv_send.notify_one();
+    return capsule;
+}
+
+extern "C" void absolute_transfer_channel_close(void* ch) {
+    if (!ch) return;
+    TransferChannelImpl* channel = static_cast<TransferChannelImpl*>(ch);
+    {
+        std::lock_guard lock(channel->mutex);
+        channel->closed = true;
+    }
+    channel->cv_recv.notify_all();
+    channel->cv_send.notify_all();
+}
+
+extern "C" bool absolute_transfer_channel_is_closed(void* ch) {
+    if (!ch) return true;
+    TransferChannelImpl* channel = static_cast<TransferChannelImpl*>(ch);
+    std::lock_guard lock(channel->mutex);
+    return channel->closed;
+}
+
+extern "C" std::int32_t absolute_transfer_channel_count(void* ch) {
+    if (!ch) return 0;
+    TransferChannelImpl* channel = static_cast<TransferChannelImpl*>(ch);
+    std::lock_guard lock(channel->mutex);
+    return static_cast<std::int32_t>(channel->queue.size());
+}
+
+extern "C" void absolute_transfer_channel_destroy(void* ch) {
+    if (!ch) return;
+    TransferChannelImpl* channel = static_cast<TransferChannelImpl*>(ch);
+    for (void* capsule : channel->queue)
+        absolute_capsule_destroy(capsule);
+    delete channel;
 }
 
 extern "C" void* absolute_atomic_create(std::int64_t initialValue) {

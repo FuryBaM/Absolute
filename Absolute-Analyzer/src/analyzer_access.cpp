@@ -426,6 +426,54 @@ namespace Absolute {
                 return;
             }
 
+            if (callName == "seal") {
+                if (!explicitTypeArguments.empty())
+                    Report("seal does not accept explicit type arguments",
+                        "E_SEAL_TYPE_ARGUMENTS");
+                if (arguments.size() != 1) {
+                    Report("seal expects exactly one moved managed owner",
+                        "E_SEAL_ARGUMENT_COUNT");
+                    Save(expr, {table.Lookup(callName), "raw void*", false});
+                    return;
+                }
+                const Result& argument = arguments.front();
+                if (!IsStrongManagedPointerType(argument.type) && argument.type != "error")
+                    Report("seal expects a strong managed pointer, got '" +
+                        argument.type + "'", "E_SEAL_ARGUMENT_TYPE", argument.symbol);
+                else if ((!argument.isMoveResult || !argument.createsManagedOwner) &&
+                    argument.type != "error")
+                    Report("seal consumes ownership; pass move(owner)",
+                        "E_SEAL_REQUIRES_MOVE", argument.symbol);
+                Save(expr, {table.Lookup(callName), "raw void*", false, false, false,
+                    InitializationState::Initialized, PointerValidity::Live});
+                return;
+            }
+
+            if (callName == "unseal") {
+                if (explicitTypeArguments.size() != 1) {
+                    Report("unseal requires exactly one managed pointee type",
+                        "E_UNSEAL_TYPE_ARGUMENT_COUNT");
+                }
+                if (arguments.size() != 1) {
+                    Report("unseal expects exactly one raw capsule",
+                        "E_UNSEAL_ARGUMENT_COUNT");
+                }
+                else if (arguments.front().type != "raw void*" &&
+                    arguments.front().type != "error") {
+                    Report("unseal expects a raw void* capsule, got '" +
+                        arguments.front().type + "'", "E_UNSEAL_ARGUMENT_TYPE",
+                        arguments.front().symbol);
+                }
+                const std::string pointee = explicitTypeArguments.size() == 1
+                    ? explicitTypeArguments.front() : std::string("error");
+                if (pointee == "void" || IsPointerType(pointee) || ArrayRank(pointee) > 0)
+                    Report("unseal type argument must be a concrete managed pointee type",
+                        "E_UNSEAL_POINTEE_TYPE");
+                Save(expr, {table.Lookup(callName), pointee + "*", false, true, false,
+                    InitializationState::Initialized, PointerValidity::Live});
+                return;
+            }
+
             if (callName == "copy") {
                 if (arguments.size() != 1) {
                     Report("copy expects exactly one array or slice argument", "E_COPY_ARGUMENT_COUNT");

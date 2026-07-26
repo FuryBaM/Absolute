@@ -61,10 +61,10 @@ async int32 main() {
     mtx.unlock();
 
     // 4. Testing Channel
-    auto ch = new std.collections.Channel(5);
+    auto ch = std.collections.channels.int64Values(5);
     assert(!ch.isClosed(), "channel initially open");
-    ch.send(42);
-    ch.send(100);
+    ch.send(42 as int64);
+    ch.send(100 as int64);
     assert(ch.receive() == 42, "channel receive 1");
     assert(ch.receive() == 100, "channel receive 2");
     ch.close();

@@ -1571,6 +1571,108 @@ const char* absolute_net_udp_receive_from(void* handle, int32_t maxBytes) {
 }
 void absolute_net_udp_close(void* handle) { (void)handle; }
 
+/* ---------- channels ---------- */
+
+typedef struct ChannelNode {
+    int64_t value;
+    struct ChannelNode* next;
+} ChannelNode;
+
+typedef struct ChannelImpl {
+    ChannelNode* first;
+    ChannelNode* last;
+    int32_t count;
+    int32_t capacity;
+    uint8_t closed;
+} ChannelImpl;
+
+void* absolute_channel_create(int32_t capacity) {
+    ChannelImpl* channel = (ChannelImpl*)heap_alloc(sizeof(ChannelImpl));
+    if (!channel)
+        abort();
+    memset(channel, 0, sizeof(ChannelImpl));
+    channel->capacity = capacity > 0 ? capacity : 0;
+    return channel;
+}
+
+int32_t absolute_channel_try_send(void* channelPtr, int64_t value) {
+    ChannelImpl* channel = (ChannelImpl*)channelPtr;
+    if (!channel || channel->closed)
+        return 0;
+    if (channel->capacity > 0 && channel->count >= channel->capacity)
+        return 0;
+    ChannelNode* node = (ChannelNode*)heap_alloc(sizeof(ChannelNode));
+    if (!node)
+        abort();
+    node->value = value;
+    node->next = NULL;
+    if (channel->last)
+        channel->last->next = node;
+    else
+        channel->first = node;
+    channel->last = node;
+    channel->count += 1;
+    return 1;
+}
+
+int32_t absolute_channel_send(void* channelPtr, int64_t value) {
+    /* A wasm instance cannot synchronously wait for another worker instance. */
+    return absolute_channel_try_send(channelPtr, value);
+}
+
+int32_t absolute_channel_try_receive(void* channelPtr, int64_t* outValue) {
+    ChannelImpl* channel = (ChannelImpl*)channelPtr;
+    if (!channel || !outValue || !channel->first)
+        return 0;
+    ChannelNode* node = channel->first;
+    *outValue = node->value;
+    channel->first = node->next;
+    if (!channel->first)
+        channel->last = NULL;
+    channel->count -= 1;
+    free(node);
+    return 1;
+}
+
+int32_t absolute_channel_receive_checked(void* channelPtr, int64_t* outValue) {
+    return absolute_channel_try_receive(channelPtr, outValue);
+}
+
+int64_t absolute_channel_receive(void* channelPtr) {
+    int64_t value = 0;
+    absolute_channel_receive_checked(channelPtr, &value);
+    return value;
+}
+
+void absolute_channel_close(void* channelPtr) {
+    ChannelImpl* channel = (ChannelImpl*)channelPtr;
+    if (channel)
+        channel->closed = 1;
+}
+
+int32_t absolute_channel_is_closed(void* channelPtr) {
+    ChannelImpl* channel = (ChannelImpl*)channelPtr;
+    return !channel || channel->closed;
+}
+
+int32_t absolute_channel_count(void* channelPtr) {
+    ChannelImpl* channel = (ChannelImpl*)channelPtr;
+    return channel ? channel->count : 0;
+}
+
+void absolute_channel_destroy(void* channelPtr) {
+    ChannelImpl* channel = (ChannelImpl*)channelPtr;
+    if (!channel)
+        return;
+    ChannelNode* node = channel->first;
+    while (node) {
+        ChannelNode* next = node->next;
+        free(node);
+        node = next;
+    }
+    free(channel);
+}
+
 /* ---------- transfer capsules ---------- */
 
 typedef struct CapsuleImpl {
@@ -1582,19 +1684,21 @@ void* absolute_capsule_create(uint64_t handle) {
     CapsuleImpl* capsule = (CapsuleImpl*)heap_alloc(sizeof(CapsuleImpl));
     if (!capsule)
         abort();
-    capsule->handle = handle;
+    capsule->handle = absolute_managed_transfer(handle);
     capsule->transferred = 0;
     return capsule;
 }
 
 uint64_t absolute_capsule_unwrap(void* capsulePtr) {
     if (!capsulePtr)
-        return 0;
+        abort();
     CapsuleImpl* capsule = (CapsuleImpl*)capsulePtr;
     if (capsule->transferred)
         abort();
     capsule->transferred = 1;
-    return capsule->handle;
+    uint64_t handle = capsule->handle;
+    free(capsule);
+    return handle;
 }
 
 void absolute_capsule_destroy(void* capsulePtr) {
@@ -1604,6 +1708,104 @@ void absolute_capsule_destroy(void* capsulePtr) {
     if (!capsule->transferred && capsule->handle)
         absolute_managed_destroy(capsule->handle);
     free(capsule);
+}
+
+/* ---------- ownership-transfer channels ---------- */
+
+typedef struct TransferChannelNode {
+    void* capsule;
+    struct TransferChannelNode* next;
+} TransferChannelNode;
+
+typedef struct TransferChannelImpl {
+    TransferChannelNode* first;
+    TransferChannelNode* last;
+    int32_t count;
+    int32_t capacity;
+    uint8_t closed;
+} TransferChannelImpl;
+
+void* absolute_transfer_channel_create(int32_t capacity) {
+    TransferChannelImpl* channel =
+        (TransferChannelImpl*)heap_alloc(sizeof(TransferChannelImpl));
+    if (!channel)
+        abort();
+    memset(channel, 0, sizeof(TransferChannelImpl));
+    channel->capacity = capacity > 0 ? capacity : 0;
+    return channel;
+}
+
+int32_t absolute_transfer_channel_try_send(void* channelPtr, void* capsule) {
+    TransferChannelImpl* channel = (TransferChannelImpl*)channelPtr;
+    if (!channel || !capsule || channel->closed)
+        return 0;
+    if (channel->capacity > 0 && channel->count >= channel->capacity)
+        return 0;
+    TransferChannelNode* node =
+        (TransferChannelNode*)heap_alloc(sizeof(TransferChannelNode));
+    if (!node)
+        abort();
+    node->capsule = capsule;
+    node->next = NULL;
+    if (channel->last)
+        channel->last->next = node;
+    else
+        channel->first = node;
+    channel->last = node;
+    channel->count += 1;
+    return 1;
+}
+
+int32_t absolute_transfer_channel_send(void* channelPtr, void* capsule) {
+    return absolute_transfer_channel_try_send(channelPtr, capsule);
+}
+
+void* absolute_transfer_channel_try_receive(void* channelPtr) {
+    TransferChannelImpl* channel = (TransferChannelImpl*)channelPtr;
+    if (!channel || !channel->first)
+        return NULL;
+    TransferChannelNode* node = channel->first;
+    void* capsule = node->capsule;
+    channel->first = node->next;
+    if (!channel->first)
+        channel->last = NULL;
+    channel->count -= 1;
+    free(node);
+    return capsule;
+}
+
+void* absolute_transfer_channel_receive(void* channelPtr) {
+    return absolute_transfer_channel_try_receive(channelPtr);
+}
+
+void absolute_transfer_channel_close(void* channelPtr) {
+    TransferChannelImpl* channel = (TransferChannelImpl*)channelPtr;
+    if (channel)
+        channel->closed = 1;
+}
+
+int32_t absolute_transfer_channel_is_closed(void* channelPtr) {
+    TransferChannelImpl* channel = (TransferChannelImpl*)channelPtr;
+    return !channel || channel->closed;
+}
+
+int32_t absolute_transfer_channel_count(void* channelPtr) {
+    TransferChannelImpl* channel = (TransferChannelImpl*)channelPtr;
+    return channel ? channel->count : 0;
+}
+
+void absolute_transfer_channel_destroy(void* channelPtr) {
+    TransferChannelImpl* channel = (TransferChannelImpl*)channelPtr;
+    if (!channel)
+        return;
+    TransferChannelNode* node = channel->first;
+    while (node) {
+        TransferChannelNode* next = node->next;
+        absolute_capsule_destroy(node->capsule);
+        free(node);
+        node = next;
+    }
+    free(channel);
 }
 
 /* ---------- time / random (WASI-backed when available) ---------- */

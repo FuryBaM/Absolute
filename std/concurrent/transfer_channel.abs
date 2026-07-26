@@ -1,0 +1,98 @@
+import "capsule.abs";
+
+extern "C" raw void* absolute_transfer_channel_create(int32 capacity);
+extern "C" bool absolute_transfer_channel_send(raw void* channel, raw void* capsule);
+extern "C" bool absolute_transfer_channel_try_send(raw void* channel, raw void* capsule);
+extern "C" raw void* absolute_transfer_channel_receive(raw void* channel);
+extern "C" raw void* absolute_transfer_channel_try_receive(raw void* channel);
+extern "C" void absolute_transfer_channel_close(raw void* channel);
+extern "C" bool absolute_transfer_channel_is_closed(raw void* channel);
+extern "C" int32 absolute_transfer_channel_count(raw void* channel);
+extern "C" void absolute_transfer_channel_destroy(raw void* channel);
+
+namespace std.concurrent {
+
+    // TransferChannel<T> carries sealed, one-shot managed owners.
+    //
+    // Transfer<T>* message = new Transfer<T>(seal(move(owner)));
+    // channel.send(message);       // message becomes empty on success
+    // T* received = channel.receive();
+    class TransferChannel<T> {
+        private raw void* handle;
+
+        public TransferChannel() {
+            handle = absolute_transfer_channel_create(0);
+        }
+
+        public TransferChannel(int32 capacity) {
+            if (capacity < 0) {
+                throw new Error("TransferChannel capacity must not be negative");
+            }
+            handle = absolute_transfer_channel_create(capacity);
+        }
+
+        public bool send(Transfer<T>* message) {
+            if (message == null || message.isEmpty()) {
+                return false;
+            }
+            raw void* capsule = message.release();
+            if (absolute_transfer_channel_send(handle, capsule)) {
+                return true;
+            }
+            message.restore(capsule);
+            return false;
+        }
+
+        public bool trySend(Transfer<T>* message) {
+            if (message == null || message.isEmpty()) {
+                return false;
+            }
+            raw void* capsule = message.release();
+            if (absolute_transfer_channel_try_send(handle, capsule)) {
+                return true;
+            }
+            message.restore(capsule);
+            return false;
+        }
+
+        public T* receive() {
+            raw void* capsule = absolute_transfer_channel_receive(handle);
+            if (capsule == null) {
+                return null;
+            }
+            return unseal<T>(capsule);
+        }
+
+        public T* tryReceive() {
+            raw void* capsule = absolute_transfer_channel_try_receive(handle);
+            if (capsule == null) {
+                return null;
+            }
+            return unseal<T>(capsule);
+        }
+
+        public int32 count {
+            get { return absolute_transfer_channel_count(handle); }
+        }
+
+        public void close() {
+            if (handle != null) {
+                absolute_transfer_channel_close(handle);
+            }
+        }
+
+        public bool isClosed() {
+            return absolute_transfer_channel_is_closed(handle);
+        }
+
+        public void destroy() {
+            if (handle != null) {
+                absolute_transfer_channel_destroy(handle);
+                handle = null;
+            }
+        }
+
+        public void dispose() { destroy(); }
+    }
+
+}

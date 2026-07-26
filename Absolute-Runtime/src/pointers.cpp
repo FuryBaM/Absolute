@@ -128,6 +128,18 @@ extern "C" void absolute_managed_destroy(std::uint64_t handle) {
     freeSlots.push_back(id);
 }
 
+extern "C" std::uint64_t absolute_managed_transfer(std::uint64_t handle) {
+    Slot* slot = Find(handle);
+    if (!slot || !slot->pointer) {
+        std::cerr << "Absolute runtime error: cannot transfer a null or expired managed owner\n";
+        std::abort();
+    }
+    const std::uint32_t id = HandleId(handle);
+    ++slot->generation;
+    if (slot->generation == 0) ++slot->generation;
+    return MakeHandle(id, slot->generation);
+}
+
 namespace {
     struct CapsuleImpl {
         std::uint64_t handle = 0;
@@ -137,12 +149,15 @@ namespace {
 
 extern "C" void* absolute_capsule_create(std::uint64_t handle) {
     CapsuleImpl* capsule = new CapsuleImpl;
-    capsule->handle = handle;
+    capsule->handle = absolute_managed_transfer(handle);
     return capsule;
 }
 
 extern "C" std::uint64_t absolute_capsule_unwrap(void* capsulePtr) {
-    if (!capsulePtr) return 0;
+    if (!capsulePtr) {
+        std::cerr << "Absolute runtime error: cannot unwrap a null transfer capsule\n";
+        std::abort();
+    }
     CapsuleImpl* capsule = static_cast<CapsuleImpl*>(capsulePtr);
     if (capsule->transferred.exchange(true)) {
         std::cerr << "Absolute runtime error: transfer capsule already unwrapped or transferred\n";

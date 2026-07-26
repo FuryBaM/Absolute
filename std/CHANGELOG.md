@@ -11,6 +11,11 @@
   hashing/equality callbacks, tombstone reuse, and snapshot iteration.
 - Added built-in `std.hash` functions for integer, Boolean, and Unicode string
   keys.
+- Replaced the untyped integer channel facade with codec-based `Channel<T>`,
+  including checked close/receive semantics and queue counts.
+- Added `seal(move(owner))`, typed `unseal<T>`, `Transfer<T>`, and
+  `std.concurrent.TransferChannel<T>` for one-shot ownership transfer. Sealing
+  rotates the managed generation so aliases left in the sender expire.
 - Added native and WebAssembly regression coverage for the new collections.
 
 ## 0.3.0

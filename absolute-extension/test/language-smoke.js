@@ -44,6 +44,16 @@ const pollHover = lang.hoverFor(index, sample, positionOf(sample, 'poll', 0, 2))
 assert(pollHover.contents.value.includes('bool poll()'));
 assert(pollHover.contents.value.includes('Desktop.Window'));
 
+const sealSample = 'raw void* capsule = seal(move(owner));';
+const sealHover = lang.hoverFor(index, sealSample, positionOf(sealSample, 'seal', 0, 2));
+assert(sealHover.contents.value.includes('seal<T>'));
+assert(sealHover.contents.value.includes('expires sender aliases'));
+
+const unsealSample = 'Job* owner = unseal<Job>(capsule);';
+const unsealHover = lang.hoverFor(index, unsealSample, positionOf(unsealSample, 'unseal', 0, 2));
+assert(unsealHover.contents.value.includes('unseal<T>'));
+assert(unsealHover.contents.value.includes('new managed owner'));
+
 const windowCompletion = lang.completionItems(
     index,
     `${sample}\nwindow.`,

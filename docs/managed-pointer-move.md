@@ -50,6 +50,13 @@ Ordinary managed pointer parameters are borrowed in Absolute. Passing
 parameter role and would otherwise lose the allocation. Pass `owner` without
 `move(...)` for a synchronous borrow.
 
+For a task or channel boundary, `seal(move(owner))` is the explicit consuming
+operation. It rotates the managed handle generation immediately, invalidating
+all aliases left in the sender, and returns an opaque capsule handle.
+`unseal<T>(capsule)` consumes that handle and creates the new `T*` owner.
+Application code normally uses these through `std.concurrent.Transfer<T>` and
+`std.concurrent.TransferChannel<T>`.
+
 The analyzer also rejects moving a subscriber, weak pointer, const source,
 invalid pointer, or discarding a move result. None of these rules adds a runtime
 pointer kind: managed moves reuse the existing 64-bit `(slot, generation)`

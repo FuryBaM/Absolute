@@ -651,6 +651,17 @@ void absolute_managed_destroy(uint64_t handle) {
         g_free_slots[g_free_count++] = id;
 }
 
+uint64_t absolute_managed_transfer(uint64_t handle) {
+    ManagedSlot* slot = find_slot(handle);
+    if (!slot || !slot->pointer)
+        abort();
+    uint32_t id = handle_id(handle);
+    ++slot->generation;
+    if (slot->generation == 0)
+        ++slot->generation;
+    return make_handle(id, slot->generation);
+}
+
 void absolute_managed_check_leaks(void) {
     for (uint32_t i = 0; i < g_slot_count; ++i) {
         if (g_slots[i].pointer != NULL)
