@@ -57,6 +57,7 @@ std/
   collections/
     vector.abs             # std.collections.Vector
     deque.abs              # Deque<T>, Queue<T>, Stack<T>
+    priority_queue.abs     # stable binary-heap PriorityQueue<T>
     map.abs                # std.collections.Map
     set.abs                # std.collections.Set
     channel.abs            # std.collections.Channel
@@ -129,8 +130,8 @@ Current Stable modules (0.x: *preview-stable* — see versioning note):
 
 - `std.core` convenience import
 - `std.time`, `std.env`, `std.process`, `std.fs`
-- `std.collections` (`Vector`, `Deque`, `Queue`, `Stack`, `Map`, `Set`,
-  algorithms, `Channel`)
+- `std.collections` (`Vector`, `Deque`, `Queue`, `Stack`, `PriorityQueue`,
+  `Map`, `Set`, algorithms, `Channel`)
 - `std.string` file → `std.text` (`StringBuilder` and string helpers)
 - `std.assert`, `std.log`, `std.testing`
 - `std.random`, `std.json`, `std.binary`
@@ -305,7 +306,7 @@ release is validated against a **minimum language/runtime** pair:
 | 0.1.x | current `main` / release that ships this `std/` tree |
 | 0.2.x | runtime with portable process arguments and `std.env` launch API |
 | 0.3.x | Unicode-correct text offsets and automatic `destroy()` lifecycle |
-| 0.4.x | ring-buffer deque, queue, and stack collections |
+| 0.4.x | ring-buffer deque/queue/stack and stable priority queue collections |
 
 If a future std release requires new language features, document the floor in
 the package changelog and refuse to load on older compilers when that check is
@@ -321,7 +322,7 @@ implemented.
 | `std.env` / `std.process` | Environment and process control |
 | `std.fs` | Filesystem |
 | `std.net` / `std.uri` / `std.http` | Networking stack |
-| `std.collections` | Dynamic collections, deque/queue/stack, algorithms, channels |
+| `std.collections` | Dynamic collections, deque/queue/stack, priority queues, algorithms, channels |
 | `std.concurrent` | Shared concurrent capabilities (atomics, mutex, capsules) |
 | `std.task` | Task metadata / scheduling queries |
 | `std.text` | String building and Unicode helpers |

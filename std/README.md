@@ -15,6 +15,7 @@ import std.fs;
 import std.env;
 import std.collections.vector;
 import std.collections.deque;
+import std.collections.priority_queue;
 import "std/string.abs"; // defines namespace std.text
 ```
 
@@ -32,6 +33,19 @@ Filesystem paths can be composed without string concatenation:
 std.fs.Path* asset = std.fs.path("assets");
 asset.push("textures");
 asset.push("wall.png");
+```
+
+Priority queues accept a comparator. A negative result means that `left` is
+dequeued before `right`; equal priorities preserve insertion order:
+
+```absolute
+func<int32, int32, int32> ascending =
+    fn(int32 left, int32 right) => left - right;
+std.collections.PriorityQueue<int32>* jobs =
+    new std.collections.PriorityQueue<int32>(ascending);
+jobs.enqueue(20);
+jobs.enqueue(10);
+println(jobs.dequeue()); // 10
 ```
 
 ## Modules

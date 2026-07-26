@@ -483,6 +483,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-deque.abs"
     )
     add_test(
+        NAME absolute.std-priority-queue-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-priority-queue.abs"
+    )
+    add_test(
         NAME absolute.collection-builder-capability-semantic
         COMMAND Absolute-Compiler
             "${PROJECT_SOURCE_DIR}/tests/collection-builder-capability.abs"
@@ -1559,6 +1563,17 @@ if(BUILD_TESTING)
                         -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-marker.cmake"
                 )
+                add_test(
+                    NAME absolute.run-wasm-std-priority-queue
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/std-priority-queue.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/std-priority-queue.wasm
+                        -DMARKER=std-priority-queue=ok
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-marker.cmake"
+                )
                 if(TARGET Absolute-Math-Plugin)
                     add_test(
                         NAME absolute.run-wasm-math-plugin
@@ -2119,6 +2134,21 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-std-deque PROPERTIES
             FIXTURES_REQUIRED absolute-std-deque-executable
             PASS_REGULAR_EXPRESSION "std-deque=ok"
+        )
+        add_test(
+            NAME absolute.build-std-priority-queue
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-priority-queue.abs"
+                --build-exe
+                -o "${CMAKE_BINARY_DIR}/std-priority-queue-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-priority-queue PROPERTIES
+            FIXTURES_SETUP absolute-std-priority-queue-executable
+        )
+        add_test(NAME absolute.run-std-priority-queue
+            COMMAND "${CMAKE_BINARY_DIR}/std-priority-queue-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-priority-queue PROPERTIES
+            FIXTURES_REQUIRED absolute-std-priority-queue-executable
+            PASS_REGULAR_EXPRESSION "std-priority-queue=ok"
         )
         add_test(
             NAME absolute.build-collection-snapshot-iteration

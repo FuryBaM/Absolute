@@ -1,0 +1,152 @@
+namespace std.collections {
+    class PriorityQueue<T> {
+        private T[] items;
+        private int64[] insertionOrders;
+        private int32 _count;
+        private int32 _capacity;
+        private int64 nextInsertionOrder;
+        private func<int32, T, T> comparator;
+
+        // Comparator contract: a negative result means `left` is dequeued first.
+        public PriorityQueue(func<int32, T, T> compare) {
+            initialize(compare, 8);
+        }
+
+        public PriorityQueue(func<int32, T, T> compare, int32 initialCapacity) {
+            initialize(compare, initialCapacity);
+        }
+
+        private void initialize(func<int32, T, T> compare, int32 initialCapacity) {
+            if (initialCapacity < 1) {
+                throw new Error("PriorityQueue capacity must be positive");
+            }
+            comparator = compare;
+            _capacity = initialCapacity;
+            items = new T[_capacity];
+            insertionOrders = new int64[_capacity];
+            _count = 0;
+            nextInsertionOrder = 0;
+        }
+
+        private bool comesBefore(int32 left, int32 right) {
+            func<int32, T, T> compare = comparator;
+            int32 order = compare(items[left], items[right]);
+            if (order < 0) { return true; }
+            if (order > 0) { return false; }
+            return insertionOrders[left] < insertionOrders[right];
+        }
+
+        private void swap(int32 left, int32 right) {
+            T item = items[left];
+            items[left] = items[right];
+            items[right] = item;
+
+            int64 insertionOrder = insertionOrders[left];
+            insertionOrders[left] = insertionOrders[right];
+            insertionOrders[right] = insertionOrder;
+        }
+
+        private void grow() {
+            int32 newCapacity = _capacity * 2;
+            T[] nextItems = new T[newCapacity];
+            int64[] nextOrders = new int64[newCapacity];
+            int32 index = 0;
+            while (index < _count) {
+                nextItems[index] = items[index];
+                nextOrders[index] = insertionOrders[index];
+                index = index + 1;
+            }
+            items = copy(nextItems);
+            insertionOrders = copy(nextOrders);
+            _capacity = newCapacity;
+        }
+
+        private void siftUp(int32 start) {
+            int32 index = start;
+            while (index > 0) {
+                int32 parent = (index - 1) / 2;
+                if (!comesBefore(index, parent)) { return; }
+                swap(index, parent);
+                index = parent;
+            }
+        }
+
+        private void siftDown(int32 start) {
+            int32 index = start;
+            while (true) {
+                int32 left = index * 2 + 1;
+                if (left >= _count) { return; }
+                int32 right = left + 1;
+                int32 best = left;
+                if (right < _count && comesBefore(right, left)) {
+                    best = right;
+                }
+                if (!comesBefore(best, index)) { return; }
+                swap(index, best);
+                index = best;
+            }
+        }
+
+        public int32 count {
+            get { return _count; }
+        }
+
+        public int32 capacity {
+            get { return _capacity; }
+        }
+
+        public bool isEmpty {
+            get { return _count == 0; }
+        }
+
+        public T peek {
+            get {
+                if (_count == 0) { throw new Error("PriorityQueue is empty"); }
+                return items[0];
+            }
+        }
+
+        public void enqueue(T value) {
+            if (_count == _capacity) { grow(); }
+            items[_count] = value;
+            insertionOrders[_count] = nextInsertionOrder;
+            nextInsertionOrder = nextInsertionOrder + 1;
+            siftUp(_count);
+            _count = _count + 1;
+        }
+
+        public void enqueueAll(T[] values) {
+            int32 index = 0;
+            while (index < values.length) {
+                enqueue(values[index]);
+                index = index + 1;
+            }
+        }
+
+        public T dequeue() {
+            if (_count == 0) { throw new Error("PriorityQueue is empty"); }
+            T result = items[0];
+            _count = _count - 1;
+            if (_count > 0) {
+                items[0] = items[_count];
+                insertionOrders[0] = insertionOrders[_count];
+                siftDown(0);
+            }
+            return result;
+        }
+
+        public bool contains(T target) {
+            int32 index = 0;
+            while (index < _count) {
+                if (items[index] == target) { return true; }
+                index = index + 1;
+            }
+            return false;
+        }
+
+        public void clear() {
+            _count = 0;
+            nextInsertionOrder = 0;
+        }
+    }
+}

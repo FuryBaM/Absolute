@@ -5,6 +5,8 @@
 - Added the O(1) ring-buffer `Deque<T>` collection with indexed access,
   snapshots, iteration, and insertion/removal at both ends.
 - Added typed FIFO `Queue<T>` and LIFO `Stack<T>` facades.
+- Added stable binary-heap `PriorityQueue<T>` with a user comparator and
+  O(log n) enqueue/dequeue.
 - Added native and WebAssembly regression coverage for the new collections.
 
 ## 0.3.0
