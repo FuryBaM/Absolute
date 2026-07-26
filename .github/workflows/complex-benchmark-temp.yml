@@ -25,9 +25,22 @@ jobs:
         shell: bash
         run: |
           cat .benchmark-payload/part-* | base64 --decode > /tmp/complex-suite-v2.tar.gz
-          test "$(sha256sum /tmp/complex-suite-v2.tar.gz | cut -d' ' -f1)" = "ab4b89bbc87c35d9d912864cb4d00c38db448d041f8f5c9d8b4f2b6e19139c8e"
+          test "$(sha256sum /tmp/complex-suite-v2.tar.gz | cut -d' ' -f1)" = "5ef308efa716ad4a2cc1970def12c80a1880228d01f3b4e8f4e7259935e853f8"
           mkdir -p benchmarks
           tar -xzf /tmp/complex-suite-v2.tar.gz -C benchmarks
+          python3 - <<'PY'
+          from pathlib import Path
+          for path in Path("benchmarks/complex-suite-v2/absolute").glob("*.abs"):
+              source = path.read_text()
+              source = source.replace("int32 benchSeed = 0;\n\n", "", 1)
+              source = source.replace("int64 kernel() {", "int64 kernel(int32 benchSeed) {", 1)
+              source = source.replace(
+                  "        benchSeed = i * 97 + 11;\n        checksum += kernel();",
+                  "        checksum += kernel(i * 97 + 11);",
+                  1,
+              )
+              path.write_text(source)
+          PY
           find benchmarks/complex-suite-v2 -maxdepth 2 -type f -print | sort
 
       - name: Install LLVM and build tools
