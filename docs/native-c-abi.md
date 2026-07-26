@@ -181,7 +181,7 @@ clang-based tool:
 
 ```bat
 node tools/absolute-bindgen.js path\to\api.h -o api.abs
-absolute-dev bindgen path\to\api.h -o api.abs -I third_party\include
+absolute bindgen path\to\api.h -o api.abs -I third_party\include
 ```
 
 The tool uses `clang -Xclang -ast-dump=json` (portable LLVM under

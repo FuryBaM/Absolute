@@ -136,7 +136,7 @@
           "type": "array",
           "items": { "type": "string" },
           "default": [],
-          "description": "Additional arguments passed to absolutec before --build-exe / diagnostics."
+          "description": "Additional arguments passed to absolutec before the selected project output mode / diagnostics."
         },
         "absolute.buildCommand": {
           "type": "string",
@@ -145,8 +145,8 @@
         },
         "absolute.outputDirectory": {
           "type": "string",
-          "default": "${workspaceFolder}/.absolute/bin",
-          "description": "Directory for native executables."
+          "default": "",
+          "description": "Optional artifact directory. Empty uses build/ for projects and .absolute/out/ for standalone files."
         },
         "absolute.preferProject": {
           "type": "boolean",

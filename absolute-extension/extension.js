@@ -293,15 +293,29 @@ async function buildAbsolute(requestedSource) {
     if (configuredValue(configuration, localSettings, 'preferProject', true) && path.extname(source) === '.abs')
         input = await nearestProject(source, variableFolder) || source;
     let projectName = path.basename(input, path.extname(input));
+    let projectType = 'app';
     if (path.extname(input) === '.absproj') {
-        try { projectName = readJson(input).name || projectName; } catch (_) { }
+        try {
+            const project = readJson(input);
+            projectName = project.name || projectName;
+            projectType = ['lib', 'library'].includes(String(project.type || 'app').toLowerCase())
+                ? 'lib'
+                : 'app';
+        } catch (_) { }
     }
     const workspace = variableFolder ? variableFolder.uri.fsPath : path.dirname(input);
-    const outputDirectory = resolveConfiguredPath(
-        configuredValue(configuration, localSettings, 'outputDirectory', '${workspaceFolder}/.absolute/bin'),
-        workspace, variableFolder, source);
+    const configuredOutput = configuredValue(configuration, localSettings, 'outputDirectory', '').trim();
+    const outputDirectory = configuredOutput
+        ? resolveConfiguredPath(configuredOutput, workspace, variableFolder, source)
+        : (path.extname(input) === '.absproj'
+            ? path.join(path.dirname(input), 'build')
+            : path.join(path.dirname(input), '.absolute', 'out'));
     fs.mkdirSync(outputDirectory, { recursive: true });
-    const executable = path.join(outputDirectory, `${projectName}${process.platform === 'win32' ? '.exe' : ''}`);
+    const libraryPrefix = projectType === 'lib' && process.platform !== 'win32' ? 'lib' : '';
+    const artifactExtension = projectType === 'lib'
+        ? (process.platform === 'win32' ? '.dll' : (process.platform === 'darwin' ? '.dylib' : '.so'))
+        : (process.platform === 'win32' ? '.exe' : '');
+    const executable = path.join(outputDirectory, `${libraryPrefix}${projectName}${artifactExtension}`);
     const configuredPlugins = configuredValue(configuration, localSettings, 'plugins', [])
         .map(item => resolveConfiguredPath(item, workspace, variableFolder, source));
     const searchPaths = configuredValue(configuration, localSettings, 'pluginSearchPaths', [])
@@ -330,7 +344,7 @@ async function buildAbsolute(requestedSource) {
         const args = [];
         if (path.extname(input) === '.absproj') args.push('build');
         args.push(input, ...configuredValue(configuration, localSettings, 'compilerArguments', []), ...pluginArguments,
-            '--build-exe', '-o', executable);
+            projectType === 'lib' ? '--build-library' : '--build-exe', '-o', executable);
         if (folder) execution = new vscode.ProcessExecution(compiler, args, { cwd: workspace });
         else { directCommand = compiler; directArguments = args; }
     }
@@ -348,7 +362,7 @@ async function buildAbsolute(requestedSource) {
         vscode.window.showErrorMessage(`Absolute build failed${exitCode === undefined ? '' : ` with exit code ${exitCode}`}.`);
         return undefined;
     }
-    return { executable, input, workspace, folder };
+    return { executable, input, workspace, folder, projectType };
 }
 
 function projectFromUri(value) {
@@ -360,6 +374,10 @@ function validateProject(projectFile) {
     const project = readJson(projectFile);
     if (!project.name || typeof project.name !== 'string') throw new Error("missing string property 'name'");
     if (!project.entry || typeof project.entry !== 'string') throw new Error("missing string property 'entry'");
+    if (project.type && !['app', 'lib', 'application', 'library', 'exe'].includes(
+        String(project.type).toLowerCase())) {
+        throw new Error("property 'type' must be 'app' or 'lib'");
+    }
     const entry = path.resolve(path.dirname(projectFile), project.entry);
     if (!fs.existsSync(entry)) throw new Error(`entry source does not exist: ${entry}`);
     return { project, entry };
@@ -416,6 +434,10 @@ async function runProject(resource, debug = false) {
     if (!projectFile) return;
     const artifact = await buildAbsolute(projectFile);
     if (!artifact) return;
+    if (artifact.projectType === 'lib') {
+        vscode.window.showInformationMessage(`Absolute library built: ${artifact.executable}`);
+        return;
+    }
     if (debug) await startNativeDebug(artifact);
     else await runArtifact(artifact);
 }

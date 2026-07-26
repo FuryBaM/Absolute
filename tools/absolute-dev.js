@@ -26,28 +26,36 @@ const language = require(path.join(repoRoot, 'absolute-extension', 'server', 'la
 const repl = require(path.join(repoRoot, 'tools', 'absolute-repl.js'));
 
 function usage() {
-    console.log(`Usage:
-  absolute build-compiler [--bootstrap] [--frontend] [-Clean] [--test]
-  absolute compiler [absolutec arguments...]
-  absolute compile <file.abs|project.absproj> [compiler arguments...]
-  absolute run <file.abs|project.absproj> [compiler arguments...] [-- program arguments...]
-  absolute fmt [file.abs ...]
-  absolute test [-- [ctest args...]]
-  absolute doc [root ...] [-o out.md]
-  absolute package list <project.absproj>
-  absolute package resolve <project.absproj>
-  absolute eval <expression>
-  absolute repl
-  absolute bindgen <header.h> [-o out.abs] [-I dir] [--clang path]
-  absolute wasm build <file.abs> [-o out.wasm] [--runtime host|wasi|shared]
-  absolute wasm run <file.wasm> [--wasi] [--export name] [--args a,b] [--env K=V]
-  absolute wasm test [ctest-args...]
+    console.log(`Absolute CLI
 
-Examples:
-  absolute build-compiler --bootstrap
-  absolute compile hello.abs
-  absolute run hello.abs
-  absolute run hello.abs -- first-argument "second argument"
+Projects:
+  absolute new <name> [--type app|lib] [--directory <path>]
+  absolute build [project.absproj]
+  absolute run [project.absproj] [-- program arguments...]
+  absolute clean [project.absproj]
+  absolute info [project.absproj]
+
+Single files:
+  absolute compile <file.abs> [compiler options...]
+  absolute run <file.abs> [compiler options...] [-- program arguments...]
+
+Toolchain:
+  absolute build-compiler [--bootstrap] [--frontend] [-Clean] [--test]
+  absolute test [-- ctest arguments...]
+  absolute compiler <absolutec arguments...>
+
+Utilities:
+  absolute fmt [file.abs ...]         absolute repl
+  absolute eval <expression>          absolute doc [root ...] [-o out.md]
+  absolute package list|resolve ...   absolute bindgen ...
+  absolute wasm build|run|test ...
+
+Start here:
+  absolute new Demo --type app
+  absolute run Demo
+
+  absolute new Math --type lib
+  absolute build Math
 `);
 }
 
@@ -168,11 +176,84 @@ function runCompiler(args) {
     return result.status === null ? 1 : result.status;
 }
 
+function isProjectFile(input) {
+    const name = path.basename(input).toLowerCase();
+    return path.extname(input).toLowerCase() === '.absproj' ||
+        name === 'package.abs' ||
+        name === 'abspackage.json';
+}
+
 function inputCompilerArguments(input) {
     const absoluteInput = path.resolve(input);
-    return path.extname(input).toLowerCase() === '.absproj'
+    return isProjectFile(input)
         ? ['build', absoluteInput]
         : [absoluteInput];
+}
+
+function readProject(input) {
+    if (!isProjectFile(input)) return null;
+    let project;
+    try {
+        project = JSON.parse(fs.readFileSync(input, 'utf8').replace(/^\uFEFF/, ''));
+    }
+    catch (error) {
+        throw new Error(`cannot read project ${input}: ${error.message}`);
+    }
+    if (!project.name || typeof project.name !== 'string')
+        throw new Error(`project is missing string property 'name': ${input}`);
+    let type = String(project.type || 'app').toLowerCase();
+    if (type === 'application' || type === 'exe') type = 'app';
+    if (type === 'library') type = 'lib';
+    if (!['app', 'lib'].includes(type))
+        throw new Error(`project type must be 'app' or 'lib': ${input}`);
+    return {
+        file: path.resolve(input),
+        root: path.dirname(path.resolve(input)),
+        name: project.name,
+        type,
+    };
+}
+
+function projectInDirectory(directory) {
+    const projects = fs.readdirSync(directory)
+        .filter(name => name.toLowerCase().endsWith('.absproj'))
+        .sort();
+    if (projects.length > 1) {
+        throw new Error(
+            `more than one .absproj file found in ${directory}: ${projects.join(', ')}`,
+        );
+    }
+    return projects.length ? path.join(directory, projects[0]) : null;
+}
+
+function findNearestProject(start = process.cwd()) {
+    let directory = path.resolve(start);
+    if (fs.existsSync(directory) && fs.statSync(directory).isFile())
+        directory = path.dirname(directory);
+    while (true) {
+        const project = projectInDirectory(directory);
+        if (project) return project;
+        const parent = path.dirname(directory);
+        if (parent === directory) return null;
+        directory = parent;
+    }
+}
+
+function resolveInput(value, discoverProject) {
+    if (value) {
+        const resolved = path.resolve(value);
+        if (!fs.existsSync(resolved)) throw new Error(`input was not found: ${value}`);
+        if (fs.statSync(resolved).isDirectory()) {
+            const project = projectInDirectory(resolved);
+            if (!project) throw new Error(`no .absproj file found in ${resolved}`);
+            return project;
+        }
+        return resolved;
+    }
+    if (!discoverProject) throw new Error('an .abs or .absproj input is required');
+    const project = findNearestProject();
+    if (!project) throw new Error('no .absproj project found in this directory or its parents');
+    return project;
 }
 
 function normalizeOutputArguments(args) {
@@ -198,29 +279,99 @@ function hasOutputMode(args) {
         argument === '--parse-only' ||
         argument === '--emit-llvm' ||
         argument === '--emit-object' ||
-        argument === '--build-exe');
+        argument === '--build-exe' ||
+        argument === '--build-library');
 }
 
-function runCompile(args) {
-    if (!args.length || args[0] === '-h' || args[0] === '--help') {
-        console.log('Usage: absolute compile <file.abs|project.absproj> [compiler arguments...]');
-        console.log('Defaults to --build-exe. Use --output <path> as an alias for -o.');
-        return args.length ? 0 : 1;
+function nativeArtifactExtension(type) {
+    if (type === 'lib') {
+        if (process.platform === 'win32') return '.dll';
+        if (process.platform === 'darwin') return '.dylib';
+        return '.so';
     }
-    const [input, ...rawOptions] = args;
-    if (!fs.existsSync(input)) {
-        console.error(`input file was not found: ${input}`);
+    return process.platform === 'win32' ? '.exe' : '';
+}
+
+function defaultArtifact(input, type) {
+    const project = readProject(input);
+    const name = project ? project.name : path.basename(input, path.extname(input));
+    const prefix = type === 'lib' && process.platform !== 'win32' ? 'lib' : '';
+    const directory = project
+        ? path.join(project.root, 'build')
+        : path.join(path.dirname(path.resolve(input)), '.absolute', 'out');
+    return path.join(directory, prefix + name + nativeArtifactExtension(type));
+}
+
+function replaceArtifactExtension(file, extension) {
+    const parsed = path.parse(file);
+    return path.join(parsed.dir, parsed.name + extension);
+}
+
+function splitInputAndOptions(args, discoverProject) {
+    const firstIsInput = args.length && !args[0].startsWith('-');
+    const input = resolveInput(firstIsInput ? args[0] : null, discoverProject);
+    return {
+        input,
+        options: firstIsInput ? args.slice(1) : args,
+    };
+}
+
+function runCompile(args, discoverProject = false) {
+    if (args[0] === '-h' || args[0] === '--help') {
+        console.log(`Usage: absolute ${discoverProject ? 'build [project.absproj]' : 'compile <file.abs|project.absproj>'} [compiler options...]
+The project type selects an executable or native library automatically.
+Build artifacts are written to the project's build directory.`);
+        return 0;
+    }
+    let parsed;
+    try {
+        parsed = splitInputAndOptions(args, discoverProject);
+    }
+    catch (error) {
+        console.error(error.message);
         return 1;
     }
-    const options = normalizeOutputArguments(rawOptions);
-    const output = outputFromArguments(options);
+    let project;
+    try {
+        project = readProject(parsed.input);
+    }
+    catch (error) {
+        console.error(error.message);
+        return 1;
+    }
+    const type = project ? project.type : 'app';
+    const options = normalizeOutputArguments(parsed.options);
+    let output = outputFromArguments(options);
     if (options.includes('-o') && !output) {
         console.error('-o/--output requires a path');
         return 1;
     }
+    if (!hasOutputMode(options)) {
+        output = output || defaultArtifact(parsed.input, type);
+        options.push(type === 'lib' ? '--build-library' : '--build-exe');
+        if (!options.includes('-o')) options.push('-o', output);
+    }
+    else if (!output && options.includes('--build-exe')) {
+        output = defaultArtifact(parsed.input, 'app');
+        options.push('-o', output);
+    }
+    else if (!output && options.includes('--build-library')) {
+        output = defaultArtifact(parsed.input, 'lib');
+        options.push('-o', output);
+    }
+    else if (!output && options.includes('--emit-object')) {
+        output = replaceArtifactExtension(
+            defaultArtifact(parsed.input, type),
+            process.platform === 'win32' ? '.obj' : '.o',
+        );
+        options.push('-o', output);
+    }
     if (output) fs.mkdirSync(path.dirname(path.resolve(output)), { recursive: true });
-    if (!hasOutputMode(options)) options.push('--build-exe');
-    return runCompiler([...inputCompilerArguments(input), ...options]);
+    const selectedType = options.includes('--build-library')
+        ? 'library'
+        : (options.includes('--build-exe') ? 'application' : 'source');
+    console.log(`${selectedType === 'source' ? 'Compiling' : `Building ${selectedType}`}: ${project ? project.name : path.basename(parsed.input)}`);
+    return runCompiler([...inputCompilerArguments(parsed.input), ...options]);
 }
 
 function outputFromArguments(args) {
@@ -230,28 +381,38 @@ function outputFromArguments(args) {
     return null;
 }
 
-function defaultRunOutput(input) {
-    const name = path.basename(input, path.extname(input));
-    const extension = process.platform === 'win32' ? '.exe' : '';
-    return path.join(repoRoot, '.absolute', 'run', name + extension);
-}
-
 function runNative(args) {
-    if (!args.length || args[0] === '-h' || args[0] === '--help') {
-        console.log('Usage: absolute run <file.abs|project.absproj> [compiler arguments...] [-- program arguments...]');
-        console.log('The first -- separates compiler arguments from arguments passed to the program.');
-        return args.length ? 0 : 1;
+    if (args[0] === '-h' || args[0] === '--help') {
+        console.log(`Usage: absolute run [file.abs|project.absproj] [compiler options...] [-- program arguments...]
+When the input is omitted, Absolute finds the nearest project.
+The first -- separates compiler options from arguments passed to the program.`);
+        return 0;
     }
 
     const separator = args.indexOf('--');
     const compileArgs = separator === -1 ? args : args.slice(0, separator);
     const programArgs = separator === -1 ? [] : args.slice(separator + 1);
-    const [input, ...rawOptions] = compileArgs;
-    if (!input || !fs.existsSync(input)) {
-        console.error(`input file was not found: ${input || '(missing)'}`);
+    let parsed;
+    try {
+        parsed = splitInputAndOptions(compileArgs, true);
+    }
+    catch (error) {
+        console.error(error.message);
         return 1;
     }
-    const options = normalizeOutputArguments(rawOptions);
+    let project;
+    try {
+        project = readProject(parsed.input);
+    }
+    catch (error) {
+        console.error(error.message);
+        return 1;
+    }
+    if (project && project.type === 'lib') {
+        console.error(`project '${project.name}' is a library and cannot be run; use: absolute build`);
+        return 1;
+    }
+    const options = normalizeOutputArguments(parsed.options);
     if (hasOutputMode(options)) {
         console.error('absolute run selects --build-exe automatically; remove the explicit output mode');
         return 1;
@@ -263,7 +424,7 @@ function runNative(args) {
 
     let output = outputFromArguments(options);
     if (!output) {
-        output = defaultRunOutput(input);
+        output = defaultArtifact(parsed.input, 'app');
         fs.mkdirSync(path.dirname(output), { recursive: true });
         options.push('-o', output);
     }
@@ -273,7 +434,7 @@ function runNative(args) {
     }
 
     const compileStatus = runCompiler([
-        ...inputCompilerArguments(input),
+        ...inputCompilerArguments(parsed.input),
         ...options,
         '--build-exe',
     ]);
@@ -290,6 +451,96 @@ function runNative(args) {
         return 1;
     }
     return result.status === null ? 1 : result.status;
+}
+
+function createProject(args) {
+    if (!args.length || args[0] === '-h' || args[0] === '--help') {
+        console.log(`Usage: absolute new <name> [--type app|lib] [--directory <path>]
+  app  Native executable with main()
+  lib  Native shared library with an exported C function`);
+        return args.length ? 0 : 1;
+    }
+    return runCompiler(['new', ...args]);
+}
+
+function cleanProject(args) {
+    if (args[0] === '-h' || args[0] === '--help') {
+        console.log('Usage: absolute clean [file.abs|project.absproj]');
+        return 0;
+    }
+    let input;
+    try {
+        input = resolveInput(args[0] || null, true);
+    }
+    catch (error) {
+        console.error(error.message);
+        return 1;
+    }
+    let project;
+    try {
+        project = readProject(input);
+    }
+    catch (error) {
+        console.error(error.message);
+        return 1;
+    }
+    const root = project ? project.root : path.dirname(path.resolve(input));
+    const target = project
+        ? path.resolve(root, 'build')
+        : path.resolve(root, '.absolute', 'out');
+    const expected = project
+        ? path.join(path.resolve(root), 'build')
+        : path.join(path.resolve(root), '.absolute', 'out');
+    if (target !== expected || !target.startsWith(path.resolve(root) + path.sep)) {
+        console.error(`refusing to clean unexpected directory: ${target}`);
+        return 1;
+    }
+    if (!fs.existsSync(target)) {
+        console.log(`Already clean: ${project ? project.name : path.basename(input)}`);
+        return 0;
+    }
+    fs.rmSync(target, { recursive: true, force: true });
+    console.log(`Removed ${target}`);
+    return 0;
+}
+
+function showProjectInfo(args) {
+    let input;
+    try {
+        input = args[0] ? resolveInput(args[0], false) : findNearestProject();
+    }
+    catch (error) {
+        console.error(error.message);
+        return 1;
+    }
+    const compiler = findAbsolutec();
+    if (!input) {
+        console.log(`Directory: ${process.cwd()}`);
+        console.log(`Compiler:  ${compiler}`);
+        console.log(`Available: ${compilerWasFound(compiler) ? 'yes' : 'no'}`);
+        console.log('Project:   none');
+        console.log('Next:      absolute new <name> --type app|lib');
+        return compilerWasFound(compiler) ? 0 : 1;
+    }
+    let project;
+    try {
+        project = readProject(input);
+    }
+    catch (error) {
+        console.error(error.message);
+        return 1;
+    }
+    if (!project) {
+        console.error('info requires an Absolute project');
+        return 1;
+    }
+    console.log(`Project:  ${project.name}`);
+    console.log(`Type:     ${project.type === 'lib' ? 'library' : 'application'}`);
+    console.log(`Manifest: ${project.file}`);
+    console.log(`Output:   ${defaultArtifact(project.file, project.type)}`);
+    console.log(`Compiler: ${compiler}`);
+    console.log(project.type === 'lib' ? 'Command:  absolute build' : 'Command:  absolute run');
+    return 0;
 }
 
 function buildCompiler(args) {
@@ -633,6 +884,17 @@ function main(argv) {
         return 0;
     }
     switch (command) {
+    case 'new':
+    case 'init':
+        return createProject(rest);
+    case 'build':
+        return runCompile(rest, true);
+    case 'clean':
+        return cleanProject(rest);
+    case 'info':
+    case 'status':
+    case 'doctor':
+        return showProjectInfo(rest);
     case 'build-compiler':
         return buildCompiler(rest);
     case 'bootstrap':
@@ -647,9 +909,9 @@ function main(argv) {
             console.log(`Usage:
   absolute compiler <source.abs> [options]
   absolute compiler build <project.absproj> [options]
-  absolute compiler new <name> [--directory path]
+  absolute compiler new <name> [--type app|lib] [--directory path]
 Options:
-  --parse-only | --emit-llvm | --emit-object | --build-exe
+  --parse-only | --emit-llvm | --emit-object | --build-exe | --build-library
   --target <triple>
   --sanitize=address
   --plugin <path> | --plugin-path <directory> | -o <output>`);
@@ -657,7 +919,6 @@ Options:
         }
         return runCompiler(rest);
     case 'compile':
-    case 'build':
         return runCompile(rest);
     case 'run':
         return runNative(rest);

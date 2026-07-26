@@ -73,7 +73,7 @@ First-class experimental target: `absolutec --target wasm32-unknown-unknown`
 | Host (Node) | console, HTTP, TCP mocks/real, task pools, shared memory |
 | WASI | preview1 console/time/random/args/env; selective wasi-libc kits |
 | Browser | mocks on UI thread; Worker session + optional shared tasks (COOP/COEP) |
-| CLI helper | `node tools/absolute-dev.js wasm build\|run\|test` |
+| CLI helper | `absolute wasm build\|run\|test` |
 | CI | `ctest -R wasm` on Windows + Linux |
 
 Not yet: dynamic `load`, full wasi-threads/TLS, guest-on-wasi-libc malloc.

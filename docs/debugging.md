@@ -58,8 +58,8 @@ absolute-opaque:<host-path>#shader@<startLine>
 ## REPL / expression evaluator
 
 ```bat
-tools\absolute-dev.bat repl
-tools\absolute-dev.bat eval "2 + 2"
+absolute repl
+absolute eval "2 + 2"
 ```
 
 VS Code: **Absolute: Evaluate Expression** and **Absolute: Open REPL**.

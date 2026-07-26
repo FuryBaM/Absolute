@@ -4,6 +4,31 @@ Absolute is an experimental C++20 compiler frontend. The repository currently
 contains a lexer, parser/AST, a two-pass semantic analyzer, an LLVM IR backend,
 and the `absolutec` command-line driver.
 
+## Quick start
+
+Build the compiler once, then create either an application or a library:
+
+```powershell
+.\absolute build-compiler --bootstrap
+
+.\absolute new Demo --type app
+.\absolute run Demo
+
+.\absolute new Math --type lib
+.\absolute build Math
+```
+
+Inside a project, the manifest path is optional. `absolute build`, `run`,
+`clean`, and `info` find the nearest `.absproj` automatically. Application
+artifacts and native libraries are placed under the project's `build`
+directory; `absolute clean` removes only that directory.
+
+Project types:
+
+- `app` creates an executable project with `src/main.abs`;
+- `lib` creates a native shared library with `src/lib.abs` and an exported C
+  ABI function.
+
 ## Build
 
 The shortest native Windows workflow is:
@@ -97,12 +122,18 @@ Compile a source file to a native executable, or compile and run it immediately:
 ```
 
 Arguments before `--` belong to the compiler; arguments after it are passed to
-the compiled program. Project files work the same way:
+the compiled program. Project files work the same way, but can be omitted while
+the current directory is inside a project:
 
 ```powershell
-.\absolute compile Demo\Demo.absproj
-.\absolute run Demo\Demo.absproj -- argument-for-demo
+absolute build
+absolute run -- argument-for-demo
+absolute info
+absolute clean
 ```
+
+Standalone file artifacts stay under the nearby hidden `.absolute/out`
+directory instead of cluttering the source directory.
 
 An `.abs` or `.absproj` path can be used directly as a shorthand for
 `compile`. Use `.\absolute compiler ...` to pass arguments directly to
@@ -131,13 +162,11 @@ explicit `main` keeps the traditional mode; combining it with executable
 top-level statements is a compile-time error instead of creating a second
 entry point. Module-level declarations may still accompany an explicit `main`.
 
-Create and build a project:
+Create application and library projects:
 
-```bash
-absolutec new Demo
-absolutec build Demo/Demo.absproj
-absolutec build Demo/Demo.absproj --emit-llvm -o Demo.ll
-lli Demo.ll
+```powershell
+absolute new Demo --type app
+absolute new Math --type lib
 ```
 
 An `.absproj` file describes the entry source and directories compiled into one
@@ -146,6 +175,7 @@ module:
 ```json
 {
   "name": "Demo",
+  "type": "app",
   "entry": "src/main.abs",
   "sources": ["src"],
   "plugins": ["plugins/absolute-unless.dll"],
@@ -153,6 +183,11 @@ module:
   "nativeSearchPaths": ["native"]
 }
 ```
+
+`type` is optional for older projects and defaults to `app`. Library projects
+use `"type": "lib"`; `absolute build` produces `Name.dll` on Windows,
+`libName.so` on Linux, or `libName.dylib` on macOS. Use `export "C"` functions
+as the public library API.
 
 Projects support recursive file imports and namespace imports:
 
@@ -428,10 +463,12 @@ debugging through `cppvsdbg` or `cppdbg`. It reads `.absproj` plugin roots,
 follows `.absplugin` dependencies, and consumes their safe `editor` JSON
 sidecars without loading native DLL/SO code into VS Code.
 
-Install the packaged extension:
+Package and install the VS Code extension:
 
 ```powershell
-code --install-extension absolute-extension\absolute-extension-0.2.1.vsix --force
+cd absolute-extension
+npx @vscode/vsce package
+code --install-extension absolute-extension-0.3.2.vsix --force
 ```
 
 Use `F5` to build and debug or `Ctrl+F5` to build and run. Compiler paths,
@@ -516,7 +553,7 @@ Generate Absolute declarations from a C header (requires `clang`):
 
 ```bat
 node tools/absolute-bindgen.js native/api.h -o native/api.abs
-absolute-dev bindgen native/api.h -o native/api.abs
+absolute bindgen native/api.h -o native/api.abs
 ```
 
 ### WebAssembly
@@ -532,9 +569,9 @@ absolutec tests\wasm-smoke.abs --target wasm32-unknown-unknown --build-exe -o ou
 node tools\absolute-wasm-run.js out.wasm
 
 REM Developer helper (build / run / ctest -R wasm)
-node tools\absolute-dev.js wasm build tests\wasm-smoke.abs -o out.wasm
-node tools\absolute-dev.js wasm run out.wasm
-node tools\absolute-dev.js wasm test
+absolute wasm build tests\wasm-smoke.abs -o out.wasm
+absolute wasm run out.wasm
+absolute wasm test
 
 REM WASI (fd_write / clock / args / env) — needs Absolute built with WASI object
 set ABSOLUTE_WASM_RUNTIME=wasi
@@ -561,6 +598,17 @@ Generate a native object without linking it:
 ```bash
 absolutec build Demo.absproj --emit-object -o Demo.obj
 ```
+
+Build a native shared library directly:
+
+```bash
+absolutec build Math.absproj --build-library -o Math.dll
+```
+
+On Linux use a `.so` output and on macOS use `.dylib`. The library command
+also produces the platform's normal import/object artifacts alongside the
+shared library, all contained by the project `build` directory when invoked
+through `absolute build`.
 
 Or let Absolute emit the object and call the C++ compiler driver to link the
 project's `nativeLibraries`. On a Visual Studio build this uses the configured

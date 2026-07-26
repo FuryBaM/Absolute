@@ -377,3 +377,11 @@ examples/desktop/.desktop-build/
 examples/chess/.build/
 .absolute/
 benchmarks/pointer-object-suite/results/
+
+# Local Absolute outputs and packaged editor builds
+/*.exe
+/*.ll
+/vkprobe.obj
+/scratch/*.exe
+/absolute-extension/*.vsix
+/Testing/

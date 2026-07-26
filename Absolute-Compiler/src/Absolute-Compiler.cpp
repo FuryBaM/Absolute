@@ -45,12 +45,14 @@ namespace {
         bool emitLlvm = false;
         bool emitObject = false;
         bool buildExecutable = false;
+        bool buildLibrary = false;
         bool parseOnly = false;
         bool sanitizeAddress = false;
         std::string targetTriple; // empty => host default
         fs::path output;
         std::vector<fs::path> plugins;
         std::vector<fs::path> pluginSearchPaths;
+        std::string projectType = "app";
     };
 
     bool IsWebAssemblyTargetTriple(const std::string& triple) {
@@ -108,6 +110,7 @@ namespace {
 
     struct ProjectConfig {
         std::string name;
+        std::string type = "app";
         fs::path root;
         fs::path entry;
         std::vector<fs::path> sourceDirectories;
@@ -130,9 +133,9 @@ namespace {
             << "Usage:\n"
             << "  absolutec <source.abs> [options]\n"
             << "  absolutec build <project.absproj> [options]\n"
-            << "  absolutec new <name> [--directory path]\n"
+            << "  absolutec new <name> [--type app|lib] [--directory path]\n"
             << "Options:\n"
-            << "  --parse-only | --emit-llvm | --emit-object | --build-exe\n"
+            << "  --parse-only | --emit-llvm | --emit-object | --build-exe | --build-library\n"
             << "  --target <triple>     host default, or e.g. wasm32-unknown-unknown\n"
             << "  --sanitize=address    (host targets only)\n"
             << "  --plugin path | --plugin-path directory | -o output\n";
@@ -144,6 +147,7 @@ namespace {
             if (argument == "--emit-llvm") result.emitLlvm = true;
             else if (argument == "--emit-object") result.emitObject = true;
             else if (argument == "--build-exe") result.buildExecutable = true;
+            else if (argument == "--build-library") result.buildLibrary = true;
             else if (argument == "--parse-only") result.parseOnly = true;
             else if (argument == "--sanitize=address") result.sanitizeAddress = true;
             else if (argument == "--target") {
@@ -170,11 +174,14 @@ namespace {
             else throw std::invalid_argument("unknown argument: " + argument);
         }
         const int outputModes = static_cast<int>(result.emitLlvm) + static_cast<int>(result.emitObject) +
-            static_cast<int>(result.buildExecutable);
+            static_cast<int>(result.buildExecutable) + static_cast<int>(result.buildLibrary);
         if (outputModes > 1 || (result.parseOnly && outputModes != 0))
-            throw std::invalid_argument("choose only one of --parse-only, --emit-llvm, --emit-object or --build-exe");
+            throw std::invalid_argument(
+                "choose only one of --parse-only, --emit-llvm, --emit-object, "
+                "--build-exe or --build-library");
         if (!result.output.empty() && outputModes == 0)
-            throw std::invalid_argument("-o requires --emit-llvm, --emit-object or --build-exe");
+            throw std::invalid_argument(
+                "-o requires --emit-llvm, --emit-object, --build-exe or --build-library");
     }
 
     CommandLine ParseCommandLine(int argc, char* argv[]) {
@@ -196,8 +203,21 @@ namespace {
                     if (++index >= argc) throw std::invalid_argument("--directory requires a path");
                     result.projectDirectory = argv[index];
                 }
+                else if (argument == "--type") {
+                    if (++index >= argc) throw std::invalid_argument("--type requires app or lib");
+                    result.projectType = argv[index];
+                }
+                else if (argument.starts_with("--type=")) {
+                    result.projectType = argument.substr(std::string("--type=").size());
+                }
                 else throw std::invalid_argument("unknown argument for new: " + argument);
             }
+            if (result.projectType == "application" || result.projectType == "exe")
+                result.projectType = "app";
+            if (result.projectType == "library")
+                result.projectType = "lib";
+            if (result.projectType != "app" && result.projectType != "lib")
+                throw std::invalid_argument("--type must be app or lib");
             return result;
         }
 
@@ -236,6 +256,13 @@ namespace {
         return match[1].str();
     }
 
+    std::string JsonOptionalString(const std::string& document, const std::string& key,
+        const std::string& fallback) {
+        const std::regex pattern("\\\"" + key + "\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
+        std::smatch match;
+        return std::regex_search(document, match, pattern) ? match[1].str() : fallback;
+    }
+
     std::vector<std::string> JsonStringArray(const std::string& document, const std::string& key) {
         const std::regex arrayPattern("\\\"" + key + "\\\"\\s*:\\s*\\[([^\\]]*)\\]");
         std::smatch arrayMatch;
@@ -255,6 +282,11 @@ namespace {
         result.root = fs::absolute(projectFile).parent_path();
         const std::string document = ReadFile(projectFile);
         result.name = JsonString(document, "name");
+        result.type = JsonOptionalString(document, "type", "app");
+        if (result.type == "application" || result.type == "exe") result.type = "app";
+        if (result.type == "library") result.type = "lib";
+        if (result.type != "app" && result.type != "lib")
+            throw std::runtime_error("Project property 'type' must be 'app' or 'lib'");
         result.entry = result.root / JsonString(document, "entry");
         for (const std::string& directory : JsonStringArray(document, "sources"))
             result.sourceDirectories.push_back(result.root / directory);
@@ -287,30 +319,37 @@ namespace {
         if (fs::exists(root) && !fs::is_empty(root))
             throw std::runtime_error("Project directory is not empty: " + root.string());
         fs::create_directories(root / "src");
-        fs::create_directories(root / "native");
 
+        const bool library = commandLine.projectType == "lib";
+        std::string symbolName = commandLine.projectName;
+        std::transform(symbolName.begin(), symbolName.end(), symbolName.begin(),
+            [](unsigned char ch) {
+                if (ch == '-') return '_';
+                return static_cast<char>(std::tolower(ch));
+            });
+        const std::string entry = library ? "src/lib.abs" : "src/main.abs";
         const std::string project =
             "{\n"
             "  \"name\": \"" + commandLine.projectName + "\",\n"
-            "  \"entry\": \"src/main.abs\",\n"
-            "  \"sources\": [\"src\"],\n"
-            "  \"plugins\": [],\n"
-            "  \"pluginSearchPaths\": [],\n"
-            "  \"nativeLibraries\": [],\n"
-            "  \"nativeSearchPaths\": [\"native\"]\n"
+            "  \"type\": \"" + commandLine.projectType + "\",\n"
+            "  \"entry\": \"" + entry + "\",\n"
+            "  \"sources\": [\"src\"]\n"
             "}\n";
-        const std::string source =
-            "int32 main() {\n"
-            "    int32 value = 40;\n"
-            "    value += 2;\n"
-            "    println(format(\"" + commandLine.projectName + " value={}\", value));\n"
-            "    return 0;\n"
-            "}\n";
+        const std::string source = library
+            ? "export \"C\" int32 " + symbolName + "_add(int32 left, int32 right) {\n"
+                "    return left + right;\n"
+                "}\n"
+            : "int32 main() {\n"
+                "    println(\"Hello from " + commandLine.projectName + "!\");\n"
+                "    return 0;\n"
+                "}\n";
         WriteFile(root / (commandLine.projectName + ".absproj"), project);
-        WriteFile(root / "src" / "main.abs", source);
-        std::cout << "Created Absolute project at " << root.string() << '\n';
-        std::cout << "Build: absolutec build \"" <<
-            (root / (commandLine.projectName + ".absproj")).string() << "\"\n";
+        WriteFile(root / entry, source);
+        std::cout << "Created Absolute " << (library ? "library" : "application")
+            << " project at " << root.string() << '\n';
+        std::cout << "Next:\n"
+            << "  absolute build \"" << root.string() << "\"\n";
+        if (!library) std::cout << "  absolute run \"" << root.string() << "\"\n";
     }
 
     struct CollectedImport {
@@ -848,6 +887,94 @@ namespace {
             std::chrono::steady_clock::now() - startTime).count();
         std::cout << "Built " << executable.filename().string() << " [" << elapsed << " ms]\n";
     }
+
+    void BuildLibrary(CodeGenerator& generator, Program& program, const Compilation& compilation,
+        const fs::path& requestedOutput) {
+        const auto startTime = std::chrono::steady_clock::now();
+        fs::path library = fs::absolute(requestedOutput);
+#ifdef _WIN32
+        if (library.extension() != ".dll") library.replace_extension(".dll");
+#elif defined(__APPLE__)
+        if (library.extension() != ".dylib") library.replace_extension(".dylib");
+#else
+        if (library.extension() != ".so") library.replace_extension(".so");
+#endif
+        if (!library.parent_path().empty()) fs::create_directories(library.parent_path());
+
+        fs::path object = library;
+#ifdef _WIN32
+        object.replace_extension(".obj");
+#else
+        object.replace_extension(".o");
+#endif
+        generator.GenerateObject(program, compilation.moduleName, object.string(),
+            compilation.sanitizeAddress);
+
+        fs::path response = library;
+        response += ".absolute-link.rsp";
+        std::ostringstream arguments;
+#ifdef _WIN32
+        fs::path importLibrary = library;
+        importLibrary.replace_extension(".lib");
+        arguments << "/nologo\n/dll\n/out:" << QuoteResponseArgument(library)
+            << "\n/implib:" << QuoteResponseArgument(importLibrary)
+            << '\n' << QuoteResponseArgument(object) << '\n';
+#ifdef ABSOLUTE_RUNTIME_LIBRARY
+        arguments << QuoteResponseArgument(ABSOLUTE_RUNTIME_LIBRARY) << '\n';
+#endif
+        for (const fs::path& nativeLibrary : compilation.nativeLibraries)
+            arguments << QuoteResponseArgument(nativeLibrary) << '\n';
+        arguments << "msvcrt.lib\nvcruntime.lib\nucrt.lib\noldnames.lib\n"
+            "legacy_stdio_definitions.lib\nws2_32.lib\nshell32.lib\n";
+        if (compilation.sanitizeAddress) {
+            arguments << "clang_rt.asan_dynamic-x86_64.lib\n"
+                "clang_rt.asan_dynamic_runtime_thunk-x86_64.lib\n";
+        }
+        for (const fs::path& path : compilation.nativeSearchPaths)
+            arguments << "/LIBPATH:" << QuoteResponseArgument(path) << '\n';
+#else
+        arguments << "-shared\n" << QuoteResponseArgument(object) << '\n';
+#ifdef ABSOLUTE_RUNTIME_LIBRARY
+        arguments << QuoteResponseArgument(ABSOLUTE_RUNTIME_LIBRARY) << '\n';
+#endif
+#ifdef ABSOLUTE_RUNTIME_DL_LIBRARY
+        arguments << "-l" ABSOLUTE_RUNTIME_DL_LIBRARY "\n";
+#endif
+        for (const fs::path& nativeLibrary : compilation.nativeLibraries)
+            arguments << QuoteResponseArgument(nativeLibrary) << '\n';
+        for (const fs::path& path : compilation.nativeSearchPaths)
+            arguments << "-L" << QuoteResponseArgument(path) << '\n';
+        if (compilation.sanitizeAddress) arguments << "-fsanitize=address\n";
+        arguments << "-o\n" << QuoteResponseArgument(library) << '\n';
+#endif
+        WriteFile(response, arguments.str());
+
+#ifndef ABSOLUTE_HOST_CXX_COMPILER
+#define ABSOLUTE_HOST_CXX_COMPILER "c++"
+#endif
+#ifdef _WIN32
+#ifndef ABSOLUTE_HOST_LINKER
+#define ABSOLUTE_HOST_LINKER "link.exe"
+#endif
+        constexpr const char* nativeTool = ABSOLUTE_HOST_LINKER;
+#else
+        constexpr const char* nativeTool = ABSOLUTE_HOST_CXX_COMPILER;
+#endif
+        std::string command = QuoteShellArgument(nativeTool) +
+            " @" + QuoteShellArgument(response.string());
+#ifdef _WIN32
+        command = "\"" + command + "\"";
+#endif
+        const int status = std::system(command.c_str());
+        std::error_code ignored;
+        fs::remove(response, ignored);
+        if (status != 0)
+            throw std::runtime_error("Native library linker failed with exit code " +
+                std::to_string(status));
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - startTime).count();
+        std::cout << "Built " << library.filename().string() << " [" << elapsed << " ms]\n";
+    }
 #endif
 }
 
@@ -877,7 +1004,8 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        if (commandLine.emitLlvm || commandLine.emitObject || commandLine.buildExecutable) {
+        if (commandLine.emitLlvm || commandLine.emitObject ||
+            commandLine.buildExecutable || commandLine.buildLibrary) {
 #ifdef ABSOLUTE_HAS_LLVM
             const bool wasmTarget = IsWebAssemblyTargetTriple(commandLine.targetTriple);
             if (wasmTarget && commandLine.sanitizeAddress) {
@@ -907,6 +1035,24 @@ int main(int argc, char* argv[]) {
                 }
                 generator.GenerateObject(*compilation.program, compilation.moduleName,
                     output.string(), compilation.sanitizeAddress, commandLine.targetTriple);
+            }
+            else if (commandLine.buildLibrary) {
+                if (wasmTarget || !commandLine.targetTriple.empty()) {
+                    throw std::runtime_error(
+                        "--build-library currently supports the host target only; "
+                        "use --emit-object for another target");
+                }
+                fs::path output = commandLine.output;
+                if (output.empty()) {
+#ifdef _WIN32
+                    output = compilation.moduleName + ".dll";
+#elif defined(__APPLE__)
+                    output = "lib" + compilation.moduleName + ".dylib";
+#else
+                    output = "lib" + compilation.moduleName + ".so";
+#endif
+                }
+                BuildLibrary(generator, *compilation.program, compilation, output);
             }
             else if (wasmTarget) {
                 fs::path output = commandLine.output;

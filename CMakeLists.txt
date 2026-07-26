@@ -1765,6 +1765,22 @@ if(BUILD_TESTING)
         )
         set(ABSOLUTE_EXPORT_TEST_OBJECT
             "${CMAKE_BINARY_DIR}/absolute-export-library${CMAKE_CXX_OUTPUT_EXTENSION}")
+        add_test(NAME absolute.build-library
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-library.abs"
+                --build-library
+                -o "${CMAKE_BINARY_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}absolute-export${CMAKE_SHARED_LIBRARY_SUFFIX}")
+        if(ABSOLUTE_NODE_EXECUTABLE)
+            add_test(NAME absolute.cli-project-types
+                COMMAND "${CMAKE_COMMAND}"
+                    -DCOMPILER=$<TARGET_FILE:Absolute-Compiler>
+                    -DNODE=${ABSOLUTE_NODE_EXECUTABLE}
+                    -DCLI=${PROJECT_SOURCE_DIR}/tools/absolute-dev.js
+                    -DWORK_DIR=${CMAKE_BINARY_DIR}/cli-project-types
+                    -DAPP_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
+                    -DLIB_PREFIX=${CMAKE_SHARED_LIBRARY_PREFIX}
+                    -DLIB_SUFFIX=${CMAKE_SHARED_LIBRARY_SUFFIX}
+                    -P "${PROJECT_SOURCE_DIR}/tests/run-cli-project-types.cmake")
+        endif()
         add_custom_command(
             OUTPUT "${ABSOLUTE_EXPORT_TEST_OBJECT}"
             COMMAND $<TARGET_FILE:Absolute-Compiler>

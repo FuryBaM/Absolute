@@ -33,21 +33,23 @@ See also [docs/debugging.md](https://github.com/FuryBaM/Absolute/blob/main/docs/
 | `absolute.compilerPath` | `absolutec` for builds and LSP diagnostics |
 | `absolute.compilerArguments` | Extra compiler args |
 | `absolute.buildCommand` | Optional full build command (`{input}`, `{output}`, `{workspace}`, `{plugins}`) |
-| `absolute.outputDirectory` | Default `${workspaceFolder}/.absolute/bin` |
+| `absolute.outputDirectory` | Optional override; projects default to `build/`, files to `.absolute/out/` |
 | `absolute.plugins` / `absolute.pluginSearchPaths` | Plugin roots |
 | `absolute.editorMetadata` | Editor-only `*.editor.json` sidecars |
 | `absolute.debugger` | `auto` / `cppvsdbg` / `cppdbg` |
 
-Example for this repository's native Windows desktop pipeline (no WSL required):
+Example for using the compiler built in this repository:
 
 ```json
 {
-  "absolute.buildCommand": "${workspaceFolder}\\examples\\desktop\\run.bat -Source {input} -Output {output} -NoRun",
   "absolute.compilerPath": "${workspaceFolder}\\.absolute\\build\\windows-release\\Release\\absolutec.exe"
 }
 ```
 
-First-time setup: `build-windows.bat --bootstrap -NoTest` from the repo root.
+First-time setup: `absolute build-compiler --bootstrap` from the repo root.
+Application projects build and run normally. Library projects build a
+`.dll`, `.so`, or `.dylib`; Run/Debug reports the built library instead of
+trying to launch it as an executable.
 
 ## Architecture
 
@@ -69,10 +71,10 @@ node absolute-extension/server/lsp-server.js
 From the repo root:
 
 ```bat
-tools\absolute-dev.bat fmt tests\std-log.abs
-tools\absolute-dev.bat test
-tools\absolute-dev.bat doc std tests -o absolute-api.md
-tools\absolute-dev.bat package list examples\chess\Chess.absproj
+absolute fmt tests\std-log.abs
+absolute test
+absolute doc std tests -o absolute-api.md
+absolute package list examples\chess\Chess.absproj
 ```
 
 Commands:
@@ -86,8 +88,7 @@ Commands:
 ## Package
 
 ```bash
-npm run check
-npm run package
+npx @vscode/vsce package
 ```
 
 Install the produced `.vsix` with **Extensions: Install from VSIX…**.
