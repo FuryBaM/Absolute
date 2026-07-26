@@ -3,7 +3,7 @@
   "displayName": "Absolute Language",
   "description": "Absolute language support with LSP intelligence, plugin-aware IntelliSense, build, run, and native debugging.",
   "publisher": "FuryBaM",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "repository": {
     "type": "git",
     "url": "https://github.com/FuryBaM/Absolute.git"
@@ -130,7 +130,7 @@
         "absolute.compilerPath": {
           "type": "string",
           "default": "auto",
-          "description": "Absolute compiler path. 'auto' searches ABSOLUTEC, the workspace .absolute/build directories, common build layouts, and PATH."
+          "description": "Absolute compiler path. 'auto' searches ABSOLUTEC, the workspace .absolute/build directories, common build layouts, and PATH. A directory containing absolutec is also accepted."
         },
         "absolute.compilerArguments": {
           "type": "array",
