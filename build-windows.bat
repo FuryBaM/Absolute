@@ -5,6 +5,7 @@ set "MODE=release"
 set "BOOTSTRAP=0"
 set "TOOLCHAIN=msvc"
 set "USE_CACHE=0"
+set "NO_TEST=0"
 set "EXTRA_ARGS="
 
 :parse
@@ -13,6 +14,9 @@ if /i "%~1"=="--bootstrap" set "BOOTSTRAP=1"& shift& goto parse
 if /i "%~1"=="--frontend" set "MODE=frontend"& shift& goto parse
 if /i "%~1"=="--clang-cl" set "TOOLCHAIN=clang-cl"& shift& goto parse
 if /i "%~1"=="--sccache" set "USE_CACHE=1"& shift& goto parse
+if /i "%~1"=="--no-test" set "NO_TEST=1"& shift& goto parse
+if /i "%~1"=="--no-tests" set "NO_TEST=1"& shift& goto parse
+if /i "%~1"=="--build-only" set "NO_TEST=1"& shift& goto parse
 set "EXTRA_ARGS=%EXTRA_ARGS% %1"
 shift
 goto parse
@@ -48,5 +52,7 @@ set "VSLANG=1033"
 
 set "CACHE_ARG="
 if "%USE_CACHE%"=="1" set "CACHE_ARG=-UseCompilerCache"
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\windows\build-windows.ps1" -Mode %MODE% -Toolchain %TOOLCHAIN% %CACHE_ARG% %EXTRA_ARGS%
+set "NO_TEST_ARG="
+if "%NO_TEST%"=="1" set "NO_TEST_ARG=-NoTest"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\windows\build-windows.ps1" -Mode %MODE% -Toolchain %TOOLCHAIN% %CACHE_ARG% %NO_TEST_ARG% %EXTRA_ARGS%
 exit /b %ERRORLEVEL%
