@@ -150,7 +150,7 @@ Windows GDI (ClearType raster → soft buffer). Non-Windows: create returns inva
 - **BackendAuto:** OpenGL first; on Windows falls back to D3D11 if GL fails
 - **OpenGL (full RHI):** Windows WGL (`opengl-wgl`), Linux GLX (`opengl-glx`)
 - **D3D11 (Windows):** full sprite-capable path (`backend()` → `d3d11`):
-  HLSL, VB/IB, pipeline, draw, textures + samplers
+  HLSL, VB/IB, pipeline, draw, textures + samplers, compute shaders
 - **D3D12 (Windows):** full sprite-capable path (`backend()` → `d3d12`):
   HLSL, root CBV b0 + SRV t0 + Sampler s0, VB/IB, PSO, draw/drawIndexed,
   textures (`createTextureFromSprite`) + samplers
@@ -173,6 +173,29 @@ Resources:
 - `createLayoutPos3Color3()` / `createLayoutPos3Uv2()`
 - `createPipeline(shader, layout)` → `GpuPipeline*`
 - `createTextureFromSprite(sprite)` → `GpuTexture*` (RGBA8 + color-key alpha)
+
+Compute (D3D11, HLSL shader model 5.0):
+```absolute
+string source = "RWStructuredBuffer<float> values : register(u0);\n"
+    "[numthreads(1, 1, 1)]\n"
+    "void main(uint3 id : SV_DispatchThreadID) { values[id.x] *= 2.0; }\n";
+float[] values = {{1.0, 2.0}, {3.0, 4.0}};
+
+auto compute = gpu.createComputeShader(source);
+auto storage = gpu.createStorageBuffer(values);
+gpu.bind(compute);
+gpu.bindStorage(storage, 0);
+gpu.dispatch(values.length, 1, 1);
+storage.download(values);
+```
+
+- `gpu.supportsCompute()` reports whether the selected backend supports compute.
+- `createComputeShader(source)` compiles entry point `main` as `cs_5_0`.
+- `GpuStorageBuffer` maps to `RWStructuredBuffer<float>` at UAV slots `u0..u7`.
+- `upload` and `download` require an array with the same length as the buffer.
+- Dispatch group counts must be within `1..65535` on every axis.
+- Compute currently uses `BackendD3D11`; other backends return a clear unsupported
+  error through `gpu.lastError()`.
 
 Frame:
 ```absolute
@@ -199,7 +222,7 @@ gpu.present();
 - `bind` overloads: pipeline, vertex buffer, index buffer, texture, sampler
 - Alpha blending on in `beginFrame`
 - Examples: `triangle.abs` / `gpu-sprites.abs` (OpenGL GLSL),
-  `d3d-clear.abs` / `d3d-triangle.abs` / `d3d-sprites.abs` (D3D11),
+  `d3d-clear.abs` / `d3d-triangle.abs` / `d3d-sprites.abs` / `compute.abs` (D3D11),
   `d3d12-clear.abs` / `d3d12-triangle.abs` / `d3d12-sprites.abs` (D3D12),
   `vulkan-triangle.abs` / `vulkan-sprites.abs` (Vulkan)
 

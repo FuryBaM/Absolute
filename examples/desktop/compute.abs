@@ -1,0 +1,58 @@
+// D3D11 compute shader: doubles a contiguous float[] on the GPU and reads it back.
+
+int32 main() {
+    // A native GPU device currently needs a window/swap-chain owner, but it does
+    // not need to present a frame for compute-only work.
+    auto window = new Desktop.Window("Absolute Compute", 320, 180, false);
+    auto gpu = new Desktop.Gpu(window, Desktop.Gpu.BackendD3D11);
+    if (!gpu.isValid() || !gpu.supportsCompute()) {
+        println("D3D11 compute is unavailable:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    string source = "RWStructuredBuffer<float> values : register(u0);\n[numthreads(1, 1, 1)]\nvoid main(uint3 id : SV_DispatchThreadID) {\n    values[id.x] = values[id.x] * 2.0;\n}\n";
+    auto compute = gpu.createComputeShader(source);
+    if (compute == null) {
+        println("createComputeShader failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    float[] values = {
+        {1.0, 2.0, 3.0, 4.0},
+        {5.0, 6.0, 7.0, 8.0}
+    };
+    auto storage = gpu.createStorageBuffer(values);
+    if (storage == null) {
+        println("createStorageBuffer failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    gpu.bind(compute);
+    gpu.bindStorage(storage, 0);
+    if (!gpu.dispatch(values.length, 1, 1)) {
+        println("dispatch failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+    if (!storage.download(values)) {
+        println("storage download failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    assert(values[0] == 2.0 && values[3] == 8.0 && values[7] == 16.0,
+        "compute output");
+
+    float[] replacement = {{10.0, 20.0, 30.0, 40.0}, {50.0, 60.0, 70.0, 80.0}};
+    assert(storage.upload(replacement), "compute upload");
+    assert(gpu.dispatch(replacement.length, 1, 1), "second dispatch");
+    assert(storage.download(replacement), "second compute download");
+    assert(replacement[0] == 20.0 && replacement[7] == 160.0,
+        "second compute output");
+
+    println("compute=ok");
+    return 0;
+}

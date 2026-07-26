@@ -95,6 +95,7 @@ pong.exe
 | `d3d-triangle-smoke.abs` | Non-interactive D3D11 triangle resource check |
 | `d3d-sprites.abs` | D3D11 textured ship + sampler + WASD |
 | `d3d-sprites-smoke.abs` | Non-interactive D3D11 texture/sampler draw |
+| `compute.abs` | D3D11 HLSL compute + `RWStructuredBuffer<float>` readback |
 | `d3d12-clear.abs` | D3D12 clear/present (`BackendD3D12`, Windows) |
 | `d3d12-clear-smoke.abs` | Non-interactive D3D12 clear check |
 | `d3d12-triangle.abs` | D3D12 HLSL triangle + VB/PSO/draw |

@@ -149,7 +149,10 @@
         { "name": "isValid", "detail": "bool isValid()" },
         { "name": "backend", "detail": "string backend()" },
         { "name": "lastError", "detail": "string lastError()" },
+        { "name": "supportsCompute", "detail": "bool supportsCompute()", "documentation": "True when the selected backend implements compute shaders (currently D3D11)." },
         { "name": "createShader", "detail": "GpuShader* createShader(string vertexSource, string fragmentSource)" },
+        { "name": "createComputeShader", "detail": "GpuComputeShader* createComputeShader(string source)", "documentation": "Compiles HLSL main as cs_5_0 on D3D11." },
+        { "name": "createStorageBuffer", "detail": "GpuStorageBuffer* createStorageBuffer(float[] values)", "documentation": "Creates read/write float storage for compute shaders." },
         { "name": "createVertexBuffer", "detail": "GpuBuffer* createVertexBuffer(float[] vertices)" },
         { "name": "createLayoutPos3Color3", "detail": "VertexLayout* createLayoutPos3Color3()" },
         { "name": "createLayoutPos3Uv2", "detail": "VertexLayout* createLayoutPos3Uv2()" },
@@ -158,8 +161,10 @@
         { "name": "beginFrame", "detail": "void beginFrame()" },
         { "name": "endFrame", "detail": "void endFrame()" },
         { "name": "clear", "detail": "void clear(float r, float g, float b, float a)" },
-        { "name": "bind", "detail": "void bind(GpuPipeline* | GpuBuffer* | GpuTexture*)" },
+        { "name": "bind", "detail": "void bind(GpuPipeline* | GpuBuffer* | GpuTexture* | GpuComputeShader*)" },
+        { "name": "bindStorage", "detail": "void bindStorage(GpuStorageBuffer* buffer, int32 slot)", "documentation": "Binds a storage buffer to UAV slot u0..u7." },
         { "name": "draw", "detail": "void draw(int32 vertexCount)" },
+        { "name": "dispatch", "detail": "bool dispatch(int32 groupsX, int32 groupsY, int32 groupsZ)" },
         { "name": "setUniformF", "detail": "void setUniformF(string name, float value)" },
         { "name": "setUniformI", "detail": "void setUniformI(string name, int32 value)" },
         { "name": "setUniform2F", "detail": "void setUniform2F(string name, float x, float y)" },
@@ -193,6 +198,25 @@
       "ownership": "Managed RAII owner tied to its Gpu device."
     },
     {
+      "name": "Desktop.GpuComputeShader",
+      "detail": "class Desktop.GpuComputeShader",
+      "documentation": "D3D11 HLSL compute shader compiled as cs_5_0.",
+      "ownership": "Managed RAII owner tied to its Gpu device."
+    },
+    {
+      "name": "Desktop.GpuStorageBuffer",
+      "detail": "class Desktop.GpuStorageBuffer",
+      "documentation": "Read/write float storage exposed to HLSL as RWStructuredBuffer<float>.",
+      "ownership": "Managed RAII owner tied to its Gpu device.",
+      "members": [
+        { "name": "isValid", "detail": "bool isValid()" },
+        { "name": "floatCount", "detail": "int32 floatCount()" },
+        { "name": "upload", "detail": "bool upload(float[] values)" },
+        { "name": "download", "detail": "bool download(float[] output)" },
+        { "name": "destroy", "detail": "void destroy()" }
+      ]
+    },
+    {
       "name": "Desktop.GpuPipeline",
       "detail": "class Desktop.GpuPipeline",
       "documentation": "Shader + vertex layout binding for Gpu.bind/draw.",
@@ -218,6 +242,11 @@
       "label": "desktop gpu triangle",
       "detail": "OpenGL pipeline bind/draw frame",
       "body": "auto ${1:window} = new Desktop.Window(${2:\"Absolute GPU\"}, ${3:800}, ${4:450}, true);\nauto ${5:gpu} = new Desktop.Gpu($1);\nauto ${6:shader} = $5.createShader(${7:vs}, ${8:fs});\nauto ${9:buffer} = $5.createVertexBuffer(${10:vertices});\nauto ${11:layout} = $5.createLayoutPos3Color3();\nauto ${12:pipeline} = $5.createPipeline($6, $11);\nwhile ($1.poll()) {\n    if ($1.keyPressed(Desktop.KeyEscape())) { break; }\n    $5.beginFrame();\n    $5.clear(0.06, 0.07, 0.12, 1.0);\n    $5.bind($12);\n    $5.bind($9);\n    $5.draw(3);\n    $5.endFrame();\n    $5.present();\n}"
+    },
+    {
+      "label": "desktop compute d3d11",
+      "detail": "Run an HLSL compute shader over a float array",
+      "body": "string ${1:source} = \"RWStructuredBuffer<float> values : register(u0);\\n[numthreads(1, 1, 1)]\\nvoid main(uint3 id : SV_DispatchThreadID) { values[id.x] *= 2.0; }\";\nfloat[] ${2:values} = {1.0, 2.0, 3.0, 4.0};\nauto ${3:compute} = ${4:gpu}.createComputeShader($1);\nauto ${5:storage} = $4.createStorageBuffer($2);\n$4.bind($3);\n$4.bindStorage($5, 0);\n$4.dispatch($2.length, 1, 1);\n$5.download($2);"
     }
   ]
 }

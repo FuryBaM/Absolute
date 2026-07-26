@@ -55,6 +55,21 @@ extern "C" void absolute_desktop_gpu_d3d11_bind_texture(int64_t, int64_t, int32_
 extern "C" int64_t absolute_desktop_gpu_d3d11_sampler_create(int64_t, int32_t, int32_t) { return 0; }
 extern "C" void absolute_desktop_gpu_d3d11_sampler_destroy(int64_t, int64_t) {}
 extern "C" void absolute_desktop_gpu_d3d11_bind_sampler(int64_t, int64_t, int32_t) {}
+extern "C" int32_t absolute_desktop_gpu_d3d11_compute_supported(int64_t) { return 0; }
+extern "C" int64_t absolute_desktop_gpu_d3d11_compute_shader_create(int64_t, const char*) { return 0; }
+extern "C" void absolute_desktop_gpu_d3d11_compute_shader_destroy(int64_t, int64_t) {}
+extern "C" int64_t absolute_desktop_gpu_d3d11_storage_buffer_create(
+    int64_t, const float*, int32_t) { return 0; }
+extern "C" void absolute_desktop_gpu_d3d11_storage_buffer_destroy(int64_t, int64_t) {}
+extern "C" int32_t absolute_desktop_gpu_d3d11_storage_buffer_float_count(int64_t) { return 0; }
+extern "C" int32_t absolute_desktop_gpu_d3d11_storage_buffer_upload(
+    int64_t, int64_t, const float*, int32_t) { return 0; }
+extern "C" int32_t absolute_desktop_gpu_d3d11_storage_buffer_download(
+    int64_t, int64_t, float*, int32_t) { return 0; }
+extern "C" void absolute_desktop_gpu_d3d11_bind_compute_shader(int64_t, int64_t) {}
+extern "C" void absolute_desktop_gpu_d3d11_bind_storage_buffer(int64_t, int64_t, int32_t) {}
+extern "C" int32_t absolute_desktop_gpu_d3d11_dispatch(
+    int64_t, int32_t, int32_t, int32_t) { return 0; }
 
 #else
 
@@ -66,6 +81,7 @@ extern "C" void absolute_desktop_gpu_d3d11_bind_sampler(int64_t, int64_t, int32_
 
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -95,6 +111,8 @@ namespace {
     constexpr uint32_t kResPipeline = 0xD311504Cu; // 'D3PL'
     constexpr uint32_t kResTexture = 0xD3115445u;  // 'D3TE'
     constexpr uint32_t kResSampler = 0xD3115341u;  // 'D3SA'
+    constexpr uint32_t kResCompute = 0xD3114353u;  // 'D3CS'
+    constexpr uint32_t kResStorage = 0xD3115342u;  // 'D3SB'
 
     uint32_t PeekRes(int64_t handle) {
         if (!handle) return 0;
@@ -239,6 +257,37 @@ namespace {
         }
     };
 
+    struct D3D11ComputeShader {
+        uint32_t magic = kResCompute;
+        ID3D11ComputeShader* shader = nullptr;
+
+        void Destroy() {
+            if (shader) {
+                shader->Release();
+                shader = nullptr;
+            }
+        }
+    };
+
+    struct D3D11StorageBuffer {
+        uint32_t magic = kResStorage;
+        ID3D11Buffer* buffer = nullptr;
+        ID3D11UnorderedAccessView* uav = nullptr;
+        int32_t floatCount = 0;
+        int32_t byteSize = 0;
+
+        void Destroy() {
+            if (uav) {
+                uav->Release();
+                uav = nullptr;
+            }
+            if (buffer) {
+                buffer->Release();
+                buffer = nullptr;
+            }
+        }
+    };
+
     // Must match DesktopSprite in desktop_soft_sprites.cpp.
     struct DesktopSpriteView {
         int32_t width = 1;
@@ -263,6 +312,8 @@ namespace {
         int64_t boundPipeline = 0;
         int64_t boundBuffer = 0;
         int64_t boundIndexBuffer = 0;
+        int64_t boundComputeShader = 0;
+        int64_t boundStorage[8] = {};
 
         void ReleaseRtv() {
             if (rtv) {
@@ -380,6 +431,8 @@ namespace {
             boundPipeline = 0;
             boundBuffer = 0;
             boundIndexBuffer = 0;
+            boundComputeShader = 0;
+            for (int64_t& handle : boundStorage) handle = 0;
         }
     };
 
@@ -416,6 +469,32 @@ namespace {
     D3D11Sampler* SamplerFrom(int64_t handle) {
         if (PeekRes(handle) != kResSampler) return nullptr;
         return reinterpret_cast<D3D11Sampler*>(static_cast<intptr_t>(handle));
+    }
+
+    D3D11ComputeShader* ComputeFrom(int64_t handle) {
+        if (PeekRes(handle) != kResCompute) return nullptr;
+        return reinterpret_cast<D3D11ComputeShader*>(static_cast<intptr_t>(handle));
+    }
+
+    D3D11StorageBuffer* StorageFrom(int64_t handle) {
+        if (PeekRes(handle) != kResStorage) return nullptr;
+        return reinterpret_cast<D3D11StorageBuffer*>(static_cast<intptr_t>(handle));
+    }
+
+    void ApplyTrackedStorageBindings(D3D11Device* dev) {
+        if (!dev || !dev->context) return;
+        ID3D11UnorderedAccessView* views[8] = {};
+        for (size_t slot = 0; slot < 8; ++slot) {
+            if (D3D11StorageBuffer* storage = StorageFrom(dev->boundStorage[slot]))
+                views[slot] = storage->uav;
+        }
+        dev->context->CSSetUnorderedAccessViews(0, 8, views, nullptr);
+    }
+
+    void ClearNativeStorageBindings(D3D11Device* dev) {
+        if (!dev || !dev->context) return;
+        ID3D11UnorderedAccessView* empty[8] = {};
+        dev->context->CSSetUnorderedAccessViews(0, 8, empty, nullptr);
     }
 
     DesktopSpriteView* SpriteFrom(int64_t handle) {
@@ -732,7 +811,7 @@ extern "C" void absolute_desktop_gpu_d3d11_unsupported(const char* what) {
 extern "C" int32_t absolute_desktop_gpu_d3d11_is_resource(int64_t handle) {
     const uint32_t m = PeekRes(handle);
     return (m == kResShader || m == kResBuffer || m == kResIndex || m == kResPipeline
-        || m == kResTexture || m == kResSampler)
+        || m == kResTexture || m == kResSampler || m == kResCompute || m == kResStorage)
         ? 1
         : 0;
 }
@@ -785,6 +864,227 @@ extern "C" void absolute_desktop_gpu_d3d11_shader_destroy(int64_t /*gpuHandle*/,
     if (!shader) return;
     shader->Destroy();
     delete shader;
+}
+
+extern "C" int32_t absolute_desktop_gpu_d3d11_compute_supported(int64_t gpuHandle) {
+    const D3D11Device* dev = DeviceFrom(gpuHandle);
+    return dev && dev->valid && dev->device && dev->context ? 1 : 0;
+}
+
+extern "C" int64_t absolute_desktop_gpu_d3d11_compute_shader_create(
+    int64_t gpuHandle, const char* source) {
+    g_lastError.clear();
+    D3D11Device* dev = DeviceFrom(gpuHandle);
+    if (!dev || !dev->device || !source || !source[0]) {
+        SetError("D3D11 createComputeShader: invalid arguments");
+        return 0;
+    }
+
+    ID3DBlob* code = CompileHlsl(source, "main", "cs_5_0");
+    if (!code) return 0;
+    auto* compute = new D3D11ComputeShader();
+    const HRESULT hr = dev->device->CreateComputeShader(
+        code->GetBufferPointer(), code->GetBufferSize(), nullptr, &compute->shader);
+    code->Release();
+    if (FAILED(hr) || !compute->shader) {
+        SetError("D3D11 CreateComputeShader failed");
+        compute->Destroy();
+        delete compute;
+        return 0;
+    }
+    return PtrToHandle(compute);
+}
+
+extern "C" void absolute_desktop_gpu_d3d11_compute_shader_destroy(
+    int64_t gpuHandle, int64_t shaderHandle) {
+    D3D11Device* dev = DeviceFrom(gpuHandle);
+    D3D11ComputeShader* compute = ComputeFrom(shaderHandle);
+    if (!compute) return;
+    if (dev && dev->context && dev->boundComputeShader == shaderHandle) {
+        dev->context->CSSetShader(nullptr, nullptr, 0);
+        dev->boundComputeShader = 0;
+    }
+    compute->Destroy();
+    delete compute;
+}
+
+extern "C" int64_t absolute_desktop_gpu_d3d11_storage_buffer_create(
+    int64_t gpuHandle, const float* data, int32_t floatCount) {
+    g_lastError.clear();
+    D3D11Device* dev = DeviceFrom(gpuHandle);
+    if (!dev || !dev->device || !data || floatCount <= 0) {
+        SetError("D3D11 storage buffer requires non-empty float data");
+        return 0;
+    }
+    if (static_cast<uint64_t>(floatCount) >
+        static_cast<uint64_t>(std::numeric_limits<UINT>::max()) / sizeof(float)) {
+        SetError("D3D11 storage buffer is too large");
+        return 0;
+    }
+
+    auto* storage = new D3D11StorageBuffer();
+    storage->floatCount = floatCount;
+    storage->byteSize = floatCount * static_cast<int32_t>(sizeof(float));
+
+    D3D11_BUFFER_DESC bd{};
+    bd.ByteWidth = static_cast<UINT>(storage->byteSize);
+    bd.Usage = D3D11_USAGE_DEFAULT;
+    bd.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+    bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+    bd.StructureByteStride = sizeof(float);
+    D3D11_SUBRESOURCE_DATA initial{};
+    initial.pSysMem = data;
+    HRESULT hr = dev->device->CreateBuffer(&bd, &initial, &storage->buffer);
+    if (FAILED(hr) || !storage->buffer) {
+        SetError("D3D11 CreateBuffer (storage) failed");
+        storage->Destroy();
+        delete storage;
+        return 0;
+    }
+
+    D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+    uavDesc.Format = DXGI_FORMAT_UNKNOWN;
+    uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+    uavDesc.Buffer.FirstElement = 0;
+    uavDesc.Buffer.NumElements = static_cast<UINT>(floatCount);
+    hr = dev->device->CreateUnorderedAccessView(
+        storage->buffer, &uavDesc, &storage->uav);
+    if (FAILED(hr) || !storage->uav) {
+        SetError("D3D11 CreateUnorderedAccessView (storage) failed");
+        storage->Destroy();
+        delete storage;
+        return 0;
+    }
+    return PtrToHandle(storage);
+}
+
+extern "C" void absolute_desktop_gpu_d3d11_storage_buffer_destroy(
+    int64_t gpuHandle, int64_t bufferHandle) {
+    D3D11Device* dev = DeviceFrom(gpuHandle);
+    D3D11StorageBuffer* storage = StorageFrom(bufferHandle);
+    if (!storage) return;
+    if (dev && dev->context) {
+        ClearNativeStorageBindings(dev);
+        for (int64_t& handle : dev->boundStorage) {
+            if (handle == bufferHandle) handle = 0;
+        }
+        ApplyTrackedStorageBindings(dev);
+    }
+    storage->Destroy();
+    delete storage;
+}
+
+extern "C" int32_t absolute_desktop_gpu_d3d11_storage_buffer_float_count(
+    int64_t bufferHandle) {
+    const D3D11StorageBuffer* storage = StorageFrom(bufferHandle);
+    return storage ? storage->floatCount : 0;
+}
+
+extern "C" int32_t absolute_desktop_gpu_d3d11_storage_buffer_upload(
+    int64_t gpuHandle, int64_t bufferHandle, const float* data, int32_t floatCount) {
+    g_lastError.clear();
+    D3D11Device* dev = DeviceFrom(gpuHandle);
+    D3D11StorageBuffer* storage = StorageFrom(bufferHandle);
+    if (!dev || !dev->context || !storage || !storage->buffer || !data ||
+        floatCount != storage->floatCount) {
+        SetError("D3D11 storage upload requires a matching float[] length");
+        return 0;
+    }
+    ClearNativeStorageBindings(dev);
+    dev->context->UpdateSubresource(storage->buffer, 0, nullptr, data, 0, 0);
+    ApplyTrackedStorageBindings(dev);
+    return 1;
+}
+
+extern "C" int32_t absolute_desktop_gpu_d3d11_storage_buffer_download(
+    int64_t gpuHandle, int64_t bufferHandle, float* output, int32_t floatCount) {
+    g_lastError.clear();
+    D3D11Device* dev = DeviceFrom(gpuHandle);
+    D3D11StorageBuffer* storage = StorageFrom(bufferHandle);
+    if (!dev || !dev->device || !dev->context || !storage || !storage->buffer ||
+        !output || floatCount != storage->floatCount) {
+        SetError("D3D11 storage download requires a matching float[] length");
+        return 0;
+    }
+
+    ClearNativeStorageBindings(dev);
+
+    D3D11_BUFFER_DESC stagingDesc{};
+    stagingDesc.ByteWidth = static_cast<UINT>(storage->byteSize);
+    stagingDesc.Usage = D3D11_USAGE_STAGING;
+    stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    stagingDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+    stagingDesc.StructureByteStride = sizeof(float);
+    ID3D11Buffer* staging = nullptr;
+    HRESULT hr = dev->device->CreateBuffer(&stagingDesc, nullptr, &staging);
+    if (FAILED(hr) || !staging) {
+        SetError("D3D11 CreateBuffer (compute readback) failed");
+        ApplyTrackedStorageBindings(dev);
+        return 0;
+    }
+    dev->context->CopyResource(staging, storage->buffer);
+
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    hr = dev->context->Map(staging, 0, D3D11_MAP_READ, 0, &mapped);
+    if (FAILED(hr) || !mapped.pData) {
+        SetError("D3D11 compute readback Map failed");
+        staging->Release();
+        ApplyTrackedStorageBindings(dev);
+        return 0;
+    }
+    std::memcpy(output, mapped.pData, static_cast<size_t>(storage->byteSize));
+    dev->context->Unmap(staging, 0);
+    staging->Release();
+    ApplyTrackedStorageBindings(dev);
+    return 1;
+}
+
+extern "C" void absolute_desktop_gpu_d3d11_bind_compute_shader(
+    int64_t gpuHandle, int64_t shaderHandle) {
+    g_lastError.clear();
+    D3D11Device* dev = DeviceFrom(gpuHandle);
+    D3D11ComputeShader* compute = ComputeFrom(shaderHandle);
+    if (!dev || !dev->context || !compute || !compute->shader) {
+        SetError("D3D11 bind compute shader requires a valid shader");
+        return;
+    }
+    dev->context->CSSetShader(compute->shader, nullptr, 0);
+    dev->boundComputeShader = shaderHandle;
+}
+
+extern "C" void absolute_desktop_gpu_d3d11_bind_storage_buffer(
+    int64_t gpuHandle, int64_t bufferHandle, int32_t slot) {
+    g_lastError.clear();
+    D3D11Device* dev = DeviceFrom(gpuHandle);
+    D3D11StorageBuffer* storage = StorageFrom(bufferHandle);
+    if (!dev || !dev->context || !storage || !storage->uav || slot < 0 || slot >= 8) {
+        SetError("D3D11 bindStorage requires a valid buffer and slot 0..7");
+        return;
+    }
+    ID3D11UnorderedAccessView* uav = storage->uav;
+    dev->context->CSSetUnorderedAccessViews(
+        static_cast<UINT>(slot), 1, &uav, nullptr);
+    dev->boundStorage[slot] = bufferHandle;
+}
+
+extern "C" int32_t absolute_desktop_gpu_d3d11_dispatch(
+    int64_t gpuHandle, int32_t groupsX, int32_t groupsY, int32_t groupsZ) {
+    g_lastError.clear();
+    D3D11Device* dev = DeviceFrom(gpuHandle);
+    if (!dev || !dev->context || !ComputeFrom(dev->boundComputeShader)) {
+        SetError("D3D11 dispatch requires a bound compute shader");
+        return 0;
+    }
+    if (groupsX <= 0 || groupsY <= 0 || groupsZ <= 0 ||
+        groupsX > 65535 || groupsY > 65535 || groupsZ > 65535) {
+        SetError("D3D11 dispatch group counts must be in 1..65535");
+        return 0;
+    }
+    dev->context->Dispatch(
+        static_cast<UINT>(groupsX),
+        static_cast<UINT>(groupsY),
+        static_cast<UINT>(groupsZ));
+    return 1;
 }
 
 extern "C" int64_t absolute_desktop_gpu_d3d11_buffer_create(

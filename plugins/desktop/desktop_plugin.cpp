@@ -131,6 +131,17 @@ extern "C" int32 absolute_desktop_gpu_texture_height(int64 textureHandle);
 extern "C" int64 absolute_desktop_gpu_sampler_create_on(int64 gpuHandle, int32 filter, int32 wrap);
 extern "C" void absolute_desktop_gpu_sampler_destroy(int64 gpuHandle, int64 samplerHandle);
 extern "C" void absolute_desktop_gpu_bind_sampler(int64 gpuHandle, int64 samplerHandle, int32 unit);
+extern "C" int32 absolute_desktop_gpu_compute_supported(int64 gpuHandle);
+extern "C" int64 absolute_desktop_gpu_compute_shader_create(int64 gpuHandle, string source);
+extern "C" void absolute_desktop_gpu_compute_shader_destroy(int64 gpuHandle, int64 shaderHandle);
+extern "C" int64 absolute_desktop_gpu_storage_buffer_create(int64 gpuHandle, raw float* data, int32 floatCount);
+extern "C" void absolute_desktop_gpu_storage_buffer_destroy(int64 gpuHandle, int64 bufferHandle);
+extern "C" int32 absolute_desktop_gpu_storage_buffer_float_count(int64 gpuHandle, int64 bufferHandle);
+extern "C" int32 absolute_desktop_gpu_storage_buffer_upload(int64 gpuHandle, int64 bufferHandle, raw float* data, int32 floatCount);
+extern "C" int32 absolute_desktop_gpu_storage_buffer_download(int64 gpuHandle, int64 bufferHandle, raw float* output, int32 floatCount);
+extern "C" void absolute_desktop_gpu_bind_compute_shader(int64 gpuHandle, int64 shaderHandle);
+extern "C" void absolute_desktop_gpu_bind_storage_buffer(int64 gpuHandle, int64 bufferHandle, int32 slot);
+extern "C" int32 absolute_desktop_gpu_dispatch(int64 gpuHandle, int32 groupsX, int32 groupsY, int32 groupsZ);
 extern "C" void absolute_desktop_draw_text(int64 windowHandle, int32 x, int32 y, string text, uint32 color, int32 scale);
 extern "C" int32 absolute_desktop_measure_text(string text, int32 scale);
 extern "C" int32 absolute_desktop_measure_text_height(string text, int32 scale);
@@ -1086,6 +1097,59 @@ namespace Desktop {
         }
     }
 
+    class GpuComputeShader {
+        public int64 handle;
+        public int64 gpuHandle;
+
+        public bool isValid() {
+            return handle != 0;
+        }
+
+        public void destroy() {
+            if (handle != 0) {
+                absolute_desktop_gpu_compute_shader_destroy(gpuHandle, handle);
+                handle = 0;
+            }
+        }
+    }
+
+    // Read/write float storage for compute shaders (RWStructuredBuffer<float>).
+    class GpuStorageBuffer {
+        public int64 handle;
+        public int64 gpuHandle;
+
+        public bool isValid() {
+            return handle != 0;
+        }
+
+        public int32 floatCount() {
+            return absolute_desktop_gpu_storage_buffer_float_count(gpuHandle, handle);
+        }
+
+        public bool upload(float[] values) {
+            if (values.length <= 0 || values.length != floatCount()) {
+                return false;
+            }
+            return absolute_desktop_gpu_storage_buffer_upload(
+                gpuHandle, handle, &values[0], values.length) != 0;
+        }
+
+        public bool download(float[] output) {
+            if (output.length <= 0 || output.length != floatCount()) {
+                return false;
+            }
+            return absolute_desktop_gpu_storage_buffer_download(
+                gpuHandle, handle, &output[0], output.length) != 0;
+        }
+
+        public void destroy() {
+            if (handle != 0) {
+                absolute_desktop_gpu_storage_buffer_destroy(gpuHandle, handle);
+                handle = 0;
+            }
+        }
+    }
+
     class GpuIndexBuffer {
         public int64 handle;
         public int64 gpuHandle;
@@ -1252,6 +1316,10 @@ namespace Desktop {
             return absolute_desktop_gpu_last_error();
         }
 
+        public bool supportsCompute() {
+            return absolute_desktop_gpu_compute_supported(handle) != 0;
+        }
+
         public GpuShader* createShader(string vertexSource, string fragmentSource) {
             int64 h = absolute_desktop_gpu_shader_create(handle, vertexSource, fragmentSource);
             if (h == 0) {
@@ -1263,6 +1331,34 @@ namespace Desktop {
             program.handle = h;
             program.gpuHandle = handle;
             return program;
+        }
+
+        // D3D11: HLSL entry `main`, shader model cs_5_0.
+        public GpuComputeShader* createComputeShader(string source) {
+            int64 h = absolute_desktop_gpu_compute_shader_create(handle, source);
+            if (h == 0) {
+                return null;
+            }
+            auto compute = new GpuComputeShader();
+            compute.handle = h;
+            compute.gpuHandle = handle;
+            return compute;
+        }
+
+        // Read/write float storage. Bind as RWStructuredBuffer<float> at u0..u7.
+        public GpuStorageBuffer* createStorageBuffer(float[] values) {
+            if (values.length <= 0) {
+                return null;
+            }
+            int64 h = absolute_desktop_gpu_storage_buffer_create(
+                handle, &values[0], values.length);
+            if (h == 0) {
+                return null;
+            }
+            auto storage = new GpuStorageBuffer();
+            storage.handle = h;
+            storage.gpuHandle = handle;
+            return storage;
         }
 
         // Upload interleaved floats (interpreted later by VertexLayout / Pipeline).
@@ -1442,6 +1538,18 @@ namespace Desktop {
             }
         }
 
+        public void bind(GpuComputeShader* compute) {
+            if (compute != null) {
+                absolute_desktop_gpu_bind_compute_shader(handle, compute.handle);
+            }
+        }
+
+        public void bindStorage(GpuStorageBuffer* buffer, int32 slot) {
+            if (buffer != null) {
+                absolute_desktop_gpu_bind_storage_buffer(handle, buffer.handle, slot);
+            }
+        }
+
         public void bind(GpuIndexBuffer* buffer) {
             if (buffer != null) {
                 absolute_desktop_gpu_bind_index_buffer(handle, buffer.handle);
@@ -1479,6 +1587,10 @@ namespace Desktop {
 
         public void drawIndexed(int32 indexCount) {
             absolute_desktop_gpu_draw_indexed(handle, indexCount);
+        }
+
+        public bool dispatch(int32 groupsX, int32 groupsY, int32 groupsZ) {
+            return absolute_desktop_gpu_dispatch(handle, groupsX, groupsY, groupsZ) != 0;
         }
 
         // Applies to the currently bound pipeline program.

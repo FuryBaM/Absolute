@@ -110,6 +110,27 @@ extern "C" int64_t absolute_desktop_gpu_d3d11_sampler_create(
 extern "C" void absolute_desktop_gpu_d3d11_sampler_destroy(int64_t gpuHandle, int64_t samplerHandle);
 extern "C" void absolute_desktop_gpu_d3d11_bind_sampler(
     int64_t gpuHandle, int64_t samplerHandle, int32_t unit);
+extern "C" int32_t absolute_desktop_gpu_d3d11_compute_supported(int64_t gpuHandle);
+extern "C" int64_t absolute_desktop_gpu_d3d11_compute_shader_create(
+    int64_t gpuHandle, const char* source);
+extern "C" void absolute_desktop_gpu_d3d11_compute_shader_destroy(
+    int64_t gpuHandle, int64_t shaderHandle);
+extern "C" int64_t absolute_desktop_gpu_d3d11_storage_buffer_create(
+    int64_t gpuHandle, const float* data, int32_t floatCount);
+extern "C" void absolute_desktop_gpu_d3d11_storage_buffer_destroy(
+    int64_t gpuHandle, int64_t bufferHandle);
+extern "C" int32_t absolute_desktop_gpu_d3d11_storage_buffer_float_count(
+    int64_t bufferHandle);
+extern "C" int32_t absolute_desktop_gpu_d3d11_storage_buffer_upload(
+    int64_t gpuHandle, int64_t bufferHandle, const float* data, int32_t floatCount);
+extern "C" int32_t absolute_desktop_gpu_d3d11_storage_buffer_download(
+    int64_t gpuHandle, int64_t bufferHandle, float* output, int32_t floatCount);
+extern "C" void absolute_desktop_gpu_d3d11_bind_compute_shader(
+    int64_t gpuHandle, int64_t shaderHandle);
+extern "C" void absolute_desktop_gpu_d3d11_bind_storage_buffer(
+    int64_t gpuHandle, int64_t bufferHandle, int32_t slot);
+extern "C" int32_t absolute_desktop_gpu_d3d11_dispatch(
+    int64_t gpuHandle, int32_t groupsX, int32_t groupsY, int32_t groupsZ);
 extern "C" int64_t absolute_desktop_gpu_d3d12_texture_from_sprite(int64_t gpuHandle, int64_t spriteHandle);
 extern "C" void absolute_desktop_gpu_d3d12_texture_destroy(int64_t gpuHandle, int64_t textureHandle);
 extern "C" int32_t absolute_desktop_gpu_d3d12_texture_width(int64_t textureHandle);
@@ -1814,6 +1835,88 @@ extern "C" void absolute_desktop_gpu_bind_texture(
     device->gl.BindTexture(GL_TEXTURE_2D, texture->id);
 }
 
+extern "C" int32_t absolute_desktop_gpu_compute_supported(int64_t gpuHandle) {
+    return AbsoluteGpuIsD3D11(gpuHandle)
+        ? absolute_desktop_gpu_d3d11_compute_supported(gpuHandle)
+        : 0;
+}
+
+extern "C" int64_t absolute_desktop_gpu_compute_shader_create(
+    int64_t gpuHandle, const char* source) {
+    if (AbsoluteGpuIsD3D11(gpuHandle))
+        return absolute_desktop_gpu_d3d11_compute_shader_create(gpuHandle, source);
+    SetError(std::string("compute shaders are not implemented for backend ")
+        + absolute_desktop_gpu_backend_of(gpuHandle) + "; use BackendD3D11");
+    return 0;
+}
+
+extern "C" void absolute_desktop_gpu_compute_shader_destroy(
+    int64_t gpuHandle, int64_t shaderHandle) {
+    if (AbsoluteGpuIsD3D11(gpuHandle))
+        absolute_desktop_gpu_d3d11_compute_shader_destroy(gpuHandle, shaderHandle);
+}
+
+extern "C" int64_t absolute_desktop_gpu_storage_buffer_create(
+    int64_t gpuHandle, const float* data, int32_t floatCount) {
+    if (AbsoluteGpuIsD3D11(gpuHandle))
+        return absolute_desktop_gpu_d3d11_storage_buffer_create(
+            gpuHandle, data, floatCount);
+    SetError(std::string("storage buffers are not implemented for backend ")
+        + absolute_desktop_gpu_backend_of(gpuHandle) + "; use BackendD3D11");
+    return 0;
+}
+
+extern "C" void absolute_desktop_gpu_storage_buffer_destroy(
+    int64_t gpuHandle, int64_t bufferHandle) {
+    if (AbsoluteGpuIsD3D11(gpuHandle))
+        absolute_desktop_gpu_d3d11_storage_buffer_destroy(gpuHandle, bufferHandle);
+}
+
+extern "C" int32_t absolute_desktop_gpu_storage_buffer_float_count(
+    int64_t gpuHandle, int64_t bufferHandle) {
+    return AbsoluteGpuIsD3D11(gpuHandle)
+        ? absolute_desktop_gpu_d3d11_storage_buffer_float_count(bufferHandle)
+        : 0;
+}
+
+extern "C" int32_t absolute_desktop_gpu_storage_buffer_upload(
+    int64_t gpuHandle, int64_t bufferHandle, const float* data, int32_t floatCount) {
+    return AbsoluteGpuIsD3D11(gpuHandle)
+        ? absolute_desktop_gpu_d3d11_storage_buffer_upload(
+            gpuHandle, bufferHandle, data, floatCount)
+        : 0;
+}
+
+extern "C" int32_t absolute_desktop_gpu_storage_buffer_download(
+    int64_t gpuHandle, int64_t bufferHandle, float* output, int32_t floatCount) {
+    return AbsoluteGpuIsD3D11(gpuHandle)
+        ? absolute_desktop_gpu_d3d11_storage_buffer_download(
+            gpuHandle, bufferHandle, output, floatCount)
+        : 0;
+}
+
+extern "C" void absolute_desktop_gpu_bind_compute_shader(
+    int64_t gpuHandle, int64_t shaderHandle) {
+    if (AbsoluteGpuIsD3D11(gpuHandle))
+        absolute_desktop_gpu_d3d11_bind_compute_shader(gpuHandle, shaderHandle);
+}
+
+extern "C" void absolute_desktop_gpu_bind_storage_buffer(
+    int64_t gpuHandle, int64_t bufferHandle, int32_t slot) {
+    if (AbsoluteGpuIsD3D11(gpuHandle))
+        absolute_desktop_gpu_d3d11_bind_storage_buffer(gpuHandle, bufferHandle, slot);
+}
+
+extern "C" int32_t absolute_desktop_gpu_dispatch(
+    int64_t gpuHandle, int32_t groupsX, int32_t groupsY, int32_t groupsZ) {
+    if (AbsoluteGpuIsD3D11(gpuHandle))
+        return absolute_desktop_gpu_d3d11_dispatch(
+            gpuHandle, groupsX, groupsY, groupsZ);
+    SetError(std::string("compute dispatch is not implemented for backend ")
+        + absolute_desktop_gpu_backend_of(gpuHandle) + "; use BackendD3D11");
+    return 0;
+}
+
 #else // no WGL/GLX
 
 namespace {
@@ -1921,5 +2024,68 @@ extern "C" int32_t absolute_desktop_gpu_texture_height(int64_t) { return 0; }
 extern "C" int64_t absolute_desktop_gpu_sampler_create_on(int64_t, int32_t, int32_t) { return 0; }
 extern "C" void absolute_desktop_gpu_sampler_destroy(int64_t, int64_t) {}
 extern "C" void absolute_desktop_gpu_bind_sampler(int64_t, int64_t, int32_t) {}
+extern "C" int32_t absolute_desktop_gpu_compute_supported(int64_t gpuHandle) {
+    return AbsoluteGpuIsD3D11(gpuHandle)
+        ? absolute_desktop_gpu_d3d11_compute_supported(gpuHandle)
+        : 0;
+}
+extern "C" int64_t absolute_desktop_gpu_compute_shader_create(
+    int64_t gpuHandle, const char* source) {
+    return AbsoluteGpuIsD3D11(gpuHandle)
+        ? absolute_desktop_gpu_d3d11_compute_shader_create(gpuHandle, source)
+        : 0;
+}
+extern "C" void absolute_desktop_gpu_compute_shader_destroy(
+    int64_t gpuHandle, int64_t shaderHandle) {
+    if (AbsoluteGpuIsD3D11(gpuHandle))
+        absolute_desktop_gpu_d3d11_compute_shader_destroy(gpuHandle, shaderHandle);
+}
+extern "C" int64_t absolute_desktop_gpu_storage_buffer_create(
+    int64_t gpuHandle, const float* data, int32_t floatCount) {
+    return AbsoluteGpuIsD3D11(gpuHandle)
+        ? absolute_desktop_gpu_d3d11_storage_buffer_create(gpuHandle, data, floatCount)
+        : 0;
+}
+extern "C" void absolute_desktop_gpu_storage_buffer_destroy(
+    int64_t gpuHandle, int64_t bufferHandle) {
+    if (AbsoluteGpuIsD3D11(gpuHandle))
+        absolute_desktop_gpu_d3d11_storage_buffer_destroy(gpuHandle, bufferHandle);
+}
+extern "C" int32_t absolute_desktop_gpu_storage_buffer_float_count(
+    int64_t gpuHandle, int64_t bufferHandle) {
+    return AbsoluteGpuIsD3D11(gpuHandle)
+        ? absolute_desktop_gpu_d3d11_storage_buffer_float_count(bufferHandle)
+        : 0;
+}
+extern "C" int32_t absolute_desktop_gpu_storage_buffer_upload(
+    int64_t gpuHandle, int64_t bufferHandle, const float* data, int32_t floatCount) {
+    return AbsoluteGpuIsD3D11(gpuHandle)
+        ? absolute_desktop_gpu_d3d11_storage_buffer_upload(
+            gpuHandle, bufferHandle, data, floatCount)
+        : 0;
+}
+extern "C" int32_t absolute_desktop_gpu_storage_buffer_download(
+    int64_t gpuHandle, int64_t bufferHandle, float* output, int32_t floatCount) {
+    return AbsoluteGpuIsD3D11(gpuHandle)
+        ? absolute_desktop_gpu_d3d11_storage_buffer_download(
+            gpuHandle, bufferHandle, output, floatCount)
+        : 0;
+}
+extern "C" void absolute_desktop_gpu_bind_compute_shader(
+    int64_t gpuHandle, int64_t shaderHandle) {
+    if (AbsoluteGpuIsD3D11(gpuHandle))
+        absolute_desktop_gpu_d3d11_bind_compute_shader(gpuHandle, shaderHandle);
+}
+extern "C" void absolute_desktop_gpu_bind_storage_buffer(
+    int64_t gpuHandle, int64_t bufferHandle, int32_t slot) {
+    if (AbsoluteGpuIsD3D11(gpuHandle))
+        absolute_desktop_gpu_d3d11_bind_storage_buffer(gpuHandle, bufferHandle, slot);
+}
+extern "C" int32_t absolute_desktop_gpu_dispatch(
+    int64_t gpuHandle, int32_t groupsX, int32_t groupsY, int32_t groupsZ) {
+    return AbsoluteGpuIsD3D11(gpuHandle)
+        ? absolute_desktop_gpu_d3d11_dispatch(gpuHandle, groupsX, groupsY, groupsZ)
+        : 0;
+}
 
 #endif
