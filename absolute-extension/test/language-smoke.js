@@ -73,6 +73,30 @@ assert.strictEqual(signature.signatures[0].label,
     'void fillRect(int32 x, int32 y, int32 width, int32 height, uint32 color)');
 assert.strictEqual(signature.activeParameter, 2);
 
+const resolutionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'absolute-compiler-resolution-'));
+try {
+    const fakeCompiler = process.platform === 'win32'
+        ? path.join(resolutionRoot, '.absolute', 'build', 'windows-release', 'Release', 'absolutec.exe')
+        : path.join(resolutionRoot, '.absolute', 'build', 'release', 'absolutec');
+    fs.mkdirSync(path.dirname(fakeCompiler), { recursive: true });
+    fs.writeFileSync(fakeCompiler, '');
+    const resolutionRoots = toolchain.candidateRoots([resolutionRoot]);
+
+    const staleRootHint = path.join(resolutionRoot, 'absolutec');
+    assert.strictEqual(
+        toolchain.resolveCompilerPath(staleRootHint, resolutionRoots).path,
+        path.resolve(fakeCompiler),
+        'a stale workspace-root absolutec hint must fall back to the configured build layout'
+    );
+    assert.strictEqual(
+        toolchain.resolveCompilerPath(path.dirname(fakeCompiler), resolutionRoots).path,
+        path.resolve(fakeCompiler),
+        'a compiler directory hint must resolve the executable inside it'
+    );
+} finally {
+    fs.rmSync(resolutionRoot, { recursive: true, force: true });
+}
+
 const roots = toolchain.candidateRoots([repo]);
 const compiler = toolchain.resolveCompilerPath('auto', roots);
 assert(compiler.path, 'workspace compiler should be auto-detected');
