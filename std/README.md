@@ -16,6 +16,8 @@ import std.env;
 import std.collections.vector;
 import std.collections.deque;
 import std.collections.priority_queue;
+import std.collections.hash_map;
+import std.hash;
 import "std/string.abs"; // defines namespace std.text
 ```
 
@@ -46,6 +48,19 @@ std.collections.PriorityQueue<int32>* jobs =
 jobs.enqueue(20);
 jobs.enqueue(10);
 println(jobs.dequeue()); // 10
+```
+
+Hash collections accept explicit hashing and equality functions. Equal keys
+must always produce the same hash:
+
+```absolute
+func<int64, string> hash =
+    fn(string value) => std.hash.stringCode(value);
+func<bool, string, string> equal =
+    fn(string left, string right) => std.hash.stringEqual(left, right);
+std.collections.HashMap<string, int32>* scores =
+    new std.collections.HashMap<string, int32>(hash, equal);
+scores["Absolute"] = 42;
 ```
 
 ## Modules

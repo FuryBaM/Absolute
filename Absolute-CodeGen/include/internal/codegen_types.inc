@@ -33,7 +33,6 @@
 
         void FinalizeStruct(const std::string& name);
 
-        bool SameMethodSignature(FunctionDeclStmt& left, FunctionDeclStmt& right);
 
         void FinalizeClass(const std::string& name);
 

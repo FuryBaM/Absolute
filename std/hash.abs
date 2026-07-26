@@ -1,0 +1,46 @@
+import "./string.abs";
+
+namespace std.hash {
+    // Hashing/equality contract:
+    // if `equal(left, right)` is true, both values must have the same code.
+    int64 int32Code(int32 value) {
+        return value as int64;
+    }
+
+    bool int32Equal(int32 left, int32 right) {
+        return left == right;
+    }
+
+    int64 int64Code(int64 value) {
+        return value;
+    }
+
+    bool int64Equal(int64 left, int64 right) {
+        return left == right;
+    }
+
+    int64 stringCode(string value) {
+        // Hash Unicode code points, so the result is portable across native/WASM.
+        int64 result = 1469598103934665603 as int64;
+        int32 length = std.text.codePointCount(value);
+        int32 index = 0;
+        while (index < length) {
+            result = result * (1099511628211 as int64);
+            result = result + (std.text.codePointAt(value, index) as int64);
+            index = index + 1;
+        }
+        return result;
+    }
+
+    bool stringEqual(string left, string right) {
+        return left == right;
+    }
+
+    int64 boolCode(bool value) {
+        return value ? (1 as int64) : (0 as int64);
+    }
+
+    bool boolEqual(bool left, bool right) {
+        return left == right;
+    }
+}

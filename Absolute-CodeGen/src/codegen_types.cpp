@@ -593,15 +593,6 @@ namespace Absolute {
         currentGenericSubstitutions = oldSubstitutions;
     }
 
-    bool CodeGenerator::Impl::SameMethodSignature(FunctionDeclStmt& left, FunctionDeclStmt& right) {
-        if (ResolveTypeName(left.returnType.get()) != ResolveTypeName(right.returnType.get()) ||
-            left.parameters.size() != right.parameters.size()) return false;
-        for (size_t index = 0; index < left.parameters.size(); ++index)
-            if (DeclaredTypeName(*left.parameters[index]) != DeclaredTypeName(*right.parameters[index]))
-                return false;
-        return true;
-    }
-
     void CodeGenerator::Impl::FinalizeClass(const std::string& name) {
         auto found = classes.find(name);
         if (found == classes.end()) Fail("unknown class '" + name + "'");
@@ -691,7 +682,10 @@ namespace Absolute {
             std::optional<unsigned> slot;
             const bool staticMethod = HasModifier(*statement, "static");
             if (!staticMethod && inherited != info.methods.end() && inherited->second.virtualSlot) {
-                if (!SameMethodSignature(*inherited->second.statement, *statement))
+                const std::string declaredReturn =
+                    ResolveTypeName(statement->returnType.get());
+                if (inherited->second.returnType != declaredReturn ||
+                    inherited->second.parameterTypes != parameterTypes)
                     Fail("override signature mismatch for '" + name + "." + methodName + "'");
                 slot = inherited->second.virtualSlot;
             }

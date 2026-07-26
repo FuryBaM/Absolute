@@ -1,0 +1,122 @@
+import "../std/hash.abs";
+import "../std/collections/hash_map.abs";
+
+int32 main() {
+    func<int64, int32> collisionHash =
+        fn(int32 value) => (value % 3) as int64;
+    func<bool, int32, int32> intEquals =
+        fn(int32 left, int32 right) => left == right;
+
+    std.collections.HashMap<int32, int32>* numbers =
+        new std.collections.HashMap<int32, int32>(
+            collisionHash,
+            intEquals,
+            4
+        );
+
+    int32 index = 0;
+    while (index < 40) {
+        numbers.put(index, index * 10);
+        index = index + 1;
+    }
+    assert(numbers.count == 40, "hash map count after growth");
+    assert(numbers.capacity > 4, "hash map grows");
+    assert(numbers[17] == 170, "hash map lookup through collisions");
+
+    numbers[17] = 171;
+    assert(numbers.count == 40 && numbers[17] == 171, "hash map update");
+    assert(!numbers.tryAdd(17, 999), "hash map tryAdd existing");
+    assert(numbers.tryAdd(41, 410), "hash map tryAdd new");
+
+    index = 0;
+    while (index < 20) {
+        assert(numbers.remove(index), "hash map remove existing");
+        index = index + 2;
+    }
+    assert(!numbers.remove(1000), "hash map remove missing");
+
+    index = 100;
+    while (index < 120) {
+        numbers.put(index, index * 10);
+        index = index + 1;
+    }
+    assert(numbers.containsKey(118) && numbers[118] == 1180,
+        "hash map tombstone reuse");
+
+    std.collections.HashKeyValuePair<int32, int32>[] entries =
+        numbers.toArray();
+    assert(entries.length == numbers.count, "hash map snapshot");
+    std.collections.HashMapIterator<int32, int32>* iterator =
+        numbers.iterate();
+    int32 iterated = 0;
+    while (iterator.next()) {
+        std.collections.HashKeyValuePair<int32, int32> entry = iterator.value;
+        assert(numbers[entry.key] == entry.value, "hash map iterator value");
+        iterated = iterated + 1;
+    }
+    assert(iterated == numbers.count, "hash map iterator count");
+
+    std.collections.HashSet<int32>* ids =
+        new std.collections.HashSet<int32>(collisionHash, intEquals, 4);
+    index = 0;
+    while (index < 40) {
+        assert(ids.add(index), "hash set add during growth");
+        index = index + 1;
+    }
+    assert(ids.capacity > 4 && ids.count == 40, "hash set grows");
+    index = 0;
+    while (index < 20) {
+        assert(ids.remove(index), "hash set remove existing");
+        index = index + 2;
+    }
+    index = 100;
+    while (index < 120) {
+        assert(ids.add(index), "hash set tombstone reuse");
+        index = index + 1;
+    }
+    assert(ids.contains(118) && !ids.contains(8), "hash set collision lookup");
+
+    func<int64, string> stringHash =
+        fn(string value) => std.hash.stringCode(value);
+    func<bool, string, string> stringEquals =
+        fn(string left, string right) => std.hash.stringEqual(left, right);
+    std.collections.HashMap<string, int32>* words =
+        new std.collections.HashMap<string, int32>(
+            stringHash,
+            stringEquals
+        );
+    words.put("Привет", 1);
+    words.put("Absolute", 2);
+    assert(words["Привет"] == 1, "standard Unicode string hashing");
+
+    func<int64, string> foldedHash =
+        fn(string value) => std.hash.stringCode(std.text.toLower(value));
+    func<bool, string, string> foldedEquals =
+        fn(string left, string right) =>
+            std.text.toLower(left) == std.text.toLower(right);
+    std.collections.HashSet<string>* names =
+        new std.collections.HashSet<string>(foldedHash, foldedEquals, 4);
+    assert(names.add("Absolute"), "hash set add");
+    assert(!names.add("ABSOLUTE"), "custom equality rejects duplicate");
+    assert(names.add("бета") && names.contains("БЕТА"),
+        "hash set Unicode custom equality");
+    assert(names.remove("absolute") && !names.contains("Absolute"),
+        "hash set remove");
+    assert(names.toArray().length == names.count, "hash set snapshot");
+    names.clear();
+    assert(names.isEmpty, "hash set clear");
+
+    numbers.clear();
+    assert(numbers.isEmpty, "hash map clear");
+    bool missingRejected = false;
+    try {
+        int32 missing = numbers[99];
+    }
+    catch (Error* error) {
+        missingRejected = true;
+    }
+    assert(missingRejected, "hash map missing key throws");
+
+    println("std-hash-collections=ok");
+    return 0;
+}

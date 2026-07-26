@@ -58,6 +58,7 @@ std/
     vector.abs             # std.collections.Vector
     deque.abs              # Deque<T>, Queue<T>, Stack<T>
     priority_queue.abs     # stable binary-heap PriorityQueue<T>
+    hash_map.abs           # open-addressed HashMap<K,V>, HashSet<T>
     map.abs                # std.collections.Map
     set.abs                # std.collections.Set
     channel.abs            # std.collections.Channel
@@ -65,6 +66,7 @@ std/
   datetime.abs             # std.datetime
   env.abs                  # std.env
   fs.abs                   # std.fs
+  hash.abs                 # std.hash callback helpers
   http.abs                 # std.http
   json.abs                 # std.json
   log.abs                  # std.log
@@ -90,6 +92,7 @@ std/
 | `std.datetime` | `std/datetime.abs` | Calendar / timezone |
 | `std.env` | `std/env.abs` | Environment variables and launch arguments |
 | `std.fs` | `std/fs.abs` | Paths and `File` |
+| `std.hash` | `std/hash.abs` | Portable hashing/equality callbacks for standard key types |
 | `std.http` | `std/http.abs` | HTTP client/server |
 | `std.json` | `std/json.abs` | JSON |
 | `std.log` | `std/log.abs` | Leveled logging |
@@ -131,7 +134,8 @@ Current Stable modules (0.x: *preview-stable* — see versioning note):
 - `std.core` convenience import
 - `std.time`, `std.env`, `std.process`, `std.fs`
 - `std.collections` (`Vector`, `Deque`, `Queue`, `Stack`, `PriorityQueue`,
-  `Map`, `Set`, algorithms, `Channel`)
+  `HashMap`, `HashSet`, `Map`, `Set`, algorithms, `Channel`)
+- `std.hash` standard key hashing/equality helpers
 - `std.string` file → `std.text` (`StringBuilder` and string helpers)
 - `std.assert`, `std.log`, `std.testing`
 - `std.random`, `std.json`, `std.binary`
@@ -306,7 +310,7 @@ release is validated against a **minimum language/runtime** pair:
 | 0.1.x | current `main` / release that ships this `std/` tree |
 | 0.2.x | runtime with portable process arguments and `std.env` launch API |
 | 0.3.x | Unicode-correct text offsets and automatic `destroy()` lifecycle |
-| 0.4.x | ring-buffer deque/queue/stack and stable priority queue collections |
+| 0.4.x | deque/queue/stack, priority queue, and open-addressed hash collections |
 
 If a future std release requires new language features, document the floor in
 the package changelog and refuse to load on older compilers when that check is
@@ -322,7 +326,8 @@ implemented.
 | `std.env` / `std.process` | Environment and process control |
 | `std.fs` | Filesystem |
 | `std.net` / `std.uri` / `std.http` | Networking stack |
-| `std.collections` | Dynamic collections, deque/queue/stack, priority queues, algorithms, channels |
+| `std.collections` | Dynamic, deque/queue/stack, priority, hash, and channel collections |
+| `std.hash` | Portable hashing/equality helpers for standard key types |
 | `std.concurrent` | Shared concurrent capabilities (atomics, mutex, capsules) |
 | `std.task` | Task metadata / scheduling queries |
 | `std.text` | String building and Unicode helpers |

@@ -389,6 +389,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generics-types.abs"
     )
     add_test(
+        NAME absolute.generic-callback-abi-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-callback-abi.abs"
+    )
+    add_test(
         NAME absolute.std-time-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-time.abs"
     )
@@ -485,6 +489,10 @@ if(BUILD_TESTING)
     add_test(
         NAME absolute.std-priority-queue-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-priority-queue.abs"
+    )
+    add_test(
+        NAME absolute.std-hash-collections-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-hash-collections.abs"
     )
     add_test(
         NAME absolute.collection-builder-capability-semantic
@@ -1574,6 +1582,28 @@ if(BUILD_TESTING)
                         -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-marker.cmake"
                 )
+                add_test(
+                    NAME absolute.run-wasm-generic-callback-abi
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/generic-callback-abi.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/generic-callback-abi.wasm
+                        -DMARKER=generic-callback-abi=ok
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-marker.cmake"
+                )
+                add_test(
+                    NAME absolute.run-wasm-std-hash-collections
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/std-hash-collections.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/std-hash-collections.wasm
+                        -DMARKER=std-hash-collections=ok
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-marker.cmake"
+                )
                 if(TARGET Absolute-Math-Plugin)
                     add_test(
                         NAME absolute.run-wasm-math-plugin
@@ -2151,6 +2181,21 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "std-priority-queue=ok"
         )
         add_test(
+            NAME absolute.build-std-hash-collections
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-hash-collections.abs"
+                --build-exe
+                -o "${CMAKE_BINARY_DIR}/std-hash-collections-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-hash-collections PROPERTIES
+            FIXTURES_SETUP absolute-std-hash-collections-executable
+        )
+        add_test(NAME absolute.run-std-hash-collections
+            COMMAND "${CMAKE_BINARY_DIR}/std-hash-collections-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-hash-collections PROPERTIES
+            FIXTURES_REQUIRED absolute-std-hash-collections-executable
+            PASS_REGULAR_EXPRESSION "std-hash-collections=ok"
+        )
+        add_test(
             NAME absolute.build-collection-snapshot-iteration
             COMMAND Absolute-Compiler
                 "${PROJECT_SOURCE_DIR}/tests/collection-snapshot-iteration.abs"
@@ -2424,6 +2469,21 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-generic-types PROPERTIES
             FIXTURES_REQUIRED absolute-generic-types-executable
             PASS_REGULAR_EXPRESSION "generic-types=ok"
+        )
+        add_test(
+            NAME absolute.build-generic-callback-abi
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-callback-abi.abs"
+                --build-exe
+                -o "${CMAKE_BINARY_DIR}/generic-callback-abi-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-generic-callback-abi PROPERTIES
+            FIXTURES_SETUP absolute-generic-callback-abi-executable
+        )
+        add_test(NAME absolute.run-generic-callback-abi
+            COMMAND "${CMAKE_BINARY_DIR}/generic-callback-abi-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-generic-callback-abi PROPERTIES
+            FIXTURES_REQUIRED absolute-generic-callback-abi-executable
+            PASS_REGULAR_EXPRESSION "generic-callback-abi=ok"
         )
         add_test(
             NAME absolute.build-generic-interfaces

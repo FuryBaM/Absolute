@@ -489,9 +489,9 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   - [x] `Deque<T>` на кольцевом буфере с O(1) вставкой и удалением с обоих концов.
   - [x] `Queue<T>` и `Stack<T>` как компактные типизированные фасады без отдельных storage engines.
   - [x] `PriorityQueue<T>` на стабильной бинарной куче с пользовательским comparator.
-  - [ ] Стандартный контракт hashing/equality и настоящие `HashMap<K, V>` / `HashSet<T>`;
+  - [x] Стандартный контракт hashing/equality и настоящие `HashMap<K, V>` / `HashSet<T>`;
     текущие `Map` / `Set` оставить совместимыми ordered-linear контейнерами.
-    - [ ] Сначала закрыть CodeGen ABI для callback-полей в generic-классах с несколькими
+    - [x] Закрыть CodeGen ABI для callback-полей в generic-классах с несколькими
       параметрами и virtual override value-type параметров в generic-наследниках;
       добавить отдельные semantic/native/WASM regression-тесты.
   - [ ] Типизированный `Channel<T>` с явной моделью передачи ownership между tasks.

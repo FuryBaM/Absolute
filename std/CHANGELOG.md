@@ -7,6 +7,10 @@
 - Added typed FIFO `Queue<T>` and LIFO `Stack<T>` facades.
 - Added stable binary-heap `PriorityQueue<T>` with a user comparator and
   O(log n) enqueue/dequeue.
+- Added open-addressed `HashMap<K, V>` and `HashSet<T>` with explicit portable
+  hashing/equality callbacks, tombstone reuse, and snapshot iteration.
+- Added built-in `std.hash` functions for integer, Boolean, and Unicode string
+  keys.
 - Added native and WebAssembly regression coverage for the new collections.
 
 ## 0.3.0
