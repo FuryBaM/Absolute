@@ -120,6 +120,12 @@ if [[ "$llvm_enabled" == ON ]]; then
         echo "Absolute requires LLVM 18 or newer; Termux provides $(llvm-config --version)." >&2
         exit 1
     fi
+    if [[ ! -f "$PREFIX/lib/libLLVMDemangle.a" ]]; then
+        echo "Termux LLVM component archives are missing: $PREFIX/lib/libLLVMDemangle.a" >&2
+        echo "Install them with: pkg install libllvm-static" >&2
+        echo "Or rerun: bash build-termux.sh --bootstrap" >&2
+        exit 1
+    fi
 fi
 
 cmake_args=(
