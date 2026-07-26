@@ -127,7 +127,7 @@ namespace std.http {
         if (uri.query != "") {
             path = format("{}?{}", path, uri.query);
         }
-        int32 bodyLen = std.text.codePointCount(bodyText);
+        int32 bodyLen = std.text.byteCount(bodyText);
         string reqStr = format(
             "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             path,
@@ -162,7 +162,7 @@ namespace std.http {
                 statusMsg = "Internal Error";
             }
 
-            int32 bodyLen = std.text.codePointCount(bodyText);
+            int32 bodyLen = std.text.byteCount(bodyText);
             string respStr = format(
                 "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                 statusCode,
@@ -175,7 +175,7 @@ namespace std.http {
             socketHandle = null;
         }
 
-        public void dispose() {
+        public void destroy() {
             if (request != null) {
                 request = null;
             }
@@ -184,6 +184,8 @@ namespace std.http {
                 socketHandle = null;
             }
         }
+
+        public void dispose() { destroy(); }
     }
 
     class HttpServer {
@@ -250,6 +252,14 @@ namespace std.http {
                 listener.close();
                 listener = null;
             }
+        }
+
+        public void destroy() {
+            close();
+        }
+
+        public void dispose() {
+            destroy();
         }
     }
 }

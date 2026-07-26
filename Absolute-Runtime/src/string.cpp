@@ -75,6 +75,29 @@ namespace {
         return c;
     }
 
+    std::size_t ByteOffsetForCodePoint(const char* text, int32_t index) {
+        if (!text || index <= 0) return 0;
+        const char* cursor = text;
+        int32_t current = 0;
+        while (*cursor && current < index) {
+            DecodeUtf8(cursor);
+            ++current;
+        }
+        return static_cast<std::size_t>(cursor - text);
+    }
+
+    int32_t CodePointIndexForByteOffset(const char* text, std::size_t byteOffset) {
+        if (!text || byteOffset == 0) return 0;
+        const char* cursor = text;
+        const char* end = text + byteOffset;
+        int32_t index = 0;
+        while (*cursor && cursor < end) {
+            DecodeUtf8(cursor);
+            ++index;
+        }
+        return index;
+    }
+
     // Helper: encode single code point to UTF-8 std::string
     std::string EncodeUtf8(uint32_t cp) {
         std::string res;
@@ -129,6 +152,10 @@ extern "C" int32_t absolute_string_code_point_count(const char* text) {
         count++;
     }
     return count;
+}
+
+extern "C" int32_t absolute_string_utf8_byte_count(const char* text) {
+    return text ? static_cast<int32_t>(std::strlen(text)) : 0;
 }
 
 extern "C" int32_t absolute_string_code_point_at(const char* text, int32_t index) {
@@ -234,7 +261,7 @@ extern "C" int32_t absolute_string_index_of(const char* text, const char* sub) {
     if (!text || !sub) return -1;
     const char* pos = std::strstr(text, sub);
     if (!pos) return -1;
-    return static_cast<int32_t>(pos - text);
+    return CodePointIndexForByteOffset(text, static_cast<std::size_t>(pos - text));
 }
 
 extern "C" int32_t absolute_string_last_index_of(const char* text, const char* sub) {
@@ -243,7 +270,7 @@ extern "C" int32_t absolute_string_last_index_of(const char* text, const char* s
     std::string needle(sub);
     size_t pos = s.rfind(needle);
     if (pos == std::string::npos) return -1;
-    return static_cast<int32_t>(pos);
+    return CodePointIndexForByteOffset(text, pos);
 }
 
 extern "C" const char* absolute_string_replace(const char* text, const char* fromText, const char* toText) {
@@ -268,13 +295,13 @@ extern "C" const char* absolute_string_replace(const char* text, const char* fro
 extern "C" const char* absolute_string_substring(const char* text, int32_t start, int32_t length) {
     lastStringResult.clear();
     if (!text || start < 0 || length <= 0) return DurableCopy(lastStringResult);
-    size_t textLen = std::strlen(text);
-    if (static_cast<size_t>(start) >= textLen) return DurableCopy(lastStringResult);
-    size_t count = static_cast<size_t>(length);
-    if (static_cast<size_t>(start) + count > textLen) {
-        count = textLen - static_cast<size_t>(start);
-    }
-    lastStringResult = std::string(text + start, count);
+    const int32_t codePoints = absolute_string_code_point_count(text);
+    if (start >= codePoints) return DurableCopy(lastStringResult);
+    const int32_t remaining = codePoints - start;
+    const int32_t endIndex = length > remaining ? codePoints : start + length;
+    const std::size_t startByte = ByteOffsetForCodePoint(text, start);
+    const std::size_t endByte = ByteOffsetForCodePoint(text, endIndex);
+    lastStringResult = std::string(text + startByte, endByte - startByte);
     return DurableCopy(lastStringResult);
 }
 

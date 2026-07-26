@@ -1,12 +1,13 @@
 {
   "name": "absolute.std",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "lib",
   "description": "Absolute standard library (std.*). Layout and SemVer policy: docs/standard-library.md",
   "sources": [
     "."
   ],
   "modules": {
+    "std.core": "core.abs",
     "std.assert": "assert.abs",
     "std.binary": "binary.abs",
     "std.concurrent": ["concurrent.abs", "concurrent/capsule.abs"],

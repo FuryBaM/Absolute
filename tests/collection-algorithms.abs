@@ -9,12 +9,15 @@ int32 main() {
     assert(arr1[5] == 9, "array sort max");
 
     std.collections.Vector<int32>* vec1 = new std.collections.Vector<int32>();
+    assert(vec1.isEmpty, "new vector is empty");
     vec1.push(5);
     vec1.push(2);
     vec1.push(8);
     vec1.push(1);
     vec1.push(9);
     vec1.push(3);
+    assert(!vec1.isEmpty && vec1.first == 5 && vec1.last == 3,
+        "vector convenience properties");
     std.collections.sort(vec1);
     assert(vec1[0] == 1, "vector sort min");
     assert(vec1[5] == 9, "vector sort max");

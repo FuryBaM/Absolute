@@ -18,6 +18,8 @@ int32 main() {
     assert(!std.env.has(varName), "var must not exist after remove");
 
     assert(std.env.argsCount() == 5, "launch argument count");
+    string[] launchArgs = std.env.args();
+    assert(launchArgs.length == 5 && launchArgs[0] == "positional", "launch argument snapshot");
     assert(std.env.argAt(0) == "positional", "positional launch argument");
     assert(std.env.hasArg("positional"), "hasArg must find a positional argument");
     assert(std.env.flag("verbose"), "flag accepts a bare option name");

@@ -29,7 +29,9 @@ namespace std.collections {
         }
 
         public void close() {
-            absolute_channel_close(handle);
+            if (handle != null) {
+                absolute_channel_close(handle);
+            }
         }
 
         public bool isClosed() {
@@ -42,6 +44,8 @@ namespace std.collections {
                 handle = null;
             }
         }
+
+        public void dispose() { destroy(); }
     }
 
 }

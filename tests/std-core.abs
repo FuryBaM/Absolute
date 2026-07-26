@@ -1,0 +1,30 @@
+import "../std/core.abs";
+
+void automaticResources(string path) {
+    std.text.StringBuilder* builder = new std.text.StringBuilder();
+    builder.append("std");
+    builder.append("-");
+    builder.append("core");
+
+    std.random.Rng* rng = new std.random.Rng(42);
+    int32 value = rng.range(10, 20);
+
+    std.fs.File* file = std.fs.open(path, "wb");
+    file.write(format("{}:{}", builder.toString(), value));
+
+    // Managed scope cleanup invokes destroy() for all three wrappers.
+}
+
+int32 main() {
+    string path = "absolute-std-core-test.txt";
+    if (std.fs.exists(path)) { std.fs.remove(path); }
+
+    automaticResources(path);
+    assert(std.fs.exists(path), "std.core filesystem import");
+    assert(std.text.startsWith(std.fs.readText(path), "std-core:"), "std.core text import");
+    assert(std.time.monotonicNanoseconds() > 0, "std.core time import");
+
+    std.fs.remove(path);
+    println("std-core=ok");
+    return 0;
+}

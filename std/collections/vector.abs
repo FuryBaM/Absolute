@@ -136,6 +136,24 @@ namespace std.collections {
             get { return _capacity; }
         }
 
+        public bool isEmpty {
+            get { return _count == 0; }
+        }
+
+        public T first {
+            get {
+                if (_count == 0) { throw new Error("Vector is empty"); }
+                return items[0];
+            }
+        }
+
+        public T last {
+            get {
+                if (_count == 0) { throw new Error("Vector is empty"); }
+                return items[_count - 1];
+            }
+        }
+
         public void push(T element) {
             ensureUnshared();
             if (_count == _capacity) {
@@ -205,7 +223,7 @@ namespace std.collections {
             return new std.collections.VectorBuilder<T>(items, _count);
         }
 
-        public T[] unsafeCopyRaw() {
+        public T[] toArray() {
             T[] res = new T[_count];
             int32 i = 0;
             while (i < _count) {
@@ -214,6 +232,10 @@ namespace std.collections {
             }
             T[] rawCopy = copy(res);
             return rawCopy;
+        }
+
+        public T[] unsafeCopyRaw() {
+            return toArray();
         }
     }
 }

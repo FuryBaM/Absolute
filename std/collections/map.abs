@@ -144,6 +144,10 @@ namespace std.collections {
             get { return _capacity; }
         }
 
+        public bool isEmpty {
+            get { return _count == 0; }
+        }
+
         public KeyValuePair<K, V> entryAt(int32 index) {
             return entries[index];
         }
@@ -234,7 +238,7 @@ namespace std.collections {
             return new std.collections.MapBuilder<K, V>(entries, _count);
         }
 
-        public KeyValuePair<K, V>[] unsafeCopyRaw() {
+        public KeyValuePair<K, V>[] toArray() {
             KeyValuePair<K, V>[] res = new KeyValuePair<K, V>[_count];
             int32 i = 0;
             while (i < _count) {
@@ -243,6 +247,10 @@ namespace std.collections {
             }
             KeyValuePair<K, V>[] rawCopy = copy(res);
             return rawCopy;
+        }
+
+        public KeyValuePair<K, V>[] unsafeCopyRaw() {
+            return toArray();
         }
     }
 }

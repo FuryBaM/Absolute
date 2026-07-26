@@ -8,16 +8,20 @@ int32 main() {
     vec.push(200);
 
     Map<int32, int32>* map = new Map<int32, int32>();
+    assert(map.isEmpty, "new map is empty");
     map.put(1, 10);
     map.put(2, 20);
 
     Set<int32>* mySet = new Set<int32>();
+    assert(mySet.isEmpty, "new set is empty");
     mySet.add(5);
     mySet.add(10);
 
     assert(vec.count == 2, "vector count");
     assert(map.containsKey(1), "map contains key");
     assert(mySet.contains(5), "set contains item");
+    assert(map.toArray().length == 2, "map snapshot");
+    assert(mySet.toArray().length == 2, "set snapshot");
 
     return 0;
 }

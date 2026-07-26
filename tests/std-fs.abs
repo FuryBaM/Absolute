@@ -18,6 +18,9 @@ int32 main() {
         "written file must exist");
     assert(std.fs.size(source) == 10, "file size must include appended text");
     assert(std.fs.readText(source) == "alpha\nbeta", "whole-file read must round-trip");
+    string[] lines = std.fs.readLines(source);
+    assert(lines.length == 2 && lines[1] == "beta", "readLines must split text");
+    assert(std.fs.join(directory, "source.txt") == source, "path join");
 
     std.fs.File* reader = std.fs.open(source, "rb");
     assert(reader.readLine() == "alpha", "stream must read the first line");

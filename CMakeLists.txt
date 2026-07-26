@@ -393,6 +393,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-time.abs"
     )
     add_test(
+        NAME absolute.std-core-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-core.abs"
+    )
+    add_test(
         NAME absolute.std-random-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-random.abs"
     )
@@ -1530,6 +1534,16 @@ if(BUILD_TESTING)
                         -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-managed.cmake"
                 )
+                add_test(
+                    NAME absolute.run-wasm-std-string
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/std-string-wasm.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/std-string.wasm
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-std-string.cmake"
+                )
                 if(TARGET Absolute-Math-Plugin)
                     add_test(
                         NAME absolute.run-wasm-math-plugin
@@ -2394,6 +2408,21 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-std-time PROPERTIES
             FIXTURES_REQUIRED absolute-std-time-executable
             PASS_REGULAR_EXPRESSION "std-time=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-core
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-core.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-core-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-core PROPERTIES
+            FIXTURES_SETUP absolute-std-core-executable
+        )
+        add_test(NAME absolute.run-std-core
+            COMMAND "${CMAKE_BINARY_DIR}/std-core-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-core PROPERTIES
+            FIXTURES_REQUIRED absolute-std-core-executable
+            PASS_REGULAR_EXPRESSION "std-core=ok"
         )
 
         add_test(

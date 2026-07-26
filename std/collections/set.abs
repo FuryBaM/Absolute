@@ -141,6 +141,10 @@ namespace std.collections {
             get { return _capacity; }
         }
 
+        public bool isEmpty {
+            get { return _count == 0; }
+        }
+
         public T itemAt(int32 index) {
             return items[index];
         }
@@ -211,7 +215,7 @@ namespace std.collections {
             return new std.collections.SetBuilder<T>(items, _count);
         }
 
-        public T[] unsafeCopyRaw() {
+        public T[] toArray() {
             T[] res = new T[_count];
             int32 i = 0;
             while (i < _count) {
@@ -220,6 +224,10 @@ namespace std.collections {
             }
             T[] rawCopy = copy(res);
             return rawCopy;
+        }
+
+        public T[] unsafeCopyRaw() {
+            return toArray();
         }
     }
 }

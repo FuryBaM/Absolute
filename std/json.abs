@@ -46,12 +46,15 @@ namespace std.json {
             return handle;
         }
 
-        public void dispose() {
+        public void destroy() {
             if (isOwner && handle) {
                 absolute_json_free(handle);
                 handle = null;
             }
         }
+
+        public void dispose() { destroy(); }
+        public bool isValid() { return handle != null; }
 
         public JsonType getType() {
             int32 t = absolute_json_get_type(handle);
@@ -94,15 +97,51 @@ namespace std.json {
             return new JsonValue(child, false);
         }
 
+        public string getStringOr(string key, string defaultValue) {
+            raw void* child = absolute_json_get_property(handle, key);
+            if (!child || absolute_json_get_type(child) != 3) { return defaultValue; }
+            return absolute_json_as_string(child);
+        }
+
+        public int64 getIntOr(string key, int64 defaultValue) {
+            raw void* child = absolute_json_get_property(handle, key);
+            if (!child || absolute_json_get_type(child) != 2) { return defaultValue; }
+            return absolute_json_as_number(child) as int64;
+        }
+
+        public bool getBoolOr(string key, bool defaultValue) {
+            raw void* child = absolute_json_get_property(handle, key);
+            if (!child || absolute_json_get_type(child) != 1) { return defaultValue; }
+            return absolute_json_as_bool(child) != 0;
+        }
+
         public void add(JsonValue* item) {
-            if (item) {
+            if (item && isArray()) {
                 absolute_json_array_add(handle, item.getHandle());
+                item.isOwner = false;
             }
         }
 
+        public void addNumber(double value) {
+            absolute_json_array_add(handle, absolute_json_create_number(value));
+        }
+
+        public void addString(string value) {
+            absolute_json_array_add(handle, absolute_json_create_string(value));
+        }
+
+        public void addBool(bool value) {
+            absolute_json_array_add(handle, absolute_json_create_bool(value ? 1 : 0));
+        }
+
+        public void addNull() {
+            absolute_json_array_add(handle, absolute_json_create_null());
+        }
+
         public void setProp(string key, JsonValue* val) {
-            if (val) {
+            if (val && isObject()) {
                 absolute_json_object_set(handle, key, val.getHandle());
+                val.isOwner = false;
             }
         }
 

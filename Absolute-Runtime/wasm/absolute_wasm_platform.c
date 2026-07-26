@@ -3,6 +3,504 @@
  * Included from absolute_wasm_runtime.c (shares heap_alloc / host log).
  */
 
+/* ---------- UTF-8 strings ---------- */
+
+typedef struct WasmStringBuilder {
+    char* data;
+    size_t length;
+    size_t capacity;
+} WasmStringBuilder;
+
+static const char* wasm_string_copy_range(const char* text, size_t length) {
+    char* result = (char*)heap_alloc(length + 1);
+    if (!result)
+        return "";
+    if (text && length)
+        memcpy(result, text, length);
+    result[length] = '\0';
+    return result;
+}
+
+static const char* wasm_string_copy(const char* text) {
+    return wasm_string_copy_range(text ? text : "", text ? strlen(text) : 0);
+}
+
+static uint32_t wasm_utf8_decode(const char** cursor) {
+    if (!cursor || !*cursor || !**cursor)
+        return 0;
+    const uint8_t* p = (const uint8_t*)*cursor;
+    uint32_t cp = *p++;
+    if (cp < 0x80) {
+        *cursor = (const char*)p;
+        return cp;
+    }
+    if ((cp & 0xe0) == 0xc0) {
+        cp &= 0x1f;
+        if ((*p & 0xc0) == 0x80)
+            cp = (cp << 6) | (*p++ & 0x3f);
+    } else if ((cp & 0xf0) == 0xe0) {
+        cp &= 0x0f;
+        for (int i = 0; i < 2 && (*p & 0xc0) == 0x80; ++i)
+            cp = (cp << 6) | (*p++ & 0x3f);
+    } else if ((cp & 0xf8) == 0xf0) {
+        cp &= 0x07;
+        for (int i = 0; i < 3 && (*p & 0xc0) == 0x80; ++i)
+            cp = (cp << 6) | (*p++ & 0x3f);
+    }
+    *cursor = (const char*)p;
+    return cp;
+}
+
+static size_t wasm_utf8_encode(uint32_t cp, char out[4]) {
+    if (cp <= 0x7f) {
+        out[0] = (char)cp;
+        return 1;
+    }
+    if (cp <= 0x7ff) {
+        out[0] = (char)(0xc0 | (cp >> 6));
+        out[1] = (char)(0x80 | (cp & 0x3f));
+        return 2;
+    }
+    if (cp <= 0xffff) {
+        out[0] = (char)(0xe0 | (cp >> 12));
+        out[1] = (char)(0x80 | ((cp >> 6) & 0x3f));
+        out[2] = (char)(0x80 | (cp & 0x3f));
+        return 3;
+    }
+    if (cp <= 0x10ffff) {
+        out[0] = (char)(0xf0 | (cp >> 18));
+        out[1] = (char)(0x80 | ((cp >> 12) & 0x3f));
+        out[2] = (char)(0x80 | ((cp >> 6) & 0x3f));
+        out[3] = (char)(0x80 | (cp & 0x3f));
+        return 4;
+    }
+    return 0;
+}
+
+static size_t wasm_utf8_byte_offset(const char* text, int32_t index) {
+    if (!text || index <= 0)
+        return 0;
+    const char* cursor = text;
+    int32_t current = 0;
+    while (*cursor && current < index) {
+        wasm_utf8_decode(&cursor);
+        ++current;
+    }
+    return (size_t)(cursor - text);
+}
+
+static int32_t wasm_utf8_index_at_byte(const char* text, size_t byte_offset) {
+    if (!text)
+        return 0;
+    const char* cursor = text;
+    const char* end = text + byte_offset;
+    int32_t index = 0;
+    while (*cursor && cursor < end) {
+        wasm_utf8_decode(&cursor);
+        ++index;
+    }
+    return index;
+}
+
+static const char* wasm_string_find(const char* text, const char* needle) {
+    if (!text || !needle)
+        return NULL;
+    if (!*needle)
+        return text;
+    size_t text_length = strlen(text);
+    size_t needle_length = strlen(needle);
+    if (needle_length > text_length)
+        return NULL;
+    for (size_t i = 0; i + needle_length <= text_length; ++i) {
+        if (memcmp(text + i, needle, needle_length) == 0)
+            return text + i;
+    }
+    return NULL;
+}
+
+static uint32_t wasm_string_upper_cp(uint32_t cp) {
+    if (cp >= 'a' && cp <= 'z')
+        return cp - ('a' - 'A');
+    if (cp >= 0x0430 && cp <= 0x044f)
+        return cp - 32;
+    return cp == 0x0451 ? 0x0401 : cp;
+}
+
+static uint32_t wasm_string_lower_cp(uint32_t cp) {
+    if (cp >= 'A' && cp <= 'Z')
+        return cp + ('a' - 'A');
+    if (cp >= 0x0410 && cp <= 0x042f)
+        return cp + 32;
+    return cp == 0x0401 ? 0x0451 : cp;
+}
+
+static const char* wasm_string_map_case(const char* text, int upper) {
+    if (!text)
+        return wasm_string_copy("");
+    size_t capacity = strlen(text) + 1;
+    char* result = (char*)heap_alloc(capacity);
+    if (!result)
+        return "";
+    const char* cursor = text;
+    size_t length = 0;
+    while (*cursor) {
+        uint32_t cp = wasm_utf8_decode(&cursor);
+        cp = upper ? wasm_string_upper_cp(cp) : wasm_string_lower_cp(cp);
+        char encoded[4];
+        size_t encoded_length = wasm_utf8_encode(cp, encoded);
+        if (length + encoded_length + 1 > capacity) {
+            size_t next_capacity = (length + encoded_length + 1) * 2;
+            char* next = (char*)heap_alloc(next_capacity);
+            if (!next) {
+                free(result);
+                return "";
+            }
+            memcpy(next, result, length);
+            free(result);
+            result = next;
+            capacity = next_capacity;
+        }
+        memcpy(result + length, encoded, encoded_length);
+        length += encoded_length;
+    }
+    result[length] = '\0';
+    return result;
+}
+
+static int wasm_string_is_space(char value) {
+    return value == ' ' || value == '\t' || value == '\r' || value == '\n';
+}
+
+static int wasm_builder_reserve(WasmStringBuilder* builder, size_t required) {
+    if (!builder)
+        return 0;
+    if (required <= builder->capacity)
+        return 1;
+    size_t capacity = builder->capacity ? builder->capacity : 32;
+    while (capacity < required)
+        capacity *= 2;
+    char* next = (char*)heap_alloc(capacity);
+    if (!next)
+        return 0;
+    if (builder->data && builder->length)
+        memcpy(next, builder->data, builder->length);
+    if (builder->data)
+        free(builder->data);
+    builder->data = next;
+    builder->capacity = capacity;
+    builder->data[builder->length] = '\0';
+    return 1;
+}
+
+static void wasm_builder_append_bytes(WasmStringBuilder* builder, const char* text, size_t length) {
+    if (!builder || !text || !wasm_builder_reserve(builder, builder->length + length + 1))
+        return;
+    memcpy(builder->data + builder->length, text, length);
+    builder->length += length;
+    builder->data[builder->length] = '\0';
+}
+
+static size_t wasm_i64_text(int64_t value, char out[32]) {
+    char reverse[32];
+    size_t count = 0;
+    uint64_t magnitude = value < 0
+        ? (uint64_t)(-(value + 1)) + 1u
+        : (uint64_t)value;
+    do {
+        reverse[count++] = (char)('0' + magnitude % 10u);
+        magnitude /= 10u;
+    } while (magnitude);
+    size_t length = 0;
+    if (value < 0)
+        out[length++] = '-';
+    while (count)
+        out[length++] = reverse[--count];
+    out[length] = '\0';
+    return length;
+}
+
+int32_t absolute_string_code_point_count(const char* text) {
+    int32_t count = 0;
+    const char* cursor = text;
+    while (cursor && *cursor) {
+        wasm_utf8_decode(&cursor);
+        ++count;
+    }
+    return count;
+}
+
+int32_t absolute_string_utf8_byte_count(const char* text) {
+    return text ? (int32_t)strlen(text) : 0;
+}
+
+int32_t absolute_string_code_point_at(const char* text, int32_t index) {
+    if (!text || index < 0)
+        return -1;
+    const char* cursor = text;
+    int32_t current = 0;
+    while (*cursor) {
+        uint32_t cp = wasm_utf8_decode(&cursor);
+        if (current++ == index)
+            return (int32_t)cp;
+    }
+    return -1;
+}
+
+const char* absolute_string_from_code_point(int32_t code_point) {
+    char encoded[4];
+    size_t length = code_point < 0 ? 0 : wasm_utf8_encode((uint32_t)code_point, encoded);
+    return wasm_string_copy_range(encoded, length);
+}
+
+const char* absolute_string_to_upper(const char* text) {
+    return wasm_string_map_case(text, 1);
+}
+
+const char* absolute_string_to_lower(const char* text) {
+    return wasm_string_map_case(text, 0);
+}
+
+const char* absolute_string_trim_start(const char* text) {
+    if (!text)
+        return wasm_string_copy("");
+    while (*text && wasm_string_is_space(*text))
+        ++text;
+    return wasm_string_copy(text);
+}
+
+const char* absolute_string_trim_end(const char* text) {
+    if (!text)
+        return wasm_string_copy("");
+    size_t length = strlen(text);
+    while (length && wasm_string_is_space(text[length - 1]))
+        --length;
+    return wasm_string_copy_range(text, length);
+}
+
+const char* absolute_string_trim(const char* text) {
+    if (!text)
+        return wasm_string_copy("");
+    while (*text && wasm_string_is_space(*text))
+        ++text;
+    size_t length = strlen(text);
+    while (length && wasm_string_is_space(text[length - 1]))
+        --length;
+    return wasm_string_copy_range(text, length);
+}
+
+int32_t absolute_string_starts_with(const char* text, const char* prefix) {
+    if (!text || !prefix)
+        return 0;
+    size_t length = strlen(prefix);
+    return strlen(text) >= length && memcmp(text, prefix, length) == 0;
+}
+
+int32_t absolute_string_ends_with(const char* text, const char* suffix) {
+    if (!text || !suffix)
+        return 0;
+    size_t text_length = strlen(text);
+    size_t suffix_length = strlen(suffix);
+    return text_length >= suffix_length &&
+        memcmp(text + text_length - suffix_length, suffix, suffix_length) == 0;
+}
+
+const char* absolute_string_concat(const char* left, const char* right) {
+    size_t left_length = left ? strlen(left) : 0;
+    size_t right_length = right ? strlen(right) : 0;
+    char* result = (char*)heap_alloc(left_length + right_length + 1);
+    if (!result)
+        return "";
+    if (left_length)
+        memcpy(result, left, left_length);
+    if (right_length)
+        memcpy(result + left_length, right, right_length);
+    result[left_length + right_length] = '\0';
+    return result;
+}
+
+int32_t absolute_string_parse_int(const char* text) {
+    if (!text)
+        return 0;
+    while (wasm_string_is_space(*text))
+        ++text;
+    int sign = 1;
+    if (*text == '-' || *text == '+')
+        sign = *text++ == '-' ? -1 : 1;
+    int32_t value = 0;
+    int found = 0;
+    while (*text >= '0' && *text <= '9') {
+        value = value * 10 + (*text++ - '0');
+        found = 1;
+    }
+    return found ? value * sign : 0;
+}
+
+int32_t absolute_string_contains(const char* text, const char* sub) {
+    return wasm_string_find(text, sub) ? 1 : 0;
+}
+
+int32_t absolute_string_index_of(const char* text, const char* sub) {
+    const char* found = wasm_string_find(text, sub);
+    return found ? wasm_utf8_index_at_byte(text, (size_t)(found - text)) : -1;
+}
+
+int32_t absolute_string_last_index_of(const char* text, const char* sub) {
+    if (!text || !sub || !*sub)
+        return -1;
+    const char* last = NULL;
+    const char* cursor = text;
+    while ((cursor = wasm_string_find(cursor, sub)) != NULL) {
+        last = cursor;
+        ++cursor;
+    }
+    return last ? wasm_utf8_index_at_byte(text, (size_t)(last - text)) : -1;
+}
+
+const char* absolute_string_replace(const char* text, const char* from, const char* to) {
+    if (!text)
+        return wasm_string_copy("");
+    if (!from || !*from)
+        return wasm_string_copy(text);
+    if (!to)
+        to = "";
+    size_t from_length = strlen(from);
+    size_t to_length = strlen(to);
+    size_t matches = 0;
+    const char* cursor = text;
+    const char* found;
+    while ((found = wasm_string_find(cursor, from)) != NULL) {
+        ++matches;
+        cursor = found + from_length;
+    }
+    size_t result_length = strlen(text);
+    if (to_length >= from_length)
+        result_length += matches * (to_length - from_length);
+    else
+        result_length -= matches * (from_length - to_length);
+    char* result = (char*)heap_alloc(result_length + 1);
+    if (!result)
+        return "";
+    cursor = text;
+    size_t written = 0;
+    while ((found = wasm_string_find(cursor, from)) != NULL) {
+        size_t prefix = (size_t)(found - cursor);
+        memcpy(result + written, cursor, prefix);
+        written += prefix;
+        memcpy(result + written, to, to_length);
+        written += to_length;
+        cursor = found + from_length;
+    }
+    size_t tail = strlen(cursor);
+    memcpy(result + written, cursor, tail);
+    result[written + tail] = '\0';
+    return result;
+}
+
+const char* absolute_string_substring(const char* text, int32_t start, int32_t length) {
+    if (!text || start < 0 || length <= 0)
+        return wasm_string_copy("");
+    int32_t count = absolute_string_code_point_count(text);
+    if (start >= count)
+        return wasm_string_copy("");
+    int32_t remaining = count - start;
+    int32_t end = length > remaining ? count : start + length;
+    size_t start_byte = wasm_utf8_byte_offset(text, start);
+    size_t end_byte = wasm_utf8_byte_offset(text, end);
+    return wasm_string_copy_range(text + start_byte, end_byte - start_byte);
+}
+
+void* absolute_string_builder_create(void) {
+    WasmStringBuilder* builder = (WasmStringBuilder*)heap_alloc(sizeof(WasmStringBuilder));
+    if (!builder)
+        return NULL;
+    builder->data = NULL;
+    builder->length = 0;
+    builder->capacity = 0;
+    wasm_builder_reserve(builder, 1);
+    return builder;
+}
+
+void absolute_string_builder_free(void* handle) {
+    WasmStringBuilder* builder = (WasmStringBuilder*)handle;
+    if (!builder)
+        return;
+    if (builder->data)
+        free(builder->data);
+    free(builder);
+}
+
+void absolute_string_builder_append(void* handle, const char* text) {
+    wasm_builder_append_bytes((WasmStringBuilder*)handle, text, text ? strlen(text) : 0);
+}
+
+void absolute_string_builder_append_char(void* handle, int32_t code_point) {
+    if (code_point < 0)
+        return;
+    char encoded[4];
+    size_t length = wasm_utf8_encode((uint32_t)code_point, encoded);
+    wasm_builder_append_bytes((WasmStringBuilder*)handle, encoded, length);
+}
+
+void absolute_string_builder_append_int(void* handle, int64_t value) {
+    char text[32];
+    size_t length = wasm_i64_text(value, text);
+    wasm_builder_append_bytes((WasmStringBuilder*)handle, text, length);
+}
+
+void absolute_string_builder_append_double(void* handle, double value) {
+    char text[64];
+    size_t length = 0;
+    if (value != value) {
+        wasm_builder_append_bytes((WasmStringBuilder*)handle, "nan", 3);
+        return;
+    }
+    if (value < 0) {
+        text[length++] = '-';
+        value = -value;
+    }
+    int64_t whole = (int64_t)value;
+    length += wasm_i64_text(whole, text + length);
+    double fraction = value - (double)whole;
+    if (fraction > 0.0000005) {
+        text[length++] = '.';
+        size_t fraction_start = length;
+        for (int i = 0; i < 6; ++i) {
+            fraction *= 10.0;
+            int digit = (int)fraction;
+            text[length++] = (char)('0' + digit);
+            fraction -= digit;
+        }
+        while (length > fraction_start && text[length - 1] == '0')
+            --length;
+    }
+    text[length] = '\0';
+    wasm_builder_append_bytes((WasmStringBuilder*)handle, text, length);
+}
+
+void absolute_string_builder_append_bool(void* handle, int32_t value) {
+    wasm_builder_append_bytes((WasmStringBuilder*)handle,
+        value ? "true" : "false", value ? 4 : 5);
+}
+
+void absolute_string_builder_clear(void* handle) {
+    WasmStringBuilder* builder = (WasmStringBuilder*)handle;
+    if (!builder)
+        return;
+    builder->length = 0;
+    if (builder->data)
+        builder->data[0] = '\0';
+}
+
+int32_t absolute_string_builder_length(void* handle) {
+    WasmStringBuilder* builder = (WasmStringBuilder*)handle;
+    return builder ? absolute_string_code_point_count(builder->data) : 0;
+}
+
+const char* absolute_string_builder_to_string(void* handle) {
+    WasmStringBuilder* builder = (WasmStringBuilder*)handle;
+    return wasm_string_copy(builder && builder->data ? builder->data : "");
+}
+
 /* ---------- virtual filesystem ---------- */
 
 enum {

@@ -1,5 +1,7 @@
 // std.fs - UTF-8 filesystem paths, whole-file helpers, and streaming text files.
 
+import "string.abs";
+
 extern "C" int32 absolute_fs_exists(string path);
 extern "C" int32 absolute_fs_is_file(string path);
 extern "C" int32 absolute_fs_is_directory(string path);
@@ -123,6 +125,9 @@ namespace std.fs {
             }
         }
 
+        public void close() { destroy(); }
+        public void dispose() { destroy(); }
+
         public bool isOpen() {
             return handle != null;
         }
@@ -162,5 +167,24 @@ namespace std.fs {
 
     File* open(string path, string mode) {
         return new File(path, mode);
+    }
+
+    string join(string left, string right) {
+        if (left == "") { return right; }
+        if (right == "") { return left; }
+        if (std.text.endsWith(left, "/") || std.text.endsWith(left, "\\")) {
+            return format("{}{}", left, right);
+        }
+        return format("{}/{}", left, right);
+    }
+
+    string[] readLines(string path) {
+        string text = readText(path);
+        string normalized = std.text.replace(text, "\r\n", "\n");
+        return std.text.split(normalized, "\n");
+    }
+
+    void writeLines(string path, string[] lines) {
+        writeText(path, std.text.join(lines, "\n"));
     }
 }

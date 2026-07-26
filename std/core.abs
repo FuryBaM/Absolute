@@ -1,0 +1,14 @@
+// std.core - the practical, low-cost standard environment for applications.
+//
+// Import this module when an application needs the usual diagnostics, launch
+// arguments, filesystem, process, random, text and time APIs. Specialized
+// modules such as std.http, std.json and std.collections remain explicit.
+
+import "assert.abs";
+import "env.abs";
+import "fs.abs";
+import "log.abs";
+import "process.abs";
+import "random.abs";
+import "string.abs";
+import "time.abs";

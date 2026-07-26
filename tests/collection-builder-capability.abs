@@ -23,6 +23,7 @@ int32 main() {
     println("VectorBuilder finish ok");
 
     Map<int32, int32>* map = new Map<int32, int32>();
+    assert(map.isEmpty, "new map is empty");
     map.put(1, 100);
 
     MapBuilder<int32, int32>* mapB = map.builder();
@@ -33,10 +34,12 @@ int32 main() {
     Map<int32, int32>* publishedMap = mapB.finish();
     assert(publishedMap.count == 2, "published map count is 2");
     assert(publishedMap[2] == 200, "published map key 2 is 200");
+    assert(publishedMap.toArray().length == 2, "map snapshot has 2 entries");
 
     println("MapBuilder finish ok");
 
     Set<int32>* collectionSet = new Set<int32>();
+    assert(collectionSet.isEmpty, "new set is empty");
     collectionSet.add(5);
 
     SetBuilder<int32>* setB = collectionSet.builder();
@@ -47,6 +50,7 @@ int32 main() {
     Set<int32>* publishedSet = setB.finish();
     assert(publishedSet.count == 2, "published set count is 2");
     assert(publishedSet.contains(15), "published set contains 15");
+    assert(publishedSet.toArray().length == 2, "set snapshot has 2 items");
 
     println("SetBuilder finish ok");
 

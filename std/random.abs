@@ -30,6 +30,8 @@ namespace std.random {
             }
         }
 
+        public void dispose() { destroy(); }
+
         public uint64 u64() {
             return absolute_random_u64(state);
         }

@@ -35,12 +35,15 @@ namespace std.binary {
             handle = absolute_binary_writer_create();
         }
 
-        public void dispose() {
+        public void destroy() {
             if (handle) {
                 absolute_binary_writer_free(handle);
                 handle = null;
             }
         }
+
+        public void dispose() { destroy(); }
+        public bool isOpen() { return handle != null; }
 
         public void writeByte(uint8 val) { absolute_binary_writer_write_byte(handle, val); }
         public void writeInt16(int16 val) { absolute_binary_writer_write_i16(handle, val); }
@@ -63,12 +66,15 @@ namespace std.binary {
             handle = absolute_binary_reader_create(data, size);
         }
 
-        public void dispose() {
+        public void destroy() {
             if (handle) {
                 absolute_binary_reader_free(handle);
                 handle = null;
             }
         }
+
+        public void dispose() { destroy(); }
+        public bool isOpen() { return handle != null; }
 
         public uint8 readByte() { return absolute_binary_reader_read_byte(handle); }
         public int16 readInt16() { return absolute_binary_reader_read_i16(handle); }

@@ -22,7 +22,7 @@ Dependents declare:
 ```json
 {
   "dependencies": {
-    "absolute.std": "^0.2.0"
+    "absolute.std": "^0.3.0"
   }
 }
 ```
@@ -50,6 +50,7 @@ std/
   abspackage.json          # package identity + version
   assert.abs               # std.assert
   binary.abs               # std.binary
+  core.abs                 # ergonomic import bundle for applications
   concurrent.abs           # std.concurrent (atomics, mutex)
   concurrent/
     capsule.abs            # std.concurrent transfer capsule helpers
@@ -81,6 +82,7 @@ std/
 |-----------|------|--------|
 | `std.assert` | `std/assert.abs` | Soft assertions (`throw`); built-in `assert` remains aborting |
 | `std.binary` | `std/binary.abs` | `BinaryReader` / `BinaryWriter` |
+| `std.core` | `std/core.abs` | Common application imports; it does not introduce another namespace |
 | `std.collections` | `std/collections/*.abs` | Split across files; import any file that defines the needed type |
 | `std.concurrent` | `std/concurrent.abs`, `std/concurrent/capsule.abs` | Atomics, mutex, isolate capsules |
 | `std.datetime` | `std/datetime.abs` | Calendar / timezone |
@@ -124,6 +126,7 @@ per module in this file; breaking changes are gated by SemVer rules below.
 
 Current Stable modules (0.x: *preview-stable* — see versioning note):
 
+- `std.core` convenience import
 - `std.time`, `std.env`, `std.process`, `std.fs`
 - `std.collections` (`Vector`, `Map`, `Set`, algorithms, `Channel`)
 - `std.string` file → `std.text` (`StringBuilder` and string helpers)
@@ -157,10 +160,43 @@ absolute run app.abs -- --verbose --mode=fast
 absolute run app.abs -- --verbose --mode fast
 ```
 
-The API consists of `argsCount()`, `argAt(index)`, `hasArg(value)`,
+The API consists of `argsCount()`, `argAt(index)`, `args()`, `hasArg(value)`,
 `flag(name)`, `hasParameter(name)`, `parameter(name)`, and
 `parameterOrDefault(name, fallback)`. Flag and parameter functions accept both
 `mode` and `--mode`.
+
+`args()` returns a snapshot array when indexed access is inconvenient.
+
+### Resource lifetime
+
+Resource-owning standard types implement `destroy()`, the lifecycle hook used
+by Absolute's automatic cleanup. Normal local usage therefore needs no manual
+cleanup:
+
+```absolute
+import std.core;
+
+void writeReport() {
+    std.fs.File* file = std.fs.openWrite("report.txt");
+    file.writeLine("done");
+} // file.destroy() is inserted automatically
+```
+
+`close()` and `dispose()` are aliases where appropriate and remain useful for
+releasing a resource before the end of its scope. They are idempotent. This
+policy covers files, binary readers/writers, builders, JSON owners, network
+sockets, HTTP objects, random generators, task/concurrency handles, and
+channels.
+
+### Text indexing and UTF-8
+
+All `std.text` indexes and substring lengths are Unicode code-point based.
+`byteCount(value)` returns the UTF-8 byte length for protocols and binary
+formats; for example HTTP `Content-Length` uses bytes rather than characters.
+`StringBuilder` also provides `appendLine`, while `isEmpty`, `isBlank`,
+`repeat`, and `split` cover common allocation-safe text operations. The same
+UTF-8 helpers and `StringBuilder` surface are available in native and WebAssembly
+builds.
 
 Application projects may provide default arguments:
 
@@ -239,6 +275,7 @@ release is validated against a **minimum language/runtime** pair:
 |-------------|----------------------------------------|
 | 0.1.x | current `main` / release that ships this `std/` tree |
 | 0.2.x | runtime with portable process arguments and `std.env` launch API |
+| 0.3.x | Unicode-correct text offsets and automatic `destroy()` lifecycle |
 
 If a future std release requires new language features, document the floor in
 the package changelog and refuse to load on older compilers when that check is
@@ -248,6 +285,7 @@ implemented.
 
 | Module | Responsibility |
 |--------|----------------|
+| `std.core` | Convenience import for common application modules |
 | `std.time` | Wall clock, monotonic time, sleep, measure/bench |
 | `std.datetime` | Calendar date/time, zones, ISO-8601 |
 | `std.env` / `std.process` | Environment and process control |

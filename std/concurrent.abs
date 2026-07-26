@@ -47,6 +47,8 @@ namespace std.concurrent {
                 handle = null;
             }
         }
+
+        public void dispose() { destroy(); }
     }
 
     class Mutex {
@@ -74,6 +76,8 @@ namespace std.concurrent {
                 handle = null;
             }
         }
+
+        public void dispose() { destroy(); }
     }
 
 }

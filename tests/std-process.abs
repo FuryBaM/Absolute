@@ -8,6 +8,8 @@ int32 main() {
 
     assert(std.process.argsCount() >= 1, "args count must be at least 1");
     assert(std.process.argAt(0) != "", "argAt(0) must not be empty");
+    string[] processArgs = std.process.args();
+    assert(processArgs.length >= 1 && processArgs[0] != "", "process argument snapshot");
     assert(std.env.argsCount() == 0, "std.env excludes the executable path");
 
     string output = std.process.runCapture("echo hello_process");

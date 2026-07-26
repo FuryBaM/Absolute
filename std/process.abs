@@ -48,6 +48,17 @@ namespace std.process {
         return absolute_process_arg_at(index);
     }
 
+    string[] args() {
+        int32 count = argsCount();
+        string[] result = new string[count];
+        int32 index = 0;
+        while (index < count) {
+            result[index] = argAt(index);
+            index = index + 1;
+        }
+        return copy(result);
+    }
+
     int32 run(string command) {
         return absolute_process_run(command);
     }

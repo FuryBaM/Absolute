@@ -18,8 +18,8 @@ namespace std.uri {
             fragment = "";
         }
 
-        public void dispose() {
-        }
+        public void destroy() {}
+        public void dispose() { destroy(); }
 
         public string toString() {
             string result = format("{}://{}", scheme, host);

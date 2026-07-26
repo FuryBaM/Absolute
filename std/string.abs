@@ -1,6 +1,7 @@
 // std.string / std.text - StringBuilder and Unicode UTF-8 string manipulation utilities
 
 extern "C" int32 absolute_string_code_point_count(string text);
+extern "C" int32 absolute_string_utf8_byte_count(string text);
 extern "C" int32 absolute_string_code_point_at(string text, int32 index);
 extern "C" string absolute_string_from_code_point(int32 codePoint);
 extern "C" string absolute_string_to_upper(string text);
@@ -37,15 +38,24 @@ namespace std.text {
             handle = absolute_string_builder_create();
         }
 
-        public void dispose() {
+        public void destroy() {
             if (handle != null) {
                 absolute_string_builder_free(handle);
                 handle = null;
             }
         }
 
+        public void dispose() {
+            destroy();
+        }
+
         public void append(string text) {
             absolute_string_builder_append(handle, text);
+        }
+
+        public void appendLine(string text) {
+            absolute_string_builder_append(handle, text);
+            absolute_string_builder_append(handle, "\n");
         }
 
         public void appendChar(int32 codePoint) {
@@ -79,6 +89,10 @@ namespace std.text {
 
     int32 codePointCount(string text) {
         return absolute_string_code_point_count(text);
+    }
+
+    int32 byteCount(string text) {
+        return absolute_string_utf8_byte_count(text);
     }
 
     int32 codePointAt(string text, int32 index) {
@@ -141,6 +155,64 @@ namespace std.text {
         return absolute_string_parse_int(text);
     }
 
+    bool isEmpty(string text) {
+        return codePointCount(text) == 0;
+    }
+
+    bool isBlank(string text) {
+        return codePointCount(trim(text)) == 0;
+    }
+
+    string repeat(string text, int32 count) {
+        if (count < 0) {
+            throw new Error("repeat count must be non-negative");
+        }
+        StringBuilder* builder = new StringBuilder();
+        int32 index = 0;
+        while (index < count) {
+            builder.append(text);
+            index = index + 1;
+        }
+        return builder.toString();
+    }
+
+    string[] split(string text, string delimiter) {
+        int32 delimiterLength = codePointCount(delimiter);
+        if (delimiterLength == 0) {
+            throw new Error("split delimiter must not be empty");
+        }
+
+        int32 partCount = 1;
+        string remainder = text;
+        int32 separator = indexOf(remainder, delimiter);
+        while (separator >= 0) {
+            partCount = partCount + 1;
+            int32 nextStart = separator + delimiterLength;
+            remainder = substring(
+                remainder,
+                nextStart,
+                codePointCount(remainder) - nextStart);
+            separator = indexOf(remainder, delimiter);
+        }
+
+        string[] result = new string[partCount];
+        remainder = text;
+        int32 part = 0;
+        separator = indexOf(remainder, delimiter);
+        while (separator >= 0) {
+            result[part] = substring(remainder, 0, separator);
+            part = part + 1;
+            int32 nextStart = separator + delimiterLength;
+            remainder = substring(
+                remainder,
+                nextStart,
+                codePointCount(remainder) - nextStart);
+            separator = indexOf(remainder, delimiter);
+        }
+        result[part] = remainder;
+        return copy(result);
+    }
+
     string join(string[] parts, string delimiter) {
         if (parts.length == 0) { return ""; }
         StringBuilder* builder = new StringBuilder();
@@ -152,8 +224,6 @@ namespace std.text {
             i = i + 1;
         }
         string result = builder.toString();
-        builder.dispose();
-        delete builder;
         return result;
     }
 }

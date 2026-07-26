@@ -6,6 +6,10 @@ int32 main() {
     assert(root != null, "json.parse failed");
     assert(root.isObject() == true, "root is object");
     assert(root.hasProp("name") == true, "hasProp name");
+    assert(root.getStringOr("name", "") == "Absolute", "typed string getter");
+    assert(root.getIntOr("version", 0) == 2, "typed int getter");
+    assert(root.getBoolOr("active", false), "typed bool getter");
+    assert(root.getStringOr("missing", "fallback") == "fallback", "typed getter fallback");
 
     std.json.JsonValue* nameProp = root.getProp("name");
     assert(nameProp != null, "getProp name null");
@@ -29,10 +33,21 @@ int32 main() {
     std.json.JsonValue* obj = std.json.createObject();
     obj.setNumber("score", 100.0);
     obj.setString("status", "ok");
+    std.json.JsonValue* details = std.json.createString("owned by object");
+    obj.setProp("details", details);
 
     string jsonStr = obj.stringify();
-    assert(jsonStr == "{\"score\":100,\"status\":\"ok\"}", "stringify match");
+    assert(jsonStr == "{\"details\":\"owned by object\",\"score\":100,\"status\":\"ok\"}", "stringify match");
     obj.dispose();
+
+    std.json.JsonValue* array = std.json.createArray();
+    array.addNumber(42.0);
+    array.addString("answer");
+    array.addBool(true);
+    array.addNull();
+    std.json.JsonValue* nested = std.json.createString("nested");
+    array.add(nested);
+    assert(array.stringify() == "[42,\"answer\",true,null,\"nested\"]", "array helpers and ownership transfer");
 
     println("std-json=ok");
     return 0;
