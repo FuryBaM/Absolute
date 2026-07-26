@@ -4,6 +4,7 @@ project(Absolute-Runtime LANGUAGES CXX)
 find_package(Threads REQUIRED)
 
 add_library(Absolute-Runtime STATIC
+    src/android_pthread_affinity_compat.h
     src/binary.cpp
     src/datetime.cpp
     src/env.cpp
@@ -29,6 +30,11 @@ if(MSVC)
     target_compile_options(Absolute-Runtime PRIVATE /W4 /permissive-)
 else()
     target_compile_options(Absolute-Runtime PRIVATE -Wall -Wextra -Wpedantic)
+    # Termux/Android bionic has sched_{get,set}affinity(), but not glibc's
+    # pthread_{get,set}affinity_np() declarations used by tasks.cpp. Force-include
+    # a no-op-on-other-platforms compatibility header for this translation unit.
+    set_source_files_properties(src/tasks.cpp PROPERTIES
+        COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/src/android_pthread_affinity_compat.h")
 endif()
 
 set_target_properties(Absolute-Runtime PROPERTIES
