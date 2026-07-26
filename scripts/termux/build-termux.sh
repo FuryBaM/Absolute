@@ -132,6 +132,12 @@ if [[ "$llvm_enabled" == ON ]]; then
         echo "Or rerun: bash build-termux.sh --bootstrap" >&2
         exit 1
     fi
+    if [[ ! -f "$PREFIX/lib/LLVMPolly.so" ]]; then
+        echo "Termux LLVM Polly library is missing: $PREFIX/lib/LLVMPolly.so" >&2
+        echo "Install it with: pkg install libpolly" >&2
+        echo "Or rerun: bash build-termux.sh --bootstrap" >&2
+        exit 1
+    fi
 fi
 
 cmake_args=(
