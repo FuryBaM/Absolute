@@ -18,6 +18,9 @@
 #include <llvm/Transforms/Instrumentation/AddressSanitizer.h>
 #include <llvm/Support/CodeGen.h>
 #include <llvm/Support/FileSystem.h>
+#if LLVM_VERSION_MAJOR >= 21
+#include <llvm/Support/ModRef.h>
+#endif
 #include <llvm/Support/SourceMgr.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
