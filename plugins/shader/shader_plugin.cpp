@@ -29,6 +29,8 @@ namespace {
         Float2,
         Float3,
         Float4,
+        Mat3,
+        Mat4,
         Int1,
         Unknown
     };
@@ -98,6 +100,14 @@ namespace {
             components = 4;
             return ShaderTypeKind::Float4;
         }
+        if (text == "mat3") {
+            components = 9;
+            return ShaderTypeKind::Mat3;
+        }
+        if (text == "mat4") {
+            components = 16;
+            return ShaderTypeKind::Mat4;
+        }
         if (text == "int" || text == "int1") {
             components = 1;
             return ShaderTypeKind::Int1;
@@ -133,6 +143,8 @@ namespace {
         case ShaderTypeKind::Float2: return "vec2";
         case ShaderTypeKind::Float3: return "vec3";
         case ShaderTypeKind::Float4: return "vec4";
+        case ShaderTypeKind::Mat3: return "mat3";
+        case ShaderTypeKind::Mat4: return "mat4";
         case ShaderTypeKind::Int1: return "int";
         default: return "vec3";
         }
@@ -144,6 +156,8 @@ namespace {
         case ShaderTypeKind::Float2: return "float2";
         case ShaderTypeKind::Float3: return "float3";
         case ShaderTypeKind::Float4: return "float4";
+        case ShaderTypeKind::Mat3: return "float3x3";
+        case ShaderTypeKind::Mat4: return "float4x4";
         case ShaderTypeKind::Int1: return "int";
         default: return "float3";
         }
@@ -191,7 +205,28 @@ namespace {
         std::string typeText;
         bool hasType = false;
 
-        if (first->kind == ABSOLUTE_SYNTAX_TOKEN_KEYWORD || first->kind == ABSOLUTE_SYNTAX_TOKEN_IDENTIFIER) {
+        if (first->kind == ABSOLUTE_SYNTAX_TOKEN_IDENTIFIER && TokenText(first) == "Math") {
+            // absolute.math expands vecN aliases before opaque statements are
+            // delegated to this parser. Accept the qualified expansion so the
+            // same vec2/vec3/vec4 spelling works in CPU and shader code.
+            const AbsoluteSyntaxTokenV1* dot = parser->peek(parser->context, 1);
+            const AbsoluteSyntaxTokenV1* mathType = parser->peek(parser->context, 2);
+            if (dot && TokenText(dot) == "." && mathType) {
+                const std::string expanded = TokenText(mathType);
+                if (expanded == "__vec2" || expanded == "__vec3" || expanded == "__vec4" ||
+                    expanded == "__mat3" || expanded == "__mat4") {
+                    Consume(parser, first->kind, nullptr);
+                    Consume(parser, dot->kind, ".");
+                    Consume(parser, mathType->kind, nullptr);
+                    typeText = expanded.substr(2);
+                    hasType = true;
+                }
+            }
+        }
+
+        if (!hasType &&
+            (first->kind == ABSOLUTE_SYNTAX_TOKEN_KEYWORD ||
+             first->kind == ABSOLUTE_SYNTAX_TOKEN_IDENTIFIER)) {
             const std::string firstText = TokenText(first);
             if (firstText == "float") {
                 Consume(parser, first->kind, nullptr);
@@ -468,6 +503,18 @@ namespace {
                     return storage.kind != ShaderTypeKind::Float1;
                 })) {
             lastError = "desktop compute storage currently supports only 'storage float name;'";
+        }
+        else if (std::any_of(shader.inputs.begin(), shader.inputs.end(),
+                     [](const ShaderVar& value) {
+                         return value.kind == ShaderTypeKind::Mat3 ||
+                             value.kind == ShaderTypeKind::Mat4;
+                     }) ||
+                 std::any_of(shader.outputs.begin(), shader.outputs.end(),
+                     [](const ShaderVar& value) {
+                         return value.kind == ShaderTypeKind::Mat3 ||
+                             value.kind == ShaderTypeKind::Mat4;
+                     })) {
+            lastError = "mat3/mat4 are supported as shader uniforms, not stage inputs or outputs";
         }
         else if (!IsComputeStage(shader.stage) && !shader.userHlsl.empty()) {
             lastError = "hlsl { ... } bodies are currently supported only for compute shaders";

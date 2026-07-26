@@ -6,6 +6,8 @@
     { "name": "input", "detail": "shader input declaration" },
     { "name": "output", "detail": "shader output declaration" },
     { "name": "uniform", "detail": "uniform [type] name;", "documentation": "Declares a graphics-stage uniform/cbuffer field." },
+    { "name": "mat3", "detail": "3x3 matrix uniform", "documentation": "Compatible with absolute.math mat3 float packing. Matrix types are uniforms, not stage inputs/outputs." },
+    { "name": "mat4", "detail": "4x4 matrix uniform", "documentation": "Compatible with absolute.math mat4. Emits mat4 in GLSL and float4x4 in HLSL/MSL." },
     { "name": "storage", "detail": "storage float name;", "documentation": "Declares a compute read/write storage buffer. Bindings are assigned as u0..u7 in declaration order." },
     { "name": "workgroup", "detail": "workgroup x, y, z;", "documentation": "Declares the compute local group size for HLSL, GLSL and MSL." },
     { "name": "kernel", "detail": "kernel { portable compute statements }", "documentation": "Portable compute body generated as HLSL, GLSL 430 and MSL. Use id.x/id.y/id.z for the global invocation id." },

@@ -1,21 +1,43 @@
 {
   "schemaVersion": 1,
   "plugin": "absolute.math",
+  "version": "2.0.0",
   "namespaces": [
     { "name": "Math", "documentation": "Math functions, vectors, matrices, and camera transforms." }
   ],
   "types": [
-    { "name": "vec2", "detail": "plugin type vec2", "snippet": "new vec2(${1:0.0}, ${2:0.0})" },
-    { "name": "vec3", "detail": "plugin type vec3", "snippet": "new vec3(${1:0.0}, ${2:0.0}, ${3:0.0})" },
-    { "name": "mat3", "detail": "plugin type mat3" },
-    { "name": "mat4", "detail": "plugin type mat4" }
+    { "name": "vec2", "detail": "vec2: double x, y", "documentation": "Portable CPU vector. Use toFloatArray() or writeFloat() for desktop, shader buffers, wasm memory and native APIs.", "snippet": "new vec2(${1:0.0}, ${2:0.0})" },
+    { "name": "vec3", "detail": "vec3: double x, y, z", "documentation": "Portable CPU vector with dot, cross, normalization and GPU float packing.", "snippet": "new vec3(${1:0.0}, ${2:0.0}, ${3:0.0})" },
+    { "name": "vec4", "detail": "vec4: double x, y, z, w", "documentation": "Portable 4D vector / RGBA color with GPU float packing.", "snippet": "new vec4(${1:0.0}, ${2:0.0}, ${3:0.0}, ${4:1.0})" },
+    { "name": "mat3", "detail": "row-major mat3", "documentation": "3x3 matrix. toFloatArray() returns shader/desktop-ready float data." },
+    { "name": "mat4", "detail": "row-major mat4", "documentation": "4x4 matrix. Use toFloatArray() for row-major or toColumnMajorFloatArray() for GLSL-style uniforms." }
   ],
   "functions": [
     { "name": "Math.abs", "detail": "int32|double Math.abs(value)" },
     { "name": "Math.sqrt", "detail": "double Math.sqrt(double value)" },
     { "name": "Math.sin", "detail": "double Math.sin(double radians)" },
     { "name": "Math.cos", "detail": "double Math.cos(double radians)" },
+    { "name": "Math.tan", "detail": "double Math.tan(double radians)" },
+    { "name": "Math.clamp", "detail": "double Math.clamp(double value, double minimum, double maximum)" },
+    { "name": "Math.saturate", "detail": "double Math.saturate(double value)" },
+    { "name": "Math.lerp", "detail": "double Math.lerp(double from, double to, double amount)" },
+    { "name": "Math.smoothstep", "detail": "double Math.smoothstep(double edge0, double edge1, double value)" },
+    { "name": "Math.radians", "detail": "double Math.radians(double degrees)" },
+    { "name": "Math.degrees", "detail": "double Math.degrees(double radians)" },
     { "name": "Math.projection", "detail": "void Math.projection(mat4* output, double fov, double aspect, double near, double far)" },
-    { "name": "Math.lookAt", "detail": "void Math.lookAt(mat4* output, vec3* eye, vec3* center, vec3* up)" }
+    { "name": "Math.perspectiveRH", "detail": "mat4* Math.perspectiveRH(double fov, double aspect, double near, double far)", "documentation": "Right-handed projection with OpenGL -1..1 depth." },
+    { "name": "Math.perspectiveRHZeroToOne", "detail": "mat4* Math.perspectiveRHZeroToOne(double fov, double aspect, double near, double far)", "documentation": "Right-handed projection with D3D/Vulkan 0..1 depth." },
+    { "name": "Math.lookAt", "detail": "void Math.lookAt(mat4* output, vec3* eye, vec3* center, vec3* up)" },
+    { "name": "Math.lookAtRH", "detail": "mat4* Math.lookAtRH(vec3* eye, vec3* center, vec3* up)" },
+    { "name": "Math.translation", "detail": "mat4* Math.translation(double x, double y, double z)" },
+    { "name": "Math.scaling", "detail": "mat4* Math.scaling(double x, double y, double z)" },
+    { "name": "Math.rotationX", "detail": "mat4* Math.rotationX(double radians)" },
+    { "name": "Math.rotationY", "detail": "mat4* Math.rotationY(double radians)" },
+    { "name": "Math.rotationZ", "detail": "mat4* Math.rotationZ(double radians)" }
+  ],
+  "snippets": [
+    { "label": "math transform", "detail": "Create a model transform", "body": "auto ${1:model} = Math.translation(${2:0.0}, ${3:0.0}, ${4:0.0}) * Math.rotationY(Math.radians(${5:45.0})) * Math.scaling(${6:1.0}, $6, $6);" },
+    { "label": "math camera OpenGL", "detail": "Create OpenGL view-projection matrices", "body": "auto ${1:view} = Math.lookAtRH(new vec3(${2:0.0}, ${3:0.0}, ${4:3.0}), new vec3(0.0, 0.0, 0.0), new vec3(0.0, 1.0, 0.0));\nauto ${5:projection} = Math.perspectiveRH(Math.radians(${6:60.0}), ${7:16.0 / 9.0}, ${8:0.1}, ${9:1000.0});" },
+    { "label": "math GPU packing", "detail": "Pack vectors for Desktop GPU / shader storage", "body": "float[] ${1:data} = new float[${2:3}];\n${3:value}.writeFloat($1, 0);" }
   ]
 }

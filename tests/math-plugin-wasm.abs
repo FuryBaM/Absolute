@@ -1,0 +1,16 @@
+export "C" int32 math_wasm_probe() {
+    auto left = new vec3(1.0, 2.0, 3.0);
+    auto right = new vec3(2.0, 3.0, 4.0);
+    auto total = (left + right) * 2.0;
+    float[] packed = total.toFloatArray();
+
+    auto identity = Math.identity4();
+    auto transformed = identity * new vec4(12.0, 0.0, 0.0, 1.0);
+    return (packed[0] + packed[1] + packed[2] + transformed.x) as int32;
+}
+
+int32 main() {
+    assert(math_wasm_probe() == 42, "portable math wasm result");
+    println("math-wasm=ok");
+    return 0;
+}

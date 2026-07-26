@@ -94,6 +94,8 @@ if(BUILD_TESTING)
         )
     endif()
     if(TARGET Absolute-Math-Plugin)
+        set(ABSOLUTE_MATH_MANIFEST
+            "$<TARGET_FILE_DIR:Absolute-Math-Plugin>/absolute-math.absplugin")
         file(WRITE "${CMAKE_BINARY_DIR}/unsupported-permissions.absplugin" [=[{
   "name": "absolute.test-permissions",
   "version": "1.0.0",
@@ -106,7 +108,7 @@ if(BUILD_TESTING)
         add_test(
             NAME absolute.math-plugin
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/math-plugin.abs"
-                --plugin "$<TARGET_FILE:Absolute-Math-Plugin>"
+                --plugin "${ABSOLUTE_MATH_MANIFEST}"
         )
         add_test(
             NAME absolute.plugin-permissions
@@ -781,7 +783,7 @@ if(BUILD_TESTING)
             add_test(
                 NAME absolute.build-math-plugin
                 COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/math-plugin.abs"
-                    --plugin "$<TARGET_FILE:Absolute-Math-Plugin>"
+                    --plugin "${ABSOLUTE_MATH_MANIFEST}"
                     --build-exe -o "${CMAKE_BINARY_DIR}/absolute-math-plugin${CMAKE_EXECUTABLE_SUFFIX}"
             )
             set_tests_properties(absolute.build-math-plugin PROPERTIES
@@ -794,6 +796,30 @@ if(BUILD_TESTING)
             set_tests_properties(absolute.run-math-plugin PROPERTIES
                 FIXTURES_REQUIRED absolute-math-plugin-executable
                 PASS_REGULAR_EXPRESSION "math-plugin=ok"
+            )
+        endif()
+        if(TARGET Absolute-Math-Plugin AND TARGET Absolute-Shader-Plugin AND
+           TARGET Absolute-Desktop-Plugin)
+            add_test(
+                NAME absolute.build-math-plugin-integration
+                COMMAND Absolute-Compiler
+                    "${PROJECT_SOURCE_DIR}/tests/math-plugin-integration.abs"
+                    --plugin "${ABSOLUTE_DESKTOP_MANIFEST}"
+                    --plugin "${ABSOLUTE_SHADER_MANIFEST}"
+                    --plugin "${ABSOLUTE_MATH_MANIFEST}"
+                    --build-exe
+                    -o "${CMAKE_BINARY_DIR}/absolute-math-integration${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.build-math-plugin-integration PROPERTIES
+                FIXTURES_SETUP absolute-math-integration-executable
+            )
+            add_test(
+                NAME absolute.run-math-plugin-integration
+                COMMAND "${CMAKE_BINARY_DIR}/absolute-math-integration${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.run-math-plugin-integration PROPERTIES
+                FIXTURES_REQUIRED absolute-math-integration-executable
+                PASS_REGULAR_EXPRESSION "math-integration=ok"
             )
         endif()
         if(TARGET Absolute-Shader-Plugin)
@@ -1504,6 +1530,19 @@ if(BUILD_TESTING)
                         -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-managed.cmake"
                 )
+                if(TARGET Absolute-Math-Plugin)
+                    add_test(
+                        NAME absolute.run-wasm-math-plugin
+                        COMMAND "${CMAKE_COMMAND}"
+                            -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                            -DSOURCE=${PROJECT_SOURCE_DIR}/tests/math-plugin-wasm.abs
+                            -DPLUGIN=${ABSOLUTE_MATH_MANIFEST}
+                            -DOUTPUT=${CMAKE_BINARY_DIR}/math-plugin.wasm
+                            -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                            -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                            -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-math-plugin.cmake"
+                    )
+                endif()
                 add_test(
                     NAME absolute.run-wasm-task
                     COMMAND "${CMAKE_COMMAND}"

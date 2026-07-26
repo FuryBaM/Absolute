@@ -1,0 +1,633 @@
+namespace Math {
+    // CPU calculations use double precision. The float packing helpers are the
+    // explicit bridge to shaders, desktop GPU buffers, wasm memory and native ABIs.
+    double pi() { return 3.141592653589793; }
+    double tau() { return 6.283185307179586; }
+    double halfPi() { return 1.5707963267948966; }
+    double epsilon() { return 0.000000001; }
+
+    int32 abs(int32 value) {
+        return value < 0 ? -value : value;
+    }
+
+    int64 abs(int64 value) {
+        return value < 0 ? -value : value;
+    }
+
+    float abs(float value) {
+        return value < 0.0 ? -value : value;
+    }
+
+    double abs(double value) {
+        return value < 0.0 ? -value : value;
+    }
+
+    double min(double left, double right) {
+        return left < right ? left : right;
+    }
+
+    double max(double left, double right) {
+        return left > right ? left : right;
+    }
+
+    double clamp(double value, double minimum, double maximum) {
+        if (value < minimum) { return minimum; }
+        if (value > maximum) { return maximum; }
+        return value;
+    }
+
+    double saturate(double value) {
+        return clamp(value, 0.0, 1.0);
+    }
+
+    double lerp(double from, double to, double amount) {
+        return from + (to - from) * amount;
+    }
+
+    double inverseLerp(double from, double to, double value) {
+        double width = to - from;
+        if (abs(width) <= epsilon()) { return 0.0; }
+        return (value - from) / width;
+    }
+
+    double smoothstep(double edge0, double edge1, double value) {
+        double amount = saturate(inverseLerp(edge0, edge1, value));
+        return amount * amount * (3.0 - 2.0 * amount);
+    }
+
+    bool approximately(double left, double right) {
+        double scale = max(1.0, max(abs(left), abs(right)));
+        return abs(left - right) <= epsilon() * scale;
+    }
+
+    double radians(double degrees) {
+        return degrees * pi() / 180.0;
+    }
+
+    double degrees(double radiansValue) {
+        return radiansValue * 180.0 / pi();
+    }
+
+    double sqrt(double value) {
+        if (value <= 0.0) { return 0.0; }
+        double estimate = value > 1.0 ? value : 1.0;
+        int32 iteration = 0;
+        while (iteration < 24) {
+            estimate = (estimate + value / estimate) * 0.5;
+            iteration += 1;
+        }
+        return estimate;
+    }
+
+    double wrapRadians(double value) {
+        double period = tau();
+        while (value > pi()) { value -= period; }
+        while (value < -pi()) { value += period; }
+        return value;
+    }
+
+    double sin(double value) {
+        double x = wrapRadians(value);
+        double x2 = x * x;
+        double x4 = x2 * x2;
+        double x6 = x4 * x2;
+        double x8 = x4 * x4;
+        double x10 = x8 * x2;
+        double x12 = x10 * x2;
+        double x14 = x12 * x2;
+        return x * (1.0 - x2 / 6.0 + x4 / 120.0 - x6 / 5040.0
+            + x8 / 362880.0 - x10 / 39916800.0
+            + x12 / 6227020800.0 - x14 / 1307674368000.0);
+    }
+
+    double cos(double value) {
+        double x = wrapRadians(value);
+        double x2 = x * x;
+        double x4 = x2 * x2;
+        double x6 = x4 * x2;
+        double x8 = x4 * x4;
+        double x10 = x8 * x2;
+        double x12 = x10 * x2;
+        double x14 = x12 * x2;
+        return 1.0 - x2 / 2.0 + x4 / 24.0 - x6 / 720.0
+            + x8 / 40320.0 - x10 / 3628800.0
+            + x12 / 479001600.0 - x14 / 87178291200.0;
+    }
+
+    double tan(double value) {
+        double cosine = cos(value);
+        if (abs(cosine) <= epsilon()) { return 0.0; }
+        return sin(value) / cosine;
+    }
+
+    class __vec2 {
+        public double x;
+        public double y;
+
+        public __vec2(double initialX, double initialY) {
+            x = initialX;
+            y = initialY;
+        }
+
+        public void assign(double nextX, double nextY) {
+            x = nextX;
+            y = nextY;
+        }
+
+        public double dot(__vec2* other) {
+            return x * other.x + y * other.y;
+        }
+
+        public double lengthSquared() {
+            return x * x + y * y;
+        }
+
+        public double length() {
+            return sqrt(lengthSquared());
+        }
+
+        public __vec2* normalized() {
+            double magnitude = sqrt(x * x + y * y);
+            if (magnitude <= epsilon()) { return new __vec2(0.0, 0.0); }
+            return new __vec2(x / magnitude, y / magnitude);
+        }
+
+        public __vec2* lerped(__vec2* other, double amount) {
+            return new __vec2(Math.lerp(x, other.x, amount), Math.lerp(y, other.y, amount));
+        }
+
+        public void writeFloat(float[] output, int32 offset) {
+            output[offset] = x as float;
+            output[offset + 1] = y as float;
+        }
+
+        public float[] toFloatArray() {
+            return copy({x as float, y as float});
+        }
+    }
+
+    class __vec3 {
+        public double x;
+        public double y;
+        public double z;
+
+        public __vec3(double initialX, double initialY, double initialZ) {
+            x = initialX;
+            y = initialY;
+            z = initialZ;
+        }
+
+        public void assign(double nextX, double nextY, double nextZ) {
+            x = nextX;
+            y = nextY;
+            z = nextZ;
+        }
+
+        public double dot(__vec3* other) {
+            return x * other.x + y * other.y + z * other.z;
+        }
+
+        public double lengthSquared() {
+            return x * x + y * y + z * z;
+        }
+
+        public double length() {
+            return sqrt(lengthSquared());
+        }
+
+        public __vec3* normalized() {
+            double magnitude = sqrt(x * x + y * y + z * z);
+            if (magnitude <= epsilon()) { return new __vec3(0.0, 0.0, 0.0); }
+            return new __vec3(x / magnitude, y / magnitude, z / magnitude);
+        }
+
+        public __vec3* crossed(__vec3* other) {
+            return new __vec3(
+                y * other.z - z * other.y,
+                z * other.x - x * other.z,
+                x * other.y - y * other.x);
+        }
+
+        public __vec3* lerped(__vec3* other, double amount) {
+            return new __vec3(
+                Math.lerp(x, other.x, amount),
+                Math.lerp(y, other.y, amount),
+                Math.lerp(z, other.z, amount));
+        }
+
+        public void writeFloat(float[] output, int32 offset) {
+            output[offset] = x as float;
+            output[offset + 1] = y as float;
+            output[offset + 2] = z as float;
+        }
+
+        public float[] toFloatArray() {
+            return copy({x as float, y as float, z as float});
+        }
+    }
+
+    class __vec4 {
+        public double x;
+        public double y;
+        public double z;
+        public double w;
+
+        public __vec4(double initialX, double initialY, double initialZ, double initialW) {
+            x = initialX;
+            y = initialY;
+            z = initialZ;
+            w = initialW;
+        }
+
+        public void assign(double nextX, double nextY, double nextZ, double nextW) {
+            x = nextX;
+            y = nextY;
+            z = nextZ;
+            w = nextW;
+        }
+
+        public double dot(__vec4* other) {
+            return x * other.x + y * other.y + z * other.z + w * other.w;
+        }
+
+        public double lengthSquared() {
+            return x * x + y * y + z * z + w * w;
+        }
+
+        public double length() {
+            return sqrt(lengthSquared());
+        }
+
+        public __vec4* normalized() {
+            double magnitude = sqrt(x * x + y * y + z * z + w * w);
+            if (magnitude <= epsilon()) { return new __vec4(0.0, 0.0, 0.0, 0.0); }
+            return new __vec4(x / magnitude, y / magnitude, z / magnitude, w / magnitude);
+        }
+
+        public __vec4* lerped(__vec4* other, double amount) {
+            return new __vec4(
+                Math.lerp(x, other.x, amount),
+                Math.lerp(y, other.y, amount),
+                Math.lerp(z, other.z, amount),
+                Math.lerp(w, other.w, amount));
+        }
+
+        public void writeFloat(float[] output, int32 offset) {
+            output[offset] = x as float;
+            output[offset + 1] = y as float;
+            output[offset + 2] = z as float;
+            output[offset + 3] = w as float;
+        }
+
+        public float[] toFloatArray() {
+            return copy({x as float, y as float, z as float, w as float});
+        }
+    }
+
+    class __mat3 {
+        public double m00; public double m01; public double m02;
+        public double m10; public double m11; public double m12;
+        public double m20; public double m21; public double m22;
+
+        public void setIdentity() {
+            m00 = 1.0; m01 = 0.0; m02 = 0.0;
+            m10 = 0.0; m11 = 1.0; m12 = 0.0;
+            m20 = 0.0; m21 = 0.0; m22 = 1.0;
+        }
+
+        public double determinant() {
+            return m00 * (m11 * m22 - m12 * m21)
+                - m01 * (m10 * m22 - m12 * m20)
+                + m02 * (m10 * m21 - m11 * m20);
+        }
+
+        public float[] toFloatArray() {
+            return copy({
+                m00 as float, m01 as float, m02 as float,
+                m10 as float, m11 as float, m12 as float,
+                m20 as float, m21 as float, m22 as float
+            });
+        }
+    }
+
+    class __mat4 {
+        public double m00; public double m01; public double m02; public double m03;
+        public double m10; public double m11; public double m12; public double m13;
+        public double m20; public double m21; public double m22; public double m23;
+        public double m30; public double m31; public double m32; public double m33;
+
+        public void setIdentity() {
+            m00 = 1.0; m01 = 0.0; m02 = 0.0; m03 = 0.0;
+            m10 = 0.0; m11 = 1.0; m12 = 0.0; m13 = 0.0;
+            m20 = 0.0; m21 = 0.0; m22 = 1.0; m23 = 0.0;
+            m30 = 0.0; m31 = 0.0; m32 = 0.0; m33 = 1.0;
+        }
+
+        public __vec4* transform(__vec4* value) {
+            return new __vec4(
+                m00 * value.x + m01 * value.y + m02 * value.z + m03 * value.w,
+                m10 * value.x + m11 * value.y + m12 * value.z + m13 * value.w,
+                m20 * value.x + m21 * value.y + m22 * value.z + m23 * value.w,
+                m30 * value.x + m31 * value.y + m32 * value.z + m33 * value.w);
+        }
+
+        public float[] toFloatArray() {
+            return copy({
+                m00 as float, m01 as float, m02 as float, m03 as float,
+                m10 as float, m11 as float, m12 as float, m13 as float,
+                m20 as float, m21 as float, m22 as float, m23 as float,
+                m30 as float, m31 as float, m32 as float, m33 as float
+            });
+        }
+
+        public float[] toColumnMajorFloatArray() {
+            return copy({
+                m00 as float, m10 as float, m20 as float, m30 as float,
+                m01 as float, m11 as float, m21 as float, m31 as float,
+                m02 as float, m12 as float, m22 as float, m32 as float,
+                m03 as float, m13 as float, m23 as float, m33 as float
+            });
+        }
+    }
+
+    __vec2* makeVec2(double x, double y) { return new __vec2(x, y); }
+    __vec3* makeVec3(double x, double y, double z) { return new __vec3(x, y, z); }
+    __vec4* makeVec4(double x, double y, double z, double w) {
+        return new __vec4(x, y, z, w);
+    }
+    __vec4* rgba(double red, double green, double blue, double alpha) {
+        return new __vec4(red, green, blue, alpha);
+    }
+
+    void vec2Set(__vec2* output, double x, double y) { output.assign(x, y); }
+    void vec2Add(__vec2* output, __vec2* left, __vec2* right) {
+        output.assign(left.x + right.x, left.y + right.y);
+    }
+    double vec2Dot(__vec2* left, __vec2* right) { return left.dot(right); }
+    double vec2Length(__vec2* value) { return value.length(); }
+
+    void vec3Set(__vec3* output, double x, double y, double z) { output.assign(x, y, z); }
+    void vec3Add(__vec3* output, __vec3* left, __vec3* right) {
+        output.assign(left.x + right.x, left.y + right.y, left.z + right.z);
+    }
+    void vec3Subtract(__vec3* output, __vec3* left, __vec3* right) {
+        output.assign(left.x - right.x, left.y - right.y, left.z - right.z);
+    }
+    double vec3Dot(__vec3* left, __vec3* right) { return left.dot(right); }
+    double vec3Length(__vec3* value) { return value.length(); }
+    void vec3Normalize(__vec3* output, __vec3* value) {
+        double magnitude = value.length();
+        if (magnitude <= epsilon()) { output.assign(0.0, 0.0, 0.0); }
+        else { output.assign(value.x / magnitude, value.y / magnitude, value.z / magnitude); }
+    }
+    void vec3Cross(__vec3* output, __vec3* left, __vec3* right) {
+        output.assign(
+            left.y * right.z - left.z * right.y,
+            left.z * right.x - left.x * right.z,
+            left.x * right.y - left.y * right.x);
+    }
+
+    __vec2* __vec2AddOwned(__vec2* left, __vec2* right) {
+        return new __vec2(left.x + right.x, left.y + right.y);
+    }
+    __vec2* __vec2SubtractOwned(__vec2* left, __vec2* right) {
+        return new __vec2(left.x - right.x, left.y - right.y);
+    }
+    __vec2* __vec2ScaleOwned(__vec2* value, double scalar) {
+        return new __vec2(value.x * scalar, value.y * scalar);
+    }
+    __vec2* __vec2ScaleReverseOwned(double scalar, __vec2* value) {
+        return __vec2ScaleOwned(value, scalar);
+    }
+    __vec2* __vec2DivideOwned(__vec2* value, double scalar) {
+        return abs(scalar) <= epsilon()
+            ? new __vec2(0.0, 0.0)
+            : new __vec2(value.x / scalar, value.y / scalar);
+    }
+
+    __vec3* __vec3AddOwned(__vec3* left, __vec3* right) {
+        return new __vec3(left.x + right.x, left.y + right.y, left.z + right.z);
+    }
+    __vec3* __vec3SubtractOwned(__vec3* left, __vec3* right) {
+        return new __vec3(left.x - right.x, left.y - right.y, left.z - right.z);
+    }
+    __vec3* __vec3ScaleOwned(__vec3* value, double scalar) {
+        return new __vec3(value.x * scalar, value.y * scalar, value.z * scalar);
+    }
+    __vec3* __vec3ScaleReverseOwned(double scalar, __vec3* value) {
+        return __vec3ScaleOwned(value, scalar);
+    }
+    __vec3* __vec3DivideOwned(__vec3* value, double scalar) {
+        return abs(scalar) <= epsilon()
+            ? new __vec3(0.0, 0.0, 0.0)
+            : new __vec3(value.x / scalar, value.y / scalar, value.z / scalar);
+    }
+
+    __vec4* __vec4AddOwned(__vec4* left, __vec4* right) {
+        return new __vec4(left.x + right.x, left.y + right.y, left.z + right.z, left.w + right.w);
+    }
+    __vec4* __vec4SubtractOwned(__vec4* left, __vec4* right) {
+        return new __vec4(left.x - right.x, left.y - right.y, left.z - right.z, left.w - right.w);
+    }
+    __vec4* __vec4ScaleOwned(__vec4* value, double scalar) {
+        return new __vec4(value.x * scalar, value.y * scalar, value.z * scalar, value.w * scalar);
+    }
+    __vec4* __vec4ScaleReverseOwned(double scalar, __vec4* value) {
+        return __vec4ScaleOwned(value, scalar);
+    }
+    __vec4* __vec4DivideOwned(__vec4* value, double scalar) {
+        return abs(scalar) <= epsilon()
+            ? new __vec4(0.0, 0.0, 0.0, 0.0)
+            : new __vec4(value.x / scalar, value.y / scalar, value.z / scalar, value.w / scalar);
+    }
+
+    void mat3Identity(__mat3* output) {
+        output.m00 = 1.0; output.m01 = 0.0; output.m02 = 0.0;
+        output.m10 = 0.0; output.m11 = 1.0; output.m12 = 0.0;
+        output.m20 = 0.0; output.m21 = 0.0; output.m22 = 1.0;
+    }
+
+    double mat3Determinant(__mat3* value) {
+        return value.m00 * (value.m11 * value.m22 - value.m12 * value.m21)
+            - value.m01 * (value.m10 * value.m22 - value.m12 * value.m20)
+            + value.m02 * (value.m10 * value.m21 - value.m11 * value.m20);
+    }
+
+    __mat3* __mat3MultiplyOwned(__mat3* left, __mat3* right) {
+        auto output = new __mat3();
+        output.m00 = left.m00 * right.m00 + left.m01 * right.m10 + left.m02 * right.m20;
+        output.m01 = left.m00 * right.m01 + left.m01 * right.m11 + left.m02 * right.m21;
+        output.m02 = left.m00 * right.m02 + left.m01 * right.m12 + left.m02 * right.m22;
+        output.m10 = left.m10 * right.m00 + left.m11 * right.m10 + left.m12 * right.m20;
+        output.m11 = left.m10 * right.m01 + left.m11 * right.m11 + left.m12 * right.m21;
+        output.m12 = left.m10 * right.m02 + left.m11 * right.m12 + left.m12 * right.m22;
+        output.m20 = left.m20 * right.m00 + left.m21 * right.m10 + left.m22 * right.m20;
+        output.m21 = left.m20 * right.m01 + left.m21 * right.m11 + left.m22 * right.m21;
+        output.m22 = left.m20 * right.m02 + left.m21 * right.m12 + left.m22 * right.m22;
+        return output;
+    }
+
+    void mat4Identity(__mat4* output) {
+        output.m00 = 1.0; output.m01 = 0.0; output.m02 = 0.0; output.m03 = 0.0;
+        output.m10 = 0.0; output.m11 = 1.0; output.m12 = 0.0; output.m13 = 0.0;
+        output.m20 = 0.0; output.m21 = 0.0; output.m22 = 1.0; output.m23 = 0.0;
+        output.m30 = 0.0; output.m31 = 0.0; output.m32 = 0.0; output.m33 = 1.0;
+    }
+
+    __mat4* identity4() {
+        auto output = new __mat4();
+        mat4Identity(output);
+        return output;
+    }
+
+    void mat4Multiply(__mat4* output, __mat4* left, __mat4* right) {
+        double n00 = left.m00 * right.m00 + left.m01 * right.m10 + left.m02 * right.m20 + left.m03 * right.m30;
+        double n01 = left.m00 * right.m01 + left.m01 * right.m11 + left.m02 * right.m21 + left.m03 * right.m31;
+        double n02 = left.m00 * right.m02 + left.m01 * right.m12 + left.m02 * right.m22 + left.m03 * right.m32;
+        double n03 = left.m00 * right.m03 + left.m01 * right.m13 + left.m02 * right.m23 + left.m03 * right.m33;
+        double n10 = left.m10 * right.m00 + left.m11 * right.m10 + left.m12 * right.m20 + left.m13 * right.m30;
+        double n11 = left.m10 * right.m01 + left.m11 * right.m11 + left.m12 * right.m21 + left.m13 * right.m31;
+        double n12 = left.m10 * right.m02 + left.m11 * right.m12 + left.m12 * right.m22 + left.m13 * right.m32;
+        double n13 = left.m10 * right.m03 + left.m11 * right.m13 + left.m12 * right.m23 + left.m13 * right.m33;
+        double n20 = left.m20 * right.m00 + left.m21 * right.m10 + left.m22 * right.m20 + left.m23 * right.m30;
+        double n21 = left.m20 * right.m01 + left.m21 * right.m11 + left.m22 * right.m21 + left.m23 * right.m31;
+        double n22 = left.m20 * right.m02 + left.m21 * right.m12 + left.m22 * right.m22 + left.m23 * right.m32;
+        double n23 = left.m20 * right.m03 + left.m21 * right.m13 + left.m22 * right.m23 + left.m23 * right.m33;
+        double n30 = left.m30 * right.m00 + left.m31 * right.m10 + left.m32 * right.m20 + left.m33 * right.m30;
+        double n31 = left.m30 * right.m01 + left.m31 * right.m11 + left.m32 * right.m21 + left.m33 * right.m31;
+        double n32 = left.m30 * right.m02 + left.m31 * right.m12 + left.m32 * right.m22 + left.m33 * right.m32;
+        double n33 = left.m30 * right.m03 + left.m31 * right.m13 + left.m32 * right.m23 + left.m33 * right.m33;
+        output.m00 = n00; output.m01 = n01; output.m02 = n02; output.m03 = n03;
+        output.m10 = n10; output.m11 = n11; output.m12 = n12; output.m13 = n13;
+        output.m20 = n20; output.m21 = n21; output.m22 = n22; output.m23 = n23;
+        output.m30 = n30; output.m31 = n31; output.m32 = n32; output.m33 = n33;
+    }
+
+    __mat4* __mat4MultiplyOwned(__mat4* left, __mat4* right) {
+        auto output = new __mat4();
+        mat4Multiply(output, left, right);
+        return output;
+    }
+
+    __vec4* __mat4TransformOwned(__mat4* matrix, __vec4* value) {
+        return new __vec4(
+            matrix.m00 * value.x + matrix.m01 * value.y + matrix.m02 * value.z + matrix.m03 * value.w,
+            matrix.m10 * value.x + matrix.m11 * value.y + matrix.m12 * value.z + matrix.m13 * value.w,
+            matrix.m20 * value.x + matrix.m21 * value.y + matrix.m22 * value.z + matrix.m23 * value.w,
+            matrix.m30 * value.x + matrix.m31 * value.y + matrix.m32 * value.z + matrix.m33 * value.w);
+    }
+
+    void projection(__mat4* output, double fovYRadians, double aspect, double nearPlane, double farPlane) {
+        double half = fovYRadians * 0.5;
+        double scale = cos(half) / sin(half);
+        output.m00 = scale / aspect; output.m01 = 0.0; output.m02 = 0.0; output.m03 = 0.0;
+        output.m10 = 0.0; output.m11 = scale; output.m12 = 0.0; output.m13 = 0.0;
+        output.m20 = 0.0; output.m21 = 0.0;
+        output.m22 = (farPlane + nearPlane) / (nearPlane - farPlane);
+        output.m23 = (2.0 * farPlane * nearPlane) / (nearPlane - farPlane);
+        output.m30 = 0.0; output.m31 = 0.0; output.m32 = -1.0; output.m33 = 0.0;
+    }
+
+    __mat4* perspectiveRH(double fovYRadians, double aspect, double nearPlane, double farPlane) {
+        auto output = new __mat4();
+        projection(output, fovYRadians, aspect, nearPlane, farPlane);
+        return output;
+    }
+
+    __mat4* perspectiveRHZeroToOne(double fovYRadians, double aspect, double nearPlane, double farPlane) {
+        auto output = new __mat4();
+        double half = fovYRadians * 0.5;
+        double scale = cos(half) / sin(half);
+        output.m00 = scale / aspect; output.m01 = 0.0; output.m02 = 0.0; output.m03 = 0.0;
+        output.m10 = 0.0; output.m11 = scale; output.m12 = 0.0; output.m13 = 0.0;
+        output.m20 = 0.0; output.m21 = 0.0;
+        output.m22 = farPlane / (nearPlane - farPlane);
+        output.m23 = (farPlane * nearPlane) / (nearPlane - farPlane);
+        output.m30 = 0.0; output.m31 = 0.0; output.m32 = -1.0; output.m33 = 0.0;
+        return output;
+    }
+
+    void lookAt(__mat4* output, __vec3* eye, __vec3* center, __vec3* up) {
+        double fx = center.x - eye.x;
+        double fy = center.y - eye.y;
+        double fz = center.z - eye.z;
+        double forwardLength = sqrt(fx * fx + fy * fy + fz * fz);
+        if (forwardLength > epsilon()) {
+            fx /= forwardLength; fy /= forwardLength; fz /= forwardLength;
+        }
+
+        double sx = fy * up.z - fz * up.y;
+        double sy = fz * up.x - fx * up.z;
+        double sz = fx * up.y - fy * up.x;
+        double sideLength = sqrt(sx * sx + sy * sy + sz * sz);
+        if (sideLength > epsilon()) {
+            sx /= sideLength; sy /= sideLength; sz /= sideLength;
+        }
+
+        double ux = sy * fz - sz * fy;
+        double uy = sz * fx - sx * fz;
+        double uz = sx * fy - sy * fx;
+
+        output.m00 = sx; output.m01 = sy; output.m02 = sz;
+        output.m03 = -(sx * eye.x + sy * eye.y + sz * eye.z);
+        output.m10 = ux; output.m11 = uy; output.m12 = uz;
+        output.m13 = -(ux * eye.x + uy * eye.y + uz * eye.z);
+        output.m20 = -fx; output.m21 = -fy; output.m22 = -fz;
+        output.m23 = fx * eye.x + fy * eye.y + fz * eye.z;
+        output.m30 = 0.0; output.m31 = 0.0; output.m32 = 0.0; output.m33 = 1.0;
+    }
+
+    __mat4* lookAtRH(__vec3* eye, __vec3* center, __vec3* up) {
+        auto output = new __mat4();
+        lookAt(output, eye, center, up);
+        return output;
+    }
+
+    __mat4* translation(double x, double y, double z) {
+        auto output = identity4();
+        output.m03 = x;
+        output.m13 = y;
+        output.m23 = z;
+        return output;
+    }
+
+    __mat4* scaling(double x, double y, double z) {
+        auto output = new __mat4();
+        mat4Identity(output);
+        output.m00 = x;
+        output.m11 = y;
+        output.m22 = z;
+        return output;
+    }
+
+    __mat4* rotationX(double radiansValue) {
+        auto output = identity4();
+        double c = cos(radiansValue);
+        double s = sin(radiansValue);
+        output.m11 = c; output.m12 = -s;
+        output.m21 = s; output.m22 = c;
+        return output;
+    }
+
+    __mat4* rotationY(double radiansValue) {
+        auto output = identity4();
+        double c = cos(radiansValue);
+        double s = sin(radiansValue);
+        output.m00 = c; output.m02 = s;
+        output.m20 = -s; output.m22 = c;
+        return output;
+    }
+
+    __mat4* rotationZ(double radiansValue) {
+        auto output = identity4();
+        double c = cos(radiansValue);
+        double s = sin(radiansValue);
+        output.m00 = c; output.m01 = -s;
+        output.m10 = s; output.m11 = c;
+        return output;
+    }
+}
+
+extension double length(Math.__vec2* value) { return value.length(); }
+extension double length(Math.__vec3* value) { return value.length(); }
+extension double length(Math.__vec4* value) { return value.length(); }

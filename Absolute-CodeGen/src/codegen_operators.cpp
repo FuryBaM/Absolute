@@ -5,7 +5,9 @@ namespace Absolute {
         const std::string leftType = impl->SemanticType(expr->left.get());
         const std::string rightType = impl->SemanticType(expr->right.get());
         llvm::Value* left = impl->Evaluate(expr->left.get());
+        const bool leftCreatesManagedOwner = impl->valueCreatesManagedOwner;
         llvm::Value* right = impl->Evaluate(expr->right.get());
+        const bool rightCreatesManagedOwner = impl->valueCreatesManagedOwner;
 
         if (const PluginBinaryOperator* pluginOperator =
                 FindPluginBinaryOperator(leftType, expr->op, rightType)) {
@@ -16,6 +18,16 @@ namespace Absolute {
             right = impl->Coerce(right, function->getFunctionType()->getParamType(1));
             impl->value = impl->builder.CreateCall(function, {left, right}, "plugin.operator");
             impl->EmitExceptionCheck();
+            // Plugin operators borrow their operands. Destroy temporary managed
+            // owners after the call, while named variables remain owned by their
+            // enclosing scope. This makes chained expressions such as
+            // translation(...) * rotation(...) leak-free.
+            llvm::Value* result = impl->value;
+            if (leftCreatesManagedOwner)
+                impl->builder.CreateCall(impl->ManagedDestroy(), {left});
+            if (rightCreatesManagedOwner)
+                impl->builder.CreateCall(impl->ManagedDestroy(), {right});
+            impl->value = result;
             impl->valueCreatesManagedOwner = IsStrongManagedPointerTypeName(pluginOperator->resultType);
             impl->valueManagedPointee = nullptr;
             return;

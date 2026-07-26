@@ -325,6 +325,39 @@ namespace Absolute {
                     it != end; ++it)
                     result.dependencies.push_back({(*it)[1].str(), (*it)[2].str(), {}});
             }
+
+            const auto optionalDependencyArray =
+                PropertyValue(document, "optional_dependencies", '[', ']');
+            const auto optionalDependencyObject =
+                PropertyValue(document, "optional_dependencies", '{', '}');
+            if (optionalDependencyArray) {
+                const std::regex objectPattern("\\{([^{}]*)\\}");
+                for (std::sregex_iterator it(optionalDependencyArray->begin(),
+                         optionalDependencyArray->end(), objectPattern), end;
+                     it != end; ++it) {
+                    const std::string object = (*it)[1].str();
+                    const auto dependencyName = StringProperty(object, "name");
+                    if (!dependencyName || dependencyName->empty())
+                        throw std::runtime_error(
+                            "Optional plugin dependency requires string property 'name': " +
+                            path.string());
+                    Dependency dependency;
+                    dependency.name = *dependencyName;
+                    dependency.version = StringProperty(object, "version").value_or("*");
+                    if (const auto dependencyPath = StringProperty(object, "path"))
+                        dependency.path = *dependencyPath;
+                    result.optionalDependencies.push_back(std::move(dependency));
+                }
+            }
+            else if (optionalDependencyObject) {
+                const std::regex pairPattern(
+                    "\\\"([^\\\"]+)\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
+                for (std::sregex_iterator it(optionalDependencyObject->begin(),
+                         optionalDependencyObject->end(), pairPattern), end;
+                     it != end; ++it)
+                    result.optionalDependencies.push_back(
+                        {(*it)[1].str(), (*it)[2].str(), {}});
+            }
             return result;
         }
 

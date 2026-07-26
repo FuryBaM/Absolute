@@ -13,6 +13,9 @@ file(WRITE "${OUTPUT}"
   \"prelude\": \"absolute-shader.prelude.abs\",
   \"editor\": \"absolute-shader.editor.json\",
   \"provides\": [\"shader.ast\", \"shader.compute\"],
-  \"dependencies\": {}
+  \"dependencies\": {},
+  \"optional_dependencies\": [
+    {\"name\": \"absolute.math\", \"version\": \"^2.0.0\", \"path\": \"../math/absolute-math.absplugin\"}
+  ]
 }
 ")

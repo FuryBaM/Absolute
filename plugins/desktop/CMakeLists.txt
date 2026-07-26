@@ -87,7 +87,12 @@ if(ZLIB_FOUND)
 endif()
 set_target_properties(Absolute-Desktop-Runtime PROPERTIES OUTPUT_NAME "absolute-desktop-runtime")
 
-add_library(Absolute-Desktop-Plugin SHARED desktop_plugin.cpp)
+add_library(Absolute-Desktop-Plugin SHARED
+    desktop_plugin.cpp
+    absolute-desktop.prelude.abs
+    absolute-desktop.editor.json
+    write_manifest.cmake
+)
 target_compile_features(Absolute-Desktop-Plugin PRIVATE cxx_std_20)
 target_include_directories(Absolute-Desktop-Plugin PRIVATE
     "${CMAKE_SOURCE_DIR}/Absolute-Parser/include"
@@ -95,6 +100,7 @@ target_include_directories(Absolute-Desktop-Plugin PRIVATE
 set_target_properties(Absolute-Desktop-Plugin PROPERTIES
     PREFIX ""
     OUTPUT_NAME "absolute-desktop"
+    LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/absolute-desktop.prelude.abs;${CMAKE_CURRENT_SOURCE_DIR}/absolute-desktop.editor.json;${CMAKE_CURRENT_SOURCE_DIR}/write_manifest.cmake"
 )
 add_dependencies(Absolute-Desktop-Plugin Absolute-Desktop-Runtime)
 
