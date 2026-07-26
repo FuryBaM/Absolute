@@ -19,11 +19,28 @@ const CORE_TYPES = [
     'float', 'double', 'char', 'bool', 'string', 'void', 'dynamic'
 ];
 
+const CORE_HOVER = {
+    auto: ['inferred local type', 'The analyzer infers the static type from the initializer. Ownership is preserved.'],
+    new: ['managed allocation', 'Creates a checked managed owner. The owner is destroyed automatically when its scope ends.'],
+    delete: ['explicit owner destruction', 'Destroys an owner before normal scope exit. Usually unnecessary for RAII values.'],
+    raw: ['raw pointer qualifier', 'Unsafe address without managed lifetime checks or automatic pointee destruction.'],
+    weak: ['weak managed reference', 'Non-owning observer that expires when the strong owner is destroyed.'],
+    move: ['ownership transfer', 'Transfers an owning value and leaves the source moved-from.'],
+    copy: ['explicit owning copy', 'Creates a distinct owning copy when the value supports copying.'],
+    defer: ['deferred action', 'Runs at scope exit, including return, break, continue, and exception cleanup.'],
+    namespace: ['namespace declaration', 'Groups related types and functions under a qualified name.'],
+    extern: ['native declaration', 'Declares an externally implemented ABI function. Plugin users normally receive these through a prelude.'],
+    string: ['UTF-8 string', 'Built-in UTF-8 string view/value used by Absolute APIs.'],
+    auto_cleanup: ['RAII cleanup', 'Managed owners and classes with destroy() are released automatically at scope exit.']
+};
+
 function emptyPluginIndex() {
     return {
         plugins: [],
         entries: [],
+        entryByKey: new Map(),
         hover: new Map(),
+        membersByOwner: new Map(),
         keywordNames: new Set(CORE_KEYWORDS),
         typeNames: new Set(CORE_TYPES),
         functionNames: new Set(),
@@ -271,8 +288,14 @@ function runCompilerDiagnostics(filePath, compilerPath, extraArgs = []) {
         const result = childProcess.spawnSync(
             compilerPath,
             [filePath, ...extraArgs],
-            { encoding: 'utf8', timeout: 20000, windowsHide: true }
+            {
+                encoding: 'utf8',
+                timeout: 20000,
+                windowsHide: true,
+                cwd: path.dirname(filePath)
+            }
         );
+        if (result.error) throw result.error;
         const text = `${result.stdout || ''}\n${result.stderr || ''}`;
         return parseCompilerDiagnostics(text, filePath);
     } catch (error) {
@@ -363,8 +386,23 @@ function metadataItem(raw, kind, plugin, owner) {
         detail: item.detail || `${kind} ${fullName}`,
         documentation: item.documentation || '',
         snippet: item.snippet,
-        plugin
+        plugin,
+        owner,
+        ownership: item.ownership || '',
+        since: item.since || ''
     };
+}
+
+function upsertIndexEntry(index, entry) {
+    const key = `${entry.kind}:${entry.fullName}`;
+    const existing = index.entryByKey.get(key);
+    if (existing) {
+        Object.assign(existing, entry);
+        return existing;
+    }
+    index.entries.push(entry);
+    index.entryByKey.set(key, entry);
+    return entry;
 }
 
 function addMetadata(index, metadata, pluginName) {
@@ -376,9 +414,9 @@ function addMetadata(index, metadata, pluginName) {
     ];
     for (const [property, kind] of groups) {
         for (const raw of Array.isArray(metadata[property]) ? metadata[property] : []) {
-            const entry = metadataItem(raw, kind, pluginName);
-            if (!entry) continue;
-            index.entries.push(entry);
+            const parsedEntry = metadataItem(raw, kind, pluginName);
+            if (!parsedEntry) continue;
+            const entry = upsertIndexEntry(index, parsedEntry);
             index.hover.set(entry.fullName, entry);
             index.hover.set(entry.name.split('.').pop(), entry);
             const names = kind === 'keyword' ? index.keywordNames : kind === 'type' ? index.typeNames :
@@ -386,20 +424,24 @@ function addMetadata(index, metadata, pluginName) {
             names.add(entry.fullName);
             names.add(entry.fullName.split('.').pop());
             if (kind === 'type' && raw && Array.isArray(raw.members)) {
+                const ownerMembers = index.membersByOwner.get(entry.fullName) || [];
                 for (const member of raw.members) {
                     const memberEntry = metadataItem(member, 'member', pluginName, entry.fullName);
                     if (!memberEntry) continue;
-                    index.entries.push(memberEntry);
-                    index.hover.set(memberEntry.fullName, memberEntry);
-                    if (!index.hover.has(memberEntry.name)) index.hover.set(memberEntry.name, memberEntry);
-                    index.functionNames.add(memberEntry.name);
+                    const storedMember = upsertIndexEntry(index, memberEntry);
+                    if (!ownerMembers.some(item => item.fullName === storedMember.fullName))
+                        ownerMembers.push(storedMember);
+                    index.hover.set(storedMember.fullName, storedMember);
+                    if (!index.hover.has(storedMember.name)) index.hover.set(storedMember.name, storedMember);
+                    index.functionNames.add(storedMember.name);
                 }
+                index.membersByOwner.set(entry.fullName, ownerMembers);
             }
         }
     }
     for (const snippet of Array.isArray(metadata.snippets) ? metadata.snippets : []) {
         if (!snippet || !snippet.label || !snippet.body) continue;
-        index.entries.push({
+        upsertIndexEntry(index, {
             kind: 'snippet', name: snippet.label, fullName: snippet.label,
             detail: snippet.detail || 'Absolute plugin snippet', documentation: snippet.documentation || '',
             snippet: snippet.body, plugin: pluginName
@@ -462,6 +504,12 @@ function completionItems(index, text, position) {
     const before = text.slice(Math.max(0, offsets[position.line] || 0), offset);
     const qualified = before.match(/([A-Za-z_][A-Za-z0-9_.]*)\.$/);
     const qualifier = qualified ? qualified[1] : undefined;
+    const inferredQualifier = qualifier && !qualifier.includes('.')
+        ? variableInfo(index, text, position, qualifier)
+        : undefined;
+    const qualifierOwner = inferredQualifier && inferredQualifier.type
+        ? inferredQualifier.type.replace(/^(?:raw|weak)\s+/, '').replace(/\*$/, '')
+        : (qualifier && index.membersByOwner.has(qualifier) ? qualifier : undefined);
     const items = [];
 
     if (!qualifier) {
@@ -474,16 +522,22 @@ function completionItems(index, text, position) {
     }
 
     for (const entry of index.entries) {
-        if (qualifier && !(entry.fullName.startsWith(`${qualifier}.`) || entry.kind === 'member')) continue;
+        if (qualifierOwner) {
+            if (entry.owner !== qualifierOwner) continue;
+        } else if (qualifier) {
+            if (!entry.fullName.startsWith(`${qualifier}.`)) continue;
+            const remainder = entry.fullName.slice(qualifier.length + 1);
+            if (remainder.includes('.')) continue;
+        }
         let label = entry.fullName;
         let insertText = entry.snippet || entry.fullName;
-        if (qualifier && entry.fullName.startsWith(`${qualifier}.`)) {
+        if (qualifierOwner) {
+            label = entry.name;
+            insertText = entry.snippet || entry.name;
+        } else if (qualifier && entry.fullName.startsWith(`${qualifier}.`)) {
             label = entry.fullName.slice(qualifier.length + 1);
             if (typeof insertText === 'string' && insertText.startsWith(`${qualifier}.`))
                 insertText = insertText.slice(qualifier.length + 1);
-        } else if (qualifier && entry.kind === 'member') {
-            label = entry.name;
-            insertText = entry.snippet || entry.name;
         }
         const kind = entry.kind === 'keyword' ? 14 :
             entry.kind === 'type' ? 7 :
@@ -502,22 +556,225 @@ function completionItems(index, text, position) {
     return items;
 }
 
+function declarationSignatureAt(text, name) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const patterns = [
+        new RegExp(`^[ \\t]*(?:public|private|protected|static|virtual|override|async|const|sealed|export(?:\\s+"[^"]+")?|extern(?:\\s+"[^"]+")?\\s+)*[^\\n;{}]*\\b${escaped}\\s*\\([^\\n{}]*\\)`, 'gm'),
+        new RegExp(`^[ \\t]*(?:class|struct|interface|enum|namespace)\\s+${escaped}\\b[^\\n{]*`, 'gm')
+    ];
+    let best;
+    for (const pattern of patterns) {
+        let match;
+        while ((match = pattern.exec(text)) !== null) best = match[0].trim();
+    }
+    return best;
+}
+
+function variableInfo(index, text, position, variableName, resolving = new Set()) {
+    if (resolving.has(variableName)) return undefined;
+    resolving.add(variableName);
+    const offsets = lineOffsets(text);
+    const limit = positionToOffset(offsets, position, text.length);
+    const clean = stripComments(text).slice(0, limit);
+    const escaped = variableName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const candidates = [];
+
+    const managedNew = new RegExp(
+        `\\bauto\\s+${escaped}\\s*=\\s*new\\s+([A-Za-z_][A-Za-z0-9_.]*(?:<[^;()]+>)?)\\s*\\(`,
+        'g'
+    );
+    let match;
+    while ((match = managedNew.exec(clean)) !== null) {
+        candidates.push({
+            offset: match.index,
+            type: `${match[1]}*`,
+            inferred: true,
+            ownership: 'managed owner',
+            cleanup: true
+        });
+    }
+
+    const explicit = new RegExp(
+        `\\b((?:raw\\s+|weak\\s+)?[A-Za-z_][A-Za-z0-9_.]*(?:<[^;=()]+>)?(?:\\[\\])?\\s*\\*?)\\s+${escaped}\\b`,
+        'g'
+    );
+    while ((match = explicit.exec(clean)) !== null) {
+        const type = match[1].replace(/\s+/g, ' ').trim();
+        if (CORE_KEYWORDS.includes(type)) continue;
+        candidates.push({
+            offset: match.index,
+            type,
+            inferred: false,
+            ownership: type.startsWith('raw ') ? 'raw pointer' :
+                type.startsWith('weak ') ? 'weak observer' :
+                type.endsWith('*') ? 'managed pointer' : 'local value',
+            cleanup: !type.startsWith('raw ') && !type.startsWith('weak ')
+        });
+    }
+
+    const factory = new RegExp(
+        `\\bauto\\s+${escaped}\\s*=\\s*([A-Za-z_][A-Za-z0-9_]*)\\.([A-Za-z_][A-Za-z0-9_]*)\\s*\\(`,
+        'g'
+    );
+    while ((match = factory.exec(clean)) !== null) {
+        const receiver = variableInfo(index, text, position, match[1], resolving);
+        const receiverType = receiver && receiver.type
+            ? receiver.type.replace(/^(?:raw|weak)\s+/, '').replace(/\*$/, '')
+            : undefined;
+        const member = receiverType && index.hover.get(`${receiverType}.${match[2]}`);
+        const returnType = member && /^([^()]+?)\s+[A-Za-z_][A-Za-z0-9_]*\s*\(/.exec(member.detail);
+        if (returnType) {
+            let type = returnType[1].trim();
+            const pointerSuffix = type.endsWith('*') ? '*' : '';
+            const bareType = pointerSuffix ? type.slice(0, -1) : type;
+            if (!bareType.includes('.') && receiverType && receiverType.includes('.') &&
+                !CORE_TYPES.includes(bareType)) {
+                type = `${receiverType.slice(0, receiverType.lastIndexOf('.') + 1)}${bareType}${pointerSuffix}`;
+            }
+            candidates.push({
+                offset: match.index,
+                type,
+                inferred: true,
+                ownership: type.endsWith('*') ? 'managed owner returned by factory' : 'inferred local value',
+                cleanup: true,
+                factory: member.fullName
+            });
+        }
+    }
+    candidates.sort((left, right) => left.offset - right.offset);
+    resolving.delete(variableName);
+    return candidates.pop();
+}
+
+function entryForWord(index, text, position, word) {
+    const exact = index.hover.get(word.full);
+    if (exact) return exact;
+    const segments = word.full.split('.');
+    if (segments.length > 1) {
+        const memberName = segments[segments.length - 1];
+        const qualifier = segments[segments.length - 2];
+        const variable = variableInfo(index, text, position, qualifier);
+        if (variable && variable.type) {
+            const owner = variable.type.replace(/^(?:raw|weak)\s+/, '').replace(/\*$/, '');
+            const member = index.hover.get(`${owner}.${memberName}`);
+            if (member) return member;
+        }
+    }
+    return index.hover.get(word.name) || index.hover.get(word.name.split('.').pop());
+}
+
 function hoverFor(index, text, position) {
     const word = wordAt(text, position);
     if (!word) return undefined;
-    const entry = index.hover.get(word.full) || index.hover.get(word.name) ||
-        index.hover.get(word.name.split('.').pop());
-    if (!entry) return undefined;
+    const variable = variableInfo(index, text, position, word.name);
+    if (variable) {
+        const lines = [
+            `\`\`\`absolute\n${variable.type} ${word.name}\n\`\`\``,
+            `**${variable.inferred ? 'Inferred type' : 'Declared type'}:** \`${variable.type}\``,
+            `**Ownership:** ${variable.ownership}`
+        ];
+        if (variable.cleanup)
+            lines.push('**Lifetime:** automatic cleanup at scope exit, including early `return`/`break`.');
+        if (variable.factory) lines.push(`Created by \`${variable.factory}\`.`);
+        return {
+            contents: { kind: 'markdown', value: lines.join('\n\n') },
+            range: word.range
+        };
+    }
+
+    const entry = entryForWord(index, text, position, word);
+    if (!entry) {
+        const core = CORE_HOVER[word.name] ||
+            (CORE_TYPES.includes(word.name)
+                ? [`built-in ${word.name} type`, 'Built-in Absolute value type.']
+                : undefined);
+        if (core) {
+            return {
+                contents: {
+                    kind: 'markdown',
+                    value: `\`\`\`absolute\n${core[0]}\n\`\`\`\n\n${core[1]}\n\n_Core language_`
+                },
+                range: word.range
+            };
+        }
+        const signature = declarationSignatureAt(text, word.name);
+        if (!signature) return undefined;
+        return {
+            contents: {
+                kind: 'markdown',
+                value: `\`\`\`absolute\n${signature}\n\`\`\`\n\n_Local declaration_`
+            },
+            range: word.range
+        };
+    }
+
+    const sections = [`\`\`\`absolute\n${entry.detail}\n\`\`\``];
+    if (entry.documentation) sections.push(entry.documentation);
+    if (entry.owner) sections.push(`**Owner:** \`${entry.owner}\``);
+    if (entry.ownership) sections.push(`**Ownership:** ${entry.ownership}`);
+    const members = index.membersByOwner.get(entry.fullName) || [];
+    if (members.length) {
+        const visible = members.slice(0, 12).map(member => `- \`${member.detail}\``).join('\n');
+        sections.push(`**Members (${members.length}):**\n\n${visible}` +
+            (members.length > 12 ? `\n- _…and ${members.length - 12} more_` : ''));
+    }
+    if (entry.kind === 'type' && /\bRAII\b|scope exit|automatically/i.test(entry.documentation))
+        sections.push('**Lifetime:** managed owners are released automatically at scope exit.');
+    if (entry.since) sections.push(`**Since:** ${entry.since}`);
+    sections.push(`_${entry.kind} from plugin \`${entry.plugin}\`_`);
     const value = {
         contents: {
             kind: 'markdown',
-            value: '```absolute\n' + entry.detail + '\n```\n\n' +
-                (entry.documentation ? entry.documentation + '\n\n' : '') +
-                `_Plugin: ${entry.plugin}_`
+            value: sections.join('\n\n')
         },
         range: word.range
     };
     return value;
+}
+
+function signatureHelpFor(index, text, position) {
+    const offsets = lineOffsets(text);
+    const offset = positionToOffset(offsets, position, text.length);
+    const before = stripComments(text.slice(0, offset));
+    const match = /([A-Za-z_][A-Za-z0-9_.]*)\s*\(([^()]*)$/.exec(before);
+    if (!match) return undefined;
+    const callable = match[1];
+    const segments = callable.split('.');
+    const name = segments[segments.length - 1];
+    let entry = index.hover.get(callable);
+    if (!entry && segments.length > 1) {
+        const qualifier = segments[segments.length - 2];
+        const variable = variableInfo(index, text, position, qualifier);
+        const owner = variable && variable.type
+            ? variable.type.replace(/^(?:raw|weak)\s+/, '').replace(/\*$/, '')
+            : segments.slice(0, -1).join('.');
+        entry = index.hover.get(`${owner}.${name}`);
+    }
+    if (!entry) entry = index.hover.get(name);
+    if (!entry || !entry.detail.includes('(')) return undefined;
+
+    const open = entry.detail.indexOf('(');
+    const close = entry.detail.lastIndexOf(')');
+    const parameterText = close > open ? entry.detail.slice(open + 1, close).trim() : '';
+    const parameters = parameterText
+        ? parameterText.split(',').map(parameter => ({
+            label: parameter.trim(),
+            documentation: `Parameter \`${parameter.trim()}\``
+        }))
+        : [];
+    const activeParameter = Math.min(
+        parameters.length ? parameters.length - 1 : 0,
+        (match[2].match(/,/g) || []).length
+    );
+    return {
+        signatures: [{
+            label: entry.detail,
+            documentation: entry.documentation || `From plugin ${entry.plugin}`,
+            parameters
+        }],
+        activeSignature: 0,
+        activeParameter
+    };
 }
 
 /**
@@ -702,6 +959,7 @@ module.exports = {
     loadEditorIndex,
     completionItems,
     hoverFor,
+    signatureHelpFor,
     semanticTokens,
     extractOpaqueBlocks,
     opaqueVirtualUri,

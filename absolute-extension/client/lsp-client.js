@@ -51,6 +51,12 @@ class LspClient {
                     synchronization: { dynamicRegistration: false },
                     completion: { completionItem: { snippetSupport: true } },
                     hover: { contentFormat: ['markdown'] },
+                    signatureHelp: {
+                        signatureInformation: {
+                            documentationFormat: ['markdown'],
+                            parameterInformation: { labelOffsetSupport: true }
+                        }
+                    },
                     definition: {},
                     references: {},
                     rename: { prepareSupport: true },
@@ -239,6 +245,41 @@ class LspClient {
                 return new vscode.Hover(new vscode.MarkdownString(value), hover.range ? asRange(hover.range) : undefined);
             }
         }));
+
+        context.subscriptions.push(vscode.languages.registerSignatureHelpProvider(selector, {
+            provideSignatureHelp: async (document, position, _token, contextInfo) => {
+                const result = await this.request('textDocument/signatureHelp', {
+                    textDocument: { uri: document.uri.toString() },
+                    position: { line: position.line, character: position.character },
+                    context: {
+                        triggerKind: contextInfo.triggerKind,
+                        triggerCharacter: contextInfo.triggerCharacter,
+                        isRetrigger: contextInfo.isRetrigger
+                    }
+                });
+                if (!result || !Array.isArray(result.signatures)) return undefined;
+                const help = new vscode.SignatureHelp();
+                help.activeSignature = result.activeSignature || 0;
+                help.activeParameter = result.activeParameter || 0;
+                help.signatures = result.signatures.map(signature => {
+                    const info = new vscode.SignatureInformation(
+                        signature.label,
+                        signature.documentation
+                            ? new vscode.MarkdownString(signature.documentation)
+                            : undefined
+                    );
+                    info.parameters = (signature.parameters || []).map(parameter =>
+                        new vscode.ParameterInformation(
+                            parameter.label,
+                            parameter.documentation
+                                ? new vscode.MarkdownString(parameter.documentation)
+                                : undefined
+                        ));
+                    return info;
+                });
+                return help;
+            }
+        }, '(', ','));
 
         context.subscriptions.push(vscode.languages.registerDefinitionProvider(selector, {
             provideDefinition: async (document, position) => {

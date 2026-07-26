@@ -3,7 +3,7 @@
   "displayName": "Absolute Language",
   "description": "Absolute language support with LSP intelligence, plugin-aware IntelliSense, build, run, and native debugging.",
   "publisher": "FuryBaM",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "repository": {
     "type": "git",
     "url": "https://github.com/FuryBaM/Absolute.git"
@@ -129,8 +129,8 @@
       "properties": {
         "absolute.compilerPath": {
           "type": "string",
-          "default": "absolutec",
-          "description": "Path to the Absolute compiler used for native builds and LSP diagnostics."
+          "default": "auto",
+          "description": "Absolute compiler path. 'auto' searches ABSOLUTEC, the workspace .absolute/build directories, common build layouts, and PATH."
         },
         "absolute.compilerArguments": {
           "type": "array",
@@ -185,7 +185,8 @@
     }
   },
   "scripts": {
-    "check": "node --check extension.js && node --check client/lsp-client.js && node --check server/lsp-server.js && node --check server/language.js && node --check opaque-docs.js && node --check tools/absolute-repl.js && node --check ../tools/absolute-repl.js",
+    "check": "node --check extension.js && node --check toolchain.js && node --check client/lsp-client.js && node --check server/lsp-server.js && node --check server/language.js && node --check opaque-docs.js && node --check tools/absolute-repl.js && node --check ../tools/absolute-repl.js",
+    "test": "node test/language-smoke.js",
     "package": "npx @vscode/vsce package --allow-missing-repository",
     "fmt-smoke": "node ../tools/absolute-dev.js fmt ../tests/std-log.abs"
   }

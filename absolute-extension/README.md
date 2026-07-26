@@ -3,7 +3,9 @@
 Language support for `.abs` files with:
 
 - **LSP language intelligence** (`server/lsp-server.js`)
-  - completion / hover (plugin editor sidecars + core language)
+  - type-aware completion, rich hover, and signature help
+  - inferred managed-owner types and RAII lifetime information
+  - plugin editor sidecars + core language documentation
   - go-to-definition, find references, rename
   - document / workspace symbols
   - semantic highlighting
@@ -12,6 +14,7 @@ Language support for `.abs` files with:
   - compiler diagnostics via `absolutec`
 - native **build / run / debug**
 - project and plugin discovery (safe JSON sidecars only; native DLL/SO never loads in VS Code)
+- automatic compiler/plugin discovery from workspace `.absolute/build` layouts
 
 ## Commands
 
@@ -30,7 +33,7 @@ See also [docs/debugging.md](https://github.com/FuryBaM/Absolute/blob/main/docs/
 
 | Setting | Purpose |
 |--------|---------|
-| `absolute.compilerPath` | `absolutec` for builds and LSP diagnostics |
+| `absolute.compilerPath` | `auto` (recommended) or an explicit compiler path |
 | `absolute.compilerArguments` | Extra compiler args |
 | `absolute.buildCommand` | Optional full build command (`{input}`, `{output}`, `{workspace}`, `{plugins}`) |
 | `absolute.outputDirectory` | Optional override; projects default to `build/`, files to `.absolute/out/` |
@@ -38,7 +41,12 @@ See also [docs/debugging.md](https://github.com/FuryBaM/Absolute/blob/main/docs/
 | `absolute.editorMetadata` | Editor-only `*.editor.json` sidecars |
 | `absolute.debugger` | `auto` / `cppvsdbg` / `cppdbg` |
 
-Example for using the compiler built in this repository:
+The default `auto` mode checks `ABSOLUTEC`, workspace `.absolute/build`
+directories, common CMake/Visual Studio layouts, and finally `PATH`. Desktop,
+math, and shader plugins built in the same workspace are detected automatically
+and selected from the source being compiled.
+
+Explicit override:
 
 ```json
 {

@@ -9,6 +9,7 @@
       "name": "Desktop.Window",
       "detail": "class Desktop.Window",
       "documentation": "Managed Win32/X11 window. Native declarations are supplied by the plugin; scope exit releases the handle automatically.",
+      "ownership": "Managed RAII owner; native handle is released automatically.",
       "snippet": "new Desktop.Window(${1:\"Absolute\"}, ${2:800}, ${3:450}, ${4:true})",
       "members": [
         { "name": "poll", "detail": "bool poll()", "documentation": "Processes pending OS events and returns whether the window remains open." },
@@ -41,6 +42,7 @@
       "name": "Desktop.Font",
       "detail": "class Desktop.Font",
       "documentation": "RAII soft TrueType/system font (Windows GDI). Scope exit releases it automatically.",
+      "ownership": "Managed RAII owner.",
       "snippet": "auto ${1:font} = new Desktop.Font(${2:\"Segoe UI\"}, ${3:18}, Desktop.Font.StyleNormal);\n$4.drawFontText($1, ${5:16}, ${6:16}, ${7:\"Hello\"}, Desktop.rgb(255,255,255));",
       "members": [
         { "name": "loadFile", "detail": "bool loadFile(string path, int32 pixelHeight, int32 style)" },
@@ -70,6 +72,7 @@
       "name": "Desktop.Audio",
       "detail": "class Desktop.Audio",
       "documentation": "RAII WAV software mixer (Windows waveOut). loadWav, master volume, stopAll.",
+      "ownership": "Managed RAII owner; loaded Sound objects must not outlive this Audio device.",
       "snippet": "auto ${1:audio} = new Desktop.Audio();\nauto ${2:sfx} = $1.loadWav(${3:\"assets/beep.wav\"});\n$2.play(1.0);",
       "members": [
         { "name": "loadWav", "detail": "Sound* loadWav(string path)" },
@@ -83,6 +86,7 @@
       "name": "Desktop.Sound",
       "detail": "class Desktop.Sound",
       "documentation": "RAII decoded WAV clip. play(volume), playLoop(volume), stop.",
+      "ownership": "Managed RAII owner returned by Audio.loadWav.",
       "members": [
         { "name": "play", "detail": "bool play(float volume)" },
         { "name": "playLoop", "detail": "bool playLoop(float volume)" },
@@ -96,6 +100,7 @@
       "name": "Desktop.Sprite",
       "detail": "class Desktop.Sprite",
       "documentation": "RAII soft offscreen buffer for procedural art, BMP/PNG images, and baked text.",
+      "ownership": "Managed RAII owner.",
       "snippet": "new Desktop.Sprite(${1:64}, ${2:64})",
       "members": [
         { "name": "loadBmp", "detail": "bool loadBmp(string path)" },
@@ -113,6 +118,7 @@
       "name": "Desktop.SpriteBatch",
       "detail": "class Desktop.SpriteBatch",
       "documentation": "RAII soft atlas/sprite draw queue. begin(window, atlas), drawRect/drawSprite, end() before present.",
+      "ownership": "Managed RAII owner.",
       "snippet": "auto ${1:batch} = new Desktop.SpriteBatch();\n$1.begin(${2:window}, ${3:atlas});\n$1.drawRect(${4:x}, ${5:y}, ${6:sx}, ${7:sy}, ${8:sw}, ${9:sh});\n$1.end();",
       "members": [
         { "name": "begin", "detail": "void begin(Window* window, Sprite* atlas)" },
@@ -137,6 +143,7 @@
       "name": "Desktop.Gpu",
       "detail": "class Desktop.Gpu",
       "documentation": "RAII multi-backend RHI. Managed GPU resources are released automatically in reverse scope order.",
+      "ownership": "Managed RAII owner; declare child GPU resources after the device.",
       "snippet": "auto ${1:shader} = ${2:gpu}.createShader(${3:vs}, ${4:fs});\nauto ${5:buffer} = $2.createVertexBuffer(${6:vertices});\nauto ${7:layout} = $2.createLayoutPos3Color3();\nauto ${8:pipeline} = $2.createPipeline($1, $7);\n$2.beginFrame();\n$2.clear(0.06, 0.07, 0.12, 1.0);\n$2.bind($8);\n$2.bind($5);\n$2.draw(3);\n$2.endFrame();\n$2.present();",
       "members": [
         { "name": "isValid", "detail": "bool isValid()" },
@@ -163,28 +170,33 @@
     {
       "name": "Desktop.GpuTexture",
       "detail": "class Desktop.GpuTexture",
-      "documentation": "GPU texture from soft Sprite (RGBA8, color-key alpha)."
+      "documentation": "GPU texture from soft Sprite (RGBA8, color-key alpha).",
+      "ownership": "Managed RAII owner returned by Gpu.createTextureFromSprite."
     },
     {
       "name": "Desktop.VertexLayout",
       "detail": "class Desktop.VertexLayout",
       "documentation": "Vertex attribute layout for GpuPipeline. add(location, components, offsetBytes).",
+      "ownership": "Managed RAII owner.",
       "snippet": "auto ${1:layout} = new Desktop.VertexLayout(${2:24});\n$1.add(0, 3, 0);\n$1.add(1, 3, 12);"
     },
     {
       "name": "Desktop.GpuShader",
       "detail": "class Desktop.GpuShader",
-      "documentation": "Compiled GLSL program handle from Gpu.createShader."
+      "documentation": "Compiled shader program returned by Gpu.createShader.",
+      "ownership": "Managed RAII owner tied to its Gpu device."
     },
     {
       "name": "Desktop.GpuBuffer",
       "detail": "class Desktop.GpuBuffer",
-      "documentation": "GPU vertex buffer from Gpu.createVertexBuffer(float[])."
+      "documentation": "GPU vertex buffer from Gpu.createVertexBuffer(float[]).",
+      "ownership": "Managed RAII owner tied to its Gpu device."
     },
     {
       "name": "Desktop.GpuPipeline",
       "detail": "class Desktop.GpuPipeline",
-      "documentation": "Shader + vertex layout binding for Gpu.bind/draw."
+      "documentation": "Shader + vertex layout binding for Gpu.bind/draw.",
+      "ownership": "Managed RAII owner tied to its Gpu device."
     }
   ],
   "functions": [

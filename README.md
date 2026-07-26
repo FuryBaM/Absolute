@@ -468,7 +468,7 @@ Package and install the VS Code extension:
 ```powershell
 cd absolute-extension
 npx @vscode/vsce package
-code --install-extension absolute-extension-0.3.2.vsix --force
+code --install-extension absolute-extension-0.3.3.vsix --force
 ```
 
 Use `F5` to build and debug or `Ctrl+F5` to build and run. Compiler paths,

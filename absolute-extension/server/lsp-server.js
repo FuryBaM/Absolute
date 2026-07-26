@@ -9,13 +9,16 @@
 const fs = require('fs');
 const path = require('path');
 const lang = require('./language');
+const toolchain = require('../toolchain');
 
 const documents = new Map(); // uri -> { text, version }
 let workspaceFolders = [];
 let pluginIndex = lang.emptyPluginIndex();
 let workspaceSymbols = new Map();
-let compilerPath = 'absolutec';
+let compilerPath = '';
 let compilerArguments = [];
+let availablePlugins = [];
+let configuredPlugins = [];
 let initialized = false;
 
 function writeMessage(message) {
@@ -51,7 +54,21 @@ function publishDiagnostics(uri) {
     const doc = documents.get(uri);
     if (!doc) return;
     const filePath = lang.uriToPath(uri);
-    const diagnostics = lang.runCompilerDiagnostics(filePath, compilerPath, compilerArguments);
+    const discovered = {
+        desktop: availablePlugins.find(file => /absolute-desktop[.]absplugin$/i.test(file)),
+        math: availablePlugins.find(file => /absolute-math[.](?:dll|so|dylib)$/i.test(file)),
+        shader: availablePlugins.find(file => /absolute-shader[.](?:dll|so|dylib)$/i.test(file))
+    };
+    const sourcePlugins = toolchain.selectPluginsForSource(
+        filePath,
+        discovered,
+        configuredPlugins
+    );
+    const diagnostics = lang.runCompilerDiagnostics(
+        filePath,
+        compilerPath,
+        [...compilerArguments, ...toolchain.pluginArguments(sourcePlugins)]
+    );
     notify('textDocument/publishDiagnostics', { uri, diagnostics });
 }
 
@@ -186,13 +203,16 @@ function handleRequest(message) {
                 workspaceFolders = [{ uri: params.rootUri }];
             }
             if (params.initializationOptions) {
-                if (params.initializationOptions.compilerPath)
+                if (Object.prototype.hasOwnProperty.call(params.initializationOptions, 'compilerPath'))
                     compilerPath = params.initializationOptions.compilerPath;
                 if (Array.isArray(params.initializationOptions.compilerArguments))
                     compilerArguments = params.initializationOptions.compilerArguments;
                 if (Array.isArray(params.initializationOptions.plugins))
-                    pluginIndex = lang.loadEditorIndex(params.initializationOptions.plugins,
-                        params.initializationOptions.editorMetadata || []);
+                    availablePlugins = params.initializationOptions.plugins;
+                if (Array.isArray(params.initializationOptions.configuredPlugins))
+                    configuredPlugins = params.initializationOptions.configuredPlugins;
+                pluginIndex = lang.loadEditorIndex(availablePlugins,
+                    params.initializationOptions.editorMetadata || []);
             }
             refreshWorkspaceIndex();
             respond(id, {
@@ -200,6 +220,7 @@ function handleRequest(message) {
                     textDocumentSync: { openClose: true, change: 1, save: { includeText: false } },
                     completionProvider: { triggerCharacters: ['.'] },
                     hoverProvider: true,
+                    signatureHelpProvider: { triggerCharacters: ['(', ','] },
                     definitionProvider: true,
                     referencesProvider: true,
                     renameProvider: { prepareProvider: true },
@@ -215,7 +236,7 @@ function handleRequest(message) {
                         full: true
                     }
                 },
-                serverInfo: { name: 'absolute-lsp', version: '0.3.0' }
+                serverInfo: { name: 'absolute-lsp', version: '0.3.3' }
             });
             return;
         }
@@ -230,6 +251,11 @@ function handleRequest(message) {
         case 'textDocument/hover': {
             const doc = documents.get(params.textDocument.uri);
             respond(id, doc ? (lang.hoverFor(pluginIndex, doc.text, params.position) || null) : null);
+            return;
+        }
+        case 'textDocument/signatureHelp': {
+            const doc = documents.get(params.textDocument.uri);
+            respond(id, doc ? (lang.signatureHelpFor(pluginIndex, doc.text, params.position) || null) : null);
             return;
         }
         case 'textDocument/definition':
@@ -281,11 +307,15 @@ function handleRequest(message) {
             return;
         }
         case 'absolute/setConfiguration': {
-            if (params.compilerPath) compilerPath = params.compilerPath;
+            if (Object.prototype.hasOwnProperty.call(params, 'compilerPath'))
+                compilerPath = params.compilerPath;
             if (Array.isArray(params.compilerArguments)) compilerArguments = params.compilerArguments;
             if (Array.isArray(params.plugins) || Array.isArray(params.editorMetadata)) {
-                pluginIndex = lang.loadEditorIndex(params.plugins || [], params.editorMetadata || []);
+                availablePlugins = params.plugins || [];
+                pluginIndex = lang.loadEditorIndex(availablePlugins, params.editorMetadata || []);
             }
+            if (Array.isArray(params.configuredPlugins))
+                configuredPlugins = params.configuredPlugins;
             refreshWorkspaceIndex();
             respond(id, { ok: true, plugins: pluginIndex.plugins.length, symbols: workspaceSymbols.size });
             return;

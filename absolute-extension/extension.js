@@ -6,6 +6,7 @@ const path = require('path');
 const childProcess = require('child_process');
 const { LspClient } = require('./client/lsp-client');
 const opaqueDocs = require('./opaque-docs');
+const toolchain = require('./toolchain');
 
 let statusBar;
 let output;
@@ -96,16 +97,41 @@ function resolveConfiguredPath(value, base, folder, file) {
     return path.isAbsolute(expanded) ? path.normalize(expanded) : path.resolve(base, expanded);
 }
 
+function contextRoots(folder, source) {
+    return toolchain.candidateRoots([
+        source,
+        folder && folder.uri && folder.uri.fsPath,
+        ...(vscode.workspace.workspaceFolders || []).map(item => item.uri.fsPath),
+        path.resolve(__dirname, '..')
+    ]);
+}
+
+function resolveCompiler(configuration, localSettings, folder, source) {
+    const configured = expandVariables(
+        configuredValue(configuration, localSettings, 'compilerPath', 'auto'),
+        folder,
+        source
+    );
+    return toolchain.resolveCompilerPath(configured, contextRoots(folder, source));
+}
+
 function collectPluginPaths() {
     const plugins = [];
     const editorMetadata = [];
+    const configuredPlugins = [];
     const folders = vscode.workspace.workspaceFolders || [];
     for (const folder of folders) {
         const configuration = vscode.workspace.getConfiguration('absolute', folder.uri);
-        for (const item of configuration.get('plugins', []))
-            plugins.push(resolveConfiguredPath(item, folder.uri.fsPath, folder));
+        for (const item of configuration.get('plugins', [])) {
+            const plugin = resolveConfiguredPath(item, folder.uri.fsPath, folder);
+            plugins.push(plugin);
+            configuredPlugins.push(plugin);
+        }
         for (const item of configuration.get('editorMetadata', []))
             editorMetadata.push(resolveConfiguredPath(item, folder.uri.fsPath, folder));
+        const discovered = toolchain.discoverPlugins(contextRoots(folder));
+        plugins.push(...discovered.all);
+        editorMetadata.push(...discovered.metadata);
         try {
             const projects = fs.readdirSync(folder.uri.fsPath)
                 .filter(name => name.endsWith('.absproj'))
@@ -116,6 +142,7 @@ function collectPluginPaths() {
                     const project = readJson(projectFile);
                     const root = path.dirname(projectFile);
                     for (const item of Array.isArray(project.plugins) ? project.plugins : [])
+                        configuredPlugins.push(path.resolve(root, item));
                         plugins.push(path.resolve(root, item));
                 } catch (_) { /* ignore */ }
             }
@@ -123,7 +150,8 @@ function collectPluginPaths() {
     }
     return {
         plugins: [...new Set(plugins.map(item => path.resolve(item)))],
-        editorMetadata: [...new Set(editorMetadata.map(item => path.resolve(item)))]
+        editorMetadata: [...new Set(editorMetadata.map(item => path.resolve(item)))],
+        configuredPlugins: [...new Set(configuredPlugins.map(item => path.resolve(item)))]
     };
 }
 
@@ -133,6 +161,7 @@ async function refreshPlugins(showMessage = false) {
     const editorMetadata = [];
     const pluginRecords = [];
     const errors = [];
+    const configuredPlugins = [];
 
     for (const folder of folders) {
         const configuration = vscode.workspace.getConfiguration('absolute', folder.uri);
@@ -140,8 +169,12 @@ async function refreshPlugins(showMessage = false) {
             .map(item => resolveConfiguredPath(item, folder.uri.fsPath, folder));
         const roots = configuration.get('plugins', [])
             .map(item => resolveConfiguredPath(item, folder.uri.fsPath, folder));
+        configuredPlugins.push(...roots);
         for (const item of configuration.get('editorMetadata', []))
             editorMetadata.push(resolveConfiguredPath(item, folder.uri.fsPath, folder));
+        const discovered = toolchain.discoverPlugins(contextRoots(folder));
+        roots.push(...discovered.all);
+        editorMetadata.push(...discovered.metadata);
 
         const projectPattern = new vscode.RelativePattern(folder, '**/*.absproj');
         const projects = await vscode.workspace.findFiles(projectPattern,
@@ -154,6 +187,7 @@ async function refreshPlugins(showMessage = false) {
                     configuredSearch.push(path.resolve(root, item));
                 for (const item of Array.isArray(project.plugins) ? project.plugins : [])
                     roots.push(path.resolve(root, item));
+                    configuredPlugins.push(path.resolve(root, item));
             } catch (error) {
                 errors.push(`${projectUri.fsPath}: ${error.message || error}`);
             }
@@ -192,11 +226,14 @@ async function refreshPlugins(showMessage = false) {
 
     if (lspClient && lspClient.ready) {
         const configuration = vscode.workspace.getConfiguration('absolute');
+        const compiler = resolveCompiler(configuration, undefined,
+            (vscode.workspace.workspaceFolders || [])[0]);
         await lspClient.setConfiguration({
-            compilerPath: configuration.get('compilerPath', 'absolutec'),
+            compilerPath: compiler.path || '',
             compilerArguments: configuration.get('compilerArguments', []),
             plugins,
-            editorMetadata
+            editorMetadata,
+            configuredPlugins: [...new Set(configuredPlugins)]
         });
     }
 
@@ -237,7 +274,7 @@ async function executeTaskAndWait(task) {
     return completion;
 }
 
-function executeProcessAndWait(command, args, cwd, useShell = false) {
+function executeProcessAndWait(command, args, cwd, useShell = false, environment = process.env) {
     return new Promise(resolve => {
         const printable = useShell ? command : [command, ...args].map(shellQuote).join(' ');
         output.appendLine(`> ${printable}`);
@@ -247,7 +284,7 @@ function executeProcessAndWait(command, args, cwd, useShell = false) {
             cwd,
             shell: useShell,
             windowsHide: false,
-            env: process.env
+            env: environment
         });
         child.stdout.on('data', data => output.append(data.toString()));
         child.stderr.on('data', data => output.append(data.toString()));
@@ -321,8 +358,9 @@ async function buildAbsolute(requestedSource) {
     const searchPaths = configuredValue(configuration, localSettings, 'pluginSearchPaths', [])
         .map(item => resolveConfiguredPath(item, workspace, variableFolder, source));
 
-    const pluginArguments = [];
-    for (const plugin of configuredPlugins) pluginArguments.push('--plugin', plugin);
+    const discoveredPlugins = toolchain.discoverPlugins(contextRoots(variableFolder, source));
+    const selectedPlugins = toolchain.selectPluginsForSource(source, discoveredPlugins, configuredPlugins);
+    const pluginArguments = toolchain.pluginArguments(selectedPlugins);
     for (const searchPath of searchPaths) pluginArguments.push('--plugin-path', searchPath);
     const customCommand = configuredValue(configuration, localSettings, 'buildCommand', '').trim();
     let execution;
@@ -339,13 +377,26 @@ async function buildAbsolute(requestedSource) {
         directCommand = command;
         directShell = true;
     } else {
-        const compiler = expandVariables(
-            configuredValue(configuration, localSettings, 'compilerPath', 'absolutec'), variableFolder, source);
+        const compilerResolution = resolveCompiler(configuration, localSettings, variableFolder, source);
+        if (!compilerResolution.path) {
+            output.clear();
+            output.appendLine('Absolute compiler was not found.');
+            output.appendLine('Checked:');
+            for (const candidate of compilerResolution.tried) output.appendLine(`  ${candidate}`);
+            output.show(true);
+            vscode.window.showErrorMessage(
+                'Absolute compiler was not found. Build it with absolute build-compiler --bootstrap or set absolute.compilerPath.');
+            return undefined;
+        }
+        const compiler = compilerResolution.path;
         const args = [];
         if (path.extname(input) === '.absproj') args.push('build');
         args.push(input, ...configuredValue(configuration, localSettings, 'compilerArguments', []), ...pluginArguments,
             projectType === 'lib' ? '--build-library' : '--build-exe', '-o', executable);
-        if (folder) execution = new vscode.ProcessExecution(compiler, args, { cwd: workspace });
+        if (folder) execution = new vscode.ProcessExecution(compiler, args, {
+            cwd: workspace,
+            env: toolchain.nativeBuildEnvironment()
+        });
         else { directCommand = compiler; directArguments = args; }
     }
     let exitCode;
@@ -356,7 +407,13 @@ async function buildAbsolute(requestedSource) {
         exitCode = await executeTaskAndWait(task);
     } else {
         output.clear();
-        exitCode = await executeProcessAndWait(directCommand, directArguments, workspace, directShell);
+        exitCode = await executeProcessAndWait(
+            directCommand,
+            directArguments,
+            workspace,
+            directShell,
+            directShell ? process.env : toolchain.nativeBuildEnvironment()
+        );
     }
     if (exitCode !== 0 || !fs.existsSync(executable)) {
         vscode.window.showErrorMessage(`Absolute build failed${exitCode === undefined ? '' : ` with exit code ${exitCode}`}.`);
@@ -508,12 +565,21 @@ async function evaluateExpressionCommand() {
     });
     if (!expression) return;
     const configuration = vscode.workspace.getConfiguration('absolute');
-    const compilerPath = configuration.get('compilerPath', 'absolutec');
+    const compiler = resolveCompiler(
+        configuration,
+        undefined,
+        (vscode.workspace.workspaceFolders || [])[0]
+    );
+    if (!compiler.path) {
+        vscode.window.showErrorMessage(
+            'Absolute compiler was not found. Build it or set absolute.compilerPath.');
+        return;
+    }
     output.appendLine(`abs> ${expression}`);
     output.show(true);
     let result;
     try {
-        result = loadRepl().evaluate(expression, '', { compilerPath });
+        result = loadRepl().evaluate(expression, '', { compilerPath: compiler.path });
     } catch (error) {
         vscode.window.showErrorMessage(error.message || String(error));
         return;
@@ -528,7 +594,16 @@ async function evaluateExpressionCommand() {
 
 async function openReplCommand() {
     const configuration = vscode.workspace.getConfiguration('absolute');
-    const compiler = configuration.get('compilerPath', 'absolutec');
+    const compiler = resolveCompiler(
+        configuration,
+        undefined,
+        (vscode.workspace.workspaceFolders || [])[0]
+    );
+    if (!compiler.path) {
+        vscode.window.showErrorMessage(
+            'Absolute compiler was not found. Build it or set absolute.compilerPath.');
+        return;
+    }
     const terminal = vscode.window.createTerminal({
         name: 'Absolute REPL',
         cwd: (vscode.workspace.workspaceFolders || [])[0]?.uri.fsPath
@@ -539,8 +614,8 @@ async function openReplCommand() {
         return;
     }
     const envPrefix = process.platform === 'win32'
-        ? `set ABSOLUTEC=${compiler}&& `
-        : `ABSOLUTEC=${JSON.stringify(compiler)} `;
+        ? `set ABSOLUTEC=${compiler.path}&& `
+        : `ABSOLUTEC=${JSON.stringify(compiler.path)} `;
     terminal.show();
     terminal.sendText(`${envPrefix}node ${JSON.stringify(replScript)}`);
 }
@@ -571,12 +646,24 @@ async function activate(context) {
 
     const configuration = vscode.workspace.getConfiguration('absolute');
     const boot = collectPluginPaths();
+    const compiler = resolveCompiler(
+        configuration,
+        undefined,
+        (vscode.workspace.workspaceFolders || [])[0]
+    );
+    if (!compiler.path) {
+        output.appendLine('Absolute compiler was not found automatically; LSP compiler diagnostics are disabled.');
+        output.appendLine('Build it with `absolute build-compiler --bootstrap` or set `absolute.compilerPath`.');
+    } else {
+        output.appendLine(`Absolute compiler: ${compiler.path}`);
+    }
     lspClient = new LspClient();
     await lspClient.start(context, {
-        compilerPath: configuration.get('compilerPath', 'absolutec'),
+        compilerPath: compiler.path || '',
         compilerArguments: configuration.get('compilerArguments', []),
         plugins: boot.plugins,
-        editorMetadata: boot.editorMetadata
+        editorMetadata: boot.editorMetadata,
+        configuredPlugins: boot.configuredPlugins
     });
     context.subscriptions.push({ dispose: () => lspClient.stop() });
 
