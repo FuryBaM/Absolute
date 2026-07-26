@@ -126,6 +126,12 @@ if [[ "$llvm_enabled" == ON ]]; then
         echo "Or rerun: bash build-termux.sh --bootstrap" >&2
         exit 1
     fi
+    if [[ ! -x "$PREFIX/bin/FileCheck" ]]; then
+        echo "Termux LLVM development tool is missing: $PREFIX/bin/FileCheck" >&2
+        echo "Install it with: pkg install llvm-tools" >&2
+        echo "Or rerun: bash build-termux.sh --bootstrap" >&2
+        exit 1
+    fi
 fi
 
 cmake_args=(
