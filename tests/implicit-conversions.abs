@@ -1,0 +1,62 @@
+double acceptDouble(double value) {
+    return value;
+}
+
+int64 widenReturn(int16 value) {
+    return value;
+}
+
+uint64 widenUnsignedReturn(uint8 value) {
+    return value;
+}
+
+double unsignedToDouble(uint8 value) {
+    return value;
+}
+
+uint8 doubleToUnsigned(double value) {
+    return value;
+}
+
+class ConversionBase {
+}
+
+class ConversionDerived : ConversionBase {
+}
+
+int32 main() {
+    int8 tiny = 42;
+    int64 wide = tiny;
+    uint8 byte = 255;
+    uint64 unsignedWide = byte;
+    double real = wide;
+    float narrowed = real;
+
+    double argument = acceptDouble(tiny);
+    double unsignedArgument = acceptDouble(byte);
+    int64 returned = widenReturn(tiny);
+    uint64 unsignedReturned = widenUnsignedReturn(byte);
+    double unsignedReal = unsignedToDouble(byte);
+    uint8 unsignedNarrowed = doubleToUnsigned(255.0);
+
+    float[] values = {1, 2, 3};
+
+    ConversionDerived* derived = new ConversionDerived();
+    ConversionBase* base = derived;
+    weak ConversionBase* observer = derived;
+
+    if (wide != 42) { return 11; }
+    if (unsignedWide != 255) { return 12; }
+    if (real != 42.0) { return 13; }
+    if (narrowed != 42.0) { return 14; }
+    if (argument != 42.0) { return 15; }
+    if (unsignedArgument != 255.0) { return 16; }
+    if (returned != 42) { return 17; }
+    if (unsignedReturned != 255) { return 18; }
+    if (unsignedReal != 255.0) { return 19; }
+    if (unsignedNarrowed != 255) { return 20; }
+    if (values[2] != 3.0) { return 21; }
+    if (base == null || observer == null) { return 22; }
+    println("implicit-conversions=ok");
+    return 0;
+}

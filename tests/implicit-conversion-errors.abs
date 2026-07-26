@@ -1,0 +1,5 @@
+int32 main() {
+    int32 number = "42";
+    bool flag = 1;
+    return 0;
+}

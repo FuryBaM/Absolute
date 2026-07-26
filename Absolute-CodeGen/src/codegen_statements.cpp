@@ -207,7 +207,9 @@ namespace Absolute {
         llvm::Type* expectedReturn = impl->currentReturnStorage
             ? impl->TypeFromName(impl->currentReturnTypeName)
             : function->getReturnType();
-        llvm::Value* result = impl->Coerce(impl->Evaluate(stmt->expr.get()), expectedReturn);
+        llvm::Value* result = impl->Coerce(
+            impl->Evaluate(stmt->expr.get()), expectedReturn,
+            impl->SemanticType(stmt->expr.get()), impl->currentReturnTypeName);
         SymbolId transferredOwner = InvalidSymbolId;
         if (IsStrongManagedPointerTypeName(impl->currentReturnTypeName)) {
             const auto* returnedIdentifier = dynamic_cast<IdentifierExpr*>(stmt->expr.get());

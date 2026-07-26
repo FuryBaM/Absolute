@@ -492,6 +492,18 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/base-language.abs"
     )
     add_test(
+        NAME absolute.implicit-conversions-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/implicit-conversions.abs"
+    )
+    set_tests_properties(absolute.implicit-conversions-semantic PROPERTIES
+        PASS_REGULAR_EXPRESSION "implicit-conversions=ok"
+    )
+    add_test(
+        NAME absolute.implicit-conversion-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/implicit-conversion-errors.abs"
+    )
+    set_tests_properties(absolute.implicit-conversion-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.base-language-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/base-language-errors.abs"
     )
@@ -2162,6 +2174,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-base-language PROPERTIES
             FIXTURES_REQUIRED absolute-base-language-executable
             PASS_REGULAR_EXPRESSION "base-language=ok"
+        )
+        add_test(
+            NAME absolute.build-implicit-conversions
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/implicit-conversions.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/implicit-conversions-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-implicit-conversions PROPERTIES
+            FIXTURES_SETUP absolute-implicit-conversions-executable
+        )
+        add_test(NAME absolute.run-implicit-conversions
+            COMMAND "${CMAKE_BINARY_DIR}/implicit-conversions-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-implicit-conversions PROPERTIES
+            FIXTURES_REQUIRED absolute-implicit-conversions-executable
+            PASS_REGULAR_EXPRESSION "implicit-conversions=ok"
         )
         add_test(
             NAME absolute.build-managed-fast-path

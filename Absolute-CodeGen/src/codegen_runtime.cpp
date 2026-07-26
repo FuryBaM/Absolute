@@ -212,6 +212,11 @@ namespace Absolute {
         llvm::Value* argument = Evaluate(expression);
         if (valueCreatesArrayOwner) temporaryArrayOwners.push_back(valueArrayOwner);
         if (valueCreatesClosureOwner) temporaryClosureOwners.push_back(argument);
+        if (!parameterType.empty()) {
+            const std::string targetType = ValueReferenceBaseTypeName(parameterType);
+            argument = Coerce(argument, TypeFromName(targetType),
+                SemanticType(expression), targetType);
+        }
         return argument;
     }
 
@@ -480,21 +485,38 @@ namespace Absolute {
     }
 
     llvm::Value* CodeGenerator::Impl::Coerce(llvm::Value* source, llvm::Type* target) {
+        return Coerce(source, target, {}, {});
+    }
+
+    llvm::Value* CodeGenerator::Impl::Coerce(llvm::Value* source, llvm::Type* target,
+        const std::string& sourceTypeName, const std::string& targetTypeName) {
         if (!source) Fail("cannot convert an empty value");
         llvm::Type* sourceType = source->getType();
         if (sourceType == target) return source;
+        const std::string& semanticSource =
+            sourceTypeName.empty() ? currentValueType : sourceTypeName;
+        const std::string sourceValueType = ValueReferenceBaseTypeName(semanticSource);
+        const std::string targetValueType = ValueReferenceBaseTypeName(targetTypeName);
+        const bool sourceUnsigned = sourceValueType.starts_with("uint") ||
+            sourceValueType == "char" || sourceValueType == "bool";
+        const bool targetUnsigned = targetValueType.starts_with("uint") ||
+            targetValueType == "char" || targetValueType == "bool";
 
         if (target->isIntegerTy(64) && llvm::isa<llvm::ConstantPointerNull>(source))
             return builder.getInt64(0);
 
         if (sourceType->isIntegerTy() && target->isIntegerTy()) {
-            return builder.CreateIntCast(source, target, true, "int.cast");
+            return builder.CreateIntCast(source, target, !sourceUnsigned, "int.cast");
         }
         if (sourceType->isIntegerTy() && target->isFloatingPointTy()) {
-            return builder.CreateSIToFP(source, target, "int.to.fp");
+            return sourceUnsigned
+                ? builder.CreateUIToFP(source, target, "uint.to.fp")
+                : builder.CreateSIToFP(source, target, "int.to.fp");
         }
         if (sourceType->isFloatingPointTy() && target->isIntegerTy()) {
-            return builder.CreateFPToSI(source, target, "fp.to.int");
+            return targetUnsigned
+                ? builder.CreateFPToUI(source, target, "fp.to.uint")
+                : builder.CreateFPToSI(source, target, "fp.to.int");
         }
         if (sourceType->isFloatingPointTy() && target->isFloatingPointTy()) {
             return builder.CreateFPCast(source, target, "fp.cast");
@@ -539,6 +561,12 @@ namespace Absolute {
     }
 
     llvm::Value* CodeGenerator::Impl::ApplyBinary(const std::string& op, llvm::Value* left, llvm::Value* right) {
+        return ApplyBinary(op, left, right, {}, {});
+    }
+
+    llvm::Value* CodeGenerator::Impl::ApplyBinary(
+        const std::string& op, llvm::Value* left, llvm::Value* right,
+        const std::string& leftTypeName, const std::string& rightTypeName) {
         if (op == "&&" || op == "||") {
             left = AsCondition(left);
             right = AsCondition(right);
@@ -547,8 +575,14 @@ namespace Absolute {
         }
 
         llvm::Type* type = CommonNumericType(left->getType(), right->getType());
-        left = Coerce(left, type);
-        right = Coerce(right, type);
+        std::string commonTypeName;
+        if (leftTypeName == "double" || rightTypeName == "double") commonTypeName = "double";
+        else if (leftTypeName == "float" || rightTypeName == "float") commonTypeName = "float";
+        else if (leftTypeName == "int64" || rightTypeName == "int64" ||
+            leftTypeName == "uint64" || rightTypeName == "uint64") commonTypeName = "int64";
+        else if (!leftTypeName.empty() || !rightTypeName.empty()) commonTypeName = "int32";
+        left = Coerce(left, type, leftTypeName, commonTypeName);
+        right = Coerce(right, type, rightTypeName, commonTypeName);
         const bool floating = type->isFloatingPointTy();
 
         if (op == "+") return floating ? builder.CreateFAdd(left, right, "add") : builder.CreateAdd(left, right, "add");

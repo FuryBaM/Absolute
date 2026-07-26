@@ -64,11 +64,20 @@
 
         llvm::Value* Coerce(llvm::Value* source, llvm::Type* target);
 
+        llvm::Value* Coerce(llvm::Value* source, llvm::Type* target,
+            const std::string& sourceTypeName,
+            const std::string& targetTypeName);
+
         llvm::Type* CommonNumericType(llvm::Type* left, llvm::Type* right);
 
         llvm::Value* AsCondition(llvm::Value* condition);
 
         llvm::Value* ApplyBinary(const std::string& op, llvm::Value* left, llvm::Value* right);
+
+        llvm::Value* ApplyBinary(const std::string& op,
+            llvm::Value* left, llvm::Value* right,
+            const std::string& leftTypeName,
+            const std::string& rightTypeName);
 
         llvm::Value* One(llvm::Type* type);
 

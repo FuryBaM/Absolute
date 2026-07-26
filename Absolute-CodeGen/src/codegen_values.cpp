@@ -23,7 +23,8 @@ namespace Absolute {
                 assigned = impl->ApplyBinary(
                     expr->op.substr(0, expr->op.size() - 1), current, assigned);
             }
-            assigned = impl->Coerce(assigned, impl->TypeFromName(targetTypeName));
+            assigned = impl->Coerce(assigned, impl->TypeFromName(targetTypeName),
+                impl->SemanticType(expr->value.get()), targetTypeName);
             impl->EmitPropertyAccessor(receiver, receiverType,
                 CallableKey(PropertySetterName(propertyName), {targetTypeName}), {assigned});
             impl->value = assigned;
@@ -47,7 +48,8 @@ namespace Absolute {
                 assigned = impl->ApplyBinary(
                     expr->op.substr(0, expr->op.size() - 1), current, assigned);
             }
-            assigned = impl->Coerce(assigned, impl->TypeFromName(targetTypeName));
+            assigned = impl->Coerce(assigned, impl->TypeFromName(targetTypeName),
+                impl->SemanticType(expr->value.get()), targetTypeName);
             std::vector<std::string> setterTypes = targetInfo->parameterTypes;
             setterTypes.push_back(targetTypeName);
             arguments.push_back(assigned);
@@ -111,7 +113,8 @@ namespace Absolute {
                 impl->builder.CreateCall(impl->ClosureRetain(), {assigned});
             impl->EmitValueCleanup(targetAddress, targetTypeName);
         }
-        assigned = impl->Coerce(assigned, targetType);
+        assigned = impl->Coerce(assigned, targetType,
+            impl->SemanticType(expr->value.get()), targetTypeName);
         impl->builder.CreateStore(assigned, targetAddress);
         impl->value = assigned;
         impl->valueCreatesManagedOwner = false;
@@ -184,7 +187,9 @@ namespace Absolute {
                 std::vector<Expression*> values;
                 FlattenArrayValues(*literal, values);
                 for (size_t index = 0; index < values.size(); ++index) {
-                    llvm::Value* initial = impl->Coerce(impl->Evaluate(values[index]), elementType);
+                    llvm::Value* initial = impl->Coerce(
+                        impl->Evaluate(values[index]), elementType,
+                        impl->SemanticType(values[index]), baseTypeName);
                     llvm::Value* destination = impl->builder.CreateInBoundsGEP(
                         elementType, address, impl->builder.getInt64(index), "array.initializer.element");
                     impl->builder.CreateStore(initial, destination);
@@ -249,7 +254,8 @@ namespace Absolute {
             typeName, closureReturn, closureParameters);
         if (functionValue && !createsClosureOwner)
             impl->builder.CreateCall(impl->ClosureRetain(), {initial});
-        initial = impl->Coerce(initial, type);
+        initial = impl->Coerce(initial, type,
+            expr->value ? impl->SemanticType(expr->value.get()) : typeName, typeName);
         impl->builder.CreateStore(initial, address);
         if (functionValue)
             impl->RequireVariable(name).ownsAggregateResources = true;
@@ -410,7 +416,8 @@ namespace Absolute {
             return;
         }
         llvm::Type* target = impl->ResolveType(expr->typeName.get());
-        impl->value = impl->Coerce(impl->Evaluate(expr->base.get()), target);
+        impl->value = impl->Coerce(impl->Evaluate(expr->base.get()), target,
+            sourceType, declaredTarget);
     }
 
     void CodeGenerator::Visit(ConstructorCallExpr* expr) {

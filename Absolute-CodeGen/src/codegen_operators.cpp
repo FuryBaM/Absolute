@@ -109,7 +109,7 @@ namespace Absolute {
             impl->valueCreatesManagedOwner = false;
             return;
         }
-        impl->value = impl->ApplyBinary(expr->op, left, right);
+        impl->value = impl->ApplyBinary(expr->op, left, right, leftType, rightType);
     }
 
     void CodeGenerator::Visit(TernaryExpr* expr) {
@@ -132,11 +132,14 @@ namespace Absolute {
         falseBlock = impl->builder.GetInsertBlock();
         impl->BranchIfNeeded(mergeBlock);
 
+        const std::string trueType = impl->SemanticType(expr->trueExpr.get());
+        const std::string falseType = impl->SemanticType(expr->falseExpr.get());
+        const std::string resultTypeName = impl->SemanticType(expr);
         llvm::Type* resultType = impl->CommonNumericType(trueValue->getType(), falseValue->getType());
         impl->builder.SetInsertPoint(trueBlock->getTerminator());
-        trueValue = impl->Coerce(trueValue, resultType);
+        trueValue = impl->Coerce(trueValue, resultType, trueType, resultTypeName);
         impl->builder.SetInsertPoint(falseBlock->getTerminator());
-        falseValue = impl->Coerce(falseValue, resultType);
+        falseValue = impl->Coerce(falseValue, resultType, falseType, resultTypeName);
         impl->builder.SetInsertPoint(mergeBlock);
         llvm::PHINode* result = impl->builder.CreatePHI(resultType, 2, "ternary.result");
         result->addIncoming(trueValue, trueBlock);
@@ -197,7 +200,9 @@ namespace Absolute {
             byteCount, llvm::MaybeAlign(16));
 
         for (size_t index = 0; index < values.size(); ++index) {
-            llvm::Value* initial = impl->Coerce(impl->Evaluate(values[index]), elementType);
+            llvm::Value* initial = impl->Coerce(
+                impl->Evaluate(values[index]), elementType,
+                impl->SemanticType(values[index]), elementTypeName);
             llvm::Value* destination = impl->builder.CreateInBoundsGEP(
                 elementType, address, impl->builder.getInt64(index), "array.literal.element");
             impl->builder.CreateStore(initial, destination);
