@@ -139,7 +139,12 @@ namespace Absolute {
                 llvm::Argument* argument = function.getArg(
                     offset + static_cast<unsigned>(index));
                 argument->addAttr(llvm::Attribute::NonNull);
+#if LLVM_VERSION_MAJOR >= 21
+                argument->addAttr(llvm::Attribute::getWithCaptureInfo(
+                    function.getContext(), llvm::CaptureInfo::none()));
+#else
                 argument->addAttr(llvm::Attribute::NoCapture);
+#endif
                 if (IsConstValueReferenceTypeName(type))
                     argument->addAttr(llvm::Attribute::ReadOnly);
             }
