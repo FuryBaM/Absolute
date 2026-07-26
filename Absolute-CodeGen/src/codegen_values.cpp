@@ -137,7 +137,8 @@ namespace Absolute {
             dimensions.reserve(arrayDeclarator->indexes.size());
 
             auto* literal = dynamic_cast<ArrayExpr*>(expr->value.get());
-            const auto inferredShape = literal ? InferArrayShape(*literal)
+            const auto inferredShape = literal ? InferArrayStorageShape(
+                *literal, arrayDeclarator->indexes.size())
                 : std::optional<std::vector<size_t>>{};
             for (size_t dimension = 0; dimension < arrayDeclarator->indexes.size(); ++dimension) {
                 llvm::Value* size = nullptr;

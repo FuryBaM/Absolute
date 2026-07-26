@@ -208,7 +208,7 @@ namespace Absolute {
                 }
             }
             if (const auto* literal = dynamic_cast<const ArrayExpr*>(expr->value.get())) {
-                initializerShape = InferArrayShape(*literal);
+                initializerShape = InferArrayStorageShape(*literal, arrayRank);
                 if (!initializerShape) Report("array initializer must be rectangular");
                 else if (initializerShape->size() != arrayRank)
                     Report("array initializer has " + std::to_string(initializerShape->size()) +

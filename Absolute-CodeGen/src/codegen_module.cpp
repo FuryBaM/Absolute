@@ -40,7 +40,7 @@ namespace Absolute {
         const std::string elementTypeName = ArrayElementTypeName(typeName, rank);
         llvm::Type* elementType = TypeFromName(elementTypeName);
         auto* literal = dynamic_cast<ArrayExpr*>(expression.value.get());
-        const auto inferredShape = literal ? InferArrayShape(*literal)
+        const auto inferredShape = literal ? InferArrayStorageShape(*literal, rank)
             : std::optional<std::vector<size_t>>{};
 
         std::vector<size_t> dimensions;

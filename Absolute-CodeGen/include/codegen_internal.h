@@ -273,6 +273,19 @@ namespace Absolute {
             return childShape;
         }
 
+        inline std::optional<std::vector<size_t>> InferArrayStorageShape(
+            const ArrayExpr& array, size_t declaredRank) {
+            auto shape = InferArrayShape(array);
+            if (!shape || declaredRank != 1 || shape->size() <= 1) return shape;
+            size_t count = 1;
+            for (size_t dimension : *shape) {
+                if (dimension != 0 && count > std::numeric_limits<size_t>::max() / dimension)
+                    return std::nullopt;
+                count *= dimension;
+            }
+            return std::vector<size_t>{count};
+        }
+
         inline void FlattenArrayValues(ArrayExpr& array, std::vector<Expression*>& output) {
             for (const auto& value : array.values) {
                 if (auto* nested = dynamic_cast<ArrayExpr*>(value.get())) FlattenArrayValues(*nested, output);

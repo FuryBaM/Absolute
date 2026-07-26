@@ -545,6 +545,18 @@ namespace Absolute {
         const Symbol* selected = table.Get(symbolId);
         if (selected && selected->kind == SymbolKind::Method)
             RequireAccess(selected->access, selected->memberOwner, selected->name, selected->id);
+        if (selected) {
+            for (size_t i = 0; i < arguments.size(); ++i) {
+                const size_t parameterIndex = i +
+                    (selected->extensionFunction && hasReceiver ? 1 : 0);
+                if (parameterIndex < selected->parameterTypes.size() &&
+                    dynamic_cast<ArrayExpr*>(expr->arguments[i].get())) {
+                    arguments[i] = EvaluateExpected(
+                        expr->arguments[i].get(),
+                        ValueReferenceBaseType(selected->parameterTypes[parameterIndex]));
+                }
+            }
+        }
         const std::string returnType = selected ? selected->type : "error";
         const bool asyncCall = selected && selected->asyncFunction;
         if (currentMethodConst && selected && selected->kind == SymbolKind::Method &&

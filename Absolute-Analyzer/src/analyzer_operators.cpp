@@ -126,13 +126,18 @@ namespace Absolute {
             if (!IsInteger(resolved.type)) Report("array size must be an integer");
         }
         const bool hasExpectedArrayType = expectedType.ends_with("[]");
+        const size_t expectedRank = hasExpectedArrayType ? ArrayRank(expectedType) : 0;
         const std::string expectedElementType = hasExpectedArrayType
             ? ArrayElementType(expectedType) : std::string{};
+        const auto literalShape = InferArrayShape(*expr);
+        if (!literalShape) Report("array literal must be rectangular");
+        const bool groupedFlatLiteral = expectedRank == 1 && literalShape &&
+            literalShape->size() > 1;
         std::string elementType;
-        for (const auto& value : expr->values) {
+        const auto evaluateElement = [&](Expression* value) {
             const Result resolved = hasExpectedArrayType
-                ? EvaluateExpected(value.get(), expectedElementType)
-                : Evaluate(value.get());
+                ? EvaluateExpected(value, expectedElementType)
+                : Evaluate(value);
             if (hasExpectedArrayType && !IsAssignable(expectedElementType, resolved.type))
                 Report("array element has type '" + resolved.type + "', expected '" + expectedElementType + "'");
             const std::string common = elementType.empty()
@@ -142,6 +147,18 @@ namespace Absolute {
                 Report("array literal mixes incompatible element types '" + elementType +
                     "' and '" + resolved.type + "'");
             elementType = common;
+        };
+        if (groupedFlatLiteral) {
+            const auto flatten = [&](const auto& self, ArrayExpr& array) -> void {
+                for (const auto& value : array.values) {
+                    if (auto* nested = dynamic_cast<ArrayExpr*>(value.get())) self(self, *nested);
+                    else evaluateElement(value.get());
+                }
+            };
+            flatten(flatten, *expr);
+        }
+        else {
+            for (const auto& value : expr->values) evaluateElement(value.get());
         }
         if (hasExpectedArrayType) Save(expr, {InvalidSymbolId, expectedType, false});
         else {

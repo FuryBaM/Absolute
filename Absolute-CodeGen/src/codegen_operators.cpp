@@ -177,7 +177,7 @@ namespace Absolute {
         const std::string typeName = impl->SemanticType(expr);
         const size_t rank = ArrayRankName(typeName);
         if (rank == 0) impl->Fail("array literal does not have an array type");
-        const auto shape = InferArrayShape(*expr);
+        const auto shape = InferArrayStorageShape(*expr, rank);
         if (!shape) impl->Fail("array literal must be rectangular");
         if (shape->size() != rank)
             impl->Fail("array literal rank does not match its semantic type");

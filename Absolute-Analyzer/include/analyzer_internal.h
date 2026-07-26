@@ -108,6 +108,19 @@ namespace Absolute {
             return childShape;
         }
 
+        inline std::optional<std::vector<size_t>> InferArrayStorageShape(
+            const ArrayExpr& array, size_t declaredRank) {
+            auto shape = InferArrayShape(array);
+            if (!shape || declaredRank != 1 || shape->size() <= 1) return shape;
+            size_t count = 1;
+            for (size_t dimension : *shape) {
+                if (dimension != 0 && count > std::numeric_limits<size_t>::max() / dimension)
+                    return std::nullopt;
+                count *= dimension;
+            }
+            return std::vector<size_t>{count};
+        }
+
         inline std::string TaskValueType(const std::string& type) {
             return IsTaskType(type) ? type.substr(5, type.size() - 6) : "error";
         }

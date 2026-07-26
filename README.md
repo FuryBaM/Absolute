@@ -1109,6 +1109,12 @@ values[2] += 12;
 int32 matrix[2][3] = {{1, 2, 3}, {4, 5, 6}};
 matrix[1][0] = values[2];
 
+// Nested groups, but one contiguous float[] with length 6.
+float[] vertices = {
+    {0.0, 0.5, 0.0},
+    {0.5, 0.0, 1.0}
+};
+
 int32 inferred[] = {7, 8, 9};
 int32 length = 16;
 int32 buffer[length];
@@ -1119,6 +1125,11 @@ must provide the complete index list, and generated code checks each index at
 runtime. An invalid size or out-of-bounds index prints a diagnostic and exits
 with a nonzero status. Literal shapes are checked statically for rank,
 rectangularity, and exact fixed dimensions.
+
+For a one-dimensional declaration (`T[]` or `T values[N]`), nested braces are
+readable record groups that flatten into one contiguous row-major buffer. The
+groups must be rectangular. A `T[][]` declaration still creates a true rank-2
+descriptor with multidimensional indexing.
 
 Code generation removes checks that are already true at compile time and emits
 `inbounds` addressing after every successful check. Native object and executable
