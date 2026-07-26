@@ -30,7 +30,10 @@ if(NOT BUILD_STATUS EQUAL 0)
 endif()
 
 get_filename_component(_wasm_dir "${OUTPUT}" DIRECTORY)
-set(RUNNER "${_wasm_dir}/run-wasm-marker-runner.js")
+# CTest runs these marker tests in parallel. A shared runner filename lets one
+# invocation overwrite another invocation's embedded marker before Node reads it.
+string(MD5 _runner_id "${OUTPUT}|${MARKER}")
+set(RUNNER "${_wasm_dir}/run-wasm-marker-${_runner_id}.js")
 file(WRITE "${RUNNER}" "
 const fs = require('fs');
 const { instantiateAbsoluteWasm } = require(process.argv[2]);
