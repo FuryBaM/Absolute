@@ -138,6 +138,12 @@
           "default": [],
           "description": "Additional arguments passed to absolutec before the selected project output mode / diagnostics."
         },
+        "absolute.runArguments": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Arguments passed to the built Absolute application by Run and Debug. They are available through std.env."
+        },
         "absolute.buildCommand": {
           "type": "string",
           "default": "",

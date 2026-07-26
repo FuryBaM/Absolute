@@ -331,6 +331,7 @@ async function buildAbsolute(requestedSource) {
         input = await nearestProject(source, variableFolder) || source;
     let projectName = path.basename(input, path.extname(input));
     let projectType = 'app';
+    let projectRunArguments = [];
     if (path.extname(input) === '.absproj') {
         try {
             const project = readJson(input);
@@ -338,10 +339,16 @@ async function buildAbsolute(requestedSource) {
             projectType = ['lib', 'library'].includes(String(project.type || 'app').toLowerCase())
                 ? 'lib'
                 : 'app';
+            if (Array.isArray(project.runArgs))
+                projectRunArguments = project.runArgs.map(value => String(value));
         } catch (_) { }
     }
     const workspace = variableFolder ? variableFolder.uri.fsPath : path.dirname(input);
     const configuredOutput = configuredValue(configuration, localSettings, 'outputDirectory', '').trim();
+    const runArguments = [
+        ...projectRunArguments,
+        ...configuredValue(configuration, localSettings, 'runArguments', []).map(value => String(value))
+    ].map(value => expandVariables(value, variableFolder, source));
     const outputDirectory = configuredOutput
         ? resolveConfiguredPath(configuredOutput, workspace, variableFolder, source)
         : (path.extname(input) === '.absproj'
@@ -419,7 +426,7 @@ async function buildAbsolute(requestedSource) {
         vscode.window.showErrorMessage(`Absolute build failed${exitCode === undefined ? '' : ` with exit code ${exitCode}`}.`);
         return undefined;
     }
-    return { executable, input, workspace, folder, projectType };
+    return { executable, input, workspace, folder, projectType, runArguments };
 }
 
 function projectFromUri(value) {
@@ -434,6 +441,11 @@ function validateProject(projectFile) {
     if (project.type && !['app', 'lib', 'application', 'library', 'exe'].includes(
         String(project.type).toLowerCase())) {
         throw new Error("property 'type' must be 'app' or 'lib'");
+    }
+    if (project.runArgs !== undefined &&
+        (!Array.isArray(project.runArgs) ||
+            project.runArgs.some(value => typeof value !== 'string'))) {
+        throw new Error("property 'runArgs' must be an array of strings");
     }
     const entry = path.resolve(path.dirname(projectFile), project.entry);
     if (!fs.existsSync(entry)) throw new Error(`entry source does not exist: ${entry}`);
@@ -496,7 +508,7 @@ async function runProject(resource, debug = false) {
         return;
     }
     if (debug) await startNativeDebug(artifact);
-    else await runArtifact(artifact);
+    else await runArtifact(artifact, artifact.runArguments);
 }
 
 async function runArtifact(artifact, args = []) {
@@ -535,7 +547,7 @@ async function startNativeDebug(artifact, launch = {}) {
     const debugConfiguration = {
         type: debugType, request: 'launch',
         name: launch.name || `Debug ${path.basename(artifact.executable)}`,
-        program: artifact.executable, args: launch.args || [],
+        program: artifact.executable, args: launch.args || artifact.runArguments || [],
         cwd: expandVariables(launch.cwd || artifact.workspace, artifact.folder, artifact.input),
         stopAtEntry: launch.stopAtEntry !== false,
         externalConsole: configuration.get('externalConsole', false)
@@ -677,11 +689,11 @@ async function activate(context) {
         vscode.commands.registerCommand('absolute.openRepl', openReplCommand),
         vscode.commands.registerCommand('absolute.runFile', async () => {
             const artifact = await buildAbsolute();
-            if (artifact) await runArtifact(artifact);
+            if (artifact) await runArtifact(artifact, artifact.runArguments);
         }),
         vscode.commands.registerCommand('absolute.debugFile', async () => {
             const artifact = await buildAbsolute();
-            if (artifact) await startNativeDebug(artifact);
+            if (artifact) await startNativeDebug(artifact, { args: artifact.runArguments });
         }),
         // Map breakpoints placed in absolute-opaque: virtual documents back to the host .abs line.
         vscode.debug.registerDebugAdapterTrackerFactory('*', {

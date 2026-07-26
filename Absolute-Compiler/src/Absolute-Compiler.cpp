@@ -333,7 +333,8 @@ namespace {
             "  \"name\": \"" + commandLine.projectName + "\",\n"
             "  \"type\": \"" + commandLine.projectType + "\",\n"
             "  \"entry\": \"" + entry + "\",\n"
-            "  \"sources\": [\"src\"]\n"
+            "  \"sources\": [\"src\"],\n"
+            "  \"runArgs\": []\n"
             "}\n";
         const std::string source = library
             ? "export \"C\" int32 " + symbolName + "_add(int32 left, int32 right) {\n"

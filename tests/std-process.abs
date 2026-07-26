@@ -1,4 +1,5 @@
 import "../std/process.abs";
+import "../std/env.abs";
 
 int32 main() {
     assert(std.process.pid() > 0, "PID must be positive");
@@ -7,6 +8,7 @@ int32 main() {
 
     assert(std.process.argsCount() >= 1, "args count must be at least 1");
     assert(std.process.argAt(0) != "", "argAt(0) must not be empty");
+    assert(std.env.argsCount() == 0, "std.env excludes the executable path");
 
     string output = std.process.runCapture("echo hello_process");
     assert(output != "", "captured output should not be empty");

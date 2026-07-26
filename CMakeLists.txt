@@ -1798,6 +1798,7 @@ if(BUILD_TESTING)
                     -DCOMPILER=$<TARGET_FILE:Absolute-Compiler>
                     -DNODE=${ABSOLUTE_NODE_EXECUTABLE}
                     -DCLI=${PROJECT_SOURCE_DIR}/tools/absolute-dev.js
+                    -DSTD_ENV=${PROJECT_SOURCE_DIR}/std/env.abs
                     -DWORK_DIR=${CMAKE_BINARY_DIR}/cli-project-types
                     -DAPP_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
                     -DLIB_PREFIX=${CMAKE_SHARED_LIBRARY_PREFIX}
@@ -2410,7 +2411,8 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-std-env-executable
         )
         add_test(NAME absolute.run-std-env
-            COMMAND "${CMAKE_BINARY_DIR}/std-env-app${CMAKE_EXECUTABLE_SUFFIX}")
+            COMMAND "${CMAKE_BINARY_DIR}/std-env-app${CMAKE_EXECUTABLE_SUFFIX}"
+                positional "--mode=fast" --output "hello world" --verbose)
         set_tests_properties(absolute.run-std-env PROPERTIES
             FIXTURES_REQUIRED absolute-std-env-executable
             PASS_REGULAR_EXPRESSION "std-env=ok"

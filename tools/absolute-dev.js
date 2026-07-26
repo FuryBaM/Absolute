@@ -206,11 +206,17 @@ function readProject(input) {
     if (type === 'library') type = 'lib';
     if (!['app', 'lib'].includes(type))
         throw new Error(`project type must be 'app' or 'lib': ${input}`);
+    if (project.runArgs !== undefined &&
+        (!Array.isArray(project.runArgs) ||
+            project.runArgs.some(value => typeof value !== 'string'))) {
+        throw new Error(`project runArgs must be an array of strings: ${input}`);
+    }
     return {
         file: path.resolve(input),
         root: path.dirname(path.resolve(input)),
         name: project.name,
         type,
+        runArgs: project.runArgs || [],
     };
 }
 
@@ -391,7 +397,7 @@ The first -- separates compiler options from arguments passed to the program.`);
 
     const separator = args.indexOf('--');
     const compileArgs = separator === -1 ? args : args.slice(0, separator);
-    const programArgs = separator === -1 ? [] : args.slice(separator + 1);
+    let programArgs = separator === -1 ? [] : args.slice(separator + 1);
     let parsed;
     try {
         parsed = splitInputAndOptions(compileArgs, true);
@@ -412,6 +418,7 @@ The first -- separates compiler options from arguments passed to the program.`);
         console.error(`project '${project.name}' is a library and cannot be run; use: absolute build`);
         return 1;
     }
+    if (project) programArgs = [...project.runArgs, ...programArgs];
     const options = normalizeOutputArguments(parsed.options);
     if (hasOutputMode(options)) {
         console.error('absolute run selects --build-exe automatically; remove the explicit output mode');

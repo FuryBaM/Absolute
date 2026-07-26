@@ -35,6 +35,7 @@ See also [docs/debugging.md](https://github.com/FuryBaM/Absolute/blob/main/docs/
 |--------|---------|
 | `absolute.compilerPath` | `auto` (recommended) or an explicit compiler path |
 | `absolute.compilerArguments` | Extra compiler args |
+| `absolute.runArguments` | Arguments passed to Run/Debug and exposed through `std.env` |
 | `absolute.buildCommand` | Optional full build command (`{input}`, `{output}`, `{workspace}`, `{plugins}`) |
 | `absolute.outputDirectory` | Optional override; projects default to `build/`, files to `.absolute/out/` |
 | `absolute.plugins` / `absolute.pluginSearchPaths` | Plugin roots |
@@ -53,6 +54,17 @@ Explicit override:
   "absolute.compilerPath": "${workspaceFolder}\\.absolute\\build\\windows-release\\Release\\absolutec.exe"
 }
 ```
+
+Run arguments can be configured without changing the source:
+
+```json
+{
+  "absolute.runArguments": ["--mode=fast", "--verbose"]
+}
+```
+
+An `.absproj` may provide shared defaults in `runArgs`. Debug configurations
+can override them with the standard `launch.json` `args` array.
 
 First-time setup: `absolute build-compiler --bootstrap` from the repo root.
 Application projects build and run normally. Library projects build a

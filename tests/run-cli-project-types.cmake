@@ -1,5 +1,6 @@
-if(NOT DEFINED COMPILER OR NOT DEFINED NODE OR NOT DEFINED CLI OR NOT DEFINED WORK_DIR)
-    message(FATAL_ERROR "COMPILER, NODE, CLI and WORK_DIR are required")
+if(NOT DEFINED COMPILER OR NOT DEFINED NODE OR NOT DEFINED CLI OR
+    NOT DEFINED STD_ENV OR NOT DEFINED WORK_DIR)
+    message(FATAL_ERROR "COMPILER, NODE, CLI, STD_ENV and WORK_DIR are required")
 endif()
 
 file(REMOVE_RECURSE "${WORK_DIR}")
@@ -31,6 +32,21 @@ file(READ "${app_project}" app_manifest)
 if(NOT app_manifest MATCHES "\"type\"[ \t]*:[ \t]*\"app\"")
     message(FATAL_ERROR "application manifest does not declare type=app:\n${app_manifest}")
 endif()
+if(NOT app_manifest MATCHES "\"runArgs\"[ \t]*:[ \t]*\\[\\]")
+    message(FATAL_ERROR "application manifest does not declare empty runArgs:\n${app_manifest}")
+endif()
+string(REPLACE "\"runArgs\": []" "\"runArgs\": [\"project-default\"]"
+    app_manifest "${app_manifest}")
+file(WRITE "${app_project}" "${app_manifest}")
+file(TO_CMAKE_PATH "${STD_ENV}" std_env_path)
+file(WRITE "${app_source}" "import \"${std_env_path}\";\n\n"
+    "int32 main() {\n"
+    "    assert(std.env.argsCount() == 2, \"project + CLI launch args\");\n"
+    "    assert(std.env.argAt(0) == \"project-default\", \"project runArgs order\");\n"
+    "    assert(std.env.argAt(1) == \"cli-test\", \"CLI run args order\");\n"
+    "    println(\"cli-run-args=ok\");\n"
+    "    return 0;\n"
+    "}\n")
 
 run_absolute_cli(build_app "${WORK_DIR}/CliApp" build)
 set(app_artifact "${WORK_DIR}/CliApp/build/CliApp${APP_SUFFIX}")
@@ -38,7 +54,7 @@ if(NOT EXISTS "${app_artifact}")
     message(FATAL_ERROR "application artifact was not created: ${app_artifact}")
 endif()
 run_absolute_cli(run_app "${WORK_DIR}/CliApp" run -- cli-test)
-if(NOT run_app_OUTPUT MATCHES "Hello from CliApp!")
+if(NOT run_app_OUTPUT MATCHES "cli-run-args=ok")
     message(FATAL_ERROR "application output was unexpected:\n${run_app_OUTPUT}")
 endif()
 

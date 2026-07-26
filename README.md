@@ -178,6 +178,7 @@ module:
   "type": "app",
   "entry": "src/main.abs",
   "sources": ["src"],
+  "runArgs": ["--mode=fast"],
   "plugins": ["plugins/absolute-unless.dll"],
   "nativeLibraries": ["native/MyLibrary.lib"],
   "nativeSearchPaths": ["native"]
@@ -187,7 +188,9 @@ module:
 `type` is optional for older projects and defaults to `app`. Library projects
 use `"type": "lib"`; `absolute build` produces `Name.dll` on Windows,
 `libName.so` on Linux, or `libName.dylib` on macOS. Use `export "C"` functions
-as the public library API.
+as the public library API. Application `runArgs` are passed by `absolute run`
+and exposed without the executable path through `std.env.argsCount()`,
+`std.env.argAt()`, `std.env.flag()`, and `std.env.parameter()`.
 
 Projects support recursive file imports and namespace imports:
 

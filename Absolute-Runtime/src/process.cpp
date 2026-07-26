@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #if defined(__APPLE__)
+#include <crt_externs.h>
 #include <mach-o/dyld.h>
 #endif
 #endif
@@ -60,22 +61,44 @@ namespace {
             LocalFree(argvW);
         }
 #else
+#if defined(__APPLE__)
+        const int argc = *_NSGetArgc();
+        char** argv = *_NSGetArgv();
+        if (argv) {
+            for (int i = 0; i < argc; ++i) {
+                if (argv[i]) args.emplace_back(argv[i]);
+            }
+        }
+#else
         FILE* f = std::fopen("/proc/self/cmdline", "rb");
         if (f) {
-            char buffer[4096];
-            size_t bytesRead = std::fread(buffer, 1, sizeof(buffer), f);
+            std::vector<char> buffer;
+            char chunk[4096];
+            size_t bytesRead = 0;
+            while ((bytesRead = std::fread(chunk, 1, sizeof(chunk), f)) != 0) {
+                buffer.insert(buffer.end(), chunk, chunk + bytesRead);
+            }
             std::fclose(f);
             size_t start = 0;
-            for (size_t i = 0; i < bytesRead; ++i) {
+            for (size_t i = 0; i < buffer.size(); ++i) {
                 if (buffer[i] == '\0') {
                     if (i > start) {
-                        args.push_back(std::string(&buffer[start], i - start));
+                        args.push_back(std::string(buffer.data() + start, i - start));
                     }
                     start = i + 1;
                 }
             }
+            if (start < buffer.size()) {
+                args.push_back(std::string(buffer.data() + start, buffer.size() - start));
+            }
         }
 #endif
+#endif
+        return args;
+    }
+
+    const std::vector<std::string>& CachedArgs() {
+        static const std::vector<std::string> args = FetchCachedArgs();
         return args;
     }
 }
@@ -193,18 +216,17 @@ extern "C" const char* absolute_process_run_capture(const char* command) {
 }
 
 extern "C" int32_t absolute_process_args_count() {
-    static const auto args = FetchCachedArgs();
+    const auto& args = CachedArgs();
     return static_cast<int32_t>(args.size());
 }
 
 extern "C" const char* absolute_process_arg_at(int32_t index) {
-    static const auto args = FetchCachedArgs();
+    const auto& args = CachedArgs();
     if (index < 0 || static_cast<size_t>(index) >= args.size()) {
         lastProcessResult.clear();
         return lastProcessResult.c_str();
     }
-    lastProcessResult = args[static_cast<size_t>(index)];
-    return lastProcessResult.c_str();
+    return args[static_cast<size_t>(index)].c_str();
 }
 
 extern "C" int32_t absolute_process_set_cwd(const char* path) {

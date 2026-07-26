@@ -17,6 +17,34 @@ int32 main() {
     std.env.removeVar(varName);
     assert(!std.env.has(varName), "var must not exist after remove");
 
+    assert(std.env.argsCount() == 5, "launch argument count");
+    assert(std.env.argAt(0) == "positional", "positional launch argument");
+    assert(std.env.hasArg("positional"), "hasArg must find a positional argument");
+    assert(std.env.flag("verbose"), "flag accepts a bare option name");
+    assert(std.env.flag("--verbose"), "flag accepts a normalized option name");
+    assert(std.env.hasParameter("mode"), "inline parameter must exist");
+    assert(std.env.parameter("mode") == "fast", "inline --name=value parameter");
+    assert(std.env.parameter("--output") == "hello world", "separate --name value parameter");
+    assert(std.env.parameterOrDefault("missing", "fallback") == "fallback", "missing parameter fallback");
+
+    bool missingThrew = false;
+    try {
+        std.env.parameter("missing");
+    }
+    catch (Error* error) {
+        missingThrew = true;
+    }
+    assert(missingThrew, "missing required parameter must throw");
+
+    bool boundsThrew = false;
+    try {
+        std.env.argAt(99);
+    }
+    catch (Error* error) {
+        boundsThrew = true;
+    }
+    assert(boundsThrew, "out-of-range launch argument must throw");
+
     println("std-env=ok");
     return 0;
 }

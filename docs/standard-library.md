@@ -22,7 +22,7 @@ Dependents declare:
 ```json
 {
   "dependencies": {
-    "absolute.std": "^0.1.0"
+    "absolute.std": "^0.2.0"
   }
 }
 ```
@@ -84,7 +84,7 @@ std/
 | `std.collections` | `std/collections/*.abs` | Split across files; import any file that defines the needed type |
 | `std.concurrent` | `std/concurrent.abs`, `std/concurrent/capsule.abs` | Atomics, mutex, isolate capsules |
 | `std.datetime` | `std/datetime.abs` | Calendar / timezone |
-| `std.env` | `std/env.abs` | Environment variables |
+| `std.env` | `std/env.abs` | Environment variables and launch arguments |
 | `std.fs` | `std/fs.abs` | Paths and `File` |
 | `std.http` | `std/http.abs` | HTTP client/server |
 | `std.json` | `std/json.abs` | JSON |
@@ -131,6 +131,52 @@ Current Stable modules (0.x: *preview-stable* — see versioning note):
 - `std.random`, `std.json`, `std.binary`
 - `std.net`, `std.uri`, `std.http`
 - `std.datetime`, `std.task`, `std.concurrent`
+
+### Launch arguments through `std.env`
+
+`std.env` exposes arguments after the executable path:
+
+```absolute
+import std.env;
+
+int32 main() {
+    if (std.env.flag("verbose")) {
+        println("verbose output enabled");
+    }
+
+    string mode = std.env.parameterOrDefault("mode", "normal");
+    println(format("mode={}", mode));
+    return 0;
+}
+```
+
+Run it with either parameter form:
+
+```powershell
+absolute run app.abs -- --verbose --mode=fast
+absolute run app.abs -- --verbose --mode fast
+```
+
+The API consists of `argsCount()`, `argAt(index)`, `hasArg(value)`,
+`flag(name)`, `hasParameter(name)`, `parameter(name)`, and
+`parameterOrDefault(name, fallback)`. Flag and parameter functions accept both
+`mode` and `--mode`.
+
+Application projects may provide default arguments:
+
+```json
+{
+  "name": "Demo",
+  "type": "app",
+  "entry": "src/main.abs",
+  "sources": ["src"],
+  "runArgs": ["--mode=fast", "--verbose"]
+}
+```
+
+CLI arguments written after `--` are appended to `runArgs`. The VS Code
+extension also accepts `absolute.runArguments`; explicit `launch.json` `args`
+take precedence while debugging.
 
 ### Tier Experimental
 
@@ -192,6 +238,7 @@ release is validated against a **minimum language/runtime** pair:
 | std version | Minimum Absolute (compiler + runtime) |
 |-------------|----------------------------------------|
 | 0.1.x | current `main` / release that ships this `std/` tree |
+| 0.2.x | runtime with portable process arguments and `std.env` launch API |
 
 If a future std release requires new language features, document the floor in
 the package changelog and refuse to load on older compilers when that check is
