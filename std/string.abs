@@ -131,6 +131,10 @@ namespace std.text {
         return absolute_string_ends_with(text, suffix) != 0;
     }
 
+    string concat(string left, string right) {
+        return absolute_string_concat(left, right);
+    }
+
     bool contains(string text, string sub) {
         return absolute_string_contains(text, sub) != 0;
     }

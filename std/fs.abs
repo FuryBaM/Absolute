@@ -12,6 +12,14 @@ extern "C" int32 absolute_fs_rename(string source, string destination);
 extern "C" int32 absolute_fs_copy_file(string source, string destination, int32 overwrite);
 extern "C" string absolute_fs_current_directory();
 extern "C" string absolute_fs_absolute(string path);
+extern "C" string absolute_fs_path_separator();
+extern "C" string absolute_fs_path_join(string left, string right);
+extern "C" string absolute_fs_path_normalize(string path);
+extern "C" string absolute_fs_path_parent(string path);
+extern "C" string absolute_fs_path_filename(string path);
+extern "C" string absolute_fs_path_stem(string path);
+extern "C" string absolute_fs_path_extension(string path);
+extern "C" int32 absolute_fs_path_is_absolute(string path);
 extern "C" string absolute_fs_read_text(string path);
 extern "C" int32 absolute_fs_write_text(string path, string text, int32 append);
 extern "C" raw uint8* absolute_fs_file_open(string path, string mode);
@@ -169,13 +177,154 @@ namespace std.fs {
         return new File(path, mode);
     }
 
+    string separator() {
+        return absolute_fs_path_separator();
+    }
+
     string join(string left, string right) {
-        if (left == "") { return right; }
-        if (right == "") { return left; }
-        if (std.text.endsWith(left, "/") || std.text.endsWith(left, "\\")) {
-            return format("{}{}", left, right);
+        string result = absolute_fs_path_join(left, right);
+        if (error() != "") {
+            throw new Error(format("path join failed: {}", error()));
         }
-        return format("{}/{}", left, right);
+        return std.text.concat("", result);
+    }
+
+    string resolve(string base, string next) {
+        return join(base, next);
+    }
+
+    string combine(string[] segments) {
+        if (segments.length == 0) { return ""; }
+        string result = std.text.concat("", segments[0]);
+        int32 index = 1;
+        while (index < segments.length) {
+            result = join(result, segments[index]);
+            index = index + 1;
+        }
+        return result;
+    }
+
+    string normalize(string path) {
+        string result = absolute_fs_path_normalize(path);
+        if (error() != "") {
+            throw new Error(format("path normalize failed: {}", error()));
+        }
+        return std.text.concat("", result);
+    }
+
+    string parent(string path) {
+        string result = absolute_fs_path_parent(path);
+        if (error() != "") {
+            throw new Error(format("path parent failed: {}", error()));
+        }
+        return std.text.concat("", result);
+    }
+
+    string sibling(string path, string name) {
+        return join(parent(path), name);
+    }
+
+    string fileName(string path) {
+        string result = absolute_fs_path_filename(path);
+        if (error() != "") {
+            throw new Error(format("path filename failed: {}", error()));
+        }
+        return std.text.concat("", result);
+    }
+
+    string stem(string path) {
+        string result = absolute_fs_path_stem(path);
+        if (error() != "") {
+            throw new Error(format("path stem failed: {}", error()));
+        }
+        return std.text.concat("", result);
+    }
+
+    string extensionOf(string path) {
+        string result = absolute_fs_path_extension(path);
+        if (error() != "") {
+            throw new Error(format("path extension failed: {}", error()));
+        }
+        return std.text.concat("", result);
+    }
+
+    bool isAbsolute(string path) {
+        return absolute_fs_path_is_absolute(path) != 0;
+    }
+
+    class Path {
+        private string pathValue;
+
+        public Path(string initial) {
+            pathValue = std.text.concat("", std.fs.normalize(initial));
+        }
+
+        public string value {
+            get { return pathValue; }
+        }
+
+        public string name {
+            get { return std.fs.fileName(pathValue); }
+        }
+
+        public string stem {
+            get { return std.fs.stem(pathValue); }
+        }
+
+        public string ext {
+            get { return std.fs.extensionOf(pathValue); }
+        }
+
+        public bool absolute {
+            get { return std.fs.isAbsolute(pathValue); }
+        }
+
+        public string toString() {
+            return pathValue;
+        }
+
+        public Path* child(string segment) {
+            return new Path(std.fs.join(pathValue, segment));
+        }
+
+        public Path* parent() {
+            return new Path(std.fs.parent(pathValue));
+        }
+
+        public Path* sibling(string name) {
+            return new Path(std.fs.sibling(pathValue, name));
+        }
+
+        public void push(string segment) {
+            pathValue = std.text.concat("", std.fs.join(pathValue, segment));
+        }
+
+        public void pop() {
+            pathValue = std.text.concat("", std.fs.parent(pathValue));
+        }
+
+        public void normalize() {
+            pathValue = std.text.concat("", std.fs.normalize(pathValue));
+        }
+
+        public void makeAbsolute() {
+            pathValue = std.text.concat("", std.fs.absolute(pathValue));
+        }
+
+        public bool exists() { return std.fs.exists(pathValue); }
+        public bool isFile() { return std.fs.isFile(pathValue); }
+        public bool isDirectory() { return std.fs.isDirectory(pathValue); }
+        public int64 size() { return std.fs.size(pathValue); }
+        public string readText() { return std.fs.readText(pathValue); }
+        public void writeText(string text) { std.fs.writeText(pathValue, text); }
+        public void appendText(string text) { std.fs.appendText(pathValue, text); }
+        public void createDirectories() { std.fs.createDirectories(pathValue); }
+        public void remove() { std.fs.remove(pathValue); }
+        public File* open(string mode) { return std.fs.open(pathValue, mode); }
+    }
+
+    Path* path(string value) {
+        return new Path(value);
     }
 
     string[] readLines(string path) {

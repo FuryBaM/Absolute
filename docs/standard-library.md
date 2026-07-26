@@ -198,6 +198,33 @@ formats; for example HTTP `Content-Length` uses bytes rather than characters.
 UTF-8 helpers and `StringBuilder` surface are available in native and WebAssembly
 builds.
 
+### Portable filesystem paths
+
+`std.fs` performs path operations in the runtime instead of concatenating text.
+The runtime uses the host platform separator and path rules on native targets;
+WebAssembly uses normalized `/` virtual paths.
+
+```absolute
+import std.fs;
+
+std.fs.Path* config = std.fs.path(std.fs.currentDirectory());
+config.push("config");
+config.push("app.json");
+
+if (config.exists()) {
+    println(config.readText());
+}
+
+std.fs.Path* directory = config.parent();
+```
+
+Functional operations are also available: `join(left, right)`,
+`combine(segments)`, `resolve(base, next)`, `normalize(path)`, `parent(path)`,
+`sibling(path, name)`, `fileName(path)`, `stem(path)`, `extensionOf(path)`,
+`isAbsolute(path)`, and `separator()`. Both native and WebAssembly
+implementations collapse `.` and `..` segments without requiring the path to
+exist.
+
 Application projects may provide default arguments:
 
 ```json

@@ -1,28 +1,35 @@
-// In-memory virtual filesystem on wasm Absolute runtime.
-extern "C" int32 absolute_fs_exists(string path);
-extern "C" int64 absolute_fs_file_size(string path);
-extern "C" string absolute_fs_read_text(string path);
-extern "C" int32 absolute_fs_write_text(string path, string text, int32 append);
-extern "C" int32 absolute_fs_remove(string path);
+// In-memory virtual filesystem and portable std.fs paths on wasm.
+import "../std/fs.abs";
 
 export "C" int32 wasm_fs_roundtrip() {
-    if (absolute_fs_write_text("/tmp/hello.txt", "hello-wasm", 0) == 0) {
+    string joined = std.fs.join("/tmp/assets", "../hello.txt");
+    if (joined != "/tmp/hello.txt") {
         return 1;
     }
-    if (absolute_fs_exists("/tmp/hello.txt") == 0) {
+    if (std.fs.normalize("tmp\\assets\\..\\hello.txt") != "tmp/hello.txt" ||
+        std.fs.join("/ignored", "/tmp/hello.txt") != "/tmp/hello.txt") {
+        return 7;
+    }
+    if (std.fs.parent(joined) != "/tmp" ||
+        std.fs.fileName(joined) != "hello.txt" ||
+        std.fs.stem(joined) != "hello" ||
+        std.fs.extensionOf(joined) != ".txt") {
         return 2;
     }
-    string text = absolute_fs_read_text("/tmp/hello.txt");
-    if (text != "hello-wasm") {
+
+    std.fs.Path* path = std.fs.path("/tmp");
+    path.push("nested");
+    path.push("..");
+    path.push("hello.txt");
+    path.writeText("hello-wasm");
+    if (!path.exists() || path.readText() != "hello-wasm") {
         return 3;
     }
-    if (absolute_fs_file_size("/tmp/hello.txt") != 10) {
+    if (path.size() != 10 || !path.absolute) {
         return 4;
     }
-    if (absolute_fs_remove("/tmp/hello.txt") == 0) {
-        return 5;
-    }
-    if (absolute_fs_exists("/tmp/hello.txt") != 0) {
+    path.remove();
+    if (path.exists()) {
         return 6;
     }
     return 0;

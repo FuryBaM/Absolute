@@ -68,6 +68,11 @@ namespace {
 #endif
     }
 
+    std::string PreferredPath(std::filesystem::path value) {
+        value.make_preferred();
+        return PortablePath(value);
+    }
+
     void ClearError() {
         lastFileSystemError.clear();
     }
@@ -222,6 +227,84 @@ extern "C" const char* absolute_fs_absolute(const char* path) {
     lastFileSystemResult = PortablePath(result.lexically_normal());
     ClearError();
     return lastFileSystemResult.c_str();
+}
+
+extern "C" const char* absolute_fs_path_separator() {
+#if defined(_WIN32)
+    return "\\";
+#else
+    return "/";
+#endif
+}
+
+extern "C" const char* absolute_fs_path_join(const char* left, const char* right) {
+    const std::filesystem::path lhs = NativePath(left ? left : "");
+    const std::filesystem::path rhs = NativePath(right ? right : "");
+    const std::filesystem::path combined = lhs.empty()
+        ? rhs
+        : (rhs.empty() ? lhs : lhs / rhs);
+    lastFileSystemResult = PreferredPath(combined.lexically_normal());
+    ClearError();
+    return lastFileSystemResult.c_str();
+}
+
+extern "C" const char* absolute_fs_path_normalize(const char* path) {
+    if (!path) {
+        lastFileSystemError = "path is null";
+        return nullptr;
+    }
+    lastFileSystemResult = PreferredPath(NativePath(path).lexically_normal());
+    ClearError();
+    return lastFileSystemResult.c_str();
+}
+
+extern "C" const char* absolute_fs_path_parent(const char* path) {
+    if (!path) {
+        lastFileSystemError = "path is null";
+        return nullptr;
+    }
+    lastFileSystemResult = PreferredPath(
+        NativePath(path).lexically_normal().parent_path());
+    ClearError();
+    return lastFileSystemResult.c_str();
+}
+
+extern "C" const char* absolute_fs_path_filename(const char* path) {
+    if (!path) {
+        lastFileSystemError = "path is null";
+        return nullptr;
+    }
+    lastFileSystemResult = PortablePath(
+        NativePath(path).lexically_normal().filename());
+    ClearError();
+    return lastFileSystemResult.c_str();
+}
+
+extern "C" const char* absolute_fs_path_stem(const char* path) {
+    if (!path) {
+        lastFileSystemError = "path is null";
+        return nullptr;
+    }
+    lastFileSystemResult = PortablePath(
+        NativePath(path).lexically_normal().stem());
+    ClearError();
+    return lastFileSystemResult.c_str();
+}
+
+extern "C" const char* absolute_fs_path_extension(const char* path) {
+    if (!path) {
+        lastFileSystemError = "path is null";
+        return nullptr;
+    }
+    lastFileSystemResult = PortablePath(
+        NativePath(path).lexically_normal().extension());
+    ClearError();
+    return lastFileSystemResult.c_str();
+}
+
+extern "C" std::int32_t absolute_fs_path_is_absolute(const char* path) {
+    ClearError();
+    return path && NativePath(path).is_absolute() ? 1 : 0;
 }
 
 extern "C" const char* absolute_fs_read_text(const char* path) {

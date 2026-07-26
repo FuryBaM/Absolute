@@ -570,25 +570,110 @@ static void fs_copy_path(char* dest, size_t cap, const char* src) {
     dest[i] = '\0';
 }
 
+static int fs_is_separator(char value) {
+    return value == '/' || value == '\\';
+}
+
+static void fs_path_normalize_into(
+    const char* path, char* output, size_t capacity, int force_absolute) {
+    if (!output || capacity == 0)
+        return;
+
+    char source[ABSOLUTE_VFS_MAX_PATH * 2];
+    size_t source_length = 0;
+    if (!path)
+        path = "";
+    if (force_absolute && !fs_is_separator(path[0])) {
+        while (g_fs_cwd[source_length] &&
+            source_length + 1 < sizeof(source)) {
+            source[source_length] = g_fs_cwd[source_length];
+            ++source_length;
+        }
+        if (source_length && !fs_is_separator(source[source_length - 1]) &&
+            source_length + 1 < sizeof(source)) {
+            source[source_length++] = '/';
+        }
+    }
+    for (size_t i = 0; path[i] && source_length + 1 < sizeof(source); ++i)
+        source[source_length++] = path[i];
+    source[source_length] = '\0';
+
+    const int absolute = fs_is_separator(source[0]);
+    size_t segment_positions[64];
+    int segment_is_parent[64];
+    size_t depth = 0;
+    size_t length = 0;
+    if (absolute && length + 1 < capacity)
+        output[length++] = '/';
+
+    size_t index = 0;
+    while (source[index]) {
+        while (fs_is_separator(source[index]))
+            ++index;
+        if (!source[index])
+            break;
+        size_t start = index;
+        while (source[index] && !fs_is_separator(source[index]))
+            ++index;
+        size_t segment_length = index - start;
+        const int is_dot = segment_length == 1 && source[start] == '.';
+        const int is_parent = segment_length == 2 &&
+            source[start] == '.' && source[start + 1] == '.';
+        if (is_dot)
+            continue;
+        if (is_parent && depth > 0 && !segment_is_parent[depth - 1]) {
+            length = segment_positions[--depth];
+            continue;
+        }
+        if (is_parent && absolute && depth == 0)
+            continue;
+
+        size_t before = length;
+        if (length && output[length - 1] != '/' && length + 1 < capacity)
+            output[length++] = '/';
+        for (size_t i = 0; i < segment_length && length + 1 < capacity; ++i)
+            output[length++] = source[start + i];
+        if (depth < sizeof(segment_positions) / sizeof(segment_positions[0])) {
+            segment_positions[depth] = before;
+            segment_is_parent[depth] = is_parent;
+            ++depth;
+        }
+    }
+
+    if (length == 0 && source_length > 0 && !absolute && capacity > 1)
+        output[length++] = '.';
+    if (length == 0 && absolute && capacity > 1)
+        output[length++] = '/';
+    output[length] = '\0';
+}
+
+static void fs_path_join_into(
+    const char* left, const char* right, char* output, size_t capacity) {
+    if (!left)
+        left = "";
+    if (!right)
+        right = "";
+    if (fs_is_separator(right[0])) {
+        fs_path_normalize_into(right, output, capacity, 0);
+        return;
+    }
+    char combined[ABSOLUTE_VFS_MAX_PATH * 2];
+    size_t length = 0;
+    for (size_t i = 0; left[i] && length + 1 < sizeof(combined); ++i)
+        combined[length++] = left[i];
+    if (length && !fs_is_separator(combined[length - 1]) &&
+        length + 1 < sizeof(combined)) {
+        combined[length++] = '/';
+    }
+    for (size_t i = 0; right[i] && length + 1 < sizeof(combined); ++i)
+        combined[length++] = right[i];
+    combined[length] = '\0';
+    fs_path_normalize_into(combined, output, capacity, 0);
+}
+
 static const char* fs_normalize(const char* path) {
-    if (!path || !*path)
-        return "/";
-    if (path[0] == '/')
-        return path;
-    /* relative -> cwd + "/" + path */
-    size_t n = 0;
-    const char* cwd = g_fs_cwd;
-    while (cwd[n] && n + 1 < sizeof(g_fs_path_scratch)) {
-        g_fs_path_scratch[n] = cwd[n];
-        ++n;
-    }
-    if (n > 0 && g_fs_path_scratch[n - 1] != '/' && n + 1 < sizeof(g_fs_path_scratch))
-        g_fs_path_scratch[n++] = '/';
-    size_t i = 0;
-    while (path[i] && n + 1 < sizeof(g_fs_path_scratch)) {
-        g_fs_path_scratch[n++] = path[i++];
-    }
-    g_fs_path_scratch[n] = '\0';
+    fs_path_normalize_into(path, g_fs_path_scratch,
+        sizeof(g_fs_path_scratch), 1);
     return g_fs_path_scratch;
 }
 
@@ -749,8 +834,87 @@ const char* absolute_fs_current_directory(void) {
 
 const char* absolute_fs_absolute(const char* path) {
     fs_clear_error();
-    fs_copy_path(g_fs_string_scratch, sizeof(g_fs_string_scratch), fs_normalize(path));
+    fs_path_normalize_into(path, g_fs_string_scratch,
+        sizeof(g_fs_string_scratch), 1);
     return g_fs_string_scratch;
+}
+
+const char* absolute_fs_path_separator(void) {
+    return "/";
+}
+
+const char* absolute_fs_path_join(const char* left, const char* right) {
+    fs_clear_error();
+    fs_path_join_into(left, right, g_fs_string_scratch,
+        sizeof(g_fs_string_scratch));
+    return g_fs_string_scratch;
+}
+
+const char* absolute_fs_path_normalize(const char* path) {
+    fs_clear_error();
+    fs_path_normalize_into(path, g_fs_string_scratch,
+        sizeof(g_fs_string_scratch), 0);
+    return g_fs_string_scratch;
+}
+
+const char* absolute_fs_path_parent(const char* path) {
+    char normalized[ABSOLUTE_VFS_MAX_PATH];
+    fs_path_normalize_into(path, normalized, sizeof(normalized), 0);
+    size_t length = strlen(normalized);
+    while (length > 1 && normalized[length - 1] == '/')
+        --length;
+    while (length > 0 && normalized[length - 1] != '/')
+        --length;
+    if (length > 1)
+        --length;
+    if (length == 0 && normalized[0] == '/')
+        length = 1;
+    fs_clear_error();
+    return wasm_string_copy_range(normalized, length);
+}
+
+const char* absolute_fs_path_filename(const char* path) {
+    char normalized[ABSOLUTE_VFS_MAX_PATH];
+    fs_path_normalize_into(path, normalized, sizeof(normalized), 0);
+    size_t length = strlen(normalized);
+    size_t start = length;
+    while (start > 0 && normalized[start - 1] != '/')
+        --start;
+    fs_clear_error();
+    return wasm_string_copy_range(normalized + start, length - start);
+}
+
+const char* absolute_fs_path_stem(const char* path) {
+    const char* name = absolute_fs_path_filename(path);
+    if (fs_streq(name, ".") || fs_streq(name, ".."))
+        return wasm_string_copy(name);
+    size_t length = strlen(name);
+    size_t dot = length;
+    while (dot > 0 && name[dot - 1] != '.')
+        --dot;
+    if (dot <= 1)
+        dot = length + 1;
+    fs_clear_error();
+    return wasm_string_copy_range(name, dot - 1);
+}
+
+const char* absolute_fs_path_extension(const char* path) {
+    const char* name = absolute_fs_path_filename(path);
+    if (fs_streq(name, ".") || fs_streq(name, ".."))
+        return wasm_string_copy("");
+    size_t length = strlen(name);
+    size_t dot = length;
+    while (dot > 0 && name[dot - 1] != '.')
+        --dot;
+    fs_clear_error();
+    if (dot <= 1)
+        return wasm_string_copy("");
+    return wasm_string_copy_range(name + dot - 1, length - dot + 1);
+}
+
+int32_t absolute_fs_path_is_absolute(const char* path) {
+    fs_clear_error();
+    return path && fs_is_separator(path[0]) ? 1 : 0;
 }
 
 const char* absolute_fs_read_text(const char* path) {

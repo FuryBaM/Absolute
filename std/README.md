@@ -25,6 +25,14 @@ Resource-owning standard types are cleaned up automatically through
 `destroy()`. `close()` and `dispose()` remain available when deterministic,
 early cleanup is useful.
 
+Filesystem paths can be composed without string concatenation:
+
+```absolute
+std.fs.Path* asset = std.fs.path("assets");
+asset.push("textures");
+asset.push("wall.png");
+```
+
 ## Modules
 
 See the namespace ↔ file map in `docs/standard-library.md`.

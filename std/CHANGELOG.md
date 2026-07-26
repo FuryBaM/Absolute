@@ -11,6 +11,8 @@
   WebAssembly targets.
 - Added common text, filesystem, JSON, collection, environment, and process
   convenience APIs.
+- Added cross-platform path composition, lexical `.` / `..` navigation, path
+  metadata, and the stateful `std.fs.Path` helper on native and WebAssembly.
 - Corrected HTTP `Content-Length` for non-ASCII UTF-8 bodies.
 
 ## 0.2.0

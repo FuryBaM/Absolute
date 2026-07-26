@@ -2,9 +2,9 @@ import "../std/fs.abs";
 
 int32 main() {
     string directory = "absolute-std-fs-test";
-    string source = "absolute-std-fs-test/source.txt";
-    string copied = "absolute-std-fs-test/copied.txt";
-    string renamed = "absolute-std-fs-test/renamed.txt";
+    string source = std.fs.join(directory, "source.txt");
+    string copied = std.fs.join(directory, "copied.txt");
+    string renamed = std.fs.join(directory, "renamed.txt");
 
     if (std.fs.exists(renamed)) { std.fs.remove(renamed); }
     if (std.fs.exists(copied)) { std.fs.remove(copied); }
@@ -21,6 +21,42 @@ int32 main() {
     string[] lines = std.fs.readLines(source);
     assert(lines.length == 2 && lines[1] == "beta", "readLines must split text");
     assert(std.fs.join(directory, "source.txt") == source, "path join");
+    assert(std.fs.join(directory, "") == directory, "empty path segment");
+    assert(std.fs.normalize(std.fs.join(directory, "nested/../source.txt")) == source,
+        "path normalization must resolve parent segments");
+    assert(std.fs.parent(source) == directory, "path parent");
+    assert(std.fs.fileName(source) == "source.txt", "path filename");
+    assert(std.fs.stem(source) == "source", "path stem");
+    assert(std.fs.extensionOf(source) == ".txt", "path extension");
+    assert(!std.fs.isAbsolute(source), "relative path detection");
+    assert(std.fs.isAbsolute(std.fs.absolute(source)), "absolute path detection");
+
+    string[] segments = new string[3];
+    segments[0] = directory;
+    segments[1] = "nested";
+    segments[2] = "item.txt";
+    string nested = std.fs.combine(segments);
+    assert(std.fs.parent(nested) == std.fs.join(directory, "nested"),
+        "multi-segment path combine");
+
+    std.fs.Path* objectPath = std.fs.path(directory);
+    objectPath.push("object.txt");
+    assert(objectPath.name == "object.txt" && objectPath.stem == "object",
+        "Path metadata");
+    objectPath.writeText("path-object");
+    assert(objectPath.exists() && objectPath.readText() == "path-object",
+        "Path filesystem operations");
+    std.fs.Path* objectParent = objectPath.parent();
+    assert(objectParent.toString() == directory, "Path parent traversal");
+    std.fs.Path* traversal = std.fs.path(directory);
+    traversal.push("first");
+    traversal.push("second");
+    traversal.pop();
+    assert(traversal.toString() == std.fs.join(directory, "first"),
+        "mutable Path traversal");
+    std.fs.Path* siblingPath = objectPath.sibling("other.txt");
+    assert(siblingPath.name == "other.txt", "Path sibling traversal");
+    objectPath.remove();
 
     std.fs.File* reader = std.fs.open(source, "rb");
     assert(reader.readLine() == "alpha", "stream must read the first line");
