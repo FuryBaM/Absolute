@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Absolute-CodeGen LANGUAGES CXX)
+project(Absolute-CodeGen LANGUAGES C CXX)
 
 option(ABSOLUTE_LLVM_USE_LIBEDIT "Allow LLVM to use LibEdit integration" OFF)
 option(ABSOLUTE_LLVM_USE_CURL "Allow LLVM to use CURL integration" OFF)
