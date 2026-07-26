@@ -119,33 +119,71 @@ function compilerCandidates(roots) {
     return roots.flatMap(root => relative.map(parts => path.join(root, ...parts)));
 }
 
+function configuredCompilerCandidates(value, roots) {
+    const bases = path.isAbsolute(value)
+        ? [path.normalize(value)]
+        : roots.map(root => path.resolve(root, value));
+    const names = process.platform === 'win32' ? ['absolutec.exe', 'absolutec'] : ['absolutec'];
+    const result = [];
+    for (const base of bases) {
+        result.push(base);
+        if (process.platform === 'win32' && !path.extname(base)) result.push(`${base}.exe`);
+        try {
+            if (fs.existsSync(base) && fs.statSync(base).isDirectory()) {
+                for (const name of names) {
+                    result.push(path.join(base, name));
+                    result.push(path.join(base, 'Release', name));
+                    result.push(path.join(base, 'Debug', name));
+                }
+            }
+        } catch (_) { }
+    }
+    return result;
+}
+
 function resolveCompilerPath(configured, roots = []) {
     const value = String(configured || 'auto').trim();
-    const automatic = !value || value.toLowerCase() === 'auto' ||
-        value.toLowerCase() === 'absolutec' || value.toLowerCase() === 'absolutec.exe';
+    const lower = value.toLowerCase();
+    const baseName = path.basename(value).toLowerCase();
+    const compilerNameHint = baseName === 'absolutec' || baseName === 'absolutec.exe';
+    const automatic = !value || lower === 'auto' || compilerNameHint;
     const tried = [];
+    const seen = new Set();
 
-    if (!automatic) {
-        const candidates = path.isAbsolute(value)
-            ? [value]
-            : roots.map(root => path.resolve(root, value));
-        for (const candidate of candidates) {
-            tried.push(candidate);
-            if (fs.existsSync(candidate)) return { path: path.resolve(candidate), tried, automatic: false };
+    const tryCandidate = candidate => {
+        if (!candidate) return undefined;
+        const normalized = path.normalize(candidate);
+        const key = process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+        if (seen.has(key)) return undefined;
+        seen.add(key);
+        tried.push(normalized);
+        try {
+            if (fs.existsSync(normalized) && fs.statSync(normalized).isFile())
+                return path.resolve(normalized);
+        } catch (_) { }
+        return undefined;
+    };
+
+    if (lower !== 'auto') {
+        for (const candidate of configuredCompilerCandidates(value, roots)) {
+            const found = tryCandidate(candidate);
+            if (found) return { path: found, tried, automatic };
         }
-        if (commandAvailable(value)) return { path: value, tried, automatic: false };
-        return { path: undefined, tried, automatic: false };
+        if (!automatic) {
+            if (commandAvailable(value)) return { path: value, tried, automatic: false };
+            return { path: undefined, tried, automatic: false };
+        }
     }
 
     if (process.env.ABSOLUTEC) {
-        tried.push(process.env.ABSOLUTEC);
-        if (fs.existsSync(process.env.ABSOLUTEC))
-            return { path: path.resolve(process.env.ABSOLUTEC), tried, automatic: true };
+        const found = tryCandidate(process.env.ABSOLUTEC);
+        if (found) return { path: found, tried, automatic: true };
     }
     for (const candidate of compilerCandidates(roots)) {
-        tried.push(candidate);
-        if (fs.existsSync(candidate)) return { path: path.resolve(candidate), tried, automatic: true };
+        const found = tryCandidate(candidate);
+        if (found) return { path: found, tried, automatic: true };
     }
+    if (commandAvailable('absolutec.exe')) return { path: 'absolutec.exe', tried, automatic: true };
     if (commandAvailable('absolutec')) return { path: 'absolutec', tried, automatic: true };
     return { path: undefined, tried, automatic: true };
 }
