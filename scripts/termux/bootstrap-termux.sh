@@ -58,7 +58,9 @@ packages=(
     make
     pkg-config
     python
+    libffi
     libxml2
+    ncurses
     zlib
     zstd
 )
