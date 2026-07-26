@@ -10,6 +10,7 @@ capabilities that other plugins consume.
   "version": "1.2.0",
   "abi": 1,
   "library": "absolute-shader-opengl.dll",
+  "prelude": "absolute-shader-opengl.prelude.abs",
   "editor": "absolute-shader-opengl.editor.json",
   "nativeLibraries": ["absolute-shader-runtime.lib", "opengl32.lib"],
   "dependencies": {
@@ -24,6 +25,59 @@ capabilities that other plugins consume.
 `library` is relative to the manifest unless it is absolute. The library's
 `AbsoluteSyntaxPluginV1::name` must match the manifest `name`, and `abi` must
 match `ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION`.
+
+## Absolute source preludes
+
+`prelude` points to an ordinary UTF-8 `.abs` source file beside the manifest:
+
+```json
+{
+  "name": "example.window",
+  "version": "1.0.0",
+  "abi": 1,
+  "library": "example-window.dll",
+  "prelude": "window.prelude.abs"
+}
+```
+
+```absolute
+// window.prelude.abs
+extern "C" int64 example_window_create(string title);
+
+namespace Example {
+    class Window {
+        public int64 handle;
+
+        public Window(string title) {
+            handle = example_window_create(title);
+        }
+    }
+}
+```
+
+The compiler reads the file before parsing the application and registers it as
+that plugin's prelude. Paths are relative to the `.absplugin` file unless
+absolute. The file must exist and use the `.abs` extension.
+
+Large APIs can be split without embedding source in C++:
+
+```json
+{
+  "preludes": [
+    "native-declarations.abs",
+    "window-api.abs",
+    "gpu-api.abs"
+  ]
+}
+```
+
+`prelude` and `preludes` may be used together. Duplicate resolved paths are
+loaded once, in declaration order. The legacy
+`absolute_syntax_plugin_prelude_v1` native export remains supported for direct
+DLL/SO loading, but file preludes require loading the `.absplugin` manifest.
+The Absolute extension also indexes manifest preludes for completion, hover and
+semantic highlighting; an editor JSON sidecar can still provide richer prose
+and snippets.
 
 `nativeLibraries` are automatically passed to the native linker when Absolute
 builds an executable. Relative files are resolved beside the manifest; bare

@@ -56,8 +56,10 @@ auto programD3D = gpu.createShader(
 ## Compute + `absolute.desktop`
 
 The canonical `Compute` stage exposes `Shader.generatedComputeHlsl()` and
-`Shader.generatedComputeGlsl()` through the plugin prelude, so user code does
-not need to declare `extern` accessors:
+`Shader.generatedComputeGlsl()` through
+`absolute-shader.prelude.abs`, loaded by the `.absplugin` manifest. The prelude
+is ordinary editable Absolute code, so user code does not need to declare
+`extern` accessors:
 
 ```absolute
 @shader.stage(Compute)
@@ -135,18 +137,18 @@ Without `code { }`, generated bodies implement a default lit mesh pipeline (Y-ro
 ```powershell
 absolutec examples/desktop/shader-rhi.abs `
   --plugin path/to/absolute-desktop.absplugin `
-  --plugin path/to/absolute-shader.dll `
+  --plugin path/to/absolute-shader.absplugin `
   --build-exe -o shader-rhi.exe
 
 # Multi-IR smoke (no window):
 absolutec examples/desktop/shader-multi-ir-smoke.abs `
-  --plugin path/to/absolute-shader.dll `
+  --plugin path/to/absolute-shader.absplugin `
   --build-exe -o shader-multi-ir-smoke.exe
 
 # End-to-end shader DSL → generated HLSL → D3D11 dispatch:
 absolutec examples/desktop/shader-compute.abs `
   --plugin path/to/absolute-desktop.absplugin `
-  --plugin path/to/absolute-shader.dll `
+  --plugin path/to/absolute-shader.absplugin `
   --build-exe -o shader-compute.exe
 
 .\shader-compute.exe opengl

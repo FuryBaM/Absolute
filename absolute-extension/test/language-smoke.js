@@ -2,6 +2,7 @@
 
 const assert = require('assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const lang = require('../server/language');
 const toolchain = require('../toolchain');
@@ -79,4 +80,34 @@ assert.deepStrictEqual(diagnostics, []);
 
 const parsed = JSON.parse(fs.readFileSync(metadata, 'utf8'));
 assert.strictEqual(parsed.plugin, 'absolute.desktop');
+
+const preludeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'absolute-prelude-'));
+try {
+    const preludeFile = path.join(preludeRoot, 'api.abs');
+    const manifestFile = path.join(preludeRoot, 'file-prelude.absplugin');
+    fs.writeFileSync(preludeFile, [
+        'namespace FilePrelude {',
+        '    int32 answer() { return 42; }',
+        '}'
+    ].join('\n'));
+    fs.writeFileSync(manifestFile, JSON.stringify({
+        name: 'file.prelude',
+        version: '1.0.0',
+        abi: 1,
+        library: 'unused-for-editor.dll',
+        prelude: 'api.abs'
+    }, null, 2));
+    const preludeIndex = lang.loadEditorIndex([manifestFile], []);
+    assert(preludeIndex.namespaceNames.has('FilePrelude'));
+    assert(preludeIndex.functionNames.has('answer'));
+    const answerHover = lang.hoverFor(
+        preludeIndex,
+        'FilePrelude.answer();',
+        positionOf('FilePrelude.answer();', 'answer', 0, 2)
+    );
+    assert(answerHover.contents.value.includes('api.abs'));
+} finally {
+    fs.rmSync(preludeRoot, { recursive: true, force: true });
+}
+
 console.log('absolute-extension language/toolchain smoke: OK');

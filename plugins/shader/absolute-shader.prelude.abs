@@ -1,0 +1,5 @@
+namespace Shader {
+    // Available when the module contains the canonical `shader Compute` block.
+    extern "C" string generatedComputeHlsl();
+    extern "C" string generatedComputeGlsl();
+}

@@ -1316,13 +1316,6 @@ namespace {
         nullptr
     };
 
-    constexpr const char* prelude = R"ABSOLUTE(
-namespace Shader {
-    // Available when the module contains the canonical `shader Compute` block.
-    extern "C" string generatedComputeHlsl();
-    extern "C" string generatedComputeGlsl();
-}
-)ABSOLUTE";
 }
 
 extern "C" ABSOLUTE_PLUGIN_EXPORT const AbsoluteSyntaxPluginV1* absolute_syntax_plugin_init_v1() {
@@ -1332,8 +1325,4 @@ extern "C" ABSOLUTE_PLUGIN_EXPORT const AbsoluteSyntaxPluginV1* absolute_syntax_
 extern "C" ABSOLUTE_PLUGIN_EXPORT const AbsoluteOpaqueSyntaxTableV1*
 absolute_syntax_plugin_opaque_rules_v1() {
     return &opaqueTable;
-}
-
-extern "C" ABSOLUTE_PLUGIN_EXPORT const char* absolute_syntax_plugin_prelude_v1() {
-    return prelude;
 }

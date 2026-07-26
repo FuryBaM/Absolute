@@ -449,6 +449,41 @@ function addMetadata(index, metadata, pluginName) {
     }
 }
 
+function addPreludeMetadata(index, preludeFile, pluginName) {
+    const absolute = path.resolve(preludeFile);
+    if (path.extname(absolute).toLowerCase() !== '.abs') {
+        throw new Error(`plugin prelude must use the .abs extension: ${absolute}`);
+    }
+    if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
+        throw new Error(`plugin prelude does not exist: ${absolute}`);
+    }
+    const source = fs.readFileSync(absolute, 'utf8').replace(/^\uFEFF/, '');
+    const symbols = extractSymbols(pathToUri(absolute), source);
+    const lines = source.replace(/\r\n/g, '\n').split('\n');
+    for (const symbol of symbols) {
+        const kind = symbol.symbolKind === 'type'
+            ? 'type'
+            : symbol.symbolKind === 'namespace'
+                ? 'namespace'
+                : 'function';
+        const declaration = (lines[symbol.range.start.line] || '').trim();
+        const entry = upsertIndexEntry(index, metadataItem({
+            name: symbol.name,
+            detail: declaration || `${kind} ${symbol.name}`,
+            documentation: `Declared by ${pluginName} in ${path.basename(absolute)}.`
+        }, kind, pluginName));
+        index.hover.set(entry.fullName, entry);
+        index.hover.set(entry.name, entry);
+        const names = kind === 'type'
+            ? index.typeNames
+            : kind === 'namespace'
+                ? index.namespaceNames
+                : index.functionNames;
+        names.add(entry.fullName);
+        names.add(entry.name);
+    }
+}
+
 function readJson(file) {
     const text = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
     return JSON.parse(text);
@@ -458,6 +493,19 @@ function loadPluginMetadata(index, manifestFile) {
     const absolute = path.resolve(manifestFile);
     if (!fs.existsSync(absolute)) return;
     const manifest = readJson(absolute);
+    const configuredPreludes = [];
+    if (typeof manifest.prelude === 'string' && manifest.prelude) {
+        configuredPreludes.push(manifest.prelude);
+    }
+    if (Array.isArray(manifest.preludes)) {
+        configuredPreludes.push(...manifest.preludes.filter(item => typeof item === 'string' && item));
+    }
+    for (const prelude of [...new Set(configuredPreludes)]) {
+        addPreludeMetadata(
+            index,
+            path.resolve(path.dirname(absolute), prelude),
+            manifest.name || path.basename(absolute));
+    }
     let metadata = manifest.editor;
     if (typeof metadata === 'string') {
         metadata = readJson(path.resolve(path.dirname(absolute), metadata));

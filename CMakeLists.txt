@@ -139,10 +139,12 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.math-plugin-required PROPERTIES WILL_FAIL TRUE)
     endif()
     if(TARGET Absolute-Shader-Plugin)
+        set(ABSOLUTE_SHADER_MANIFEST
+            "$<TARGET_FILE_DIR:Absolute-Shader-Plugin>/absolute-shader.absplugin")
         add_test(
             NAME absolute.shader-plugin
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/shader-plugin.abs"
-                --plugin "$<TARGET_FILE:Absolute-Shader-Plugin>"
+                --plugin "${ABSOLUTE_SHADER_MANIFEST}"
         )
         set_tests_properties(absolute.shader-plugin PROPERTIES
             PASS_REGULAR_EXPRESSION "Opaque plugin statement.*shader Vertex"
@@ -155,7 +157,7 @@ if(BUILD_TESTING)
         add_test(
             NAME absolute.shader-plugin-errors
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/shader-plugin-errors.abs"
-                --plugin "$<TARGET_FILE:Absolute-Shader-Plugin>"
+                --plugin "${ABSOLUTE_SHADER_MANIFEST}"
         )
         set_tests_properties(absolute.shader-plugin-errors PROPERTIES WILL_FAIL TRUE)
     endif()
@@ -786,7 +788,7 @@ if(BUILD_TESTING)
             add_test(
                 NAME absolute.emit-shader-plugin
                 COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/shader-plugin.abs"
-                    --plugin "$<TARGET_FILE:Absolute-Shader-Plugin>"
+                    --plugin "${ABSOLUTE_SHADER_MANIFEST}"
                     --emit-llvm -o "${CMAKE_BINARY_DIR}/shader-plugin.ll"
             )
             set_tests_properties(absolute.emit-shader-plugin PROPERTIES
@@ -804,7 +806,7 @@ if(BUILD_TESTING)
             add_test(
                 NAME absolute.build-shader-plugin
                 COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/shader-plugin.abs"
-                    --plugin "$<TARGET_FILE:Absolute-Shader-Plugin>"
+                    --plugin "${ABSOLUTE_SHADER_MANIFEST}"
                     --build-exe -o "${CMAKE_BINARY_DIR}/shader-plugin${CMAKE_EXECUTABLE_SUFFIX}"
             )
             set_tests_properties(absolute.build-shader-plugin PROPERTIES

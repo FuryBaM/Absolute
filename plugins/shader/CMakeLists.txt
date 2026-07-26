@@ -14,4 +14,12 @@ add_custom_command(TARGET Absolute-Shader-Plugin POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/absolute-shader.editor.json"
         "$<TARGET_FILE_DIR:Absolute-Shader-Plugin>/absolute-shader.editor.json"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/absolute-shader.prelude.abs"
+        "$<TARGET_FILE_DIR:Absolute-Shader-Plugin>/absolute-shader.prelude.abs"
+    COMMAND "${CMAKE_COMMAND}"
+        "-DOUTPUT=$<TARGET_FILE_DIR:Absolute-Shader-Plugin>/absolute-shader.absplugin"
+        "-DPLUGIN_LIBRARY=$<TARGET_FILE:Absolute-Shader-Plugin>"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/write_manifest.cmake"
+    VERBATIM
 )

@@ -52,6 +52,7 @@ namespace Absolute {
             std::vector<std::string> provides;
             std::vector<std::string> requiresCapabilities;
             std::vector<std::filesystem::path> nativeLibraries;
+            std::vector<std::filesystem::path> preludes;
         };
 
         bool PermissionEnabled(const std::string& permission, const ::AbsolutePermissionPolicyV1& policy) {
@@ -88,7 +89,7 @@ namespace Absolute {
 
         std::string ReadText(const std::filesystem::path& path) {
             std::ifstream file(path, std::ios::binary);
-            if (!file) throw std::runtime_error("Cannot open plugin manifest: " + path.string());
+            if (!file) throw std::runtime_error("Cannot open plugin file: " + path.string());
             std::ostringstream content;
             content << file.rdbuf();
             return content.str();
@@ -293,6 +294,13 @@ namespace Absolute {
             result.ruleNamespace = StringProperty(document, "namespace").value_or("");
             for (const std::string& nativeLibrary : StringArrayProperty(document, "nativeLibraries"))
                 result.nativeLibraries.emplace_back(nativeLibrary);
+            if (const auto prelude = StringProperty(document, "prelude");
+                prelude && !prelude->empty()) {
+                result.preludes.emplace_back(*prelude);
+            }
+            for (const std::string& prelude : StringArrayProperty(document, "preludes")) {
+                result.preludes.emplace_back(prelude);
+            }
 
             const auto dependencyArray = PropertyValue(document, "dependencies", '[', ']');
             const auto dependencyObject = PropertyValue(document, "dependencies", '{', '}');
@@ -545,9 +553,41 @@ namespace Absolute {
                 if (!capabilityProviders.contains(capability))
                     throw std::runtime_error("Plugin '" + manifest.name + "' requires missing capability '" + capability + "'");
             }
+            std::vector<std::pair<std::filesystem::path, std::string>> preludeSources;
+            std::unordered_set<std::string> seenPreludes;
+            for (const std::filesystem::path& configuredPrelude : manifest.preludes) {
+                const std::filesystem::path resolved = configuredPrelude.is_absolute()
+                    ? configuredPrelude
+                    : canonical.parent_path() / configuredPrelude;
+                if (resolved.extension() != ".abs") {
+                    throw std::runtime_error("Plugin '" + manifest.name +
+                        "' prelude must use the .abs extension: " + resolved.string());
+                }
+                if (!std::filesystem::exists(resolved) ||
+                    !std::filesystem::is_regular_file(resolved)) {
+                    throw std::runtime_error("Plugin '" + manifest.name +
+                        "' prelude does not exist: " +
+                        std::filesystem::absolute(resolved).string());
+                }
+                const std::filesystem::path preludePath =
+                    std::filesystem::weakly_canonical(resolved);
+                if (!seenPreludes.insert(preludePath.generic_string()).second) continue;
+                std::string source = ReadText(preludePath);
+                if (source.starts_with("\xEF\xBB\xBF")) source.erase(0, 3);
+                preludeSources.emplace_back(preludePath, std::move(source));
+            }
             const std::filesystem::path library = manifest.library.is_absolute()
                 ? manifest.library : canonical.parent_path() / manifest.library;
             LoadDynamicLibrary(library, manifest.name, manifest.version, canonical, manifest.provides);
+            for (const auto& [preludePath, source] : preludeSources) {
+                try {
+                    RegisterSyntaxPluginPrelude(manifest.name, source.c_str());
+                }
+                catch (const std::exception& error) {
+                    throw std::runtime_error("Cannot register plugin prelude '" +
+                        preludePath.string() + "': " + error.what());
+                }
+            }
             std::vector<std::filesystem::path> resolvedNativeLibraries;
             for (const std::filesystem::path& nativeLibrary : manifest.nativeLibraries) {
                 const std::filesystem::path relative = canonical.parent_path() / nativeLibrary;

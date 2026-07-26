@@ -16,9 +16,12 @@ The build creates `absolute-desktop.absplugin` beside the plugin DLL. The
 manifest automatically adds the static runtime and Win32 system libraries when
 `--build-exe` is used.
 
-Loading that manifest also injects the complete binding prelude. Application
-code never declares `extern "C"` functions: the native ABI remains an internal
-detail and the public API lives under `Desktop`.
+Loading that manifest also injects
+[`absolute-desktop.prelude.abs`](absolute-desktop.prelude.abs), an ordinary
+Absolute source file containing the complete binding API. It can be edited and
+checked like any other `.abs` file. Application code never declares `extern
+"C"` functions: the native ABI remains an internal detail and the public API
+lives under `Desktop`.
 
 All native-owning wrappers are managed RAII classes. `new Desktop.Window(...)`,
 `new Desktop.Gpu(...)`, and GPU/sprite/audio factory results are owning managed
