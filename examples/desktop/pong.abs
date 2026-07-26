@@ -32,7 +32,7 @@ int32 main() {
         }
 
         if (window.keyPressed(Desktop.KeyEscape())) {
-            window.close();
+            break;
         } else {
             double speed = 360.0;
             if (window.keyDown(Desktop.KeyW())) {
@@ -148,6 +148,5 @@ int32 main() {
         }
     }
 
-    window.close();
     return 0;
 }

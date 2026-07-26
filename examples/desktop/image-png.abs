@@ -21,7 +21,6 @@ int32 main() {
     }
     if (!shipOk) {
         println("Failed to load ship.png/bmp");
-        window.close();
         return 1;
     }
     ship.colorKey(Desktop.rgb(255, 0, 255));
@@ -39,8 +38,6 @@ int32 main() {
     }
     if (!atlasOk) {
         println("Failed to load atlas.png/bmp");
-        ship.destroy();
-        window.close();
         return 1;
     }
     atlas.colorKey(Desktop.rgb(255, 0, 255));
@@ -91,7 +88,7 @@ int32 main() {
         }
 
         if (window.keyPressed(Desktop.KeyEscape())) {
-            window.close();
+            break;
         } else {
             window.clear(Desktop.rgb(12, 14, 28));
 
@@ -117,8 +114,5 @@ int32 main() {
         }
     }
 
-    ship.destroy();
-    atlas.destroy();
-    window.close();
     return 0;
 }

@@ -18,7 +18,7 @@ int32 main() {
 
     while (window.poll()) {
         if (window.keyPressed(Desktop.KeyEscape())) {
-            window.close();
+            break;
         } else {
             double dt = window.deltaTime();
             if (dt <= 0.0) {
@@ -85,8 +85,5 @@ int32 main() {
         }
     }
 
-    ui.destroy();
-    font.destroy();
-    window.close();
     return 0;
 }

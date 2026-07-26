@@ -11,7 +11,6 @@ int32 main() {
     if (!gpu.isValid()) {
         println("D3D12 GPU context failed:");
         println(gpu.lastError());
-        window.close();
         return 1;
     }
 
@@ -25,8 +24,6 @@ int32 main() {
     if (program == null) {
         println("createShader failed:");
         println(gpu.lastError());
-        gpu.destroy();
-        window.close();
         return 1;
     }
 
@@ -49,7 +46,7 @@ int32 main() {
 
     while (window.poll()) {
         if (window.keyPressed(Desktop.KeyEscape())) {
-            window.close();
+            break;
         } else {
             float t = Desktop.time() as float;
             gpu.beginFrame();
@@ -63,11 +60,5 @@ int32 main() {
         }
     }
 
-    pipeline.destroy();
-    layout.destroy();
-    buffer.destroy();
-    program.destroy();
-    gpu.destroy();
-    window.close();
     return 0;
 }

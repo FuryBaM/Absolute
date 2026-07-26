@@ -12,7 +12,6 @@ int32 main() {
     if (!atlas.loadBmp("examples/desktop/assets/atlas.bmp")) {
         if (!atlas.loadBmp("assets/atlas.bmp")) {
             println("Failed to load atlas.bmp");
-            window.close();
             return 1;
         }
     }
@@ -22,8 +21,6 @@ int32 main() {
     if (!ship.loadBmp("examples/desktop/assets/ship.bmp")) {
         if (!ship.loadBmp("assets/ship.bmp")) {
             println("Failed to load ship.bmp");
-            atlas.destroy();
-            window.close();
             return 1;
         }
     }
@@ -74,7 +71,7 @@ int32 main() {
         }
 
         if (window.keyPressed(Desktop.KeyEscape())) {
-            window.close();
+            break;
         } else {
             window.clear(Desktop.rgb(10, 12, 24));
 
@@ -113,9 +110,5 @@ int32 main() {
         }
     }
 
-    batch.destroy();
-    ship.destroy();
-    atlas.destroy();
-    window.close();
     return 0;
 }

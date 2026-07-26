@@ -39,7 +39,7 @@ int32 main() {
         }
 
         if (window.keyPressed(Desktop.KeyEscape())) {
-            window.close();
+            break;
         } else if (window.keyPressed(Desktop.KeyEnter())) {
             typed.clear();
         } else {
@@ -72,7 +72,5 @@ int32 main() {
     }
 
     typed.dispose();
-    badge.destroy();
-    window.close();
     return 0;
 }

@@ -25,7 +25,7 @@ int32 main() {
 
     while (window.poll()) {
         if (window.keyPressed(Desktop.KeyEscape())) {
-            window.close();
+            break;
         } else {
             while (window.textCount() > 0) {
                 int32 ch = window.textPop();
@@ -86,6 +86,5 @@ int32 main() {
         }
     }
 
-    window.close();
     return 0;
 }

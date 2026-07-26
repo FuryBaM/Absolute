@@ -144,6 +144,11 @@ extern "C" int32 absolute_desktop_gamepad_button(int32 index, int32 button);
 extern "C" double absolute_desktop_gamepad_axis(int32 index, int32 axis);
 
 namespace Desktop {
+    // Public managed API. The extern declarations above are injected with the
+    // plugin prelude and are implementation details: user code only works with
+    // Desktop.* classes/functions. Managed pointers are implicitly dereferenced
+    // by '.', and every native-owning class provides destroy() for scope cleanup.
+
     // Input codes as static fields (namespace vars are not LLVM-codegen'd yet).
     class Codes {
         // Virtual-key style (Win32 / mapped X11).
@@ -562,11 +567,16 @@ namespace Desktop {
             return handle != 0 && absolute_desktop_is_open(handle) != 0;
         }
 
-        public void close() {
+        public void destroy() {
             if (handle != 0) {
                 absolute_desktop_destroy(handle);
                 handle = 0;
             }
+        }
+
+        // Explicit early close is optional. Normal scope exit calls destroy().
+        public void close() {
+            destroy();
         }
 
         public void setTitle(string title) {

@@ -12,7 +12,6 @@ int32 main() {
     if (!gpu.isValid()) {
         println("gpu failed");
         println(gpu.lastError());
-        window.close();
         return 1;
     }
     println(gpu.backend());
@@ -53,12 +52,6 @@ int32 main() {
     gpu.endFrame();
     gpu.present();
 
-    pipeline.destroy();
-    layout.destroy();
-    buffer.destroy();
-    program.destroy();
-    gpu.destroy();
-    window.close();
     println("d3d12-triangle-smoke OK");
     return 0;
 }

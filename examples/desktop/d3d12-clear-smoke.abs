@@ -12,7 +12,6 @@ int32 main() {
     if (!gpu.isValid()) {
         println("D3D12 failed");
         println(gpu.lastError());
-        window.close();
         return 1;
     }
     println(gpu.backend());
@@ -22,8 +21,6 @@ int32 main() {
     gpu.endFrame();
     gpu.present();
 
-    gpu.destroy();
-    window.close();
     println("d3d12-clear-smoke OK");
     return 0;
 }

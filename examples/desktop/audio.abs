@@ -11,7 +11,6 @@ int32 main() {
     auto audio = new Desktop.Audio();
     if (!audio.isValid()) {
         println("Audio device failed (Windows waveOut required)");
-        window.close();
         return 1;
     }
     audio.setMasterVolume(0.85);
@@ -30,8 +29,6 @@ int32 main() {
     }
     if (beep == null || blip == null || thud == null) {
         println("Failed to load WAV assets");
-        audio.destroy();
-        window.close();
         return 1;
     }
 
@@ -40,7 +37,7 @@ int32 main() {
 
     while (window.poll()) {
         if (window.keyPressed(Desktop.KeyEscape())) {
-            window.close();
+            break;
         } else {
             // Virtual-key codes: '1' '2' '3' Space L S
             if (window.keyPressed(49)) {
@@ -93,12 +90,5 @@ int32 main() {
         }
     }
 
-    beep.destroy();
-    blip.destroy();
-    thud.destroy();
-    small.destroy();
-    font.destroy();
-    audio.destroy();
-    window.close();
     return 0;
 }

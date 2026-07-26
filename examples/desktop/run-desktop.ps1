@@ -14,12 +14,12 @@ $ProgressPreference = 'SilentlyContinue'
 if ([string]::IsNullOrWhiteSpace($Source)) {
     $Source = Join-Path $PSScriptRoot 'window.abs'
 }
-if ([string]::IsNullOrWhiteSpace($Output)) {
-    $Output = Join-Path $PSScriptRoot '.desktop-build\absolute-desktop-demo.exe'
-}
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
 $windowsBuild = Join-Path $repoRoot '.absolute\build\windows-release'
+if ([string]::IsNullOrWhiteSpace($Output)) {
+    $Output = Join-Path $repoRoot '.absolute\out\desktop\absolute-desktop-demo.exe'
+}
 
 function Import-VisualStudioEnvironment {
     $vsWhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
@@ -197,7 +197,7 @@ Preferred on this machine: use the native Windows path (default), after:
 "@
     }
 
-    $buildRoot = Join-Path $PSScriptRoot '.desktop-build'
+    $buildRoot = Join-Path $repoRoot '.absolute\build\desktop-wsl'
     $localWindowsBuild = Join-Path $buildRoot 'windows'
     $nativeOutput = Join-Path $buildRoot 'native'
     New-Item -ItemType Directory -Force -Path $localWindowsBuild, $nativeOutput | Out-Null

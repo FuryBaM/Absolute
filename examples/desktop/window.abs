@@ -9,7 +9,7 @@ int32 main() {
     double direction = 1.0;
     while (window.poll()) {
         if (window.keyPressed(Desktop.KeyEscape())) {
-            window.close();
+            break;
         }
         else {
             double dt = window.deltaTime();
@@ -35,6 +35,5 @@ int32 main() {
             }
         }
     }
-    window.close();
     return 0;
 }

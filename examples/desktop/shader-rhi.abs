@@ -39,7 +39,6 @@ int32 main() {
     if (!gpu.isValid()) {
         println("OpenGL GPU context failed:");
         println(gpu.lastError());
-        window.close();
         return 1;
     }
 
@@ -49,8 +48,6 @@ int32 main() {
     if (program == null) {
         println("createShader from absolute.shader GLSL failed:");
         println(gpu.lastError());
-        gpu.destroy();
-        window.close();
         return 1;
     }
 
@@ -98,7 +95,7 @@ int32 main() {
 
     while (window.poll()) {
         if (window.keyPressed(Desktop.KeyEscape())) {
-            window.close();
+            break;
         } else {
             float t = Desktop.time() as float;
             gpu.beginFrame();
@@ -114,13 +111,5 @@ int32 main() {
         }
     }
 
-    ib.destroy();
-    vb.destroy();
-    mesh.destroy();
-    pipeline.destroy();
-    layout.destroy();
-    program.destroy();
-    gpu.destroy();
-    window.close();
     return 0;
 }

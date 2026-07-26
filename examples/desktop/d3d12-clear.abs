@@ -12,7 +12,6 @@ int32 main() {
     if (!gpu.isValid()) {
         println("D3D12 GPU context failed:");
         println(gpu.lastError());
-        window.close();
         return 1;
     }
 
@@ -22,7 +21,7 @@ int32 main() {
     float t = 0.0;
     while (window.poll()) {
         if (window.keyPressed(Desktop.KeyEscape())) {
-            window.close();
+            break;
         } else {
             double dt = window.deltaTime();
             if (dt <= 0.0) { dt = 0.016; }
@@ -41,7 +40,5 @@ int32 main() {
         }
     }
 
-    gpu.destroy();
-    window.close();
     return 0;
 }

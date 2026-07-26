@@ -29,7 +29,6 @@ int32 main() {
     if (!gpu.isValid()) {
         println("OpenGL GPU context failed:");
         println(gpu.lastError());
-        window.close();
         return 1;
     }
 
@@ -37,8 +36,6 @@ int32 main() {
     if (!shipSprite.loadBmp("examples/desktop/assets/ship.bmp")) {
         if (!shipSprite.loadBmp("assets/ship.bmp")) {
             println("Failed to load ship.bmp");
-            gpu.destroy();
-            window.close();
             return 1;
         }
     }
@@ -48,9 +45,6 @@ int32 main() {
     if (!atlasSprite.loadBmp("examples/desktop/assets/atlas.bmp")) {
         if (!atlasSprite.loadBmp("assets/atlas.bmp")) {
             println("Failed to load atlas.bmp");
-            shipSprite.destroy();
-            gpu.destroy();
-            window.close();
             return 1;
         }
     }
@@ -61,10 +55,6 @@ int32 main() {
     if (shipTex == null || atlasTex == null) {
         println("createTextureFromSprite failed:");
         println(gpu.lastError());
-        shipSprite.destroy();
-        atlasSprite.destroy();
-        gpu.destroy();
-        window.close();
         return 1;
     }
 
@@ -157,7 +147,7 @@ int32 main() {
         }
 
         if (window.keyPressed(Desktop.KeyEscape())) {
-            window.close();
+            break;
         } else {
             float ox = shipX as float;
             float oy = shipY as float;
@@ -191,19 +181,5 @@ int32 main() {
         }
     }
 
-    starIndex.destroy();
-    starBuffer.destroy();
-    shipIndex.destroy();
-    shipBuffer.destroy();
-    pipeline.destroy();
-    layout.destroy();
-    program.destroy();
-    sampler.destroy();
-    atlasTex.destroy();
-    shipTex.destroy();
-    atlasSprite.destroy();
-    shipSprite.destroy();
-    gpu.destroy();
-    window.close();
     return 0;
 }

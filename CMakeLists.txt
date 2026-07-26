@@ -184,6 +184,15 @@ if(BUILD_TESTING)
         )
         if(ABSOLUTE_ENABLE_LLVM)
             add_test(
+                NAME absolute.desktop-plugin-raii-ir
+                COMMAND "${CMAKE_COMMAND}"
+                    -DCOMPILER=$<TARGET_FILE:Absolute-Compiler>
+                    -DPLUGIN=${ABSOLUTE_DESKTOP_MANIFEST}
+                    -DSOURCE=${PROJECT_SOURCE_DIR}/tests/desktop-plugin.abs
+                    -DOUTPUT=${CMAKE_BINARY_DIR}/tests/desktop-plugin-raii.ll
+                    -P "${PROJECT_SOURCE_DIR}/tests/check-desktop-plugin-raii-ir.cmake"
+            )
+            add_test(
                 NAME absolute.build-desktop-plugin
                 COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/desktop-plugin.abs"
                     --plugin "${ABSOLUTE_DESKTOP_MANIFEST}"

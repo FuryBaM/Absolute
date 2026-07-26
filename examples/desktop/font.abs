@@ -13,10 +13,6 @@ int32 main() {
     auto mono = new Desktop.Font("Consolas", 16, Desktop.Font.StyleNormal);
     if (!title.isValid() || !body.isValid() || !mono.isValid()) {
         println("System font create failed (Windows GDI required)");
-        title.destroy();
-        body.destroy();
-        mono.destroy();
-        window.close();
         return 1;
     }
 
@@ -35,7 +31,7 @@ int32 main() {
 
     while (window.poll()) {
         if (window.keyPressed(Desktop.KeyEscape())) {
-            window.close();
+            break;
         } else {
             window.clear(Desktop.rgb(16, 18, 28));
 
@@ -61,11 +57,5 @@ int32 main() {
         }
     }
 
-    label.destroy();
-    fileFont.destroy();
-    mono.destroy();
-    body.destroy();
-    title.destroy();
-    window.close();
     return 0;
 }

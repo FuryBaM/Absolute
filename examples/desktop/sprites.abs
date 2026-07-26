@@ -64,7 +64,7 @@ int32 main() {
         }
 
         if (window.keyPressed(Desktop.KeyEscape())) {
-            window.close();
+            break;
         } else {
             window.clear(Desktop.rgb(8, 10, 22));
             // Parallax stars via procedural offsets.
@@ -82,8 +82,5 @@ int32 main() {
         }
     }
 
-    ship.destroy();
-    star.destroy();
-    window.close();
     return 0;
 }

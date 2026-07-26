@@ -1,3 +1,10 @@
+// The desktop prelude supplies the native declarations, and a managed Window
+// owner needs no manual close/destroy. This stays uncalled in the headless test.
+int32 desktopManagedEnvironmentCompiles() {
+    auto window = new Desktop.Window("Absolute desktop RAII", 64, 64, false);
+    return window.isOpen() ? 1 : 0;
+}
+
 int32 main() {
     uint32 color = Desktop.rgb(64, 128, 255);
     assert(color == 4227327, "desktop runtime RGB function failed");

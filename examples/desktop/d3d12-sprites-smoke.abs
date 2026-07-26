@@ -19,7 +19,6 @@ int32 main() {
     if (!gpu.isValid()) {
         println("gpu failed");
         println(gpu.lastError());
-        window.close();
         return 1;
     }
     println(gpu.backend());
@@ -87,16 +86,6 @@ int32 main() {
     gpu.endFrame();
     gpu.present();
 
-    ib.destroy();
-    vb.destroy();
-    pipeline.destroy();
-    layout.destroy();
-    program.destroy();
-    sampler.destroy();
-    tex.destroy();
-    ship.destroy();
-    gpu.destroy();
-    window.close();
     println("d3d12-sprites-smoke OK");
     return 0;
 }

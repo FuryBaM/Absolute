@@ -8,12 +8,12 @@
     {
       "name": "Desktop.Window",
       "detail": "class Desktop.Window",
-      "documentation": "Managed Absolute wrapper around a native Win32 or X11 window.",
+      "documentation": "Managed Win32/X11 window. Native declarations are supplied by the plugin; scope exit releases the handle automatically.",
       "snippet": "new Desktop.Window(${1:\"Absolute\"}, ${2:800}, ${3:450}, ${4:true})",
       "members": [
         { "name": "poll", "detail": "bool poll()", "documentation": "Processes pending OS events and returns whether the window remains open." },
         { "name": "isOpen", "detail": "bool isOpen()" },
-        { "name": "close", "detail": "void close()", "documentation": "Destroys the native window handle." },
+        { "name": "close", "detail": "void close()", "documentation": "Optional early close. Normal scope exit releases the native handle automatically." },
         { "name": "setTitle", "detail": "void setTitle(string title)" },
         { "name": "width", "detail": "int32 width()" },
         { "name": "height", "detail": "int32 height()" },
@@ -40,7 +40,7 @@
     {
       "name": "Desktop.Font",
       "detail": "class Desktop.Font",
-      "documentation": "Soft TrueType/system font (Windows GDI). drawFontText on Window/Sprite.",
+      "documentation": "RAII soft TrueType/system font (Windows GDI). Scope exit releases it automatically.",
       "snippet": "auto ${1:font} = new Desktop.Font(${2:\"Segoe UI\"}, ${3:18}, Desktop.Font.StyleNormal);\n$4.drawFontText($1, ${5:16}, ${6:16}, ${7:\"Hello\"}, Desktop.rgb(255,255,255));",
       "members": [
         { "name": "loadFile", "detail": "bool loadFile(string path, int32 pixelHeight, int32 style)" },
@@ -69,7 +69,7 @@
     {
       "name": "Desktop.Audio",
       "detail": "class Desktop.Audio",
-      "documentation": "WAV software mixer (Windows waveOut). loadWav, master volume, stopAll.",
+      "documentation": "RAII WAV software mixer (Windows waveOut). loadWav, master volume, stopAll.",
       "snippet": "auto ${1:audio} = new Desktop.Audio();\nauto ${2:sfx} = $1.loadWav(${3:\"assets/beep.wav\"});\n$2.play(1.0);",
       "members": [
         { "name": "loadWav", "detail": "Sound* loadWav(string path)" },
@@ -82,7 +82,7 @@
     {
       "name": "Desktop.Sound",
       "detail": "class Desktop.Sound",
-      "documentation": "Decoded WAV clip. play(volume), playLoop(volume), stop.",
+      "documentation": "RAII decoded WAV clip. play(volume), playLoop(volume), stop.",
       "members": [
         { "name": "play", "detail": "bool play(float volume)" },
         { "name": "playLoop", "detail": "bool playLoop(float volume)" },
@@ -95,7 +95,7 @@
     {
       "name": "Desktop.Sprite",
       "detail": "class Desktop.Sprite",
-      "documentation": "Soft offscreen buffer for procedural art, BMP/PNG images, and baked text.",
+      "documentation": "RAII soft offscreen buffer for procedural art, BMP/PNG images, and baked text.",
       "snippet": "new Desktop.Sprite(${1:64}, ${2:64})",
       "members": [
         { "name": "loadBmp", "detail": "bool loadBmp(string path)" },
@@ -112,7 +112,7 @@
     {
       "name": "Desktop.SpriteBatch",
       "detail": "class Desktop.SpriteBatch",
-      "documentation": "Soft atlas/sprite draw queue. begin(window, atlas), drawRect/drawSprite, end() before present.",
+      "documentation": "RAII soft atlas/sprite draw queue. begin(window, atlas), drawRect/drawSprite, end() before present.",
       "snippet": "auto ${1:batch} = new Desktop.SpriteBatch();\n$1.begin(${2:window}, ${3:atlas});\n$1.drawRect(${4:x}, ${5:y}, ${6:sx}, ${7:sy}, ${8:sw}, ${9:sh});\n$1.end();",
       "members": [
         { "name": "begin", "detail": "void begin(Window* window, Sprite* atlas)" },
@@ -136,7 +136,7 @@
     {
       "name": "Desktop.Gpu",
       "detail": "class Desktop.Gpu",
-      "documentation": "OpenGL RHI: createShader/createVertexBuffer/createPipeline; beginFrame/bind/draw/endFrame/present.",
+      "documentation": "RAII multi-backend RHI. Managed GPU resources are released automatically in reverse scope order.",
       "snippet": "auto ${1:shader} = ${2:gpu}.createShader(${3:vs}, ${4:fs});\nauto ${5:buffer} = $2.createVertexBuffer(${6:vertices});\nauto ${7:layout} = $2.createLayoutPos3Color3();\nauto ${8:pipeline} = $2.createPipeline($1, $7);\n$2.beginFrame();\n$2.clear(0.06, 0.07, 0.12, 1.0);\n$2.bind($8);\n$2.bind($5);\n$2.draw(3);\n$2.endFrame();\n$2.present();",
       "members": [
         { "name": "isValid", "detail": "bool isValid()" },
@@ -200,12 +200,12 @@
     {
       "label": "desktop window loop",
       "detail": "Create a window and run an event/render loop",
-      "body": "auto ${1:window} = new Desktop.Window(${2:\"Absolute\"}, ${3:800}, ${4:450}, true);\nwhile ($1.poll()) {\n    $1.clear(Desktop.rgb(18, 22, 32));\n    $1.drawText(16, 16, ${5:\"Hello\"}, Desktop.rgb(255, 255, 255), 2);\n    ${0}\n    $1.present();\n}\n$1.close();"
+      "body": "auto ${1:window} = new Desktop.Window(${2:\"Absolute\"}, ${3:800}, ${4:450}, true);\nwhile ($1.poll()) {\n    if ($1.keyPressed(Desktop.KeyEscape())) { break; }\n    $1.clear(Desktop.rgb(18, 22, 32));\n    $1.drawText(16, 16, ${5:\"Hello\"}, Desktop.rgb(255, 255, 255), 2);\n    ${0}\n    $1.present();\n}"
     },
     {
       "label": "desktop gpu triangle",
       "detail": "OpenGL pipeline bind/draw frame",
-      "body": "auto ${1:window} = new Desktop.Window(${2:\"Absolute GPU\"}, ${3:800}, ${4:450}, true);\nauto ${5:gpu} = new Desktop.Gpu($1);\nauto ${6:shader} = $5.createShader(${7:vs}, ${8:fs});\nauto ${9:buffer} = $5.createVertexBuffer(${10:vertices});\nauto ${11:layout} = $5.createLayoutPos3Color3();\nauto ${12:pipeline} = $5.createPipeline($6, $11);\nwhile ($1.poll()) {\n    $5.beginFrame();\n    $5.clear(0.06, 0.07, 0.12, 1.0);\n    $5.bind($12);\n    $5.bind($9);\n    $5.draw(3);\n    $5.endFrame();\n    $5.present();\n}\n$12.destroy(); $11.destroy(); $9.destroy(); $6.destroy(); $5.destroy(); $1.close();"
+      "body": "auto ${1:window} = new Desktop.Window(${2:\"Absolute GPU\"}, ${3:800}, ${4:450}, true);\nauto ${5:gpu} = new Desktop.Gpu($1);\nauto ${6:shader} = $5.createShader(${7:vs}, ${8:fs});\nauto ${9:buffer} = $5.createVertexBuffer(${10:vertices});\nauto ${11:layout} = $5.createLayoutPos3Color3();\nauto ${12:pipeline} = $5.createPipeline($6, $11);\nwhile ($1.poll()) {\n    if ($1.keyPressed(Desktop.KeyEscape())) { break; }\n    $5.beginFrame();\n    $5.clear(0.06, 0.07, 0.12, 1.0);\n    $5.bind($12);\n    $5.bind($9);\n    $5.draw(3);\n    $5.endFrame();\n    $5.present();\n}"
     }
   ]
 }

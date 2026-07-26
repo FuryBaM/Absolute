@@ -12,7 +12,6 @@ int32 main() {
     if (!gpu.isValid()) {
         println("D3D11 GPU context failed:");
         println(gpu.lastError());
-        window.close();
         return 1;
     }
 
@@ -27,8 +26,6 @@ int32 main() {
     if (program == null) {
         println("createShader failed:");
         println(gpu.lastError());
-        gpu.destroy();
-        window.close();
         return 1;
     }
 
@@ -44,9 +41,6 @@ int32 main() {
     if (buffer == null) {
         println("createVertexBuffer failed:");
         println(gpu.lastError());
-        program.destroy();
-        gpu.destroy();
-        window.close();
         return 1;
     }
 
@@ -54,10 +48,6 @@ int32 main() {
     if (layout == null) {
         println("createLayout failed:");
         println(gpu.lastError());
-        buffer.destroy();
-        program.destroy();
-        gpu.destroy();
-        window.close();
         return 1;
     }
 
@@ -65,17 +55,12 @@ int32 main() {
     if (pipeline == null) {
         println("createPipeline failed:");
         println(gpu.lastError());
-        layout.destroy();
-        buffer.destroy();
-        program.destroy();
-        gpu.destroy();
-        window.close();
         return 1;
     }
 
     while (window.poll()) {
         if (window.keyPressed(Desktop.KeyEscape())) {
-            window.close();
+            break;
         } else {
             float t = Desktop.time() as float;
             gpu.beginFrame();
@@ -89,11 +74,5 @@ int32 main() {
         }
     }
 
-    pipeline.destroy();
-    layout.destroy();
-    buffer.destroy();
-    program.destroy();
-    gpu.destroy();
-    window.close();
     return 0;
 }

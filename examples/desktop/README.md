@@ -2,6 +2,23 @@
 
 Requires the `absolute.desktop` plugin (Win32 on Windows, X11 on Linux).
 
+The runner loads the plugin manifest, so source files do not contain native
+`extern` declarations. The plugin exposes a ready `Desktop` namespace with
+managed classes. Member access through `.` performs checked pointer
+dereferencing, and native resources are released automatically on scope exit:
+
+```absolute
+int32 main() {
+    auto window = new Desktop.Window("Absolute", 800, 450, true);
+    while (window.poll()) {
+        if (window.keyPressed(Desktop.KeyEscape())) { break; }
+        window.clear(Desktop.rgb(18, 22, 32));
+        window.present();
+    }
+    return 0; // no close()/destroy() tail
+}
+```
+
 ## Build plugin
 
 First-time Windows setup (downloads portable LLVM 18 into `.absolute\toolchains`):
@@ -25,7 +42,9 @@ Plugin output is typically:
 
 Native Windows is the default path (no WSL required). `run.bat` loads the MSVC
 environment, finds `absolutec` + the desktop plugin under
-`.absolute\build\windows-release`, builds the example with `--build-exe`, and runs it.
+`.absolute\build\windows-release`, builds the example with `--build-exe`, and
+runs it. Generated executables go to `.absolute\out\desktop`, outside the
+example sources.
 
 ```bat
 examples\desktop\run.bat

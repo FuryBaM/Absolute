@@ -12,7 +12,6 @@ int32 main() {
     if (!gpu.isValid()) {
         println("OpenGL GPU context failed:");
         println(gpu.lastError());
-        window.close();
         return 1;
     }
 
@@ -23,9 +22,6 @@ int32 main() {
     }
     if (!ok) {
         println("Failed to load cube.obj");
-        mesh.destroy();
-        gpu.destroy();
-        window.close();
         return 1;
     }
 
@@ -54,7 +50,7 @@ int32 main() {
 
     while (window.poll()) {
         if (window.keyPressed(Desktop.KeyEscape())) {
-            window.close();
+            break;
         } else {
             float t = Desktop.time() as float;
 
@@ -71,13 +67,5 @@ int32 main() {
         }
     }
 
-    pipeline.destroy();
-    program.destroy();
-    layout.destroy();
-    ib.destroy();
-    vb.destroy();
-    mesh.destroy();
-    gpu.destroy();
-    window.close();
     return 0;
 }

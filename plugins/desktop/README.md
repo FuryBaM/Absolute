@@ -16,6 +16,16 @@ The build creates `absolute-desktop.absplugin` beside the plugin DLL. The
 manifest automatically adds the static runtime and Win32 system libraries when
 `--build-exe` is used.
 
+Loading that manifest also injects the complete binding prelude. Application
+code never declares `extern "C"` functions: the native ABI remains an internal
+detail and the public API lives under `Desktop`.
+
+All native-owning wrappers are managed RAII classes. `new Desktop.Window(...)`,
+`new Desktop.Gpu(...)`, and GPU/sprite/audio factory results are owning managed
+pointers; `.` performs the checked dereference. Their `destroy()` methods run
+automatically in reverse declaration order on scope exit, early `return`, or
+`break`. Call `destroy()`/`close()` only when early release is actually needed.
+
 ```powershell
 .absolute\build\windows-release\Release\absolutec.exe examples\desktop\window.abs `
   --plugin .absolute\build\windows-release\plugins\desktop\Release\absolute-desktop.absplugin `
@@ -34,7 +44,8 @@ examples\desktop\run.bat pong.abs
 
 ### Window lifecycle
 - `new Desktop.Window(title, width, height, resizable)`
-- `poll()`, `isOpen()`, `close()`, `setTitle()`, `width()`, `height()`
+- `poll()`, `isOpen()`, `setTitle()`, `width()`, `height()`
+- `close()` is optional and only needed to close before scope exit
 
 ### Drawing (software framebuffer, colors `0x00RRGGBB`)
 - `clear(color)`, `pixel(x, y, color)`, `fillRect(...)`, `drawLine(...)`, `fillCircle(...)`
@@ -198,12 +209,12 @@ Variable step:
 
 ```absolute
 while (window.poll()) {
+    if (window.keyPressed(Desktop.KeyEscape())) { break; }
     double dt = window.deltaTime();
     if (dt <= 0.0) { dt = 0.016; }
     if (dt > 0.05) { dt = 0.05; }
     // update with dt, draw, present
 }
-window.close();
 ```
 
 Fixed step (e.g. 60 Hz sim):
@@ -225,8 +236,9 @@ The Linux backend is enabled when X11 development files are available
 (`libx11-dev`). Without them the plugin builds a headless backend so CI can
 still compile/link; `Desktop.Window` then reports that it could not open.
 
-Call `window.close()` before leaving `main`. Native window handles are explicit
-resources; the current Absolute class model does not yet run RAII destructors.
+No cleanup tail is required after the loop. `Window`, `Gpu`, sprites, fonts,
+audio, meshes, and child GPU resources are destroyed automatically; explicit
+cleanup remains available for intentionally shortened lifetimes.
 
 Examples: `examples/desktop/window.abs`, `pong.abs`, `sprites.abs`, `input.abs`,
 `image.abs` (BMP + atlas), `text.abs` (soft font HUD / typing),
