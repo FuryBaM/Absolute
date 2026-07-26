@@ -194,6 +194,49 @@ extern "C" void absolute_desktop_gpu_vk_bind_sampler(
 extern "C" void absolute_desktop_gpu_d3d12_sampler_destroy(int64_t gpuHandle, int64_t samplerHandle);
 extern "C" void absolute_desktop_gpu_d3d12_bind_sampler(
     int64_t gpuHandle, int64_t samplerHandle, int32_t unit);
+extern "C" int32_t absolute_desktop_gpu_d3d12_compute_supported(int64_t gpuHandle);
+extern "C" int64_t absolute_desktop_gpu_d3d12_compute_shader_create(
+    int64_t gpuHandle, const char* source);
+extern "C" void absolute_desktop_gpu_d3d12_compute_shader_destroy(
+    int64_t gpuHandle, int64_t shaderHandle);
+extern "C" int64_t absolute_desktop_gpu_d3d12_storage_buffer_create(
+    int64_t gpuHandle, const float* data, int32_t floatCount);
+extern "C" void absolute_desktop_gpu_d3d12_storage_buffer_destroy(
+    int64_t gpuHandle, int64_t bufferHandle);
+extern "C" int32_t absolute_desktop_gpu_d3d12_storage_buffer_float_count(
+    int64_t bufferHandle);
+extern "C" int32_t absolute_desktop_gpu_d3d12_storage_buffer_upload(
+    int64_t gpuHandle, int64_t bufferHandle, const float* data, int32_t floatCount);
+extern "C" int32_t absolute_desktop_gpu_d3d12_storage_buffer_download(
+    int64_t gpuHandle, int64_t bufferHandle, float* output, int32_t floatCount);
+extern "C" void absolute_desktop_gpu_d3d12_bind_compute_shader(
+    int64_t gpuHandle, int64_t shaderHandle);
+extern "C" void absolute_desktop_gpu_d3d12_bind_storage_buffer(
+    int64_t gpuHandle, int64_t bufferHandle, int32_t slot);
+extern "C" int32_t absolute_desktop_gpu_d3d12_dispatch(
+    int64_t gpuHandle, int32_t groupsX, int32_t groupsY, int32_t groupsZ);
+
+extern "C" int32_t absolute_desktop_gpu_vk_compute_supported(int64_t gpuHandle);
+extern "C" int64_t absolute_desktop_gpu_vk_compute_shader_create(
+    int64_t gpuHandle, const char* source);
+extern "C" void absolute_desktop_gpu_vk_compute_shader_destroy(
+    int64_t gpuHandle, int64_t shaderHandle);
+extern "C" int64_t absolute_desktop_gpu_vk_storage_buffer_create(
+    int64_t gpuHandle, const float* data, int32_t floatCount);
+extern "C" void absolute_desktop_gpu_vk_storage_buffer_destroy(
+    int64_t gpuHandle, int64_t bufferHandle);
+extern "C" int32_t absolute_desktop_gpu_vk_storage_buffer_float_count(
+    int64_t bufferHandle);
+extern "C" int32_t absolute_desktop_gpu_vk_storage_buffer_upload(
+    int64_t gpuHandle, int64_t bufferHandle, const float* data, int32_t floatCount);
+extern "C" int32_t absolute_desktop_gpu_vk_storage_buffer_download(
+    int64_t gpuHandle, int64_t bufferHandle, float* output, int32_t floatCount);
+extern "C" void absolute_desktop_gpu_vk_bind_compute_shader(
+    int64_t gpuHandle, int64_t shaderHandle);
+extern "C" void absolute_desktop_gpu_vk_bind_storage_buffer(
+    int64_t gpuHandle, int64_t bufferHandle, int32_t slot);
+extern "C" int32_t absolute_desktop_gpu_vk_dispatch(
+    int64_t gpuHandle, int32_t groupsX, int32_t groupsY, int32_t groupsZ);
 
 #if defined(_WIN32)
 #define ABSOLUTE_GPU_WGL 1
@@ -252,6 +295,10 @@ using GLintptr = ptrdiff_t;
 #define GL_ONE_MINUS_SRC_ALPHA 0x0303
 #define GL_DEPTH_TEST 0x0B71
 #define GL_LESS 0x0201
+#define GL_COMPUTE_SHADER 0x91B9
+#define GL_SHADER_STORAGE_BUFFER 0x90D2
+#define GL_DYNAMIC_COPY 0x88EA
+#define GL_SHADER_STORAGE_BARRIER_BIT 0x00002000
 #define WGL_CONTEXT_MAJOR_VERSION_ARB 0x2091
 #define WGL_CONTEXT_MINOR_VERSION_ARB 0x2092
 #define WGL_CONTEXT_PROFILE_MASK_ARB 0x9126
@@ -322,6 +369,11 @@ namespace {
     using PFNGLDISABLE = void(APIENTRY*)(GLenum);
     using PFNGLBLENDFUNC = void(APIENTRY*)(GLenum, GLenum);
     using PFNGLDEPTHFUNC = void(APIENTRY*)(GLenum);
+    using PFNGLBINDBUFFERBASE = void(APIENTRY*)(GLenum, GLuint, GLuint);
+    using PFNGLBUFFERSUBDATA = void(APIENTRY*)(GLenum, GLintptr, GLsizeiptr, const void*);
+    using PFNGLGETBUFFERSUBDATA = void(APIENTRY*)(GLenum, GLintptr, GLsizeiptr, void*);
+    using PFNGLDISPATCHCOMPUTE = void(APIENTRY*)(GLuint, GLuint, GLuint);
+    using PFNGLMEMORYBARRIER = void(APIENTRY*)(GLbitfield);
 
     struct GlFns {
         PFNGLCREATESHADER CreateShader = nullptr;
@@ -370,6 +422,11 @@ namespace {
         PFNGLDISABLE Disable = nullptr;
         PFNGLBLENDFUNC BlendFunc = nullptr;
         PFNGLDEPTHFUNC DepthFunc = nullptr;
+        PFNGLBINDBUFFERBASE BindBufferBase = nullptr;
+        PFNGLBUFFERSUBDATA BufferSubData = nullptr;
+        PFNGLGETBUFFERSUBDATA GetBufferSubData = nullptr;
+        PFNGLDISPATCHCOMPUTE DispatchCompute = nullptr;
+        PFNGLMEMORYBARRIER MemoryBarrier = nullptr;
         PFNSWAPINTERVAL SwapInterval = nullptr;
     };
 
@@ -440,6 +497,11 @@ namespace {
         gl.Disable = LoadProc<PFNGLDISABLE>("glDisable");
         gl.BlendFunc = LoadProc<PFNGLBLENDFUNC>("glBlendFunc");
         gl.DepthFunc = LoadProc<PFNGLDEPTHFUNC>("glDepthFunc");
+        gl.BindBufferBase = LoadProc<PFNGLBINDBUFFERBASE>("glBindBufferBase");
+        gl.BufferSubData = LoadProc<PFNGLBUFFERSUBDATA>("glBufferSubData");
+        gl.GetBufferSubData = LoadProc<PFNGLGETBUFFERSUBDATA>("glGetBufferSubData");
+        gl.DispatchCompute = LoadProc<PFNGLDISPATCHCOMPUTE>("glDispatchCompute");
+        gl.MemoryBarrier = LoadProc<PFNGLMEMORYBARRIER>("glMemoryBarrier");
 #if defined(ABSOLUTE_GPU_WGL)
         gl.SwapInterval = LoadProc<PFNSWAPINTERVAL>("wglSwapIntervalEXT");
 #elif defined(ABSOLUTE_GPU_GLX)
@@ -494,6 +556,24 @@ namespace {
         return program;
     }
 
+    GLuint LinkComputeProgram(const GlFns& gl, GLuint cs) {
+        GLuint program = gl.CreateProgram();
+        gl.AttachShader(program, cs);
+        gl.LinkProgram(program);
+        GLint ok = 0;
+        gl.GetProgramiv(program, GL_LINK_STATUS, &ok);
+        if (!ok) {
+            GLint len = 0;
+            gl.GetProgramiv(program, GL_INFO_LOG_LENGTH, &len);
+            std::string log(static_cast<std::size_t>(std::max(len, 1)), '\0');
+            if (gl.GetProgramInfoLog) gl.GetProgramInfoLog(program, len, nullptr, log.data());
+            gl.DeleteProgram(program);
+            SetError(std::string("compute program link failed: ") + log.c_str());
+            return 0;
+        }
+        return program;
+    }
+
     struct VertexAttr {
         int32_t location = 0;
         int32_t components = 0;
@@ -513,6 +593,16 @@ namespace {
         GLuint vbo = 0;
         int32_t byteSize = 0;
         int32_t floatCount = 0;
+    };
+
+    struct GpuComputeShader {
+        GLuint program = 0;
+    };
+
+    struct GpuStorageBuffer {
+        GLuint buffer = 0;
+        int32_t floatCount = 0;
+        int32_t byteSize = 0;
     };
 
     struct GpuIndexBuffer {
@@ -557,6 +647,8 @@ namespace {
         int64_t boundBuffer = 0;
         int64_t boundIndexBuffer = 0;
         int64_t boundSamplerUnit0 = 0;
+        int64_t boundComputeShader = 0;
+        int64_t boundStorageBuffers[8] = {};
         bool attrsDirty = true;
 
         bool HasContext() const {
@@ -628,6 +720,8 @@ namespace {
             boundBuffer = 0;
             boundIndexBuffer = 0;
             boundSamplerUnit0 = 0;
+            boundComputeShader = 0;
+            std::fill(std::begin(boundStorageBuffers), std::end(boundStorageBuffers), 0);
         }
     };
 
@@ -650,6 +744,14 @@ namespace {
 
     GpuBuffer* BufferFromHandle(int64_t handle) {
         return reinterpret_cast<GpuBuffer*>(static_cast<intptr_t>(handle));
+    }
+
+    GpuComputeShader* ComputeShaderFromHandle(int64_t handle) {
+        return reinterpret_cast<GpuComputeShader*>(static_cast<intptr_t>(handle));
+    }
+
+    GpuStorageBuffer* StorageBufferFromHandle(int64_t handle) {
+        return reinterpret_cast<GpuStorageBuffer*>(static_cast<intptr_t>(handle));
     }
 
     GpuIndexBuffer* IndexBufferFromHandle(int64_t handle) {
@@ -728,13 +830,20 @@ namespace {
         auto createAttribs = LoadProc<PFNWGLCREATECONTEXTATTRIBSARB>("wglCreateContextAttribsARB");
         HGLRC modern = nullptr;
         if (createAttribs) {
-            const int attribs[] = {
+            const int computeAttribs[] = {
+                WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
+                WGL_CONTEXT_MINOR_VERSION_ARB, 3,
+                WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
+                0
+            };
+            modern = createAttribs(device.hdc, nullptr, computeAttribs);
+            const int graphicsAttribs[] = {
                 WGL_CONTEXT_MAJOR_VERSION_ARB, 3,
                 WGL_CONTEXT_MINOR_VERSION_ARB, 3,
                 WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
                 0
             };
-            modern = createAttribs(device.hdc, nullptr, attribs);
+            if (!modern) modern = createAttribs(device.hdc, nullptr, graphicsAttribs);
         }
 
         wglMakeCurrent(nullptr, nullptr);
@@ -785,13 +894,23 @@ namespace {
             glXGetProcAddress(reinterpret_cast<const GLubyte*>("glXCreateContextAttribsARB")));
 
         if (fbc && fbCount > 0 && createAttribs) {
-            const int ctxAttribs[] = {
+            const int computeAttribs[] = {
+                GLX_CONTEXT_MAJOR_VERSION_ARB, 4,
+                GLX_CONTEXT_MINOR_VERSION_ARB, 3,
+                GLX_CONTEXT_PROFILE_MASK_ARB, GLX_CONTEXT_CORE_PROFILE_BIT_ARB,
+                None
+            };
+            device.glx = createAttribs(device.display, fbc[0], nullptr, True, computeAttribs);
+            const int graphicsAttribs[] = {
                 GLX_CONTEXT_MAJOR_VERSION_ARB, 3,
                 GLX_CONTEXT_MINOR_VERSION_ARB, 3,
                 GLX_CONTEXT_PROFILE_MASK_ARB, GLX_CONTEXT_CORE_PROFILE_BIT_ARB,
                 None
             };
-            device.glx = createAttribs(device.display, fbc[0], nullptr, True, ctxAttribs);
+            if (!device.glx) {
+                device.glx = createAttribs(
+                    device.display, fbc[0], nullptr, True, graphicsAttribs);
+            }
             XFree(fbc);
             fbc = nullptr;
         }
@@ -1836,85 +1955,272 @@ extern "C" void absolute_desktop_gpu_bind_texture(
 }
 
 extern "C" int32_t absolute_desktop_gpu_compute_supported(int64_t gpuHandle) {
-    return AbsoluteGpuIsD3D11(gpuHandle)
-        ? absolute_desktop_gpu_d3d11_compute_supported(gpuHandle)
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        return absolute_desktop_gpu_vk_compute_supported(gpuHandle);
+    }
+    if (AbsoluteGpuIsD3D12(gpuHandle)) {
+        return absolute_desktop_gpu_d3d12_compute_supported(gpuHandle);
+    }
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        return absolute_desktop_gpu_d3d11_compute_supported(gpuHandle);
+    }
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    return device && device->valid && device->gl.DispatchCompute
+        && device->gl.MemoryBarrier && device->gl.BindBufferBase
+        && device->gl.BufferSubData && device->gl.GetBufferSubData
+        ? 1
         : 0;
 }
 
 extern "C" int64_t absolute_desktop_gpu_compute_shader_create(
     int64_t gpuHandle, const char* source) {
+    if (AbsoluteGpuIsVK(gpuHandle))
+        return absolute_desktop_gpu_vk_compute_shader_create(gpuHandle, source);
+    if (AbsoluteGpuIsD3D12(gpuHandle))
+        return absolute_desktop_gpu_d3d12_compute_shader_create(gpuHandle, source);
     if (AbsoluteGpuIsD3D11(gpuHandle))
         return absolute_desktop_gpu_d3d11_compute_shader_create(gpuHandle, source);
-    SetError(std::string("compute shaders are not implemented for backend ")
-        + absolute_desktop_gpu_backend_of(gpuHandle) + "; use BackendD3D11");
-    return 0;
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    if (!device || !source || !source[0] || !MakeCurrent(*device)) {
+        SetError("OpenGL compute shader requires a valid GPU and GLSL source");
+        return 0;
+    }
+    if (!absolute_desktop_gpu_compute_supported(gpuHandle)) {
+        SetError("OpenGL compute requires an OpenGL 4.3 context");
+        return 0;
+    }
+    GLuint cs = CompileShader(device->gl, GL_COMPUTE_SHADER, source);
+    if (!cs) return 0;
+    GLuint program = LinkComputeProgram(device->gl, cs);
+    device->gl.DeleteShader(cs);
+    if (!program) return 0;
+    auto* compute = new GpuComputeShader();
+    compute->program = program;
+    return static_cast<int64_t>(reinterpret_cast<intptr_t>(compute));
+}
+
+extern "C" int64_t absolute_desktop_gpu_compute_shader_create_sources(
+    int64_t gpuHandle, const char* hlslSource, const char* glslSource) {
+    return absolute_desktop_gpu_compute_shader_create(
+        gpuHandle, AbsoluteGpuIsGL(gpuHandle) ? glslSource : hlslSource);
 }
 
 extern "C" void absolute_desktop_gpu_compute_shader_destroy(
     int64_t gpuHandle, int64_t shaderHandle) {
-    if (AbsoluteGpuIsD3D11(gpuHandle))
+    if (AbsoluteGpuIsVK(gpuHandle))
+        absolute_desktop_gpu_vk_compute_shader_destroy(gpuHandle, shaderHandle);
+    else if (AbsoluteGpuIsD3D12(gpuHandle))
+        absolute_desktop_gpu_d3d12_compute_shader_destroy(gpuHandle, shaderHandle);
+    else if (AbsoluteGpuIsD3D11(gpuHandle))
         absolute_desktop_gpu_d3d11_compute_shader_destroy(gpuHandle, shaderHandle);
+    else {
+        GpuDevice* device = DeviceFromHandle(gpuHandle);
+        GpuComputeShader* compute = ComputeShaderFromHandle(shaderHandle);
+        if (!device || !compute) return;
+        if (device->boundComputeShader == shaderHandle) device->boundComputeShader = 0;
+        if (MakeCurrent(*device) && compute->program) {
+            device->gl.DeleteProgram(compute->program);
+        }
+        delete compute;
+    }
 }
 
 extern "C" int64_t absolute_desktop_gpu_storage_buffer_create(
     int64_t gpuHandle, const float* data, int32_t floatCount) {
+    if (AbsoluteGpuIsVK(gpuHandle))
+        return absolute_desktop_gpu_vk_storage_buffer_create(
+            gpuHandle, data, floatCount);
+    if (AbsoluteGpuIsD3D12(gpuHandle))
+        return absolute_desktop_gpu_d3d12_storage_buffer_create(
+            gpuHandle, data, floatCount);
     if (AbsoluteGpuIsD3D11(gpuHandle))
         return absolute_desktop_gpu_d3d11_storage_buffer_create(
             gpuHandle, data, floatCount);
-    SetError(std::string("storage buffers are not implemented for backend ")
-        + absolute_desktop_gpu_backend_of(gpuHandle) + "; use BackendD3D11");
-    return 0;
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    if (!device || !data || floatCount <= 0 || !MakeCurrent(*device)
+        || !absolute_desktop_gpu_compute_supported(gpuHandle)) {
+        SetError("OpenGL storage buffer requires OpenGL 4.3 and non-empty data");
+        return 0;
+    }
+    auto* storage = new GpuStorageBuffer();
+    storage->floatCount = floatCount;
+    storage->byteSize = floatCount * static_cast<int32_t>(sizeof(float));
+    device->gl.GenBuffers(1, &storage->buffer);
+    device->gl.BindBuffer(GL_SHADER_STORAGE_BUFFER, storage->buffer);
+    device->gl.BufferData(
+        GL_SHADER_STORAGE_BUFFER, storage->byteSize, data, GL_DYNAMIC_COPY);
+    device->gl.BindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    if (!storage->buffer) {
+        delete storage;
+        SetError("OpenGL storage buffer creation failed");
+        return 0;
+    }
+    return static_cast<int64_t>(reinterpret_cast<intptr_t>(storage));
 }
 
 extern "C" void absolute_desktop_gpu_storage_buffer_destroy(
     int64_t gpuHandle, int64_t bufferHandle) {
-    if (AbsoluteGpuIsD3D11(gpuHandle))
+    if (AbsoluteGpuIsVK(gpuHandle))
+        absolute_desktop_gpu_vk_storage_buffer_destroy(gpuHandle, bufferHandle);
+    else if (AbsoluteGpuIsD3D12(gpuHandle))
+        absolute_desktop_gpu_d3d12_storage_buffer_destroy(gpuHandle, bufferHandle);
+    else if (AbsoluteGpuIsD3D11(gpuHandle))
         absolute_desktop_gpu_d3d11_storage_buffer_destroy(gpuHandle, bufferHandle);
+    else {
+        GpuDevice* device = DeviceFromHandle(gpuHandle);
+        GpuStorageBuffer* storage = StorageBufferFromHandle(bufferHandle);
+        if (!device || !storage) return;
+        for (int32_t slot = 0; slot < 8; ++slot) {
+            if (device->boundStorageBuffers[slot] == bufferHandle) {
+                device->boundStorageBuffers[slot] = 0;
+            }
+        }
+        if (MakeCurrent(*device) && storage->buffer) {
+            device->gl.DeleteBuffers(1, &storage->buffer);
+        }
+        delete storage;
+    }
 }
 
 extern "C" int32_t absolute_desktop_gpu_storage_buffer_float_count(
     int64_t gpuHandle, int64_t bufferHandle) {
-    return AbsoluteGpuIsD3D11(gpuHandle)
-        ? absolute_desktop_gpu_d3d11_storage_buffer_float_count(bufferHandle)
-        : 0;
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        return absolute_desktop_gpu_vk_storage_buffer_float_count(bufferHandle);
+    }
+    if (AbsoluteGpuIsD3D12(gpuHandle)) {
+        return absolute_desktop_gpu_d3d12_storage_buffer_float_count(bufferHandle);
+    }
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        return absolute_desktop_gpu_d3d11_storage_buffer_float_count(bufferHandle);
+    }
+    const GpuStorageBuffer* storage = StorageBufferFromHandle(bufferHandle);
+    return storage ? storage->floatCount : 0;
 }
 
 extern "C" int32_t absolute_desktop_gpu_storage_buffer_upload(
     int64_t gpuHandle, int64_t bufferHandle, const float* data, int32_t floatCount) {
-    return AbsoluteGpuIsD3D11(gpuHandle)
-        ? absolute_desktop_gpu_d3d11_storage_buffer_upload(
-            gpuHandle, bufferHandle, data, floatCount)
-        : 0;
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        return absolute_desktop_gpu_vk_storage_buffer_upload(
+            gpuHandle, bufferHandle, data, floatCount);
+    }
+    if (AbsoluteGpuIsD3D12(gpuHandle)) {
+        return absolute_desktop_gpu_d3d12_storage_buffer_upload(
+            gpuHandle, bufferHandle, data, floatCount);
+    }
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        return absolute_desktop_gpu_d3d11_storage_buffer_upload(
+            gpuHandle, bufferHandle, data, floatCount);
+    }
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    GpuStorageBuffer* storage = StorageBufferFromHandle(bufferHandle);
+    if (!device || !storage || !data || floatCount != storage->floatCount
+        || !MakeCurrent(*device)) {
+        SetError("OpenGL storage upload size mismatch");
+        return 0;
+    }
+    device->gl.BindBuffer(GL_SHADER_STORAGE_BUFFER, storage->buffer);
+    device->gl.BufferSubData(
+        GL_SHADER_STORAGE_BUFFER, 0, storage->byteSize, data);
+    device->gl.BindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    return 1;
 }
 
 extern "C" int32_t absolute_desktop_gpu_storage_buffer_download(
     int64_t gpuHandle, int64_t bufferHandle, float* output, int32_t floatCount) {
-    return AbsoluteGpuIsD3D11(gpuHandle)
-        ? absolute_desktop_gpu_d3d11_storage_buffer_download(
-            gpuHandle, bufferHandle, output, floatCount)
-        : 0;
+    if (AbsoluteGpuIsVK(gpuHandle)) {
+        return absolute_desktop_gpu_vk_storage_buffer_download(
+            gpuHandle, bufferHandle, output, floatCount);
+    }
+    if (AbsoluteGpuIsD3D12(gpuHandle)) {
+        return absolute_desktop_gpu_d3d12_storage_buffer_download(
+            gpuHandle, bufferHandle, output, floatCount);
+    }
+    if (AbsoluteGpuIsD3D11(gpuHandle)) {
+        return absolute_desktop_gpu_d3d11_storage_buffer_download(
+            gpuHandle, bufferHandle, output, floatCount);
+    }
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    GpuStorageBuffer* storage = StorageBufferFromHandle(bufferHandle);
+    if (!device || !storage || !output || floatCount != storage->floatCount
+        || !MakeCurrent(*device)) {
+        SetError("OpenGL storage download size mismatch");
+        return 0;
+    }
+    device->gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    device->gl.BindBuffer(GL_SHADER_STORAGE_BUFFER, storage->buffer);
+    device->gl.GetBufferSubData(
+        GL_SHADER_STORAGE_BUFFER, 0, storage->byteSize, output);
+    device->gl.BindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    return 1;
 }
 
 extern "C" void absolute_desktop_gpu_bind_compute_shader(
     int64_t gpuHandle, int64_t shaderHandle) {
-    if (AbsoluteGpuIsD3D11(gpuHandle))
+    if (AbsoluteGpuIsVK(gpuHandle))
+        absolute_desktop_gpu_vk_bind_compute_shader(gpuHandle, shaderHandle);
+    else if (AbsoluteGpuIsD3D12(gpuHandle))
+        absolute_desktop_gpu_d3d12_bind_compute_shader(gpuHandle, shaderHandle);
+    else if (AbsoluteGpuIsD3D11(gpuHandle))
         absolute_desktop_gpu_d3d11_bind_compute_shader(gpuHandle, shaderHandle);
+    else {
+        GpuDevice* device = DeviceFromHandle(gpuHandle);
+        if (device) device->boundComputeShader = shaderHandle;
+    }
 }
 
 extern "C" void absolute_desktop_gpu_bind_storage_buffer(
     int64_t gpuHandle, int64_t bufferHandle, int32_t slot) {
-    if (AbsoluteGpuIsD3D11(gpuHandle))
+    if (AbsoluteGpuIsVK(gpuHandle))
+        absolute_desktop_gpu_vk_bind_storage_buffer(gpuHandle, bufferHandle, slot);
+    else if (AbsoluteGpuIsD3D12(gpuHandle))
+        absolute_desktop_gpu_d3d12_bind_storage_buffer(gpuHandle, bufferHandle, slot);
+    else if (AbsoluteGpuIsD3D11(gpuHandle))
         absolute_desktop_gpu_d3d11_bind_storage_buffer(gpuHandle, bufferHandle, slot);
+    else {
+        GpuDevice* device = DeviceFromHandle(gpuHandle);
+        if (!device || slot < 0 || slot >= 8) {
+            SetError("OpenGL storage binding slot must be in 0..7");
+            return;
+        }
+        device->boundStorageBuffers[slot] = bufferHandle;
+    }
 }
 
 extern "C" int32_t absolute_desktop_gpu_dispatch(
     int64_t gpuHandle, int32_t groupsX, int32_t groupsY, int32_t groupsZ) {
+    if (AbsoluteGpuIsVK(gpuHandle))
+        return absolute_desktop_gpu_vk_dispatch(
+            gpuHandle, groupsX, groupsY, groupsZ);
+    if (AbsoluteGpuIsD3D12(gpuHandle))
+        return absolute_desktop_gpu_d3d12_dispatch(
+            gpuHandle, groupsX, groupsY, groupsZ);
     if (AbsoluteGpuIsD3D11(gpuHandle))
         return absolute_desktop_gpu_d3d11_dispatch(
             gpuHandle, groupsX, groupsY, groupsZ);
-    SetError(std::string("compute dispatch is not implemented for backend ")
-        + absolute_desktop_gpu_backend_of(gpuHandle) + "; use BackendD3D11");
-    return 0;
+    GpuDevice* device = DeviceFromHandle(gpuHandle);
+    GpuComputeShader* compute = device
+        ? ComputeShaderFromHandle(device->boundComputeShader)
+        : nullptr;
+    if (!device || !compute || groupsX <= 0 || groupsY <= 0 || groupsZ <= 0
+        || groupsX > 65535 || groupsY > 65535 || groupsZ > 65535
+        || !MakeCurrent(*device)) {
+        SetError("OpenGL dispatch requires a bound shader and groups in 1..65535");
+        return 0;
+    }
+    device->gl.UseProgram(compute->program);
+    for (int32_t slot = 0; slot < 8; ++slot) {
+        GpuStorageBuffer* storage =
+            StorageBufferFromHandle(device->boundStorageBuffers[slot]);
+        device->gl.BindBufferBase(
+            GL_SHADER_STORAGE_BUFFER, static_cast<GLuint>(slot),
+            storage ? storage->buffer : 0);
+    }
+    device->gl.DispatchCompute(
+        static_cast<GLuint>(groupsX),
+        static_cast<GLuint>(groupsY),
+        static_cast<GLuint>(groupsZ));
+    device->gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    return 1;
 }
 
 #else // no WGL/GLX
@@ -2025,40 +2331,59 @@ extern "C" int64_t absolute_desktop_gpu_sampler_create_on(int64_t, int32_t, int3
 extern "C" void absolute_desktop_gpu_sampler_destroy(int64_t, int64_t) {}
 extern "C" void absolute_desktop_gpu_bind_sampler(int64_t, int64_t, int32_t) {}
 extern "C" int32_t absolute_desktop_gpu_compute_supported(int64_t gpuHandle) {
+    if (AbsoluteGpuIsD3D12(gpuHandle))
+        return absolute_desktop_gpu_d3d12_compute_supported(gpuHandle);
     return AbsoluteGpuIsD3D11(gpuHandle)
-        ? absolute_desktop_gpu_d3d11_compute_supported(gpuHandle)
-        : 0;
+        ? absolute_desktop_gpu_d3d11_compute_supported(gpuHandle) : 0;
 }
 extern "C" int64_t absolute_desktop_gpu_compute_shader_create(
     int64_t gpuHandle, const char* source) {
+    if (AbsoluteGpuIsD3D12(gpuHandle))
+        return absolute_desktop_gpu_d3d12_compute_shader_create(gpuHandle, source);
     return AbsoluteGpuIsD3D11(gpuHandle)
         ? absolute_desktop_gpu_d3d11_compute_shader_create(gpuHandle, source)
         : 0;
 }
+extern "C" int64_t absolute_desktop_gpu_compute_shader_create_sources(
+    int64_t gpuHandle, const char* hlslSource, const char*) {
+    return absolute_desktop_gpu_compute_shader_create(gpuHandle, hlslSource);
+}
 extern "C" void absolute_desktop_gpu_compute_shader_destroy(
     int64_t gpuHandle, int64_t shaderHandle) {
-    if (AbsoluteGpuIsD3D11(gpuHandle))
+    if (AbsoluteGpuIsD3D12(gpuHandle))
+        absolute_desktop_gpu_d3d12_compute_shader_destroy(gpuHandle, shaderHandle);
+    else if (AbsoluteGpuIsD3D11(gpuHandle))
         absolute_desktop_gpu_d3d11_compute_shader_destroy(gpuHandle, shaderHandle);
 }
 extern "C" int64_t absolute_desktop_gpu_storage_buffer_create(
     int64_t gpuHandle, const float* data, int32_t floatCount) {
+    if (AbsoluteGpuIsD3D12(gpuHandle))
+        return absolute_desktop_gpu_d3d12_storage_buffer_create(
+            gpuHandle, data, floatCount);
     return AbsoluteGpuIsD3D11(gpuHandle)
         ? absolute_desktop_gpu_d3d11_storage_buffer_create(gpuHandle, data, floatCount)
         : 0;
 }
 extern "C" void absolute_desktop_gpu_storage_buffer_destroy(
     int64_t gpuHandle, int64_t bufferHandle) {
-    if (AbsoluteGpuIsD3D11(gpuHandle))
+    if (AbsoluteGpuIsD3D12(gpuHandle))
+        absolute_desktop_gpu_d3d12_storage_buffer_destroy(gpuHandle, bufferHandle);
+    else if (AbsoluteGpuIsD3D11(gpuHandle))
         absolute_desktop_gpu_d3d11_storage_buffer_destroy(gpuHandle, bufferHandle);
 }
 extern "C" int32_t absolute_desktop_gpu_storage_buffer_float_count(
     int64_t gpuHandle, int64_t bufferHandle) {
+    if (AbsoluteGpuIsD3D12(gpuHandle))
+        return absolute_desktop_gpu_d3d12_storage_buffer_float_count(bufferHandle);
     return AbsoluteGpuIsD3D11(gpuHandle)
         ? absolute_desktop_gpu_d3d11_storage_buffer_float_count(bufferHandle)
         : 0;
 }
 extern "C" int32_t absolute_desktop_gpu_storage_buffer_upload(
     int64_t gpuHandle, int64_t bufferHandle, const float* data, int32_t floatCount) {
+    if (AbsoluteGpuIsD3D12(gpuHandle))
+        return absolute_desktop_gpu_d3d12_storage_buffer_upload(
+            gpuHandle, bufferHandle, data, floatCount);
     return AbsoluteGpuIsD3D11(gpuHandle)
         ? absolute_desktop_gpu_d3d11_storage_buffer_upload(
             gpuHandle, bufferHandle, data, floatCount)
@@ -2066,6 +2391,9 @@ extern "C" int32_t absolute_desktop_gpu_storage_buffer_upload(
 }
 extern "C" int32_t absolute_desktop_gpu_storage_buffer_download(
     int64_t gpuHandle, int64_t bufferHandle, float* output, int32_t floatCount) {
+    if (AbsoluteGpuIsD3D12(gpuHandle))
+        return absolute_desktop_gpu_d3d12_storage_buffer_download(
+            gpuHandle, bufferHandle, output, floatCount);
     return AbsoluteGpuIsD3D11(gpuHandle)
         ? absolute_desktop_gpu_d3d11_storage_buffer_download(
             gpuHandle, bufferHandle, output, floatCount)
@@ -2073,16 +2401,23 @@ extern "C" int32_t absolute_desktop_gpu_storage_buffer_download(
 }
 extern "C" void absolute_desktop_gpu_bind_compute_shader(
     int64_t gpuHandle, int64_t shaderHandle) {
-    if (AbsoluteGpuIsD3D11(gpuHandle))
+    if (AbsoluteGpuIsD3D12(gpuHandle))
+        absolute_desktop_gpu_d3d12_bind_compute_shader(gpuHandle, shaderHandle);
+    else if (AbsoluteGpuIsD3D11(gpuHandle))
         absolute_desktop_gpu_d3d11_bind_compute_shader(gpuHandle, shaderHandle);
 }
 extern "C" void absolute_desktop_gpu_bind_storage_buffer(
     int64_t gpuHandle, int64_t bufferHandle, int32_t slot) {
-    if (AbsoluteGpuIsD3D11(gpuHandle))
+    if (AbsoluteGpuIsD3D12(gpuHandle))
+        absolute_desktop_gpu_d3d12_bind_storage_buffer(gpuHandle, bufferHandle, slot);
+    else if (AbsoluteGpuIsD3D11(gpuHandle))
         absolute_desktop_gpu_d3d11_bind_storage_buffer(gpuHandle, bufferHandle, slot);
 }
 extern "C" int32_t absolute_desktop_gpu_dispatch(
     int64_t gpuHandle, int32_t groupsX, int32_t groupsY, int32_t groupsZ) {
+    if (AbsoluteGpuIsD3D12(gpuHandle))
+        return absolute_desktop_gpu_d3d12_dispatch(
+            gpuHandle, groupsX, groupsY, groupsZ);
     return AbsoluteGpuIsD3D11(gpuHandle)
         ? absolute_desktop_gpu_d3d11_dispatch(gpuHandle, groupsX, groupsY, groupsZ)
         : 0;

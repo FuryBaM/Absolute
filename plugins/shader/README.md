@@ -55,23 +55,26 @@ auto programD3D = gpu.createShader(
 
 ## Compute + `absolute.desktop`
 
-The canonical `Compute` stage exposes `Shader.generatedComputeHlsl()` through
-the plugin prelude, so user code does not need to declare an `extern` accessor:
+The canonical `Compute` stage exposes `Shader.generatedComputeHlsl()` and
+`Shader.generatedComputeGlsl()` through the plugin prelude, so user code does
+not need to declare `extern` accessors:
 
 ```absolute
 @shader.stage(Compute)
 shader Compute {
-    // Declaration order maps to D3D11 UAV slots u0, u1, ...
+    // Declaration order maps to HLSL u0..u7 and GLSL bindings 0..7.
     storage float values;
     workgroup 1, 1, 1;
 
-    // Body of the generated HLSL main(uint3 id : SV_DispatchThreadID).
-    hlsl {
+    // Portable body: HLSL id becomes gl_GlobalInvocationID for GLSL.
+    kernel {
         values[id.x] = values[id.x] * 2.0;
     }
 }
 
-auto compute = gpu.createComputeShader(Shader.generatedComputeHlsl());
+auto compute = gpu.createComputeShader(
+    Shader.generatedComputeHlsl(),
+    Shader.generatedComputeGlsl());
 auto storage = gpu.createStorageBuffer(values);
 gpu.bind(compute);
 gpu.bindStorage(storage, 0);
@@ -79,9 +82,11 @@ gpu.dispatch(values.length, 1, 1);
 storage.download(values);
 ```
 
-The shader plugin owns stage parsing and HLSL/DXIL/SPIR-V generation. The
-desktop plugin owns D3D11 execution, UAV storage and CPU readback. Compute
-storage is currently `float` only and the desktop execution backend is D3D11.
+The shader plugin owns stage parsing and HLSL/GLSL/MSL/DXIL/SPIR-V generation.
+The desktop plugin executes compute on OpenGL 4.3, D3D11, D3D12 and Vulkan,
+including storage buffers and CPU readback. Metal source is emitted, but
+`absolute.desktop` does not currently expose a Metal runtime backend.
+Compute storage is currently `float` only.
 
 ## DSL
 
@@ -90,9 +95,10 @@ storage is currently `float` only and the desktop execution backend is D3D11.
 | `input [type] name;` | Vertex attribute (or fragment varying). Types: `float`, `float2`/`vec2`, `float3`/`vec3`, `float4`/`vec4`, `int`. Untyped names keep legacy inference (`position`→float3, `uv`→float2, …). |
 | `output [type] name;` | Stage output (`clipPosition` → `gl_Position` / `SV_POSITION` / `[[position]]`). |
 | `uniform [type] name;` | Uniform / cbuffer field (bound via `gpu.setUniformF` / `setUniformI`). |
-| `storage float name;` | Compute read/write storage. Declaration order becomes HLSL UAV bindings `u0..u7`. |
-| `workgroup x, y, z;` | Compute thread-group size emitted as HLSL `numthreads(x,y,z)`. |
-| `hlsl { ... }` | Compute statements inserted into generated `main(uint3 id : SV_DispatchThreadID)`. Storage and entry-point declarations are generated automatically. |
+| `storage float name;` | Compute read/write storage. Declaration order becomes HLSL UAV `u0..u7`, GLSL SSBO binding `0..7`, and MSL buffer `0..7`. |
+| `workgroup x, y, z;` | Compute local group size emitted as HLSL `numthreads`, GLSL `local_size`, and MSL reflection. |
+| `kernel { ... }` | Portable compute body. `id.x/y/z` maps to the backend global invocation id; common float/vector expressions are emitted for HLSL, GLSL and MSL. |
+| `hlsl { ... }` | Backend-specific/legacy compute body. Prefer `kernel` for cross-API execution. |
 | `code { ... }` | Optional **full GLSL** body for the stage. Nested `{`/`}` supported. If omitted, a default mesh-style body is generated for GLSL/HLSL/MSL. `#version 330 core` is always prepended when missing. **Do not write `#...` in the body** — Absolute’s lexer rejects `#`. Custom `code` skips HLSL→SPIR-V/DXIL auto-compile. |
 
 `@shader.stage(Name)` must match the block stage name.
@@ -142,6 +148,11 @@ absolutec examples/desktop/shader-compute.abs `
   --plugin path/to/absolute-desktop.absplugin `
   --plugin path/to/absolute-shader.dll `
   --build-exe -o shader-compute.exe
+
+.\shader-compute.exe opengl
+.\shader-compute.exe d3d11
+.\shader-compute.exe d3d12
+.\shader-compute.exe vulkan
 ```
 
 See `examples/desktop/shader-rhi.abs`, `shader-code.abs`,

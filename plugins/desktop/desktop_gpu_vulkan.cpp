@@ -53,6 +53,21 @@ extern "C" void absolute_desktop_gpu_vk_bind_texture(int64_t, int64_t, int32_t) 
 extern "C" int64_t absolute_desktop_gpu_vk_sampler_create(int64_t, int32_t, int32_t) { return 0; }
 extern "C" void absolute_desktop_gpu_vk_sampler_destroy(int64_t, int64_t) {}
 extern "C" void absolute_desktop_gpu_vk_bind_sampler(int64_t, int64_t, int32_t) {}
+extern "C" int32_t absolute_desktop_gpu_vk_compute_supported(int64_t) { return 0; }
+extern "C" int64_t absolute_desktop_gpu_vk_compute_shader_create(int64_t, const char*) { return 0; }
+extern "C" void absolute_desktop_gpu_vk_compute_shader_destroy(int64_t, int64_t) {}
+extern "C" int64_t absolute_desktop_gpu_vk_storage_buffer_create(
+    int64_t, const float*, int32_t) { return 0; }
+extern "C" void absolute_desktop_gpu_vk_storage_buffer_destroy(int64_t, int64_t) {}
+extern "C" int32_t absolute_desktop_gpu_vk_storage_buffer_float_count(int64_t) { return 0; }
+extern "C" int32_t absolute_desktop_gpu_vk_storage_buffer_upload(
+    int64_t, int64_t, const float*, int32_t) { return 0; }
+extern "C" int32_t absolute_desktop_gpu_vk_storage_buffer_download(
+    int64_t, int64_t, float*, int32_t) { return 0; }
+extern "C" void absolute_desktop_gpu_vk_bind_compute_shader(int64_t, int64_t) {}
+extern "C" void absolute_desktop_gpu_vk_bind_storage_buffer(int64_t, int64_t, int32_t) {}
+extern "C" int32_t absolute_desktop_gpu_vk_dispatch(
+    int64_t, int32_t, int32_t, int32_t) { return 0; }
 
 #else
 
@@ -88,6 +103,8 @@ constexpr uint32_t kResIndex = 0x564B4942u;    // 'VKIB'
 constexpr uint32_t kResPipeline = 0x564B504Cu; // 'VKPL'
 constexpr uint32_t kResTexture = 0x564B5445u;  // 'VKTE'
 constexpr uint32_t kResSampler = 0x564B5341u;  // 'VKSA'
+constexpr uint32_t kResCompute = 0x564B4353u;  // 'VKCS'
+constexpr uint32_t kResStorage = 0x564B5354u;  // 'VKST'
 constexpr UINT kUboSize = 256;
 
 uint32_t PeekRes(int64_t handle) {
@@ -139,6 +156,7 @@ PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
     X(vkCmdBindDescriptorSets) \
     X(vkCmdDraw) \
     X(vkCmdDrawIndexed) \
+    X(vkCmdDispatch) \
     X(vkCmdSetViewport) \
     X(vkCmdSetScissor) \
     X(vkCmdPipelineBarrier) \
@@ -161,6 +179,7 @@ PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr = nullptr;
     X(vkCreatePipelineLayout) \
     X(vkDestroyPipelineLayout) \
     X(vkCreateGraphicsPipelines) \
+    X(vkCreateComputePipelines) \
     X(vkDestroyPipeline) \
     X(vkCreateDescriptorSetLayout) \
     X(vkDestroyDescriptorSetLayout) \
@@ -230,10 +249,17 @@ bool LoadDeviceFns(VkDevice device) {
         }
         return vkGetInstanceProcAddr(VK_NULL_HANDLE, n);
     };
-    // Re-bind device entry points that may be device-dispatch only.
-    // Most loaders still expose them via instance gipa after device create.
-    (void)load;
-    return vkCreateSwapchainKHR && vkQueueSubmit && vkCreateGraphicsPipelines;
+    // Re-bind compute entry points explicitly; some Vulkan loaders expose them
+    // only through vkGetDeviceProcAddr.
+    if (auto fn = load("vkCreateComputePipelines")) {
+        vkCreateComputePipelines =
+            reinterpret_cast<PFN_vkCreateComputePipelines>(fn);
+    }
+    if (auto fn = load("vkCmdDispatch")) {
+        vkCmdDispatch = reinterpret_cast<PFN_vkCmdDispatch>(fn);
+    }
+    return vkCreateSwapchainKHR && vkQueueSubmit && vkCreateGraphicsPipelines
+        && vkCreateComputePipelines && vkCmdDispatch;
 }
 
 struct UniformVar {
@@ -312,6 +338,25 @@ struct VkGpuShader {
     UINT cbufferSize = 16;
     std::vector<uint8_t> cbufferCpu;
     bool cbufferDirty = true;
+};
+
+struct VkGpuComputeShader {
+    uint32_t magic = kResCompute;
+    std::vector<uint32_t> spirv;
+    VkShaderModule module = VK_NULL_HANDLE;
+    VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
+    VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+};
+
+struct VkGpuStorageBuffer {
+    uint32_t magic = kResStorage;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    int32_t floatCount = 0;
+    VkDeviceSize size = 0;
 };
 
 struct VkGpuBuffer {
@@ -400,6 +445,8 @@ struct VkGpuDevice {
     int64_t boundIndexBuffer = 0;
     int64_t boundTexture = 0;
     int64_t boundSampler = 0;
+    int64_t boundComputeShader = 0;
+    int64_t boundStorageBuffers[8] = {};
 
     VkGpuTexture* defaultTexture = nullptr;
     VkGpuSampler* defaultSampler = nullptr;
@@ -583,6 +630,8 @@ struct VkGpuDevice {
         valid = false;
         inFrame = false;
         cmdOpen = false;
+        boundComputeShader = 0;
+        std::memset(boundStorageBuffers, 0, sizeof(boundStorageBuffers));
     }
 };
 
@@ -607,6 +656,16 @@ VkGpuTexture* TextureFrom(int64_t h) {
 }
 VkGpuSampler* SamplerFrom(int64_t h) {
     return PeekRes(h) == kResSampler ? reinterpret_cast<VkGpuSampler*>(static_cast<intptr_t>(h)) : nullptr;
+}
+VkGpuComputeShader* ComputeFrom(int64_t h) {
+    return PeekRes(h) == kResCompute
+        ? reinterpret_cast<VkGpuComputeShader*>(static_cast<intptr_t>(h))
+        : nullptr;
+}
+VkGpuStorageBuffer* StorageFrom(int64_t h) {
+    return PeekRes(h) == kResStorage
+        ? reinterpret_cast<VkGpuStorageBuffer*>(static_cast<intptr_t>(h))
+        : nullptr;
 }
 DesktopSpriteView* SpriteFrom(int64_t h) {
     return h ? reinterpret_cast<DesktopSpriteView*>(static_cast<intptr_t>(h)) : nullptr;
@@ -928,7 +987,9 @@ extern "C" int64_t absolute_desktop_gpu_vk_create(int64_t windowHandle) {
     for (uint32_t i = 0; i < qCount; ++i) {
         VkBool32 present = VK_FALSE;
         vkGetPhysicalDeviceSurfaceSupportKHR(dev->phys, i, dev->surface, &present);
-        if ((qprops[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && present) {
+        if ((qprops[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+            && (qprops[i].queueFlags & VK_QUEUE_COMPUTE_BIT)
+            && present) {
             dev->queueFamily = i;
             break;
         }
@@ -1123,7 +1184,8 @@ extern "C" void absolute_desktop_gpu_vk_unsupported(const char* what) {
 extern "C" int32_t absolute_desktop_gpu_vk_is_resource(int64_t handle) {
     const uint32_t m = PeekRes(handle);
     return (m == kResShader || m == kResBuffer || m == kResIndex || m == kResPipeline
-        || m == kResTexture || m == kResSampler)
+        || m == kResTexture || m == kResSampler || m == kResCompute
+        || m == kResStorage)
         ? 1
         : 0;
 }
@@ -1837,6 +1899,362 @@ extern "C" void absolute_desktop_gpu_vk_sampler_destroy(int64_t gpuHandle, int64
         if (samp->sampler) vkDestroySampler(dev->device, samp->sampler, nullptr);
     }
     delete samp;
+}
+
+extern "C" int32_t absolute_desktop_gpu_vk_compute_supported(int64_t gpuHandle) {
+    const VkGpuDevice* dev = DeviceFrom(gpuHandle);
+    return dev && dev->valid && dev->device && vkCreateComputePipelines
+        && vkCmdDispatch ? 1 : 0;
+}
+
+extern "C" int64_t absolute_desktop_gpu_vk_compute_shader_create(
+    int64_t gpuHandle, const char* source) {
+    g_lastError.clear();
+    VkGpuDevice* dev = DeviceFrom(gpuHandle);
+    if (!dev || !source || !source[0]) {
+        SetError("Vulkan compute shader requires valid GPU and HLSL source");
+        return 0;
+    }
+    auto* compute = new VkGpuComputeShader();
+    if (!CompileHlslToSpirv(source, "cs_6_0", compute->spirv)) {
+        delete compute;
+        return 0;
+    }
+
+    VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    moduleInfo.codeSize = compute->spirv.size() * sizeof(uint32_t);
+    moduleInfo.pCode = compute->spirv.data();
+    if (vkCreateShaderModule(
+            dev->device, &moduleInfo, nullptr, &compute->module) != VK_SUCCESS) {
+        SetError("Vulkan compute shader module creation failed");
+        delete compute;
+        return 0;
+    }
+
+    VkDescriptorSetLayoutBinding bindings[8]{};
+    for (uint32_t slot = 0; slot < 8; ++slot) {
+        bindings[slot].binding = slot;
+        bindings[slot].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        bindings[slot].descriptorCount = 1;
+        bindings[slot].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+    VkDescriptorSetLayoutCreateInfo setInfo{
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    setInfo.bindingCount = 8;
+    setInfo.pBindings = bindings;
+    if (vkCreateDescriptorSetLayout(
+            dev->device, &setInfo, nullptr, &compute->setLayout) != VK_SUCCESS) {
+        SetError("Vulkan compute descriptor layout creation failed");
+        vkDestroyShaderModule(dev->device, compute->module, nullptr);
+        delete compute;
+        return 0;
+    }
+
+    VkPipelineLayoutCreateInfo layoutInfo{
+        VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts = &compute->setLayout;
+    if (vkCreatePipelineLayout(
+            dev->device, &layoutInfo, nullptr,
+            &compute->pipelineLayout) != VK_SUCCESS) {
+        SetError("Vulkan compute pipeline layout creation failed");
+        vkDestroyDescriptorSetLayout(dev->device, compute->setLayout, nullptr);
+        vkDestroyShaderModule(dev->device, compute->module, nullptr);
+        delete compute;
+        return 0;
+    }
+
+    VkComputePipelineCreateInfo pipelineInfo{
+        VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    pipelineInfo.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    pipelineInfo.stage.module = compute->module;
+    pipelineInfo.stage.pName = "main";
+    pipelineInfo.layout = compute->pipelineLayout;
+    if (vkCreateComputePipelines(
+            dev->device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr,
+            &compute->pipeline) != VK_SUCCESS) {
+        SetError("Vulkan compute pipeline creation failed");
+        vkDestroyPipelineLayout(dev->device, compute->pipelineLayout, nullptr);
+        vkDestroyDescriptorSetLayout(dev->device, compute->setLayout, nullptr);
+        vkDestroyShaderModule(dev->device, compute->module, nullptr);
+        delete compute;
+        return 0;
+    }
+
+    VkDescriptorPoolSize poolSize{
+        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 8};
+    VkDescriptorPoolCreateInfo poolInfo{
+        VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    poolInfo.maxSets = 1;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    if (vkCreateDescriptorPool(
+            dev->device, &poolInfo, nullptr,
+            &compute->descriptorPool) != VK_SUCCESS) {
+        SetError("Vulkan compute descriptor pool creation failed");
+        vkDestroyPipeline(dev->device, compute->pipeline, nullptr);
+        vkDestroyPipelineLayout(dev->device, compute->pipelineLayout, nullptr);
+        vkDestroyDescriptorSetLayout(dev->device, compute->setLayout, nullptr);
+        vkDestroyShaderModule(dev->device, compute->module, nullptr);
+        delete compute;
+        return 0;
+    }
+    VkDescriptorSetAllocateInfo allocInfo{
+        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    allocInfo.descriptorPool = compute->descriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &compute->setLayout;
+    if (vkAllocateDescriptorSets(
+            dev->device, &allocInfo, &compute->descriptorSet) != VK_SUCCESS) {
+        SetError("Vulkan compute descriptor set allocation failed");
+        vkDestroyDescriptorPool(dev->device, compute->descriptorPool, nullptr);
+        vkDestroyPipeline(dev->device, compute->pipeline, nullptr);
+        vkDestroyPipelineLayout(dev->device, compute->pipelineLayout, nullptr);
+        vkDestroyDescriptorSetLayout(dev->device, compute->setLayout, nullptr);
+        vkDestroyShaderModule(dev->device, compute->module, nullptr);
+        delete compute;
+        return 0;
+    }
+    return PtrToHandle(compute);
+}
+
+extern "C" void absolute_desktop_gpu_vk_compute_shader_destroy(
+    int64_t gpuHandle, int64_t shaderHandle) {
+    VkGpuDevice* dev = DeviceFrom(gpuHandle);
+    VkGpuComputeShader* compute = ComputeFrom(shaderHandle);
+    if (!dev || !compute) return;
+    vkDeviceWaitIdle(dev->device);
+    if (dev->boundComputeShader == shaderHandle) dev->boundComputeShader = 0;
+    if (compute->descriptorPool) {
+        vkDestroyDescriptorPool(dev->device, compute->descriptorPool, nullptr);
+    }
+    if (compute->pipeline) {
+        vkDestroyPipeline(dev->device, compute->pipeline, nullptr);
+    }
+    if (compute->pipelineLayout) {
+        vkDestroyPipelineLayout(dev->device, compute->pipelineLayout, nullptr);
+    }
+    if (compute->setLayout) {
+        vkDestroyDescriptorSetLayout(dev->device, compute->setLayout, nullptr);
+    }
+    if (compute->module) {
+        vkDestroyShaderModule(dev->device, compute->module, nullptr);
+    }
+    delete compute;
+}
+
+extern "C" int64_t absolute_desktop_gpu_vk_storage_buffer_create(
+    int64_t gpuHandle, const float* data, int32_t floatCount) {
+    g_lastError.clear();
+    VkGpuDevice* dev = DeviceFrom(gpuHandle);
+    if (!dev || !data || floatCount <= 0) {
+        SetError("Vulkan storage buffer requires non-empty float data");
+        return 0;
+    }
+    auto* storage = new VkGpuStorageBuffer();
+    storage->floatCount = floatCount;
+    storage->size = static_cast<VkDeviceSize>(floatCount) * sizeof(float);
+    void* mapped = nullptr;
+    if (!dev->CreateBuffer(
+            storage->size,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+                | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            &storage->buffer, &storage->memory, &mapped)) {
+        SetError("Vulkan storage buffer creation failed");
+        if (storage->buffer) vkDestroyBuffer(dev->device, storage->buffer, nullptr);
+        if (storage->memory) vkFreeMemory(dev->device, storage->memory, nullptr);
+        delete storage;
+        return 0;
+    }
+    std::memcpy(mapped, data, static_cast<size_t>(storage->size));
+    vkUnmapMemory(dev->device, storage->memory);
+    return PtrToHandle(storage);
+}
+
+extern "C" void absolute_desktop_gpu_vk_storage_buffer_destroy(
+    int64_t gpuHandle, int64_t bufferHandle) {
+    VkGpuDevice* dev = DeviceFrom(gpuHandle);
+    VkGpuStorageBuffer* storage = StorageFrom(bufferHandle);
+    if (!dev || !storage) return;
+    vkDeviceWaitIdle(dev->device);
+    for (int slot = 0; slot < 8; ++slot) {
+        if (dev->boundStorageBuffers[slot] == bufferHandle) {
+            dev->boundStorageBuffers[slot] = 0;
+        }
+    }
+    dev->DestroyBuffer(storage->buffer, storage->memory);
+    delete storage;
+}
+
+extern "C" int32_t absolute_desktop_gpu_vk_storage_buffer_float_count(
+    int64_t bufferHandle) {
+    const VkGpuStorageBuffer* storage = StorageFrom(bufferHandle);
+    return storage ? storage->floatCount : 0;
+}
+
+extern "C" int32_t absolute_desktop_gpu_vk_storage_buffer_upload(
+    int64_t gpuHandle,
+    int64_t bufferHandle,
+    const float* data,
+    int32_t floatCount) {
+    VkGpuDevice* dev = DeviceFrom(gpuHandle);
+    VkGpuStorageBuffer* storage = StorageFrom(bufferHandle);
+    if (!dev || !storage || !data || floatCount != storage->floatCount) {
+        SetError("Vulkan storage upload size mismatch");
+        return 0;
+    }
+    vkDeviceWaitIdle(dev->device);
+    void* mapped = nullptr;
+    if (vkMapMemory(
+            dev->device, storage->memory, 0, storage->size, 0,
+            &mapped) != VK_SUCCESS || !mapped) {
+        SetError("Vulkan storage upload mapping failed");
+        return 0;
+    }
+    std::memcpy(mapped, data, static_cast<size_t>(storage->size));
+    vkUnmapMemory(dev->device, storage->memory);
+    return 1;
+}
+
+extern "C" int32_t absolute_desktop_gpu_vk_storage_buffer_download(
+    int64_t gpuHandle,
+    int64_t bufferHandle,
+    float* output,
+    int32_t floatCount) {
+    VkGpuDevice* dev = DeviceFrom(gpuHandle);
+    VkGpuStorageBuffer* storage = StorageFrom(bufferHandle);
+    if (!dev || !storage || !output || floatCount != storage->floatCount) {
+        SetError("Vulkan storage download size mismatch");
+        return 0;
+    }
+    vkDeviceWaitIdle(dev->device);
+    void* mapped = nullptr;
+    if (vkMapMemory(
+            dev->device, storage->memory, 0, storage->size, 0,
+            &mapped) != VK_SUCCESS || !mapped) {
+        SetError("Vulkan storage download mapping failed");
+        return 0;
+    }
+    std::memcpy(output, mapped, static_cast<size_t>(storage->size));
+    vkUnmapMemory(dev->device, storage->memory);
+    return 1;
+}
+
+extern "C" void absolute_desktop_gpu_vk_bind_compute_shader(
+    int64_t gpuHandle, int64_t shaderHandle) {
+    VkGpuDevice* dev = DeviceFrom(gpuHandle);
+    if (dev) dev->boundComputeShader = shaderHandle;
+}
+
+extern "C" void absolute_desktop_gpu_vk_bind_storage_buffer(
+    int64_t gpuHandle, int64_t bufferHandle, int32_t slot) {
+    VkGpuDevice* dev = DeviceFrom(gpuHandle);
+    if (!dev || slot < 0 || slot >= 8) {
+        SetError("Vulkan storage binding slot must be in 0..7");
+        return;
+    }
+    dev->boundStorageBuffers[slot] = bufferHandle;
+}
+
+extern "C" int32_t absolute_desktop_gpu_vk_dispatch(
+    int64_t gpuHandle, int32_t groupsX, int32_t groupsY, int32_t groupsZ) {
+    VkGpuDevice* dev = DeviceFrom(gpuHandle);
+    VkGpuComputeShader* compute = dev
+        ? ComputeFrom(dev->boundComputeShader)
+        : nullptr;
+    if (!dev || !compute || groupsX <= 0 || groupsY <= 0 || groupsZ <= 0
+        || groupsX > 65535 || groupsY > 65535 || groupsZ > 65535) {
+        SetError("Vulkan dispatch requires a bound shader and groups in 1..65535");
+        return 0;
+    }
+    if (dev->cmdOpen) {
+        SetError("Vulkan compute dispatch cannot run inside beginFrame/endFrame");
+        return 0;
+    }
+
+    VkDescriptorBufferInfo bufferInfos[8]{};
+    VkWriteDescriptorSet writes[8]{};
+    uint32_t writeCount = 0;
+    VkBufferMemoryBarrier barriers[8]{};
+    uint32_t barrierCount = 0;
+    for (uint32_t slot = 0; slot < 8; ++slot) {
+        VkGpuStorageBuffer* storage =
+            StorageFrom(dev->boundStorageBuffers[slot]);
+        if (!storage) continue;
+        bufferInfos[writeCount].buffer = storage->buffer;
+        bufferInfos[writeCount].offset = 0;
+        bufferInfos[writeCount].range = storage->size;
+        writes[writeCount].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[writeCount].dstSet = compute->descriptorSet;
+        writes[writeCount].dstBinding = slot;
+        writes[writeCount].descriptorCount = 1;
+        writes[writeCount].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[writeCount].pBufferInfo = &bufferInfos[writeCount];
+        ++writeCount;
+
+        barriers[barrierCount].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        barriers[barrierCount].srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+        barriers[barrierCount].dstAccessMask =
+            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        barriers[barrierCount].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barriers[barrierCount].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barriers[barrierCount].buffer = storage->buffer;
+        barriers[barrierCount].offset = 0;
+        barriers[barrierCount].size = storage->size;
+        ++barrierCount;
+    }
+    if (writeCount == 0) {
+        SetError("Vulkan dispatch requires at least one bound storage buffer");
+        return 0;
+    }
+    vkUpdateDescriptorSets(
+        dev->device, writeCount, writes, 0, nullptr);
+
+    vkDeviceWaitIdle(dev->device);
+    vkResetCommandBuffer(dev->cmd, 0);
+    VkCommandBufferBeginInfo begin{
+        VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (vkBeginCommandBuffer(dev->cmd, &begin) != VK_SUCCESS) {
+        SetError("Vulkan compute command buffer begin failed");
+        return 0;
+    }
+    vkCmdPipelineBarrier(
+        dev->cmd, VK_PIPELINE_STAGE_HOST_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+        0, nullptr, barrierCount, barriers, 0, nullptr);
+    vkCmdBindPipeline(
+        dev->cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compute->pipeline);
+    vkCmdBindDescriptorSets(
+        dev->cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compute->pipelineLayout,
+        0, 1, &compute->descriptorSet, 0, nullptr);
+    vkCmdDispatch(
+        dev->cmd, static_cast<uint32_t>(groupsX),
+        static_cast<uint32_t>(groupsY), static_cast<uint32_t>(groupsZ));
+    for (uint32_t index = 0; index < barrierCount; ++index) {
+        barriers[index].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barriers[index].dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    }
+    vkCmdPipelineBarrier(
+        dev->cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_HOST_BIT, 0,
+        0, nullptr, barrierCount, barriers, 0, nullptr);
+    if (vkEndCommandBuffer(dev->cmd) != VK_SUCCESS) {
+        SetError("Vulkan compute command buffer end failed");
+        return 0;
+    }
+    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &dev->cmd;
+    if (vkQueueSubmit(
+            dev->queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS) {
+        SetError("Vulkan compute queue submit failed");
+        return 0;
+    }
+    vkQueueWaitIdle(dev->queue);
+    return 1;
 }
 
 #endif

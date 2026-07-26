@@ -55,6 +55,21 @@ extern "C" void absolute_desktop_gpu_d3d12_bind_texture(int64_t, int64_t, int32_
 extern "C" int64_t absolute_desktop_gpu_d3d12_sampler_create(int64_t, int32_t, int32_t) { return 0; }
 extern "C" void absolute_desktop_gpu_d3d12_sampler_destroy(int64_t, int64_t) {}
 extern "C" void absolute_desktop_gpu_d3d12_bind_sampler(int64_t, int64_t, int32_t) {}
+extern "C" int32_t absolute_desktop_gpu_d3d12_compute_supported(int64_t) { return 0; }
+extern "C" int64_t absolute_desktop_gpu_d3d12_compute_shader_create(int64_t, const char*) { return 0; }
+extern "C" void absolute_desktop_gpu_d3d12_compute_shader_destroy(int64_t, int64_t) {}
+extern "C" int64_t absolute_desktop_gpu_d3d12_storage_buffer_create(
+    int64_t, const float*, int32_t) { return 0; }
+extern "C" void absolute_desktop_gpu_d3d12_storage_buffer_destroy(int64_t, int64_t) {}
+extern "C" int32_t absolute_desktop_gpu_d3d12_storage_buffer_float_count(int64_t) { return 0; }
+extern "C" int32_t absolute_desktop_gpu_d3d12_storage_buffer_upload(
+    int64_t, int64_t, const float*, int32_t) { return 0; }
+extern "C" int32_t absolute_desktop_gpu_d3d12_storage_buffer_download(
+    int64_t, int64_t, float*, int32_t) { return 0; }
+extern "C" void absolute_desktop_gpu_d3d12_bind_compute_shader(int64_t, int64_t) {}
+extern "C" void absolute_desktop_gpu_d3d12_bind_storage_buffer(int64_t, int64_t, int32_t) {}
+extern "C" int32_t absolute_desktop_gpu_d3d12_dispatch(
+    int64_t, int32_t, int32_t, int32_t) { return 0; }
 
 #else
 
@@ -104,6 +119,8 @@ namespace {
     constexpr uint32_t kResPipeline = 0xD312504Cu; // 'D2PL'
     constexpr uint32_t kResTexture = 0xD3125445u;  // 'D2TE'
     constexpr uint32_t kResSampler = 0xD3125341u;  // 'D2SA'
+    constexpr uint32_t kResCompute = 0xD3124353u;  // 'D2CS'
+    constexpr uint32_t kResStorage = 0xD3125354u;  // 'D2ST'
 
     uint32_t PeekRes(int64_t handle) {
         if (!handle) return 0;
@@ -188,6 +205,37 @@ namespace {
             uniforms.clear();
             cbufferCpu.clear();
             cbufferSize = 0;
+        }
+    };
+
+    struct D3D12ComputeShader {
+        uint32_t magic = kResCompute;
+        ComPtr<ID3DBlob> blob;
+        ComPtr<ID3D12RootSignature> rootSignature;
+        ComPtr<ID3D12PipelineState> pipeline;
+        ComPtr<ID3D12DescriptorHeap> uavHeap;
+        UINT descriptorSize = 0;
+
+        void Destroy() {
+            pipeline.Reset();
+            rootSignature.Reset();
+            uavHeap.Reset();
+            blob.Reset();
+        }
+    };
+
+    struct D3D12StorageBuffer {
+        uint32_t magic = kResStorage;
+        ComPtr<ID3D12Resource> resource;
+        ComPtr<ID3D12Resource> upload;
+        ComPtr<ID3D12Resource> readback;
+        int32_t floatCount = 0;
+        UINT64 byteSize = 0;
+
+        void Destroy() {
+            resource.Reset();
+            upload.Reset();
+            readback.Reset();
         }
     };
 
@@ -304,6 +352,8 @@ namespace {
         int64_t boundIndexBuffer = 0;
         int64_t boundTexture = 0;
         int64_t boundSampler = 0;
+        int64_t boundComputeShader = 0;
+        int64_t boundStorageBuffers[8] = {};
         // Default 1x1 white + nearest/clamp so non-textured draws still have valid tables.
         D3D12Texture* defaultTexture = nullptr;
         D3D12Sampler* defaultSampler = nullptr;
@@ -557,6 +607,8 @@ namespace {
             boundIndexBuffer = 0;
             boundTexture = 0;
             boundSampler = 0;
+            boundComputeShader = 0;
+            std::memset(boundStorageBuffers, 0, sizeof(boundStorageBuffers));
         }
     };
 
@@ -595,6 +647,16 @@ namespace {
         return reinterpret_cast<D3D12Sampler*>(static_cast<intptr_t>(handle));
     }
 
+    D3D12ComputeShader* ComputeFrom(int64_t handle) {
+        if (PeekRes(handle) != kResCompute) return nullptr;
+        return reinterpret_cast<D3D12ComputeShader*>(static_cast<intptr_t>(handle));
+    }
+
+    D3D12StorageBuffer* StorageFrom(int64_t handle) {
+        if (PeekRes(handle) != kResStorage) return nullptr;
+        return reinterpret_cast<D3D12StorageBuffer*>(static_cast<intptr_t>(handle));
+    }
+
     DesktopSpriteView* SpriteFrom(int64_t handle) {
         if (!handle) return nullptr;
         return reinterpret_cast<DesktopSpriteView*>(static_cast<intptr_t>(handle));
@@ -625,6 +687,63 @@ namespace {
         b.Transition.StateAfter = after;
         b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
         list->ResourceBarrier(1, &b);
+    }
+
+    bool CreateBufferResource(
+        ID3D12Device* device,
+        UINT64 sizeBytes,
+        D3D12_HEAP_TYPE heapType,
+        D3D12_RESOURCE_FLAGS flags,
+        D3D12_RESOURCE_STATES initialState,
+        ComPtr<ID3D12Resource>& out) {
+        D3D12_HEAP_PROPERTIES hp{};
+        hp.Type = heapType;
+        D3D12_RESOURCE_DESC rd{};
+        rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        rd.Width = sizeBytes;
+        rd.Height = 1;
+        rd.DepthOrArraySize = 1;
+        rd.MipLevels = 1;
+        rd.SampleDesc.Count = 1;
+        rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        rd.Flags = flags;
+        const HRESULT hr = device->CreateCommittedResource(
+            &hp, D3D12_HEAP_FLAG_NONE, &rd, initialState, nullptr,
+            IID_PPV_ARGS(&out));
+        return SUCCEEDED(hr) && out;
+    }
+
+    template <typename Recorder>
+    bool ExecuteOneShot(D3D12Device* dev, Recorder&& record) {
+        if (!dev || !dev->device || !dev->queue || dev->cmdOpen) {
+            SetError("D3D12 compute operations cannot run inside beginFrame/endFrame");
+            return false;
+        }
+        ComPtr<ID3D12CommandAllocator> allocator;
+        ComPtr<ID3D12GraphicsCommandList> list;
+        HRESULT hr = dev->device->CreateCommandAllocator(
+            D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator));
+        if (FAILED(hr) || !allocator) {
+            SetError("D3D12 compute command allocator creation failed");
+            return false;
+        }
+        hr = dev->device->CreateCommandList(
+            0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator.Get(), nullptr,
+            IID_PPV_ARGS(&list));
+        if (FAILED(hr) || !list) {
+            SetError("D3D12 compute command list creation failed");
+            return false;
+        }
+        record(list.Get());
+        hr = list->Close();
+        if (FAILED(hr)) {
+            SetError("D3D12 compute command list close failed");
+            return false;
+        }
+        ID3D12CommandList* lists[] = {list.Get()};
+        dev->queue->ExecuteCommandLists(1, lists);
+        dev->WaitIdle();
+        return true;
     }
 
     // Upload RGBA8 into a DEFAULT texture via a one-shot command list (must not be mid-frame).
@@ -1204,7 +1323,8 @@ extern "C" void absolute_desktop_gpu_d3d12_unsupported(const char* what) {
 extern "C" int32_t absolute_desktop_gpu_d3d12_is_resource(int64_t handle) {
     const uint32_t m = PeekRes(handle);
     return (m == kResShader || m == kResBuffer || m == kResIndex || m == kResPipeline
-        || m == kResTexture || m == kResSampler)
+        || m == kResTexture || m == kResSampler || m == kResCompute
+        || m == kResStorage)
         ? 1
         : 0;
 }
@@ -1670,6 +1790,320 @@ extern "C" void absolute_desktop_gpu_d3d12_bind_sampler(
     D3D12Device* dev = DeviceFrom(gpuHandle);
     if (!dev) return;
     dev->boundSampler = samplerHandle;
+}
+
+extern "C" int32_t absolute_desktop_gpu_d3d12_compute_supported(int64_t gpuHandle) {
+    const D3D12Device* dev = DeviceFrom(gpuHandle);
+    return dev && dev->valid && dev->device && dev->queue ? 1 : 0;
+}
+
+extern "C" int64_t absolute_desktop_gpu_d3d12_compute_shader_create(
+    int64_t gpuHandle, const char* source) {
+    g_lastError.clear();
+    D3D12Device* dev = DeviceFrom(gpuHandle);
+    if (!dev || !dev->device || !source || !source[0]) {
+        SetError("D3D12 compute shader requires valid GPU and HLSL source");
+        return 0;
+    }
+    ID3DBlob* compiled = CompileHlsl(source, "main", "cs_5_0");
+    if (!compiled) return 0;
+
+    auto* compute = new D3D12ComputeShader();
+    compute->blob.Attach(compiled);
+
+    D3D12_DESCRIPTOR_RANGE range{};
+    range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+    range.NumDescriptors = 8;
+    range.BaseShaderRegister = 0;
+    range.RegisterSpace = 0;
+    range.OffsetInDescriptorsFromTableStart = 0;
+    D3D12_ROOT_PARAMETER parameter{};
+    parameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    parameter.DescriptorTable.NumDescriptorRanges = 1;
+    parameter.DescriptorTable.pDescriptorRanges = &range;
+    parameter.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    D3D12_ROOT_SIGNATURE_DESC rootDesc{};
+    rootDesc.NumParameters = 1;
+    rootDesc.pParameters = &parameter;
+
+    ComPtr<ID3DBlob> signature;
+    ComPtr<ID3DBlob> error;
+    HRESULT hr = D3D12SerializeRootSignature(
+        &rootDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error);
+    if (FAILED(hr) || !signature) {
+        std::string message = "D3D12 compute root signature creation failed";
+        if (error && error->GetBufferPointer()) {
+            message += ": ";
+            message += static_cast<const char*>(error->GetBufferPointer());
+        }
+        SetError(std::move(message));
+        compute->Destroy();
+        delete compute;
+        return 0;
+    }
+    hr = dev->device->CreateRootSignature(
+        0, signature->GetBufferPointer(), signature->GetBufferSize(),
+        IID_PPV_ARGS(&compute->rootSignature));
+    if (FAILED(hr) || !compute->rootSignature) {
+        SetError("D3D12 CreateRootSignature for compute failed");
+        compute->Destroy();
+        delete compute;
+        return 0;
+    }
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC pipelineDesc{};
+    pipelineDesc.pRootSignature = compute->rootSignature.Get();
+    pipelineDesc.CS = {
+        compute->blob->GetBufferPointer(), compute->blob->GetBufferSize()};
+    hr = dev->device->CreateComputePipelineState(
+        &pipelineDesc, IID_PPV_ARGS(&compute->pipeline));
+    if (FAILED(hr) || !compute->pipeline) {
+        SetError("D3D12 CreateComputePipelineState failed");
+        compute->Destroy();
+        delete compute;
+        return 0;
+    }
+
+    D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
+    heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    heapDesc.NumDescriptors = 8;
+    heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    hr = dev->device->CreateDescriptorHeap(
+        &heapDesc, IID_PPV_ARGS(&compute->uavHeap));
+    if (FAILED(hr) || !compute->uavHeap) {
+        SetError("D3D12 compute UAV descriptor heap creation failed");
+        compute->Destroy();
+        delete compute;
+        return 0;
+    }
+    compute->descriptorSize = dev->device->GetDescriptorHandleIncrementSize(
+        D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    return PtrToHandle(compute);
+}
+
+extern "C" void absolute_desktop_gpu_d3d12_compute_shader_destroy(
+    int64_t gpuHandle, int64_t shaderHandle) {
+    D3D12Device* dev = DeviceFrom(gpuHandle);
+    D3D12ComputeShader* compute = ComputeFrom(shaderHandle);
+    if (!compute) return;
+    if (dev) {
+        if (dev->boundComputeShader == shaderHandle) dev->boundComputeShader = 0;
+        dev->WaitIdle();
+    }
+    compute->Destroy();
+    delete compute;
+}
+
+extern "C" int64_t absolute_desktop_gpu_d3d12_storage_buffer_create(
+    int64_t gpuHandle, const float* data, int32_t floatCount) {
+    g_lastError.clear();
+    D3D12Device* dev = DeviceFrom(gpuHandle);
+    if (!dev || !dev->device || !data || floatCount <= 0) {
+        SetError("D3D12 storage buffer requires non-empty float data");
+        return 0;
+    }
+    auto* storage = new D3D12StorageBuffer();
+    storage->floatCount = floatCount;
+    storage->byteSize = static_cast<UINT64>(floatCount) * sizeof(float);
+    if (!CreateBufferResource(
+            dev->device.Get(), storage->byteSize, D3D12_HEAP_TYPE_DEFAULT,
+            D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+            D3D12_RESOURCE_STATE_COPY_DEST, storage->resource)
+        || !CreateBufferResource(
+            dev->device.Get(), storage->byteSize, D3D12_HEAP_TYPE_UPLOAD,
+            D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ,
+            storage->upload)
+        || !CreateBufferResource(
+            dev->device.Get(), storage->byteSize, D3D12_HEAP_TYPE_READBACK,
+            D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST,
+            storage->readback)) {
+        SetError("D3D12 storage buffer resource creation failed");
+        storage->Destroy();
+        delete storage;
+        return 0;
+    }
+    void* mapped = nullptr;
+    if (FAILED(storage->upload->Map(0, nullptr, &mapped)) || !mapped) {
+        SetError("D3D12 storage upload mapping failed");
+        storage->Destroy();
+        delete storage;
+        return 0;
+    }
+    std::memcpy(mapped, data, static_cast<size_t>(storage->byteSize));
+    storage->upload->Unmap(0, nullptr);
+    if (!ExecuteOneShot(dev, [&](ID3D12GraphicsCommandList* list) {
+            list->CopyBufferRegion(
+                storage->resource.Get(), 0, storage->upload.Get(), 0,
+                storage->byteSize);
+            Transition(
+                list, storage->resource.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        })) {
+        storage->Destroy();
+        delete storage;
+        return 0;
+    }
+    return PtrToHandle(storage);
+}
+
+extern "C" void absolute_desktop_gpu_d3d12_storage_buffer_destroy(
+    int64_t gpuHandle, int64_t bufferHandle) {
+    D3D12Device* dev = DeviceFrom(gpuHandle);
+    D3D12StorageBuffer* storage = StorageFrom(bufferHandle);
+    if (!storage) return;
+    if (dev) {
+        for (int slot = 0; slot < 8; ++slot) {
+            if (dev->boundStorageBuffers[slot] == bufferHandle) {
+                dev->boundStorageBuffers[slot] = 0;
+            }
+        }
+        dev->WaitIdle();
+    }
+    storage->Destroy();
+    delete storage;
+}
+
+extern "C" int32_t absolute_desktop_gpu_d3d12_storage_buffer_float_count(
+    int64_t bufferHandle) {
+    const D3D12StorageBuffer* storage = StorageFrom(bufferHandle);
+    return storage ? storage->floatCount : 0;
+}
+
+extern "C" int32_t absolute_desktop_gpu_d3d12_storage_buffer_upload(
+    int64_t gpuHandle,
+    int64_t bufferHandle,
+    const float* data,
+    int32_t floatCount) {
+    D3D12Device* dev = DeviceFrom(gpuHandle);
+    D3D12StorageBuffer* storage = StorageFrom(bufferHandle);
+    if (!dev || !storage || !data || floatCount != storage->floatCount) {
+        SetError("D3D12 storage upload size mismatch");
+        return 0;
+    }
+    void* mapped = nullptr;
+    if (FAILED(storage->upload->Map(0, nullptr, &mapped)) || !mapped) {
+        SetError("D3D12 storage upload mapping failed");
+        return 0;
+    }
+    std::memcpy(mapped, data, static_cast<size_t>(storage->byteSize));
+    storage->upload->Unmap(0, nullptr);
+    return ExecuteOneShot(dev, [&](ID3D12GraphicsCommandList* list) {
+        Transition(
+            list, storage->resource.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+            D3D12_RESOURCE_STATE_COPY_DEST);
+        list->CopyBufferRegion(
+            storage->resource.Get(), 0, storage->upload.Get(), 0,
+            storage->byteSize);
+        Transition(
+            list, storage->resource.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }) ? 1 : 0;
+}
+
+extern "C" int32_t absolute_desktop_gpu_d3d12_storage_buffer_download(
+    int64_t gpuHandle,
+    int64_t bufferHandle,
+    float* output,
+    int32_t floatCount) {
+    D3D12Device* dev = DeviceFrom(gpuHandle);
+    D3D12StorageBuffer* storage = StorageFrom(bufferHandle);
+    if (!dev || !storage || !output || floatCount != storage->floatCount) {
+        SetError("D3D12 storage download size mismatch");
+        return 0;
+    }
+    if (!ExecuteOneShot(dev, [&](ID3D12GraphicsCommandList* list) {
+            Transition(
+                list, storage->resource.Get(),
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                D3D12_RESOURCE_STATE_COPY_SOURCE);
+            list->CopyBufferRegion(
+                storage->readback.Get(), 0, storage->resource.Get(), 0,
+                storage->byteSize);
+            Transition(
+                list, storage->resource.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE,
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        })) {
+        return 0;
+    }
+    void* mapped = nullptr;
+    D3D12_RANGE readRange{0, static_cast<SIZE_T>(storage->byteSize)};
+    if (FAILED(storage->readback->Map(0, &readRange, &mapped)) || !mapped) {
+        SetError("D3D12 storage readback mapping failed");
+        return 0;
+    }
+    std::memcpy(output, mapped, static_cast<size_t>(storage->byteSize));
+    D3D12_RANGE writtenRange{0, 0};
+    storage->readback->Unmap(0, &writtenRange);
+    return 1;
+}
+
+extern "C" void absolute_desktop_gpu_d3d12_bind_compute_shader(
+    int64_t gpuHandle, int64_t shaderHandle) {
+    D3D12Device* dev = DeviceFrom(gpuHandle);
+    if (dev) dev->boundComputeShader = shaderHandle;
+}
+
+extern "C" void absolute_desktop_gpu_d3d12_bind_storage_buffer(
+    int64_t gpuHandle, int64_t bufferHandle, int32_t slot) {
+    D3D12Device* dev = DeviceFrom(gpuHandle);
+    if (!dev || slot < 0 || slot >= 8) {
+        SetError("D3D12 storage binding slot must be in 0..7");
+        return;
+    }
+    dev->boundStorageBuffers[slot] = bufferHandle;
+}
+
+extern "C" int32_t absolute_desktop_gpu_d3d12_dispatch(
+    int64_t gpuHandle, int32_t groupsX, int32_t groupsY, int32_t groupsZ) {
+    D3D12Device* dev = DeviceFrom(gpuHandle);
+    D3D12ComputeShader* compute = dev
+        ? ComputeFrom(dev->boundComputeShader)
+        : nullptr;
+    if (!dev || !compute || groupsX <= 0 || groupsY <= 0 || groupsZ <= 0
+        || groupsX > 65535 || groupsY > 65535 || groupsZ > 65535) {
+        SetError("D3D12 dispatch requires a bound shader and groups in 1..65535");
+        return 0;
+    }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE cpu =
+        compute->uavHeap->GetCPUDescriptorHandleForHeapStart();
+    for (int slot = 0; slot < 8; ++slot) {
+        D3D12StorageBuffer* storage =
+            StorageFrom(dev->boundStorageBuffers[slot]);
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
+        uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+        uav.Format = DXGI_FORMAT_UNKNOWN;
+        uav.Buffer.FirstElement = 0;
+        uav.Buffer.NumElements = storage
+            ? static_cast<UINT>(storage->floatCount)
+            : 1u;
+        uav.Buffer.StructureByteStride = sizeof(float);
+        dev->device->CreateUnorderedAccessView(
+            storage ? storage->resource.Get() : nullptr, nullptr, &uav, cpu);
+        cpu.ptr += compute->descriptorSize;
+    }
+
+    return ExecuteOneShot(dev, [&](ID3D12GraphicsCommandList* list) {
+        list->SetPipelineState(compute->pipeline.Get());
+        list->SetComputeRootSignature(compute->rootSignature.Get());
+        ID3D12DescriptorHeap* heaps[] = {compute->uavHeap.Get()};
+        list->SetDescriptorHeaps(1, heaps);
+        list->SetComputeRootDescriptorTable(
+            0, compute->uavHeap->GetGPUDescriptorHandleForHeapStart());
+        list->Dispatch(
+            static_cast<UINT>(groupsX),
+            static_cast<UINT>(groupsY),
+            static_cast<UINT>(groupsZ));
+        for (int slot = 0; slot < 8; ++slot) {
+            D3D12StorageBuffer* storage =
+                StorageFrom(dev->boundStorageBuffers[slot]);
+            if (!storage) continue;
+            D3D12_RESOURCE_BARRIER barrier{};
+            barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+            barrier.UAV.pResource = storage->resource.Get();
+            list->ResourceBarrier(1, &barrier);
+        }
+    }) ? 1 : 0;
 }
 
 #endif

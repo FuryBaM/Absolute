@@ -1,27 +1,54 @@
-// absolute.shader compute DSL executed by absolute.desktop on D3D11.
+// Portable absolute.shader compute DSL executed by absolute.desktop.
 // Requires the absolute.shader and absolute.desktop plugins.
+
+import "../../std/process.abs";
 
 @shader.stage(Compute)
 shader Compute {
     storage float values;
     workgroup 1, 1, 1;
 
-    hlsl {
+    kernel {
         values[id.x] = values[id.x] * 2.0;
     }
 }
 
 int32 main() {
+    int32 backend = Desktop.Gpu.BackendAuto;
+    if (std.process.argsCount() > 1) {
+        string selected = std.process.argAt(1);
+        if (selected == "opengl") {
+            backend = Desktop.Gpu.BackendOpenGL;
+        } else if (selected == "d3d11") {
+            backend = Desktop.Gpu.BackendD3D11;
+        } else if (selected == "d3d12") {
+            backend = Desktop.Gpu.BackendD3D12;
+        } else if (selected == "vulkan") {
+            backend = Desktop.Gpu.BackendVulkan;
+        } else {
+            println("backend must be: auto, opengl, d3d11, d3d12, or vulkan");
+            return 2;
+        }
+    }
+
     auto window = new Desktop.Window("Absolute Shader Compute", 320, 180, false);
-    auto gpu = new Desktop.Gpu(window, Desktop.Gpu.BackendD3D11);
-    if (!gpu.isValid() || !gpu.supportsCompute()) {
-        println("D3D11 compute is unavailable:");
+    auto gpu = new Desktop.Gpu(window, backend);
+    if (!gpu.isValid()) {
+        println("GPU backend creation failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+    if (!gpu.supportsCompute()) {
+        println("compute is unavailable:");
+        println(gpu.backend());
         println(gpu.lastError());
         return 1;
     }
 
-    // Declared automatically by absolute.shader; no manual extern is needed.
-    auto compute = gpu.createComputeShader(Shader.generatedComputeHlsl());
+    // Backend selects HLSL for D3D/Vulkan and GLSL for OpenGL.
+    auto compute = gpu.createComputeShader(
+        Shader.generatedComputeHlsl(),
+        Shader.generatedComputeGlsl());
     if (compute == null) {
         println("generated compute shader failed:");
         println(gpu.lastError());

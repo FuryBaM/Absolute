@@ -133,6 +133,8 @@ extern "C" void absolute_desktop_gpu_sampler_destroy(int64 gpuHandle, int64 samp
 extern "C" void absolute_desktop_gpu_bind_sampler(int64 gpuHandle, int64 samplerHandle, int32 unit);
 extern "C" int32 absolute_desktop_gpu_compute_supported(int64 gpuHandle);
 extern "C" int64 absolute_desktop_gpu_compute_shader_create(int64 gpuHandle, string source);
+extern "C" int64 absolute_desktop_gpu_compute_shader_create_sources(
+    int64 gpuHandle, string hlslSource, string glslSource);
 extern "C" void absolute_desktop_gpu_compute_shader_destroy(int64 gpuHandle, int64 shaderHandle);
 extern "C" int64 absolute_desktop_gpu_storage_buffer_create(int64 gpuHandle, raw float* data, int32 floatCount);
 extern "C" void absolute_desktop_gpu_storage_buffer_destroy(int64 gpuHandle, int64 bufferHandle);
@@ -1113,7 +1115,7 @@ namespace Desktop {
         }
     }
 
-    // Read/write float storage for compute shaders (RWStructuredBuffer<float>).
+    // Cross-backend read/write float storage (UAV / SSBO / Vulkan storage buffer).
     class GpuStorageBuffer {
         public int64 handle;
         public int64 gpuHandle;
@@ -1270,9 +1272,9 @@ namespace Desktop {
 
     // Multi-backend GPU RHI.
     // OpenGL (WGL/GLX): GLSL + full buffer/pipeline/texture path.
-    // D3D11 (Windows): HLSL + VB/IB/pipeline/draw + texture/sampler.
-    // D3D12 (Windows): HLSL + VB/IB/PSO/draw + texture/sampler.
-    // Vulkan: HLSL→SPIR-V (DXC) + mesh + texture/sampler.
+    // D3D11/D3D12 (Windows): HLSL graphics + compute.
+    // Vulkan: HLSL→SPIR-V (DXC) graphics + compute.
+    // OpenGL 4.3: GLSL graphics + compute/SSBO.
     // Frame model:
     //   beginFrame(); clear(...); bind(pipeline); bind(vb); bind(ib); bind(tex); bind(sampler);
     //   draw(n) | drawIndexed(n); endFrame(); present();
@@ -1333,7 +1335,7 @@ namespace Desktop {
             return program;
         }
 
-        // D3D11: HLSL entry `main`, shader model cs_5_0.
+        // Single-source form: HLSL for D3D11/D3D12/Vulkan, GLSL for OpenGL.
         public GpuComputeShader* createComputeShader(string source) {
             int64 h = absolute_desktop_gpu_compute_shader_create(handle, source);
             if (h == 0) {
@@ -1345,7 +1347,21 @@ namespace Desktop {
             return compute;
         }
 
-        // Read/write float storage. Bind as RWStructuredBuffer<float> at u0..u7.
+        // Portable form: the backend selects HLSL or GLSL automatically.
+        public GpuComputeShader* createComputeShader(
+            string hlslSource, string glslSource) {
+            int64 h = absolute_desktop_gpu_compute_shader_create_sources(
+                handle, hlslSource, glslSource);
+            if (h == 0) {
+                return null;
+            }
+            auto compute = new GpuComputeShader();
+            compute.handle = h;
+            compute.gpuHandle = handle;
+            return compute;
+        }
+
+        // Read/write float storage. Bind at compute storage slots 0..7.
         public GpuStorageBuffer* createStorageBuffer(float[] values) {
             if (values.length <= 0) {
                 return null;

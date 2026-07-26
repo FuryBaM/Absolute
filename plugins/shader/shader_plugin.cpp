@@ -52,6 +52,7 @@ namespace {
         int32_t workgroupZ = 1;
         std::string userGlsl; // optional full GLSL from `code { ... }`
         std::string userHlsl; // optional compute body from `hlsl { ... }`
+        std::string userKernel; // portable compute body from `kernel { ... }`
         std::string debugText;
         std::string moduleIr;
         std::string glslSource;
@@ -377,14 +378,15 @@ namespace {
                 token->kind != ABSOLUTE_SYNTAX_TOKEN_KEYWORD)
                 return Fail(result, "expected a shader declaration or '}'");
 
-            // `code {}` is a complete GLSL source. For compute, `hlsl {}`
-            // contains the body of main() and gets storage/workgroup declarations.
-            if (declaration == "code" || declaration == "hlsl") {
+            // `code {}` is a complete GLSL source. For compute, `kernel {}`
+            // is portable while `hlsl {}` remains available for backend-specific code.
+            if (declaration == "code" || declaration == "hlsl" || declaration == "kernel") {
                 Consume(parser, token->kind, nullptr);
                 std::string body;
                 if (!ParseRawBlock(parser, result, body, declaration.c_str())) return 0;
                 if (declaration == "code") node->userGlsl = std::move(body);
-                else node->userHlsl = std::move(body);
+                else if (declaration == "hlsl") node->userHlsl = std::move(body);
+                else node->userKernel = std::move(body);
                 continue;
             }
 
@@ -397,7 +399,7 @@ namespace {
             if (declaration != "input" && declaration != "output" &&
                 declaration != "uniform" && declaration != "storage")
                 return Fail(result, "expected 'input', 'output', 'uniform', 'storage', "
-                    "'workgroup', 'code', 'hlsl', or '}' in shader block");
+                    "'workgroup', 'kernel', 'code', 'hlsl', or '}' in shader block");
 
             Consume(parser, token->kind, nullptr);
             ShaderVar var{};
@@ -425,7 +427,8 @@ namespace {
             std::to_string(shader.outputs.size()) + ", uniforms=" +
             std::to_string(shader.uniforms.size()) + ", storages=" +
             std::to_string(shader.storages.size()) +
-            ((!shader.userGlsl.empty() || !shader.userHlsl.empty())
+            ((!shader.userGlsl.empty() || !shader.userHlsl.empty() ||
+                !shader.userKernel.empty())
                 ? ", codegen=custom" : ", codegen=auto") + ")";
         return shader.debugText.c_str();
     }
@@ -456,7 +459,7 @@ namespace {
                 shader.workgroupZ > 64 ||
                 static_cast<int64_t>(shader.workgroupX) * shader.workgroupY *
                     shader.workgroupZ > 1024)) {
-            lastError = "compute workgroup exceeds D3D11 limits "
+            lastError = "compute workgroup exceeds portable desktop limits "
                 "(x/y <= 1024, z <= 64, total <= 1024)";
         }
         else if (IsComputeStage(shader.stage) &&
@@ -468,6 +471,9 @@ namespace {
         }
         else if (!IsComputeStage(shader.stage) && !shader.userHlsl.empty()) {
             lastError = "hlsl { ... } bodies are currently supported only for compute shaders";
+        }
+        else if (!IsComputeStage(shader.stage) && !shader.userKernel.empty()) {
+            lastError = "kernel { ... } bodies are supported only for compute shaders";
         }
         else {
             for (size_t index = 0; index < context->attribute_count; ++index) {
@@ -526,6 +532,39 @@ namespace {
         return out;
     }
 
+    void ReplaceAll(std::string& text, const std::string& from, const std::string& to) {
+        if (from.empty()) return;
+        std::size_t offset = 0;
+        while ((offset = text.find(from, offset)) != std::string::npos) {
+            text.replace(offset, from.size(), to);
+            offset += to.size();
+        }
+    }
+
+    // Portable `kernel {}` uses the scalar/vector subset shared by HLSL, GLSL
+    // and MSL. Only dispatch ids and a few constructor names differ.
+    std::string KernelBodyForGlsl(const ShaderNode& shader) {
+        std::string body = !shader.userKernel.empty()
+            ? shader.userKernel
+            : shader.userHlsl;
+        ReplaceAll(body, "id.x", "gl_GlobalInvocationID.x");
+        ReplaceAll(body, "id.y", "gl_GlobalInvocationID.y");
+        ReplaceAll(body, "id.z", "gl_GlobalInvocationID.z");
+        ReplaceAll(body, "float2(", "vec2(");
+        ReplaceAll(body, "float3(", "vec3(");
+        ReplaceAll(body, "float4(", "vec4(");
+        ReplaceAll(body, "lerp(", "mix(");
+        return body;
+    }
+
+    std::string KernelBodyForMsl(const ShaderNode& shader) {
+        std::string body = !shader.userKernel.empty()
+            ? shader.userKernel
+            : shader.userHlsl;
+        ReplaceAll(body, "lerp(", "mix(");
+        return body;
+    }
+
     std::string GenerateGlsl(const ShaderNode& shader) {
         const bool isCompute = IsComputeStage(shader.stage);
         // Custom body from `code { ... }` is treated as complete stage source.
@@ -554,7 +593,10 @@ namespace {
                 g << "layout(std430, binding=" << storage.location << ") buffer AbsoluteStorage"
                   << storage.location << " { float " << storage.name << "[]; };\n";
             }
-            g << "void main() {}\n";
+            g << "void main() {\n";
+            const std::string body = KernelBodyForGlsl(shader);
+            if (!body.empty()) g << "  " << body << "\n";
+            g << "}\n";
             return g.str();
         }
 
@@ -692,7 +734,10 @@ namespace {
             h << "[numthreads(" << shader.workgroupX << ", " << shader.workgroupY
               << ", " << shader.workgroupZ << ")]\n";
             h << "void main(uint3 id : SV_DispatchThreadID) {\n";
-            if (!shader.userHlsl.empty()) h << "  " << shader.userHlsl << "\n";
+            const std::string& body = !shader.userKernel.empty()
+                ? shader.userKernel
+                : shader.userHlsl;
+            if (!body.empty()) h << "  " << body << "\n";
             h << "}\n";
             return h.str();
         }
@@ -828,7 +873,8 @@ namespace {
             }
             if (!shader.storages.empty()) m << ", ";
             m << "uint3 id [[thread_position_in_grid]]) {\n";
-            m << "  // HLSL compute body is preserved in the HLSL artifact.\n";
+            const std::string body = KernelBodyForMsl(shader);
+            if (!body.empty()) m << "  " << body << "\n";
             m << "}\n";
             return m.str();
         }

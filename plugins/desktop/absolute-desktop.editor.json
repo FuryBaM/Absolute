@@ -149,9 +149,9 @@
         { "name": "isValid", "detail": "bool isValid()" },
         { "name": "backend", "detail": "string backend()" },
         { "name": "lastError", "detail": "string lastError()" },
-        { "name": "supportsCompute", "detail": "bool supportsCompute()", "documentation": "True when the selected backend implements compute shaders (currently D3D11)." },
+        { "name": "supportsCompute", "detail": "bool supportsCompute()", "documentation": "True when the selected OpenGL 4.3, D3D11, D3D12 or Vulkan backend can execute compute shaders." },
         { "name": "createShader", "detail": "GpuShader* createShader(string vertexSource, string fragmentSource)" },
-        { "name": "createComputeShader", "detail": "GpuComputeShader* createComputeShader(string source)", "documentation": "Compiles HLSL main as cs_5_0 on D3D11." },
+        { "name": "createComputeShader", "detail": "GpuComputeShader* createComputeShader(string source) | createComputeShader(string hlsl, string glsl)", "documentation": "Compiles compute main. The two-source overload automatically selects GLSL for OpenGL and HLSL for D3D11, D3D12 and Vulkan." },
         { "name": "createStorageBuffer", "detail": "GpuStorageBuffer* createStorageBuffer(float[] values)", "documentation": "Creates read/write float storage for compute shaders." },
         { "name": "createVertexBuffer", "detail": "GpuBuffer* createVertexBuffer(float[] vertices)" },
         { "name": "createLayoutPos3Color3", "detail": "VertexLayout* createLayoutPos3Color3()" },
@@ -200,13 +200,13 @@
     {
       "name": "Desktop.GpuComputeShader",
       "detail": "class Desktop.GpuComputeShader",
-      "documentation": "D3D11 HLSL compute shader compiled as cs_5_0.",
+      "documentation": "Compute shader for OpenGL 4.3, D3D11, D3D12 or Vulkan.",
       "ownership": "Managed RAII owner tied to its Gpu device."
     },
     {
       "name": "Desktop.GpuStorageBuffer",
       "detail": "class Desktop.GpuStorageBuffer",
-      "documentation": "Read/write float storage exposed to HLSL as RWStructuredBuffer<float>.",
+      "documentation": "Read/write float storage exposed as an HLSL RWStructuredBuffer or GLSL SSBO.",
       "ownership": "Managed RAII owner tied to its Gpu device.",
       "members": [
         { "name": "isValid", "detail": "bool isValid()" },
@@ -244,9 +244,9 @@
       "body": "auto ${1:window} = new Desktop.Window(${2:\"Absolute GPU\"}, ${3:800}, ${4:450}, true);\nauto ${5:gpu} = new Desktop.Gpu($1);\nauto ${6:shader} = $5.createShader(${7:vs}, ${8:fs});\nauto ${9:buffer} = $5.createVertexBuffer(${10:vertices});\nauto ${11:layout} = $5.createLayoutPos3Color3();\nauto ${12:pipeline} = $5.createPipeline($6, $11);\nwhile ($1.poll()) {\n    if ($1.keyPressed(Desktop.KeyEscape())) { break; }\n    $5.beginFrame();\n    $5.clear(0.06, 0.07, 0.12, 1.0);\n    $5.bind($12);\n    $5.bind($9);\n    $5.draw(3);\n    $5.endFrame();\n    $5.present();\n}"
     },
     {
-      "label": "desktop compute d3d11",
-      "detail": "Run an HLSL compute shader over a float array",
-      "body": "string ${1:source} = \"RWStructuredBuffer<float> values : register(u0);\\n[numthreads(1, 1, 1)]\\nvoid main(uint3 id : SV_DispatchThreadID) { values[id.x] *= 2.0; }\";\nfloat[] ${2:values} = {1.0, 2.0, 3.0, 4.0};\nauto ${3:compute} = ${4:gpu}.createComputeShader($1);\nauto ${5:storage} = $4.createStorageBuffer($2);\n$4.bind($3);\n$4.bindStorage($5, 0);\n$4.dispatch($2.length, 1, 1);\n$5.download($2);"
+      "label": "desktop compute portable",
+      "detail": "Run generated HLSL/GLSL compute over a float array",
+      "body": "float[] ${1:values} = {1.0, 2.0, 3.0, 4.0};\nauto ${2:compute} = ${3:gpu}.createComputeShader(\n    Shader.generatedComputeHlsl(),\n    Shader.generatedComputeGlsl());\nauto ${4:storage} = $3.createStorageBuffer($1);\n$3.bind($2);\n$3.bindStorage($4, 0);\n$3.dispatch($1.length, 1, 1);\n$4.download($1);"
     }
   ]
 }
