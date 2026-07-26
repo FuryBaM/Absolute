@@ -5,7 +5,17 @@ shader Vertex {
     output clipPosition;
 }
 
+@shader.stage(Compute)
+shader Compute {
+    storage float values;
+    workgroup 8, 1, 1;
+    hlsl {
+        values[id.x] = values[id.x] + 1.0;
+    }
+}
+
 int32 main() {
+    assert(Shader.generatedComputeHlsl() != "", "generated compute HLSL");
     println("shader-plugin=ok");
     return 0;
 }

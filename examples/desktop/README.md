@@ -86,6 +86,7 @@ pong.exe
 | `shader-code.abs` | `absolute.shader` custom `code { GLSL }` → Gpu |
 | `shader-multi-ir-smoke.abs` | Multi-target IR smoke (GLSL/HLSL/MSL + SPIR-V/DXIL) |
 | `shader-multi-ir-smoke.abs` | Multi-target IR smoke (GLSL/HLSL/MSL + SPIR-V/DXIL flags) |
+| `shader-compute.abs` | `absolute.shader` compute DSL → generated HLSL → D3D11 dispatch |
 | `text.abs` | Built-in 8×8 soft font, scaled HUD, sprite-baked label, typing |
 | `batch.abs` | Soft `SpriteBatch`: 120 atlas tiles + ship in one flush |
 | `triangle.abs` | GPU RHI: shader + buffer + pipeline + bind/draw (`BackendAuto`) |

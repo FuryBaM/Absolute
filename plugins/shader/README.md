@@ -5,7 +5,7 @@ emits **first-class GPU IR** into the Absolute module:
 
 | IR | Kind | Accessor (per stage, e.g. `Vertex`) |
 |----|------|--------------------------------------|
-| GLSL 330 | `SOURCE_TEXT` / `glsl` | `absolute_shader_glsl_Vertex()` |
+| GLSL 330 / compute 430 | `SOURCE_TEXT` / `glsl` | `absolute_shader_glsl_Vertex()` |
 | HLSL | `SOURCE_TEXT` / `hlsl` | `absolute_shader_hlsl_Vertex()` |
 | MSL (Metal source) | `SOURCE_TEXT` / `msl` | `absolute_shader_msl_Vertex()` |
 | SPIR-V | `ABSOLUTE_ARTIFACT_SPIRV` | `absolute_shader_spirv_Vertex()` + `_size` / `_has` |
@@ -53,6 +53,36 @@ auto programD3D = gpu.createShader(
     absolute_shader_hlsl_Fragment());
 ```
 
+## Compute + `absolute.desktop`
+
+The canonical `Compute` stage exposes `Shader.generatedComputeHlsl()` through
+the plugin prelude, so user code does not need to declare an `extern` accessor:
+
+```absolute
+@shader.stage(Compute)
+shader Compute {
+    // Declaration order maps to D3D11 UAV slots u0, u1, ...
+    storage float values;
+    workgroup 1, 1, 1;
+
+    // Body of the generated HLSL main(uint3 id : SV_DispatchThreadID).
+    hlsl {
+        values[id.x] = values[id.x] * 2.0;
+    }
+}
+
+auto compute = gpu.createComputeShader(Shader.generatedComputeHlsl());
+auto storage = gpu.createStorageBuffer(values);
+gpu.bind(compute);
+gpu.bindStorage(storage, 0);
+gpu.dispatch(values.length, 1, 1);
+storage.download(values);
+```
+
+The shader plugin owns stage parsing and HLSL/DXIL/SPIR-V generation. The
+desktop plugin owns D3D11 execution, UAV storage and CPU readback. Compute
+storage is currently `float` only and the desktop execution backend is D3D11.
+
 ## DSL
 
 | Declaration | Meaning |
@@ -60,6 +90,9 @@ auto programD3D = gpu.createShader(
 | `input [type] name;` | Vertex attribute (or fragment varying). Types: `float`, `float2`/`vec2`, `float3`/`vec3`, `float4`/`vec4`, `int`. Untyped names keep legacy inference (`position`→float3, `uv`→float2, …). |
 | `output [type] name;` | Stage output (`clipPosition` → `gl_Position` / `SV_POSITION` / `[[position]]`). |
 | `uniform [type] name;` | Uniform / cbuffer field (bound via `gpu.setUniformF` / `setUniformI`). |
+| `storage float name;` | Compute read/write storage. Declaration order becomes HLSL UAV bindings `u0..u7`. |
+| `workgroup x, y, z;` | Compute thread-group size emitted as HLSL `numthreads(x,y,z)`. |
+| `hlsl { ... }` | Compute statements inserted into generated `main(uint3 id : SV_DispatchThreadID)`. Storage and entry-point declarations are generated automatically. |
 | `code { ... }` | Optional **full GLSL** body for the stage. Nested `{`/`}` supported. If omitted, a default mesh-style body is generated for GLSL/HLSL/MSL. `#version 330 core` is always prepended when missing. **Do not write `#...` in the body** — Absolute’s lexer rejects `#`. Custom `code` skips HLSL→SPIR-V/DXIL auto-compile. |
 
 `@shader.stage(Name)` must match the block stage name.
@@ -71,6 +104,7 @@ auto programD3D = gpu.createShader(
 | Symbol | Role |
 |--------|------|
 | `@absolute.shader.Vertex.input_count` | constant i32 |
+| `@absolute.shader.Compute.storage_count` / `.workgroup` | compute reflection constants |
 | `@absolute.shader.Vertex.glsl` / `.hlsl` / `.msl` | private source text |
 | `@absolute.shader.Vertex.spirv` / `.dxil` / `.metal_ir` | private binary blobs |
 | `absolute_shader_glsl_Vertex()` | GLSL source string |
@@ -83,6 +117,9 @@ auto programD3D = gpu.createShader(
 | `absolute_shader_input_count_Vertex()` | reflection |
 | `absolute_shader_input_components_Vertex(i32)` | reflection |
 | `absolute_shader_vertex_stride_floats_Vertex()` | packed float stride |
+| `absolute_shader_storage_count_Compute()` | compute storage count |
+| `absolute_shader_workgroup_{x,y,z}_Compute()` | compute local group dimensions |
+| `Shader.generatedComputeHlsl()` | namespaced, predeclared bridge for `Desktop.Gpu.createComputeShader` |
 | `absolute_shader_artifact_kind_{spirv,dxil,metal_ir,source_text}()` | `AbsoluteArtifactKindV1` constants |
 
 Without `code { }`, generated bodies implement a default lit mesh pipeline (Y-rotation when `uTime` is present).
@@ -99,9 +136,16 @@ absolutec examples/desktop/shader-rhi.abs `
 absolutec examples/desktop/shader-multi-ir-smoke.abs `
   --plugin path/to/absolute-shader.dll `
   --build-exe -o shader-multi-ir-smoke.exe
+
+# End-to-end shader DSL → generated HLSL → D3D11 dispatch:
+absolutec examples/desktop/shader-compute.abs `
+  --plugin path/to/absolute-desktop.absplugin `
+  --plugin path/to/absolute-shader.dll `
+  --build-exe -o shader-compute.exe
 ```
 
-See `examples/desktop/shader-rhi.abs`, `shader-code.abs`, and `shader-multi-ir-smoke.abs`.
+See `examples/desktop/shader-rhi.abs`, `shader-code.abs`,
+`shader-multi-ir-smoke.abs`, and `shader-compute.abs`.
 
 ## Build plugin
 

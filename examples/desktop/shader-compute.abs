@@ -1,0 +1,50 @@
+// absolute.shader compute DSL executed by absolute.desktop on D3D11.
+// Requires the absolute.shader and absolute.desktop plugins.
+
+@shader.stage(Compute)
+shader Compute {
+    storage float values;
+    workgroup 1, 1, 1;
+
+    hlsl {
+        values[id.x] = values[id.x] * 2.0;
+    }
+}
+
+int32 main() {
+    auto window = new Desktop.Window("Absolute Shader Compute", 320, 180, false);
+    auto gpu = new Desktop.Gpu(window, Desktop.Gpu.BackendD3D11);
+    if (!gpu.isValid() || !gpu.supportsCompute()) {
+        println("D3D11 compute is unavailable:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    // Declared automatically by absolute.shader; no manual extern is needed.
+    auto compute = gpu.createComputeShader(Shader.generatedComputeHlsl());
+    if (compute == null) {
+        println("generated compute shader failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    float[] values = {
+        {1.0, 2.0, 3.0, 4.0},
+        {5.0, 6.0, 7.0, 8.0}
+    };
+    auto storage = gpu.createStorageBuffer(values);
+    if (storage == null) {
+        println("createStorageBuffer failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    gpu.bind(compute);
+    gpu.bindStorage(storage, 0);
+    assert(gpu.dispatch(values.length, 1, 1), "shader compute dispatch");
+    assert(storage.download(values), "shader compute download");
+    assert(values[0] == 2.0 && values[3] == 8.0 && values[7] == 16.0,
+        "shader compute output");
+    println("shader-compute=ok");
+    return 0;
+}

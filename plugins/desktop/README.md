@@ -196,6 +196,9 @@ storage.download(values);
 - Dispatch group counts must be within `1..65535` on every axis.
 - Compute currently uses `BackendD3D11`; other backends return a clear unsupported
   error through `gpu.lastError()`.
+- With `absolute.shader`, use `shader Compute { ... }` and pass
+  `Shader.generatedComputeHlsl()` to `gpu.createComputeShader(...)`; see
+  `examples/desktop/shader-compute.abs`.
 
 Frame:
 ```absolute

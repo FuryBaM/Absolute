@@ -6,6 +6,7 @@
 
 #include "plugin_api.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -45,7 +46,12 @@ namespace {
         std::vector<ShaderVar> inputs;
         std::vector<ShaderVar> outputs;
         std::vector<ShaderVar> uniforms;
+        std::vector<ShaderVar> storages;
+        int32_t workgroupX = 1;
+        int32_t workgroupY = 1;
+        int32_t workgroupZ = 1;
         std::string userGlsl; // optional full GLSL from `code { ... }`
+        std::string userHlsl; // optional compute body from `hlsl { ... }`
         std::string debugText;
         std::string moduleIr;
         std::string glslSource;
@@ -154,6 +160,10 @@ namespace {
             || stage == "Pixel" || stage == "pixel" || stage == "PS" || stage == "ps";
     }
 
+    bool IsComputeStage(const std::string& stage) {
+        return stage == "Compute" || stage == "compute" || stage == "CS" || stage == "cs";
+    }
+
     // D3D/Vulkan HLSL: location 0 → POSITION; location n → TEXCOORDn-1.
     void HlslSemanticForLocation(int32_t location, std::string& semantic) {
         if (location <= 0) {
@@ -230,6 +240,109 @@ namespace {
         return true;
     }
 
+    bool ParseRawBlock(
+        AbsoluteParserCursorV1* parser,
+        AbsoluteOpaqueParseResultV1* result,
+        std::string& output,
+        const char* declaration) {
+        if (!Consume(parser, ABSOLUTE_SYNTAX_TOKEN_BRACKET, "{"))
+            return Fail(result, std::string("expected '{' after ") + declaration);
+        int depth = 1;
+        std::ostringstream body;
+        bool needSpace = false;
+        while (depth > 0) {
+            const AbsoluteSyntaxTokenV1* token = parser->peek(parser->context, 0);
+            if (!token)
+                return Fail(result, std::string("unterminated ") + declaration + " block");
+            const std::string text = TokenText(token);
+            if (token->kind == ABSOLUTE_SYNTAX_TOKEN_BRACKET && text == "{") {
+                ++depth;
+                if (needSpace) body << ' ';
+                body << '{';
+                needSpace = false;
+                Consume(parser, ABSOLUTE_SYNTAX_TOKEN_BRACKET, nullptr);
+                continue;
+            }
+            if (token->kind == ABSOLUTE_SYNTAX_TOKEN_BRACKET && text == "}") {
+                --depth;
+                if (depth == 0) {
+                    Consume(parser, ABSOLUTE_SYNTAX_TOKEN_BRACKET, nullptr);
+                    break;
+                }
+                body << '}';
+                needSpace = true;
+                Consume(parser, ABSOLUTE_SYNTAX_TOKEN_BRACKET, nullptr);
+                continue;
+            }
+            if (token->kind == ABSOLUTE_SYNTAX_TOKEN_STRING) {
+                if (needSpace) body << ' ';
+                body << '"' << text << '"';
+                needSpace = true;
+            }
+            else if (token->kind == ABSOLUTE_SYNTAX_TOKEN_DELIMITER &&
+                (text == ";" || text == "," || text == ".")) {
+                body << text;
+                needSpace = text == ";" || text == ",";
+            }
+            else if (token->kind == ABSOLUTE_SYNTAX_TOKEN_OPERATOR ||
+                token->kind == ABSOLUTE_SYNTAX_TOKEN_BRACKET) {
+                if (text == "(" || text == "[" || text == "<") {
+                    body << text;
+                    needSpace = false;
+                }
+                else if (text == ")" || text == "]" || text == ">") {
+                    body << text;
+                    needSpace = true;
+                }
+                else {
+                    if (needSpace) body << ' ';
+                    body << text;
+                    needSpace = true;
+                }
+            }
+            else {
+                if (needSpace) body << ' ';
+                body << text;
+                needSpace = true;
+            }
+            parser->consume(parser->context, 0xFFFFFFFFu, nullptr);
+        }
+        output = body.str();
+        return true;
+    }
+
+    bool ParseWorkgroup(
+        AbsoluteParserCursorV1* parser,
+        AbsoluteOpaqueParseResultV1* result,
+        ShaderNode& node) {
+        int32_t values[3] = {};
+        for (int index = 0; index < 3; ++index) {
+            const AbsoluteSyntaxTokenV1* token = parser->peek(parser->context, 0);
+            if (!token || token->kind != ABSOLUTE_SYNTAX_TOKEN_NUMBER)
+                return Fail(result, "workgroup requires three positive integer sizes");
+            const std::string text = TokenText(token);
+            if (text.empty() || text.find('.') != std::string::npos)
+                return Fail(result, "workgroup sizes must be integers");
+            char* end = nullptr;
+            const long parsed = std::strtol(text.c_str(), &end, 10);
+            if (!end || *end != '\0' || parsed > INT32_MAX) {
+                return Fail(result, "invalid workgroup size");
+            }
+            values[index] = static_cast<int32_t>(parsed);
+            if (values[index] <= 0)
+                return Fail(result, "workgroup sizes must be positive");
+            Consume(parser, ABSOLUTE_SYNTAX_TOKEN_NUMBER, nullptr);
+            if (index < 2 && !Consume(parser, ABSOLUTE_SYNTAX_TOKEN_DELIMITER, ","))
+                return Fail(result, "workgroup sizes must be separated by commas");
+        }
+        if (!Consume(parser, ABSOLUTE_SYNTAX_TOKEN_DELIMITER, ";"))
+            return Fail(result, "workgroup declaration requires ';'");
+        node.workgroupX = values[0];
+        node.workgroupY = values[1];
+        node.workgroupZ = values[2];
+        return true;
+    }
+
     int32_t ParseShader(void*, AbsoluteParserCursorV1* parser, AbsoluteOpaqueParseResultV1* result) {
         if (!parser || !result || parser->abi_version != ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION)
             return 0;
@@ -262,76 +375,29 @@ namespace {
             }
             if (token->kind != ABSOLUTE_SYNTAX_TOKEN_IDENTIFIER &&
                 token->kind != ABSOLUTE_SYNTAX_TOKEN_KEYWORD)
-                return Fail(result, "expected 'input', 'output', 'uniform', 'code', or '}'");
+                return Fail(result, "expected a shader declaration or '}'");
 
-            // Optional raw GLSL body: code { ... } with nested-brace matching.
-            // Body is the complete stage source (optionally without #version).
-            if (declaration == "code") {
+            // `code {}` is a complete GLSL source. For compute, `hlsl {}`
+            // contains the body of main() and gets storage/workgroup declarations.
+            if (declaration == "code" || declaration == "hlsl") {
                 Consume(parser, token->kind, nullptr);
-                if (!Consume(parser, ABSOLUTE_SYNTAX_TOKEN_BRACKET, "{"))
-                    return Fail(result, "expected '{' after code");
-                int depth = 1;
-                std::ostringstream body;
-                bool needSpace = false;
-                while (depth > 0) {
-                    const AbsoluteSyntaxTokenV1* t = parser->peek(parser->context, 0);
-                    if (!t) return Fail(result, "unterminated code block");
-                    const std::string text = TokenText(t);
-                    if (t->kind == ABSOLUTE_SYNTAX_TOKEN_BRACKET && text == "{") {
-                        ++depth;
-                        if (needSpace) body << ' ';
-                        body << '{';
-                        needSpace = false;
-                        Consume(parser, ABSOLUTE_SYNTAX_TOKEN_BRACKET, nullptr);
-                        continue;
-                    }
-                    if (t->kind == ABSOLUTE_SYNTAX_TOKEN_BRACKET && text == "}") {
-                        --depth;
-                        if (depth == 0) {
-                            Consume(parser, ABSOLUTE_SYNTAX_TOKEN_BRACKET, nullptr);
-                            break;
-                        }
-                        body << '}';
-                        needSpace = true;
-                        Consume(parser, ABSOLUTE_SYNTAX_TOKEN_BRACKET, nullptr);
-                        continue;
-                    }
-                    // Reconstruct source-ish text for GLSL.
-                    if (t->kind == ABSOLUTE_SYNTAX_TOKEN_STRING) {
-                        if (needSpace) body << ' ';
-                        body << '"' << text << '"';
-                        needSpace = true;
-                    } else if (t->kind == ABSOLUTE_SYNTAX_TOKEN_DELIMITER &&
-                               (text == ";" || text == "," || text == ".")) {
-                        body << text;
-                        needSpace = text == ";" || text == ",";
-                    } else if (t->kind == ABSOLUTE_SYNTAX_TOKEN_OPERATOR ||
-                               t->kind == ABSOLUTE_SYNTAX_TOKEN_BRACKET) {
-                        if (text == "(" || text == "[" || text == "<") {
-                            body << text;
-                            needSpace = false;
-                        } else if (text == ")" || text == "]" || text == ">") {
-                            body << text;
-                            needSpace = true;
-                        } else {
-                            if (needSpace) body << ' ';
-                            body << text;
-                            needSpace = true;
-                        }
-                    } else {
-                        if (needSpace) body << ' ';
-                        body << text;
-                        needSpace = true;
-                    }
-                    // Consume whatever kind this token is.
-                    parser->consume(parser->context, 0xFFFFFFFFu, nullptr);
-                }
-                node->userGlsl = body.str();
+                std::string body;
+                if (!ParseRawBlock(parser, result, body, declaration.c_str())) return 0;
+                if (declaration == "code") node->userGlsl = std::move(body);
+                else node->userHlsl = std::move(body);
                 continue;
             }
 
-            if (declaration != "input" && declaration != "output" && declaration != "uniform")
-                return Fail(result, "expected 'input', 'output', 'uniform', 'code', or '}' in shader block");
+            if (declaration == "workgroup") {
+                Consume(parser, token->kind, nullptr);
+                if (!ParseWorkgroup(parser, result, *node)) return 0;
+                continue;
+            }
+
+            if (declaration != "input" && declaration != "output" &&
+                declaration != "uniform" && declaration != "storage")
+                return Fail(result, "expected 'input', 'output', 'uniform', 'storage', "
+                    "'workgroup', 'code', 'hlsl', or '}' in shader block");
 
             Consume(parser, token->kind, nullptr);
             ShaderVar var{};
@@ -339,7 +405,11 @@ namespace {
                 return 0;
             if (declaration == "input") node->inputs.push_back(std::move(var));
             else if (declaration == "output") node->outputs.push_back(std::move(var));
-            else node->uniforms.push_back(std::move(var));
+            else if (declaration == "uniform") node->uniforms.push_back(std::move(var));
+            else {
+                var.location = static_cast<int32_t>(node->storages.size());
+                node->storages.push_back(std::move(var));
+            }
         }
         return Fail(result, "unterminated shader block");
     }
@@ -353,8 +423,10 @@ namespace {
         shader.debugText = "shader " + shader.stage + " (inputs=" +
             std::to_string(shader.inputs.size()) + ", outputs=" +
             std::to_string(shader.outputs.size()) + ", uniforms=" +
-            std::to_string(shader.uniforms.size()) +
-            (shader.userGlsl.empty() ? ", codegen=auto" : ", codegen=code") + ")";
+            std::to_string(shader.uniforms.size()) + ", storages=" +
+            std::to_string(shader.storages.size()) +
+            ((!shader.userGlsl.empty() || !shader.userHlsl.empty())
+                ? ", codegen=custom" : ", codegen=auto") + ")";
         return shader.debugText.c_str();
     }
 
@@ -367,8 +439,35 @@ namespace {
         else if (context->function_depth != 0) {
             lastError = "shader declarations are allowed only at module or namespace scope";
         }
-        else if (shader.outputs.empty()) {
+        else if (!IsComputeStage(shader.stage) && shader.outputs.empty()) {
             lastError = "shader requires at least one output";
+        }
+        else if (IsComputeStage(shader.stage) && shader.storages.empty()) {
+            lastError = "compute shader requires at least one storage declaration";
+        }
+        else if (IsComputeStage(shader.stage) && shader.storages.size() > 8) {
+            lastError = "desktop compute supports at most 8 storage buffers (u0..u7)";
+        }
+        else if (IsComputeStage(shader.stage) && !shader.uniforms.empty()) {
+            lastError = "desktop compute uniforms are not implemented yet; use storage buffers";
+        }
+        else if (IsComputeStage(shader.stage) &&
+            (shader.workgroupX > 1024 || shader.workgroupY > 1024 ||
+                shader.workgroupZ > 64 ||
+                static_cast<int64_t>(shader.workgroupX) * shader.workgroupY *
+                    shader.workgroupZ > 1024)) {
+            lastError = "compute workgroup exceeds D3D11 limits "
+                "(x/y <= 1024, z <= 64, total <= 1024)";
+        }
+        else if (IsComputeStage(shader.stage) &&
+            std::any_of(shader.storages.begin(), shader.storages.end(),
+                [](const ShaderVar& storage) {
+                    return storage.kind != ShaderTypeKind::Float1;
+                })) {
+            lastError = "desktop compute storage currently supports only 'storage float name;'";
+        }
+        else if (!IsComputeStage(shader.stage) && !shader.userHlsl.empty()) {
+            lastError = "hlsl { ... } bodies are currently supported only for compute shaders";
         }
         else {
             for (size_t index = 0; index < context->attribute_count; ++index) {
@@ -428,6 +527,7 @@ namespace {
     }
 
     std::string GenerateGlsl(const ShaderNode& shader) {
+        const bool isCompute = IsComputeStage(shader.stage);
         // Custom body from `code { ... }` is treated as complete stage source.
         if (!shader.userGlsl.empty()) {
             std::string g = shader.userGlsl;
@@ -435,17 +535,28 @@ namespace {
             std::size_t i = 0;
             while (i < g.size() && (g[i] == ' ' || g[i] == '\n' || g[i] == '\r' || g[i] == '\t')) ++i;
             if (g.compare(i, 8, "#version") != 0) {
-                g = "#version 330 core\n" + g;
+                g = std::string(isCompute ? "#version 430 core\n" : "#version 330 core\n") + g;
             }
             if (g.empty() || g.back() != '\n') g.push_back('\n');
             return g;
         }
 
         std::ostringstream g;
-        g << "#version 330 core\n";
-        const bool isVertex = shader.stage == "Vertex" || shader.stage == "vertex" || shader.stage == "VS";
-        const bool isFragment = shader.stage == "Fragment" || shader.stage == "fragment" ||
-            shader.stage == "FS" || shader.stage == "Pixel";
+        g << (isCompute ? "#version 430 core\n" : "#version 330 core\n");
+        const bool isVertex = IsVertexStage(shader.stage);
+        const bool isFragment = IsFragmentStage(shader.stage);
+
+        if (isCompute) {
+            g << "layout(local_size_x=" << shader.workgroupX
+              << ", local_size_y=" << shader.workgroupY
+              << ", local_size_z=" << shader.workgroupZ << ") in;\n";
+            for (const ShaderVar& storage : shader.storages) {
+                g << "layout(std430, binding=" << storage.location << ") buffer AbsoluteStorage"
+                  << storage.location << " { float " << storage.name << "[]; };\n";
+            }
+            g << "void main() {}\n";
+            return g.str();
+        }
 
         if (isVertex) {
             for (const ShaderVar& in : shader.inputs) {
@@ -563,7 +674,7 @@ namespace {
             return g.str();
         }
 
-        // Generic compute/unknown stage: empty main.
+        // Unknown stage: empty main.
         for (const ShaderVar& u : shader.uniforms) {
             g << "uniform " << GlslType(u) << " " << u.name << ";\n";
         }
@@ -572,6 +683,20 @@ namespace {
     }
 
     std::string GenerateHlsl(const ShaderNode& shader) {
+        if (IsComputeStage(shader.stage)) {
+            std::ostringstream h;
+            for (const ShaderVar& storage : shader.storages) {
+                h << "RWStructuredBuffer<float> " << storage.name
+                  << " : register(u" << storage.location << ");\n";
+            }
+            h << "[numthreads(" << shader.workgroupX << ", " << shader.workgroupY
+              << ", " << shader.workgroupZ << ")]\n";
+            h << "void main(uint3 id : SV_DispatchThreadID) {\n";
+            if (!shader.userHlsl.empty()) h << "  " << shader.userHlsl << "\n";
+            h << "}\n";
+            return h.str();
+        }
+
         // `code { }` is GLSL-oriented; for HLSL emit a note stub so D3D paths still link.
         if (!shader.userGlsl.empty()) {
             return std::string(
@@ -691,6 +816,23 @@ namespace {
     }
 
     std::string GenerateMsl(const ShaderNode& shader) {
+        if (IsComputeStage(shader.stage)) {
+            std::ostringstream m;
+            m << "#include <metal_stdlib>\nusing namespace metal;\n";
+            m << "kernel void main(";
+            for (size_t index = 0; index < shader.storages.size(); ++index) {
+                if (index > 0) m << ", ";
+                const ShaderVar& storage = shader.storages[index];
+                m << "device float* " << storage.name << " [[buffer("
+                  << storage.location << ")]]";
+            }
+            if (!shader.storages.empty()) m << ", ";
+            m << "uint3 id [[thread_position_in_grid]]) {\n";
+            m << "  // HLSL compute body is preserved in the HLSL artifact.\n";
+            m << "}\n";
+            return m.str();
+        }
+
         if (!shader.userGlsl.empty()) {
             return std::string(
                 "// absolute.shader: custom code { } is GLSL; MSL auto-gen skipped\n"
@@ -963,7 +1105,9 @@ namespace {
 
         const bool isVertex = IsVertexStage(shader.stage);
         const bool isFragment = IsFragmentStage(shader.stage);
-        const char* profile = isVertex ? "vs_6_0" : (isFragment ? "ps_6_0" : "ps_6_0");
+        const bool isCompute = IsComputeStage(shader.stage);
+        const char* profile = isVertex ? "vs_6_0"
+            : (isFragment ? "ps_6_0" : (isCompute ? "cs_6_0" : "ps_6_0"));
         if (!shader.userGlsl.empty()) {
             // Custom GLSL body is not HLSL — skip DXC.
             shader.spirvBytes.clear();
@@ -988,6 +1132,11 @@ namespace {
            << shader.outputs.size() << "\n";
         ir << "@absolute.shader." << stage << ".uniform_count = constant i32 "
            << shader.uniforms.size() << "\n";
+        ir << "@absolute.shader." << stage << ".storage_count = constant i32 "
+           << shader.storages.size() << "\n";
+        ir << "@absolute.shader." << stage << ".workgroup = constant [3 x i32] [i32 "
+           << shader.workgroupX << ", i32 " << shader.workgroupY << ", i32 "
+           << shader.workgroupZ << "]\n";
         ir << "@absolute.shader." << stage << ".metadata_count = constant i32 "
            << context->attribute_count << "\n";
 
@@ -1002,11 +1151,29 @@ namespace {
             ir << "@absolute.shader." << stage << ".input." << i << ".name = private constant ["
                << (in.name.size() + 1) << " x i8] c\"" << en << "\\00\"\n";
         }
+        for (size_t i = 0; i < shader.storages.size(); ++i) {
+            const ShaderVar& storage = shader.storages[i];
+            ir << "@absolute.shader." << stage << ".storage." << i
+               << ".binding = constant i32 " << storage.location << "\n";
+            const std::string escapedName = EscapeLlvmString(storage.name);
+            ir << "@absolute.shader." << stage << ".storage." << i
+               << ".name = private constant [" << (storage.name.size() + 1)
+               << " x i8] c\"" << escapedName << "\\00\"\n";
+        }
 
         // First-class source IR blobs (null-terminated strings).
         EmitStringConstant(ir, stage, "glsl", shader.glslSource);
         EmitStringConstant(ir, stage, "hlsl", shader.hlslSource);
         EmitStringConstant(ir, stage, "msl", shader.mslSource);
+
+        if (shader.stage == "Compute") {
+            ir << "define i8* @generatedComputeHlsl() {\n";
+            ir << "entry:\n  %p = call i8* @absolute_shader_hlsl_" << stage << "()\n";
+            ir << "  ret i8* %p\n}\n";
+            ir << "define i8* @generatedComputeGlsl() {\n";
+            ir << "entry:\n  %p = call i8* @absolute_shader_glsl_" << stage << "()\n";
+            ir << "  ret i8* %p\n}\n";
+        }
 
         // First-class binary IR blobs (SPIR-V, DXIL, Metal IR placeholder).
         EmitBinaryConstant(ir, stage, "spirv", shader.spirvBytes);
@@ -1022,6 +1189,16 @@ namespace {
 
         ir << "define i32 @absolute_shader_uniform_count_" << stage << "() {\n";
         ir << "entry:\n  ret i32 " << shader.uniforms.size() << "\n}\n";
+
+        ir << "define i32 @absolute_shader_storage_count_" << stage << "() {\n";
+        ir << "entry:\n  ret i32 " << shader.storages.size() << "\n}\n";
+
+        ir << "define i32 @absolute_shader_workgroup_x_" << stage << "() {\n";
+        ir << "entry:\n  ret i32 " << shader.workgroupX << "\n}\n";
+        ir << "define i32 @absolute_shader_workgroup_y_" << stage << "() {\n";
+        ir << "entry:\n  ret i32 " << shader.workgroupY << "\n}\n";
+        ir << "define i32 @absolute_shader_workgroup_z_" << stage << "() {\n";
+        ir << "entry:\n  ret i32 " << shader.workgroupZ << "\n}\n";
 
         ir << "define i32 @absolute_shader_input_location_" << stage << "(i32 %index) {\n";
         ir << "entry:\n";
@@ -1092,6 +1269,14 @@ namespace {
         0,
         nullptr
     };
+
+    constexpr const char* prelude = R"ABSOLUTE(
+namespace Shader {
+    // Available when the module contains the canonical `shader Compute` block.
+    extern "C" string generatedComputeHlsl();
+    extern "C" string generatedComputeGlsl();
+}
+)ABSOLUTE";
 }
 
 extern "C" ABSOLUTE_PLUGIN_EXPORT const AbsoluteSyntaxPluginV1* absolute_syntax_plugin_init_v1() {
@@ -1101,4 +1286,8 @@ extern "C" ABSOLUTE_PLUGIN_EXPORT const AbsoluteSyntaxPluginV1* absolute_syntax_
 extern "C" ABSOLUTE_PLUGIN_EXPORT const AbsoluteOpaqueSyntaxTableV1*
 absolute_syntax_plugin_opaque_rules_v1() {
     return &opaqueTable;
+}
+
+extern "C" ABSOLUTE_PLUGIN_EXPORT const char* absolute_syntax_plugin_prelude_v1() {
+    return prelude;
 }
