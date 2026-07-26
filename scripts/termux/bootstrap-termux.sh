@@ -54,6 +54,7 @@ packages=(
     cmake
     ninja
     llvm
+    libllvm-static
     lld
     make
     pkg-config
@@ -94,13 +95,21 @@ if [[ -z "$llvm_dir" || ! -f "$llvm_dir/LLVMConfig.cmake" ]]; then
     exit 1
 fi
 
+if [[ ! -f "$PREFIX/lib/libLLVMDemangle.a" ]]; then
+    echo "Termux LLVM CMake metadata is installed, but its component archives are missing." >&2
+    echo "Expected: $PREFIX/lib/libLLVMDemangle.a" >&2
+    echo "Install the matching package with: pkg install libllvm-static" >&2
+    exit 1
+fi
+
 llvm_version="$(llvm-config --version 2>/dev/null || echo unknown)"
 echo
 echo "Termux toolchain is ready."
-echo "  PREFIX:    $PREFIX"
-echo "  Clang:     $(clang --version | head -n 1)"
-echo "  LLVM:      $llvm_version"
-echo "  LLVM_DIR:  $llvm_dir"
+echo "  PREFIX:       $PREFIX"
+echo "  Clang:        $(clang --version | head -n 1)"
+echo "  LLVM:         $llvm_version"
+echo "  LLVM_DIR:     $llvm_dir"
+echo "  LLVM static:  $PREFIX/lib/libLLVMDemangle.a"
 echo
 echo "Next:"
 echo "  bash build-termux.sh"
