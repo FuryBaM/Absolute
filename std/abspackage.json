@@ -1,6 +1,6 @@
 {
   "name": "absolute.std",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "lib",
   "description": "Absolute standard library (std.*). Layout and SemVer policy: docs/standard-library.md",
   "sources": [
@@ -13,6 +13,7 @@
     "std.concurrent": ["concurrent.abs", "concurrent/capsule.abs"],
     "std.collections": [
       "collections/vector.abs",
+      "collections/deque.abs",
       "collections/map.abs",
       "collections/set.abs",
       "collections/channel.abs",

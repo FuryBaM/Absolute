@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0
+
+- Added the O(1) ring-buffer `Deque<T>` collection with indexed access,
+  snapshots, iteration, and insertion/removal at both ends.
+- Added typed FIFO `Queue<T>` and LIFO `Stack<T>` facades.
+- Added native and WebAssembly regression coverage for the new collections.
+
 ## 0.3.0
 
 - Added `std.core` as a convenient import bundle for common application APIs.

@@ -479,6 +479,10 @@ if(BUILD_TESTING)
             "${PROJECT_SOURCE_DIR}/tests/collection-snapshot-iteration.abs"
     )
     add_test(
+        NAME absolute.std-deque-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-deque.abs"
+    )
+    add_test(
         NAME absolute.collection-builder-capability-semantic
         COMMAND Absolute-Compiler
             "${PROJECT_SOURCE_DIR}/tests/collection-builder-capability.abs"
@@ -1544,6 +1548,17 @@ if(BUILD_TESTING)
                         -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-std-string.cmake"
                 )
+                add_test(
+                    NAME absolute.run-wasm-std-deque
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/std-deque.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/std-deque.wasm
+                        -DMARKER=std-deque=ok
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-marker.cmake"
+                )
                 if(TARGET Absolute-Math-Plugin)
                     add_test(
                         NAME absolute.run-wasm-math-plugin
@@ -2090,6 +2105,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-resource-fields PROPERTIES
             FIXTURES_REQUIRED absolute-resource-fields-executable
             PASS_REGULAR_EXPRESSION "resource-fields=ok"
+        )
+        add_test(
+            NAME absolute.build-std-deque
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-deque.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-deque-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-deque PROPERTIES
+            FIXTURES_SETUP absolute-std-deque-executable
+        )
+        add_test(NAME absolute.run-std-deque
+            COMMAND "${CMAKE_BINARY_DIR}/std-deque-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-deque PROPERTIES
+            FIXTURES_REQUIRED absolute-std-deque-executable
+            PASS_REGULAR_EXPRESSION "std-deque=ok"
         )
         add_test(
             NAME absolute.build-collection-snapshot-iteration

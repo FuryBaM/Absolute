@@ -483,6 +483,27 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   transform, reduce и filter и подключить весь набор к CTest.
 - [x] Добавить logging, assertions и test framework.
 
+#### Roadmap std после 0.3
+
+- [ ] P0 collections:
+  - [x] `Deque<T>` на кольцевом буфере с O(1) вставкой и удалением с обоих концов.
+  - [x] `Queue<T>` и `Stack<T>` как компактные типизированные фасады без отдельных storage engines.
+  - [ ] `PriorityQueue<T>` на бинарной куче с пользовательским comparator.
+  - [ ] Стандартный контракт hashing/equality и настоящие `HashMap<K, V>` / `HashSet<T>`;
+    текущие `Map` / `Set` оставить совместимыми ordered-linear контейнерами.
+  - [ ] Типизированный `Channel<T>` с явной моделью передачи ownership между tasks.
+- [ ] P0 data / I/O:
+  - [ ] `std.bytes.ByteBuffer`: position/limit/capacity, slices и endian-aware primitives.
+  - [ ] `std.io`: `Reader`, `Writer`, buffered streams и memory streams.
+- [ ] P1 platform:
+  - [ ] Расширить `std.fs`: directory listing/walk, metadata, temporary files и watcher.
+  - [ ] Расширить `std.http`: headers collection, HTTPS/TLS, redirects, streaming,
+    timeout/cancellation и multipart.
+  - [ ] `Semaphore`, `RwLock`, `ConditionVariable`, `Once` и `TaskGroup`.
+- [ ] P1 utilities:
+  - [ ] `std.encoding` (Base64/hex/UTF-8 bytes), `std.uuid`, `std.regex`,
+    `std.crypto` (hash/HMAC), `std.compress`, `std.cli`, CSV/TOML и SemVer.
+
 ### Desktop, игры и графика
 
 - [x] Native Win32/X11 окно, event loop и headless backend через desktop plugin.
