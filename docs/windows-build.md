@@ -18,29 +18,33 @@ For the multi-OS host matrix (Linux, macOS, ARM64 status, CI jobs), see
 Run from Command Prompt or PowerShell in the repository root:
 
 ```bat
-build-windows.bat --bootstrap
+absolute build-compiler --bootstrap
 ```
 
 `--bootstrap` downloads the official
 `clang+llvm-18.1.8-x86_64-pc-windows-msvc.tar.xz` archive into
 `.absolute\downloads` and extracts it into `.absolute\toolchains`. Both paths
 are ignored by Git and no administrator access is required. The script finds
-Visual Studio with `vswhere`, initializes `vcvars64.bat`, builds Release, and
-runs the native test set.
+Visual Studio with `vswhere`, initializes `vcvars64.bat`, and builds Release.
+
+`build-windows.bat --bootstrap` is the equivalent low-level command.
+The `absolute build-compiler` shortcut only builds by default; add `--test` to
+run the complete CTest suite as well.
 
 Subsequent builds do not download anything:
 
 ```bat
-build-windows.bat
+absolute build-compiler
 ```
 
 Useful options:
 
 ```bat
-build-windows.bat -NoTest
-build-windows.bat -Clean
-build-windows.bat --frontend
-build-windows.bat --sccache
+absolute build-compiler -NoTest
+absolute build-compiler -Clean
+absolute build-compiler --frontend
+absolute build-compiler --sccache
+absolute build-compiler --test
 ```
 
 The frontend mode builds the parser, analyzer, CLI, and DLL plugins without

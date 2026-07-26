@@ -6,6 +6,26 @@ and the `absolutec` command-line driver.
 
 ## Build
 
+The shortest native Windows workflow is:
+
+```powershell
+# First build; downloads the portable LLVM SDK once.
+.\absolute build-compiler --bootstrap
+
+# Later compiler rebuilds.
+.\absolute build-compiler
+
+# Build and run the complete test suite.
+.\absolute build-compiler --test
+```
+
+The root `absolute.bat` launcher finds the compiler in the repository build
+directories and initializes the MSVC environment when native linking needs it.
+Set `ABSOLUTEC` to use a compiler executable from another location.
+The convenient `build-compiler` command skips tests unless `--test` is passed.
+
+The underlying build commands remain available:
+
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
@@ -65,6 +85,31 @@ The native Windows backend is the default. Use
 `benchmarks\build-suite\run.bat 4 linux wsl` for the older WSL measurement.
 
 ## Run
+
+Compile a source file to a native executable, or compile and run it immediately:
+
+```powershell
+.\absolute compile hello.abs
+.\absolute hello.abs
+.\absolute compile hello.abs --output bin\hello.exe
+.\absolute run hello.abs
+.\absolute run hello.abs -- first-argument "second argument"
+```
+
+Arguments before `--` belong to the compiler; arguments after it are passed to
+the compiled program. Project files work the same way:
+
+```powershell
+.\absolute compile Demo\Demo.absproj
+.\absolute run Demo\Demo.absproj -- argument-for-demo
+```
+
+An `.abs` or `.absproj` path can be used directly as a shorthand for
+`compile`. Use `.\absolute compiler ...` to pass arguments directly to
+`absolutec`, for example `.\absolute compiler code.abs --parse-only`. Run
+`.\absolute --help` for all developer commands.
+
+The compiler can also be invoked directly:
 
 ```bash
 ./build/Debug/absolutec code.abs --parse-only

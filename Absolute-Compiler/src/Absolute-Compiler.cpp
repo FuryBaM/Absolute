@@ -125,8 +125,8 @@ namespace {
         bool sanitizeAddress = false;
     };
 
-    void PrintUsage() {
-        std::cerr
+    void PrintUsage(std::ostream& output = std::cerr) {
+        output
             << "Usage:\n"
             << "  absolutec <source.abs> [options]\n"
             << "  absolutec build <project.absproj> [options]\n"
@@ -853,6 +853,13 @@ namespace {
 
 int main(int argc, char* argv[]) {
     try {
+        if (argc == 2) {
+            const std::string argument = argv[1];
+            if (argument == "-h" || argument == "--help" || argument == "help") {
+                PrintUsage(std::cout);
+                return 0;
+            }
+        }
         const CommandLine commandLine = ParseCommandLine(argc, argv);
         if (commandLine.mode == CommandMode::NewProject) {
             CreateProject(commandLine);
