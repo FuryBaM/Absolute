@@ -15,10 +15,17 @@ endif()
 
 # Добавляем исполняемый файл
 add_executable(Absolute-Compiler 
+    src/entrypoint.cpp
     src/Absolute-Compiler.cpp
     src/plugin_loader.cpp
     src/package_manager.cpp
     src/pch.cpp
+)
+
+# Keep the existing compiler implementation intact while the public entrypoint
+# injects project-level target settings before normal command-line parsing.
+set_source_files_properties(src/Absolute-Compiler.cpp PROPERTIES
+    COMPILE_DEFINITIONS "main=absolute_compiler_main"
 )
 
 # Подключаем предкомпилированный заголовок (pch)
