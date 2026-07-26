@@ -18,9 +18,10 @@ git switch agent/stabilize-foundation
 bash build-termux.sh --bootstrap
 ```
 
-`--bootstrap` installs Clang, CMake, Ninja, LLVM, LLD, Node.js, and the native
-libraries needed by LLVM. It does not run a full `pkg upgrade` unless
-`--upgrade` is also supplied.
+`--bootstrap` installs Clang, CMake, Ninja, LLVM, the matching
+`libllvm-static` component archives, LLD, Node.js, and the native libraries
+needed by LLVM. It does not run a full `pkg upgrade` unless `--upgrade` is also
+supplied.
 
 The compiler is written under:
 
@@ -94,6 +95,31 @@ For nontrivial programs, keep dependencies, plugins, source directories,
 target, runtime, and `runArgs` in the `.absproj` file. A standalone `.abs` stays
 useful for small programs, tests, and experiments, just like a single C++ source
 file.
+
+## LLVM package troubleshooting
+
+Termux splits the LLVM shared runtime and component archives into separate
+packages. `LLVMConfig.cmake` exports component targets such as
+`LLVMDemangle`, so a full Absolute backend build needs `libllvm-static` even
+though `clang`, `llvm`, and `libllvm` are already installed.
+
+If CMake reports that `libLLVMDemangle.a` does not exist, repair the toolchain
+and restart configuration:
+
+```bash
+pkg update
+pkg install libllvm-static
+bash build-termux.sh --clean
+```
+
+If the previous configure stopped in LLVM's `FindFFI.cmake` with
+`C: needs to be enabled before use`, update the Absolute branch. The CodeGen
+subproject enables both C and C++ because LLVM performs a small C compile/link
+check while locating libffi.
+
+The bootstrap and build scripts now check for
+`$PREFIX/lib/libLLVMDemangle.a` before starting CMake and print the package
+command directly instead of letting LLVM fail several screens later.
 
 ## Notes
 
