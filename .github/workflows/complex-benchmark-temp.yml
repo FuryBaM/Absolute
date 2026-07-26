@@ -9,6 +9,10 @@ on:
       - ".benchmark-payload/**"
   workflow_dispatch:
 
+concurrency:
+  group: complex-benchmark-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   benchmark-linux:
     runs-on: ubuntu-latest
@@ -21,7 +25,7 @@ jobs:
         shell: bash
         run: |
           cat .benchmark-payload/part-* | base64 --decode > /tmp/complex-suite-v2.tar.gz
-          test "$(sha256sum /tmp/complex-suite-v2.tar.gz | cut -d' ' -f1)" = "57a56b7521da5e3a0c0029abee6fb7cb2cde7218c95a04b826fd52557615116f"
+          test "$(sha256sum /tmp/complex-suite-v2.tar.gz | cut -d' ' -f1)" = "5ef308efa716ad4a2cc1970def12c80a1880228d01f3b4e8f4e7259935e853f8"
           mkdir -p benchmarks
           tar -xzf /tmp/complex-suite-v2.tar.gz -C benchmarks
           find benchmarks/complex-suite-v2 -maxdepth 2 -type f -print | sort
