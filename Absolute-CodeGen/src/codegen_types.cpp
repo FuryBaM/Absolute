@@ -155,9 +155,10 @@ namespace Absolute {
                 info && !info->type.empty() && info->type != "error")
                 return SubstituteCodegenType(info->type, currentGenericSubstitutions);
         }
-        std::string type = SubstituteCodegenType(ResolveTypeName(expression.type.get()), currentGenericSubstitutions);
-        if (const auto* declarator = dynamic_cast<const ArrayAccessExpr*>(expression.name.get()))
-            for (size_t index = 0; index < declarator->indexes.size(); ++index) type += "[]";
+        std::string type = SubstituteCodegenType(
+            ResolveTypeName(expression.type.get()), currentGenericSubstitutions);
+        const size_t rank = ArrayDeclaratorRank(expression.name.get());
+        for (size_t index = 0; index < rank; ++index) type += "[]";
         return type;
     }
 

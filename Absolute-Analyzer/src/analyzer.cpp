@@ -502,10 +502,13 @@ namespace Absolute {
 
     std::string Analyzer::ResolveDeclaredType(VarDeclExpr& expression) {
         std::string type = ResolveType(expression.type.get());
-        if (const auto* declarator = dynamic_cast<const ArrayAccessExpr*>(expression.name.get());
-            declarator && !declarator->indexes.empty()) {
-            type = ArrayType(std::move(type), declarator->indexes.size());
+        size_t rank = 0;
+        const Expression* current = expression.name.get();
+        while (const auto* declarator = dynamic_cast<const ArrayAccessExpr*>(current)) {
+            rank += declarator->indexes.size();
+            current = declarator->base.get();
         }
+        if (rank != 0) type = ArrayType(std::move(type), rank);
         return type;
     }
 

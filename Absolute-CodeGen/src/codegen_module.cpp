@@ -1,6 +1,8 @@
 #include "codegen_internal.h"
 
 namespace Absolute {
+    void AddAbsoluteOptimizationPassesToPipeline(llvm::ModulePassManager& passes);
+
     llvm::Constant* CodeGenerator::Impl::GlobalConstant(Expression* expression, llvm::Type* type) {
         if (!expression) return llvm::Constant::getNullValue(type);
         if (auto* number = dynamic_cast<NumberLiteralExpr*>(expression)) {
@@ -44,11 +46,13 @@ namespace Absolute {
             : std::optional<std::vector<size_t>>{};
 
         std::vector<size_t> dimensions;
-        if (auto* declarator = dynamic_cast<ArrayAccessExpr*>(expression.name.get())) {
-            for (size_t index = 0; index < declarator->indexes.size(); ++index) {
-                if (auto* size = dynamic_cast<NumberLiteralExpr*>(declarator->indexes[index].get()))
+        std::vector<Expression*> declaratorIndexes;
+        CollectArrayDeclaratorIndexes(expression.name.get(), declaratorIndexes);
+        if (!declaratorIndexes.empty()) {
+            for (size_t index = 0; index < declaratorIndexes.size(); ++index) {
+                if (auto* size = dynamic_cast<NumberLiteralExpr*>(declaratorIndexes[index]))
                     dimensions.push_back(static_cast<size_t>(std::stoull(size->value)));
-                else if (!declarator->indexes[index] && inferredShape && index < inferredShape->size())
+                else if (!declaratorIndexes[index] && inferredShape && index < inferredShape->size())
                     dimensions.push_back((*inferredShape)[index]);
                 else Fail("global array dimensions must be constant integers");
             }
@@ -811,6 +815,7 @@ namespace Absolute {
             loopAnalyses, functionAnalyses, cgsccAnalyses, moduleAnalyses);
         llvm::ModulePassManager optimizationPasses =
             passBuilder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
+        AddAbsoluteOptimizationPassesToPipeline(optimizationPasses);
         optimizationPasses.run(generatedModule, moduleAnalyses);
 
         std::error_code error;

@@ -5,7 +5,6 @@
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Transforms/Scalar/DCE.h>
 #include <llvm/Transforms/Scalar/SimplifyCFG.h>
-#include <llvm/Transforms/Utils/BasicBlockUtils.h>
 
 namespace Absolute {
     namespace {
@@ -27,10 +26,16 @@ namespace Absolute {
             llvm::Value* right = comparison.getOperand(1);
 
             if (llvm::isa<llvm::Constant>(left) || llvm::isa<llvm::Constant>(right)) {
+#if LLVM_VERSION_MAJOR >= 21
                 llvm::Constant* result = lazyValues.getPredicateAt(
                     predicate, left, right, context, true);
                 if (const auto* known = llvm::dyn_cast_or_null<llvm::ConstantInt>(result))
                     if (known->isOne()) return true;
+#else
+                if (lazyValues.getPredicateAt(
+                        predicate, left, right, context, true) == llvm::LazyValueInfo::True)
+                    return true;
+#endif
             }
 
             if (!left->getType()->isIntegerTy() || left->getType() != right->getType())
@@ -53,6 +58,7 @@ namespace Absolute {
             if (const auto* constant = llvm::dyn_cast<llvm::ConstantInt>(value))
                 return constant->isOne() == expected;
 
+#if LLVM_VERSION_MAJOR >= 21
             llvm::Constant* known = lazyValues.getPredicateAt(
                 llvm::CmpInst::ICMP_EQ,
                 value,
@@ -61,6 +67,15 @@ namespace Absolute {
                 true);
             if (const auto* result = llvm::dyn_cast_or_null<llvm::ConstantInt>(known))
                 if (result->isOne()) return true;
+#else
+            if (lazyValues.getPredicateAt(
+                    llvm::CmpInst::ICMP_EQ,
+                    value,
+                    llvm::ConstantInt::get(value->getType(), expected),
+                    context,
+                    true) == llvm::LazyValueInfo::True)
+                return true;
+#endif
 
             if (const auto* comparison = llvm::dyn_cast<llvm::ICmpInst>(value)) {
                 if (IsKnownIntegerComparison(
@@ -134,8 +149,11 @@ namespace Absolute {
                     rewrites.emplace_back(branch, firstFailure ? second : first);
                 }
 
-                for (auto& [branch, success] : rewrites)
-                    llvm::ReplaceInstWithInst(branch, llvm::BranchInst::Create(success));
+                for (auto& [branch, success] : rewrites) {
+                    llvm::IRBuilder<> rewriteBuilder(branch);
+                    rewriteBuilder.CreateBr(success);
+                    branch->eraseFromParent();
+                }
 
                 return rewrites.empty()
                     ? llvm::PreservedAnalyses::all()

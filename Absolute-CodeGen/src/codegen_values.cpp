@@ -133,21 +133,22 @@ namespace Absolute {
         if (name.empty()) impl->Fail("variable declaration requires an identifier");
         const std::string baseTypeName = impl->ResolveTypeName(expr->type.get());
         const std::string declaredTypeName = impl->DeclaredTypeName(*expr);
-        if (auto* arrayDeclarator = dynamic_cast<ArrayAccessExpr*>(expr->name.get())) {
-            if (arrayDeclarator->indexes.empty()) impl->Fail("array declaration requires a dimension");
+        std::vector<Expression*> arrayDeclaratorIndexes;
+        CollectArrayDeclaratorIndexes(expr->name.get(), arrayDeclaratorIndexes);
+        if (!arrayDeclaratorIndexes.empty()) {
             llvm::Type* elementType = impl->TypeFromName(baseTypeName);
             std::vector<llvm::Value*> dimensions;
-            dimensions.reserve(arrayDeclarator->indexes.size());
+            dimensions.reserve(arrayDeclaratorIndexes.size());
 
             auto* literal = dynamic_cast<ArrayExpr*>(expr->value.get());
             const auto inferredShape = literal ? InferArrayStorageShape(
-                *literal, arrayDeclarator->indexes.size())
+                *literal, arrayDeclaratorIndexes.size())
                 : std::optional<std::vector<size_t>>{};
-            for (size_t dimension = 0; dimension < arrayDeclarator->indexes.size(); ++dimension) {
+            for (size_t dimension = 0; dimension < arrayDeclaratorIndexes.size(); ++dimension) {
                 llvm::Value* size = nullptr;
-                if (arrayDeclarator->indexes[dimension]) {
+                if (arrayDeclaratorIndexes[dimension]) {
                     size = impl->Coerce(
-                        impl->Evaluate(arrayDeclarator->indexes[dimension].get()),
+                        impl->Evaluate(arrayDeclaratorIndexes[dimension]),
                         impl->builder.getInt64Ty());
                 }
                 else if (inferredShape && dimension < inferredShape->size()) {

@@ -50,6 +50,24 @@ namespace Absolute {
             return visitor.identifierExpr ? visitor.identifierExpr->name : std::string{};
         }
 
+        inline size_t ArrayDeclaratorRank(const Expression* expression) {
+            size_t rank = 0;
+            const Expression* current = expression;
+            while (const auto* declarator = dynamic_cast<const ArrayAccessExpr*>(current)) {
+                rank += declarator->indexes.size();
+                current = declarator->base.get();
+            }
+            return rank;
+        }
+
+        inline void CollectArrayDeclaratorIndexes(
+            Expression* expression, std::vector<Expression*>& indexes) {
+            auto* declarator = dynamic_cast<ArrayAccessExpr*>(expression);
+            if (!declarator) return;
+            CollectArrayDeclaratorIndexes(declarator->base.get(), indexes);
+            for (const auto& index : declarator->indexes) indexes.push_back(index.get());
+        }
+
         inline bool IsRawPointerTypeName(const std::string& name) {
             return name.starts_with("raw ") && name.ends_with("*");
         }
