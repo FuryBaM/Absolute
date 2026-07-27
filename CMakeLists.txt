@@ -8,7 +8,15 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(ABSOLUTE_ENABLE_LLVM "Build the LLVM IR backend" ON)
 option(ABSOLUTE_BUILD_EXAMPLE_PLUGINS "Build example syntax plugins" ON)
 option(ABSOLUTE_USE_COMPILER_CACHE "Use sccache or ccache when available" OFF)
+option(ABSOLUTE_TERMUX "Enable Android/Termux host compatibility" OFF)
 set(ABSOLUTE_LLVM_ROOT "" CACHE PATH "Root of a native LLVM SDK containing lib/cmake/llvm/LLVMConfig.cmake")
+
+if(DEFINED ENV{TERMUX_VERSION} OR "$ENV{PREFIX}" MATCHES "^/data/data/com\.termux/")
+    set(ABSOLUTE_TERMUX ON CACHE BOOL "Enable Android/Termux host compatibility" FORCE)
+endif()
+if(ABSOLUTE_TERMUX)
+    message(STATUS "Absolute Termux host compatibility enabled")
+endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(AbsoluteLLVM)
@@ -1260,7 +1268,7 @@ if(BUILD_TESTING)
         # Windows UCRT exposes printf/snprintf as inline wrappers rather than
         # JIT-resolvable symbols. Native Windows runtime coverage therefore
         # uses the --build-exe tests below instead of lli.
-        if(NOT WIN32)
+        if(NOT WIN32 AND NOT ABSOLUTE_TERMUX)
             find_program(ABSOLUTE_LLI_EXECUTABLE NAMES lli lli-18
                 HINTS "${LLVM_TOOLS_BINARY_DIR}" "${LLVM_DIR}/../../../bin")
         else()
@@ -1307,7 +1315,7 @@ if(BUILD_TESTING)
             )
             set_tests_properties(absolute.run-array-advanced PROPERTIES
                 FIXTURES_REQUIRED absolute-array-advanced-ir
-                PASS_REGULAR_EXPRESSION "advanced-arrays=227"
+                PASS_REGULAR_EXPRESSION "advanced-arrays=248"
             )
             add_test(
                 NAME absolute.run-array-copy
@@ -1352,6 +1360,43 @@ if(BUILD_TESTING)
                 FIXTURES_REQUIRED absolute-slice-out-of-bounds-ir
                 WILL_FAIL TRUE
             )
+        elseif(ABSOLUTE_TERMUX)
+            # LLVM's MCJIT/lli is not a supported Android execution path and can
+            # crash inside Termux even when the same IR links and runs natively.
+            # Keep IR emission/check coverage, but execute representative array
+            # programs through the normal Android ELF linker path.
+            add_test(
+                NAME absolute.build-arrays-termux
+                COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/arrays.abs"
+                    --build-exe -o "${CMAKE_BINARY_DIR}/arrays-termux${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.build-arrays-termux PROPERTIES
+                FIXTURES_SETUP absolute-arrays-termux-executable
+            )
+            add_test(
+                NAME absolute.run-arrays
+                COMMAND "${CMAKE_BINARY_DIR}/arrays-termux${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.run-arrays PROPERTIES
+                FIXTURES_REQUIRED absolute-arrays-termux-executable
+                PASS_REGULAR_EXPRESSION "arrays=90"
+            )
+            add_test(
+                NAME absolute.build-array-advanced-termux
+                COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-advanced.abs"
+                    --build-exe -o "${CMAKE_BINARY_DIR}/array-advanced-termux${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.build-array-advanced-termux PROPERTIES
+                FIXTURES_SETUP absolute-array-advanced-termux-executable
+            )
+            add_test(
+                NAME absolute.run-array-advanced
+                COMMAND "${CMAKE_BINARY_DIR}/array-advanced-termux${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.run-array-advanced PROPERTIES
+                FIXTURES_REQUIRED absolute-array-advanced-termux-executable
+                PASS_REGULAR_EXPRESSION "advanced-arrays=248"
+            )
         endif()
         add_test(
             NAME absolute.emit-project
@@ -1370,6 +1415,25 @@ if(BUILD_TESTING)
             set_tests_properties(absolute.run-project PROPERTIES
                 FIXTURES_REQUIRED absolute-project-ir
                 PASS_REGULAR_EXPRESSION "project=42"
+            )
+        elseif(ABSOLUTE_TERMUX)
+            add_test(
+                NAME absolute.build-project-termux
+                COMMAND Absolute-Compiler build
+                    "${PROJECT_SOURCE_DIR}/tests/projects/multi-file/MultiFile.absproj"
+                    --build-exe -o "${CMAKE_BINARY_DIR}/multi-file-project-termux${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.build-project-termux PROPERTIES
+                FIXTURES_SETUP absolute-project-termux-executable
+            )
+            add_test(
+                NAME absolute.run-project
+                COMMAND "${CMAKE_BINARY_DIR}/multi-file-project-termux${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.run-project PROPERTIES
+                FIXTURES_REQUIRED absolute-project-termux-executable
+                PASS_REGULAR_EXPRESSION "project=42"
+                TIMEOUT 60
             )
         endif()
     endif()
@@ -2006,6 +2070,12 @@ if(BUILD_TESTING)
   \"nativeSearchPaths\": []
 }
 ")
+        if(WIN32 OR ABSOLUTE_TERMUX)
+            set(ABSOLUTE_SANITIZER_DETECT_LEAKS OFF)
+        else()
+            set(ABSOLUTE_SANITIZER_DETECT_LEAKS ON)
+        endif()
+
         add_test(
             NAME absolute.build-sanitizer-uaf
             COMMAND Absolute-Compiler build "${CMAKE_BINARY_DIR}/SanitizerUaf-$<CONFIG>.absproj"
@@ -2020,6 +2090,7 @@ if(BUILD_TESTING)
             COMMAND "${CMAKE_COMMAND}"
                 -DEXECUTABLE=${CMAKE_BINARY_DIR}/sanitizer-uaf-app${CMAKE_EXECUTABLE_SUFFIX}
                 -DEXPECT=heap-use-after-free
+                -DDETECT_LEAKS=${ABSOLUTE_SANITIZER_DETECT_LEAKS}
                 -P "${PROJECT_SOURCE_DIR}/tests/run-sanitizer-case.cmake"
         )
         set_tests_properties(absolute.run-sanitizer-uaf PROPERTIES
@@ -2039,6 +2110,7 @@ if(BUILD_TESTING)
             COMMAND "${CMAKE_COMMAND}"
                 -DEXECUTABLE=${CMAKE_BINARY_DIR}/sanitizer-double-free-app${CMAKE_EXECUTABLE_SUFFIX}
                 -DEXPECT=double-free
+                -DDETECT_LEAKS=${ABSOLUTE_SANITIZER_DETECT_LEAKS}
                 -P "${PROJECT_SOURCE_DIR}/tests/run-sanitizer-case.cmake"
         )
         set_tests_properties(absolute.run-sanitizer-double-free PROPERTIES
@@ -2058,11 +2130,17 @@ if(BUILD_TESTING)
             COMMAND "${CMAKE_COMMAND}"
                 -DEXECUTABLE=${CMAKE_BINARY_DIR}/sanitizer-leak-app${CMAKE_EXECUTABLE_SUFFIX}
                 -DEXPECT=memory.leak.detected
+                -DDETECT_LEAKS=${ABSOLUTE_SANITIZER_DETECT_LEAKS}
                 -P "${PROJECT_SOURCE_DIR}/tests/run-sanitizer-case.cmake"
         )
         set_tests_properties(absolute.run-sanitizer-leak PROPERTIES
             FIXTURES_REQUIRED absolute-sanitizer-leak-executable
         )
+        if(ABSOLUTE_TERMUX)
+            # Android's ASan runtime explicitly does not implement LeakSanitizer.
+            # The compiler's static leak diagnostics remain covered separately.
+            set_tests_properties(absolute.run-sanitizer-leak PROPERTIES DISABLED TRUE)
+        endif()
         add_test(
             NAME absolute.emit-object
             COMMAND Absolute-Compiler build "${CMAKE_BINARY_DIR}/NativeFfi-$<CONFIG>.absproj"

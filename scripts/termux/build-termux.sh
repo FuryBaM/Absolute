@@ -154,6 +154,7 @@ cmake_args=(
     -DABSOLUTE_LLVM_USE_LIBEDIT=OFF
     -DABSOLUTE_LLVM_USE_CURL=OFF
     -DABSOLUTE_USE_COMPILER_CACHE="$([[ $use_cache -eq 1 ]] && echo ON || echo OFF)"
+    -DABSOLUTE_TERMUX=ON
     -DBUILD_TESTING=ON
 )
 if [[ "$llvm_enabled" == ON ]]; then
