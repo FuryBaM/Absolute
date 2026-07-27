@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/complex-benchmark-temp.yml"
       - ".benchmark-payload/**"
+      - ".benchmark-rust/**"
   workflow_dispatch:
 
 concurrency:
@@ -41,14 +42,9 @@ jobs:
               )
               path.write_text(source)
           PY
+          cp .benchmark-rust/benchmark.rs benchmarks/complex-suite-v2/benchmark.rs
+          cp .benchmark-rust/run_benchmark.py benchmarks/complex-suite-v2/run_benchmark.py
           find benchmarks/complex-suite-v2 -maxdepth 2 -type f -print | sort
-
-      - name: Upload restored benchmark suite
-        uses: actions/upload-artifact@v4
-        with:
-          name: complex-benchmark-suite-source
-          path: benchmarks/complex-suite-v2
-          if-no-files-found: error
 
       - name: Install LLVM and build tools
         run: |
@@ -56,9 +52,9 @@ jobs:
           sudo apt-get install -y llvm-dev clang lld cmake ninja-build
           llvm-config --version
           clang++ --version | head -n 1
+          rustc --version
           go version
           java -version
-          node --version
           python3 --version
 
       - name: Build Absolute Release compiler
@@ -86,6 +82,8 @@ jobs:
           done
           clang++ -O3 -march=native -ffp-contract=off -std=c++20 \
             "$suite/benchmark.cpp" -o "$suite/benchmark-cpp"
+          rustc -O -C target-cpu=native -C codegen-units=1 -C debuginfo=0 \
+            "$suite/benchmark.rs" -o "$suite/benchmark-rust"
           (cd "$suite" && go build -trimpath -ldflags="-s -w" -o benchmark-go benchmark.go)
           (cd "$suite" && javac Benchmark.java)
 
@@ -100,7 +98,7 @@ jobs:
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: complex-benchmark-results
+          name: complex-benchmark-results-rust
           path: |
             benchmarks/complex-suite-v2/results.md
             benchmarks/complex-suite-v2/results.csv
