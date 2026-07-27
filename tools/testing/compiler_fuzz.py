@@ -155,6 +155,8 @@ def run_compiler(command: list[str], timeout: float) -> subprocess.CompletedProc
     return subprocess.run(
         command,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         timeout=timeout,
         env=env,
