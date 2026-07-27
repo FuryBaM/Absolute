@@ -5,13 +5,13 @@ on:
     branches:
       - agent/fix-termux-tests-v4
     paths:
-      - termux-fix.patch
+      - tools/apply_termux_fix.py
       - .github/workflows/apply-termux-fix.yml
   pull_request:
     branches:
       - agent/stabilize-foundation
     paths:
-      - termux-fix.patch
+      - tools/apply_termux_fix.py
       - .github/workflows/apply-termux-fix.yml
 
 permissions:
@@ -28,11 +28,8 @@ jobs:
           ref: agent/fix-termux-tests-v4
           fetch-depth: 0
 
-      - name: Apply patch
-        shell: bash
-        run: |
-          git apply --check termux-fix.patch
-          git apply termux-fix.patch
+      - name: Apply source changes
+        run: python3 tools/apply_termux_fix.py
 
       - name: Validate CMake and scripts
         shell: bash
