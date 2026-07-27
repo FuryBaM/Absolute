@@ -23,7 +23,7 @@ VARIABLES = ["a", "b", "c", "i"]
 INSERT_TOKENS = [
     "{", "}", "(", ")", ";", ",", "@spawn", "await", "raw", "weak",
     "int32", "return", "foreach", "namespace", "\"unterminated", "/*", "*/",
-    "\u03bb", "\u0000", "999999999999999999999999999999999999",
+    "λ", "\u0000", "999999999999999999999999999999999999",
 ]
 
 
@@ -40,7 +40,7 @@ def expression(rng: random.Random, depth: int = 0) -> str:
         divisor = rng.randint(1, 97)
         return f"({expression(rng, depth + 1)} % {divisor})"
     if kind == 2:
-        return f"(-{expression(rng, depth + 1)})"
+        return f"(-({expression(rng, depth + 1)}))"
     if kind == 3:
         return f"helper({expression(rng, depth + 1)}, {expression(rng, depth + 1)})"
     return f"({expression(rng, depth + 1)} + {rng.randint(0, 31)})"
