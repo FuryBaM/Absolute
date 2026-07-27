@@ -33,7 +33,9 @@ int32 main() {
             }
         }
         if ((visited & 15) == 0) {
-            alias[visited % alias.count] = 20000 + visited;
+            int32 currentCount = alias.count;
+            int32 targetIndex = visited % currentCount;
+            alias[targetIndex] = 20000 + visited;
         }
     }
 
