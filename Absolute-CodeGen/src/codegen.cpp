@@ -5,6 +5,7 @@
 #include <llvm/Analysis/ScalarEvolution.h>
 #include <llvm/Transforms/Scalar/DCE.h>
 #include <llvm/Transforms/Scalar/SimplifyCFG.h>
+#include <llvm/Transforms/Utils/BasicBlockUtils.h>
 
 namespace Absolute {
     namespace {
@@ -133,10 +134,9 @@ namespace Absolute {
                     rewrites.emplace_back(branch, firstFailure ? second : first);
                 }
 
-                for (auto& [branch, success] : rewrites) {
-                    llvm::BranchInst::Create(success, branch);
-                    branch->eraseFromParent();
-                }
+                for (auto& [branch, success] : rewrites)
+                    llvm::ReplaceInstWithInst(branch, llvm::BranchInst::Create(success));
+
                 return rewrites.empty()
                     ? llvm::PreservedAnalyses::all()
                     : llvm::PreservedAnalyses::none();
@@ -150,6 +150,10 @@ namespace Absolute {
             functions.addPass(llvm::DCEPass());
             passes.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(functions)));
         }
+    }
+
+    void AddAbsoluteOptimizationPassesToPipeline(llvm::ModulePassManager& passes) {
+        AddAbsoluteOptimizationPasses(passes);
     }
 
     CodeGenerator::CodeGenerator(const Analyzer* analyzer)
@@ -167,54 +171,5 @@ namespace Absolute {
         Program& program, const std::string& moduleName, const std::string& outputPath,
         bool sanitizeAddress, const std::string& targetTriple) {
         impl->GenerateObject(program, moduleName, outputPath, sanitizeAddress, targetTriple);
-    }
-
-        const std::string dataLayout =
-            targetMachine->createDataLayout().getStringRepresentation();
-        llvm::Module& generatedModule =
-            impl->BuildModule(program, moduleName, triple, dataLayout);
-
-        llvm::LoopAnalysisManager loopAnalyses;
-        llvm::FunctionAnalysisManager functionAnalyses;
-        llvm::CGSCCAnalysisManager cgsccAnalyses;
-        llvm::ModuleAnalysisManager moduleAnalyses;
-        llvm::PassBuilder passBuilder(targetMachine.get());
-        passBuilder.registerModuleAnalyses(moduleAnalyses);
-        passBuilder.registerCGSCCAnalyses(cgsccAnalyses);
-        passBuilder.registerFunctionAnalyses(functionAnalyses);
-        passBuilder.registerLoopAnalyses(loopAnalyses);
-        passBuilder.crossRegisterProxies(
-            loopAnalyses, functionAnalyses, cgsccAnalyses, moduleAnalyses);
-
-        llvm::ModulePassManager optimizationPasses =
-            passBuilder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
-        AddAbsoluteOptimizationPasses(optimizationPasses);
-        optimizationPasses.run(generatedModule, moduleAnalyses);
-
-        std::string verifierMessage;
-        llvm::raw_string_ostream verifierStream(verifierMessage);
-        if (llvm::verifyModule(generatedModule, &verifierStream)) {
-            verifierStream.flush();
-            throw std::runtime_error(
-                "optimized module verification failed: " + verifierMessage);
-        }
-
-        std::error_code error;
-        llvm::raw_fd_ostream output(outputPath, error, llvm::sys::fs::OF_None);
-        if (error)
-            throw std::runtime_error(
-                "cannot create object file '" + outputPath + "': " + error.message());
-
-        llvm::legacy::PassManager emissionPasses;
-#if LLVM_VERSION_MAJOR >= 18
-        constexpr llvm::CodeGenFileType fileType = llvm::CodeGenFileType::ObjectFile;
-#else
-        constexpr llvm::CodeGenFileType fileType = llvm::CGFT_ObjectFile;
-#endif
-        if (targetMachine->addPassesToEmitFile(
-            emissionPasses, output, nullptr, fileType))
-            throw std::runtime_error("target cannot emit an object file");
-        emissionPasses.run(generatedModule);
-        output.flush();
     }
 }
