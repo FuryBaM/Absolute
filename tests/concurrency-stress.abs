@@ -1,5 +1,6 @@
 import "../std/task.abs";
 import "../std/concurrent.abs";
+import "../std/collections/channel.abs";
 
 raw void* stressMutex = null;
 raw void* stressAtomic = null;
