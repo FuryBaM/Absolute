@@ -47,11 +47,18 @@ jobs:
           echo "ABSOLUTEC=$compiler" >> "$GITHUB_ENV"
 
       - name: Build hardening programs
+        shell: bash
         run: |
+          set -o pipefail
+          mkdir -p hardening-logs
+          status=0
           "$ABSOLUTEC" tests/concurrency-stress.abs \
-            --build-exe -o "$GITHUB_WORKSPACE/build-hardening/concurrency-stress"
+            --build-exe -o "$GITHUB_WORKSPACE/build-hardening/concurrency-stress" \
+            2>&1 | tee hardening-logs/concurrency-build.log || status=$?
           "$ABSOLUTEC" tests/collection-snapshot-stress.abs \
-            --build-exe -o "$GITHUB_WORKSPACE/build-hardening/collection-snapshot-stress"
+            --build-exe -o "$GITHUB_WORKSPACE/build-hardening/collection-snapshot-stress" \
+            2>&1 | tee hardening-logs/collection-snapshot-build.log || status=$?
+          exit "$status"
 
       - name: Run iterator snapshot stress
         run: "$GITHUB_WORKSPACE/build-hardening/collection-snapshot-stress"
@@ -103,12 +110,14 @@ jobs:
             --timeout 5 \
             --repro-dir fuzz-reproducers
 
-      - name: Upload fuzz reproducers
-        if: failure()
+      - name: Upload language hardening diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: compiler-fuzz-reproducers
-          path: fuzz-reproducers
+          name: language-hardening-diagnostics
+          path: |
+            hardening-logs
+            fuzz-reproducers
           if-no-files-found: ignore
 
   runtime-thread-sanitizer:
@@ -150,11 +159,22 @@ jobs:
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1:history_size=7
         run: |
+          set -o pipefail
+          mkdir -p hardening-logs
           repeats=3
           if [[ "${{ github.event_name }}" == "schedule" ]]; then
             repeats=10
           fi
           for iteration in $(seq 1 "$repeats"); do
-            echo "TSan iteration $iteration/$repeats"
-            timeout 90s build-tsan/runtime-scheduler-tsan
+            echo "TSan iteration $iteration/$repeats" | tee -a hardening-logs/tsan.log
+            timeout 90s build-tsan/runtime-scheduler-tsan \
+              2>&1 | tee -a hardening-logs/tsan.log
           done
+
+      - name: Upload TSan diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-tsan-diagnostics
+          path: hardening-logs
+          if-no-files-found: ignore
