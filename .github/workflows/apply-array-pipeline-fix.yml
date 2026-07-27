@@ -7,6 +7,13 @@ on:
     paths:
       - tools/apply_array_pipeline_fix.py
       - .github/workflows/apply-array-pipeline-fix.yml
+  pull_request:
+    branches:
+      - master
+    paths:
+      - tools/apply_array_pipeline_fix.py
+      - .github/workflows/apply-array-pipeline-fix.yml
+  workflow_dispatch:
 
 permissions:
   contents: write
