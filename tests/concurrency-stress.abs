@@ -1,0 +1,198 @@
+import "../std/task.abs";
+import "../std/concurrent.abs";
+
+raw void* stressMutex = null;
+raw void* stressAtomic = null;
+raw void* stressChannel = null;
+raw void* stressToken = null;
+int64 guardedCounter = 0;
+
+@task(core = -1, priority = 1, role = "worker")
+async int64 contentionWorker(int64 iterations, int32 expectedPriority, int32 roleKind) {
+    if (std.task.priority() != expectedPriority) {
+        return -1001;
+    }
+    if (roleKind == 0 && !std.task.hasRole("worker")) {
+        return -1002;
+    }
+    if (roleKind == 1 && !std.task.hasRole("background")) {
+        return -1003;
+    }
+
+    int64 i = 0;
+    while (i < iterations) {
+        if ((i & 255) == 0) {
+            std.task.delay(1);
+        }
+
+        absolute_mutex_lock(stressMutex);
+        guardedCounter += 1;
+        absolute_mutex_unlock(stressMutex);
+        absolute_atomic_fetch_add(stressAtomic, 1);
+        i += 1;
+    }
+    return i;
+}
+
+async int64 channelProducer(int64 baseValue, int64 count) {
+    int64 i = 0;
+    int64 checksum = 0;
+    while (i < count) {
+        int64 value = baseValue + i;
+        bool sent = absolute_channel_send(stressChannel, value);
+        if (!sent) {
+            return -2001;
+        }
+        checksum += value;
+        i += 1;
+    }
+    return checksum;
+}
+
+async int64 channelConsumer(int64 count) {
+    int64 i = 0;
+    int64 checksum = 0;
+    while (i < count) {
+        checksum += absolute_channel_receive(stressChannel);
+        i += 1;
+    }
+    return checksum;
+}
+
+async int64 cancellationReader(int64 iterations) {
+    int64 observed = 0;
+    int64 i = 0;
+    while (i < iterations) {
+        if (absolute_cancellation_token_is_cancelled(stressToken)) {
+            observed += 1;
+        }
+        if ((i & 127) == 0) {
+            std.task.delay(1);
+        }
+        i += 1;
+    }
+    return observed;
+}
+
+async int64 cancellationWriter(int64 iterations) {
+    int64 i = 0;
+    while (i < iterations) {
+        absolute_cancellation_token_cancel(stressToken);
+        i += 1;
+    }
+    return iterations;
+}
+
+async int32 main() {
+    const int64 workerIterations = 5000;
+    const int64 workerCount = 16;
+
+    stressMutex = absolute_mutex_create();
+    stressAtomic = absolute_atomic_create(0);
+    guardedCounter = 0;
+
+    task<int64> w01 = spawn contentionWorker(workerIterations, 1, 0);
+    task<int64> w02 = spawn contentionWorker(workerIterations, 1, 0);
+    task<int64> w03 = spawn contentionWorker(workerIterations, 1, 0);
+    task<int64> w04 = spawn contentionWorker(workerIterations, 1, 0);
+    task<int64> w05 = spawn contentionWorker(workerIterations, 1, 0);
+    task<int64> w06 = spawn contentionWorker(workerIterations, 1, 0);
+    task<int64> w07 = spawn contentionWorker(workerIterations, 1, 0);
+    task<int64> w08 = spawn contentionWorker(workerIterations, 1, 0);
+
+    @spawn(core = -1, priority = -1, role = "background")
+    task<int64> w09 = spawn contentionWorker(workerIterations, -1, 1);
+    @spawn(core = -1, priority = -1, role = "background")
+    task<int64> w10 = spawn contentionWorker(workerIterations, -1, 1);
+    @spawn(core = -1, priority = -1, role = "background")
+    task<int64> w11 = spawn contentionWorker(workerIterations, -1, 1);
+    @spawn(core = -1, priority = -1, role = "background")
+    task<int64> w12 = spawn contentionWorker(workerIterations, -1, 1);
+    @spawn(core = -1, priority = -1, role = "background")
+    task<int64> w13 = spawn contentionWorker(workerIterations, -1, 1);
+    @spawn(core = -1, priority = -1, role = "background")
+    task<int64> w14 = spawn contentionWorker(workerIterations, -1, 1);
+    @spawn(core = -1, priority = -1, role = "background")
+    task<int64> w15 = spawn contentionWorker(workerIterations, -1, 1);
+    @spawn(core = -1, priority = -1, role = "background")
+    task<int64> w16 = spawn contentionWorker(workerIterations, -1, 1);
+
+    int64 completed = 0;
+    completed += await w01;
+    completed += await w02;
+    completed += await w03;
+    completed += await w04;
+    completed += await w05;
+    completed += await w06;
+    completed += await w07;
+    completed += await w08;
+    completed += await w09;
+    completed += await w10;
+    completed += await w11;
+    completed += await w12;
+    completed += await w13;
+    completed += await w14;
+    completed += await w15;
+    completed += await w16;
+
+    int64 expectedIncrements = workerCount * workerIterations;
+    assert(completed == expectedIncrements, "all contention workers completed");
+    assert(guardedCounter == expectedIncrements, "mutex protected counter is exact");
+    assert(absolute_atomic_load(stressAtomic) == expectedIncrements, "atomic counter is exact");
+
+    absolute_mutex_destroy(stressMutex);
+    absolute_atomic_destroy(stressAtomic);
+    stressMutex = null;
+    stressAtomic = null;
+
+    const int64 messagesPerProducer = 3000;
+    stressChannel = absolute_channel_create(7);
+
+    task<int64> c1 = spawn channelConsumer(messagesPerProducer);
+    task<int64> c2 = spawn channelConsumer(messagesPerProducer);
+    task<int64> c3 = spawn channelConsumer(messagesPerProducer);
+    task<int64> c4 = spawn channelConsumer(messagesPerProducer);
+    task<int64> p1 = spawn channelProducer(100000, messagesPerProducer);
+    task<int64> p2 = spawn channelProducer(200000, messagesPerProducer);
+    task<int64> p3 = spawn channelProducer(300000, messagesPerProducer);
+    task<int64> p4 = spawn channelProducer(400000, messagesPerProducer);
+
+    int64 produced = await p1;
+    produced += await p2;
+    produced += await p3;
+    produced += await p4;
+    int64 consumed = await c1;
+    consumed += await c2;
+    consumed += await c3;
+    consumed += await c4;
+
+    assert(produced == consumed, "MPMC channel preserves every message exactly once");
+    assert(absolute_channel_count(stressChannel) == 0, "MPMC channel drained");
+    absolute_channel_close(stressChannel);
+    absolute_channel_destroy(stressChannel);
+    stressChannel = null;
+
+    stressToken = absolute_cancellation_token_create();
+    task<int64> r1 = spawn cancellationReader(5000);
+    task<int64> r2 = spawn cancellationReader(5000);
+    task<int64> r3 = spawn cancellationReader(5000);
+    task<int64> r4 = spawn cancellationReader(5000);
+    task<int64> x1 = spawn cancellationWriter(1000);
+    task<int64> x2 = spawn cancellationWriter(1000);
+
+    int64 writerCalls = await x1;
+    writerCalls += await x2;
+    int64 observations = await r1;
+    observations += await r2;
+    observations += await r3;
+    observations += await r4;
+
+    assert(writerCalls == 2000, "all cancellation writes completed");
+    assert(absolute_cancellation_token_is_cancelled(stressToken), "cancellation state is visible after racing access");
+    assert(observations > 0, "at least one reader observed cancellation");
+    absolute_cancellation_token_destroy(stressToken);
+    stressToken = null;
+
+    println("concurrency-stress=ok");
+    return 0;
+}
