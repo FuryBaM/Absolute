@@ -7,6 +7,12 @@ on:
     paths:
       - termux-fix.patch
       - .github/workflows/apply-termux-fix.yml
+  pull_request:
+    branches:
+      - agent/stabilize-foundation
+    paths:
+      - termux-fix.patch
+      - .github/workflows/apply-termux-fix.yml
 
 permissions:
   contents: write
