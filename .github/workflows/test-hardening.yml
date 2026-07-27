@@ -96,6 +96,8 @@ jobs:
       - name: Grammar and mutation fuzz compiler
         shell: bash
         run: |
+          set -o pipefail
+          mkdir -p hardening-logs
           valid=75
           mutated=225
           if [[ "${{ github.event_name }}" == "schedule" ]]; then
@@ -108,7 +110,8 @@ jobs:
             --valid-cases "$valid" \
             --mutated-cases "$mutated" \
             --timeout 5 \
-            --repro-dir fuzz-reproducers
+            --repro-dir fuzz-reproducers \
+            2>&1 | tee hardening-logs/compiler-fuzz.log
 
       - name: Upload language hardening diagnostics
         if: always()
