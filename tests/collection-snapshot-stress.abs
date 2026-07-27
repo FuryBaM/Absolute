@@ -1,0 +1,128 @@
+import "../std/collections/vector.abs";
+import "../std/collections/map.abs";
+import "../std/collections/set.abs";
+
+int64 sumVectorIterator(std.collections.VectorIterator<int32>* iterator) {
+    int64 sum = 0;
+    while (iterator.next()) {
+        sum += iterator.value;
+    }
+    return sum;
+}
+
+int32 main() {
+    Vector<int32>* vector = new Vector<int32>();
+    int32 i = 0;
+    while (i < 128) {
+        vector.push(i);
+        i += 1;
+    }
+
+    Vector<int32>* alias = vector;
+    int64 originalSum = 0;
+    int32 visited = 0;
+    foreach (int32 value in vector) {
+        originalSum += value;
+        visited += 1;
+        if (visited == 1) {
+            alias.clear();
+            int32 replacement = 0;
+            while (replacement < 1024) {
+                alias.push(10000 + replacement);
+                replacement += 1;
+            }
+        }
+        if ((visited & 15) == 0) {
+            alias[visited % alias.count] = 20000 + visited;
+        }
+    }
+
+    assert(visited == 128, "vector iterator retains original length after clear and reallocation");
+    assert(originalSum == 8128, "vector iterator retains original values after alias mutation");
+    assert(vector.count == 1024, "mutations remain visible on original vector");
+
+    auto snapshotA = vector.iterate();
+    auto snapshotB = vector.iterate();
+    int64 expectedSnapshotSum = sumVectorIterator(snapshotA);
+
+    vector.clear();
+    i = 0;
+    while (i < 2048) {
+        vector.push(i * 3);
+        i += 1;
+    }
+
+    int64 secondSnapshotSum = sumVectorIterator(snapshotB);
+    assert(secondSnapshotSum == expectedSnapshotSum, "independent iterators retain the same immutable snapshot");
+    assert(vector.count == 2048, "second reallocation does not corrupt active snapshots");
+
+    int64 nestedOuter = 0;
+    int64 nestedInner = 0;
+    int32 outerCount = 0;
+    foreach (int32 outer in vector) {
+        nestedOuter += outer;
+        outerCount += 1;
+        if (outerCount == 1) {
+            vector.push(777777);
+            foreach (int32 inner in vector) {
+                nestedInner += inner;
+            }
+        }
+    }
+    assert(outerCount == 2048, "outer iterator ignores later append");
+    assert(vector.count == 2049, "nested mutation remains visible");
+    assert(nestedInner == nestedOuter + 777777, "nested iterator snapshots the post-mutation collection");
+
+    Map<int32, int32>* map = new Map<int32, int32>();
+    i = 0;
+    while (i < 256) {
+        map.put(i, i * 2);
+        i += 1;
+    }
+    int64 mapSnapshotSum = 0;
+    int32 mapVisited = 0;
+    foreach (KeyValuePair<int32, int32> entry in map) {
+        mapSnapshotSum += entry.value;
+        mapVisited += 1;
+        if (mapVisited == 1) {
+            i = 0;
+            while (i < 256) {
+                map.remove(i);
+                map.put(1000 + i, i * 5);
+                i += 1;
+            }
+        }
+    }
+    assert(mapVisited == 256, "map iterator retains original entry count during replacement");
+    assert(mapSnapshotSum == 65280, "map iterator retains original values during replacement");
+
+    Set<int32>* values = new Set<int32>();
+    i = 0;
+    while (i < 256) {
+        values.add(i);
+        i += 1;
+    }
+    int64 setSnapshotSum = 0;
+    int32 setVisited = 0;
+    foreach (int32 value in values) {
+        setSnapshotSum += value;
+        setVisited += 1;
+        if (setVisited == 1) {
+            i = 0;
+            while (i < 256) {
+                values.remove(i);
+                values.add(2000 + i);
+                i += 1;
+            }
+        }
+    }
+    assert(setVisited == 256, "set iterator retains original item count during replacement");
+    assert(setSnapshotSum == 32640, "set iterator retains original values during replacement");
+
+    delete values;
+    delete map;
+    delete vector;
+
+    println("collection-snapshot-stress=ok");
+    return 0;
+}
