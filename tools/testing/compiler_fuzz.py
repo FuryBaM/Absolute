@@ -110,26 +110,41 @@ def mutate(rng: random.Random, source: str) -> str:
             position = rng.randrange(len(data) + 1)
             data = data[:position] + fragment + data[position:]
         elif operation == 3:
-            data = data.replace(rng.choice(["int32", "return", "while", "if"]), rng.choice(INSERT_TOKENS), 1)
+            data = data.replace(
+                rng.choice(["int32", "return", "while", "if"]),
+                rng.choice(INSERT_TOKENS),
+                1,
+            )
         elif operation == 4:
-            data = rng.choice(["}", ")", "]", "/*", "\"", "@"] ) * rng.randint(1, 64) + data
+            data = rng.choice(["}", ")", "]", "/*", "\"", "@"]) * rng.randint(1, 64) + data
         else:
             data += "\n" + rng.choice(INSERT_TOKENS) * rng.randint(1, 32)
     return data
 
 
-def write_failure(directory: Path, name: str, source: str, command: list[str], result: subprocess.CompletedProcess[str] | None, reason: str) -> None:
+def write_failure(
+    directory: Path,
+    name: str,
+    source: str,
+    command: list[str],
+    result: subprocess.CompletedProcess[str] | None,
+    reason: str,
+) -> None:
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / f"{name}.abs").write_text(source, encoding="utf-8", errors="surrogatepass")
+    (directory / f"{name}.abs").write_text(
+        source, encoding="utf-8", errors="surrogatepass"
+    )
     details = [reason, "command: " + " ".join(command)]
     if result is not None:
-        details.extend([
-            f"returncode: {result.returncode}",
-            "stdout:",
-            result.stdout,
-            "stderr:",
-            result.stderr,
-        ])
+        details.extend(
+            [
+                f"returncode: {result.returncode}",
+                "stdout:",
+                result.stdout,
+                "stderr:",
+                result.stderr,
+            ]
+        )
     (directory / f"{name}.txt").write_text("\n".join(details), encoding="utf-8")
 
 
@@ -137,13 +152,19 @@ def run_compiler(command: list[str], timeout: float) -> subprocess.CompletedProc
     env = os.environ.copy()
     env.setdefault("ASAN_OPTIONS", "abort_on_error=1:detect_leaks=1")
     env.setdefault("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
-    return subprocess.run(command, text=True, capture_output=True, timeout=timeout, env=env)
+    return subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+        env=env,
+    )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--compiler", required=True, type=Path)
-    parser.add_argument("--seed", type=int, default=0xA8501UTE if False else 0xA8501)
+    parser.add_argument("--seed", type=int, default=689409)
     parser.add_argument("--valid-cases", type=int, default=75)
     parser.add_argument("--mutated-cases", type=int, default=225)
     parser.add_argument("--timeout", type=float, default=4.0)
@@ -169,10 +190,24 @@ def main() -> int:
                 try:
                     result = run_compiler(command, args.timeout)
                 except subprocess.TimeoutExpired:
-                    write_failure(args.repro_dir, f"valid-{case_id:05d}-{phase}", source, command, None, "compiler timed out on valid generated program")
+                    write_failure(
+                        args.repro_dir,
+                        f"valid-{case_id:05d}-{phase}",
+                        source,
+                        command,
+                        None,
+                        "compiler timed out on valid generated program",
+                    )
                     return 1
                 if result.returncode != 0:
-                    write_failure(args.repro_dir, f"valid-{case_id:05d}-{phase}", source, command, result, "compiler rejected valid generated program")
+                    write_failure(
+                        args.repro_dir,
+                        f"valid-{case_id:05d}-{phase}",
+                        source,
+                        command,
+                        result,
+                        "compiler rejected valid generated program",
+                    )
                     return 1
 
         for case_id in range(args.mutated_cases):
@@ -183,13 +218,35 @@ def main() -> int:
             try:
                 result = run_compiler(command, args.timeout)
             except subprocess.TimeoutExpired:
-                write_failure(args.repro_dir, f"mutated-{case_id:05d}", source, command, None, "compiler timed out on mutated input")
+                write_failure(
+                    args.repro_dir,
+                    f"mutated-{case_id:05d}",
+                    source,
+                    command,
+                    None,
+                    "compiler timed out on mutated input",
+                )
                 return 1
 
             # Diagnostics are expected for malformed inputs. Signals and common
             # shell crash encodings are not.
-            if result.returncode < 0 or result.returncode in {128, 132, 133, 134, 136, 137, 139}:
-                write_failure(args.repro_dir, f"mutated-{case_id:05d}", source, command, result, "compiler crashed on mutated input")
+            if result.returncode < 0 or result.returncode in {
+                128,
+                132,
+                133,
+                134,
+                136,
+                137,
+                139,
+            }:
+                write_failure(
+                    args.repro_dir,
+                    f"mutated-{case_id:05d}",
+                    source,
+                    command,
+                    result,
+                    "compiler crashed on mutated input",
+                )
                 return 1
 
     print(
