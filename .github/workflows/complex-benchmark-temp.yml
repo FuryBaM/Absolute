@@ -43,6 +43,13 @@ jobs:
           PY
           find benchmarks/complex-suite-v2 -maxdepth 2 -type f -print | sort
 
+      - name: Upload restored benchmark suite
+        uses: actions/upload-artifact@v4
+        with:
+          name: complex-benchmark-suite-source
+          path: benchmarks/complex-suite-v2
+          if-no-files-found: error
+
       - name: Install LLVM and build tools
         run: |
           sudo apt-get update
