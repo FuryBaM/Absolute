@@ -6,8 +6,18 @@ if(NOT DEFINED EXPECT)
 endif()
 
 set(asan_options "abort_on_error=1:symbolize=0")
-if(NOT WIN32)
+if(NOT DEFINED DETECT_LEAKS)
+    if(WIN32 OR DEFINED ENV{TERMUX_VERSION} OR
+       "$ENV{PREFIX}" MATCHES "^/data/data/com\.termux/")
+        set(DETECT_LEAKS OFF)
+    else()
+        set(DETECT_LEAKS ON)
+    endif()
+endif()
+if(DETECT_LEAKS)
     string(APPEND asan_options ":detect_leaks=1")
+else()
+    string(APPEND asan_options ":detect_leaks=0")
 endif()
 
 execute_process(

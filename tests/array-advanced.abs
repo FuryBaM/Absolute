@@ -82,6 +82,7 @@ int32 main() {
 
     int32 checksum = sum(globalValues[]) + sum(inferredGlobal[]) +
         sum(middle) + filtered + sum(returned) + sum(squares) + sum(groupedFlat);
+    assert(checksum == 248, "advanced array checksum");
     println(format("advanced-arrays={}", checksum));
     return 0;
 }

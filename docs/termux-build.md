@@ -65,6 +65,16 @@ runtime. A real Android surface/input/audio backend is separate work; installing
 Termux:X11 packages does not turn the existing X11 desktop backend into a
 supported Android game window automatically.
 
+The full test suite keeps LLVM IR emission and validation enabled, but executes
+array and multi-file runtime coverage as native Android ELF binaries. Termux's
+`lli`/MCJIT path is not treated as a supported execution backend because current
+Termux LLVM builds can crash or block inside the JIT while the same IR links and
+runs correctly through `clang++`.
+
+Android's AddressSanitizer does not provide LeakSanitizer. UAF and double-free
+tests run with `detect_leaks=0`; the dedicated runtime leak test is reported as
+disabled on Termux, while Absolute's compile-time leak diagnostics remain active.
+
 ## Compile and run one file
 
 Native execution is the default:
