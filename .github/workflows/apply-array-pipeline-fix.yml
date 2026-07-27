@@ -127,4 +127,5 @@ jobs:
             Absolute-CodeGen/src/codegen_types.cpp \
             Absolute-CodeGen/src/codegen_values.cpp
           git commit -m "Fix multidimensional array declaration lowering"
+          git pull --rebase origin agent/stabilize-foundation
           git push origin HEAD:agent/stabilize-foundation
