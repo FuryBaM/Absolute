@@ -153,7 +153,7 @@ namespace {
     public:
         Scheduler() {
             const unsigned count = std::min(32U,
-                std::max(1U, std::thread::hardware_concurrency()));
+                std::max(8U, std::thread::hardware_concurrency()));
             workers.reserve(count);
             for (unsigned index = 0; index < count; ++index)
                 workers.emplace_back([this] { Run(); });
