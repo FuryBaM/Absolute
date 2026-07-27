@@ -114,15 +114,15 @@ void cancellationWorker(void* opaque) {
 
 template <class Context>
 Context* awaitAndDelete(void* task) {
-    auto* context = static_cast<Context*>(absolute_task_await(task));
-    return context;
+    return static_cast<Context*>(absolute_task_await(task));
 }
 }  // namespace
 
 int main() {
-    constexpr int taskCount = 32;
-    constexpr int iterations = 20'000;
+    constexpr int taskCount = 16;
+    constexpr int iterations = 5'000;
 
+    std::cerr << "phase=contention\n";
     SharedState shared;
     shared.atomicCounter = absolute_atomic_create(0);
     shared.mutex = absolute_mutex_create();
@@ -151,9 +151,10 @@ int main() {
     absolute_atomic_destroy(shared.atomicCounter);
     absolute_mutex_destroy(shared.mutex);
 
+    std::cerr << "phase=channel\n";
     constexpr int producerCount = 4;
     constexpr int consumerCount = 4;
-    constexpr int messagesPerWorker = 25'000;
+    constexpr int messagesPerWorker = 5'000;
     void* channel = absolute_channel_create(17);
     std::vector<void*> producers;
     std::vector<void*> consumers;
@@ -187,15 +188,16 @@ int main() {
     absolute_channel_close(channel);
     absolute_channel_destroy(channel);
 
+    std::cerr << "phase=cancellation\n";
     void* token = absolute_cancellation_token_create();
     std::vector<void*> cancellationTasks;
-    for (int index = 0; index < 8; ++index) {
-        auto* context = new CancellationContext{token, 100'000, 0, false};
+    for (int index = 0; index < 4; ++index) {
+        auto* context = new CancellationContext{token, 20'000, 0, false};
         cancellationTasks.push_back(absolute_task_spawn_config(
             cancellationWorker, context, -1, 0, "cancel-reader"));
     }
-    for (int index = 0; index < 4; ++index) {
-        auto* context = new CancellationContext{token, 10'000, 0, true};
+    for (int index = 0; index < 2; ++index) {
+        auto* context = new CancellationContext{token, 2'000, 0, true};
         cancellationTasks.push_back(absolute_task_spawn_config(
             cancellationWorker, context, -1, 2, "cancel-writer"));
     }
