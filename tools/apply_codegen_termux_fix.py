@@ -2,24 +2,24 @@
 from pathlib import Path
 
 
-def replace_once(path: Path, old: str, new: str) -> None:
-    text = path.read_text(encoding="utf-8")
+def replace_once(text: str, old: str, new: str, description: str) -> str:
     if old not in text:
-        raise SystemExit(f"expected block not found in {path}")
-    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+        raise SystemExit(f"expected block not found: {description}")
+    return text.replace(old, new, 1)
 
 
-codegen = Path("Absolute-CodeGen/src/codegen.cpp")
-text = codegen.read_text(encoding="utf-8")
+codegen_path = Path("Absolute-CodeGen/src/codegen.cpp")
+codegen = codegen_path.read_text(encoding="utf-8")
 
-text = text.replace(
+codegen = replace_once(
+    codegen,
     '#include <llvm/Transforms/Scalar/SimplifyCFG.h>\n',
     '#include <llvm/Transforms/Scalar/SimplifyCFG.h>\n'
     '#include <llvm/Transforms/Utils/BasicBlockUtils.h>\n',
-    1,
+    "BasicBlockUtils include",
 )
 
-replace_once(
+codegen = replace_once(
     codegen,
     '''                for (auto& [branch, success] : rewrites) {
                     llvm::BranchInst::Create(success, branch);
@@ -30,10 +30,9 @@ replace_once(
                     llvm::ReplaceInstWithInst(branch, llvm::BranchInst::Create(success));
                 }
 ''',
+    "LLVM 21 branch replacement",
 )
 
-# Re-read after the first replacement because replace_once writes the file.
-text = codegen.read_text(encoding="utf-8")
 marker = '''        void AddAbsoluteOptimizationPasses(llvm::ModulePassManager& passes) {
             llvm::FunctionPassManager functions;
             functions.addPass(ProvenArrayBoundsPass());
@@ -43,26 +42,52 @@ marker = '''        void AddAbsoluteOptimizationPasses(llvm::ModulePassManager& 
         }
     }
 '''
-replacement = marker + '''
+codegen = replace_once(
+    codegen,
+    marker,
+    marker + '''
     void AddAbsoluteOptimizationPassesToPipeline(llvm::ModulePassManager& passes) {
         AddAbsoluteOptimizationPasses(passes);
     }
-'''
-if marker not in text:
-    raise SystemExit("optimization pass marker not found")
-text = text.replace(marker, replacement, 1)
+''',
+    "optimization pass bridge",
+)
 
-orphan_start = text.find('''
+orphan_start = codegen.find('''
         const std::string dataLayout =
             targetMachine->createDataLayout().getStringRepresentation();
 ''')
 if orphan_start == -1:
     raise SystemExit("orphaned GenerateObject tail not found")
-namespace_close = text.rfind('\n}')
+namespace_close = codegen.rfind('\n}')
 if namespace_close == -1 or namespace_close <= orphan_start:
     raise SystemExit("namespace close not found")
-text = text[:orphan_start] + text[namespace_close:]
-codegen.write_text(text, encoding="utf-8")
+codegen = codegen[:orphan_start] + codegen[namespace_close:]
+codegen_path.write_text(codegen, encoding="utf-8")
 
-module = Path("Absolute-CodeGen/src/codegen_module.cpp")
-module_text = module.read_text(encoding="utf-8")n
+module_path = Path("Absolute-CodeGen/src/codegen_module.cpp")
+module = module_path.read_text(encoding="utf-8")
+module = replace_once(
+    module,
+    '''namespace Absolute {
+''',
+    '''namespace Absolute {
+    void AddAbsoluteOptimizationPassesToPipeline(llvm::ModulePassManager& passes);
+
+''',
+    "optimization pass declaration",
+)
+module = replace_once(
+    module,
+    '''        llvm::ModulePassManager optimizationPasses =
+            passBuilder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
+        optimizationPasses.run(generatedModule, moduleAnalyses);
+''',
+    '''        llvm::ModulePassManager optimizationPasses =
+            passBuilder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
+        AddAbsoluteOptimizationPassesToPipeline(optimizationPasses);
+        optimizationPasses.run(generatedModule, moduleAnalyses);
+''',
+    "optimization pass pipeline hook",
+)
+module_path.write_text(module, encoding="utf-8")
