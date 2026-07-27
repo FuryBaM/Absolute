@@ -1,0 +1,58 @@
+name: Apply TODO append
+
+on:
+  push:
+    branches:
+      - agent/stabilize-foundation
+    paths:
+      - TODO_APPEND.md
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/stabilize-foundation
+          fetch-depth: 0
+
+      - name: Insert roadmap into TODO.md
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          todo_path = Path("TODO.md")
+          append_path = Path("TODO_APPEND.md")
+          marker = "## Критерии готовности языка\n"
+          header = "## Следующий этап: стабильность, параллельность и production-ready toolchain"
+
+          todo = todo_path.read_text(encoding="utf-8")
+          appendix = append_path.read_text(encoding="utf-8").strip()
+
+          if header in todo:
+              print("Roadmap is already present; nothing to change.")
+          else:
+              if marker not in todo:
+                  raise SystemExit("TODO insertion marker was not found")
+              todo = todo.replace(marker, appendix + "\n\n" + marker, 1)
+              todo_path.write_text(todo, encoding="utf-8")
+          PY
+
+      - name: Commit updated TODO
+        shell: bash
+        run: |
+          if git diff --quiet -- TODO.md; then
+            echo "TODO.md already contains the roadmap"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add TODO.md
+          git commit -m "Document next stabilization roadmap"
+          git push origin HEAD:agent/stabilize-foundation
