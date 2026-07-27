@@ -142,8 +142,8 @@ namespace {
                 {
                     std::lock_guard lock(work.task->mutex);
                     work.task->done = true;
+                    work.task->completed.notify_all();
                 }
-                work.task->completed.notify_all();
                 currentCore = -1;
                 currentPriority = 0;
                 currentRole.clear();
@@ -571,4 +571,3 @@ extern "C" void absolute_mutex_destroy(void* mutex) {
     if (!mutex) return;
     delete static_cast<std::mutex*>(mutex);
 }
-
