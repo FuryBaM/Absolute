@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Restore temporary benchmark suite
+      - name: Restore and instrument benchmark suite
         shell: bash
         run: |
           cat .benchmark-payload/part-* | base64 --decode > /tmp/complex-suite-v2.tar.gz
@@ -43,7 +43,8 @@ jobs:
               path.write_text(source)
           PY
           cp .benchmark-rust/benchmark.rs benchmarks/complex-suite-v2/benchmark.rs
-          cp .benchmark-rust/run_benchmark.py benchmarks/complex-suite-v2/run_benchmark.py
+          cp .benchmark-rust/run_internal_benchmark.py benchmarks/complex-suite-v2/run_benchmark.py
+          python3 .benchmark-rust/strictify.py benchmarks/complex-suite-v2
           find benchmarks/complex-suite-v2 -maxdepth 2 -type f -print | sort
 
       - name: Install LLVM and build tools
@@ -87,7 +88,7 @@ jobs:
           (cd "$suite" && go build -trimpath -ldflags="-s -w" -o benchmark-go benchmark.go)
           (cd "$suite" && javac Benchmark.java)
 
-      - name: Run benchmark
+      - name: Run internally timed benchmark
         env:
           ABSOLUTE_BENCH_BIN_DIR: ${{ github.workspace }}/benchmarks/complex-suite-v2/bin
         run: |
@@ -98,7 +99,7 @@ jobs:
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: complex-benchmark-results-rust
+          name: complex-benchmark-results-internal-timers
           path: |
             benchmarks/complex-suite-v2/results.md
             benchmarks/complex-suite-v2/results.csv
