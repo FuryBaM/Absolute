@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
-project(Absolute LANGUAGES CXX)
+project(Absolute VERSION 0.5.0 LANGUAGES CXX)
+
+set(ABSOLUTE_VERSION "${PROJECT_VERSION}")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -60,6 +62,12 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_test(
+        NAME absolute.compiler-version
+        COMMAND Absolute-Compiler --version)
+    set_tests_properties(absolute.compiler-version PROPERTIES
+        PASS_REGULAR_EXPRESSION "absolutec ${ABSOLUTE_VERSION}")
+
     add_executable(absolute-runtime-scheduler-v2-test
         tests/runtime-scheduler-v2.cpp)
     target_include_directories(absolute-runtime-scheduler-v2-test
@@ -576,6 +584,15 @@ if(BUILD_TESTING)
         NAME absolute.task-scheduling-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/task-scheduling.abs"
     )
+    add_test(
+        NAME absolute.task-group-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/task-group.abs"
+    )
+    add_test(
+        NAME absolute.task-group-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/task-group-errors.abs"
+    )
+    set_tests_properties(absolute.task-group-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
         NAME absolute.task-scheduling-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/task-scheduling-errors.abs"
@@ -2981,6 +2998,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-task-scheduling PROPERTIES
             FIXTURES_REQUIRED absolute-task-scheduling-executable
             PASS_REGULAR_EXPRESSION "task-scheduling=ok"
+        )
+        add_test(
+            NAME absolute.build-task-group
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/task-group.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/task-group-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-task-group PROPERTIES
+            FIXTURES_SETUP absolute-task-group-executable
+        )
+        add_test(NAME absolute.run-task-group
+            COMMAND "${CMAKE_BINARY_DIR}/task-group-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-task-group PROPERTIES
+            FIXTURES_REQUIRED absolute-task-group-executable
+            PASS_REGULAR_EXPRESSION "task-group=ok"
         )
         add_test(
             NAME absolute.build-async-methods

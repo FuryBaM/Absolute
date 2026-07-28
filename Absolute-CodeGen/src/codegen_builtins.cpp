@@ -89,6 +89,22 @@ namespace Absolute {
             return;
         }
 
+        if (name == "taskGroupAdd") {
+            if (expression.arguments.size() != 2)
+                Fail("taskGroupAdd expects a group handle and one task");
+            llvm::Value* group = Coerce(
+                Evaluate(expression.arguments[0].get()), builder.getPtrTy());
+            Expression* childExpression = expression.arguments[1].get();
+            llvm::Value* child = Coerce(Evaluate(childExpression), builder.getPtrTy());
+            ConsumeTaskArgument(childExpression, SemanticType(childExpression));
+            llvm::FunctionType* addType = llvm::FunctionType::get(
+                builder.getInt1Ty(), {builder.getPtrTy(), builder.getPtrTy()}, false);
+            value = builder.CreateCall(
+                module->getOrInsertFunction("absolute_task_group_add", addType),
+                {group, child}, "task.group.added");
+            return;
+        }
+
         if (name == "move") {
             if (expression.arguments.size() != 1) Fail("move expects exactly one argument");
             Expression* argument = expression.arguments.front().get();

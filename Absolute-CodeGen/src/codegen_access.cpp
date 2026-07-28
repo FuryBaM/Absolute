@@ -206,8 +206,8 @@ namespace Absolute {
             for (size_t index = 0; index < expr->arguments.size(); ++index)
                 arguments.push_back(impl->EvaluateCallArgument(
                     expr->arguments[index].get(), temporaryArrayOwners,
-                    temporaryClosureOwners, selected && index < selected->parameterTypes.size()
-                        ? selected->parameterTypes[index] : std::string{}));
+                    temporaryClosureOwners, index < functionValueParameters.size()
+                        ? functionValueParameters[index] : std::string{}));
             impl->value = impl->EmitAbiCall(functionType, callee,
                 functionValueReturn, {environment}, functionValueParameters, arguments,
                 "function.value.result");

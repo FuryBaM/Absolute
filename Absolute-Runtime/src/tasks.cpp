@@ -2,6 +2,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <climits>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
@@ -62,6 +63,7 @@ namespace {
         std::uint64_t errorHandle = 0;
         std::uint64_t errorType = 0;
         TaskState state = TaskState::Pending;
+        std::atomic<bool> cancelRequested{false};
         bool wakePending = false;
         bool finished = false;
         bool done = false;
@@ -605,6 +607,12 @@ namespace {
         std::atomic<bool> cancelled{false};
     };
 
+    struct TaskGroupImpl {
+        std::mutex mutex;
+        std::vector<Task*> children;
+        bool closed = false;
+    };
+
     struct MutexImpl {
         std::mutex mutex;
         std::condition_variable available;
@@ -770,6 +778,89 @@ extern "C" bool absolute_cancellation_token_is_cancelled(void* token) {
 extern "C" void absolute_cancellation_token_destroy(void* token) {
     if (!token) return;
     delete static_cast<CancellationTokenImpl*>(token);
+}
+
+extern "C" void absolute_task_cancel(void* handle) {
+    if (!handle) return;
+    static_cast<Task*>(handle)->cancelRequested.store(
+        true, std::memory_order_release);
+    NotifySchedulerProgress();
+}
+
+extern "C" bool absolute_task_current_cancelled() {
+    return currentTask && currentTask->cancelRequested.load(
+        std::memory_order_acquire);
+}
+
+extern "C" void* absolute_task_group_create() {
+    return new TaskGroupImpl();
+}
+
+extern "C" bool absolute_task_group_add(void* handle, void* childHandle) {
+    if (!childHandle) return false;
+    Task* child = static_cast<Task*>(childHandle);
+    TaskGroupImpl* group = static_cast<TaskGroupImpl*>(handle);
+    if (!group) {
+        absolute_task_cancel(child);
+        absolute_task_destroy(child);
+        return false;
+    }
+
+    {
+        std::lock_guard lock(group->mutex);
+        if (!group->closed) {
+            group->children.push_back(child);
+            return true;
+        }
+    }
+
+    // Ownership transfers on every add attempt. A closed group rejects the
+    // child but still cancels and joins it, so no detached task can escape.
+    absolute_task_cancel(child);
+    absolute_task_destroy(child);
+    return false;
+}
+
+extern "C" std::int32_t absolute_task_group_count(void* handle) {
+    TaskGroupImpl* group = static_cast<TaskGroupImpl*>(handle);
+    if (!group) return 0;
+    std::lock_guard lock(group->mutex);
+    return static_cast<std::int32_t>(std::min<std::size_t>(
+        group->children.size(), INT32_MAX));
+}
+
+extern "C" void absolute_task_group_cancel(void* handle) {
+    TaskGroupImpl* group = static_cast<TaskGroupImpl*>(handle);
+    if (!group) return;
+    std::lock_guard lock(group->mutex);
+    for (Task* child : group->children)
+        child->cancelRequested.store(true, std::memory_order_release);
+    NotifySchedulerProgress();
+}
+
+extern "C" void absolute_task_group_join(void* handle) {
+    TaskGroupImpl* group = static_cast<TaskGroupImpl*>(handle);
+    if (!group) return;
+    std::vector<Task*> children;
+    {
+        std::lock_guard lock(group->mutex);
+        group->closed = true;
+        children.swap(group->children);
+    }
+    for (Task* child : children)
+        absolute_task_destroy(child);
+}
+
+extern "C" void absolute_task_group_cancel_and_join(void* handle) {
+    absolute_task_group_cancel(handle);
+    absolute_task_group_join(handle);
+}
+
+extern "C" void absolute_task_group_destroy(void* handle) {
+    TaskGroupImpl* group = static_cast<TaskGroupImpl*>(handle);
+    if (!group) return;
+    absolute_task_group_cancel_and_join(group);
+    delete group;
 }
 
 extern "C" void* absolute_channel_create(std::int32_t capacity) {

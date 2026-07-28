@@ -50,6 +50,9 @@ target_include_directories(Absolute-Compiler PRIVATE
 # Линкуем библиотеки
 target_link_libraries(Absolute-Compiler PRIVATE Absolute-Parser Absolute-Analyzer)
 target_link_libraries(Absolute-Compiler PRIVATE ${CMAKE_DL_LIBS})
+target_compile_definitions(Absolute-Compiler PRIVATE
+    ABSOLUTE_VERSION="${ABSOLUTE_VERSION}"
+)
 if(TARGET Absolute-CodeGen)
     target_link_libraries(Absolute-Compiler PRIVATE Absolute-CodeGen)
     target_compile_definitions(Absolute-Compiler PRIVATE

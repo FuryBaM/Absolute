@@ -4,10 +4,17 @@ extern "C" string absolute_task_current_role();
 extern "C" bool absolute_task_current_role_is(string role);
 extern "C" int32 absolute_scheduler_worker_count();
 extern "C" void absolute_task_delay(int32 ms);
+extern "C" bool absolute_task_current_cancelled();
 extern "C" raw void* absolute_cancellation_token_create();
 extern "C" void absolute_cancellation_token_cancel(raw void* token);
 extern "C" bool absolute_cancellation_token_is_cancelled(raw void* token);
 extern "C" void absolute_cancellation_token_destroy(raw void* token);
+extern "C" raw void* absolute_task_group_create();
+extern "C" int32 absolute_task_group_count(raw void* groupHandle);
+extern "C" void absolute_task_group_cancel(raw void* groupHandle);
+extern "C" void absolute_task_group_join(raw void* groupHandle);
+extern "C" void absolute_task_group_cancel_and_join(raw void* groupHandle);
+extern "C" void absolute_task_group_destroy(raw void* groupHandle);
 
 namespace std.task {
     int32 core() {
@@ -38,6 +45,10 @@ namespace std.task {
         absolute_task_delay(ms);
     }
 
+    bool cancelled() {
+        return absolute_task_current_cancelled();
+    }
+
     class CancellationToken {
         private raw void* handle;
 
@@ -56,6 +67,43 @@ namespace std.task {
         public void destroy() {
             if (handle != null) {
                 absolute_cancellation_token_destroy(handle);
+                handle = null;
+            }
+        }
+
+        public void dispose() { destroy(); }
+    }
+
+    class TaskGroup {
+        private raw void* handle;
+
+        public TaskGroup() {
+            handle = absolute_task_group_create();
+        }
+
+        public bool add(task<void> child) {
+            return taskGroupAdd(handle, child);
+        }
+
+        public int32 count() {
+            return absolute_task_group_count(handle);
+        }
+
+        public void cancel() {
+            absolute_task_group_cancel(handle);
+        }
+
+        public void join() {
+            absolute_task_group_join(handle);
+        }
+
+        public void cancelAndJoin() {
+            absolute_task_group_cancel_and_join(handle);
+        }
+
+        public void destroy() {
+            if (handle != null) {
+                absolute_task_group_destroy(handle);
                 handle = null;
             }
         }

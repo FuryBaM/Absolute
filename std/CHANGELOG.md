@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+
+- Added structured concurrency through `std.task.TaskGroup`. Adding a child
+  transfers its task handle to the group; `join()` waits for every child and
+  `cancelAndJoin()` cooperatively cancels before joining.
+- Added `std.task.cancelled()` so child tasks can observe group cancellation.
+
 ## 0.4.0
 
 - Added the O(1) ring-buffer `Deque<T>` collection with indexed access,

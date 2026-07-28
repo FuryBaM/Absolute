@@ -71,6 +71,8 @@
 - [x] Проверить генерацию `.obj`/`.exe`, native runtime и C ABI через MSVC linker.
 - [x] Запускать все доступные semantic, emit и runtime tests непосредственно на Windows.
   На Windows проходят 98/98 тестов; десять Linux-only `lli`-тестов заменены покрытием через скомпилированные `.exe`.
+- [x] Добавить `absolutec --version`, чтобы установленный compiler можно было
+  однозначно обнаружить и проверить из терминала и install-скриптов.
 - [x] Добавить Windows Release build benchmark: clean, no-op, Analyzer unit, CodeGen unit и PCH.
   Первый native MSVC запуск: clean — 44,82 с; no-op — 1,17 с; Analyzer unit — 6,38 с;
   CodeGen unit — 5,43 с; CodeGen PCH — 17,11 с.
@@ -504,7 +506,9 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   - [ ] Расширить `std.fs`: directory listing/walk, metadata, temporary files и watcher.
   - [ ] Расширить `std.http`: headers collection, HTTPS/TLS, redirects, streaming,
     timeout/cancellation и multipart.
-  - [ ] `Semaphore`, `RwLock`, `ConditionVariable`, `Once` и `TaskGroup`.
+  - [ ] `Semaphore`, `RwLock`, `ConditionVariable` и `Once`.
+  - [x] `std.task.TaskGroup` с consuming transfer дочерних `task<void>`,
+    cooperative cancellation и автоматическим cancel/join на выходе из scope.
 - [ ] P1 utilities:
   - [ ] `std.encoding` (Base64/hex/UTF-8 bytes), `std.uuid`, `std.regex`,
     `std.crypto` (hash/HMAC), `std.compress`, `std.cli`, CSV/TOML и SemVer.
@@ -791,7 +795,7 @@ Task-isolate, закрытый message envelope и transfer capsule описан
       portable async API.
 - [x] Сделать wake-up через scheduler queue: `send`/completion возвращает
   приостановленную task в runnable state без polling.
-- [ ] Добавить structured concurrency и `TaskGroup`: дочерние tasks принадлежат
+- [x] Добавить structured concurrency и `TaskGroup`: дочерние tasks принадлежат
   lexical scope и автоматически join/cancel при выходе.
 - [ ] Реализовать propagation cancellation и deadline через всю иерархию tasks.
 - [ ] Добавить work stealing между worker queues.

@@ -36,6 +36,38 @@ the task from running; the requested logical core remains visible as metadata.
 The `std/task.abs` module exposes `std.task.core()`, `priority()`, `role()`, and
 `hasRole(...)` for the currently executing task.
 
+## Structured concurrency
+
+`std.task.TaskGroup` owns every `task<void>` passed to `add`. Passing a task is
+a consuming transfer: the caller cannot await, transfer, or destroy that task
+afterward. `join()` waits for all children and closes the group to new work.
+`cancelAndJoin()` first marks every child as cancelled and then waits. The
+compiler invokes `destroy()` automatically when the managed group leaves its
+lexical scope, giving the same cancel-and-join guarantee on every exit path.
+
+Children observe cooperative cancellation with `std.task.cancelled()`:
+
+```absolute
+async void worker() {
+    while (!std.task.cancelled()) {
+        std.task.delay(1);
+    }
+}
+
+async int32 main() {
+    {
+        auto taskSet = new std.task.TaskGroup();
+        task<void> child = spawn worker();
+        taskSet.add(child);
+    } // taskSet.destroy(): cancel + join
+    return 0;
+}
+```
+
+Cancellation does not forcibly interrupt user code. A child must reach a
+cancellation check or finish normally. Automatic propagation into timers and
+I/O belongs to the next scheduler milestone.
+
 ## Scheduler v2 runtime
 
 Native tasks run on stackful fibers owned by a bounded OS worker pool. Once a

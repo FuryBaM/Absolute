@@ -35,6 +35,9 @@
             std::vector<llvm::Value*>& temporaryClosureOwners,
             const std::string& parameterType = {});
 
+        void ConsumeTaskArgument(Expression* expression,
+            const std::string& parameterType);
+
         void ReleaseArrayTemporaries(const std::vector<llvm::Value*>& owners);
 
         void ReleaseClosureTemporaries(const std::vector<llvm::Value*>& owners);

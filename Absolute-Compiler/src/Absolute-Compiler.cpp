@@ -1,4 +1,8 @@
 #include "pch.h"
+
+#ifndef ABSOLUTE_VERSION
+#define ABSOLUTE_VERSION "0.0.0"
+#endif
 #include "plugin_loader.h"
 #include "package_manager.h"
 #include "syntax_plugins.h"
@@ -134,6 +138,7 @@ namespace {
             << "  absolutec <source.abs> [options]\n"
             << "  absolutec build <project.absproj> [options]\n"
             << "  absolutec new <name> [--type app|lib] [--directory path]\n"
+            << "  absolutec --version\n"
             << "Options:\n"
             << "  --parse-only | --emit-llvm | --emit-object | --build-exe | --build-library\n"
             << "  --target <triple>     host default, or e.g. wasm32-unknown-unknown\n"
@@ -989,6 +994,10 @@ int main(int argc, char* argv[]) {
     try {
         if (argc == 2) {
             const std::string argument = argv[1];
+            if (argument == "--version" || argument == "-V") {
+                std::cout << "absolutec " << ABSOLUTE_VERSION << '\n';
+                return 0;
+            }
             if (argument == "-h" || argument == "--help" || argument == "help") {
                 PrintUsage(std::cout);
                 return 0;

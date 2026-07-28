@@ -10,6 +10,10 @@ import "../std/random.abs";
 import "../std/task.abs";
 import "../std/time.abs";
 
+async void wasmTaskGroupChild() {
+    std.task.delay(1);
+}
+
 int32 main() {
     assert(std.time.now(std.time.Unit.Milliseconds) > 0, "host wall clock");
     assert(std.time.mono(std.time.Unit.Nanoseconds) > 0, "host monotonic clock");
@@ -84,6 +88,15 @@ int32 main() {
     cancellation.cancel();
     assert(cancellation.isCancelled(), "cancellation state");
     cancellation.dispose();
+
+    {
+        std.task.TaskGroup* taskSet = new std.task.TaskGroup();
+        task<void> child = spawn wasmTaskGroupChild();
+        assert(taskSet.add(child), "task group accepts child");
+        assert(taskSet.count() == 1, "task group owns child");
+        taskSet.join();
+        assert(taskSet.count() == 0, "task group joins child");
+    }
 
     println("wasm-full-runtime=ok");
     return 0;

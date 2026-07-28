@@ -57,6 +57,8 @@ namespace Absolute {
         table.Declare(SymbolKind::Function, "load", "bool", {"string"});
         table.Declare(SymbolKind::Function, "isLoaded", "bool", {"string"});
         table.Declare(SymbolKind::Function, "loadError", "string", {});
+        table.Declare(SymbolKind::Function, "taskGroupAdd", "bool",
+            {"raw void*", "task<void>"});
         for (Program* program : programs) if (program) CollectProgramTypeNames(*program);
         phase = Phase::CollectDeclarations;
         for (Program* program : programs) if (program) AnalyzeProgram(*program);

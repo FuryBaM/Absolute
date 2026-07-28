@@ -323,7 +323,8 @@ namespace Absolute {
             return name == "print" || name == "println" || name == "format" ||
                 name == "toString" || name == "assert" || name == "copy" || name == "move" ||
                 name == "seal" || name == "unseal" ||
-                name == "load" || name == "isLoaded" || name == "loadError";
+                name == "load" || name == "isLoaded" || name == "loadError" ||
+                name == "taskGroupAdd";
         }
 
         inline bool IsPrintableType(const std::string& type) {

@@ -217,7 +217,19 @@ namespace Absolute {
             argument = Coerce(argument, TypeFromName(targetType),
                 SemanticType(expression), targetType);
         }
+        ConsumeTaskArgument(expression, parameterType);
         return argument;
+    }
+
+    void CodeGenerator::Impl::ConsumeTaskArgument(
+        Expression* expression, const std::string& parameterType) {
+        if (!expression || !IsTaskTypeName(parameterType)) return;
+        const ExpressionInfo* info = analyzer
+            ? analyzer->GetExpressionInfo(*expression) : nullptr;
+        if (!info || !info->isLValue) return;
+        llvm::Value* address = EvaluateAddress(expression);
+        builder.CreateStore(
+            llvm::ConstantPointerNull::get(builder.getPtrTy()), address);
     }
 
     void CodeGenerator::Impl::ReleaseArrayTemporaries(
@@ -667,7 +679,8 @@ namespace Absolute {
         return name == "print" || name == "println" || name == "format" ||
             name == "toString" || name == "assert" || name == "copy" || name == "move" ||
             name == "seal" || name == "unseal" ||
-            name == "load" || name == "isLoaded" || name == "loadError";
+            name == "load" || name == "isLoaded" || name == "loadError" ||
+            name == "taskGroupAdd";
     }
 
 

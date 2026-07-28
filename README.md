@@ -143,6 +143,7 @@ An `.abs` or `.absproj` path can be used directly as a shorthand for
 The compiler can also be invoked directly:
 
 ```bash
+absolutec --version
 ./build/Debug/absolutec code.abs --parse-only
 ```
 

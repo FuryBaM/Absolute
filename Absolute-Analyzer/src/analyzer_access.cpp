@@ -288,6 +288,17 @@ namespace Absolute {
                         " has type '" + argument.type + "', expected '" + expected + "'",
                         cFunctionValue ? "E_CFUNC_ARGUMENT" : "E_FUNCTION_VALUE_ARGUMENT");
                 CheckManagedMoveArgument(argument, expected, index, "function value");
+                if (IsTaskType(expected)) {
+                    if (argument.taskState == TaskState::Awaited) {
+                        Report("task argument " + std::to_string(index + 1) +
+                            " has already been awaited or transferred",
+                            "E_TASK_ALREADY_CONSUMED", argument.symbol);
+                    }
+                    if (auto flow = valueFlow.find(argument.symbol);
+                        flow != valueFlow.end()) {
+                        flow->second.taskState = TaskState::Awaited;
+                    }
+                }
             }
             Save(expr, {callableValue.symbol, returnType, false,
                 IsStrongManagedPointerType(returnType), false});
@@ -490,6 +501,36 @@ namespace Absolute {
                 return;
             }
 
+            if (callName == "taskGroupAdd") {
+                if (arguments.size() != 2) {
+                    Report("taskGroupAdd expects a group handle and one task",
+                        "E_TASK_GROUP_ARGUMENT_COUNT");
+                }
+                else {
+                    if (arguments[0].type != "raw void*" &&
+                        arguments[0].type != "error") {
+                        Report("taskGroupAdd expects a raw TaskGroup handle",
+                            "E_TASK_GROUP_HANDLE_TYPE", arguments[0].symbol);
+                    }
+                    if (!IsTaskType(arguments[1].type) &&
+                        arguments[1].type != "error") {
+                        Report("taskGroupAdd expects task<T>, got '" +
+                            arguments[1].type + "'",
+                            "E_TASK_GROUP_CHILD_TYPE", arguments[1].symbol);
+                    }
+                    else if (arguments[1].taskState == TaskState::Awaited) {
+                        Report("task has already been awaited or transferred",
+                            "E_TASK_ALREADY_CONSUMED", arguments[1].symbol);
+                    }
+                    if (auto flow = valueFlow.find(arguments[1].symbol);
+                        flow != valueFlow.end()) {
+                        flow->second.taskState = TaskState::Awaited;
+                    }
+                }
+                Save(expr, {table.Lookup(callName), "bool", false});
+                return;
+            }
+
             if (arguments.empty()) {
                 Report("format expects a string literal template");
             }
@@ -654,6 +695,17 @@ namespace Absolute {
                         "E_RESOURCE_AGGREGATE_ARGUMENT", argument.symbol);
                 }
                 CheckManagedMoveArgument(argument, parameterValueType, i, "function");
+                if (IsTaskType(parameterValueType)) {
+                    if (argument.taskState == TaskState::Awaited) {
+                        Report("task argument " + std::to_string(i + 1) +
+                            " has already been awaited or transferred",
+                            "E_TASK_ALREADY_CONSUMED", argument.symbol);
+                    }
+                    if (auto flow = valueFlow.find(argument.symbol);
+                        flow != valueFlow.end()) {
+                        flow->second.taskState = TaskState::Awaited;
+                    }
+                }
             }
             if (argument.pointerValidity == PointerValidity::Deleted ||
                 argument.pointerValidity == PointerValidity::Expired)

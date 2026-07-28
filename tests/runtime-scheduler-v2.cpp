@@ -1,3 +1,4 @@
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -19,6 +20,13 @@ void* absolute_task_spawn_config(
 void* absolute_task_await(void* handle);
 void absolute_task_delay(std::int32_t milliseconds);
 std::int32_t absolute_scheduler_worker_count();
+bool absolute_task_current_cancelled();
+void* absolute_task_group_create();
+bool absolute_task_group_add(void* group, void* child);
+std::int32_t absolute_task_group_count(void* group);
+void absolute_task_group_join(void* group);
+void absolute_task_group_cancel_and_join(void* group);
+void absolute_task_group_destroy(void* group);
 
 void* absolute_channel_create(std::int32_t capacity);
 bool absolute_channel_send(void* channel, std::int64_t value);
@@ -98,6 +106,20 @@ void delayedTask(void* opaque) {
     auto* context = static_cast<DelayContext*>(opaque);
     if (context->delay) absolute_task_delay(20);
     context->value = context->delay ? 1 : 2;
+}
+
+std::atomic<std::int32_t> groupCompletions{0};
+std::atomic<std::int32_t> groupCancellations{0};
+
+void groupedTask(void*) {
+    absolute_task_delay(2);
+    groupCompletions.fetch_add(1, std::memory_order_relaxed);
+}
+
+void cancellableGroupedTask(void*) {
+    while (!absolute_task_current_cancelled())
+        absolute_task_delay(1);
+    groupCancellations.fetch_add(1, std::memory_order_relaxed);
 }
 
 struct NetworkContext {
@@ -314,6 +336,27 @@ int main() {
     require(fast->value == 2);
     delete slow;
     delete fast;
+
+    std::cerr << "phase=task-group\n";
+    void* group = absolute_task_group_create();
+    require(group != nullptr);
+    require(absolute_task_group_add(group, absolute_task_spawn_config(
+        groupedTask, std::malloc(1), -1, 0, "group-child")));
+    require(absolute_task_group_add(group, absolute_task_spawn_config(
+        groupedTask, std::malloc(1), -1, 0, "group-child")));
+    require(absolute_task_group_count(group) == 2);
+    absolute_task_group_join(group);
+    require(groupCompletions.load(std::memory_order_relaxed) == 2);
+    require(absolute_task_group_count(group) == 0);
+    absolute_task_group_destroy(group);
+
+    void* cancelledGroup = absolute_task_group_create();
+    require(cancelledGroup != nullptr);
+    require(absolute_task_group_add(cancelledGroup, absolute_task_spawn_config(
+        cancellableGroupedTask, std::malloc(1), -1, 0, "cancelled-child")));
+    absolute_task_group_cancel_and_join(cancelledGroup);
+    require(groupCancellations.load(std::memory_order_relaxed) == 1);
+    absolute_task_group_destroy(cancelledGroup);
 
     std::cerr << "phase=network-io\n";
     // Eight pending accepts exceed the two-thread fallback I/O pool. They can

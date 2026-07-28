@@ -780,11 +780,13 @@ typedef struct WasmTask {
     uint64_t error_type;
     int32_t job_id; /* host pool job slot, or -1 when run synchronously */
     int done;
+    int cancelled;
 } WasmTask;
 
 static int32_t g_task_core = -1;
 static int32_t g_task_priority = 0;
 static const char* g_task_role = "";
+static WasmTask* g_current_task = NULL;
 
 #if !defined(ABSOLUTE_WASM_USE_WASI)
 __attribute__((import_module("env"), import_name("absolute_task_pool_size")))
@@ -827,13 +829,16 @@ void* absolute_task_spawn_config(
     task->error_type = 0;
     task->job_id = -1;
     task->done = 0;
+    task->cancelled = 0;
 
     const int32_t prev_core = g_task_core;
     const int32_t prev_priority = g_task_priority;
     const char* prev_role = g_task_role;
+    WasmTask* prev_task = g_current_task;
     g_task_core = core;
     g_task_priority = priority;
     g_task_role = role ? role : "";
+    g_current_task = task;
 
     if (absolute_host_task_pool_size() > 0) {
         /* Offload to host worker pool (isolated module instance per worker). */
@@ -858,6 +863,7 @@ void* absolute_task_spawn_config(
     g_task_core = prev_core;
     g_task_priority = prev_priority;
     g_task_role = prev_role;
+    g_current_task = prev_task;
     return task;
 }
 
@@ -928,6 +934,111 @@ void absolute_task_destroy(void* handle) {
         absolute_managed_destroy(task->error_handle);
     free(task->context);
     free(task);
+}
+
+uint8_t absolute_task_current_cancelled(void) {
+    if (!g_current_task)
+        return 0;
+#if defined(ABSOLUTE_WASM_SHARED)
+    return __atomic_load_n(
+        &g_current_task->cancelled, __ATOMIC_ACQUIRE) ? 1 : 0;
+#else
+    return g_current_task->cancelled ? 1 : 0;
+#endif
+}
+
+void absolute_task_cancel(void* handle) {
+    if (!handle)
+        return;
+    WasmTask* task = (WasmTask*)handle;
+#if defined(ABSOLUTE_WASM_SHARED)
+    __atomic_store_n(&task->cancelled, 1, __ATOMIC_RELEASE);
+#else
+    task->cancelled = 1;
+#endif
+}
+
+typedef struct WasmTaskGroup {
+    WasmTask** children;
+    int32_t count;
+    int32_t capacity;
+    int closed;
+} WasmTaskGroup;
+
+void* absolute_task_group_create(void) {
+    WasmTaskGroup* group =
+        (WasmTaskGroup*)heap_alloc(sizeof(WasmTaskGroup));
+    if (!group)
+        return NULL;
+    group->children = NULL;
+    group->count = 0;
+    group->capacity = 0;
+    group->closed = 0;
+    return group;
+}
+
+uint8_t absolute_task_group_add(void* handle, void* child_handle) {
+    if (!child_handle)
+        return 0;
+    WasmTaskGroup* group = (WasmTaskGroup*)handle;
+    if (!group || group->closed) {
+        absolute_task_cancel(child_handle);
+        absolute_task_destroy(child_handle);
+        return 0;
+    }
+    if (group->count == group->capacity) {
+        int32_t next_capacity =
+            group->capacity > 0 ? group->capacity * 2 : 4;
+        WasmTask** children = (WasmTask**)realloc(
+            group->children,
+            (uint64_t)next_capacity * sizeof(WasmTask*));
+        if (!children) {
+            absolute_task_cancel(child_handle);
+            absolute_task_destroy(child_handle);
+            return 0;
+        }
+        group->children = children;
+        group->capacity = next_capacity;
+    }
+    group->children[group->count++] = (WasmTask*)child_handle;
+    return 1;
+}
+
+int32_t absolute_task_group_count(void* handle) {
+    WasmTaskGroup* group = (WasmTaskGroup*)handle;
+    return group ? group->count : 0;
+}
+
+void absolute_task_group_cancel(void* handle) {
+    WasmTaskGroup* group = (WasmTaskGroup*)handle;
+    if (!group)
+        return;
+    for (int32_t index = 0; index < group->count; ++index)
+        absolute_task_cancel(group->children[index]);
+}
+
+void absolute_task_group_join(void* handle) {
+    WasmTaskGroup* group = (WasmTaskGroup*)handle;
+    if (!group)
+        return;
+    group->closed = 1;
+    for (int32_t index = 0; index < group->count; ++index)
+        absolute_task_destroy(group->children[index]);
+    group->count = 0;
+}
+
+void absolute_task_group_cancel_and_join(void* handle) {
+    absolute_task_group_cancel(handle);
+    absolute_task_group_join(handle);
+}
+
+void absolute_task_group_destroy(void* handle) {
+    WasmTaskGroup* group = (WasmTaskGroup*)handle;
+    if (!group)
+        return;
+    absolute_task_group_cancel_and_join(group);
+    free(group->children);
+    free(group);
 }
 
 /* Platform services: virtual FS, env, process, network stubs, capsules. */

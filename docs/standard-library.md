@@ -22,7 +22,7 @@ Dependents declare:
 ```json
 {
   "dependencies": {
-    "absolute.std": "^0.4.0"
+    "absolute.std": "^0.5.0"
   }
 }
 ```
@@ -349,6 +349,7 @@ release is validated against a **minimum language/runtime** pair:
 | 0.2.x | runtime with portable process arguments and `std.env` launch API |
 | 0.3.x | Unicode-correct text offsets and automatic `destroy()` lifecycle |
 | 0.4.x | deque/queue/stack, priority queue, and open-addressed hash collections |
+| 0.5.x | structured concurrency and the `std.task.TaskGroup` runtime ABI |
 
 If a future std release requires new language features, document the floor in
 the package changelog and refuse to load on older compilers when that check is
