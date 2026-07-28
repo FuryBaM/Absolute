@@ -1711,6 +1711,25 @@ if(BUILD_TESTING)
                     -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-export.cmake"
             )
             if(ABSOLUTE_WASM_SHIM_OBJECT)
+                if(Python3_Interpreter_FOUND)
+                    add_test(
+                        NAME absolute.native-wasm-differential
+                        COMMAND "${Python3_EXECUTABLE}"
+                            "${PROJECT_SOURCE_DIR}/tools/testing/native_wasm_differential.py"
+                            --compiler "$<TARGET_FILE:Absolute-Compiler>"
+                            --node "${ABSOLUTE_NODE_FOR_WASM}"
+                            --wasm-host
+                                "${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js"
+                            --wasm-ld "${ABSOLUTE_WASM_LD_FOR_TEST}"
+                            --work-dir
+                                "${CMAKE_BINARY_DIR}/differential/native-wasm/$<CONFIG>"
+                            --configuration "$<CONFIG>")
+                    set_tests_properties(
+                        absolute.native-wasm-differential PROPERTIES
+                        PASS_REGULAR_EXPRESSION
+                            "native-wasm-differential=ok"
+                        TIMEOUT 180)
+                endif()
                 add_test(
                     NAME absolute.run-wasm-smoke
                     COMMAND "${CMAKE_COMMAND}"

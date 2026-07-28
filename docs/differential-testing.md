@@ -21,10 +21,19 @@ Generated sources, executables, and `failure.json` are retained under
 the same test using both Debug and Release builds of the compiler, separating
 compiler-build differences from optimization-pipeline differences.
 
+The `absolute.native-wasm-differential` CTest consumes the same seed, generator,
+and checksum oracle. It builds each case as an O3 host executable and as a
+`wasm32-unknown-unknown` module, executes the latter through
+`tools/absolute-wasm-host.js`, and compares the complete normalized output from
+both backends with the oracle. Its sources, native executables, wasm modules,
+Node runner, and mismatch report live under
+`<build>/differential/native-wasm/<configuration>`.
+
 Run the focused test through a configured build:
 
 ```text
 ctest --test-dir <build> -R absolute.optimization-differential --output-on-failure
+ctest --test-dir <build> -R absolute.native-wasm-differential --output-on-failure
 ```
 
 Or invoke the runner directly:
