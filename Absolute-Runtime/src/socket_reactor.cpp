@@ -7,6 +7,8 @@
 #if defined(__linux__)
 
 #include <atomic>
+#include <chrono>
+#include <climits>
 #include <cstdint>
 #include <deque>
 #include <mutex>
@@ -28,6 +30,8 @@ namespace Absolute::RuntimeDetail {
             std::uint32_t requested = 0;
             std::uint32_t ready = 0;
             int error = 0;
+            std::chrono::steady_clock::time_point deadline{};
+            bool hasDeadline = false;
             IoCompletion completion = nullptr;
             void* completionContext = nullptr;
         };
@@ -177,6 +181,85 @@ namespace Absolute::RuntimeDetail {
                 }
             }
 
+            int PollTimeoutMilliseconds() const {
+                bool foundDeadline = false;
+                std::chrono::steady_clock::time_point nearest{};
+                for (const auto& [descriptor, waits] : active) {
+                    (void)descriptor;
+                    for (const SocketWait* wait : waits.waits) {
+                        if (!wait->hasDeadline) continue;
+                        if (!foundDeadline || wait->deadline < nearest) {
+                            nearest = wait->deadline;
+                            foundDeadline = true;
+                        }
+                    }
+                }
+                if (!foundDeadline) return -1;
+
+                const auto remaining =
+                    nearest - std::chrono::steady_clock::now();
+                if (remaining <= std::chrono::steady_clock::duration::zero())
+                    return 0;
+                const auto rounded =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        remaining + std::chrono::milliseconds(1) -
+                        std::chrono::steady_clock::duration{1});
+                return rounded.count() > INT_MAX
+                    ? INT_MAX : static_cast<int>(rounded.count());
+            }
+
+            void ProcessExpired() {
+                const auto now = std::chrono::steady_clock::now();
+                std::vector<SocketWait*> completed;
+                for (auto descriptor = active.begin();
+                     descriptor != active.end();) {
+                    std::vector<SocketWait*> retained;
+                    retained.reserve(descriptor->second.waits.size());
+                    for (SocketWait* wait : descriptor->second.waits) {
+                        if (wait->hasDeadline && wait->deadline <= now) {
+                            wait->error = ETIMEDOUT;
+                            completed.push_back(wait);
+                        }
+                        else {
+                            retained.push_back(wait);
+                        }
+                    }
+                    if (retained.size() ==
+                        descriptor->second.waits.size()) {
+                        ++descriptor;
+                        continue;
+                    }
+
+                    const int nativeDescriptor = descriptor->first;
+                    if (retained.empty()) {
+                        epoll_ctl(
+                            pollDescriptor, EPOLL_CTL_DEL,
+                            nativeDescriptor, nullptr);
+                        descriptor = active.erase(descriptor);
+                        continue;
+                    }
+
+                    descriptor->second.waits = std::move(retained);
+                    if (!Arm(
+                            nativeDescriptor, descriptor->second,
+                            EPOLL_CTL_MOD)) {
+                        const int error = errno;
+                        for (SocketWait* wait :
+                             descriptor->second.waits) {
+                            wait->error = error;
+                            completed.push_back(wait);
+                        }
+                        epoll_ctl(
+                            pollDescriptor, EPOLL_CTL_DEL,
+                            nativeDescriptor, nullptr);
+                        descriptor = active.erase(descriptor);
+                        continue;
+                    }
+                    ++descriptor;
+                }
+                for (SocketWait* wait : completed) Complete(wait);
+            }
+
             void CancelActive(int error) {
                 std::vector<SocketWait*> cancelled;
                 for (auto& [descriptor, waits] : active) {
@@ -195,11 +278,12 @@ namespace Absolute::RuntimeDetail {
             void Run() {
                 epoll_event events[64]{};
                 while (!stopping.load(std::memory_order_acquire)) {
+                    ProcessExpired();
                     const int count = epoll_wait(
                         pollDescriptor, events,
                         static_cast<int>(
                             sizeof(events) / sizeof(events[0])),
-                        -1);
+                        PollTimeoutMilliseconds());
                     if (count < 0) {
                         if (errno == EINTR) continue;
                         const int error = errno;
@@ -217,6 +301,7 @@ namespace Absolute::RuntimeDetail {
                         ProcessReady(
                             events[index].data.fd, events[index].events);
                     }
+                    ProcessExpired();
                 }
                 ProcessPending();
                 CancelActive(ECANCELED);
@@ -299,9 +384,16 @@ namespace Absolute::RuntimeDetail {
         }
     }
 
-    bool WaitSocketReady(int descriptor, std::uint32_t events) {
+    bool WaitSocketReady(
+        int descriptor, std::uint32_t events,
+        std::int32_t timeoutMilliseconds) {
         EpollReactor& reactor = GetEpollReactor();
         SocketWait wait{&reactor, descriptor, events};
+        if (timeoutMilliseconds > 0) {
+            wait.deadline = std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(timeoutMilliseconds);
+            wait.hasDeadline = true;
+        }
         SuspendForIo(&RegisterSocketWait, &wait);
         if (wait.error != 0) {
             errno = wait.error;
@@ -313,13 +405,20 @@ namespace Absolute::RuntimeDetail {
 
 #elif defined(_WIN32)
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <climits>
 #include <cstddef>
+#include <mutex>
 #include <thread>
+#include <unordered_set>
+#include <vector>
 
 namespace Absolute::RuntimeDetail {
     namespace {
         constexpr ULONG_PTR StopCompletionKey = 1;
+        constexpr ULONG_PTR DeadlineChangedCompletionKey = 2;
 
         struct IocpWait {
             OVERLAPPED overlapped{};
@@ -327,6 +426,10 @@ namespace Absolute::RuntimeDetail {
             SocketOperationStart start = nullptr;
             void* startContext = nullptr;
             SocketCompletionResult* result = nullptr;
+            std::chrono::steady_clock::time_point deadline{};
+            bool hasDeadline = false;
+            bool timeoutRequested = false;
+            bool operationStarted = false;
             IoCompletion completion = nullptr;
             void* completionContext = nullptr;
         };
@@ -336,6 +439,8 @@ namespace Absolute::RuntimeDetail {
         class IocpReactor {
             HANDLE port = nullptr;
             int initializationError = 0;
+            std::mutex mutex;
+            std::unordered_set<IocpWait*> active;
             std::thread worker;
             std::atomic<bool> stopping{false};
 
@@ -345,6 +450,57 @@ namespace Absolute::RuntimeDetail {
                 completion(context);
             }
 
+            DWORD CompletionTimeout() {
+                std::lock_guard lock(mutex);
+                bool foundDeadline = false;
+                std::chrono::steady_clock::time_point nearest{};
+                for (const IocpWait* wait : active) {
+                    if (!wait->operationStarted ||
+                        !wait->hasDeadline ||
+                        wait->timeoutRequested)
+                        continue;
+                    if (!foundDeadline || wait->deadline < nearest) {
+                        nearest = wait->deadline;
+                        foundDeadline = true;
+                    }
+                }
+                if (!foundDeadline) return INFINITE;
+
+                const auto remaining =
+                    nearest - std::chrono::steady_clock::now();
+                if (remaining <= std::chrono::steady_clock::duration::zero())
+                    return 0;
+                const auto rounded =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        remaining + std::chrono::milliseconds(1) -
+                        std::chrono::steady_clock::duration{1});
+                return rounded.count() >=
+                        static_cast<long long>(INFINITE)
+                    ? INFINITE - 1
+                    : static_cast<DWORD>(rounded.count());
+            }
+
+            void CancelExpired() {
+                const auto now = std::chrono::steady_clock::now();
+                // Keep the registry lock through CancelIoEx. The completion
+                // thread removes a wait under the same lock before resuming
+                // its fiber, so stack-backed OVERLAPPED storage cannot
+                // disappear while cancellation still references it.
+                std::lock_guard lock(mutex);
+                for (IocpWait* wait : active) {
+                    if (!wait->hasDeadline ||
+                        !wait->operationStarted ||
+                        wait->timeoutRequested ||
+                        wait->deadline > now) {
+                        continue;
+                    }
+                    wait->timeoutRequested = true;
+                    CancelIoEx(
+                        reinterpret_cast<HANDLE>(wait->socket),
+                        &wait->overlapped);
+                }
+            }
+
             void Run() {
                 while (!stopping.load(std::memory_order_acquire)) {
                     DWORD bytesTransferred = 0;
@@ -352,17 +508,31 @@ namespace Absolute::RuntimeDetail {
                     OVERLAPPED* overlapped = nullptr;
                     const BOOL succeeded = GetQueuedCompletionStatus(
                         port, &bytesTransferred, &completionKey,
-                        &overlapped, INFINITE);
+                        &overlapped, CompletionTimeout());
+                    const DWORD completionError =
+                        succeeded ? ERROR_SUCCESS : GetLastError();
                     if (!overlapped) {
                         if (completionKey == StopCompletionKey) return;
+                        if (completionKey ==
+                                DeadlineChangedCompletionKey ||
+                            (!succeeded &&
+                                completionError == WAIT_TIMEOUT)) {
+                            CancelExpired();
+                        }
                         continue;
                     }
 
                     auto* wait = reinterpret_cast<IocpWait*>(overlapped);
+                    {
+                        std::lock_guard lock(mutex);
+                        active.erase(wait);
+                    }
                     wait->result->bytesTransferred =
                         static_cast<std::uint32_t>(bytesTransferred);
-                    wait->result->error =
-                        succeeded ? 0 : static_cast<int>(GetLastError());
+                    wait->result->error = wait->timeoutRequested
+                        ? WSAETIMEDOUT
+                        : (succeeded
+                            ? 0 : static_cast<int>(completionError));
                     Complete(wait);
                 }
             }
@@ -418,14 +588,36 @@ namespace Absolute::RuntimeDetail {
                     return;
                 }
 
+                {
+                    std::lock_guard lock(mutex);
+                    active.insert(wait);
+                }
                 const int started =
                     wait->start(wait->startContext, &wait->overlapped);
                 if (started == SOCKET_ERROR) {
                     const int error = WSAGetLastError();
                     if (error != WSA_IO_PENDING) {
+                        {
+                            std::lock_guard lock(mutex);
+                            active.erase(wait);
+                        }
                         wait->result->error = error;
                         Complete(wait);
+                        return;
                     }
+                }
+                bool registered = false;
+                {
+                    std::lock_guard lock(mutex);
+                    const auto found = active.find(wait);
+                    if (found != active.end()) {
+                        wait->operationStarted = true;
+                        registered = true;
+                    }
+                }
+                if (registered && wait->hasDeadline) {
+                    PostQueuedCompletionStatus(
+                        port, 0, DeadlineChangedCompletionKey, nullptr);
                 }
             }
         };
@@ -444,14 +636,15 @@ namespace Absolute::RuntimeDetail {
         }
     }
 
-    bool WaitSocketReady(int, std::uint32_t) {
+    bool WaitSocketReady(int, std::uint32_t, std::int32_t) {
         errno = ENOTSUP;
         return false;
     }
 
     bool RunSocketCompletion(
         SOCKET socket, SocketOperationStart start, void* context,
-        SocketCompletionResult& result) {
+        SocketCompletionResult& result,
+        std::int32_t timeoutMilliseconds) {
         if (socket == INVALID_SOCKET || !start) {
             result.error = WSAEINVAL;
             return false;
@@ -461,6 +654,11 @@ namespace Absolute::RuntimeDetail {
         wait.start = start;
         wait.startContext = context;
         wait.result = &result;
+        if (timeoutMilliseconds > 0) {
+            wait.deadline = std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(timeoutMilliseconds);
+            wait.hasDeadline = true;
+        }
         SuspendForIo(&RegisterSocketCompletion, &wait);
         return result.error == 0;
     }
@@ -477,7 +675,7 @@ namespace Absolute::RuntimeDetail {
 #elif !defined(__APPLE__)
 
 namespace Absolute::RuntimeDetail {
-    bool WaitSocketReady(int, std::uint32_t) {
+    bool WaitSocketReady(int, std::uint32_t, std::int32_t) {
         errno = ENOTSUP;
         return false;
     }

@@ -53,33 +53,34 @@ for constrained hosts and deterministic scheduler tests.
 Windows uses native Fibers. Linux and macOS use `ucontext`; Android/Termux uses
 the Termux `libucontext` package installed by the project bootstrap script.
 
-Linux and Android/Termux use a one-shot `epoll` reactor for untimed TCP
-accept/send/receive and UDP send/receive calls made by scheduler tasks. The
-reactor can track multiple read and write waiters for one descriptor. A pending
-socket suspends its fiber without consuming an I/O or scheduler worker;
-readiness enqueues the fiber on its owner worker.
+Linux and Android/Termux use a one-shot `epoll` reactor for TCP
+connect/accept/send/receive and UDP send/receive calls made by scheduler tasks.
+The reactor can track multiple read and write waiters and their deadlines for
+one descriptor. A pending socket suspends its fiber without consuming an I/O or
+scheduler worker; readiness or timeout enqueues the fiber on its owner worker.
 
 Windows associates each runtime socket once with a process-wide I/O completion
-port. Scheduler tasks use overlapped `AcceptEx`, `WSASend`, `WSARecv`,
-`WSASendTo`, and `WSARecvFrom`; their operation state and receive buffer live
-with the suspended fiber until the completion packet returns it to the
-scheduler queue. Parallel operations on one socket therefore do not share a
-mutable receive buffer.
+port. Scheduler tasks use overlapped `ConnectEx`, `AcceptEx`, `WSASend`,
+`WSARecv`, `WSASendTo`, and `WSARecvFrom`; their operation state and receive
+buffer live with the suspended fiber until the completion packet returns it to
+the scheduler queue. A deadline requests cancellation through `CancelIoEx`,
+but the fiber resumes only after the final completion packet, so stack-backed
+operation state remains valid. Parallel operations on one socket therefore do
+not share a mutable receive buffer.
 
 macOS has a one-shot `kqueue` reactor using `EVFILT_READ` and `EVFILT_WRITE`.
 An `EVFILT_USER` control event delivers new registrations to its reactor
-thread, and remaining waiters are rearmed after each readiness event. The same
-multi-accept, shared-socket, and UDP scheduler regression is enabled on macOS;
-the backend still requires confirmation by the hosted `macos-15` job.
+thread. Readiness and deadline expiry remove a waiter before its fiber resumes,
+and remaining waiters are rearmed after each event. The same multi-accept,
+shared-socket, deadline, and UDP scheduler regression is enabled on macOS; the
+backend still requires confirmation by the hosted `macos-15` job.
 
-DNS resolution, connect, timed socket waits, filesystem metadata, whole-file
-operations, and streaming file operations use a separate blocking I/O executor.
-The calling fiber is still suspended, so the host operation never occupies a
-scheduler worker. Calls made outside an Absolute task remain synchronous.
+DNS resolution, filesystem metadata, whole-file operations, and streaming file
+operations use a separate blocking I/O executor. TCP connect suspends only for
+DNS there; the connection attempt itself and timed socket waits use the native
+reactor. Calls made outside an Absolute task remain synchronous.
 
 The I/O executor defaults to the host concurrency clamped to `2..4` threads.
 `ABSOLUTE_IO_WORKERS=2..32` overrides it before the first task uses the portable
 blocking-offload backend. It does not limit Linux/Termux `epoll` socket
-concurrency, Windows IOCP completions, or macOS `kqueue` readiness. Native
-connect and deadline cancellation remain planned; they use the same fiber
-suspension contract.
+concurrency, Windows IOCP completions, or macOS `kqueue` readiness/deadlines.

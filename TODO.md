@@ -783,8 +783,10 @@ Task-isolate, закрытый message envelope и transfer capsule описан
         waiters на descriptor и общий TCP/UDP suspension path.
       - [ ] Подтвердить backend настоящим `macos-15` hosted run; локально
         выполнены platform-guard regression и syntax-check контракта `kevent`.
-    - [ ] Перевести nonblocking connect и timed socket waits в native reactors
-      после появления deadline/cancellation registration.
+    - [x] Перевести nonblocking connect и timed socket waits в native reactors:
+      Linux/Termux/macOS регистрируют deadline прямо в `epoll`/`kqueue`, Windows
+      отменяет просроченный overlapped I/O через `CancelIoEx` и ждёт финальный
+      IOCP completion packet перед resume; DNS остаётся на blocking-offload.
     - [x] Сохранить blocking-offload fallback для DNS и файловых операций без
       portable async API.
 - [x] Сделать wake-up через scheduler queue: `send`/completion возвращает

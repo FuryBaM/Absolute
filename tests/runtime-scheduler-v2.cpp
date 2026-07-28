@@ -1,3 +1,4 @@
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -32,6 +33,8 @@ void* absolute_net_tcp_listen(
 void* absolute_net_tcp_accept(void* handle);
 std::int32_t absolute_net_tcp_send(void* handle, const char* text);
 const char* absolute_net_tcp_receive(void* handle, std::int32_t maximumBytes);
+std::int32_t absolute_net_tcp_set_timeout(
+    void* handle, std::int32_t milliseconds);
 std::int32_t absolute_net_tcp_port(void* handle);
 void absolute_net_tcp_close(void* handle);
 void* absolute_net_udp_bind(const char* host, std::int32_t port);
@@ -202,6 +205,25 @@ void sharedSend(void* opaque) {
         std::cerr << "shared socket send failed: "
             << absolute_net_error() << '\n';
 }
+
+struct TimedReceiveContext {
+    void* socket = nullptr;
+    bool timedOut = false;
+    std::int64_t elapsedMilliseconds = 0;
+};
+
+void timedReceive(void* opaque) {
+    auto* context = static_cast<TimedReceiveContext*>(opaque);
+    const auto started = std::chrono::steady_clock::now();
+    const char* text = absolute_net_tcp_receive(context->socket, 1);
+    context->elapsedMilliseconds =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - started).count();
+    const char* error = absolute_net_error();
+    context->timedOut = !text && error &&
+        std::strstr(error, "timed out") != nullptr;
+    std::free(const_cast<char*>(text));
+}
 #endif
 
 #if defined(__linux__) || defined(__APPLE__)
@@ -356,6 +378,7 @@ int main() {
     require(sharedClient != nullptr);
     void* sharedServer = absolute_net_tcp_accept(sharedListener);
     require(sharedServer != nullptr);
+    require(absolute_net_tcp_set_timeout(sharedServer, 1'000) == 1);
     void* firstReceiveTask = absolute_task_spawn_config(
         sharedReceive,
         new SharedReceiveContext{sharedServer, '\0', false},
@@ -387,6 +410,40 @@ int main() {
     absolute_net_tcp_close(sharedServer);
     absolute_net_tcp_close(sharedClient);
     absolute_net_tcp_close(sharedListener);
+
+    std::cerr << "phase=native-socket-deadline\n";
+    void* timeoutListener =
+        absolute_net_tcp_listen("127.0.0.1", 0, 4);
+    require(timeoutListener != nullptr);
+    const std::int32_t timeoutPort =
+        absolute_net_tcp_port(timeoutListener);
+    require(timeoutPort > 0);
+    void* timeoutClient =
+        absolute_net_tcp_connect("127.0.0.1", timeoutPort);
+    require(timeoutClient != nullptr);
+    void* timeoutServer = absolute_net_tcp_accept(timeoutListener);
+    require(timeoutServer != nullptr);
+    require(absolute_net_tcp_set_timeout(timeoutServer, 40) == 1);
+    void* timeoutTask = absolute_task_spawn_config(
+        timedReceive,
+        new TimedReceiveContext{timeoutServer, false, 0},
+        -1, 3, "socket-deadline");
+    auto* deadlineProgress = new DelayContext{0, false};
+    void* deadlineProgressTask = absolute_task_spawn_config(
+        delayedTask, deadlineProgress,
+        -1, -3, "deadline-progress");
+    deadlineProgress = await<DelayContext>(deadlineProgressTask);
+    require(deadlineProgress->value == 2);
+    delete deadlineProgress;
+    auto* timeoutResult =
+        await<TimedReceiveContext>(timeoutTask);
+    require(timeoutResult->timedOut);
+    require(timeoutResult->elapsedMilliseconds >= 10);
+    require(timeoutResult->elapsedMilliseconds < 5'000);
+    delete timeoutResult;
+    absolute_net_tcp_close(timeoutServer);
+    absolute_net_tcp_close(timeoutClient);
+    absolute_net_tcp_close(timeoutListener);
 #endif
 
     std::cerr << "phase=udp-io\n";

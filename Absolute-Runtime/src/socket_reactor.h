@@ -16,9 +16,12 @@ namespace Absolute::RuntimeDetail {
     };
 
     // Suspends the current scheduler fiber until a one-shot native socket
-    // readiness notification arrives. This is implemented with epoll on
-    // Linux/Android and kqueue on macOS; unsupported platforms return ENOTSUP.
-    bool WaitSocketReady(int descriptor, std::uint32_t events);
+    // readiness notification arrives or the optional timeout expires. This is
+    // implemented with epoll on Linux/Android and kqueue on macOS; unsupported
+    // platforms return ENOTSUP.
+    bool WaitSocketReady(
+        int descriptor, std::uint32_t events,
+        std::int32_t timeoutMilliseconds = 0);
 
 #if defined(_WIN32)
     using SocketOperationStart =
@@ -36,6 +39,7 @@ namespace Absolute::RuntimeDetail {
     // scheduler fiber until its completion packet arrives.
     bool RunSocketCompletion(
         SOCKET socket, SocketOperationStart start, void* context,
-        SocketCompletionResult& result);
+        SocketCompletionResult& result,
+        std::int32_t timeoutMilliseconds = 0);
 #endif
 }

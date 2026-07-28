@@ -58,19 +58,13 @@ namespace {
     template <class Result, class Operation>
     Result RunSocketIo(SocketState* state, Operation&& operation) {
 #if defined(__linux__) || defined(__APPLE__)
-        // Timed waits stay on the portable offload executor until the native
-        // reactor grows deadline cancellation. Infinite waits use epoll.
-        if (state && state->timeoutMilliseconds > 0 &&
-            Absolute::RuntimeDetail::IsSchedulerTask()) {
-            return RunNetworkIo<Result>(std::forward<Operation>(operation));
-        }
+        // epoll/kqueue own both readiness and optional deadlines.
+        (void)state;
         return operation();
 #elif defined(_WIN32)
-        // Untimed scheduler socket operations use overlapped Winsock + IOCP.
-        // Timed operations stay on blocking offload until native deadline
-        // cancellation is part of the reactor contract.
-        if (state && state->timeoutMilliseconds <= 0 &&
-            Absolute::RuntimeDetail::IsSchedulerTask()) {
+        // Scheduler socket operations use overlapped Winsock + IOCP. Timed
+        // operations are cancelled by the IOCP deadline queue.
+        if (state && Absolute::RuntimeDetail::IsSchedulerTask()) {
             return operation();
         }
         return RunNetworkIo<Result>(std::forward<Operation>(operation));
@@ -100,6 +94,11 @@ namespace {
 
 #if defined(_WIN32)
     void CaptureCompletionError(const char* operation, int error) {
+        if (error == WSAETIMEDOUT) {
+            lastNetworkError =
+                std::string(operation) + ": operation timed out";
+            return;
+        }
         WSASetLastError(error);
         CaptureSocketError(operation);
     }
@@ -122,16 +121,21 @@ namespace {
         return true;
     }
 
-    SocketState* NewState(NativeSocket socket) {
+    SocketState* NewState(
+        NativeSocket socket, bool associateCompletion = true) {
 #if defined(_WIN32)
-        int associationError = 0;
-        if (!Absolute::RuntimeDetail::AssociateSocketCompletion(
-                socket, associationError)) {
-            CaptureCompletionError(
-                "associate socket with IOCP", associationError);
-            CloseNative(socket);
-            return nullptr;
+        if (associateCompletion) {
+            int associationError = 0;
+            if (!Absolute::RuntimeDetail::AssociateSocketCompletion(
+                    socket, associationError)) {
+                CaptureCompletionError(
+                    "associate socket with IOCP", associationError);
+                CloseNative(socket);
+                return nullptr;
+            }
         }
+#else
+        (void)associateCompletion;
 #endif
         SocketState* state = new (std::nothrow) SocketState;
         if (!state) {
@@ -187,10 +191,16 @@ namespace {
         SocketState* state, std::uint32_t events, const char* operation) {
 #if defined(__linux__) || defined(__APPLE__)
         if (Absolute::RuntimeDetail::IsSchedulerTask() &&
-            state->timeoutMilliseconds <= 0) {
+            state) {
             if (Absolute::RuntimeDetail::WaitSocketReady(
-                    state->socket, events)) {
+                    state->socket, events,
+                    state->timeoutMilliseconds)) {
                 return true;
+            }
+            if (errno == ETIMEDOUT) {
+                lastNetworkError =
+                    std::string(operation) + ": operation timed out";
+                return false;
             }
             CaptureSocketError(operation);
             return false;
@@ -256,6 +266,15 @@ namespace {
         return result;
     }
 
+    addrinfo* ResolveForConnect(const char* host, std::int32_t port) {
+        // Name resolution remains the portable blocking part. The resulting
+        // address list is consumed by the scheduler thread after this fiber is
+        // resumed, while connect itself uses the native socket reactor.
+        return RunNetworkIo<addrinfo*>([&] {
+            return Resolve(host, port, false);
+        });
+    }
+
     void SetReuseAddress(NativeSocket socket) {
         const int enabled = 1;
         setsockopt(socket, SOL_SOCKET, SO_REUSEADDR,
@@ -270,7 +289,7 @@ namespace {
 
 #if defined(_WIN32)
     bool UseNativeSocketCompletion(SocketState* state) {
-        return state && state->timeoutMilliseconds <= 0 &&
+        return state &&
             Absolute::RuntimeDetail::IsSchedulerTask();
     }
 
@@ -307,6 +326,61 @@ namespace {
             return nullptr;
         }
         return result;
+    }
+
+    LPFN_CONNECTEX LoadConnectEx(SOCKET socket) {
+        GUID identifier = WSAID_CONNECTEX;
+        LPFN_CONNECTEX result = nullptr;
+        DWORD bytes = 0;
+        if (WSAIoctl(
+                socket, SIO_GET_EXTENSION_FUNCTION_POINTER,
+                &identifier, sizeof(identifier),
+                &result, sizeof(result), &bytes,
+                nullptr, nullptr) == SOCKET_ERROR) {
+            CaptureSocketError("load ConnectEx");
+            return nullptr;
+        }
+        return result;
+    }
+
+    bool BindConnectSocket(SOCKET socket, int family) {
+        if (family == AF_INET) {
+            sockaddr_in local{};
+            local.sin_family = AF_INET;
+            local.sin_addr.s_addr = htonl(INADDR_ANY);
+            local.sin_port = 0;
+            return bind(
+                socket, reinterpret_cast<sockaddr*>(&local),
+                sizeof(local)) == 0;
+        }
+        if (family == AF_INET6) {
+            sockaddr_in6 local{};
+            local.sin6_family = AF_INET6;
+            local.sin6_addr = in6addr_any;
+            local.sin6_port = 0;
+            return bind(
+                socket, reinterpret_cast<sockaddr*>(&local),
+                sizeof(local)) == 0;
+        }
+        WSASetLastError(WSAEAFNOSUPPORT);
+        return false;
+    }
+
+    struct WindowsConnectOperation {
+        LPFN_CONNECTEX connectEx = nullptr;
+        SOCKET socket = INVALID_SOCKET;
+        const sockaddr* address = nullptr;
+        int addressLength = 0;
+    };
+
+    int StartWindowsConnect(void* opaque, OVERLAPPED* overlapped) {
+        auto* operation =
+            static_cast<WindowsConnectOperation*>(opaque);
+        const BOOL started = operation->connectEx(
+            operation->socket, operation->address,
+            operation->addressLength, nullptr, 0,
+            nullptr, overlapped);
+        return started ? 0 : SOCKET_ERROR;
     }
 
     int SocketFamily(SOCKET socket) {
@@ -385,38 +459,111 @@ namespace {
 }
 
 extern "C" void* absolute_net_tcp_connect(const char* host, std::int32_t port) {
-    return RunNetworkIo<void*>([&]() -> void* {
-        if (!host || !*host) {
-            lastNetworkError = "remote host is empty";
-            return nullptr;
+    if (!host || !*host) {
+        lastNetworkError = "remote host is empty";
+        return nullptr;
+    }
+    addrinfo* addresses = ResolveForConnect(host, port);
+    if (!addresses) return nullptr;
+
+    const bool schedulerTask =
+        Absolute::RuntimeDetail::IsSchedulerTask();
+    NativeSocket connected = InvalidSocket;
+    bool connectedAlreadyAssociated = false;
+    for (addrinfo* address = addresses; address; address = address->ai_next) {
+        NativeSocket candidate = CreateNativeSocket(address->ai_family,
+            address->ai_socktype, address->ai_protocol);
+        if (candidate == InvalidSocket) {
+            CaptureSocketError("socket");
+            continue;
         }
-        addrinfo* addresses = Resolve(host, port, false);
-        if (!addresses) return nullptr;
-        NativeSocket connected = InvalidSocket;
-        for (addrinfo* address = addresses; address; address = address->ai_next) {
-            NativeSocket candidate = CreateNativeSocket(address->ai_family,
-                address->ai_socktype, address->ai_protocol);
-            if (candidate == InvalidSocket) {
-                CaptureSocketError("socket");
+
+#if defined(_WIN32)
+        if (schedulerTask) {
+            LPFN_CONNECTEX connectEx = LoadConnectEx(candidate);
+            if (!connectEx ||
+                !BindConnectSocket(candidate, address->ai_family)) {
+                if (connectEx) CaptureSocketError("bind ConnectEx socket");
+                CloseNative(candidate);
                 continue;
             }
-            if (::connect(candidate, address->ai_addr,
-                static_cast<int>(address->ai_addrlen)) == 0) {
-                connected = candidate;
-                break;
+            int associationError = 0;
+            if (!Absolute::RuntimeDetail::AssociateSocketCompletion(
+                    candidate, associationError)) {
+                CaptureCompletionError(
+                    "associate ConnectEx socket with IOCP",
+                    associationError);
+                CloseNative(candidate);
+                continue;
             }
-            CaptureSocketError("connect");
+            WindowsConnectOperation operation{
+                connectEx, candidate, address->ai_addr,
+                static_cast<int>(address->ai_addrlen)};
+            Absolute::RuntimeDetail::SocketCompletionResult completion;
+            if (!Absolute::RuntimeDetail::RunSocketCompletion(
+                    candidate, &StartWindowsConnect,
+                    &operation, completion)) {
+                CaptureCompletionError("ConnectEx", completion.error);
+                CloseNative(candidate);
+                continue;
+            }
+            if (setsockopt(
+                    candidate, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT,
+                    nullptr, 0) != 0) {
+                CaptureSocketError("update connected socket context");
+                CloseNative(candidate);
+                continue;
+            }
+            connectedAlreadyAssociated = true;
+            connected = candidate;
+            break;
+        }
+#else
+        if (schedulerTask && !SetNonBlocking(candidate)) {
+            CaptureSocketError("set connect socket nonblocking");
             CloseNative(candidate);
+            continue;
         }
-        freeaddrinfo(addresses);
-        if (connected == InvalidSocket) return nullptr;
-        if (!SetNonBlocking(connected)) {
-            CaptureSocketError("set nonblocking");
-            CloseNative(connected);
-            return nullptr;
+#endif
+
+        if (::connect(candidate, address->ai_addr,
+                static_cast<int>(address->ai_addrlen)) == 0) {
+            connected = candidate;
+            break;
         }
-        return NewState(connected);
-    });
+
+#if defined(__linux__) || defined(__APPLE__)
+        if (schedulerTask && errno == EINPROGRESS) {
+            SocketState pending{candidate, 0};
+            if (WaitForSocket(
+                    &pending,
+                    Absolute::RuntimeDetail::SocketReadyWrite,
+                    "connect")) {
+                int socketError = 0;
+                socklen_t errorLength =
+                    static_cast<socklen_t>(sizeof(socketError));
+                if (getsockopt(
+                        candidate, SOL_SOCKET, SO_ERROR,
+                        &socketError, &errorLength) == 0 &&
+                    socketError == 0) {
+                    connected = candidate;
+                    break;
+                }
+                if (socketError != 0) errno = socketError;
+            }
+        }
+#endif
+        CaptureSocketError("connect");
+        CloseNative(candidate);
+    }
+    freeaddrinfo(addresses);
+    if (connected == InvalidSocket) return nullptr;
+    if (!schedulerTask && !SetNonBlocking(connected)) {
+        CaptureSocketError("set nonblocking");
+        CloseNative(connected);
+        return nullptr;
+    }
+    return NewState(connected, !connectedAlreadyAssociated);
 }
 
 extern "C" void* absolute_net_tcp_listen(
@@ -479,7 +626,8 @@ extern "C" void* absolute_net_tcp_accept(void* handle) {
             Absolute::RuntimeDetail::SocketCompletionResult completion;
             if (!Absolute::RuntimeDetail::RunSocketCompletion(
                     listener->socket, &StartWindowsAccept,
-                    &operation, completion)) {
+                    &operation, completion,
+                    listener->timeoutMilliseconds)) {
                 CaptureCompletionError("AcceptEx", completion.error);
                 CloseNative(accepted);
                 return nullptr;
@@ -547,7 +695,8 @@ extern "C" std::int32_t absolute_net_tcp_send(void* handle, const char* text) {
                 Absolute::RuntimeDetail::SocketCompletionResult completion;
                 if (!Absolute::RuntimeDetail::RunSocketCompletion(
                         state->socket, &StartWindowsSend,
-                        &operation, completion)) {
+                        &operation, completion,
+                        state->timeoutMilliseconds)) {
                     CaptureCompletionError("WSASend", completion.error);
                     return std::int32_t{-1};
                 }
@@ -611,7 +760,8 @@ extern "C" const char* absolute_net_tcp_receive(
                 Absolute::RuntimeDetail::SocketCompletionResult completion;
                 if (!Absolute::RuntimeDetail::RunSocketCompletion(
                         state->socket, &StartWindowsReceive,
-                        &operation, completion)) {
+                        &operation, completion,
+                        state->timeoutMilliseconds)) {
                     CaptureCompletionError("WSARecv", completion.error);
                     return nullptr;
                 }
@@ -832,7 +982,8 @@ extern "C" std::int32_t absolute_net_udp_send_to(void* handle, const char* host,
                 Absolute::RuntimeDetail::SocketCompletionResult completion;
                 if (!Absolute::RuntimeDetail::RunSocketCompletion(
                         state->socket, &StartWindowsSendTo,
-                        &operation, completion)) {
+                        &operation, completion,
+                        state->timeoutMilliseconds)) {
                     CaptureCompletionError(
                         "WSASendTo", completion.error);
                     return std::int32_t{-1};
@@ -896,7 +1047,8 @@ extern "C" const char* absolute_net_udp_receive_from(void* handle, std::int32_t 
                 Absolute::RuntimeDetail::SocketCompletionResult completion;
                 if (!Absolute::RuntimeDetail::RunSocketCompletion(
                         state->socket, &StartWindowsReceiveFrom,
-                        &operation, completion)) {
+                        &operation, completion,
+                        state->timeoutMilliseconds)) {
                     CaptureCompletionError(
                         "WSARecvFrom", completion.error);
                     return nullptr;

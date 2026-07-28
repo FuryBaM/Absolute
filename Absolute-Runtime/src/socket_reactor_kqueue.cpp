@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <mutex>
@@ -26,6 +27,8 @@ namespace Absolute::RuntimeDetail {
             std::uint32_t requested = 0;
             std::uint32_t ready = 0;
             int error = 0;
+            std::chrono::steady_clock::time_point deadline{};
+            bool hasDeadline = false;
             IoCompletion completion = nullptr;
             void* completionContext = nullptr;
         };
@@ -214,6 +217,83 @@ namespace Absolute::RuntimeDetail {
                 }
             }
 
+            bool NextTimeout(timespec& timeout) const {
+                bool foundDeadline = false;
+                std::chrono::steady_clock::time_point nearest{};
+                for (const auto& [descriptor, waits] : active) {
+                    (void)descriptor;
+                    for (const SocketWait* wait : waits.waits) {
+                        if (!wait->hasDeadline) continue;
+                        if (!foundDeadline || wait->deadline < nearest) {
+                            nearest = wait->deadline;
+                            foundDeadline = true;
+                        }
+                    }
+                }
+                if (!foundDeadline) return false;
+
+                auto remaining =
+                    nearest - std::chrono::steady_clock::now();
+                if (remaining < std::chrono::steady_clock::duration::zero())
+                    remaining = std::chrono::steady_clock::duration::zero();
+                const auto nanoseconds =
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        remaining);
+                timeout.tv_sec = static_cast<time_t>(
+                    nanoseconds.count() / 1'000'000'000);
+                timeout.tv_nsec = static_cast<long>(
+                    nanoseconds.count() % 1'000'000'000);
+                return true;
+            }
+
+            void ProcessExpired() {
+                const auto now = std::chrono::steady_clock::now();
+                std::vector<SocketWait*> completed;
+                for (auto descriptor = active.begin();
+                     descriptor != active.end();) {
+                    std::vector<SocketWait*> retained;
+                    retained.reserve(descriptor->second.waits.size());
+                    for (SocketWait* wait : descriptor->second.waits) {
+                        if (wait->hasDeadline && wait->deadline <= now) {
+                            wait->error = ETIMEDOUT;
+                            completed.push_back(wait);
+                        }
+                        else {
+                            retained.push_back(wait);
+                        }
+                    }
+                    if (retained.size() ==
+                        descriptor->second.waits.size()) {
+                        ++descriptor;
+                        continue;
+                    }
+
+                    const int nativeDescriptor = descriptor->first;
+                    if (retained.empty()) {
+                        DeleteFilters(
+                            nativeDescriptor, descriptor->second);
+                        descriptor = active.erase(descriptor);
+                        continue;
+                    }
+
+                    descriptor->second.waits = std::move(retained);
+                    if (!Arm(nativeDescriptor, descriptor->second)) {
+                        const int error = errno;
+                        for (SocketWait* wait :
+                             descriptor->second.waits) {
+                            wait->error = error;
+                            completed.push_back(wait);
+                        }
+                        DeleteFilters(
+                            nativeDescriptor, descriptor->second);
+                        descriptor = active.erase(descriptor);
+                        continue;
+                    }
+                    ++descriptor;
+                }
+                for (SocketWait* wait : completed) Complete(wait);
+            }
+
             void CancelActive(int error) {
                 std::vector<SocketWait*> cancelled;
                 for (auto& [descriptor, waits] : active) {
@@ -232,12 +312,16 @@ namespace Absolute::RuntimeDetail {
             void Run() {
                 struct kevent events[64]{};
                 while (!stopping.load(std::memory_order_acquire)) {
+                    ProcessExpired();
+                    timespec timeout{};
+                    const timespec* timeoutPointer =
+                        NextTimeout(timeout) ? &timeout : nullptr;
                     const int count = kevent(
                         queueDescriptor, nullptr, 0,
                         events,
                         static_cast<int>(
                             sizeof(events) / sizeof(events[0])),
-                        nullptr);
+                        timeoutPointer);
                     if (count < 0) {
                         if (errno == EINTR) continue;
                         const int error = errno;
@@ -254,6 +338,7 @@ namespace Absolute::RuntimeDetail {
                         }
                         ProcessReady(events[index]);
                     }
+                    ProcessExpired();
                 }
                 ProcessPending();
                 CancelActive(ECANCELED);
@@ -327,8 +412,15 @@ namespace Absolute::RuntimeDetail {
         }
     }
 
-    bool WaitSocketReady(int descriptor, std::uint32_t events) {
+    bool WaitSocketReady(
+        int descriptor, std::uint32_t events,
+        std::int32_t timeoutMilliseconds) {
         SocketWait wait{descriptor, events};
+        if (timeoutMilliseconds > 0) {
+            wait.deadline = std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(timeoutMilliseconds);
+            wait.hasDeadline = true;
+        }
         SuspendForIo(&RegisterSocketWait, &wait);
         if (wait.error != 0) {
             errno = wait.error;
