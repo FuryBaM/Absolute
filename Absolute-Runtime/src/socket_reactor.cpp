@@ -2,6 +2,8 @@
 
 #include <cerrno>
 
+#include "scheduler_io.h"
+
 #if defined(__linux__)
 
 #include <atomic>
@@ -15,8 +17,6 @@
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <unistd.h>
-
-#include "scheduler_io.h"
 
 namespace Absolute::RuntimeDetail {
     namespace {
@@ -308,6 +308,169 @@ namespace Absolute::RuntimeDetail {
             return false;
         }
         return (wait.ready & events) != 0;
+    }
+}
+
+#elif defined(_WIN32)
+
+#include <atomic>
+#include <cstddef>
+#include <thread>
+
+namespace Absolute::RuntimeDetail {
+    namespace {
+        constexpr ULONG_PTR StopCompletionKey = 1;
+
+        struct IocpWait {
+            OVERLAPPED overlapped{};
+            SOCKET socket = INVALID_SOCKET;
+            SocketOperationStart start = nullptr;
+            void* startContext = nullptr;
+            SocketCompletionResult* result = nullptr;
+            IoCompletion completion = nullptr;
+            void* completionContext = nullptr;
+        };
+
+        static_assert(offsetof(IocpWait, overlapped) == 0);
+
+        class IocpReactor {
+            HANDLE port = nullptr;
+            int initializationError = 0;
+            std::thread worker;
+            std::atomic<bool> stopping{false};
+
+            static void Complete(IocpWait* wait) {
+                IoCompletion completion = wait->completion;
+                void* context = wait->completionContext;
+                completion(context);
+            }
+
+            void Run() {
+                while (!stopping.load(std::memory_order_acquire)) {
+                    DWORD bytesTransferred = 0;
+                    ULONG_PTR completionKey = 0;
+                    OVERLAPPED* overlapped = nullptr;
+                    const BOOL succeeded = GetQueuedCompletionStatus(
+                        port, &bytesTransferred, &completionKey,
+                        &overlapped, INFINITE);
+                    if (!overlapped) {
+                        if (completionKey == StopCompletionKey) return;
+                        continue;
+                    }
+
+                    auto* wait = reinterpret_cast<IocpWait*>(overlapped);
+                    wait->result->bytesTransferred =
+                        static_cast<std::uint32_t>(bytesTransferred);
+                    wait->result->error =
+                        succeeded ? 0 : static_cast<int>(GetLastError());
+                    Complete(wait);
+                }
+            }
+
+        public:
+            IocpReactor() {
+                port = CreateIoCompletionPort(
+                    INVALID_HANDLE_VALUE, nullptr, 0, 1);
+                if (!port) {
+                    initializationError = static_cast<int>(GetLastError());
+                    return;
+                }
+                worker = std::thread([this] { Run(); });
+            }
+
+            ~IocpReactor() {
+                stopping.store(true, std::memory_order_release);
+                if (port)
+                    PostQueuedCompletionStatus(
+                        port, 0, StopCompletionKey, nullptr);
+                if (worker.joinable()) worker.join();
+                if (port) CloseHandle(port);
+            }
+
+            bool Associate(SOCKET socket, int& error) {
+                if (initializationError != 0) {
+                    error = initializationError;
+                    return false;
+                }
+                if (stopping.load(std::memory_order_acquire)) {
+                    error = ERROR_OPERATION_ABORTED;
+                    return false;
+                }
+                HANDLE associated = CreateIoCompletionPort(
+                    reinterpret_cast<HANDLE>(socket), port, 0, 0);
+                if (!associated) {
+                    error = static_cast<int>(GetLastError());
+                    return false;
+                }
+                error = 0;
+                return true;
+            }
+
+            void Submit(IocpWait* wait) {
+                const int unavailable =
+                    initializationError != 0
+                        ? initializationError
+                        : (stopping.load(std::memory_order_acquire)
+                            ? ERROR_OPERATION_ABORTED : 0);
+                if (unavailable != 0) {
+                    wait->result->error = unavailable;
+                    Complete(wait);
+                    return;
+                }
+
+                const int started =
+                    wait->start(wait->startContext, &wait->overlapped);
+                if (started == SOCKET_ERROR) {
+                    const int error = WSAGetLastError();
+                    if (error != WSA_IO_PENDING) {
+                        wait->result->error = error;
+                        Complete(wait);
+                    }
+                }
+            }
+        };
+
+        IocpReactor& GetIocpReactor() {
+            static IocpReactor reactor;
+            return reactor;
+        }
+
+        void RegisterSocketCompletion(
+            void* opaque, IoCompletion completion, void* completionContext) {
+            auto* wait = static_cast<IocpWait*>(opaque);
+            wait->completion = completion;
+            wait->completionContext = completionContext;
+            GetIocpReactor().Submit(wait);
+        }
+    }
+
+    bool WaitSocketReady(int, std::uint32_t) {
+        errno = ENOTSUP;
+        return false;
+    }
+
+    bool RunSocketCompletion(
+        SOCKET socket, SocketOperationStart start, void* context,
+        SocketCompletionResult& result) {
+        if (socket == INVALID_SOCKET || !start) {
+            result.error = WSAEINVAL;
+            return false;
+        }
+        IocpWait wait{};
+        wait.socket = socket;
+        wait.start = start;
+        wait.startContext = context;
+        wait.result = &result;
+        SuspendForIo(&RegisterSocketCompletion, &wait);
+        return result.error == 0;
+    }
+
+    bool AssociateSocketCompletion(SOCKET socket, int& error) {
+        if (socket == INVALID_SOCKET) {
+            error = WSAEINVAL;
+            return false;
+        }
+        return GetIocpReactor().Associate(socket, error);
     }
 }
 

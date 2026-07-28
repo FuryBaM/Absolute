@@ -59,16 +59,23 @@ reactor can track multiple read and write waiters for one descriptor. A pending
 socket suspends its fiber without consuming an I/O or scheduler worker;
 readiness enqueues the fiber on its owner worker.
 
+Windows associates each runtime socket once with a process-wide I/O completion
+port. Scheduler tasks use overlapped `AcceptEx`, `WSASend`, `WSARecv`,
+`WSASendTo`, and `WSARecvFrom`; their operation state and receive buffer live
+with the suspended fiber until the completion packet returns it to the
+scheduler queue. Parallel operations on one socket therefore do not share a
+mutable receive buffer.
+
 DNS resolution, connect, timed socket waits, filesystem metadata, whole-file
 operations, and streaming file operations use a separate blocking I/O executor.
-Windows and macOS socket operations also use this portable fallback until their
-IOCP and `kqueue` backends are implemented. The calling fiber is still
-suspended, so the host operation never occupies a scheduler worker. Calls made
-outside an Absolute task remain synchronous.
+macOS socket operations also use this portable fallback until its `kqueue`
+backend is implemented. The calling fiber is still suspended, so the host
+operation never occupies a scheduler worker. Calls made outside an Absolute
+task remain synchronous.
 
 The I/O executor defaults to the host concurrency clamped to `2..4` threads.
 `ABSOLUTE_IO_WORKERS=2..32` overrides it before the first task uses the portable
 blocking-offload backend. It does not limit Linux/Termux `epoll` socket
-concurrency. IOCP on Windows, `kqueue` on macOS, and deadline cancellation in
-the native reactors remain planned; they use the same fiber suspension
-contract.
+concurrency or Windows IOCP completions. `kqueue` on macOS and deadline
+cancellation in the native reactors remain planned; they use the same fiber
+suspension contract.

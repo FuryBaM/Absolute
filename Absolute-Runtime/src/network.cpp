@@ -13,6 +13,7 @@
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
+#include <mswsock.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #else
@@ -37,7 +38,6 @@ namespace {
 
     struct SocketState {
         NativeSocket socket = InvalidSocket;
-        std::string receiveBuffer;
         std::int32_t timeoutMilliseconds = 0;
     };
 
@@ -65,6 +65,15 @@ namespace {
             return RunNetworkIo<Result>(std::forward<Operation>(operation));
         }
         return operation();
+#elif defined(_WIN32)
+        // Untimed scheduler socket operations use overlapped Winsock + IOCP.
+        // Timed operations stay on blocking offload until native deadline
+        // cancellation is part of the reactor contract.
+        if (state && state->timeoutMilliseconds <= 0 &&
+            Absolute::RuntimeDetail::IsSchedulerTask()) {
+            return operation();
+        }
+        return RunNetworkIo<Result>(std::forward<Operation>(operation));
 #else
         (void)state;
         return RunNetworkIo<Result>(std::forward<Operation>(operation));
@@ -89,6 +98,13 @@ namespace {
 #endif
     }
 
+#if defined(_WIN32)
+    void CaptureCompletionError(const char* operation, int error) {
+        WSASetLastError(error);
+        CaptureSocketError(operation);
+    }
+#endif
+
     bool EnsureSockets() {
 #if defined(_WIN32)
         static std::once_flag once;
@@ -107,6 +123,16 @@ namespace {
     }
 
     SocketState* NewState(NativeSocket socket) {
+#if defined(_WIN32)
+        int associationError = 0;
+        if (!Absolute::RuntimeDetail::AssociateSocketCompletion(
+                socket, associationError)) {
+            CaptureCompletionError(
+                "associate socket with IOCP", associationError);
+            CloseNative(socket);
+            return nullptr;
+        }
+#endif
         SocketState* state = new (std::nothrow) SocketState;
         if (!state) {
             CloseNative(socket);
@@ -126,6 +152,16 @@ namespace {
         if (state && state->socket != InvalidSocket) return true;
         lastNetworkError = "socket is closed";
         return false;
+    }
+
+    NativeSocket CreateNativeSocket(
+        int family, int type, int protocol) {
+#if defined(_WIN32)
+        return WSASocketW(
+            family, type, protocol, nullptr, 0, WSA_FLAG_OVERLAPPED);
+#else
+        return socket(family, type, protocol);
+#endif
     }
 
     bool SetNonBlocking(NativeSocket socket) {
@@ -231,6 +267,121 @@ namespace {
             static_cast<socklen_t>(sizeof(enabled)));
 #endif
     }
+
+#if defined(_WIN32)
+    bool UseNativeSocketCompletion(SocketState* state) {
+        return state && state->timeoutMilliseconds <= 0 &&
+            Absolute::RuntimeDetail::IsSchedulerTask();
+    }
+
+    struct WindowsAcceptOperation {
+        LPFN_ACCEPTEX acceptEx = nullptr;
+        SOCKET listener = INVALID_SOCKET;
+        SOCKET accepted = INVALID_SOCKET;
+        DWORD bytesReceived = 0;
+        char addresses[2 * (sizeof(sockaddr_storage) + 16)]{};
+    };
+
+    int StartWindowsAccept(void* opaque, OVERLAPPED* overlapped) {
+        auto* operation =
+            static_cast<WindowsAcceptOperation*>(opaque);
+        const BOOL started = operation->acceptEx(
+            operation->listener, operation->accepted,
+            operation->addresses, 0,
+            static_cast<DWORD>(sizeof(sockaddr_storage) + 16),
+            static_cast<DWORD>(sizeof(sockaddr_storage) + 16),
+            &operation->bytesReceived, overlapped);
+        return started ? 0 : SOCKET_ERROR;
+    }
+
+    LPFN_ACCEPTEX LoadAcceptEx(SOCKET listener) {
+        GUID identifier = WSAID_ACCEPTEX;
+        LPFN_ACCEPTEX result = nullptr;
+        DWORD bytes = 0;
+        if (WSAIoctl(
+                listener, SIO_GET_EXTENSION_FUNCTION_POINTER,
+                &identifier, sizeof(identifier),
+                &result, sizeof(result), &bytes,
+                nullptr, nullptr) == SOCKET_ERROR) {
+            CaptureSocketError("load AcceptEx");
+            return nullptr;
+        }
+        return result;
+    }
+
+    int SocketFamily(SOCKET socket) {
+        sockaddr_storage address{};
+        int length = sizeof(address);
+        if (getsockname(
+                socket, reinterpret_cast<sockaddr*>(&address),
+                &length) != 0) {
+            CaptureSocketError("get socket family");
+            return AF_UNSPEC;
+        }
+        return address.ss_family;
+    }
+
+    struct WindowsSendOperation {
+        SOCKET socket = INVALID_SOCKET;
+        WSABUF buffer{};
+    };
+
+    int StartWindowsSend(void* opaque, OVERLAPPED* overlapped) {
+        auto* operation =
+            static_cast<WindowsSendOperation*>(opaque);
+        return WSASend(
+            operation->socket, &operation->buffer, 1,
+            nullptr, 0, overlapped, nullptr);
+    }
+
+    struct WindowsReceiveOperation {
+        SOCKET socket = INVALID_SOCKET;
+        WSABUF buffer{};
+        DWORD flags = 0;
+    };
+
+    int StartWindowsReceive(void* opaque, OVERLAPPED* overlapped) {
+        auto* operation =
+            static_cast<WindowsReceiveOperation*>(opaque);
+        return WSARecv(
+            operation->socket, &operation->buffer, 1,
+            nullptr, &operation->flags, overlapped, nullptr);
+    }
+
+    struct WindowsSendToOperation {
+        SOCKET socket = INVALID_SOCKET;
+        WSABUF buffer{};
+        sockaddr_in destination{};
+    };
+
+    int StartWindowsSendTo(void* opaque, OVERLAPPED* overlapped) {
+        auto* operation =
+            static_cast<WindowsSendToOperation*>(opaque);
+        return WSASendTo(
+            operation->socket, &operation->buffer, 1,
+            nullptr, 0,
+            reinterpret_cast<const sockaddr*>(&operation->destination),
+            sizeof(operation->destination), overlapped, nullptr);
+    }
+
+    struct WindowsReceiveFromOperation {
+        SOCKET socket = INVALID_SOCKET;
+        WSABUF buffer{};
+        DWORD flags = 0;
+        sockaddr_in source{};
+        int sourceLength = sizeof(source);
+    };
+
+    int StartWindowsReceiveFrom(void* opaque, OVERLAPPED* overlapped) {
+        auto* operation =
+            static_cast<WindowsReceiveFromOperation*>(opaque);
+        return WSARecvFrom(
+            operation->socket, &operation->buffer, 1,
+            nullptr, &operation->flags,
+            reinterpret_cast<sockaddr*>(&operation->source),
+            &operation->sourceLength, overlapped, nullptr);
+    }
+#endif
 }
 
 extern "C" void* absolute_net_tcp_connect(const char* host, std::int32_t port) {
@@ -243,7 +394,7 @@ extern "C" void* absolute_net_tcp_connect(const char* host, std::int32_t port) {
         if (!addresses) return nullptr;
         NativeSocket connected = InvalidSocket;
         for (addrinfo* address = addresses; address; address = address->ai_next) {
-            NativeSocket candidate = socket(address->ai_family,
+            NativeSocket candidate = CreateNativeSocket(address->ai_family,
                 address->ai_socktype, address->ai_protocol);
             if (candidate == InvalidSocket) {
                 CaptureSocketError("socket");
@@ -275,7 +426,7 @@ extern "C" void* absolute_net_tcp_listen(
         if (!addresses) return nullptr;
         NativeSocket listener = InvalidSocket;
         for (addrinfo* address = addresses; address; address = address->ai_next) {
-            NativeSocket candidate = socket(address->ai_family,
+            NativeSocket candidate = CreateNativeSocket(address->ai_family,
                 address->ai_socktype, address->ai_protocol);
             if (candidate == InvalidSocket) {
                 CaptureSocketError("socket");
@@ -311,6 +462,39 @@ extern "C" void* absolute_net_tcp_accept(void* handle) {
     SocketState* listener = State(handle);
     return RunSocketIo<void*>(listener, [&]() -> void* {
         if (!Valid(listener)) return nullptr;
+#if defined(_WIN32)
+        if (UseNativeSocketCompletion(listener)) {
+            LPFN_ACCEPTEX acceptEx = LoadAcceptEx(listener->socket);
+            if (!acceptEx) return nullptr;
+            const int family = SocketFamily(listener->socket);
+            if (family == AF_UNSPEC) return nullptr;
+            NativeSocket accepted =
+                CreateNativeSocket(family, SOCK_STREAM, IPPROTO_TCP);
+            if (accepted == InvalidSocket) {
+                CaptureSocketError("create accepted socket");
+                return nullptr;
+            }
+            WindowsAcceptOperation operation{
+                acceptEx, listener->socket, accepted};
+            Absolute::RuntimeDetail::SocketCompletionResult completion;
+            if (!Absolute::RuntimeDetail::RunSocketCompletion(
+                    listener->socket, &StartWindowsAccept,
+                    &operation, completion)) {
+                CaptureCompletionError("AcceptEx", completion.error);
+                CloseNative(accepted);
+                return nullptr;
+            }
+            if (setsockopt(
+                    accepted, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
+                    reinterpret_cast<const char*>(&listener->socket),
+                    sizeof(listener->socket)) != 0) {
+                CaptureSocketError("update accepted socket context");
+                CloseNative(accepted);
+                return nullptr;
+            }
+            return NewState(accepted);
+        }
+#endif
         while (true) {
             NativeSocket accepted =
                 accept(listener->socket, nullptr, nullptr);
@@ -353,7 +537,26 @@ extern "C" std::int32_t absolute_net_tcp_send(void* handle, const char* text) {
             const int chunk = static_cast<int>(
                 std::min<std::size_t>(remaining, 1U << 20));
 #if defined(_WIN32)
-            const int result = send(state->socket, text + sent, chunk, 0);
+            int result = 0;
+            if (UseNativeSocketCompletion(state)) {
+                WindowsSendOperation operation{
+                    state->socket,
+                    WSABUF{
+                        static_cast<ULONG>(chunk),
+                        const_cast<char*>(text + sent)}};
+                Absolute::RuntimeDetail::SocketCompletionResult completion;
+                if (!Absolute::RuntimeDetail::RunSocketCompletion(
+                        state->socket, &StartWindowsSend,
+                        &operation, completion)) {
+                    CaptureCompletionError("WSASend", completion.error);
+                    return std::int32_t{-1};
+                }
+                result = static_cast<int>(completion.bytesTransferred);
+            }
+            else {
+                result = send(
+                    state->socket, text + sent, chunk, 0);
+            }
 #else
             const int result = static_cast<int>(send(state->socket, text + sent,
                 static_cast<std::size_t>(chunk), MSG_NOSIGNAL));
@@ -394,15 +597,34 @@ extern "C" const char* absolute_net_tcp_receive(
             lastNetworkError = "receive size must be in [1, 16777216]";
             return nullptr;
         }
-        state->receiveBuffer.resize(static_cast<std::size_t>(maximumBytes));
+        std::string receiveBuffer(
+            static_cast<std::size_t>(maximumBytes), '\0');
         int count = 0;
         while (true) {
 #if defined(_WIN32)
-            count = recv(
-                state->socket, state->receiveBuffer.data(), maximumBytes, 0);
+            if (UseNativeSocketCompletion(state)) {
+                WindowsReceiveOperation operation{
+                    state->socket,
+                    WSABUF{
+                        static_cast<ULONG>(maximumBytes),
+                        receiveBuffer.data()}};
+                Absolute::RuntimeDetail::SocketCompletionResult completion;
+                if (!Absolute::RuntimeDetail::RunSocketCompletion(
+                        state->socket, &StartWindowsReceive,
+                        &operation, completion)) {
+                    CaptureCompletionError("WSARecv", completion.error);
+                    return nullptr;
+                }
+                count = static_cast<int>(completion.bytesTransferred);
+            }
+            else {
+                count = recv(
+                    state->socket, receiveBuffer.data(),
+                    maximumBytes, 0);
+            }
 #else
             count = static_cast<int>(recv(state->socket,
-                state->receiveBuffer.data(),
+                receiveBuffer.data(),
                 static_cast<std::size_t>(maximumBytes), 0));
 #endif
             if (count >= 0) break;
@@ -414,25 +636,23 @@ extern "C" const char* absolute_net_tcp_receive(
                         "receive")) {
                     continue;
                 }
-                state->receiveBuffer.clear();
                 return nullptr;
             }
 #endif
-            state->receiveBuffer.clear();
             CaptureSocketError("receive");
             return nullptr;
         }
-        state->receiveBuffer.resize(static_cast<std::size_t>(count));
+        receiveBuffer.resize(static_cast<std::size_t>(count));
         lastNetworkError.clear();
         // Durable copy: callers may keep the string after the next
         // receive/close and after the I/O worker processes another request.
-        const std::size_t size = state->receiveBuffer.size() + 1;
+        const std::size_t size = receiveBuffer.size() + 1;
         char* durable = static_cast<char*>(std::malloc(size));
         if (!durable) {
             lastNetworkError = "receive allocation failed";
             return nullptr;
         }
-        std::memcpy(durable, state->receiveBuffer.c_str(), size);
+        std::memcpy(durable, receiveBuffer.c_str(), size);
         return durable;
     });
 }
@@ -550,7 +770,8 @@ extern "C" const char* absolute_net_resolve_host(const char* hostname) {
 
 extern "C" void* absolute_net_udp_bind(const char* host, std::int32_t port) {
     if (!EnsureSockets()) return nullptr;
-    NativeSocket sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    NativeSocket sock =
+        CreateNativeSocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock == InvalidSocket) {
         CaptureSocketError("udp socket creation");
         return nullptr;
@@ -600,9 +821,34 @@ extern "C" std::int32_t absolute_net_udp_send_to(void* handle, const char* host,
         const std::size_t len = std::strlen(text);
         int sent = 0;
         while (true) {
+#if defined(_WIN32)
+            if (UseNativeSocketCompletion(state)) {
+                WindowsSendToOperation operation{
+                    state->socket,
+                    WSABUF{
+                        static_cast<ULONG>(len),
+                        const_cast<char*>(text)},
+                    addr};
+                Absolute::RuntimeDetail::SocketCompletionResult completion;
+                if (!Absolute::RuntimeDetail::RunSocketCompletion(
+                        state->socket, &StartWindowsSendTo,
+                        &operation, completion)) {
+                    CaptureCompletionError(
+                        "WSASendTo", completion.error);
+                    return std::int32_t{-1};
+                }
+                sent = static_cast<int>(completion.bytesTransferred);
+            }
+            else {
+                sent = sendto(state->socket, text,
+                    static_cast<int>(len), 0,
+                    reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+            }
+#else
             sent = sendto(state->socket, text,
                 static_cast<int>(len), 0,
                 reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+#endif
             if (sent >= 0) break;
 #if defined(__linux__)
             if (WouldBlock()) {
@@ -630,7 +876,8 @@ extern "C" const char* absolute_net_udp_receive_from(void* handle, std::int32_t 
             lastNetworkError = "invalid receive_from parameters";
             return nullptr;
         }
-        state->receiveBuffer.resize(static_cast<std::size_t>(maxBytes));
+        std::string receiveBuffer(
+            static_cast<std::size_t>(maxBytes), '\0');
         sockaddr_in srcAddr{};
 #if defined(_WIN32)
         int addrLen = sizeof(srcAddr);
@@ -639,9 +886,35 @@ extern "C" const char* absolute_net_udp_receive_from(void* handle, std::int32_t 
 #endif
         int count = 0;
         while (true) {
+#if defined(_WIN32)
+            if (UseNativeSocketCompletion(state)) {
+                WindowsReceiveFromOperation operation{
+                    state->socket,
+                    WSABUF{
+                        static_cast<ULONG>(maxBytes),
+                        receiveBuffer.data()}};
+                Absolute::RuntimeDetail::SocketCompletionResult completion;
+                if (!Absolute::RuntimeDetail::RunSocketCompletion(
+                        state->socket, &StartWindowsReceiveFrom,
+                        &operation, completion)) {
+                    CaptureCompletionError(
+                        "WSARecvFrom", completion.error);
+                    return nullptr;
+                }
+                count = static_cast<int>(completion.bytesTransferred);
+                srcAddr = operation.source;
+                addrLen = operation.sourceLength;
+            }
+            else {
+                count = recvfrom(state->socket,
+                    receiveBuffer.data(), maxBytes, 0,
+                    reinterpret_cast<sockaddr*>(&srcAddr), &addrLen);
+            }
+#else
             count = recvfrom(state->socket,
-                state->receiveBuffer.data(), maxBytes, 0,
+                receiveBuffer.data(), maxBytes, 0,
                 reinterpret_cast<sockaddr*>(&srcAddr), &addrLen);
+#endif
             if (count >= 0) break;
 #if defined(__linux__)
             if (WouldBlock()) {
@@ -651,23 +924,21 @@ extern "C" const char* absolute_net_udp_receive_from(void* handle, std::int32_t 
                         "udp recvfrom")) {
                     continue;
                 }
-                state->receiveBuffer.clear();
                 return nullptr;
             }
 #endif
-            state->receiveBuffer.clear();
             CaptureSocketError("udp recvfrom");
             return nullptr;
         }
-        state->receiveBuffer.resize(static_cast<std::size_t>(count));
+        receiveBuffer.resize(static_cast<std::size_t>(count));
         lastNetworkError.clear();
-        const std::size_t size = state->receiveBuffer.size() + 1;
+        const std::size_t size = receiveBuffer.size() + 1;
         char* durable = static_cast<char*>(std::malloc(size));
         if (!durable) {
             lastNetworkError = "udp receive allocation failed";
             return nullptr;
         }
-        std::memcpy(durable, state->receiveBuffer.c_str(), size);
+        std::memcpy(durable, receiveBuffer.c_str(), size);
         return durable;
     });
 }

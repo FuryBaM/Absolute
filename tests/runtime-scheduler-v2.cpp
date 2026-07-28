@@ -34,6 +34,13 @@ std::int32_t absolute_net_tcp_send(void* handle, const char* text);
 const char* absolute_net_tcp_receive(void* handle, std::int32_t maximumBytes);
 std::int32_t absolute_net_tcp_port(void* handle);
 void absolute_net_tcp_close(void* handle);
+void* absolute_net_udp_bind(const char* host, std::int32_t port);
+std::int32_t absolute_net_udp_send_to(
+    void* handle, const char* host, std::int32_t port, const char* text);
+const char* absolute_net_udp_receive_from(
+    void* handle, std::int32_t maximumBytes);
+void absolute_net_udp_close(void* handle);
+const char* absolute_net_error();
 }
 
 namespace {
@@ -99,10 +106,17 @@ struct NetworkContext {
 void networkServer(void* opaque) {
     auto* context = static_cast<NetworkContext*>(opaque);
     void* socket = absolute_net_tcp_accept(context->listener);
-    if (!socket) return;
+    if (!socket) {
+        std::cerr << "network server accept failed: "
+            << absolute_net_error() << '\n';
+        return;
+    }
     const char* request = absolute_net_tcp_receive(socket, 16);
     context->ok = request && std::strcmp(request, "ping") == 0 &&
         absolute_net_tcp_send(socket, "pong") == 4;
+    if (!context->ok)
+        std::cerr << "network server exchange failed: "
+            << absolute_net_error() << '\n';
     std::free(const_cast<char*>(request));
     absolute_net_tcp_close(socket);
 }
@@ -110,16 +124,85 @@ void networkServer(void* opaque) {
 void networkClient(void* opaque) {
     auto* context = static_cast<NetworkContext*>(opaque);
     void* socket = absolute_net_tcp_connect("127.0.0.1", context->port);
-    if (!socket) return;
+    if (!socket) {
+        std::cerr << "network client connect failed: "
+            << absolute_net_error() << '\n';
+        return;
+    }
     if (absolute_net_tcp_send(socket, "ping") != 4) {
+        std::cerr << "network client send failed: "
+            << absolute_net_error() << '\n';
         absolute_net_tcp_close(socket);
         return;
     }
     const char* response = absolute_net_tcp_receive(socket, 16);
     context->ok = response && std::strcmp(response, "pong") == 0;
+    if (!context->ok)
+        std::cerr << "network client receive failed: "
+            << absolute_net_error() << '\n';
     std::free(const_cast<char*>(response));
     absolute_net_tcp_close(socket);
 }
+
+struct UdpContext {
+    void* socket = nullptr;
+    std::int32_t port = 0;
+    bool ok = false;
+};
+
+void udpServer(void* opaque) {
+    auto* context = static_cast<UdpContext*>(opaque);
+    const char* request =
+        absolute_net_udp_receive_from(context->socket, 16);
+    context->ok = request && std::strcmp(request, "datagram") == 0;
+    if (!context->ok)
+        std::cerr << "udp server receive failed: "
+            << absolute_net_error() << '\n';
+    std::free(const_cast<char*>(request));
+}
+
+void udpClient(void* opaque) {
+    auto* context = static_cast<UdpContext*>(opaque);
+    context->ok = absolute_net_udp_send_to(
+        context->socket, "127.0.0.1",
+        context->port, "datagram") == 8;
+    if (!context->ok)
+        std::cerr << "udp client send failed: "
+            << absolute_net_error() << '\n';
+}
+
+#if defined(__linux__) || defined(_WIN32)
+struct SharedReceiveContext {
+    void* socket = nullptr;
+    char value = '\0';
+    bool ok = false;
+};
+
+void sharedReceive(void* opaque) {
+    auto* context = static_cast<SharedReceiveContext*>(opaque);
+    const char* text = absolute_net_tcp_receive(context->socket, 1);
+    context->ok = text && std::strlen(text) == 1;
+    if (context->ok) context->value = text[0];
+    if (!context->ok)
+        std::cerr << "shared socket receive failed: "
+            << absolute_net_error() << '\n';
+    std::free(const_cast<char*>(text));
+}
+
+struct SharedSendContext {
+    void* socket = nullptr;
+    bool ok = false;
+};
+
+void sharedSend(void* opaque) {
+    auto* context = static_cast<SharedSendContext*>(opaque);
+    absolute_task_delay(10);
+    context->ok = absolute_net_tcp_send(context->socket, "xy") == 2;
+    if (!context->ok)
+        std::cerr << "shared socket send failed: "
+            << absolute_net_error() << '\n';
+}
+#endif
 
 #if defined(__linux__)
 struct ReactorWaitContext {
@@ -211,11 +294,10 @@ int main() {
     delete fast;
 
     std::cerr << "phase=network-io\n";
-    // On Linux, eight pending accepts exceed the two-thread fallback I/O pool.
-    // They can all make progress only when socket readiness is handled by
-    // epoll instead of occupying those threads. Other platforms retain the
-    // portable one-pair offload contract until their native reactor lands.
-#if defined(__linux__)
+    // Eight pending accepts exceed the two-thread fallback I/O pool. They can
+    // all make progress only when Linux epoll or Windows IOCP owns the wait
+    // instead of occupying those threads.
+#if defined(__linux__) || defined(_WIN32)
     constexpr std::int32_t networkPairs = 8;
 #else
     constexpr std::int32_t networkPairs = 1;
@@ -260,6 +342,74 @@ int main() {
         absolute_net_tcp_close(
             listeners[static_cast<std::size_t>(index)]);
     }
+
+#if defined(__linux__) || defined(_WIN32)
+    std::cerr << "phase=shared-socket-receive\n";
+    void* sharedListener =
+        absolute_net_tcp_listen("127.0.0.1", 0, 4);
+    require(sharedListener != nullptr);
+    const std::int32_t sharedPort =
+        absolute_net_tcp_port(sharedListener);
+    require(sharedPort > 0);
+    void* sharedClient =
+        absolute_net_tcp_connect("127.0.0.1", sharedPort);
+    require(sharedClient != nullptr);
+    void* sharedServer = absolute_net_tcp_accept(sharedListener);
+    require(sharedServer != nullptr);
+    void* firstReceiveTask = absolute_task_spawn_config(
+        sharedReceive,
+        new SharedReceiveContext{sharedServer, '\0', false},
+        -1, 3, "shared-receive-1");
+    void* secondReceiveTask = absolute_task_spawn_config(
+        sharedReceive,
+        new SharedReceiveContext{sharedServer, '\0', false},
+        -1, 3, "shared-receive-2");
+    void* sharedSendTask = absolute_task_spawn_config(
+        sharedSend, new SharedSendContext{sharedClient, false},
+        -1, -3, "shared-send");
+    auto* firstReceive =
+        await<SharedReceiveContext>(firstReceiveTask);
+    auto* secondReceive =
+        await<SharedReceiveContext>(secondReceiveTask);
+    auto* sharedSendResult =
+        await<SharedSendContext>(sharedSendTask);
+    require(firstReceive->ok);
+    require(secondReceive->ok);
+    require(sharedSendResult->ok);
+    require(
+        (firstReceive->value == 'x' &&
+            secondReceive->value == 'y') ||
+        (firstReceive->value == 'y' &&
+            secondReceive->value == 'x'));
+    delete firstReceive;
+    delete secondReceive;
+    delete sharedSendResult;
+    absolute_net_tcp_close(sharedServer);
+    absolute_net_tcp_close(sharedClient);
+    absolute_net_tcp_close(sharedListener);
+#endif
+
+    std::cerr << "phase=udp-io\n";
+    void* udpListener = absolute_net_udp_bind("127.0.0.1", 0);
+    void* udpSender = absolute_net_udp_bind("127.0.0.1", 0);
+    require(udpListener != nullptr);
+    require(udpSender != nullptr);
+    const std::int32_t udpPort = absolute_net_tcp_port(udpListener);
+    require(udpPort > 0);
+    void* udpServerTask = absolute_task_spawn_config(
+        udpServer, new UdpContext{udpListener, udpPort, false},
+        -1, 3, "udp-server");
+    void* udpClientTask = absolute_task_spawn_config(
+        udpClient, new UdpContext{udpSender, udpPort, false},
+        -1, -3, "udp-client");
+    auto* udpServerResult = await<UdpContext>(udpServerTask);
+    auto* udpClientResult = await<UdpContext>(udpClientTask);
+    require(udpServerResult->ok);
+    require(udpClientResult->ok);
+    delete udpServerResult;
+    delete udpClientResult;
+    absolute_net_udp_close(udpListener);
+    absolute_net_udp_close(udpSender);
 
 #if defined(__linux__)
     std::cerr << "phase=epoll-shared-descriptor\n";
