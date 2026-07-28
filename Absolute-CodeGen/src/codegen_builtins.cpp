@@ -2,6 +2,26 @@
 
 namespace Absolute {
     void CodeGenerator::Impl::EmitBuiltin(FunctionCallExpr& expression, const std::string& name) {
+        if (name == "tuple") {
+            if (expression.arguments.size() < 2)
+                Fail("tuple literal requires at least two values");
+            auto* tupleType = llvm::cast<llvm::StructType>(
+                TypeFromName(SemanticType(&expression)));
+            llvm::Value* tupleValue = llvm::UndefValue::get(tupleType);
+            for (size_t index = 0; index < expression.arguments.size(); ++index) {
+                llvm::Value* element = Evaluate(expression.arguments[index].get());
+                llvm::Type* target = tupleType->getStructElementType(
+                    static_cast<unsigned>(index));
+                tupleValue = builder.CreateInsertValue(tupleValue, Coerce(element, target),
+                    {static_cast<unsigned>(index)}, "tuple.element");
+            }
+            value = tupleValue;
+            valueCreatesManagedOwner = false;
+            valueCreatesArrayOwner = false;
+            valueCreatesClosureOwner = false;
+            return;
+        }
+
         if (name == "print" || name == "println") {
             std::vector<PrintableValue> values;
             std::string format;

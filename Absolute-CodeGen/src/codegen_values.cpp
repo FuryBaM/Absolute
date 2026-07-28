@@ -322,6 +322,47 @@ namespace Absolute {
             return;
         }
 
+        std::string tupleBase;
+        std::vector<std::string> tupleElements;
+        if (ParseCodegenGenericType(baseType, tupleBase, tupleElements) &&
+            tupleBase == "tuple") {
+            if (expr->member == "length" || expr->member == "count") {
+                if (impl->addressMode)
+                    impl->Fail("tuple length property is not assignable");
+                impl->value = impl->builder.getInt32(
+                    static_cast<std::uint32_t>(tupleElements.size()));
+                impl->valueCreatesManagedOwner = false;
+                return;
+            }
+            if (!expr->member.starts_with("item"))
+                impl->Fail("tuple has no member '" + expr->member + "'");
+            size_t index = tupleElements.size();
+            try {
+                index = static_cast<size_t>(
+                    std::stoull(expr->member.substr(4)));
+            }
+            catch (...) {
+                impl->Fail("invalid tuple member '" + expr->member + "'");
+            }
+            if (index >= tupleElements.size())
+                impl->Fail("tuple member index is out of range");
+            auto* tupleType = llvm::cast<llvm::StructType>(
+                impl->TypeFromName(baseType));
+            if (impl->addressMode) {
+                llvm::Value* baseAddress =
+                    impl->EvaluateAddress(expr->base.get());
+                impl->addressValue = impl->builder.CreateStructGEP(
+                    tupleType, baseAddress, static_cast<unsigned>(index),
+                    expr->member + ".address");
+                return;
+            }
+            llvm::Value* tuple = impl->Evaluate(expr->base.get());
+            impl->value = impl->builder.CreateExtractValue(
+                tuple, {static_cast<unsigned>(index)}, expr->member + ".value");
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
+
         const std::string aggregateName = impl->ClassNameFromType(baseType);
 
         llvm::Value* fieldAddress = nullptr;

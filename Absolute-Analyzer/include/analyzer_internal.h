@@ -324,7 +324,7 @@ namespace Absolute {
                 name == "toString" || name == "assert" || name == "copy" || name == "move" ||
                 name == "seal" || name == "unseal" ||
                 name == "load" || name == "isLoaded" || name == "loadError" ||
-                name == "taskGroupAdd";
+                name == "taskGroupAdd" || name == "tuple";
         }
 
         inline bool IsPrintableType(const std::string& type) {

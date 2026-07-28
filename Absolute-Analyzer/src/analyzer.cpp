@@ -534,6 +534,14 @@ namespace Absolute {
         std::string genericBase;
         std::vector<std::string> genericArguments;
         if (ParseGenericTypeName(name, genericBase, genericArguments)) {
+            if (genericBase == "tuple") {
+                return genericArguments.size() >= 2 &&
+                    std::all_of(genericArguments.begin(), genericArguments.end(),
+                        [&](const std::string& argument) {
+                            return argument != "void" && argument != "auto" &&
+                                argument != "dynamic" && IsKnownType(argument);
+                        });
+            }
             if (genericBase == "func" || genericBase == "cfunc") {
                 if (genericArguments.empty() || genericArguments.front() == "auto" ||
                     genericArguments.front() == "dynamic") return false;
@@ -609,8 +617,16 @@ namespace Absolute {
             std::string definitionName = candidate;
             std::string genericBase;
             std::vector<std::string> genericArguments;
-            if (ParseGenericTypeName(candidate, genericBase, genericArguments))
+            if (ParseGenericTypeName(candidate, genericBase, genericArguments)) {
+                if (genericBase == "tuple") {
+                    const bool owns = std::any_of(genericArguments.begin(),
+                        genericArguments.end(), [&](const std::string& argument) {
+                            return self(self, argument);
+                        });
+                    return owns;
+                }
                 definitionName = genericBase;
+            }
             if (!visiting.insert(definitionName).second) return false;
             const auto release = [&] { visiting.erase(definitionName); };
             const auto found = types.find(definitionName);
@@ -907,6 +923,8 @@ namespace Absolute {
             symbol->externalFunction = statement.IsExternal();
             symbol->exportedFunction = statement.IsExported();
             symbol->isConst = HasModifier(statement, "const");
+            symbol->variadicParameter = !statement.parameters.empty() &&
+                statement.parameters.back()->isParams;
             for (const Token& parameter : statement.templateParams)
                 symbol->genericParameters.push_back(parameter.value);
             functionOverloads[name].push_back(*declared);
@@ -1015,6 +1033,34 @@ namespace Absolute {
             ValidateCAbiType(returnType,
                 "C ABI function '" + statement.name->value + "' return", true);
 
+        for (size_t index = 0; index < statement.parameters.size(); ++index) {
+            const VarDeclExpr& parameter = *statement.parameters[index];
+            if (!parameter.isParams) continue;
+            const std::string parameterType = ResolveDeclaredType(
+                *statement.parameters[index]);
+            if (index + 1 != statement.parameters.size())
+                Report("params parameter must be the last parameter",
+                    "E_PARAMS_NOT_LAST");
+            if (ArrayRank(parameterType) != 1)
+                Report("params parameter must be a one-dimensional array",
+                    "E_PARAMS_ARRAY_TYPE");
+            if (parameter.isReference || parameter.isConst)
+                Report("params parameter cannot be ref or const",
+                    "E_PARAMS_MODIFIER");
+            if (parameter.value)
+                Report("params parameter cannot have a default value",
+                    "E_PARAMS_DEFAULT");
+            if (statement.UsesCAbi())
+                Report("params is not supported on extern/export C ABI functions",
+                    "E_PARAMS_C_ABI");
+            if (asyncFunction)
+                Report("params is not supported on async functions",
+                    "E_PARAMS_ASYNC");
+            if (ArrayRank(parameterType) == 1 &&
+                TypeOwnsResources(ArrayElementType(parameterType)))
+                Report("params element type cannot own resources",
+                    "E_PARAMS_RESOURCE_ELEMENT");
+        }
         const std::string oldReturn = currentReturnType;
         const bool oldAsync = currentFunctionAsync;
         const bool oldConstMethod = currentMethodConst;
@@ -1595,7 +1641,12 @@ namespace Absolute {
         bool ambiguous = false;
         for (const SymbolId id : candidates) {
             const Symbol* candidate = table.Get(id);
-            if (!candidate || candidate->parameterTypes.size() != arguments.size()) continue;
+            if (!candidate) continue;
+            const bool variadic = candidate->variadicParameter;
+            const size_t fixedCount = variadic && !candidate->parameterTypes.empty()
+                ? candidate->parameterTypes.size() - 1 : candidate->parameterTypes.size();
+            if ((!variadic && candidate->parameterTypes.size() != arguments.size()) ||
+                (variadic && arguments.size() < fixedCount)) continue;
             std::vector<std::string> concreteParameters = candidate->parameterTypes;
             std::vector<std::string> inferredArguments;
             if (!candidate->genericParameters.empty()) {
@@ -1607,13 +1658,26 @@ namespace Absolute {
                 for (size_t index = 0; index < explicitTypeArguments.size(); ++index)
                     substitutions.emplace(candidate->genericParameters[index], explicitTypeArguments[index]);
                 bool unified = true;
-                for (size_t index = 0; index < arguments.size(); ++index)
-                    if (!UnifyGenericType(ValueReferenceBaseType(candidate->parameterTypes[index]),
+                for (size_t index = 0; index < arguments.size(); ++index) {
+                    std::string pattern;
+                    if (!variadic || index < fixedCount) {
+                        pattern = ValueReferenceBaseType(candidate->parameterTypes[index]);
+                    }
+                    else {
+                        const std::string arrayPattern =
+                            ValueReferenceBaseType(candidate->parameterTypes.back());
+                        const bool directArray = index == fixedCount &&
+                            arguments.size() == candidate->parameterTypes.size() &&
+                            ArrayRank(arguments[index].type) == 1;
+                        pattern = directArray ? arrayPattern : ArrayElementType(arrayPattern);
+                    }
+                    if (!UnifyGenericType(pattern,
                         arguments[index].type,
                         parameterNames, substitutions)) {
                         unified = false;
                         break;
                     }
+                }
                 if (!unified) continue;
                 for (const std::string& parameter : candidate->genericParameters) {
                     auto found = substitutions.find(parameter);
@@ -1645,11 +1709,27 @@ namespace Absolute {
                     parameter = SubstituteGenericType(parameter, substitutions);
             }
             else if (!explicitTypeArguments.empty()) continue;
-            int cost = 0;
+            if (variadic && TypeOwnsResources(ArrayElementType(
+                ValueReferenceBaseType(concreteParameters.back()))))
+                continue;
+            int cost = variadic ? 1 : 0;
             bool applicable = true;
+            const bool directVariadicArray = variadic &&
+                arguments.size() == concreteParameters.size() &&
+                !arguments.empty() &&
+                ConversionCost(ValueReferenceBaseType(concreteParameters.back()),
+                    arguments.back().type) >= 0;
             for (size_t index = 0; index < arguments.size(); ++index) {
+                std::string parameterType;
+                if (!variadic || index < fixedCount)
+                    parameterType = ValueReferenceBaseType(concreteParameters[index]);
+                else if (directVariadicArray)
+                    parameterType = ValueReferenceBaseType(concreteParameters.back());
+                else
+                    parameterType = ArrayElementType(
+                        ValueReferenceBaseType(concreteParameters.back()));
                 const int conversion = ConversionCost(
-                    ValueReferenceBaseType(concreteParameters[index]), arguments[index].type);
+                    parameterType, arguments[index].type);
                 if (conversion < 0) {
                     applicable = false;
                     break;
@@ -1721,6 +1801,15 @@ namespace Absolute {
             const std::string resolvedBase = ResolveTypeReference(genericBase);
             for (std::string& argument : genericArguments)
                 argument = ResolveTypeReference(argument);
+            if (resolvedBase == "tuple") {
+                std::string result = "tuple<";
+                for (size_t index = 0; index < genericArguments.size(); ++index) {
+                    if (index) result += ",";
+                    result += genericArguments[index];
+                }
+                result += ">";
+                return result;
+            }
             const auto definition = types.find(resolvedBase);
             if (definition == types.end() || definition->second.genericParameters.empty())
                 return name;

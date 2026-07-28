@@ -221,6 +221,67 @@ namespace Absolute {
         return argument;
     }
 
+    std::vector<llvm::Value*> CodeGenerator::Impl::EvaluateCallArguments(
+        const std::vector<Expression*>& expressions,
+        std::vector<llvm::Value*>& temporaryArrayOwners,
+        std::vector<llvm::Value*>& temporaryClosureOwners,
+        const std::vector<std::string>& rawParameterTypes,
+        bool variadicParameter) {
+        std::vector<std::string> parameterTypes = rawParameterTypes;
+        for (std::string& parameter : parameterTypes)
+            parameter = SubstituteCodegenType(parameter, currentGenericSubstitutions);
+
+        std::vector<llvm::Value*> arguments;
+        if (!variadicParameter) {
+            arguments.reserve(expressions.size());
+            for (size_t index = 0; index < expressions.size(); ++index)
+                arguments.push_back(EvaluateCallArgument(
+                    expressions[index], temporaryArrayOwners, temporaryClosureOwners,
+                    index < parameterTypes.size() ? parameterTypes[index] : std::string{}));
+            return arguments;
+        }
+        if (parameterTypes.empty()) Fail("params callable has no array parameter");
+        const size_t fixedCount = parameterTypes.size() - 1;
+        if (expressions.size() < fixedCount)
+            Fail("params call has too few fixed arguments");
+
+        arguments.reserve(parameterTypes.size());
+        for (size_t index = 0; index < fixedCount; ++index)
+            arguments.push_back(EvaluateCallArgument(
+                expressions[index], temporaryArrayOwners, temporaryClosureOwners,
+                parameterTypes[index]));
+
+        const std::string& arrayType = parameterTypes.back();
+        const bool directArray = expressions.size() == parameterTypes.size() &&
+            SemanticType(expressions.back()) == ValueReferenceBaseTypeName(arrayType);
+        if (directArray) {
+            arguments.push_back(EvaluateCallArgument(
+                expressions.back(), temporaryArrayOwners, temporaryClosureOwners,
+                arrayType));
+            return arguments;
+        }
+
+        const std::string elementTypeName = ArrayElementTypeName(
+            ValueReferenceBaseTypeName(arrayType), 1);
+        llvm::Type* elementType = TypeFromName(elementTypeName);
+        const size_t count = expressions.size() - fixedCount;
+        llvm::AllocaInst* storage = builder.CreateAlloca(
+            elementType, builder.getInt64(count), "params.storage");
+        storage->setAlignment(llvm::Align(16));
+        for (size_t index = 0; index < count; ++index) {
+            llvm::Value* item = EvaluateCallArgument(
+                expressions[fixedCount + index], temporaryArrayOwners,
+                temporaryClosureOwners, elementTypeName);
+            llvm::Value* destination = builder.CreateInBoundsGEP(
+                elementType, storage, builder.getInt64(index), "params.element");
+            builder.CreateStore(item, destination);
+        }
+        arguments.push_back(BuildArrayDescriptor(
+            {storage, elementType, ValueReferenceBaseTypeName(arrayType),
+                {builder.getInt64(count)}, nullptr}));
+        return arguments;
+    }
+
     void CodeGenerator::Impl::ConsumeTaskArgument(
         Expression* expression, const std::string& parameterType) {
         if (!expression || !IsTaskTypeName(parameterType)) return;
@@ -542,7 +603,12 @@ namespace Absolute {
         if (sourceType->isIntegerTy() && target->isPointerTy()) {
             return builder.CreateIntToPtr(source, target, "int.to.ptr");
         }
-        Fail("incompatible value conversion");
+        std::string sourceText;
+        std::string targetText;
+        llvm::raw_string_ostream(sourceText) << *sourceType;
+        llvm::raw_string_ostream(targetText) << *target;
+        Fail("incompatible value conversion from '" + semanticSource + "' (" +
+            sourceText + ") to '" + targetValueType + "' (" + targetText + ")");
     }
 
     llvm::Type* CodeGenerator::Impl::CommonNumericType(llvm::Type* left, llvm::Type* right) {
@@ -680,7 +746,7 @@ namespace Absolute {
             name == "toString" || name == "assert" || name == "copy" || name == "move" ||
             name == "seal" || name == "unseal" ||
             name == "load" || name == "isLoaded" || name == "loadError" ||
-            name == "taskGroupAdd";
+            name == "taskGroupAdd" || name == "tuple";
     }
 
 
@@ -1043,6 +1109,12 @@ namespace Absolute {
         if (name == "int32" || name == "uint32" || name == "float") return 4;
         if (name == "int64" || name == "uint64" || name == "double" || name == "string" ||
             IsPointerTypeName(name)) return 8;
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseCodegenGenericType(name, genericBase, genericArguments) &&
+            genericBase == "tuple")
+            return module->getDataLayout().getTypeAllocSize(
+                TypeFromName(name)).getFixedValue();
         if (classes.contains(name)) {
             FinalizeClass(name);
             return module->getDataLayout().getTypeAllocSize(classes.at(name).llvmType).getFixedValue();

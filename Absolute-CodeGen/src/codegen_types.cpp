@@ -57,6 +57,18 @@ namespace Absolute {
             return builder.getPtrTy();
         if (ParseCodegenCFunctionType(name, functionReturn, functionParameters))
             return builder.getPtrTy();
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseCodegenGenericType(name, genericBase, genericArguments) &&
+            genericBase == "tuple") {
+            if (genericArguments.size() < 2)
+                Fail("tuple requires at least two element types");
+            std::vector<llvm::Type*> elements;
+            elements.reserve(genericArguments.size());
+            for (const std::string& argument : genericArguments)
+                elements.push_back(TypeFromName(argument));
+            return llvm::StructType::get(context, elements, false);
+        }
         if (IsManagedPointerTypeName(name)) return builder.getInt64Ty();
         if (IsRawPointerTypeName(name)) return builder.getPtrTy();
         if (name == "int8" || name == "uint8" || name == "char") return builder.getInt8Ty();

@@ -428,6 +428,41 @@ namespace Absolute {
                 return;
             }
         }
+        std::string tupleBase;
+        std::vector<std::string> tupleElements;
+        if (ParseGenericTypeName(base.type, tupleBase, tupleElements) &&
+            tupleBase == "tuple") {
+            if (expr->member == "length" || expr->member == "count") {
+                if (accessMode != AccessMode::Read)
+                    Report("tuple property '" + expr->member + "' is read-only",
+                        "E_PROPERTY_READ_ONLY");
+                callable = false;
+                callableParameters.clear();
+                Save(expr, {InvalidSymbolId, "int32", false});
+                return;
+            }
+            if (expr->member.starts_with("item")) {
+                const std::string suffix = expr->member.substr(4);
+                const bool digits = !suffix.empty() &&
+                    std::all_of(suffix.begin(), suffix.end(),
+                        [](unsigned char value) { return std::isdigit(value); });
+                size_t index = tupleElements.size();
+                if (digits) {
+                    try { index = static_cast<size_t>(std::stoull(suffix)); }
+                    catch (...) { index = tupleElements.size(); }
+                }
+                if (index < tupleElements.size()) {
+                    callable = false;
+                    callableParameters.clear();
+                    Save(expr, {base.symbol, tupleElements[index], base.isLValue});
+                    return;
+                }
+            }
+            Report("tuple type '" + base.type + "' has no member '" +
+                expr->member + "'", "E_TUPLE_MEMBER");
+            Save(expr, {InvalidSymbolId, "error", false});
+            return;
+        }
         if (base.pointerValidity == PointerValidity::Deleted ||
             base.pointerValidity == PointerValidity::Expired) {
 
@@ -901,6 +936,36 @@ namespace Absolute {
             }
             const std::string valueType = ResolveType(expr->types.front().get());
             Save(expr, {InvalidSymbolId, "task<" + valueType + ">", false});
+            return;
+        }
+        if (typeContext && templateName == "tuple") {
+            if (expr->types.size() < 2) {
+                Report("tuple requires at least two element types",
+                    "E_TUPLE_TYPE_ARITY");
+                Save(expr, {InvalidSymbolId, "error", false});
+                return;
+            }
+            std::vector<std::string> elements;
+            elements.reserve(expr->types.size());
+            for (const auto& type : expr->types) {
+                const std::string element = ResolveType(type.get());
+                if (element == "void" || element == "auto" ||
+                    element == "dynamic")
+                    Report("tuple elements require concrete non-void types",
+                        "E_TUPLE_ELEMENT_TYPE");
+                if (TypeOwnsResources(element))
+                    Report("tuple element type '" + element +
+                        "' owns resources and is not supported yet",
+                        "E_TUPLE_RESOURCE_ELEMENT");
+                elements.push_back(element);
+            }
+            std::string tupleType = "tuple<";
+            for (size_t index = 0; index < elements.size(); ++index) {
+                if (index) tupleType += ",";
+                tupleType += elements[index];
+            }
+            tupleType += ">";
+            Save(expr, {InvalidSymbolId, std::move(tupleType), false});
             return;
         }
         if (typeContext && templateName == "func") {

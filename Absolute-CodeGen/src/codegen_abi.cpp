@@ -3,11 +3,16 @@
 namespace Absolute {
     bool CodeGenerator::Impl::IsIndirectValueType(const std::string& name) {
         const std::string valueType = ValueReferenceBaseTypeName(name);
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseCodegenGenericType(valueType, genericBase, genericArguments) &&
+            genericBase == "tuple")
+            return module->getDataLayout().getTypeAllocSize(
+                TypeFromName(valueType)).getFixedValue() > DirectValueAbiLimit;
         if (!structs.contains(valueType)) return false;
         FinalizeStruct(valueType);
         return module->getDataLayout().getTypeAllocSize(
-            structs.at(valueType).llvmType).getFixedValue() >
-            DirectValueAbiLimit;
+            structs.at(valueType).llvmType).getFixedValue() > DirectValueAbiLimit;
     }
 
     llvm::Type* CodeGenerator::Impl::AbiReturnType(

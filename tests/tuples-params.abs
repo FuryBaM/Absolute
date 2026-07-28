@@ -1,0 +1,67 @@
+tuple<int64,int64,int64> makeTriple(int64 seed) {
+    return (seed, seed + 1, seed + 2);
+}
+
+int64 tupleSum(tuple<int64,int64,int64> value) {
+    return value.item0 + value.item1 + value.item2;
+}
+
+int32 sum(int32 base, params int32[] args) {
+    int32 result = base;
+    int32 index = 0;
+    while (index < args.length) {
+        result += args[index];
+        index += 1;
+    }
+    return result;
+}
+
+int32 select(int32 value) {
+    return value + 100;
+}
+
+int32 select(params int32[] values) {
+    return values.length;
+}
+
+T first<T>(params T[] args) {
+    return args[0];
+}
+
+struct Collector {
+    int32 collect(int32 base, params int32[] values) {
+        return sum(base, values);
+    }
+}
+
+extension int32 plusAll(int32 receiver, params int32[] values) {
+    return sum(receiver, values);
+}
+
+int32 main() {
+    tuple<int64,int64,int64> triple = makeTriple(40);
+    assert(triple.length == 3, "tuple length");
+    assert(tupleSum(triple) == 123, "tuple return and parameter ABI");
+
+    tuple<int32,string> pair = (7, "seven");
+    pair.item0 = 8;
+    assert(pair.item0 == 8, "tuple item lvalue");
+    assert(pair.item1 == "seven", "heterogeneous tuple");
+    assert((3, 4).item1 == 4, "tuple literal member access");
+
+    assert(sum(10) == 10, "empty params");
+    assert(sum(10, 1, 2, 3) == 16, "expanded params");
+    int32[] values = {4, 5, 6};
+    assert(sum(10, values) == 25, "direct params array");
+    assert(select(5) == 105, "fixed overload wins over params");
+    assert(first(7, 8, 9) == 7, "generic params inference");
+    assert(first(values) == 4, "generic direct params array");
+
+    Collector collector;
+    assert(collector.collect(1, 2, 3) == 6, "params method");
+    int32 receiver = 5;
+    assert(receiver.plusAll(6, 7) == 18, "params extension");
+
+    println("tuples-params=ok");
+    return 0;
+}

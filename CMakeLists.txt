@@ -480,6 +480,15 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generics-functions.abs"
     )
     add_test(
+        NAME absolute.tuples-params-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/tuples-params.abs"
+    )
+    add_test(
+        NAME absolute.tuples-params-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/tuples-params-errors.abs"
+    )
+    set_tests_properties(absolute.tuples-params-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.generic-types-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generics-types.abs"
     )
@@ -2775,6 +2784,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-generic-functions PROPERTIES
             FIXTURES_REQUIRED absolute-generic-functions-executable
             PASS_REGULAR_EXPRESSION "generic-functions=ok"
+        )
+        add_test(
+            NAME absolute.build-tuples-params
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/tuples-params.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/tuples-params-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-tuples-params PROPERTIES
+            FIXTURES_SETUP absolute-tuples-params-executable
+        )
+        add_test(NAME absolute.run-tuples-params
+            COMMAND "${CMAKE_BINARY_DIR}/tuples-params-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-tuples-params PROPERTIES
+            FIXTURES_REQUIRED absolute-tuples-params-executable
+            PASS_REGULAR_EXPRESSION "tuples-params=ok"
         )
         add_test(
             NAME absolute.build-generic-types

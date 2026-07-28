@@ -56,6 +56,7 @@ namespace Absolute {
         bool isStatic = false;
         bool valueReference = false;
         bool constValueReference = false;
+        bool variadicParameter = false;
         bool canRead = true;
         bool canWrite = true;
         bool arrayStorageEscapes = false;

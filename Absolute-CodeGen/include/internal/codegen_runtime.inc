@@ -35,6 +35,13 @@
             std::vector<llvm::Value*>& temporaryClosureOwners,
             const std::string& parameterType = {});
 
+        std::vector<llvm::Value*> EvaluateCallArguments(
+            const std::vector<Expression*>& expressions,
+            std::vector<llvm::Value*>& temporaryArrayOwners,
+            std::vector<llvm::Value*>& temporaryClosureOwners,
+            const std::vector<std::string>& parameterTypes,
+            bool variadicParameter);
+
         void ConsumeTaskArgument(Expression* expression,
             const std::string& parameterType);
 

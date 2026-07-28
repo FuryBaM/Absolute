@@ -89,6 +89,8 @@ namespace Absolute {
                     Symbol* symbol = table.Get(overloads.back().symbol);
                     if (symbol) {
                         symbol->asyncFunction = HasModifier(*stmt, "async");
+                        symbol->variadicParameter = !stmt->parameters.empty() &&
+                            stmt->parameters.back()->isParams;
                         symbol->genericParameters = types[currentType].genericParameters;
                         for (const Token& parameter : stmt->templateParams)
                             symbol->genericParameters.push_back(parameter.value);

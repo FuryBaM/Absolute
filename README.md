@@ -309,6 +309,15 @@ specialization receives its own native layout and methods. CodeGen emits only
 used monomorphizations, without runtime boxing. See
 [docs/generics.md](docs/generics.md) for syntax and current constraint limits.
 
+## Tuples and variadic parameters
+
+Structural `tuple<T...>` values use `(a, b, ...)` literals and expose
+zero-based `item0`, `item1`, ... members plus read-only `length`/`count`.
+Functions, methods, and extension methods may declare a final
+`params T[] args` parameter. Expanded arguments use caller-side stack storage;
+an existing array is passed directly. See
+[docs/tuples-and-params.md](docs/tuples-and-params.md).
+
 ## Type aliases and const
 
 Core type aliases use `using Name = Type;` and are transparent during semantic

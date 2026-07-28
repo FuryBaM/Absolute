@@ -116,8 +116,21 @@ namespace Absolute{
                 return nullptr;
 
             // Проверяем закрывающую скобку
-            Consume(TokenType::BRACKET, ")");
+            if (CurrentToken() && CurrentToken()->type == TokenType::DELIMITER &&
+                CurrentToken()->value == ",") {
+                std::vector<std::unique_ptr<Expression>> values;
+                values.push_back(std::move(expr));
+                while (CurrentToken() && CurrentToken()->type == TokenType::DELIMITER &&
+                    CurrentToken()->value == ",") {
+                    Consume(TokenType::DELIMITER, ",");
+                    values.push_back(ParseExpression());
+                }
+                Consume(TokenType::BRACKET, ")");
+                return std::make_unique<FunctionCallExpr>(
+                    std::make_unique<IdentifierExpr>("tuple"), std::move(values));
+            }
 
+            Consume(TokenType::BRACKET, ")");
             return expr;
         }
 
@@ -135,7 +148,16 @@ namespace Absolute{
 
             if (!token) break;
 
-            if (IsPostfixUnary(*token)) {
+            if (token->value == "(") {
+                base = ParseFunctionCallExpr(std::move(base));
+            }
+            else if (token->value == "[") {
+                base = ParseArrayAccess(std::move(base));
+            }
+            else if (token->value == ".") {
+                base = ParseMemberAccess(std::move(base));
+            }
+            else if (IsPostfixUnary(*token)) {
                 base = ParsePostfixUnaryExpr(std::move(base));
             }
             else if (token->value == "as" || token->value == "is") {

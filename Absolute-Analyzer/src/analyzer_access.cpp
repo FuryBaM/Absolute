@@ -321,6 +321,35 @@ namespace Absolute {
             arguments.reserve(expr->arguments.size());
             for (const auto& argument : expr->arguments) arguments.push_back(Evaluate(argument.get()));
 
+            if (callName == "tuple") {
+                if (!explicitTypeArguments.empty())
+                    Report("tuple literal does not accept explicit type arguments",
+                        "E_TUPLE_TYPE_ARGUMENTS");
+                if (arguments.size() < 2) {
+                    Report("tuple literal requires at least two values",
+                        "E_TUPLE_LITERAL_ARITY");
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                std::string tupleType = "tuple<";
+                for (size_t index = 0; index < arguments.size(); ++index) {
+                    const std::string& element = arguments[index].type;
+                    if (element == "void" || element == "auto" ||
+                        element == "dynamic")
+                        Report("tuple elements require concrete non-void values",
+                            "E_TUPLE_ELEMENT_TYPE");
+                    if (TypeOwnsResources(element))
+                        Report("tuple element type '" + element +
+                            "' owns resources and is not supported yet",
+                            "E_TUPLE_RESOURCE_ELEMENT", arguments[index].symbol);
+                    if (index) tupleType += ",";
+                    tupleType += element;
+                }
+                tupleType += ">";
+                Save(expr, {table.Lookup(callName), std::move(tupleType), false});
+                return;
+            }
+
             if (callName == "print" || callName == "println") {
                 for (size_t index = 0; index < arguments.size(); ++index) {
                     if (!IsPrintableType(arguments[index].type))
@@ -718,14 +747,31 @@ namespace Absolute {
         if (selected && selected->kind == SymbolKind::Method)
             RequireAccess(selected->access, selected->memberOwner, selected->name, selected->id);
         if (selected) {
+            const size_t extensionOffset =
+                selected->extensionFunction && hasReceiver ? 1 : 0;
+            const size_t effectiveArgumentCount = arguments.size() + extensionOffset;
+            const size_t fixedCount = selected->variadicParameter &&
+                !selected->parameterTypes.empty()
+                ? selected->parameterTypes.size() - 1
+                : selected->parameterTypes.size();
             for (size_t i = 0; i < arguments.size(); ++i) {
-                const size_t parameterIndex = i +
-                    (selected->extensionFunction && hasReceiver ? 1 : 0);
+                const size_t parameterIndex = i + extensionOffset;
                 if (parameterIndex < selected->parameterTypes.size() &&
                     dynamic_cast<ArrayExpr*>(expr->arguments[i].get())) {
+                    std::string expectedType =
+                        ValueReferenceBaseType(selected->parameterTypes[parameterIndex]);
+                    if (selected->variadicParameter && parameterIndex >= fixedCount) {
+                        const bool directArray = effectiveArgumentCount ==
+                            selected->parameterTypes.size() &&
+                            ArrayRank(arguments[i].type) == 1 &&
+                            IsAssignable(ValueReferenceBaseType(
+                                selected->parameterTypes.back()), arguments[i].type);
+                        if (!directArray)
+                            expectedType = ArrayElementType(ValueReferenceBaseType(
+                                selected->parameterTypes.back()));
+                    }
                     arguments[i] = EvaluateExpected(
-                        expr->arguments[i].get(),
-                        ValueReferenceBaseType(selected->parameterTypes[parameterIndex]));
+                        expr->arguments[i].get(), expectedType);
                 }
             }
         }
@@ -741,8 +787,28 @@ namespace Absolute {
             const Result& argument = arguments[i];
             const size_t parameterIndex = i +
                 (selected && selected->extensionFunction && hasReceiver ? 1 : 0);
-            if (selected && parameterIndex < selected->parameterTypes.size()) {
-                const std::string& parameterType = selected->parameterTypes[parameterIndex];
+            if (selected && (selected->variadicParameter
+                ? !selected->parameterTypes.empty()
+                : parameterIndex < selected->parameterTypes.size())) {
+                const size_t fixedCount = selected->variadicParameter &&
+                    !selected->parameterTypes.empty()
+                    ? selected->parameterTypes.size() - 1
+                    : selected->parameterTypes.size();
+                const size_t effectiveArgumentCount = arguments.size() +
+                    (selected->extensionFunction && hasReceiver ? 1 : 0);
+                std::string parameterType = parameterIndex < fixedCount
+                    ? selected->parameterTypes[parameterIndex]
+                    : selected->parameterTypes.back();
+                if (selected->variadicParameter && parameterIndex >= fixedCount) {
+                    const bool directArray = effectiveArgumentCount ==
+                        selected->parameterTypes.size() &&
+                        ArrayRank(argument.type) == 1 &&
+                        IsAssignable(ValueReferenceBaseType(
+                            selected->parameterTypes.back()), argument.type);
+                    if (!directArray)
+                        parameterType = ArrayElementType(ValueReferenceBaseType(
+                            selected->parameterTypes.back()));
+                }
                 const std::string parameterValueType = ValueReferenceBaseType(parameterType);
                 if (IsValueReferenceType(parameterType)) {
                     if (!IsConstValueReferenceType(parameterType)) {

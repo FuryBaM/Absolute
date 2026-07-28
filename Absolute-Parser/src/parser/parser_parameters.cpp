@@ -13,6 +13,9 @@ namespace Absolute{
         std::vector<std::unique_ptr<VarDeclExpr>> parameters;
         while (!(RequireCurrent("a parameter or ')'")->type == TokenType::BRACKET && CurrentToken()->value == ")"))
         {
+            const bool isParams = CurrentToken()->type == TokenType::KEYWORD &&
+                CurrentToken()->value == "params";
+            if (isParams) Consume(TokenType::KEYWORD, "params");
             const bool isConst = CurrentToken()->type == TokenType::KEYWORD &&
                 CurrentToken()->value == "const";
             if (isConst) Consume(TokenType::KEYWORD, "const");
@@ -39,6 +42,7 @@ namespace Absolute{
                     std::move(type), std::move(nameExpr), std::move(value));
                 parameter->isConst = isConst;
                 parameter->isReference = isReference;
+                parameter->isParams = isParams;
                 parameters.push_back(std::move(parameter));
             }
             else {
@@ -46,6 +50,7 @@ namespace Absolute{
                     std::move(type), std::move(nameExpr), nullptr);
                 parameter->isConst = isConst;
                 parameter->isReference = isReference;
+                parameter->isParams = isParams;
                 parameters.push_back(std::move(parameter));
             }
 
