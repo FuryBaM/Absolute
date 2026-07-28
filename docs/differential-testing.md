@@ -32,8 +32,10 @@ Node runner, and mismatch report live under
 The fixed `tests/abi-linker-corpus.json` manifest is the common linker ABI
 contract. Its sources cover arrays, small and large value types, value
 references, interface and virtual dispatch, generic callback fields,
-managed/raw pointers, and C exports. The same manifest and exact stdout oracle
-are consumed by:
+managed/weak/raw pointers, C exports, integer overflow, signed/unsigned and
+floating-point conversions, constant folding, generic functions, closures,
+exceptions, `defer`, async execution, multidimensional slices, and snapshot
+collections. The same 17-case manifest and exact stdout oracle are consumed by:
 
 - `absolute.abi-linker-corpus-native`, labelled `windows-msvc`, `linux-elf`, or
   `macos-mach-o` according to the configured host linker;

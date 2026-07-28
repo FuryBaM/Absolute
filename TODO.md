@@ -847,9 +847,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   structs, interfaces, generic callbacks, managed/raw pointers и C exports;
   каждый runner сверяет формат артефакта, exit code и полный stdout с одним
   oracle.
-- [ ] Включить в corpus arithmetic overflow, signed/unsigned conversions, floats,
+- [x] Включить в corpus arithmetic overflow, signed/unsigned conversions, floats,
   constant folding, generics, lambdas, interfaces, exceptions, `defer`, async,
-  managed/weak/raw pointers, arrays, slices и snapshot collections.
+  managed/weak/raw pointers, arrays, slices и snapshot collections: versioned
+  linker manifest содержит 17 фиксированных cases с общим stdout oracle для
+  PE/ELF/WebAssembly.
 - [ ] Сохранять минимальный source и все расходящиеся outputs при mismatch.
 - [ ] Добавить metamorphic properties: dead-code insertion, alpha-renaming,
   эквивалентная перестановка независимых declarations и constant/runtime variants
