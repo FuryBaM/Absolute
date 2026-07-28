@@ -474,7 +474,7 @@ namespace Absolute::RuntimeDetail {
     }
 }
 
-#else
+#elif !defined(__APPLE__)
 
 namespace Absolute::RuntimeDetail {
     bool WaitSocketReady(int, std::uint32_t) {

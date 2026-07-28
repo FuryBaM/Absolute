@@ -4,7 +4,7 @@
 #include <iostream>
 #include <vector>
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -171,7 +171,7 @@ void udpClient(void* opaque) {
             << absolute_net_error() << '\n';
 }
 
-#if defined(__linux__) || defined(_WIN32)
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
 struct SharedReceiveContext {
     void* socket = nullptr;
     char value = '\0';
@@ -204,7 +204,7 @@ void sharedSend(void* opaque) {
 }
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 struct ReactorWaitContext {
     int descriptor = -1;
     bool ready = false;
@@ -297,7 +297,7 @@ int main() {
     // Eight pending accepts exceed the two-thread fallback I/O pool. They can
     // all make progress only when Linux epoll or Windows IOCP owns the wait
     // instead of occupying those threads.
-#if defined(__linux__) || defined(_WIN32)
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
     constexpr std::int32_t networkPairs = 8;
 #else
     constexpr std::int32_t networkPairs = 1;
@@ -343,7 +343,7 @@ int main() {
             listeners[static_cast<std::size_t>(index)]);
     }
 
-#if defined(__linux__) || defined(_WIN32)
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
     std::cerr << "phase=shared-socket-receive\n";
     void* sharedListener =
         absolute_net_tcp_listen("127.0.0.1", 0, 4);
@@ -411,19 +411,19 @@ int main() {
     absolute_net_udp_close(udpListener);
     absolute_net_udp_close(udpSender);
 
-#if defined(__linux__)
-    std::cerr << "phase=epoll-shared-descriptor\n";
+#if defined(__linux__) || defined(__APPLE__)
+    std::cerr << "phase=native-readiness-shared-descriptor\n";
     int socketPair[2] = {-1, -1};
     require(socketpair(AF_UNIX, SOCK_STREAM, 0, socketPair) == 0);
     auto* firstWait = new ReactorWaitContext{socketPair[0], false};
     auto* secondWait = new ReactorWaitContext{socketPair[0], false};
     auto* signal = new ReactorSignalContext{socketPair[1], false};
     void* firstWaitTask = absolute_task_spawn_config(
-        reactorReadWait, firstWait, -1, 3, "epoll-read-1");
+        reactorReadWait, firstWait, -1, 3, "native-read-1");
     void* secondWaitTask = absolute_task_spawn_config(
-        reactorReadWait, secondWait, -1, 3, "epoll-read-2");
+        reactorReadWait, secondWait, -1, 3, "native-read-2");
     void* signalTask = absolute_task_spawn_config(
-        reactorSignal, signal, -1, -3, "epoll-signal");
+        reactorSignal, signal, -1, -3, "native-signal");
     firstWait = await<ReactorWaitContext>(firstWaitTask);
     secondWait = await<ReactorWaitContext>(secondWaitTask);
     signal = await<ReactorSignalContext>(signalTask);

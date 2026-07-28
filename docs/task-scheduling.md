@@ -66,16 +66,20 @@ with the suspended fiber until the completion packet returns it to the
 scheduler queue. Parallel operations on one socket therefore do not share a
 mutable receive buffer.
 
+macOS has a one-shot `kqueue` reactor using `EVFILT_READ` and `EVFILT_WRITE`.
+An `EVFILT_USER` control event delivers new registrations to its reactor
+thread, and remaining waiters are rearmed after each readiness event. The same
+multi-accept, shared-socket, and UDP scheduler regression is enabled on macOS;
+the backend still requires confirmation by the hosted `macos-15` job.
+
 DNS resolution, connect, timed socket waits, filesystem metadata, whole-file
 operations, and streaming file operations use a separate blocking I/O executor.
-macOS socket operations also use this portable fallback until its `kqueue`
-backend is implemented. The calling fiber is still suspended, so the host
-operation never occupies a scheduler worker. Calls made outside an Absolute
-task remain synchronous.
+The calling fiber is still suspended, so the host operation never occupies a
+scheduler worker. Calls made outside an Absolute task remain synchronous.
 
 The I/O executor defaults to the host concurrency clamped to `2..4` threads.
 `ABSOLUTE_IO_WORKERS=2..32` overrides it before the first task uses the portable
 blocking-offload backend. It does not limit Linux/Termux `epoll` socket
-concurrency or Windows IOCP completions. `kqueue` on macOS and deadline
-cancellation in the native reactors remain planned; they use the same fiber
+concurrency, Windows IOCP completions, or macOS `kqueue` readiness. Native
+connect and deadline cancellation remain planned; they use the same fiber
 suspension contract.

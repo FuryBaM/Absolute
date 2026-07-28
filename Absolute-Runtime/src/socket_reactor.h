@@ -17,7 +17,7 @@ namespace Absolute::RuntimeDetail {
 
     // Suspends the current scheduler fiber until a one-shot native socket
     // readiness notification arrives. This is implemented with epoll on
-    // Linux/Android; other platforms return ENOTSUP and keep using offload.
+    // Linux/Android and kqueue on macOS; unsupported platforms return ENOTSUP.
     bool WaitSocketReady(int descriptor, std::uint32_t events);
 
 #if defined(_WIN32)

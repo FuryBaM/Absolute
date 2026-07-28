@@ -57,7 +57,7 @@ namespace {
 
     template <class Result, class Operation>
     Result RunSocketIo(SocketState* state, Operation&& operation) {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
         // Timed waits stay on the portable offload executor until the native
         // reactor grows deadline cancellation. Infinite waits use epoll.
         if (state && state->timeoutMilliseconds > 0 &&
@@ -165,7 +165,7 @@ namespace {
     }
 
     bool SetNonBlocking(NativeSocket socket) {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
         const int flags = fcntl(socket, F_GETFL, 0);
         return flags >= 0 && fcntl(socket, F_SETFL, flags | O_NONBLOCK) == 0;
 #else
@@ -185,7 +185,7 @@ namespace {
 
     bool WaitForSocket(
         SocketState* state, std::uint32_t events, const char* operation) {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
         if (Absolute::RuntimeDetail::IsSchedulerTask() &&
             state->timeoutMilliseconds <= 0) {
             if (Absolute::RuntimeDetail::WaitSocketReady(
@@ -506,7 +506,7 @@ extern "C" void* absolute_net_tcp_accept(void* handle) {
                 }
                 return NewState(accepted);
             }
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
             if (WouldBlock()) {
                 if (WaitForSocket(
                         listener,
@@ -562,7 +562,7 @@ extern "C" std::int32_t absolute_net_tcp_send(void* handle, const char* text) {
                 static_cast<std::size_t>(chunk), MSG_NOSIGNAL));
 #endif
             if (result < 0) {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
                 if (WouldBlock()) {
                     if (WaitForSocket(
                             state,
@@ -628,7 +628,7 @@ extern "C" const char* absolute_net_tcp_receive(
                 static_cast<std::size_t>(maximumBytes), 0));
 #endif
             if (count >= 0) break;
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
             if (WouldBlock()) {
                 if (WaitForSocket(
                         state,
@@ -850,7 +850,7 @@ extern "C" std::int32_t absolute_net_udp_send_to(void* handle, const char* host,
                 reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
 #endif
             if (sent >= 0) break;
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
             if (WouldBlock()) {
                 if (WaitForSocket(
                         state,
@@ -916,7 +916,7 @@ extern "C" const char* absolute_net_udp_receive_from(void* handle, std::int32_t 
                 reinterpret_cast<sockaddr*>(&srcAddr), &addrLen);
 #endif
             if (count >= 0) break;
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
             if (WouldBlock()) {
                 if (WaitForSocket(
                         state,

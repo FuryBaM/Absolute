@@ -777,7 +777,12 @@ Task-isolate, закрытый message envelope и transfer capsule описан
     - [x] Windows IOCP: один process-wide completion port, overlapped
       `AcceptEx`/`WSASend`/`WSARecv`/`WSASendTo`/`WSARecvFrom`, независимые
       operation buffers и возврат completion напрямую в scheduler queue.
-    - [ ] macOS `kqueue`.
+    - [ ] macOS `kqueue`:
+      - [x] Реализовать отдельный one-shot reactor на
+        `EVFILT_READ`/`EVFILT_WRITE`, wake-up через `EVFILT_USER`, несколько
+        waiters на descriptor и общий TCP/UDP suspension path.
+      - [ ] Подтвердить backend настоящим `macos-15` hosted run; локально
+        выполнены platform-guard regression и syntax-check контракта `kevent`.
     - [ ] Перевести nonblocking connect и timed socket waits в native reactors
       после появления deadline/cancellation registration.
     - [x] Сохранить blocking-offload fallback для DNS и файловых операций без

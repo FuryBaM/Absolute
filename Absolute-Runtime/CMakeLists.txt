@@ -20,6 +20,7 @@ add_library(Absolute-Runtime STATIC
     src/scheduler_io.h
     src/socket_reactor.cpp
     src/socket_reactor.h
+    src/socket_reactor_kqueue.cpp
     src/string.cpp
     src/tasks.cpp
     src/time.cpp
