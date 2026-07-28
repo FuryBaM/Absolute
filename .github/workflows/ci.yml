@@ -4,49 +4,154 @@ on:
   push:
   pull_request:
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  ABSOLUTE_LLVM_VERSION: "18"
+  ABSOLUTE_NODE_VERSION: "24"
+  ABSOLUTE_WASMTIME_VERSION: "45.0.0"
+
 jobs:
   build-and-test:
+    name: build-and-test (${{ matrix.os }}, ${{ matrix.configuration }})
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
         configuration: [Debug, Release]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install LLVM (Ubuntu)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y llvm-dev
-
-      - name: Configure with LLVM
+      - name: Install pinned LLVM (Ubuntu)
         if: runner.os == 'Linux'
         shell: bash
-        run: >-
-          cmake -S . -B build
-          -DCMAKE_BUILD_TYPE=${{ matrix.configuration }}
-          -DBUILD_TESTING=ON
-          -DLLVM_DIR="$(llvm-config --cmakedir)"
+        run: |
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              if [[ "$attempt" -lt 3 ]]; then sleep $((attempt * 10)); fi
+            done
+            return 1
+          }
+          retry sudo apt-get update
+          retry sudo apt-get install -y \
+            llvm-${ABSOLUTE_LLVM_VERSION}-dev \
+            llvm-${ABSOLUTE_LLVM_VERSION}-tools \
+            clang-${ABSOLUTE_LLVM_VERSION} \
+            lld-${ABSOLUTE_LLVM_VERSION}
+
+      - name: Configure with LLVM (Ubuntu)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p ci-logs
+          set -o pipefail
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=${{ matrix.configuration }} \
+            -DBUILD_TESTING=ON \
+            -DLLVM_DIR="$(llvm-config-${ABSOLUTE_LLVM_VERSION} --cmakedir)" \
+            2>&1 | tee ci-logs/configure.log
 
       - name: Configure frontend (Windows)
         if: runner.os == 'Windows'
-        run: >-
-          cmake -S . -B build
-          -DBUILD_TESTING=ON
-          -DABSOLUTE_ENABLE_LLVM=OFF
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ci-logs | Out-Null
+          $output = & cmake -S . -B build -DBUILD_TESTING=ON -DABSOLUTE_ENABLE_LLVM=OFF 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath ci-logs/configure.log
+          exit $code
 
-      - name: Build
-        run: cmake --build build --config ${{ matrix.configuration }} --parallel 2
+      - name: Build (Ubuntu)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake --build build --config ${{ matrix.configuration }} --parallel 2 \
+            2>&1 | tee ci-logs/build.log
 
-      - name: Test
-        run: ctest --test-dir build -C ${{ matrix.configuration }} --output-on-failure
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $output = & cmake --build build --config ${{ matrix.configuration }} --parallel 2 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath ci-logs/build.log
+          exit $code
+
+      - name: Test (Ubuntu)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -o pipefail
+          ctest --test-dir build -C ${{ matrix.configuration }} \
+            --output-on-failure --timeout 180 \
+            2>&1 | tee ci-logs/ctest.log
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $output = & ctest --test-dir build -C ${{ matrix.configuration }} --output-on-failure --timeout 180 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath ci-logs/ctest.log
+          exit $code
+
+      - name: Record toolchain versions (Ubuntu)
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p ci-logs
+          {
+            uname -a
+            cmake --version
+            clang-${ABSOLUTE_LLVM_VERSION} --version
+            llvm-config-${ABSOLUTE_LLVM_VERSION} --version
+            node --version || true
+          } > ci-logs/toolchain.txt 2>&1
+
+      - name: Record toolchain versions (Windows)
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ci-logs | Out-Null
+          @(
+            "OS=$([System.Environment]::OSVersion.VersionString)"
+            (& cmake --version 2>&1)
+            (& cl 2>&1)
+            (& node --version 2>&1)
+          ) | Set-Content ci-logs/toolchain.txt
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-${{ matrix.os }}-${{ matrix.configuration }}-failure
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            ci-logs
+            build/Testing/Temporary
+            build/**/*.ll
+            build/**/*.wasm
+            build/**/*.exe
+            build/**/absolutec
 
   windows-llvm-release:
     runs-on: windows-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.ABSOLUTE_NODE_VERSION }}
 
       - name: Cache portable LLVM SDK
         uses: actions/cache@v4
@@ -54,69 +159,278 @@ jobs:
           path: .absolute/toolchains/llvm-18.1.8
           key: windows-llvm-18.1.8-sdk-v1
 
-      - name: Bootstrap LLVM, build, and test natively
-        shell: cmd
-        run: build-windows.bat --bootstrap
+      - name: Bootstrap portable LLVM SDK
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          New-Item -ItemType Directory -Force ci-logs | Out-Null
+          $output = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/windows/bootstrap-llvm.ps1 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath ci-logs/bootstrap.log
+          exit $code
 
-      - name: WebAssembly tests (Node engine)
+      - name: Build native LLVM backend
         shell: cmd
-        run: ctest --test-dir .absolute\build\windows-release -C Release -R wasm --output-on-failure
+        run: |
+          call build-windows.bat --no-test > ci-logs\build.log 2>&1
+          set code=%ERRORLEVEL%
+          type ci-logs\build.log
+          exit /b %code%
 
-  # Host-native smoke on macOS (often Apple Silicon arm64 on GitHub runners).
+      - name: Test native and WebAssembly targets
+        shell: cmd
+        run: |
+          ctest --test-dir .absolute\build\windows-release -C Release --output-on-failure --timeout 180 > ci-logs\ctest.log 2>&1
+          set code=%ERRORLEVEL%
+          type ci-logs\ctest.log
+          exit /b %code%
+
+      - name: Record toolchain versions
+        if: always()
+        shell: pwsh
+        run: |
+          @(
+            "OS=$([System.Environment]::OSVersion.VersionString)"
+            (& cmake --version 2>&1)
+            (& node --version 2>&1)
+            (& .absolute/toolchains/llvm-18.1.8/bin/llvm-config.exe --version 2>&1)
+            (& cl 2>&1)
+          ) | Set-Content ci-logs/toolchain.txt
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-windows-llvm-release-failure
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            ci-logs
+            .absolute/build/windows-release/Testing/Temporary
+            .absolute/build/windows-release/**/*.ll
+            .absolute/build/windows-release/**/*.wasm
+            .absolute/build/windows-release/**/*.exe
+
   macos-smoke:
     runs-on: macos-latest
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install LLVM
+      - name: Install pinned LLVM
+        shell: bash
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
-          brew update
-          brew install llvm@18 || brew install llvm
-          LLVM_PREFIX="$(brew --prefix llvm@18 2>/dev/null || brew --prefix llvm)"
+          brew install llvm@18
+          LLVM_PREFIX="$(brew --prefix llvm@18)"
           echo "LLVM_PREFIX=${LLVM_PREFIX}" >> "$GITHUB_ENV"
           echo "LLVM_DIR=${LLVM_PREFIX}/lib/cmake/llvm" >> "$GITHUB_ENV"
           echo "${LLVM_PREFIX}/bin" >> "$GITHUB_PATH"
 
       - name: Configure Release with LLVM
-        run: >-
-          cmake -S . -B build
-          -DCMAKE_BUILD_TYPE=Release
-          -DBUILD_TESTING=ON
-          -DABSOLUTE_ENABLE_LLVM=ON
-          -DLLVM_DIR="${LLVM_DIR}"
+        shell: bash
+        run: |
+          mkdir -p ci-logs
+          set -o pipefail
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DABSOLUTE_ENABLE_LLVM=ON \
+            -DLLVM_DIR="${LLVM_DIR}" \
+            2>&1 | tee ci-logs/configure.log
 
       - name: Build
-        run: cmake --build build --config Release --parallel 2
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake --build build --config Release --parallel 2 \
+            2>&1 | tee ci-logs/build.log
 
       - name: Test
-        run: ctest --test-dir build -C Release --output-on-failure
+        shell: bash
+        run: |
+          set -o pipefail
+          ctest --test-dir build -C Release --output-on-failure --timeout 180 \
+            2>&1 | tee ci-logs/ctest.log
 
-  # Linux wasm smoke: build Absolute + run wasm ctests; optional wasmtime for WASI module.
+      - name: Record toolchain versions
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p ci-logs
+          {
+            sw_vers
+            uname -m
+            cmake --version
+            "${LLVM_PREFIX}/bin/clang" --version
+            "${LLVM_PREFIX}/bin/llvm-config" --version
+          } > ci-logs/toolchain.txt 2>&1
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-macos-smoke-failure
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            ci-logs
+            build/Testing/Temporary
+            build/**/*.ll
+            build/**/*.wasm
+            build/**/absolutec
+
   linux-wasm-smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install LLVM and tools
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.ABSOLUTE_NODE_VERSION }}
+
+      - name: Install pinned LLVM and tools
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y llvm-dev clang lld
-          # wasm-ld often ships with lld package as wasm-ld-XX or via llvm
-          which wasm-ld || which wasm-ld-18 || true
-          curl -sSfL https://github.com/bytecodealliance/wasmtime/releases/download/v25.0.2/wasmtime-v25.0.2-x86_64-linux.tar.xz -o /tmp/wasmtime.tar.xz
-          sudo tar -xJf /tmp/wasmtime.tar.xz -C /usr/local --strip-components=1
-          wasmtime --version
+          mkdir -p ci-logs
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              if [[ "$attempt" -lt 3 ]]; then sleep $((attempt * 10)); fi
+            done
+            return 1
+          }
+          retry sudo apt-get update
+          retry sudo apt-get install -y \
+            llvm-${ABSOLUTE_LLVM_VERSION}-dev \
+            llvm-${ABSOLUTE_LLVM_VERSION}-tools \
+            clang-${ABSOLUTE_LLVM_VERSION} \
+            lld-${ABSOLUTE_LLVM_VERSION} \
+            curl xz-utils
+
+          archive="wasmtime-v${ABSOLUTE_WASMTIME_VERSION}-x86_64-linux.tar.xz"
+          url="https://github.com/bytecodealliance/wasmtime/releases/download/v${ABSOLUTE_WASMTIME_VERSION}/${archive}"
+          curl --fail --location --show-error --silent \
+            --retry 5 --retry-all-errors --connect-timeout 20 \
+            "$url" -o "/tmp/${archive}"
+          tar -tJf "/tmp/${archive}" >/dev/null
+          sudo tar -xJf "/tmp/${archive}" -C /usr/local --strip-components=1
+          wasmtime --version | tee ci-logs/wasmtime-version.txt
 
       - name: Configure Release with LLVM
-        run: >-
-          cmake -S . -B build
-          -DCMAKE_BUILD_TYPE=Release
-          -DBUILD_TESTING=ON
-          -DABSOLUTE_ENABLE_LLVM=ON
-          -DLLVM_DIR="$(llvm-config --cmakedir)"
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DABSOLUTE_ENABLE_LLVM=ON \
+            -DLLVM_DIR="$(llvm-config-${ABSOLUTE_LLVM_VERSION} --cmakedir)" \
+            2>&1 | tee ci-logs/configure.log
 
       - name: Build
-        run: cmake --build build --config Release --parallel 2
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake --build build --config Release --parallel 2 \
+            2>&1 | tee ci-logs/build.log
 
       - name: Wasm tests
-        run: ctest --test-dir build -C Release -R wasm --output-on-failure
+        shell: bash
+        run: |
+          set -o pipefail
+          ctest --test-dir build -C Release -R wasm --output-on-failure --timeout 180 \
+            2>&1 | tee ci-logs/ctest.log
+
+      - name: Record toolchain versions
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p ci-logs
+          {
+            uname -a
+            cmake --version
+            clang-${ABSOLUTE_LLVM_VERSION} --version
+            llvm-config-${ABSOLUTE_LLVM_VERSION} --version
+            node --version
+            wasmtime --version || true
+            command -v wasm-ld || command -v wasm-ld-${ABSOLUTE_LLVM_VERSION} || true
+          } > ci-logs/toolchain.txt 2>&1
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-linux-wasm-smoke-failure
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            ci-logs
+            build/Testing/Temporary
+            build/**/*.ll
+            build/**/*.wasm
+            build/**/absolutec
+
+  termux-host-contract:
+    name: termux-host-contract (non-Android)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Termux scripts
+        shell: bash
+        run: |
+          mkdir -p ci-logs
+          bash -n build-termux.sh run-termux.sh \
+            scripts/termux/build-termux.sh \
+            scripts/termux/bootstrap-termux.sh \
+            2>&1 | tee ci-logs/bash-syntax.log
+
+      - name: Configure Termux frontend contract
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake -S . -B build-termux-contract \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DABSOLUTE_TERMUX=ON \
+            -DABSOLUTE_ENABLE_LLVM=OFF \
+            -DABSOLUTE_BUILD_EXAMPLE_PLUGINS=OFF \
+            -DBUILD_TESTING=ON \
+            2>&1 | tee ci-logs/configure.log
+          cmake --build build-termux-contract --parallel 2 \
+            2>&1 | tee ci-logs/build.log
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-termux-host-contract-failure
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            ci-logs
+            build-termux-contract/Testing/Temporary
+
+  ci-required:
+    name: CI required gate
+    if: always()
+    needs:
+      - build-and-test
+      - windows-llvm-release
+      - macos-smoke
+      - linux-wasm-smoke
+      - termux-host-contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every supported CI job
+        shell: bash
+        run: |
+          test "${{ needs.build-and-test.result }}" = "success"
+          test "${{ needs.windows-llvm-release.result }}" = "success"
+          test "${{ needs.macos-smoke.result }}" = "success"
+          test "${{ needs.linux-wasm-smoke.result }}" = "success"
+          test "${{ needs.termux-host-contract.result }}" = "success"
