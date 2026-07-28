@@ -230,8 +230,7 @@ namespace std.collections {
                 res[i] = items[i];
                 i = i + 1;
             }
-            T[] rawCopy = copy(res);
-            return rawCopy;
+            return res;
         }
 
         public T[] unsafeCopyRaw() {

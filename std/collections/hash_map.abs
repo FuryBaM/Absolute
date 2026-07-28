@@ -255,7 +255,7 @@ namespace std.collections {
                 }
                 sourceIndex = sourceIndex + 1;
             }
-            return copy(result);
+            return result;
         }
 
         public K[] keysToArray() {
@@ -269,7 +269,7 @@ namespace std.collections {
                 }
                 sourceIndex = sourceIndex + 1;
             }
-            return copy(result);
+            return result;
         }
 
         public V[] valuesToArray() {
@@ -283,7 +283,7 @@ namespace std.collections {
                 }
                 sourceIndex = sourceIndex + 1;
             }
-            return copy(result);
+            return result;
         }
 
         public HashMapIterator<K, V>* iterate() {
@@ -483,7 +483,7 @@ namespace std.collections {
                 }
                 sourceIndex = sourceIndex + 1;
             }
-            return copy(result);
+            return result;
         }
     }
 }

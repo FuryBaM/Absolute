@@ -245,8 +245,7 @@ namespace std.collections {
                 res[i] = entries[i];
                 i = i + 1;
             }
-            KeyValuePair<K, V>[] rawCopy = copy(res);
-            return rawCopy;
+            return res;
         }
 
         public KeyValuePair<K, V>[] unsafeCopyRaw() {
