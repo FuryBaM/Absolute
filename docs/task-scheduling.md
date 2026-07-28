@@ -153,6 +153,29 @@ Fairness applies whenever control returns to the scheduler. A task that never
 suspends, waits, or finishes is not preempted and can still occupy its OS
 worker.
 
+## Scheduler metrics
+
+`std.task.metrics()` returns a managed `SchedulerMetrics` snapshot. The
+`runnable` and `suspended` fields are current gauges. The remaining fields are
+cumulative from scheduler startup:
+
+- `completed` and `queueSamples`;
+- `queueLatencyTotalNanoseconds` and `queueLatencyMaxNanoseconds`;
+- `workerBusyNanoseconds` and `workerUtilizationPermille` (`0..1000`);
+- `steals`, `wakeUps`, `blockedNanoseconds`, and `starvationEvents`.
+
+`averageQueueLatencyNanoseconds()` derives the average from the total and sample
+count. One queue sample is recorded whenever a runnable task is selected.
+`blockedNanoseconds` records completed suspension intervals. A starvation event
+is a queue episode whose latency reaches 100 milliseconds; it is a diagnostic
+counter, not a scheduler panic.
+
+Snapshots read lock-free counters and can therefore be slightly approximate
+while workers are active. A currently running execution slice contributes to
+busy time after it returns control to the scheduler. Utilization divides the
+accumulated busy time across all configured worker capacity since scheduler
+startup.
+
 Windows uses native Fibers. Linux and macOS use `ucontext`; Android/Termux uses
 the Termux `libucontext` package installed by the project bootstrap script.
 

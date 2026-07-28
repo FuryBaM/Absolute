@@ -789,6 +789,7 @@ typedef struct WasmTask {
     uint64_t error_type;
     int32_t job_id; /* host pool job slot, or -1 when run synchronously */
     int done;
+    int metrics_completed;
     WasmTaskControl* control;
 } WasmTask;
 
@@ -796,6 +797,52 @@ static int32_t g_task_core = -1;
 static int32_t g_task_priority = 0;
 static const char* g_task_role = "";
 static WasmTask* g_current_task = NULL;
+static int64_t g_metric_started_nanos = 0;
+static int64_t g_metric_runnable = 0;
+static int64_t g_metric_completed = 0;
+static int64_t g_metric_queue_samples = 0;
+static int64_t g_metric_worker_busy_nanos = 0;
+
+static int64_t wasm_metric_load(int64_t* value) {
+#if defined(ABSOLUTE_WASM_SHARED)
+    return __atomic_load_n(value, __ATOMIC_RELAXED);
+#else
+    return *value;
+#endif
+}
+
+static void wasm_metric_add(int64_t* value, int64_t amount) {
+#if defined(ABSOLUTE_WASM_SHARED)
+    __atomic_add_fetch(value, amount, __ATOMIC_RELAXED);
+#else
+    *value += amount;
+#endif
+}
+
+static void wasm_metric_start(int64_t now) {
+#if defined(ABSOLUTE_WASM_SHARED)
+    int64_t expected = 0;
+    (void)__atomic_compare_exchange_n(
+        &g_metric_started_nanos, &expected, now, 0,
+        __ATOMIC_RELAXED, __ATOMIC_RELAXED);
+#else
+    if (g_metric_started_nanos == 0)
+        g_metric_started_nanos = now;
+#endif
+}
+
+static void wasm_task_metric_complete(
+    WasmTask* task, int64_t busy_nanos, int queue_sample) {
+    if (!task || task->metrics_completed)
+        return;
+    task->metrics_completed = 1;
+    wasm_metric_add(&g_metric_runnable, -1);
+    wasm_metric_add(&g_metric_completed, 1);
+    if (queue_sample)
+        wasm_metric_add(&g_metric_queue_samples, 1);
+    if (busy_nanos > 0)
+        wasm_metric_add(&g_metric_worker_busy_nanos, busy_nanos);
+}
 
 static void wasm_task_control_retain(WasmTaskControl* control) {
     if (!control) return;
@@ -911,6 +958,7 @@ void* absolute_task_spawn_config(
     task->error_type = 0;
     task->job_id = -1;
     task->done = 0;
+    task->metrics_completed = 0;
     task->control = wasm_task_control_create(
         g_current_task ? g_current_task->control : NULL);
     if (!task->control)
@@ -924,6 +972,10 @@ void* absolute_task_spawn_config(
     g_task_priority = priority;
     g_task_role = role ? role : "";
     g_current_task = task;
+    const int64_t metric_started =
+        absolute_time_monotonic_nanos();
+    wasm_metric_start(metric_started);
+    wasm_metric_add(&g_metric_runnable, 1);
 
     if (absolute_host_task_pool_size() > 0) {
         /* Offload to host worker pool (isolated module instance per worker). */
@@ -943,6 +995,13 @@ void* absolute_task_spawn_config(
             task->error_type = absolute_error_type();
             task->error_handle = absolute_error_take();
         }
+        const int64_t metric_finished =
+            absolute_time_monotonic_nanos();
+        wasm_task_metric_complete(
+            task,
+            metric_finished > metric_started
+                ? metric_finished - metric_started : 0,
+            1);
     }
 
     g_task_core = prev_core;
@@ -997,6 +1056,77 @@ uint8_t absolute_task_current_affinity_applied(void) {
     return 0;
 }
 
+enum {
+    ABSOLUTE_SCHEDULER_METRIC_RUNNABLE = 0,
+    ABSOLUTE_SCHEDULER_METRIC_SUSPENDED = 1,
+    ABSOLUTE_SCHEDULER_METRIC_COMPLETED = 2,
+    ABSOLUTE_SCHEDULER_METRIC_QUEUE_SAMPLES = 3,
+    ABSOLUTE_SCHEDULER_METRIC_QUEUE_LATENCY_TOTAL_NANOS = 4,
+    ABSOLUTE_SCHEDULER_METRIC_QUEUE_LATENCY_MAX_NANOS = 5,
+    ABSOLUTE_SCHEDULER_METRIC_WORKER_BUSY_NANOS = 6,
+    ABSOLUTE_SCHEDULER_METRIC_WORKER_UTILIZATION_PERMILLE = 7,
+    ABSOLUTE_SCHEDULER_METRIC_STEALS = 8,
+    ABSOLUTE_SCHEDULER_METRIC_WAKE_UPS = 9,
+    ABSOLUTE_SCHEDULER_METRIC_BLOCKED_NANOS = 10,
+    ABSOLUTE_SCHEDULER_METRIC_STARVATION_EVENTS = 11,
+    ABSOLUTE_SCHEDULER_METRIC_COUNT = 12
+};
+
+typedef struct WasmSchedulerMetricsSnapshot {
+    int64_t values[ABSOLUTE_SCHEDULER_METRIC_COUNT];
+} WasmSchedulerMetricsSnapshot;
+
+void* absolute_scheduler_metrics_snapshot(void) {
+    WasmSchedulerMetricsSnapshot* snapshot =
+        (WasmSchedulerMetricsSnapshot*)heap_alloc(
+            sizeof(WasmSchedulerMetricsSnapshot));
+    if (!snapshot)
+        abort();
+    for (int32_t index = 0;
+         index < ABSOLUTE_SCHEDULER_METRIC_COUNT; ++index)
+        snapshot->values[index] = 0;
+    snapshot->values[ABSOLUTE_SCHEDULER_METRIC_RUNNABLE] =
+        wasm_metric_load(&g_metric_runnable);
+    snapshot->values[ABSOLUTE_SCHEDULER_METRIC_COMPLETED] =
+        wasm_metric_load(&g_metric_completed);
+    snapshot->values[ABSOLUTE_SCHEDULER_METRIC_QUEUE_SAMPLES] =
+        wasm_metric_load(&g_metric_queue_samples);
+    const int64_t busy =
+        wasm_metric_load(&g_metric_worker_busy_nanos);
+    snapshot->values[ABSOLUTE_SCHEDULER_METRIC_WORKER_BUSY_NANOS] =
+        busy;
+    const int64_t started =
+        wasm_metric_load(&g_metric_started_nanos);
+    const int64_t now = absolute_time_monotonic_nanos();
+    const int64_t elapsed = now > started ? now - started : 0;
+    const int64_t workers = absolute_scheduler_worker_count();
+    if (elapsed > 0 && workers > 0) {
+        int64_t utilization = (int64_t)(
+            ((double)busy * 1000.0) /
+            ((double)elapsed * (double)workers));
+        if (utilization < 0) utilization = 0;
+        if (utilization > 1000) utilization = 1000;
+        snapshot->values[
+            ABSOLUTE_SCHEDULER_METRIC_WORKER_UTILIZATION_PERMILLE] =
+            utilization;
+    }
+    return snapshot;
+}
+
+int64_t absolute_scheduler_metrics_value(
+    void* snapshot_handle, int32_t metric) {
+    if (!snapshot_handle || metric < 0 ||
+        metric >= ABSOLUTE_SCHEDULER_METRIC_COUNT)
+        return 0;
+    WasmSchedulerMetricsSnapshot* snapshot =
+        (WasmSchedulerMetricsSnapshot*)snapshot_handle;
+    return snapshot->values[metric];
+}
+
+void absolute_scheduler_metrics_destroy(void* snapshot_handle) {
+    free(snapshot_handle);
+}
+
 void* absolute_task_await(void* handle) {
     if (!handle)
         abort();
@@ -1007,6 +1137,7 @@ void* absolute_task_await(void* handle) {
         absolute_host_task_await_job(
             task->job_id, task->context, ABSOLUTE_WASM_TASK_CONTEXT_MAX);
         task->done = 1;
+        wasm_task_metric_complete(task, 0, 0);
     }
     if (task->error_handle)
         absolute_error_set(task->error_handle, task->error_type);
@@ -1025,6 +1156,7 @@ void absolute_task_destroy(void* handle) {
             absolute_host_task_await_job(
                 task->job_id, task->context, ABSOLUTE_WASM_TASK_CONTEXT_MAX);
             task->done = 1;
+            wasm_task_metric_complete(task, 0, 0);
         } else {
             abort();
         }

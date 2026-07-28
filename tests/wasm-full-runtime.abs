@@ -24,6 +24,8 @@ async int32 main() {
     assert(!std.task.affinitySupported(), "wasm affinity unsupported");
     assert(!std.task.coreAvailable(0), "wasm core affinity unavailable");
     assert(!std.task.affinityApplied(), "wasm affinity not applied");
+    std.task.SchedulerMetrics* initialMetrics = std.task.metrics();
+    assert(initialMetrics.runnable == 0, "wasm metrics runnable");
 
     assert(std.time.now(std.time.Unit.Milliseconds) > 0, "host wall clock");
     assert(std.time.mono(std.time.Unit.Nanoseconds) > 0, "host monotonic clock");
@@ -109,6 +111,15 @@ async int32 main() {
     }
     task<void> deadlineChild = spawn wasmDeadlineChild();
     await deadlineChild;
+    std.task.SchedulerMetrics* finalMetrics = std.task.metrics();
+    assert(finalMetrics.runnable == 0, "wasm metrics drained");
+    assert(
+        finalMetrics.completed >= initialMetrics.completed + 2,
+        "wasm metrics completed tasks");
+    assert(
+        finalMetrics.workerUtilizationPermille >= 0 &&
+        finalMetrics.workerUtilizationPermille <= 1000,
+        "wasm metrics utilization range");
 
     println("wasm-full-runtime=ok");
     return 0;

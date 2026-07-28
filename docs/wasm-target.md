@@ -112,6 +112,10 @@ datetime, VFS, atomics, mutexes, `TaskGroup`, cancellation and task deadlines.
 CPU affinity is an explicit unsupported capability on WASM:
 `std.task.affinitySupported()`, `coreAvailable()`, and `affinityApplied()` all
 return `false`, while requested core metadata remains available to task hosts.
+`std.task.metrics()` remains available: synchronous tasks report completion,
+queue samples, busy time, and utilization. Host-worker tasks report outstanding
+and completed jobs, but their worker-local queue latency and busy time are not
+observable from the parent module.
 
 | Import | Module | Purpose |
 |--------|--------|---------|

@@ -103,6 +103,17 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "runtime-scheduler-fairness=ok"
         TIMEOUT 30)
 
+    add_executable(absolute-runtime-scheduler-metrics-test
+        tests/runtime-scheduler-metrics.cpp)
+    target_link_libraries(absolute-runtime-scheduler-metrics-test
+        PRIVATE Absolute-Runtime)
+    add_test(
+        NAME absolute.runtime-scheduler-metrics
+        COMMAND absolute-runtime-scheduler-metrics-test)
+    set_tests_properties(absolute.runtime-scheduler-metrics PROPERTIES
+        PASS_REGULAR_EXPRESSION "runtime-scheduler-metrics=ok"
+        TIMEOUT 30)
+
     if(TARGET Absolute-Unless-Plugin)
         add_test(
             NAME absolute.syntax-plugin

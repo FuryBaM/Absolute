@@ -817,8 +817,10 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   `affinityApplied()`; Linux/Termux учитывают исходную allowed CPU mask,
   Windows поддерживает logical cores через processor groups, macOS/WASM явно
   сообщают unsupported, а отказ ОС не мешает выполнению task.
-- [ ] Добавить scheduler metrics: runnable/suspended/completed tasks, queue latency,
-  worker utilization, steals, wake-ups, blocked time и starvation counters.
+- [x] Добавить scheduler metrics: `std.task.metrics()` возвращает gauges
+  runnable/suspended и cumulative completed, queue samples/total/max latency,
+  worker busy time/utilization, steals, wake-ups, blocked time и starvation
+  events для queue episodes от 100 ms.
 - [ ] Добавить stress на spawn/await storm, cancel-vs-complete, destroy-vs-wait,
   channel close races, timeout races и nested task groups.
 - [x] Удалить временную зависимость корректности bounded channels от минимального

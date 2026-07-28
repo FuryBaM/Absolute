@@ -21,6 +21,9 @@
   `std.task.affinitySupported()`, `coreAvailable()`, and `affinityApplied()`.
   Failed or unsupported pinning preserves requested-core metadata and falls
   back to normal scheduling without aborting the task.
+- Added `std.task.metrics()` snapshots with runnable/suspended gauges and
+  cumulative completion, queue-latency, utilization, stealing, wake-up,
+  blocked-time, and starvation counters.
 
 ## 0.4.0
 

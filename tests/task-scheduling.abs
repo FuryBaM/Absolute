@@ -22,6 +22,9 @@ async int32 overriddenOptions(int32 value) {
 async int32 main() {
     assert(std.task.workerCount() >= 1, "scheduler worker count");
     assert(!std.task.coreAvailable(-1), "negative core is unavailable");
+    std.task.SchedulerMetrics* initialMetrics = std.task.metrics();
+    assert(initialMetrics.runnable >= 0, "metrics runnable gauge");
+    assert(initialMetrics.suspended >= 0, "metrics suspended gauge");
     task<int32> inherited = spawn inheritedOptions(41);
 
     @spawn(core = 0, priority = 3, role = "urgent")
@@ -31,6 +34,16 @@ async int32 main() {
     int32 overriddenResult = await overridden;
     assert(inheritedResult == 42, "task attributes result");
     assert(overriddenResult == 42, "spawn attributes result");
+    std.task.SchedulerMetrics* finalMetrics = std.task.metrics();
+    assert(
+        finalMetrics.completed >= initialMetrics.completed + 2,
+        "metrics completed tasks");
+    assert(
+        finalMetrics.queueSamples >= initialMetrics.queueSamples + 2,
+        "metrics queue samples");
+    assert(
+        finalMetrics.averageQueueLatencyNanoseconds() >= 0,
+        "metrics average queue latency");
     println("task-scheduling=ok");
     return 0;
 }

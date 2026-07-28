@@ -6,6 +6,10 @@ extern "C" int32 absolute_scheduler_worker_count();
 extern "C" bool absolute_scheduler_affinity_supported();
 extern "C" bool absolute_scheduler_core_available(int32 core);
 extern "C" bool absolute_task_current_affinity_applied();
+extern "C" raw void* absolute_scheduler_metrics_snapshot();
+extern "C" int64 absolute_scheduler_metrics_value(
+    raw void* snapshotHandle, int32 metric);
+extern "C" void absolute_scheduler_metrics_destroy(raw void* snapshotHandle);
 extern "C" void absolute_task_delay(int32 ms);
 extern "C" bool absolute_task_current_cancelled();
 extern "C" bool absolute_task_current_set_deadline_after(int32 milliseconds);
@@ -22,6 +26,56 @@ extern "C" void absolute_task_group_cancel_and_join(raw void* groupHandle);
 extern "C" void absolute_task_group_destroy(raw void* groupHandle);
 
 namespace std.task {
+    class SchedulerMetrics {
+        public int64 runnable;
+        public int64 suspended;
+        public int64 completed;
+        public int64 queueSamples;
+        public int64 queueLatencyTotalNanoseconds;
+        public int64 queueLatencyMaxNanoseconds;
+        public int64 workerBusyNanoseconds;
+        public int64 workerUtilizationPermille;
+        public int64 steals;
+        public int64 wakeUps;
+        public int64 blockedNanoseconds;
+        public int64 starvationEvents;
+
+        public SchedulerMetrics(
+            int64 runnableValue,
+            int64 suspendedValue,
+            int64 completedValue,
+            int64 queueSamplesValue,
+            int64 queueLatencyTotalNanosecondsValue,
+            int64 queueLatencyMaxNanosecondsValue,
+            int64 workerBusyNanosecondsValue,
+            int64 workerUtilizationPermilleValue,
+            int64 stealsValue,
+            int64 wakeUpsValue,
+            int64 blockedNanosecondsValue,
+            int64 starvationEventsValue) {
+            runnable = runnableValue;
+            suspended = suspendedValue;
+            completed = completedValue;
+            queueSamples = queueSamplesValue;
+            queueLatencyTotalNanoseconds =
+                queueLatencyTotalNanosecondsValue;
+            queueLatencyMaxNanoseconds =
+                queueLatencyMaxNanosecondsValue;
+            workerBusyNanoseconds = workerBusyNanosecondsValue;
+            workerUtilizationPermille =
+                workerUtilizationPermilleValue;
+            steals = stealsValue;
+            wakeUps = wakeUpsValue;
+            blockedNanoseconds = blockedNanosecondsValue;
+            starvationEvents = starvationEventsValue;
+        }
+
+        public int64 averageQueueLatencyNanoseconds() {
+            if (queueSamples == 0) { return 0; }
+            return queueLatencyTotalNanoseconds / queueSamples;
+        }
+    }
+
     int32 core() {
         return absolute_task_current_core();
     }
@@ -52,6 +106,25 @@ namespace std.task {
 
     bool affinityApplied() {
         return absolute_task_current_affinity_applied();
+    }
+
+    SchedulerMetrics* metrics() {
+        raw void* snapshot = absolute_scheduler_metrics_snapshot();
+        SchedulerMetrics* result = new SchedulerMetrics(
+            absolute_scheduler_metrics_value(snapshot, 0),
+            absolute_scheduler_metrics_value(snapshot, 1),
+            absolute_scheduler_metrics_value(snapshot, 2),
+            absolute_scheduler_metrics_value(snapshot, 3),
+            absolute_scheduler_metrics_value(snapshot, 4),
+            absolute_scheduler_metrics_value(snapshot, 5),
+            absolute_scheduler_metrics_value(snapshot, 6),
+            absolute_scheduler_metrics_value(snapshot, 7),
+            absolute_scheduler_metrics_value(snapshot, 8),
+            absolute_scheduler_metrics_value(snapshot, 9),
+            absolute_scheduler_metrics_value(snapshot, 10),
+            absolute_scheduler_metrics_value(snapshot, 11));
+        absolute_scheduler_metrics_destroy(snapshot);
+        return result;
     }
 
     void delay(int32 ms) {

@@ -134,6 +134,9 @@ namespace {
         TaskState state = TaskState::Pending;
         std::shared_ptr<TaskControl> control =
             std::make_shared<TaskControl>();
+        TaskClock::time_point queuedAt{};
+        TaskClock::time_point suspendedAt{};
+        bool suspensionActive = false;
         bool wakePending = false;
         bool finished = false;
         bool done = false;
@@ -145,6 +148,26 @@ namespace {
         int core = -1;
         int priority = 0;
         std::string role;
+    };
+
+    enum SchedulerMetricIndex : std::int32_t {
+        SchedulerMetricRunnable = 0,
+        SchedulerMetricSuspended = 1,
+        SchedulerMetricCompleted = 2,
+        SchedulerMetricQueueSamples = 3,
+        SchedulerMetricQueueLatencyTotalNanoseconds = 4,
+        SchedulerMetricQueueLatencyMaxNanoseconds = 5,
+        SchedulerMetricWorkerBusyNanoseconds = 6,
+        SchedulerMetricWorkerUtilizationPermille = 7,
+        SchedulerMetricSteals = 8,
+        SchedulerMetricWakeUps = 9,
+        SchedulerMetricBlockedNanoseconds = 10,
+        SchedulerMetricStarvationEvents = 11,
+        SchedulerMetricCount = 12
+    };
+
+    struct SchedulerMetricsSnapshot {
+        std::array<std::int64_t, SchedulerMetricCount> values{};
     };
 
     thread_local int currentCore = -1;
@@ -318,12 +341,65 @@ namespace {
         size_t queued = 0;
         size_t nextSubmissionQueue = 0;
         std::uint64_t nextTimerSequence = 0;
+        TaskClock::time_point metricsStarted = TaskClock::now();
+        std::atomic<std::int64_t> runnableTasks{0};
+        std::atomic<std::int64_t> suspendedTasks{0};
+        std::atomic<std::uint64_t> completedTasks{0};
+        std::atomic<std::uint64_t> queueSamples{0};
+        std::atomic<std::uint64_t> queueLatencyNanoseconds{0};
+        std::atomic<std::uint64_t> maximumQueueLatencyNanoseconds{0};
+        std::atomic<std::uint64_t> workerBusyNanoseconds{0};
         std::atomic<std::uint64_t> successfulSteals{0};
+        std::atomic<std::uint64_t> wakeUps{0};
+        std::atomic<std::uint64_t> blockedNanoseconds{0};
+        std::atomic<std::uint64_t> starvationEvents{0};
         bool stopping = false;
 
-        void ConsumeQueuedLocked() {
+        static constexpr std::uint64_t starvationThresholdNanoseconds =
+            100'000'000;
+
+        static std::uint64_t ElapsedNanoseconds(
+            TaskClock::time_point started,
+            TaskClock::time_point finished = TaskClock::now()) {
+            if (finished <= started) return 0;
+            return static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    finished - started).count());
+        }
+
+        static void UpdateMaximum(
+            std::atomic<std::uint64_t>& target,
+            std::uint64_t candidate) {
+            std::uint64_t current =
+                target.load(std::memory_order_relaxed);
+            while (candidate > current &&
+                !target.compare_exchange_weak(
+                    current, candidate,
+                    std::memory_order_relaxed,
+                    std::memory_order_relaxed)) {}
+        }
+
+        static std::int64_t MetricValue(std::uint64_t value) {
+            return static_cast<std::int64_t>(
+                std::min<std::uint64_t>(
+                    value,
+                    static_cast<std::uint64_t>(
+                        std::numeric_limits<std::int64_t>::max())));
+        }
+
+        void ConsumeQueuedLocked(Task* task) {
             if (queued == 0) std::abort();
             --queued;
+            runnableTasks.fetch_sub(1, std::memory_order_relaxed);
+            const std::uint64_t latency =
+                ElapsedNanoseconds(task->queuedAt);
+            queueSamples.fetch_add(1, std::memory_order_relaxed);
+            queueLatencyNanoseconds.fetch_add(
+                latency, std::memory_order_relaxed);
+            UpdateMaximum(maximumQueueLatencyNanoseconds, latency);
+            if (latency >= starvationThresholdNanoseconds)
+                starvationEvents.fetch_add(
+                    1, std::memory_order_relaxed);
             if (stopping && queued == 0) available.notify_all();
         }
 
@@ -369,7 +445,7 @@ namespace {
             work = std::move(lane->second.front());
             lane->second.pop_front();
             --lanes.counts[bucket];
-            ConsumeQueuedLocked();
+            ConsumeQueuedLocked(work.task);
             if (lane->second.empty()) lanes.lanes[bucket].erase(lane);
             else lanes.readyRoles[bucket].push_back(std::move(role));
             return true;
@@ -421,6 +497,7 @@ namespace {
         }
 
         void EnqueueLaneLocked(LaneSet& lanes, Work work) {
+            work.task->queuedAt = TaskClock::now();
             const size_t bucket =
                 static_cast<size_t>(work.priority + 3);
             const std::string role = work.role;
@@ -429,6 +506,7 @@ namespace {
             lane.push_back(std::move(work));
             ++lanes.counts[bucket];
             ++queued;
+            runnableTasks.fetch_add(1, std::memory_order_relaxed);
         }
 
         void EnqueueReadyLocked(size_t queueIndex, Work work) {
@@ -453,9 +531,19 @@ namespace {
         void WakeLocked(Task* task) {
             std::lock_guard taskLock(task->mutex);
             if (task->state == TaskState::Suspending) {
-                task->wakePending = true;
+                if (!task->wakePending) {
+                    task->wakePending = true;
+                    wakeUps.fetch_add(1, std::memory_order_relaxed);
+                }
             }
             else if (task->state == TaskState::Suspended) {
+                wakeUps.fetch_add(1, std::memory_order_relaxed);
+                if (!task->suspensionActive) std::abort();
+                task->suspensionActive = false;
+                suspendedTasks.fetch_sub(1, std::memory_order_relaxed);
+                blockedNanoseconds.fetch_add(
+                    ElapsedNanoseconds(task->suspendedAt),
+                    std::memory_order_relaxed);
                 task->state = TaskState::Runnable;
                 EnqueueLocked(task);
             }
@@ -489,6 +577,7 @@ namespace {
         }
 
         void Execute(Work work) {
+            const TaskClock::time_point sliceStarted = TaskClock::now();
             const int previousCore = currentCore;
             const int previousPriority = currentPriority;
             std::string previousRole = std::move(currentRole);
@@ -522,6 +611,8 @@ namespace {
                     waiters.swap(work.task->completionWaiters);
                     work.task->completed.notify_all();
                 }
+                completedTasks.fetch_add(
+                    1, std::memory_order_relaxed);
                 for (Task* waiter : waiters)
                     Resume(waiter);
             }
@@ -537,6 +628,10 @@ namespace {
                     }
                     else {
                         work.task->state = TaskState::Suspended;
+                        work.task->suspendedAt = TaskClock::now();
+                        work.task->suspensionActive = true;
+                        suspendedTasks.fetch_add(
+                            1, std::memory_order_relaxed);
                     }
                 }
                 if (enqueue) Enqueue(work.task);
@@ -546,6 +641,9 @@ namespace {
             currentPriority = previousPriority;
             currentRole = std::move(previousRole);
             currentAffinityApplied = previousAffinityApplied;
+            workerBusyNanoseconds.fetch_add(
+                ElapsedNanoseconds(sliceStarted),
+                std::memory_order_relaxed);
         }
 
         void Run(int workerIndex) {
@@ -697,6 +795,51 @@ namespace {
 
         bool CoreAvailable(int core) const {
             return GetAffinityCapabilities().CoreAvailable(core);
+        }
+
+        SchedulerMetricsSnapshot* MetricsSnapshot() const {
+            auto* snapshot = new SchedulerMetricsSnapshot;
+            snapshot->values[SchedulerMetricRunnable] =
+                runnableTasks.load(std::memory_order_relaxed);
+            snapshot->values[SchedulerMetricSuspended] =
+                suspendedTasks.load(std::memory_order_relaxed);
+            snapshot->values[SchedulerMetricCompleted] = MetricValue(
+                completedTasks.load(std::memory_order_relaxed));
+            snapshot->values[SchedulerMetricQueueSamples] = MetricValue(
+                queueSamples.load(std::memory_order_relaxed));
+            snapshot->values[
+                SchedulerMetricQueueLatencyTotalNanoseconds] = MetricValue(
+                queueLatencyNanoseconds.load(std::memory_order_relaxed));
+            snapshot->values[
+                SchedulerMetricQueueLatencyMaxNanoseconds] = MetricValue(
+                maximumQueueLatencyNanoseconds.load(
+                    std::memory_order_relaxed));
+            const std::uint64_t busy =
+                workerBusyNanoseconds.load(std::memory_order_relaxed);
+            snapshot->values[SchedulerMetricWorkerBusyNanoseconds] =
+                MetricValue(busy);
+            const std::uint64_t elapsed =
+                ElapsedNanoseconds(metricsStarted);
+            const long double capacity =
+                static_cast<long double>(elapsed) *
+                static_cast<long double>(workers.size());
+            const long double utilization = capacity > 0.0L
+                ? static_cast<long double>(busy) * 1'000.0L / capacity
+                : 0.0L;
+            snapshot->values[SchedulerMetricWorkerUtilizationPermille] =
+                static_cast<std::int64_t>(std::clamp<long double>(
+                    utilization, 0.0L, 1'000.0L));
+            snapshot->values[SchedulerMetricSteals] = MetricValue(
+                successfulSteals.load(std::memory_order_relaxed));
+            snapshot->values[SchedulerMetricWakeUps] = MetricValue(
+                wakeUps.load(std::memory_order_relaxed));
+            snapshot->values[SchedulerMetricBlockedNanoseconds] =
+                MetricValue(blockedNanoseconds.load(
+                    std::memory_order_relaxed));
+            snapshot->values[SchedulerMetricStarvationEvents] =
+                MetricValue(starvationEvents.load(
+                    std::memory_order_relaxed));
+            return snapshot;
         }
     };
 
@@ -869,6 +1012,26 @@ extern "C" bool absolute_scheduler_core_available(std::int32_t core) {
 
 extern "C" bool absolute_task_current_affinity_applied() {
     return currentTask && currentAffinityApplied;
+}
+
+extern "C" void* absolute_scheduler_metrics_snapshot() {
+    return GetScheduler().MetricsSnapshot();
+}
+
+extern "C" std::int64_t absolute_scheduler_metrics_value(
+    void* snapshotHandle, std::int32_t metric) {
+    if (!snapshotHandle || metric < 0 ||
+        metric >= SchedulerMetricCount) {
+        return 0;
+    }
+    auto* snapshot =
+        static_cast<SchedulerMetricsSnapshot*>(snapshotHandle);
+    return snapshot->values[static_cast<size_t>(metric)];
+}
+
+extern "C" void absolute_scheduler_metrics_destroy(
+    void* snapshotHandle) {
+    delete static_cast<SchedulerMetricsSnapshot*>(snapshotHandle);
 }
 
 extern "C" std::uint64_t absolute_scheduler_steal_count() {
