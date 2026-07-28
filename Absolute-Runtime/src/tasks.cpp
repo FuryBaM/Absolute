@@ -716,6 +716,30 @@ namespace Absolute::RuntimeDetail {
         currentScheduler->YieldCurrent();
         if (call.exception) std::rethrow_exception(call.exception);
     }
+
+    void SuspendForIo(IoRegistration registration, void* context) {
+        if (!registration || !currentTask || !currentScheduler) {
+            std::cerr << "Absolute runtime error: native I/O suspension "
+                "requires a running scheduler task\n";
+            std::abort();
+        }
+
+        struct Suspension {
+            Task* task = nullptr;
+        } suspension{currentTask};
+
+        currentScheduler->PrepareSuspend();
+        registration(
+            context,
+            [](void* opaque) {
+                auto* value = static_cast<Suspension*>(opaque);
+                // Completion is the final access: the resumed fiber owns this
+                // stack storage and may return from SuspendForIo immediately.
+                ResumeSchedulerTask(value->task);
+            },
+            &suspension);
+        currentScheduler->YieldCurrent();
+    }
 }
 
 extern "C" void absolute_task_when_all(void** handles, std::int32_t count) {

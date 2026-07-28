@@ -53,16 +53,22 @@ for constrained hosts and deterministic scheduler tests.
 Windows uses native Fibers. Linux and macOS use `ucontext`; Android/Termux uses
 the Termux `libucontext` package installed by the project bootstrap script.
 
-Native filesystem calls and blocking TCP/UDP operations are submitted to a
-separate I/O executor. The calling fiber is suspended and its scheduler worker
-immediately returns to the runnable queue; I/O completion enqueues the fiber on
-its owner worker. DNS resolution, connect, accept, send, receive, filesystem
-metadata, whole-file operations, and streaming file operations use this path.
-Calls made outside an Absolute task remain synchronous.
+Linux and Android/Termux use a one-shot `epoll` reactor for untimed TCP
+accept/send/receive and UDP send/receive calls made by scheduler tasks. The
+reactor can track multiple read and write waiters for one descriptor. A pending
+socket suspends its fiber without consuming an I/O or scheduler worker;
+readiness enqueues the fiber on its owner worker.
+
+DNS resolution, connect, timed socket waits, filesystem metadata, whole-file
+operations, and streaming file operations use a separate blocking I/O executor.
+Windows and macOS socket operations also use this portable fallback until their
+IOCP and `kqueue` backends are implemented. The calling fiber is still
+suspended, so the host operation never occupies a scheduler worker. Calls made
+outside an Absolute task remain synchronous.
 
 The I/O executor defaults to the host concurrency clamped to `2..4` threads.
-`ABSOLUTE_IO_WORKERS=2..32` overrides it before the first task performs native
-I/O. This is the portable blocking-offload backend. OS-native readiness and
-completion backends (IOCP on Windows and epoll/kqueue on Unix) remain planned
-for higher connection counts; they can replace the executor without changing
-the fiber suspension contract.
+`ABSOLUTE_IO_WORKERS=2..32` overrides it before the first task uses the portable
+blocking-offload backend. It does not limit Linux/Termux `epoll` socket
+concurrency. IOCP on Windows, `kqueue` on macOS, and deadline cancellation in
+the native reactors remain planned; they use the same fiber suspension
+contract.

@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "scheduler_io.h"
+#include "socket_reactor.h"
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -17,7 +18,9 @@
 #else
 #include <arpa/inet.h>
 #include <cerrno>
+#include <fcntl.h>
 #include <netdb.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -35,6 +38,7 @@ namespace {
     struct SocketState {
         NativeSocket socket = InvalidSocket;
         std::string receiveBuffer;
+        std::int32_t timeoutMilliseconds = 0;
     };
 
     thread_local std::string lastNetworkError;
@@ -49,6 +53,22 @@ namespace {
         });
         lastNetworkError = std::move(error);
         return result;
+    }
+
+    template <class Result, class Operation>
+    Result RunSocketIo(SocketState* state, Operation&& operation) {
+#if defined(__linux__)
+        // Timed waits stay on the portable offload executor until the native
+        // reactor grows deadline cancellation. Infinite waits use epoll.
+        if (state && state->timeoutMilliseconds > 0 &&
+            Absolute::RuntimeDetail::IsSchedulerTask()) {
+            return RunNetworkIo<Result>(std::forward<Operation>(operation));
+        }
+        return operation();
+#else
+        (void)state;
+        return RunNetworkIo<Result>(std::forward<Operation>(operation));
+#endif
     }
 
     void CloseNative(NativeSocket socket) {
@@ -106,6 +126,70 @@ namespace {
         if (state && state->socket != InvalidSocket) return true;
         lastNetworkError = "socket is closed";
         return false;
+    }
+
+    bool SetNonBlocking(NativeSocket socket) {
+#if defined(__linux__)
+        const int flags = fcntl(socket, F_GETFL, 0);
+        return flags >= 0 && fcntl(socket, F_SETFL, flags | O_NONBLOCK) == 0;
+#else
+        (void)socket;
+        return true;
+#endif
+    }
+
+    bool WouldBlock() {
+#if defined(_WIN32)
+        const int error = WSAGetLastError();
+        return error == WSAEWOULDBLOCK;
+#else
+        return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+    }
+
+    bool WaitForSocket(
+        SocketState* state, std::uint32_t events, const char* operation) {
+#if defined(__linux__)
+        if (Absolute::RuntimeDetail::IsSchedulerTask() &&
+            state->timeoutMilliseconds <= 0) {
+            if (Absolute::RuntimeDetail::WaitSocketReady(
+                    state->socket, events)) {
+                return true;
+            }
+            CaptureSocketError(operation);
+            return false;
+        }
+
+        pollfd descriptor{
+            state->socket,
+            static_cast<short>(
+                ((events & Absolute::RuntimeDetail::SocketReadyRead) != 0
+                    ? POLLIN : 0) |
+                ((events & Absolute::RuntimeDetail::SocketReadyWrite) != 0
+                    ? POLLOUT : 0)),
+            0};
+        int result = 0;
+        do {
+            result = poll(
+                &descriptor, 1,
+                state->timeoutMilliseconds > 0
+                    ? state->timeoutMilliseconds : -1);
+        } while (result < 0 && errno == EINTR);
+        if (result > 0) return true;
+        if (result == 0) {
+            errno = ETIMEDOUT;
+            lastNetworkError =
+                std::string(operation) + ": operation timed out";
+            return false;
+        }
+        CaptureSocketError(operation);
+        return false;
+#else
+        (void)state;
+        (void)events;
+        (void)operation;
+        return false;
+#endif
     }
 
     addrinfo* Resolve(const char* host, std::int32_t port, bool passive) {
@@ -175,6 +259,11 @@ extern "C" void* absolute_net_tcp_connect(const char* host, std::int32_t port) {
         }
         freeaddrinfo(addresses);
         if (connected == InvalidSocket) return nullptr;
+        if (!SetNonBlocking(connected)) {
+            CaptureSocketError("set nonblocking");
+            CloseNative(connected);
+            return nullptr;
+        }
         return NewState(connected);
     });
 }
@@ -209,26 +298,50 @@ extern "C" void* absolute_net_tcp_listen(
         }
         freeaddrinfo(addresses);
         if (listener == InvalidSocket) return nullptr;
+        if (!SetNonBlocking(listener)) {
+            CaptureSocketError("set nonblocking");
+            CloseNative(listener);
+            return nullptr;
+        }
         return NewState(listener);
     });
 }
 
 extern "C" void* absolute_net_tcp_accept(void* handle) {
-    return RunNetworkIo<void*>([&]() -> void* {
-        SocketState* listener = State(handle);
+    SocketState* listener = State(handle);
+    return RunSocketIo<void*>(listener, [&]() -> void* {
         if (!Valid(listener)) return nullptr;
-        NativeSocket accepted = accept(listener->socket, nullptr, nullptr);
-        if (accepted == InvalidSocket) {
+        while (true) {
+            NativeSocket accepted =
+                accept(listener->socket, nullptr, nullptr);
+            if (accepted != InvalidSocket) {
+                if (!SetNonBlocking(accepted)) {
+                    CaptureSocketError("set accepted socket nonblocking");
+                    CloseNative(accepted);
+                    return nullptr;
+                }
+                return NewState(accepted);
+            }
+#if defined(__linux__)
+            if (WouldBlock()) {
+                if (WaitForSocket(
+                        listener,
+                        Absolute::RuntimeDetail::SocketReadyRead,
+                        "accept")) {
+                    continue;
+                }
+                return nullptr;
+            }
+#endif
             CaptureSocketError("accept");
             return nullptr;
         }
-        return NewState(accepted);
     });
 }
 
 extern "C" std::int32_t absolute_net_tcp_send(void* handle, const char* text) {
-    return RunNetworkIo<std::int32_t>([&] {
-        SocketState* state = State(handle);
+    SocketState* state = State(handle);
+    return RunSocketIo<std::int32_t>(state, [&] {
         if (!Valid(state) || !text) {
             if (!text) lastNetworkError = "send text is null";
             return std::int32_t{-1};
@@ -245,8 +358,23 @@ extern "C" std::int32_t absolute_net_tcp_send(void* handle, const char* text) {
             const int result = static_cast<int>(send(state->socket, text + sent,
                 static_cast<std::size_t>(chunk), MSG_NOSIGNAL));
 #endif
-            if (result <= 0) {
+            if (result < 0) {
+#if defined(__linux__)
+                if (WouldBlock()) {
+                    if (WaitForSocket(
+                            state,
+                            Absolute::RuntimeDetail::SocketReadyWrite,
+                            "send")) {
+                        continue;
+                    }
+                    return std::int32_t{-1};
+                }
+#endif
                 CaptureSocketError("send");
+                return std::int32_t{-1};
+            }
+            if (result == 0) {
+                lastNetworkError = "send: socket closed before completion";
                 return std::int32_t{-1};
             }
             sent += static_cast<std::size_t>(result);
@@ -259,23 +387,37 @@ extern "C" std::int32_t absolute_net_tcp_send(void* handle, const char* text) {
 
 extern "C" const char* absolute_net_tcp_receive(
     void* handle, std::int32_t maximumBytes) {
-    return RunNetworkIo<const char*>([&]() -> const char* {
-        SocketState* state = State(handle);
+    SocketState* state = State(handle);
+    return RunSocketIo<const char*>(state, [&]() -> const char* {
         if (!Valid(state)) return nullptr;
         if (maximumBytes <= 0 || maximumBytes > 16 * 1024 * 1024) {
             lastNetworkError = "receive size must be in [1, 16777216]";
             return nullptr;
         }
         state->receiveBuffer.resize(static_cast<std::size_t>(maximumBytes));
+        int count = 0;
+        while (true) {
 #if defined(_WIN32)
-        const int count = recv(
-            state->socket, state->receiveBuffer.data(), maximumBytes, 0);
+            count = recv(
+                state->socket, state->receiveBuffer.data(), maximumBytes, 0);
 #else
-        const int count = static_cast<int>(recv(state->socket,
-            state->receiveBuffer.data(),
-            static_cast<std::size_t>(maximumBytes), 0));
+            count = static_cast<int>(recv(state->socket,
+                state->receiveBuffer.data(),
+                static_cast<std::size_t>(maximumBytes), 0));
 #endif
-        if (count < 0) {
+            if (count >= 0) break;
+#if defined(__linux__)
+            if (WouldBlock()) {
+                if (WaitForSocket(
+                        state,
+                        Absolute::RuntimeDetail::SocketReadyRead,
+                        "receive")) {
+                    continue;
+                }
+                state->receiveBuffer.clear();
+                return nullptr;
+            }
+#endif
             state->receiveBuffer.clear();
             CaptureSocketError("receive");
             return nullptr;
@@ -328,6 +470,7 @@ extern "C" std::int32_t absolute_net_tcp_set_timeout(
         CaptureSocketError("set timeout");
         return 0;
     }
+    state->timeoutMilliseconds = milliseconds;
     lastNetworkError.clear();
     return 1;
 }
@@ -428,12 +571,17 @@ extern "C" void* absolute_net_udp_bind(const char* host, std::int32_t port) {
         CloseNative(sock);
         return nullptr;
     }
+    if (!SetNonBlocking(sock)) {
+        CaptureSocketError("set udp socket nonblocking");
+        CloseNative(sock);
+        return nullptr;
+    }
     return NewState(sock);
 }
 
 extern "C" std::int32_t absolute_net_udp_send_to(void* handle, const char* host, std::int32_t port, const char* text) {
-    return RunNetworkIo<std::int32_t>([&] {
-        SocketState* state = State(handle);
+    SocketState* state = State(handle);
+    return RunSocketIo<std::int32_t>(state, [&] {
         if (!Valid(state) || !text || !host || !*host) {
             lastNetworkError = "invalid arguments for udp send_to";
             return std::int32_t{-1};
@@ -450,10 +598,23 @@ extern "C" std::int32_t absolute_net_udp_send_to(void* handle, const char* host,
             }
         }
         const std::size_t len = std::strlen(text);
-        const int sent = sendto(state->socket, text,
-            static_cast<int>(len), 0,
-            reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-        if (sent < 0) {
+        int sent = 0;
+        while (true) {
+            sent = sendto(state->socket, text,
+                static_cast<int>(len), 0,
+                reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+            if (sent >= 0) break;
+#if defined(__linux__)
+            if (WouldBlock()) {
+                if (WaitForSocket(
+                        state,
+                        Absolute::RuntimeDetail::SocketReadyWrite,
+                        "udp sendto")) {
+                    continue;
+                }
+                return std::int32_t{-1};
+            }
+#endif
             CaptureSocketError("udp sendto");
             return std::int32_t{-1};
         }
@@ -463,8 +624,8 @@ extern "C" std::int32_t absolute_net_udp_send_to(void* handle, const char* host,
 }
 
 extern "C" const char* absolute_net_udp_receive_from(void* handle, std::int32_t maxBytes) {
-    return RunNetworkIo<const char*>([&]() -> const char* {
-        SocketState* state = State(handle);
+    SocketState* state = State(handle);
+    return RunSocketIo<const char*>(state, [&]() -> const char* {
         if (!Valid(state) || maxBytes <= 0) {
             lastNetworkError = "invalid receive_from parameters";
             return nullptr;
@@ -476,10 +637,24 @@ extern "C" const char* absolute_net_udp_receive_from(void* handle, std::int32_t 
 #else
         socklen_t addrLen = sizeof(srcAddr);
 #endif
-        const int count = recvfrom(state->socket,
-            state->receiveBuffer.data(), maxBytes, 0,
-            reinterpret_cast<sockaddr*>(&srcAddr), &addrLen);
-        if (count < 0) {
+        int count = 0;
+        while (true) {
+            count = recvfrom(state->socket,
+                state->receiveBuffer.data(), maxBytes, 0,
+                reinterpret_cast<sockaddr*>(&srcAddr), &addrLen);
+            if (count >= 0) break;
+#if defined(__linux__)
+            if (WouldBlock()) {
+                if (WaitForSocket(
+                        state,
+                        Absolute::RuntimeDetail::SocketReadyRead,
+                        "udp recvfrom")) {
+                    continue;
+                }
+                state->receiveBuffer.clear();
+                return nullptr;
+            }
+#endif
             state->receiveBuffer.clear();
             CaptureSocketError("udp recvfrom");
             return nullptr;

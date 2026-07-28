@@ -5,9 +5,12 @@
 
 namespace Absolute::RuntimeDetail {
     using BlockingIoOperation = void (*)(void*);
+    using IoCompletion = void (*)(void*);
+    using IoRegistration = void (*)(void*, IoCompletion, void*);
 
     bool IsSchedulerTask() noexcept;
     void RunBlockingIoImpl(BlockingIoOperation operation, void* context);
+    void SuspendForIo(IoRegistration registration, void* context);
 
     template <class Operation>
     void RunBlockingIo(Operation&& operation) {

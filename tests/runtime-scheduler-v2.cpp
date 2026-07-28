@@ -2,6 +2,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <vector>
+
+#if defined(__linux__)
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include "socket_reactor.h"
+#endif
 
 extern "C" {
 void* absolute_task_spawn_config(
@@ -113,6 +121,32 @@ void networkClient(void* opaque) {
     absolute_net_tcp_close(socket);
 }
 
+#if defined(__linux__)
+struct ReactorWaitContext {
+    int descriptor = -1;
+    bool ready = false;
+};
+
+void reactorReadWait(void* opaque) {
+    auto* context = static_cast<ReactorWaitContext*>(opaque);
+    context->ready = Absolute::RuntimeDetail::WaitSocketReady(
+        context->descriptor, Absolute::RuntimeDetail::SocketReadyRead);
+}
+
+struct ReactorSignalContext {
+    int descriptor = -1;
+    bool sent = false;
+};
+
+void reactorSignal(void* opaque) {
+    auto* context = static_cast<ReactorSignalContext*>(opaque);
+    absolute_task_delay(10);
+    const char bytes[2] = {'a', 'b'};
+    context->sent = write(context->descriptor, bytes, sizeof(bytes)) ==
+        static_cast<ssize_t>(sizeof(bytes));
+}
+#endif
+
 template <class T>
 T* await(void* task) {
     return static_cast<T*>(absolute_task_await(task));
@@ -177,25 +211,81 @@ int main() {
     delete fast;
 
     std::cerr << "phase=network-io\n";
-    // accept/receive run first and block in the I/O executor. The sole
-    // scheduler worker must remain available to start the client task.
-    void* listener = absolute_net_tcp_listen("127.0.0.1", 0, 4);
-    require(listener != nullptr);
-    const std::int32_t port = absolute_net_tcp_port(listener);
-    require(port > 0);
-    auto* server = new NetworkContext{listener, port, false};
-    auto* client = new NetworkContext{nullptr, port, false};
-    void* serverTask = absolute_task_spawn_config(
-        networkServer, server, -1, 3, "io-server");
-    void* clientTask = absolute_task_spawn_config(
-        networkClient, client, -1, -3, "io-client");
-    server = await<NetworkContext>(serverTask);
-    client = await<NetworkContext>(clientTask);
-    require(server->ok);
-    require(client->ok);
-    delete server;
-    delete client;
-    absolute_net_tcp_close(listener);
+    // On Linux, eight pending accepts exceed the two-thread fallback I/O pool.
+    // They can all make progress only when socket readiness is handled by
+    // epoll instead of occupying those threads. Other platforms retain the
+    // portable one-pair offload contract until their native reactor lands.
+#if defined(__linux__)
+    constexpr std::int32_t networkPairs = 8;
+#else
+    constexpr std::int32_t networkPairs = 1;
+#endif
+    std::vector<void*> listeners;
+    std::vector<std::int32_t> ports;
+    std::vector<void*> serverTasks;
+    std::vector<void*> clientTasks;
+    listeners.reserve(networkPairs);
+    ports.reserve(networkPairs);
+    serverTasks.reserve(networkPairs);
+    clientTasks.reserve(networkPairs);
+    for (std::int32_t index = 0; index < networkPairs; ++index) {
+        void* listener = absolute_net_tcp_listen("127.0.0.1", 0, 4);
+        require(listener != nullptr);
+        const std::int32_t port = absolute_net_tcp_port(listener);
+        require(port > 0);
+        listeners.push_back(listener);
+        ports.push_back(port);
+        serverTasks.push_back(absolute_task_spawn_config(
+            networkServer,
+            new NetworkContext{listener, port, false},
+            -1, 3, "io-server"));
+    }
+    for (std::int32_t index = 0; index < networkPairs; ++index) {
+        const std::int32_t port =
+            ports[static_cast<std::size_t>(index)];
+        clientTasks.push_back(absolute_task_spawn_config(
+            networkClient,
+            new NetworkContext{nullptr, port, false},
+            -1, -3, "io-client"));
+    }
+    for (std::int32_t index = 0; index < networkPairs; ++index) {
+        auto* server = await<NetworkContext>(
+            serverTasks[static_cast<std::size_t>(index)]);
+        auto* client = await<NetworkContext>(
+            clientTasks[static_cast<std::size_t>(index)]);
+        require(server->ok);
+        require(client->ok);
+        delete server;
+        delete client;
+        absolute_net_tcp_close(
+            listeners[static_cast<std::size_t>(index)]);
+    }
+
+#if defined(__linux__)
+    std::cerr << "phase=epoll-shared-descriptor\n";
+    int socketPair[2] = {-1, -1};
+    require(socketpair(AF_UNIX, SOCK_STREAM, 0, socketPair) == 0);
+    auto* firstWait = new ReactorWaitContext{socketPair[0], false};
+    auto* secondWait = new ReactorWaitContext{socketPair[0], false};
+    auto* signal = new ReactorSignalContext{socketPair[1], false};
+    void* firstWaitTask = absolute_task_spawn_config(
+        reactorReadWait, firstWait, -1, 3, "epoll-read-1");
+    void* secondWaitTask = absolute_task_spawn_config(
+        reactorReadWait, secondWait, -1, 3, "epoll-read-2");
+    void* signalTask = absolute_task_spawn_config(
+        reactorSignal, signal, -1, -3, "epoll-signal");
+    firstWait = await<ReactorWaitContext>(firstWaitTask);
+    secondWait = await<ReactorWaitContext>(secondWaitTask);
+    signal = await<ReactorSignalContext>(signalTask);
+    require(firstWait->ready);
+    require(secondWait->ready);
+    require(signal->sent);
+    delete firstWait;
+    delete secondWait;
+    delete signal;
+    close(socketPair[0]);
+    close(socketPair[1]);
+#endif
 
     std::cout << "runtime-scheduler-v2=ok\n";
     return 0;

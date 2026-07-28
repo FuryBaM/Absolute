@@ -735,7 +735,8 @@ Task-isolate, закрытый message envelope и transfer capsule описан
     Windows native Release локально проходит 409/409, Termux host contract —
     143/143, scheduler harness — 100/100 повторов. Ручной on-device прогон на
     ARM64 Android/Bionic с Termux Clang/LLVM 21.1.8 проходит 411/411 доступных
-    тестов; Scheduler v2 дополнительно стабилен в 20/20 повторах.
+    тестов; усиленный Scheduler v2 с `epoll` дополнительно стабилен в 50/50
+    повторах.
   - [x] Исправить ложное падение TSan cancellation race: writer запускается до
     readers, а общий release/acquire start gate исключает завершение readers до
     начала гонки.
@@ -770,8 +771,15 @@ Task-isolate, закрытый message envelope и transfer capsule описан
     scheduler fiber приостанавливается, host-вызов выполняется в отдельном I/O
     pool, completion возвращает task через scheduler queue.
   - [ ] Добавить масштабируемые OS-native readiness/completion backend-ы:
-    IOCP для Windows, epoll для Linux/Termux и kqueue для macOS; blocking-offload
-    оставить fallback для DNS и файловых операций без portable async API.
+    - [x] Linux/Termux `epoll`: one-shot reactor для TCP/UDP
+      accept/send/receive, несколько read/write waiters на одном descriptor и
+      возврат completion напрямую в scheduler queue.
+    - [ ] Windows IOCP.
+    - [ ] macOS `kqueue`.
+    - [ ] Перевести nonblocking connect и timed socket waits в native reactors
+      после появления deadline/cancellation registration.
+    - [x] Сохранить blocking-offload fallback для DNS и файловых операций без
+      portable async API.
 - [x] Сделать wake-up через scheduler queue: `send`/completion возвращает
   приостановленную task в runnable state без polling.
 - [ ] Добавить structured concurrency и `TaskGroup`: дочерние tasks принадлежат

@@ -62,6 +62,8 @@ include(CTest)
 if(BUILD_TESTING)
     add_executable(absolute-runtime-scheduler-v2-test
         tests/runtime-scheduler-v2.cpp)
+    target_include_directories(absolute-runtime-scheduler-v2-test
+        PRIVATE "${PROJECT_SOURCE_DIR}/Absolute-Runtime/src")
     target_link_libraries(absolute-runtime-scheduler-v2-test
         PRIVATE Absolute-Runtime)
     add_test(
