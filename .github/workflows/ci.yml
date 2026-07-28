@@ -94,11 +94,15 @@ jobs:
             --output-on-failure --timeout 180 \
             2>&1 | tee ci-logs/ctest.log
 
-      - name: Test (Windows)
+      - name: Test frontend contract (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $output = & ctest --test-dir build -C ${{ matrix.configuration }} --output-on-failure --timeout 180 2>&1
+          # Native executable/package tests require the LLVM backend and are
+          # covered by windows-llvm-release. Keep this matrix entry focused on
+          # parser/analyzer/plugin loading and frontend diagnostics.
+          $exclude = '^(absolute\.plugin-resource-type|absolute\.run-plugin-resource-type|absolute\.run-package-manifest-dependencies)$'
+          $output = & ctest --test-dir build -C ${{ matrix.configuration }} --output-on-failure --timeout 180 -E $exclude 2>&1
           $code = $LASTEXITCODE
           $output | Tee-Object -FilePath ci-logs/ctest.log
           exit $code
@@ -124,7 +128,6 @@ jobs:
           @(
             "OS=$([System.Environment]::OSVersion.VersionString)"
             (& cmake --version 2>&1)
-            (& cl 2>&1)
             (& node --version 2>&1)
           ) | Set-Content ci-logs/toolchain.txt
 
@@ -194,7 +197,6 @@ jobs:
             (& cmake --version 2>&1)
             (& node --version 2>&1)
             (& .absolute/toolchains/llvm-18.1.8/bin/llvm-config.exe --version 2>&1)
-            (& cl 2>&1)
           ) | Set-Content ci-logs/toolchain.txt
 
       - name: Upload failure diagnostics
@@ -237,6 +239,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=ON \
             -DABSOLUTE_ENABLE_LLVM=ON \
+            -DABSOLUTE_DESKTOP_ENABLE_X11=OFF \
             -DLLVM_DIR="${LLVM_DIR}" \
             2>&1 | tee ci-logs/configure.log
 
@@ -317,7 +320,10 @@ jobs:
             --retry 5 --retry-all-errors --connect-timeout 20 \
             "$url" -o "/tmp/${archive}"
           tar -tJf "/tmp/${archive}" >/dev/null
-          sudo tar -xJf "/tmp/${archive}" -C /usr/local --strip-components=1
+          install_dir="$(mktemp -d)"
+          tar -xJf "/tmp/${archive}" -C "$install_dir" --strip-components=1
+          test -x "$install_dir/wasmtime"
+          sudo install -m 0755 "$install_dir/wasmtime" /usr/local/bin/wasmtime
           wasmtime --version | tee ci-logs/wasmtime-version.txt
 
       - name: Configure Release with LLVM
