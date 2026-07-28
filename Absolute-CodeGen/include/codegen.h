@@ -3,11 +3,20 @@
 #include "expression_visitor.h"
 #include "statement_visitor.h"
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace Absolute {
     class Analyzer;
+
+    enum class OptimizationLevel : std::uint8_t {
+        O0,
+        O1,
+        O2,
+        O3
+    };
 
     class CodeGenerator final : public ExpressionVisitor, public StatementVisitor {
     public:
@@ -19,10 +28,12 @@ namespace Absolute {
 
         // targetTriple empty => host default (llvm::sys::getDefaultTargetTriple()).
         std::string Generate(Program& program, const std::string& moduleName,
-            const std::string& targetTriple = {});
+            const std::string& targetTriple = {},
+            std::optional<OptimizationLevel> optimizationLevel = std::nullopt);
         void GenerateObject(Program& program, const std::string& moduleName,
             const std::string& outputPath, bool sanitizeAddress = false,
-            const std::string& targetTriple = {});
+            const std::string& targetTriple = {},
+            OptimizationLevel optimizationLevel = OptimizationLevel::O3);
 
         void Visit(PrimitiveTypeExpr* expr) override;
         void Visit(UserTypeExpr* expr) override;

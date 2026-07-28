@@ -38,8 +38,10 @@
             const std::string& targetTriple = {}, const std::string& dataLayout = {});
 
         std::string Generate(Program& program, const std::string& moduleName,
-            const std::string& targetTriple = {});
+            const std::string& targetTriple = {},
+            std::optional<OptimizationLevel> optimizationLevel = std::nullopt);
 
         void GenerateObject(Program& program, const std::string& moduleName,
             const std::string& outputPath, bool sanitizeAddress = false,
-            const std::string& targetTriple = {});
+            const std::string& targetTriple = {},
+            OptimizationLevel optimizationLevel = OptimizationLevel::O3);

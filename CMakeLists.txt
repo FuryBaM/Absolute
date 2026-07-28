@@ -62,11 +62,19 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+
     add_test(
         NAME absolute.compiler-version
         COMMAND Absolute-Compiler --version)
     set_tests_properties(absolute.compiler-version PROPERTIES
         PASS_REGULAR_EXPRESSION "absolutec ${ABSOLUTE_VERSION}")
+    add_test(
+        NAME absolute.optimization-level-errors
+        COMMAND Absolute-Compiler
+            "${PROJECT_SOURCE_DIR}/tests/arrays.abs" -O4)
+    set_tests_properties(absolute.optimization-level-errors PROPERTIES
+        WILL_FAIL TRUE)
 
     add_executable(absolute-runtime-scheduler-v2-test
         tests/runtime-scheduler-v2.cpp)
@@ -124,6 +132,20 @@ if(BUILD_TESTING)
     set_tests_properties(absolute.runtime-scheduler-stress PROPERTIES
         PASS_REGULAR_EXPRESSION "runtime-scheduler-stress=ok"
         TIMEOUT 60)
+
+    if(TARGET Absolute-CodeGen AND Python3_Interpreter_FOUND)
+        add_test(
+            NAME absolute.optimization-differential
+            COMMAND "${Python3_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tools/testing/optimization_differential.py"
+                --compiler "$<TARGET_FILE:Absolute-Compiler>"
+                --work-dir
+                    "${CMAKE_BINARY_DIR}/differential/optimization/$<CONFIG>"
+                --configuration "$<CONFIG>")
+        set_tests_properties(absolute.optimization-differential PROPERTIES
+            PASS_REGULAR_EXPRESSION "optimization-differential=ok"
+            TIMEOUT 180)
+    endif()
 
     if(TARGET Absolute-Unless-Plugin)
         add_test(

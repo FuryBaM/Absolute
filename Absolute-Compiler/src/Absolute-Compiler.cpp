@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
@@ -52,6 +53,7 @@ namespace {
         bool buildLibrary = false;
         bool parseOnly = false;
         bool sanitizeAddress = false;
+        std::optional<OptimizationLevel> optimizationLevel;
         std::string targetTriple; // empty => host default
         fs::path output;
         std::vector<fs::path> plugins;
@@ -130,6 +132,7 @@ namespace {
         std::vector<fs::path> nativeLibraries;
         std::vector<fs::path> nativeSearchPaths;
         bool sanitizeAddress = false;
+        OptimizationLevel optimizationLevel = OptimizationLevel::O3;
     };
 
     void PrintUsage(std::ostream& output = std::cerr) {
@@ -142,6 +145,7 @@ namespace {
             << "Options:\n"
             << "  --parse-only | --emit-llvm | --emit-object | --build-exe | --build-library\n"
             << "  --target <triple>     host default, or e.g. wasm32-unknown-unknown\n"
+            << "  -O0 | -O1 | -O2 | -O3\n"
             << "  --sanitize=address    (host targets only)\n"
             << "  --plugin path | --plugin-path directory | -o output\n";
     }
@@ -155,6 +159,18 @@ namespace {
             else if (argument == "--build-library") result.buildLibrary = true;
             else if (argument == "--parse-only") result.parseOnly = true;
             else if (argument == "--sanitize=address") result.sanitizeAddress = true;
+            else if (argument == "-O0") {
+                result.optimizationLevel = OptimizationLevel::O0;
+            }
+            else if (argument == "-O1") {
+                result.optimizationLevel = OptimizationLevel::O1;
+            }
+            else if (argument == "-O2") {
+                result.optimizationLevel = OptimizationLevel::O2;
+            }
+            else if (argument == "-O3") {
+                result.optimizationLevel = OptimizationLevel::O3;
+            }
             else if (argument == "--target") {
                 if (++index >= argc) throw std::invalid_argument("--target requires a triple");
                 result.targetTriple = argv[index];
@@ -718,7 +734,7 @@ namespace {
         fs::path object = modulePath;
         object.replace_extension(".o");
         generator.GenerateObject(program, compilation.moduleName, object.string(),
-            false, targetTriple);
+            false, targetTriple, compilation.optimizationLevel);
 
         std::vector<std::string> linkArgs = {
             "--no-entry",
@@ -825,7 +841,8 @@ namespace {
         object.replace_extension(".o");
 #endif
         generator.GenerateObject(program, compilation.moduleName, object.string(),
-            compilation.sanitizeAddress);
+            compilation.sanitizeAddress, {},
+            compilation.optimizationLevel);
 
         fs::path response = executable;
         response += ".absolute-link.rsp";
@@ -917,7 +934,8 @@ namespace {
         object.replace_extension(".o");
 #endif
         generator.GenerateObject(program, compilation.moduleName, object.string(),
-            compilation.sanitizeAddress);
+            compilation.sanitizeAddress, {},
+            compilation.optimizationLevel);
 
         fs::path response = library;
         response += ".absolute-link.rsp";
@@ -1014,6 +1032,9 @@ int main(int argc, char* argv[]) {
         for (const fs::path& plugin : commandLine.plugins) plugins.Load(plugin);
         Compilation compilation = LoadCompilation(commandLine.input, plugins);
         compilation.sanitizeAddress = commandLine.sanitizeAddress;
+        compilation.optimizationLevel =
+            commandLine.optimizationLevel.value_or(
+                OptimizationLevel::O3);
         Analyzer analyzer({compilation.program.get()});
         if (!commandLine.parseOnly && !analyzer.Analyze()) {
             analyzer.PrintDiagnostics(std::cout);
@@ -1032,7 +1053,8 @@ int main(int argc, char* argv[]) {
             CodeGenerator generator(&analyzer);
             if (commandLine.emitLlvm) {
                 const std::string ir = generator.Generate(*compilation.program, compilation.moduleName,
-                    commandLine.targetTriple);
+                    commandLine.targetTriple,
+                    commandLine.optimizationLevel);
                 if (commandLine.output.empty()) std::cout << ir;
                 else WriteFile(commandLine.output, ir);
             }
@@ -1050,7 +1072,9 @@ int main(int argc, char* argv[]) {
                     }
                 }
                 generator.GenerateObject(*compilation.program, compilation.moduleName,
-                    output.string(), compilation.sanitizeAddress, commandLine.targetTriple);
+                    output.string(), compilation.sanitizeAddress,
+                    commandLine.targetTriple,
+                    compilation.optimizationLevel);
             }
             else if (commandLine.buildLibrary) {
                 if (wasmTarget || !commandLine.targetTriple.empty()) {

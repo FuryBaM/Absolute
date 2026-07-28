@@ -830,8 +830,10 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 
 ### P2 — differential testing компилятора и backend-ов
 
-- [ ] Генерировать одинаковые программы и сравнивать checksum/вывод для `-O0`,
-  `-O1`, `-O2`, `-O3`, Debug и Release.
+- [x] Генерировать одинаковые программы и сравнивать checksum/вывод для `-O0`,
+  `-O1`, `-O2`, `-O3`, Debug и Release: `absolutec` принимает явный optimization
+  level, deterministic runner проверяет oracle и полный stdout, а один CTest
+  запускается обеими конфигурациями compiler-а в Linux CI.
 - [ ] Сравнивать native и WASM execution для одинакового deterministic corpus.
 - [ ] Добавить матрицу LLVM 18/19/20/21 там, где host toolchain доступен.
 - [ ] Сравнивать Windows MSVC linker, Linux ELF linker и WASM linker на одном ABI corpus.

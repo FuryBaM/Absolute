@@ -3,6 +3,64 @@
 namespace Absolute {
     void AddAbsoluteOptimizationPassesToPipeline(llvm::ModulePassManager& passes);
 
+    namespace {
+        llvm::OptimizationLevel LlvmOptimizationLevel(
+            OptimizationLevel level) {
+            switch (level) {
+            case OptimizationLevel::O0: return llvm::OptimizationLevel::O0;
+            case OptimizationLevel::O1: return llvm::OptimizationLevel::O1;
+            case OptimizationLevel::O2: return llvm::OptimizationLevel::O2;
+            case OptimizationLevel::O3: return llvm::OptimizationLevel::O3;
+            }
+            return llvm::OptimizationLevel::O3;
+        }
+
+        llvm::CodeGenOptLevel LlvmCodeGenOptimizationLevel(
+            OptimizationLevel level) {
+            switch (level) {
+            case OptimizationLevel::O0: return llvm::CodeGenOptLevel::None;
+            case OptimizationLevel::O1: return llvm::CodeGenOptLevel::Less;
+            case OptimizationLevel::O2: return llvm::CodeGenOptLevel::Default;
+            case OptimizationLevel::O3: return llvm::CodeGenOptLevel::Aggressive;
+            }
+            return llvm::CodeGenOptLevel::Aggressive;
+        }
+
+        void OptimizeModule(
+            llvm::Module& module,
+            llvm::TargetMachine* targetMachine,
+            OptimizationLevel level,
+            bool sanitizeAddress) {
+            llvm::LoopAnalysisManager loopAnalyses;
+            llvm::FunctionAnalysisManager functionAnalyses;
+            llvm::CGSCCAnalysisManager cgsccAnalyses;
+            llvm::ModuleAnalysisManager moduleAnalyses;
+            llvm::PassBuilder passBuilder(targetMachine);
+            if (sanitizeAddress) {
+                passBuilder.registerOptimizerLastEPCallback(
+                    [](llvm::ModulePassManager& passes,
+                        llvm::OptimizationLevel) {
+                        llvm::AddressSanitizerOptions options;
+                        passes.addPass(
+                            llvm::AddressSanitizerPass(options));
+                    });
+            }
+            passBuilder.registerModuleAnalyses(moduleAnalyses);
+            passBuilder.registerCGSCCAnalyses(cgsccAnalyses);
+            passBuilder.registerFunctionAnalyses(functionAnalyses);
+            passBuilder.registerLoopAnalyses(loopAnalyses);
+            passBuilder.crossRegisterProxies(
+                loopAnalyses, functionAnalyses,
+                cgsccAnalyses, moduleAnalyses);
+            llvm::ModulePassManager passes =
+                passBuilder.buildPerModuleDefaultPipeline(
+                    LlvmOptimizationLevel(level));
+            if (level != OptimizationLevel::O0)
+                AddAbsoluteOptimizationPassesToPipeline(passes);
+            passes.run(module, moduleAnalyses);
+        }
+    }
+
     llvm::Constant* CodeGenerator::Impl::GlobalConstant(Expression* expression, llvm::Type* type) {
         if (!expression) return llvm::Constant::getNullValue(type);
         if (auto* number = dynamic_cast<NumberLiteralExpr*>(expression)) {
@@ -745,9 +803,14 @@ namespace Absolute {
     }
 
     std::string CodeGenerator::Impl::Generate(Program& program, const std::string& moduleName,
-        const std::string& targetTriple) {
+        const std::string& targetTriple,
+        std::optional<OptimizationLevel> optimizationLevel) {
         const std::string triple = ResolveTargetTriple(targetTriple);
-        BuildModule(program, moduleName, triple);
+        llvm::Module& generatedModule =
+            BuildModule(program, moduleName, triple);
+        if (optimizationLevel)
+            OptimizeModule(
+                generatedModule, nullptr, *optimizationLevel, false);
 
         std::string output;
         llvm::raw_string_ostream stream(output);
@@ -757,7 +820,9 @@ namespace Absolute {
     }
 
     void CodeGenerator::Impl::GenerateObject(Program& program, const std::string& moduleName,
-        const std::string& outputPath, bool sanitizeAddress, const std::string& targetTriple) {
+        const std::string& outputPath, bool sanitizeAddress,
+        const std::string& targetTriple,
+        OptimizationLevel optimizationLevel) {
         InitializeCodegenTargets();
 
         const std::string tripleName = ResolveTargetTriple(targetTriple);
@@ -784,7 +849,8 @@ namespace Absolute {
 
         std::unique_ptr<llvm::TargetMachine> targetMachine(target->createTargetMachine(
             tripleName, cpu, "", options, reloc,
-            std::nullopt, llvm::CodeGenOptLevel::Aggressive));
+            std::nullopt,
+            LlvmCodeGenOptimizationLevel(optimizationLevel)));
         if (!targetMachine) Fail("cannot create target machine for '" + tripleName + "'");
         const std::string dataLayout = targetMachine->createDataLayout().getStringRepresentation();
         llvm::Module& generatedModule = BuildModule(program, moduleName, tripleName, dataLayout);
@@ -795,28 +861,9 @@ namespace Absolute {
             }
         }
 
-        llvm::LoopAnalysisManager loopAnalyses;
-        llvm::FunctionAnalysisManager functionAnalyses;
-        llvm::CGSCCAnalysisManager cgsccAnalyses;
-        llvm::ModuleAnalysisManager moduleAnalyses;
-        llvm::PassBuilder passBuilder(targetMachine.get());
-        if (sanitizeAddress) {
-            passBuilder.registerOptimizerLastEPCallback(
-                [](llvm::ModulePassManager& mpm, llvm::OptimizationLevel) {
-                    llvm::AddressSanitizerOptions options;
-                    mpm.addPass(llvm::AddressSanitizerPass(options));
-                });
-        }
-        passBuilder.registerModuleAnalyses(moduleAnalyses);
-        passBuilder.registerCGSCCAnalyses(cgsccAnalyses);
-        passBuilder.registerFunctionAnalyses(functionAnalyses);
-        passBuilder.registerLoopAnalyses(loopAnalyses);
-        passBuilder.crossRegisterProxies(
-            loopAnalyses, functionAnalyses, cgsccAnalyses, moduleAnalyses);
-        llvm::ModulePassManager optimizationPasses =
-            passBuilder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
-        AddAbsoluteOptimizationPassesToPipeline(optimizationPasses);
-        optimizationPasses.run(generatedModule, moduleAnalyses);
+        OptimizeModule(
+            generatedModule, targetMachine.get(),
+            optimizationLevel, sanitizeAddress);
 
         std::error_code error;
         llvm::raw_fd_ostream output(outputPath, error, llvm::sys::fs::OF_None);
