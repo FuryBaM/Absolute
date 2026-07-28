@@ -190,7 +190,7 @@ namespace std.collections {
         public void put(K key, V value) {
             int32 existing = findIndex(key);
             if (existing >= 0) {
-                values[existing] = value;
+                values[existing] = forward(value);
                 return;
             }
 
@@ -199,8 +199,8 @@ namespace std.collections {
             if (states[index] == 2) {
                 tombstoneCount = tombstoneCount - 1;
             }
-            keys[index] = key;
-            values[index] = value;
+            keys[index] = forward(key);
+            values[index] = forward(value);
             states[index] = 1;
             _count = _count + 1;
         }

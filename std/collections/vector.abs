@@ -57,7 +57,7 @@ namespace std.collections {
                 buffer = copy(newBuf);
                 _capacity = newCap;
             }
-            buffer[_count] = element;
+            buffer[_count] = forward(element);
             _count = _count + 1;
         }
 
@@ -68,7 +68,7 @@ namespace std.collections {
             if (index < 0 || index >= _count) {
                 throw new Error("Index out of bounds");
             }
-            buffer[index] = element;
+            buffer[index] = forward(element);
         }
 
         public T getAt(int32 index) {
@@ -167,7 +167,7 @@ namespace std.collections {
                 items = copy(newItems);
                 _capacity = newCap;
             }
-            items[_count] = element;
+            items[_count] = forward(element);
             _count = _count + 1;
         }
 
@@ -210,7 +210,7 @@ namespace std.collections {
                     throw new Error("Index out of bounds");
                 }
                 ensureUnshared();
-                items[index] = value;
+                items[index] = forward(value);
             }
         }
 
