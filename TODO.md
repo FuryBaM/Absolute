@@ -757,15 +757,19 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 
 ### P1 — Scheduler v2 без блокировки worker threads
 
-- [ ] Ввести suspension/resume task при ожидании channel, timeout, I/O и sync
+- [x] Ввести suspension/resume task при ожидании channel, timeout, I/O и sync
   primitive вместо блокировки настоящего OS thread.
   - [x] Реализовать stackful fiber backend: Win32 Fibers, POSIX `ucontext`,
     Termux `libucontext`; после первого запуска fiber закреплён за worker и не
     мигрирует вместе с TLS.
   - [x] Перевести `await`, bounded `Channel`, `TransferChannel`, runtime mutex и
     task delay на suspension с возвратом OS worker в scheduler.
-  - [ ] Подключить filesystem/network ожидания к reactor backend без блокирующих
-    host-вызовов.
+  - [x] Подключить filesystem/network к portable blocking-offload executor:
+    scheduler fiber приостанавливается, host-вызов выполняется в отдельном I/O
+    pool, completion возвращает task через scheduler queue.
+  - [ ] Добавить масштабируемые OS-native readiness/completion backend-ы:
+    IOCP для Windows, epoll для Linux/Termux и kqueue для macOS; blocking-offload
+    оставить fallback для DNS и файловых операций без portable async API.
 - [x] Сделать wake-up через scheduler queue: `send`/completion возвращает
   приостановленную task в runnable state без polling.
 - [ ] Добавить structured concurrency и `TaskGroup`: дочерние tasks принадлежат
@@ -882,7 +886,7 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 ### Критерии завершения этапа
 
 - [ ] Вся поддерживаемая CI-матрица зелёная без manual rerun.
-- [ ] Scheduler не блокирует worker thread на channel/I/O/task wait.
+- [x] Scheduler не блокирует worker thread на channel/I/O/task wait.
 - [ ] Differential corpus не расходится между native/WASM и optimization levels.
 - [ ] Coverage-guided fuzzing работает в PR/nightly/weekly режимах и сохраняет corpus.
 - [ ] Ownership torture suite проходит под sanitizers.

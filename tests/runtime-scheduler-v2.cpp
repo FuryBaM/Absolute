@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 
 extern "C" {
@@ -16,6 +17,15 @@ std::int64_t absolute_channel_receive(void* channel);
 std::int32_t absolute_channel_count(void* channel);
 void absolute_channel_close(void* channel);
 void absolute_channel_destroy(void* channel);
+
+void* absolute_net_tcp_connect(const char* host, std::int32_t port);
+void* absolute_net_tcp_listen(
+    const char* host, std::int32_t port, std::int32_t backlog);
+void* absolute_net_tcp_accept(void* handle);
+std::int32_t absolute_net_tcp_send(void* handle, const char* text);
+const char* absolute_net_tcp_receive(void* handle, std::int32_t maximumBytes);
+std::int32_t absolute_net_tcp_port(void* handle);
+void absolute_net_tcp_close(void* handle);
 }
 
 namespace {
@@ -72,6 +82,37 @@ void delayedTask(void* opaque) {
     context->value = context->delay ? 1 : 2;
 }
 
+struct NetworkContext {
+    void* listener = nullptr;
+    std::int32_t port = 0;
+    bool ok = false;
+};
+
+void networkServer(void* opaque) {
+    auto* context = static_cast<NetworkContext*>(opaque);
+    void* socket = absolute_net_tcp_accept(context->listener);
+    if (!socket) return;
+    const char* request = absolute_net_tcp_receive(socket, 16);
+    context->ok = request && std::strcmp(request, "ping") == 0 &&
+        absolute_net_tcp_send(socket, "pong") == 4;
+    std::free(const_cast<char*>(request));
+    absolute_net_tcp_close(socket);
+}
+
+void networkClient(void* opaque) {
+    auto* context = static_cast<NetworkContext*>(opaque);
+    void* socket = absolute_net_tcp_connect("127.0.0.1", context->port);
+    if (!socket) return;
+    if (absolute_net_tcp_send(socket, "ping") != 4) {
+        absolute_net_tcp_close(socket);
+        return;
+    }
+    const char* response = absolute_net_tcp_receive(socket, 16);
+    context->ok = response && std::strcmp(response, "pong") == 0;
+    std::free(const_cast<char*>(response));
+    absolute_net_tcp_close(socket);
+}
+
 template <class T>
 T* await(void* task) {
     return static_cast<T*>(absolute_task_await(task));
@@ -81,8 +122,10 @@ T* await(void* task) {
 int main() {
 #if defined(_WIN32)
     _putenv_s("ABSOLUTE_SCHEDULER_WORKERS", "1");
+    _putenv_s("ABSOLUTE_IO_WORKERS", "2");
 #else
     setenv("ABSOLUTE_SCHEDULER_WORKERS", "1", 1);
+    setenv("ABSOLUTE_IO_WORKERS", "2", 1);
 #endif
 
     if (absolute_scheduler_worker_count() != 1) std::abort();
@@ -132,6 +175,27 @@ int main() {
     require(fast->value == 2);
     delete slow;
     delete fast;
+
+    std::cerr << "phase=network-io\n";
+    // accept/receive run first and block in the I/O executor. The sole
+    // scheduler worker must remain available to start the client task.
+    void* listener = absolute_net_tcp_listen("127.0.0.1", 0, 4);
+    require(listener != nullptr);
+    const std::int32_t port = absolute_net_tcp_port(listener);
+    require(port > 0);
+    auto* server = new NetworkContext{listener, port, false};
+    auto* client = new NetworkContext{nullptr, port, false};
+    void* serverTask = absolute_task_spawn_config(
+        networkServer, server, -1, 3, "io-server");
+    void* clientTask = absolute_task_spawn_config(
+        networkClient, client, -1, -3, "io-client");
+    server = await<NetworkContext>(serverTask);
+    client = await<NetworkContext>(clientTask);
+    require(server->ok);
+    require(client->ok);
+    delete server;
+    delete client;
+    absolute_net_tcp_close(listener);
 
     std::cout << "runtime-scheduler-v2=ok\n";
     return 0;

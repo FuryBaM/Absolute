@@ -9,6 +9,9 @@
 #include <new>
 #include <string>
 #include <system_error>
+#include <utility>
+
+#include "scheduler_io.h"
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -23,6 +26,18 @@ namespace {
 
     thread_local std::string lastFileSystemError;
     thread_local std::string lastFileSystemResult;
+
+    template <class Result, class Operation>
+    Result RunFileIo(Operation&& operation) {
+        Result result{};
+        std::string error;
+        Absolute::RuntimeDetail::RunBlockingIo([&] {
+            result = operation();
+            error = lastFileSystemError;
+        });
+        lastFileSystemError = std::move(error);
+        return result;
+    }
 
 #if defined(_WIN32)
     std::wstring Utf8ToWide(const char* value) {
@@ -114,102 +129,137 @@ namespace {
 }
 
 extern "C" std::int32_t absolute_fs_exists(const char* path) {
-    std::error_code error;
-    const bool result = path && std::filesystem::exists(NativePath(path), error);
-    if (error) SetError(error); else ClearError();
-    return result ? 1 : 0;
+    return RunFileIo<std::int32_t>([&] {
+        std::error_code error;
+        const bool result =
+            path && std::filesystem::exists(NativePath(path), error);
+        if (error) SetError(error); else ClearError();
+        return result ? std::int32_t{1} : std::int32_t{0};
+    });
 }
 
 extern "C" std::int32_t absolute_fs_is_file(const char* path) {
-    std::error_code error;
-    const bool result = path && std::filesystem::is_regular_file(NativePath(path), error);
-    if (error) SetError(error); else ClearError();
-    return result ? 1 : 0;
+    return RunFileIo<std::int32_t>([&] {
+        std::error_code error;
+        const bool result =
+            path && std::filesystem::is_regular_file(NativePath(path), error);
+        if (error) SetError(error); else ClearError();
+        return result ? std::int32_t{1} : std::int32_t{0};
+    });
 }
 
 extern "C" std::int32_t absolute_fs_is_directory(const char* path) {
-    std::error_code error;
-    const bool result = path && std::filesystem::is_directory(NativePath(path), error);
-    if (error) SetError(error); else ClearError();
-    return result ? 1 : 0;
+    return RunFileIo<std::int32_t>([&] {
+        std::error_code error;
+        const bool result =
+            path && std::filesystem::is_directory(NativePath(path), error);
+        if (error) SetError(error); else ClearError();
+        return result ? std::int32_t{1} : std::int32_t{0};
+    });
 }
 
 extern "C" std::int64_t absolute_fs_file_size(const char* path) {
-    std::error_code error;
-    const auto result = path ? std::filesystem::file_size(NativePath(path), error) : 0;
-    if (error || !path) {
-        if (error) SetError(error); else lastFileSystemError = "file path is null";
-        return -1;
-    }
-    ClearError();
-    return result > static_cast<std::uintmax_t>(INT64_MAX)
-        ? -1 : static_cast<std::int64_t>(result);
+    return RunFileIo<std::int64_t>([&] {
+        std::error_code error;
+        const auto result =
+            path ? std::filesystem::file_size(NativePath(path), error) : 0;
+        if (error || !path) {
+            if (error) SetError(error);
+            else lastFileSystemError = "file path is null";
+            return std::int64_t{-1};
+        }
+        ClearError();
+        return result > static_cast<std::uintmax_t>(INT64_MAX)
+            ? std::int64_t{-1} : static_cast<std::int64_t>(result);
+    });
 }
 
 extern "C" std::int32_t absolute_fs_create_directories(const char* path) {
-    if (!path || !*path) {
-        lastFileSystemError = "directory path is empty";
-        return 0;
-    }
-    std::error_code error;
-    const std::filesystem::path native = NativePath(path);
-    const bool created = std::filesystem::create_directories(native, error);
-    const bool exists = !error && (created || std::filesystem::is_directory(native, error));
-    if (error) SetError(error); else ClearError();
-    return exists ? 1 : 0;
+    return RunFileIo<std::int32_t>([&] {
+        if (!path || !*path) {
+            lastFileSystemError = "directory path is empty";
+            return std::int32_t{0};
+        }
+        std::error_code error;
+        const std::filesystem::path native = NativePath(path);
+        const bool created = std::filesystem::create_directories(native, error);
+        const bool exists = !error &&
+            (created || std::filesystem::is_directory(native, error));
+        if (error) SetError(error); else ClearError();
+        return exists ? std::int32_t{1} : std::int32_t{0};
+    });
 }
 
 extern "C" std::int32_t absolute_fs_remove(const char* path) {
-    if (!path || !*path) {
-        lastFileSystemError = "path is empty";
-        return 0;
-    }
-    std::error_code error;
-    const bool removed = std::filesystem::remove(NativePath(path), error);
-    if (error) SetError(error); else ClearError();
-    return removed ? 1 : 0;
+    return RunFileIo<std::int32_t>([&] {
+        if (!path || !*path) {
+            lastFileSystemError = "path is empty";
+            return std::int32_t{0};
+        }
+        std::error_code error;
+        const bool removed = std::filesystem::remove(NativePath(path), error);
+        if (error) SetError(error); else ClearError();
+        return removed ? std::int32_t{1} : std::int32_t{0};
+    });
 }
 
 extern "C" std::int32_t absolute_fs_rename(const char* source, const char* destination) {
-    if (!source || !destination) {
-        lastFileSystemError = "rename path is null";
-        return 0;
-    }
-    std::error_code error;
-    std::filesystem::rename(NativePath(source), NativePath(destination), error);
-    if (error) {
-        SetError(error);
-        return 0;
-    }
-    ClearError();
-    return 1;
+    return RunFileIo<std::int32_t>([&] {
+        if (!source || !destination) {
+            lastFileSystemError = "rename path is null";
+            return std::int32_t{0};
+        }
+        std::error_code error;
+        std::filesystem::rename(
+            NativePath(source), NativePath(destination), error);
+        if (error) {
+            SetError(error);
+            return std::int32_t{0};
+        }
+        ClearError();
+        return std::int32_t{1};
+    });
 }
 
 extern "C" std::int32_t absolute_fs_copy_file(
     const char* source, const char* destination, std::int32_t overwrite) {
-    if (!source || !destination) {
-        lastFileSystemError = "copy path is null";
-        return 0;
-    }
-    std::error_code error;
-    const auto options = overwrite
-        ? std::filesystem::copy_options::overwrite_existing
-        : std::filesystem::copy_options::none;
-    const bool copied = std::filesystem::copy_file(
-        NativePath(source), NativePath(destination), options, error);
-    if (error) SetError(error); else ClearError();
-    return copied ? 1 : 0;
+    return RunFileIo<std::int32_t>([&] {
+        if (!source || !destination) {
+            lastFileSystemError = "copy path is null";
+            return std::int32_t{0};
+        }
+        std::error_code error;
+        const auto options = overwrite
+            ? std::filesystem::copy_options::overwrite_existing
+            : std::filesystem::copy_options::none;
+        const bool copied = std::filesystem::copy_file(
+            NativePath(source), NativePath(destination), options, error);
+        if (error) SetError(error); else ClearError();
+        return copied ? std::int32_t{1} : std::int32_t{0};
+    });
 }
 
 extern "C" const char* absolute_fs_current_directory() {
-    std::error_code error;
-    const std::filesystem::path result = std::filesystem::current_path(error);
-    if (error) {
-        SetError(error);
-        return nullptr;
-    }
-    lastFileSystemResult = PortablePath(result);
-    ClearError();
+    std::string result;
+    bool success = false;
+    std::string errorText;
+    Absolute::RuntimeDetail::RunBlockingIo([&] {
+        std::error_code error;
+        const std::filesystem::path current =
+            std::filesystem::current_path(error);
+        if (error) {
+            SetError(error);
+        }
+        else {
+            result = PortablePath(current);
+            ClearError();
+            success = true;
+        }
+        errorText = lastFileSystemError;
+    });
+    lastFileSystemError = std::move(errorText);
+    if (!success) return nullptr;
+    lastFileSystemResult = std::move(result);
     return lastFileSystemResult.c_str();
 }
 
@@ -218,14 +268,26 @@ extern "C" const char* absolute_fs_absolute(const char* path) {
         lastFileSystemError = "path is null";
         return nullptr;
     }
-    std::error_code error;
-    const std::filesystem::path result = std::filesystem::absolute(NativePath(path), error);
-    if (error) {
-        SetError(error);
-        return nullptr;
-    }
-    lastFileSystemResult = PortablePath(result.lexically_normal());
-    ClearError();
+    std::string result;
+    bool success = false;
+    std::string errorText;
+    Absolute::RuntimeDetail::RunBlockingIo([&] {
+        std::error_code error;
+        const std::filesystem::path absolute =
+            std::filesystem::absolute(NativePath(path), error);
+        if (error) {
+            SetError(error);
+        }
+        else {
+            result = PortablePath(absolute.lexically_normal());
+            ClearError();
+            success = true;
+        }
+        errorText = lastFileSystemError;
+    });
+    lastFileSystemError = std::move(errorText);
+    if (!success) return nullptr;
+    lastFileSystemResult = std::move(result);
     return lastFileSystemResult.c_str();
 }
 
@@ -312,132 +374,159 @@ extern "C" const char* absolute_fs_read_text(const char* path) {
         lastFileSystemError = "file path is null";
         return nullptr;
     }
-    std::ifstream input(NativePath(path), std::ios::binary);
-    if (!input) {
-        SetError("read file");
-        return nullptr;
-    }
-    lastFileSystemResult.assign(std::istreambuf_iterator<char>(input),
-        std::istreambuf_iterator<char>());
-    if (input.bad()) {
-        SetError("read file");
-        return nullptr;
-    }
-    ClearError();
+    std::string result;
+    bool success = false;
+    std::string errorText;
+    Absolute::RuntimeDetail::RunBlockingIo([&] {
+        std::ifstream input(NativePath(path), std::ios::binary);
+        if (!input) {
+            SetError("read file");
+        }
+        else {
+            result.assign(std::istreambuf_iterator<char>(input),
+                std::istreambuf_iterator<char>());
+            if (input.bad()) {
+                SetError("read file");
+            }
+            else {
+                ClearError();
+                success = true;
+            }
+        }
+        errorText = lastFileSystemError;
+    });
+    lastFileSystemError = std::move(errorText);
+    if (!success) return nullptr;
+    lastFileSystemResult = std::move(result);
     return lastFileSystemResult.c_str();
 }
 
 extern "C" std::int32_t absolute_fs_write_text(
     const char* path, const char* text, std::int32_t append) {
-    if (!path || !text) {
-        lastFileSystemError = "write path or text is null";
-        return 0;
-    }
-    std::ofstream output(NativePath(path), std::ios::binary |
-        (append ? std::ios::app : std::ios::trunc));
-    if (!output) {
-        SetError("open file for writing");
-        return 0;
-    }
-    output.write(text, static_cast<std::streamsize>(std::strlen(text)));
-    output.flush();
-    if (!output) {
-        SetError("write file");
-        return 0;
-    }
-    ClearError();
-    return 1;
+    return RunFileIo<std::int32_t>([&] {
+        if (!path || !text) {
+            lastFileSystemError = "write path or text is null";
+            return std::int32_t{0};
+        }
+        std::ofstream output(NativePath(path), std::ios::binary |
+            (append ? std::ios::app : std::ios::trunc));
+        if (!output) {
+            SetError("open file for writing");
+            return std::int32_t{0};
+        }
+        output.write(text, static_cast<std::streamsize>(std::strlen(text)));
+        output.flush();
+        if (!output) {
+            SetError("write file");
+            return std::int32_t{0};
+        }
+        ClearError();
+        return std::int32_t{1};
+    });
 }
 
 extern "C" void* absolute_fs_file_open(const char* path, const char* mode) {
-    std::FILE* stream = OpenFile(path, mode);
-    if (!stream) {
-        SetError("open file");
-        return nullptr;
-    }
-    FileState* state = new (std::nothrow) FileState;
-    if (!state) {
-        std::fclose(stream);
-        lastFileSystemError = "file handle allocation failed";
-        return nullptr;
-    }
-    state->stream = stream;
-    ClearError();
-    return state;
+    return RunFileIo<void*>([&]() -> void* {
+        std::FILE* stream = OpenFile(path, mode);
+        if (!stream) {
+            SetError("open file");
+            return nullptr;
+        }
+        FileState* state = new (std::nothrow) FileState;
+        if (!state) {
+            std::fclose(stream);
+            lastFileSystemError = "file handle allocation failed";
+            return nullptr;
+        }
+        state->stream = stream;
+        ClearError();
+        return state;
+    });
 }
 
 extern "C" void absolute_fs_file_close(void* handle) {
     FileState* state = State(handle);
     if (!state) return;
-    if (state->stream) std::fclose(state->stream);
-    delete state;
+    Absolute::RuntimeDetail::RunBlockingIo([&] {
+        if (state->stream) std::fclose(state->stream);
+        delete state;
+    });
 }
 
 extern "C" const char* absolute_fs_file_read_line(void* handle) {
-    FileState* state = State(handle);
-    if (!state || !state->stream) {
-        lastFileSystemError = "file is closed";
-        return nullptr;
-    }
-    state->readBuffer.clear();
-    for (;;) {
-        const int value = std::fgetc(state->stream);
-        if (value == EOF) break;
-        if (value == '\n') break;
-        if (value != '\r') state->readBuffer.push_back(static_cast<char>(value));
-    }
-    if (std::ferror(state->stream)) {
-        SetError("read line");
-        return nullptr;
-    }
-    ClearError();
-    return state->readBuffer.c_str();
+    return RunFileIo<const char*>([&]() -> const char* {
+        FileState* state = State(handle);
+        if (!state || !state->stream) {
+            lastFileSystemError = "file is closed";
+            return nullptr;
+        }
+        state->readBuffer.clear();
+        for (;;) {
+            const int value = std::fgetc(state->stream);
+            if (value == EOF || value == '\n') break;
+            if (value != '\r')
+                state->readBuffer.push_back(static_cast<char>(value));
+        }
+        if (std::ferror(state->stream)) {
+            SetError("read line");
+            return nullptr;
+        }
+        ClearError();
+        return state->readBuffer.c_str();
+    });
 }
 
 extern "C" const char* absolute_fs_file_read_all(void* handle) {
-    FileState* state = State(handle);
-    if (!state || !state->stream) {
-        lastFileSystemError = "file is closed";
-        return nullptr;
-    }
-    state->readBuffer.clear();
-    char buffer[4096];
-    for (;;) {
-        const std::size_t count = std::fread(buffer, 1, sizeof(buffer), state->stream);
-        state->readBuffer.append(buffer, count);
-        if (count != sizeof(buffer)) break;
-    }
-    if (std::ferror(state->stream)) {
-        SetError("read file");
-        return nullptr;
-    }
-    ClearError();
-    return state->readBuffer.c_str();
+    return RunFileIo<const char*>([&]() -> const char* {
+        FileState* state = State(handle);
+        if (!state || !state->stream) {
+            lastFileSystemError = "file is closed";
+            return nullptr;
+        }
+        state->readBuffer.clear();
+        char buffer[4096];
+        for (;;) {
+            const std::size_t count =
+                std::fread(buffer, 1, sizeof(buffer), state->stream);
+            state->readBuffer.append(buffer, count);
+            if (count != sizeof(buffer)) break;
+        }
+        if (std::ferror(state->stream)) {
+            SetError("read file");
+            return nullptr;
+        }
+        ClearError();
+        return state->readBuffer.c_str();
+    });
 }
 
 extern "C" std::int32_t absolute_fs_file_write(void* handle, const char* text) {
-    FileState* state = State(handle);
-    if (!state || !state->stream || !text) {
-        lastFileSystemError = "file is closed or text is null";
-        return 0;
-    }
-    const std::size_t length = std::strlen(text);
-    if (std::fwrite(text, 1, length, state->stream) != length) {
-        SetError("write file");
-        return 0;
-    }
-    ClearError();
-    return 1;
+    return RunFileIo<std::int32_t>([&] {
+        FileState* state = State(handle);
+        if (!state || !state->stream || !text) {
+            lastFileSystemError = "file is closed or text is null";
+            return std::int32_t{0};
+        }
+        const std::size_t length = std::strlen(text);
+        if (std::fwrite(text, 1, length, state->stream) != length) {
+            SetError("write file");
+            return std::int32_t{0};
+        }
+        ClearError();
+        return std::int32_t{1};
+    });
 }
 
 extern "C" std::int32_t absolute_fs_file_flush(void* handle) {
-    FileState* state = State(handle);
-    if (!state || !state->stream || std::fflush(state->stream) != 0) {
-        SetError("flush file");
-        return 0;
-    }
-    ClearError();
-    return 1;
+    return RunFileIo<std::int32_t>([&] {
+        FileState* state = State(handle);
+        if (!state || !state->stream || std::fflush(state->stream) != 0) {
+            SetError("flush file");
+            return std::int32_t{0};
+        }
+        ClearError();
+        return std::int32_t{1};
+    });
 }
 
 extern "C" std::int32_t absolute_fs_file_eof(void* handle) {

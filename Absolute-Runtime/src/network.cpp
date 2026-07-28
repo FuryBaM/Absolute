@@ -6,6 +6,9 @@
 #include <mutex>
 #include <new>
 #include <string>
+#include <utility>
+
+#include "scheduler_io.h"
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -35,6 +38,18 @@ namespace {
     };
 
     thread_local std::string lastNetworkError;
+
+    template <class Result, class Operation>
+    Result RunNetworkIo(Operation&& operation) {
+        Result result{};
+        std::string error;
+        Absolute::RuntimeDetail::RunBlockingIo([&] {
+            result = operation();
+            error = lastNetworkError;
+        });
+        lastNetworkError = std::move(error);
+        return result;
+    }
 
     void CloseNative(NativeSocket socket) {
         if (socket == InvalidSocket) return;
@@ -135,137 +150,149 @@ namespace {
 }
 
 extern "C" void* absolute_net_tcp_connect(const char* host, std::int32_t port) {
-    if (!host || !*host) {
-        lastNetworkError = "remote host is empty";
-        return nullptr;
-    }
-    addrinfo* addresses = Resolve(host, port, false);
-    if (!addresses) return nullptr;
-    NativeSocket connected = InvalidSocket;
-    for (addrinfo* address = addresses; address; address = address->ai_next) {
-        NativeSocket candidate = socket(address->ai_family,
-            address->ai_socktype, address->ai_protocol);
-        if (candidate == InvalidSocket) {
-            CaptureSocketError("socket");
-            continue;
+    return RunNetworkIo<void*>([&]() -> void* {
+        if (!host || !*host) {
+            lastNetworkError = "remote host is empty";
+            return nullptr;
         }
-        if (::connect(candidate, address->ai_addr,
-            static_cast<int>(address->ai_addrlen)) == 0) {
-            connected = candidate;
-            break;
+        addrinfo* addresses = Resolve(host, port, false);
+        if (!addresses) return nullptr;
+        NativeSocket connected = InvalidSocket;
+        for (addrinfo* address = addresses; address; address = address->ai_next) {
+            NativeSocket candidate = socket(address->ai_family,
+                address->ai_socktype, address->ai_protocol);
+            if (candidate == InvalidSocket) {
+                CaptureSocketError("socket");
+                continue;
+            }
+            if (::connect(candidate, address->ai_addr,
+                static_cast<int>(address->ai_addrlen)) == 0) {
+                connected = candidate;
+                break;
+            }
+            CaptureSocketError("connect");
+            CloseNative(candidate);
         }
-        CaptureSocketError("connect");
-        CloseNative(candidate);
-    }
-    freeaddrinfo(addresses);
-    if (connected == InvalidSocket) {
-        return nullptr;
-    }
-    return NewState(connected);
+        freeaddrinfo(addresses);
+        if (connected == InvalidSocket) return nullptr;
+        return NewState(connected);
+    });
 }
 
 extern "C" void* absolute_net_tcp_listen(
     const char* host, std::int32_t port, std::int32_t backlog) {
-    addrinfo* addresses = Resolve(host, port, true);
-    if (!addresses) return nullptr;
-    NativeSocket listener = InvalidSocket;
-    for (addrinfo* address = addresses; address; address = address->ai_next) {
-        NativeSocket candidate = socket(address->ai_family,
-            address->ai_socktype, address->ai_protocol);
-        if (candidate == InvalidSocket) {
-            CaptureSocketError("socket");
-            continue;
+    return RunNetworkIo<void*>([&]() -> void* {
+        addrinfo* addresses = Resolve(host, port, true);
+        if (!addresses) return nullptr;
+        NativeSocket listener = InvalidSocket;
+        for (addrinfo* address = addresses; address; address = address->ai_next) {
+            NativeSocket candidate = socket(address->ai_family,
+                address->ai_socktype, address->ai_protocol);
+            if (candidate == InvalidSocket) {
+                CaptureSocketError("socket");
+                continue;
+            }
+            SetReuseAddress(candidate);
+            if (bind(candidate, address->ai_addr,
+                    static_cast<int>(address->ai_addrlen)) != 0) {
+                CaptureSocketError("bind");
+                CloseNative(candidate);
+                continue;
+            }
+            if (listen(candidate, (std::max)(1, backlog)) != 0) {
+                CaptureSocketError("listen");
+                CloseNative(candidate);
+                continue;
+            }
+            listener = candidate;
+            break;
         }
-        SetReuseAddress(candidate);
-        if (bind(candidate, address->ai_addr,
-                static_cast<int>(address->ai_addrlen)) != 0) {
-            CaptureSocketError("bind");
-            CloseNative(candidate);
-            continue;
-        }
-        if (listen(candidate, (std::max)(1, backlog)) != 0) {
-            CaptureSocketError("listen");
-            CloseNative(candidate);
-            continue;
-        }
-        listener = candidate;
-        break;
-    }
-    freeaddrinfo(addresses);
-    if (listener == InvalidSocket) {
-        return nullptr;
-    }
-    return NewState(listener);
+        freeaddrinfo(addresses);
+        if (listener == InvalidSocket) return nullptr;
+        return NewState(listener);
+    });
 }
 
 extern "C" void* absolute_net_tcp_accept(void* handle) {
-    SocketState* listener = State(handle);
-    if (!Valid(listener)) return nullptr;
-    NativeSocket accepted = accept(listener->socket, nullptr, nullptr);
-    if (accepted == InvalidSocket) {
-        CaptureSocketError("accept");
-        return nullptr;
-    }
-    return NewState(accepted);
+    return RunNetworkIo<void*>([&]() -> void* {
+        SocketState* listener = State(handle);
+        if (!Valid(listener)) return nullptr;
+        NativeSocket accepted = accept(listener->socket, nullptr, nullptr);
+        if (accepted == InvalidSocket) {
+            CaptureSocketError("accept");
+            return nullptr;
+        }
+        return NewState(accepted);
+    });
 }
 
 extern "C" std::int32_t absolute_net_tcp_send(void* handle, const char* text) {
-    SocketState* state = State(handle);
-    if (!Valid(state) || !text) {
-        if (!text) lastNetworkError = "send text is null";
-        return -1;
-    }
-    const std::size_t length = std::strlen(text);
-    std::size_t sent = 0;
-    while (sent < length) {
-        const std::size_t remaining = length - sent;
-        const int chunk = static_cast<int>(std::min<std::size_t>(remaining, 1U << 20));
-#if defined(_WIN32)
-        const int result = send(state->socket, text + sent, chunk, 0);
-#else
-        const int result = static_cast<int>(send(state->socket, text + sent,
-            static_cast<std::size_t>(chunk), MSG_NOSIGNAL));
-#endif
-        if (result <= 0) {
-            CaptureSocketError("send");
-            return -1;
+    return RunNetworkIo<std::int32_t>([&] {
+        SocketState* state = State(handle);
+        if (!Valid(state) || !text) {
+            if (!text) lastNetworkError = "send text is null";
+            return std::int32_t{-1};
         }
-        sent += static_cast<std::size_t>(result);
-    }
-    lastNetworkError.clear();
-    return static_cast<std::int32_t>(std::min<std::size_t>(sent, INT32_MAX));
+        const std::size_t length = std::strlen(text);
+        std::size_t sent = 0;
+        while (sent < length) {
+            const std::size_t remaining = length - sent;
+            const int chunk = static_cast<int>(
+                std::min<std::size_t>(remaining, 1U << 20));
+#if defined(_WIN32)
+            const int result = send(state->socket, text + sent, chunk, 0);
+#else
+            const int result = static_cast<int>(send(state->socket, text + sent,
+                static_cast<std::size_t>(chunk), MSG_NOSIGNAL));
+#endif
+            if (result <= 0) {
+                CaptureSocketError("send");
+                return std::int32_t{-1};
+            }
+            sent += static_cast<std::size_t>(result);
+        }
+        lastNetworkError.clear();
+        return static_cast<std::int32_t>(
+            std::min<std::size_t>(sent, INT32_MAX));
+    });
 }
 
-extern "C" const char* absolute_net_tcp_receive(void* handle, std::int32_t maximumBytes) {
-    SocketState* state = State(handle);
-    if (!Valid(state)) return nullptr;
-    if (maximumBytes <= 0 || maximumBytes > 16 * 1024 * 1024) {
-        lastNetworkError = "receive size must be in [1, 16777216]";
-        return nullptr;
-    }
-    state->receiveBuffer.resize(static_cast<std::size_t>(maximumBytes));
+extern "C" const char* absolute_net_tcp_receive(
+    void* handle, std::int32_t maximumBytes) {
+    return RunNetworkIo<const char*>([&]() -> const char* {
+        SocketState* state = State(handle);
+        if (!Valid(state)) return nullptr;
+        if (maximumBytes <= 0 || maximumBytes > 16 * 1024 * 1024) {
+            lastNetworkError = "receive size must be in [1, 16777216]";
+            return nullptr;
+        }
+        state->receiveBuffer.resize(static_cast<std::size_t>(maximumBytes));
 #if defined(_WIN32)
-    const int count = recv(state->socket, state->receiveBuffer.data(), maximumBytes, 0);
+        const int count = recv(
+            state->socket, state->receiveBuffer.data(), maximumBytes, 0);
 #else
-    const int count = static_cast<int>(recv(state->socket,
-        state->receiveBuffer.data(), static_cast<std::size_t>(maximumBytes), 0));
+        const int count = static_cast<int>(recv(state->socket,
+            state->receiveBuffer.data(),
+            static_cast<std::size_t>(maximumBytes), 0));
 #endif
-    if (count < 0) {
-        state->receiveBuffer.clear();
-        CaptureSocketError("receive");
-        return nullptr;
-    }
-    state->receiveBuffer.resize(static_cast<std::size_t>(count));
-    lastNetworkError.clear();
-    // Durable copy: callers may keep the string after the next receive/close.
-    const std::size_t size = state->receiveBuffer.size() + 1;
-    char* durable = static_cast<char*>(std::malloc(size));
-    if (!durable) {
-        lastNetworkError = "receive allocation failed";
-        return nullptr;
-    }
-    std::memcpy(durable, state->receiveBuffer.c_str(), size);
-    return durable;
+        if (count < 0) {
+            state->receiveBuffer.clear();
+            CaptureSocketError("receive");
+            return nullptr;
+        }
+        state->receiveBuffer.resize(static_cast<std::size_t>(count));
+        lastNetworkError.clear();
+        // Durable copy: callers may keep the string after the next
+        // receive/close and after the I/O worker processes another request.
+        const std::size_t size = state->receiveBuffer.size() + 1;
+        char* durable = static_cast<char*>(std::malloc(size));
+        if (!durable) {
+            lastNetworkError = "receive allocation failed";
+            return nullptr;
+        }
+        std::memcpy(durable, state->receiveBuffer.c_str(), size);
+        return durable;
+    });
 }
 
 extern "C" std::int32_t absolute_net_tcp_set_timeout(
@@ -345,34 +372,37 @@ extern "C" void absolute_net_tcp_close(void* handle) {
 }
 
 extern "C" const char* absolute_net_resolve_host(const char* hostname) {
-    if (!EnsureSockets() || !hostname || !*hostname) {
-        lastNetworkError = "hostname is empty";
-        return "";
-    }
-    addrinfo hints{};
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    addrinfo* result = nullptr;
-    int status = getaddrinfo(hostname, nullptr, &hints, &result);
-    if (status != 0 || !result) {
-        lastNetworkError = "Failed to resolve hostname: " + std::string(hostname);
-        return "";
-    }
-    char ipBuffer[INET_ADDRSTRLEN] = {0};
-    sockaddr_in* ipv4 = reinterpret_cast<sockaddr_in*>(result->ai_addr);
-    inet_ntop(AF_INET, &(ipv4->sin_addr), ipBuffer, sizeof(ipBuffer));
-    freeaddrinfo(result);
-    // Durable copy: Absolute string is a bare pointer and must outlive later
-    // resolve/send calls on the same thread.
-    const std::size_t size = std::strlen(ipBuffer) + 1;
-    char* durable = static_cast<char*>(std::malloc(size));
-    if (!durable) {
-        lastNetworkError = "resolve host allocation failed";
-        return "";
-    }
-    std::memcpy(durable, ipBuffer, size);
-    lastNetworkError.clear();
-    return durable;
+    return RunNetworkIo<const char*>([&]() -> const char* {
+        if (!EnsureSockets() || !hostname || !*hostname) {
+            lastNetworkError = "hostname is empty";
+            return "";
+        }
+        addrinfo hints{};
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        addrinfo* result = nullptr;
+        int status = getaddrinfo(hostname, nullptr, &hints, &result);
+        if (status != 0 || !result) {
+            lastNetworkError =
+                "Failed to resolve hostname: " + std::string(hostname);
+            return "";
+        }
+        char ipBuffer[INET_ADDRSTRLEN] = {0};
+        sockaddr_in* ipv4 = reinterpret_cast<sockaddr_in*>(result->ai_addr);
+        inet_ntop(AF_INET, &(ipv4->sin_addr), ipBuffer, sizeof(ipBuffer));
+        freeaddrinfo(result);
+        // Durable copy: Absolute string is a bare pointer and must outlive later
+        // resolve/send calls on both the scheduler and I/O threads.
+        const std::size_t size = std::strlen(ipBuffer) + 1;
+        char* durable = static_cast<char*>(std::malloc(size));
+        if (!durable) {
+            lastNetworkError = "resolve host allocation failed";
+            return "";
+        }
+        std::memcpy(durable, ipBuffer, size);
+        lastNetworkError.clear();
+        return durable;
+    });
 }
 
 extern "C" void* absolute_net_udp_bind(const char* host, std::int32_t port) {
@@ -402,59 +432,69 @@ extern "C" void* absolute_net_udp_bind(const char* host, std::int32_t port) {
 }
 
 extern "C" std::int32_t absolute_net_udp_send_to(void* handle, const char* host, std::int32_t port, const char* text) {
-    SocketState* state = State(handle);
-    if (!Valid(state) || !text || !host || !*host) {
-        lastNetworkError = "invalid arguments for udp send_to";
-        return -1;
-    }
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(static_cast<uint16_t>(port));
-    if (inet_pton(AF_INET, host, &addr.sin_addr) <= 0) {
-        const char* resolved = absolute_net_resolve_host(host);
-        if (!resolved || !*resolved || inet_pton(AF_INET, resolved, &addr.sin_addr) <= 0) {
-            lastNetworkError = "failed to resolve host for udp send_to";
-            return -1;
+    return RunNetworkIo<std::int32_t>([&] {
+        SocketState* state = State(handle);
+        if (!Valid(state) || !text || !host || !*host) {
+            lastNetworkError = "invalid arguments for udp send_to";
+            return std::int32_t{-1};
         }
-    }
-    std::size_t len = std::strlen(text);
-    int sent = sendto(state->socket, text, static_cast<int>(len), 0, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-    if (sent < 0) {
-        CaptureSocketError("udp sendto");
-        return -1;
-    }
-    return sent;
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(static_cast<uint16_t>(port));
+        if (inet_pton(AF_INET, host, &addr.sin_addr) <= 0) {
+            const char* resolved = absolute_net_resolve_host(host);
+            if (!resolved || !*resolved ||
+                inet_pton(AF_INET, resolved, &addr.sin_addr) <= 0) {
+                lastNetworkError = "failed to resolve host for udp send_to";
+                return std::int32_t{-1};
+            }
+        }
+        const std::size_t len = std::strlen(text);
+        const int sent = sendto(state->socket, text,
+            static_cast<int>(len), 0,
+            reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+        if (sent < 0) {
+            CaptureSocketError("udp sendto");
+            return std::int32_t{-1};
+        }
+        lastNetworkError.clear();
+        return static_cast<std::int32_t>(sent);
+    });
 }
 
 extern "C" const char* absolute_net_udp_receive_from(void* handle, std::int32_t maxBytes) {
-    SocketState* state = State(handle);
-    if (!Valid(state) || maxBytes <= 0) {
-        lastNetworkError = "invalid receive_from parameters";
-        return nullptr;
-    }
-    state->receiveBuffer.resize(static_cast<std::size_t>(maxBytes));
-    sockaddr_in srcAddr{};
+    return RunNetworkIo<const char*>([&]() -> const char* {
+        SocketState* state = State(handle);
+        if (!Valid(state) || maxBytes <= 0) {
+            lastNetworkError = "invalid receive_from parameters";
+            return nullptr;
+        }
+        state->receiveBuffer.resize(static_cast<std::size_t>(maxBytes));
+        sockaddr_in srcAddr{};
 #if defined(_WIN32)
-    int addrLen = sizeof(srcAddr);
+        int addrLen = sizeof(srcAddr);
 #else
-    socklen_t addrLen = sizeof(srcAddr);
+        socklen_t addrLen = sizeof(srcAddr);
 #endif
-    int count = recvfrom(state->socket, state->receiveBuffer.data(), maxBytes, 0, reinterpret_cast<sockaddr*>(&srcAddr), &addrLen);
-    if (count < 0) {
-        state->receiveBuffer.clear();
-        CaptureSocketError("udp recvfrom");
-        return nullptr;
-    }
-    state->receiveBuffer.resize(static_cast<std::size_t>(count));
-    lastNetworkError.clear();
-    const std::size_t size = state->receiveBuffer.size() + 1;
-    char* durable = static_cast<char*>(std::malloc(size));
-    if (!durable) {
-        lastNetworkError = "udp receive allocation failed";
-        return nullptr;
-    }
-    std::memcpy(durable, state->receiveBuffer.c_str(), size);
-    return durable;
+        const int count = recvfrom(state->socket,
+            state->receiveBuffer.data(), maxBytes, 0,
+            reinterpret_cast<sockaddr*>(&srcAddr), &addrLen);
+        if (count < 0) {
+            state->receiveBuffer.clear();
+            CaptureSocketError("udp recvfrom");
+            return nullptr;
+        }
+        state->receiveBuffer.resize(static_cast<std::size_t>(count));
+        lastNetworkError.clear();
+        const std::size_t size = state->receiveBuffer.size() + 1;
+        char* durable = static_cast<char*>(std::malloc(size));
+        if (!durable) {
+            lastNetworkError = "udp receive allocation failed";
+            return nullptr;
+        }
+        std::memcpy(durable, state->receiveBuffer.c_str(), size);
+        return durable;
+    });
 }
 
 extern "C" void absolute_net_udp_close(void* handle) {

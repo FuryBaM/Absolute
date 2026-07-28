@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <deque>
+#include <exception>
 #include <iostream>
 #include <mutex>
 #include <queue>
@@ -16,6 +17,7 @@
 #include <vector>
 
 #include "scheduler_fiber.h"
+#include "scheduler_io.h"
 
 #if defined(_WIN32)
 #define NOMINMAX
@@ -432,6 +434,94 @@ namespace {
             scheduler->Resume(task);
     }
 
+    struct BlockingIoCall {
+        Absolute::RuntimeDetail::BlockingIoOperation operation = nullptr;
+        void* context = nullptr;
+        Task* task = nullptr;
+        std::exception_ptr exception;
+    };
+
+    class BlockingIoExecutor {
+        std::mutex mutex;
+        std::condition_variable available;
+        std::deque<BlockingIoCall*> queued;
+        std::vector<std::thread> workers;
+        bool stopping = false;
+
+        static unsigned ResolveWorkerCount() {
+            constexpr unsigned minimumWorkers = 2;
+            constexpr unsigned maximumWorkers = 32;
+            if (const char* configured = std::getenv("ABSOLUTE_IO_WORKERS")) {
+                char* end = nullptr;
+                const unsigned long value = std::strtoul(configured, &end, 10);
+                if (end != configured && *end == '\0' &&
+                    value >= minimumWorkers && value <= maximumWorkers) {
+                    return static_cast<unsigned>(value);
+                }
+                std::cerr << "Absolute runtime warning: ignoring invalid "
+                    "ABSOLUTE_IO_WORKERS='" << configured << "'\n";
+            }
+            const unsigned hardware = std::thread::hardware_concurrency();
+            return std::min(maximumWorkers, std::max(minimumWorkers,
+                std::min(4U, std::max(1U, hardware))));
+        }
+
+        void Run() {
+            while (true) {
+                BlockingIoCall* call = nullptr;
+                {
+                    std::unique_lock lock(mutex);
+                    available.wait(lock, [&] {
+                        return stopping || !queued.empty();
+                    });
+                    if (stopping && queued.empty()) return;
+                    call = queued.front();
+                    queued.pop_front();
+                }
+                try {
+                    call->operation(call->context);
+                }
+                catch (...) {
+                    call->exception = std::current_exception();
+                }
+                // Resume is deliberately the final access to call. Its storage
+                // belongs to the suspended fiber and may disappear immediately.
+                ResumeSchedulerTask(call->task);
+            }
+        }
+
+    public:
+        BlockingIoExecutor() {
+            const unsigned count = ResolveWorkerCount();
+            workers.reserve(count);
+            for (unsigned index = 0; index < count; ++index)
+                workers.emplace_back([this] { Run(); });
+        }
+
+        ~BlockingIoExecutor() {
+            {
+                std::lock_guard lock(mutex);
+                stopping = true;
+            }
+            available.notify_all();
+            for (std::thread& worker : workers)
+                if (worker.joinable()) worker.join();
+        }
+
+        void Submit(BlockingIoCall* call) {
+            {
+                std::lock_guard lock(mutex);
+                queued.push_back(call);
+            }
+            available.notify_one();
+        }
+    };
+
+    BlockingIoExecutor& GetBlockingIoExecutor() {
+        static BlockingIoExecutor executor;
+        return executor;
+    }
+
     void Wait(Task& task) {
         if (currentTask) {
             if (currentTask == &task) {
@@ -605,6 +695,26 @@ extern "C" std::int32_t absolute_task_when_any(void** handles, std::int32_t coun
         const std::int32_t index = completedIndex();
         if (index >= 0) return index;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
+namespace Absolute::RuntimeDetail {
+    bool IsSchedulerTask() noexcept {
+        return currentTask != nullptr;
+    }
+
+    void RunBlockingIoImpl(BlockingIoOperation operation, void* context) {
+        if (!operation) return;
+        if (!currentTask) {
+            operation(context);
+            return;
+        }
+
+        BlockingIoCall call{operation, context, currentTask, {}};
+        currentScheduler->PrepareSuspend();
+        GetBlockingIoExecutor().Submit(&call);
+        currentScheduler->YieldCurrent();
+        if (call.exception) std::rethrow_exception(call.exception);
     }
 }
 

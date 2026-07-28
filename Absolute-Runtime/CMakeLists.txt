@@ -17,6 +17,7 @@ add_library(Absolute-Runtime STATIC
     src/process.cpp
     src/random.cpp
     src/scheduler_fiber.h
+    src/scheduler_io.h
     src/string.cpp
     src/tasks.cpp
     src/time.cpp

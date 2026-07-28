@@ -52,5 +52,17 @@ for constrained hosts and deterministic scheduler tests.
 
 Windows uses native Fibers. Linux and macOS use `ucontext`; Android/Termux uses
 the Termux `libucontext` package installed by the project bootstrap script.
-Blocking filesystem and network calls are not yet connected to an I/O reactor
-and remain the next Scheduler v2 integration step.
+
+Native filesystem calls and blocking TCP/UDP operations are submitted to a
+separate I/O executor. The calling fiber is suspended and its scheduler worker
+immediately returns to the runnable queue; I/O completion enqueues the fiber on
+its owner worker. DNS resolution, connect, accept, send, receive, filesystem
+metadata, whole-file operations, and streaming file operations use this path.
+Calls made outside an Absolute task remain synchronous.
+
+The I/O executor defaults to the host concurrency clamped to `2..4` threads.
+`ABSOLUTE_IO_WORKERS=2..32` overrides it before the first task performs native
+I/O. This is the portable blocking-offload backend. OS-native readiness and
+completion backends (IOCP on Windows and epoll/kqueue on Unix) remain planned
+for higher connection counts; they can replace the executor without changing
+the fiber suspension contract.
