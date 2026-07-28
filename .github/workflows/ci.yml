@@ -246,11 +246,10 @@ jobs:
           set -o pipefail
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER="${LLVM_PREFIX}/bin/clang" \
-            -DCMAKE_CXX_COMPILER="${LLVM_PREFIX}/bin/clang++" \
             -DBUILD_TESTING=ON \
             -DABSOLUTE_ENABLE_LLVM=ON \
             -DABSOLUTE_DESKTOP_ENABLE_X11=OFF \
+            -DABSOLUTE_NATIVE_CXX_COMPILER="${LLVM_PREFIX}/bin/clang++" \
             -DLLVM_DIR="${LLVM_DIR}" \
             2>&1 | tee ci-logs/configure.log
 
@@ -277,6 +276,7 @@ jobs:
             sw_vers
             uname -m
             cmake --version
+            /usr/bin/clang++ --version
             "${LLVM_PREFIX}/bin/clang" --version
             "${LLVM_PREFIX}/bin/llvm-config" --version
           } > ci-logs/toolchain.txt 2>&1
