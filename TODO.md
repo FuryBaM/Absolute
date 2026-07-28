@@ -1004,3 +1004,40 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [ ] Для всех перечисленных случаев добавить минимальные semantic/error/LLVM/runtime
   тесты и запускать их в ownership torture suite под ASan, LSan, UBSan и TSan,
   где соответствующий sanitizer применим.
+
+## P1 — категории выражений, places и forwarding
+
+- [ ] Заменить перегруженный `bool isLValue` на явную категорию выражения
+  `ValueCategory { Value, Place }`. Категория отвечает только на вопрос, является
+  ли выражение вычисленным значением или стабильным местом хранения; ownership и
+  consuming semantics не кодировать внутри неё.
+- [ ] Ввести `PlaceInfo { readable, writable, addressable }` и использовать его для
+  переменных, параметров, полей, properties и indexers. Writable property остаётся
+  place без физического адреса; const-place readable/addressable, но не writable.
+  `deletable` не хранить в `PlaceInfo`, а выводить из типа и ownership-роли.
+- [ ] Разнести форму выражения и владение по независимым данным: как минимум
+  `OwnershipRole`, `createsOwner` и `consumesSource`. Свежий `new`/return/call
+  создаёт owner без существующего источника; `move(place)` создаёт owner-result и
+  явно инвалидирует source.
+- [ ] Перевести текущий `move` на новую модель: требовать readable+writable place,
+  запрещать const/weak/subscriber/invalid source, возвращать `Value` с
+  `consumesSource=true` и сохранять ownership region для переноса aliases.
+- [ ] Формализовать forwarding parameters и отдельный `ForwardingMode`
+  (`None`, `Borrowed`, `Consuming`) либо эквивалентную call-site metadata.
+  `forward(...)` разрешать только для forwarding-параметров, а не для произвольных
+  локальных owners; для обычного места использовать само значение или `move(...)`.
+- [ ] Сделать `forward(borrowedParameter)` сохранением borrow/place-доступа, а
+  `forward(consumingParameter)` — consuming value с переносом owner и
+  инвалидированием источника. Не выводить forwarding через
+  `!argument.isLValue || argument.isMoveResult`.
+- [ ] Закрыть ошибки текущей реализации `forward`: не допускать второго owner из
+  `forward(localOwner)`, не терять `createsOwner` у свежего rvalue, не разрешать
+  forwarding weak/subscriber/const/invalid values и не оставлять consuming result
+  непоглощённым.
+- [ ] Обновить Analyzer `Result`/`ExpressionInfo`, `Save`, value-flow, argument и
+  return checks, а также CodeGen address/value lowering так, чтобы place access,
+  ownership creation и source consumption обрабатывались независимо.
+- [ ] Зафиксировать модель в отдельной документации и добавить semantic/error/LLVM/
+  runtime tests: variable/const/field/property/indexer, `T&`/`const T&`, fresh
+  temporary, `new`, function return, nested generic wrappers, `move`, forwarding
+  borrowed/consuming parameters, unused result и повторное использование source.
