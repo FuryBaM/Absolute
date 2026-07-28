@@ -642,6 +642,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/out-parameters.abs"
     )
     add_test(
+        NAME absolute.forward-builtin-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/forward-builtin.abs"
+    )
+    add_test(
         NAME absolute.base-language-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/base-language-errors.abs"
     )
@@ -1231,6 +1235,14 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-out-parameters-ir
         )
         add_test(
+            NAME absolute.emit-forward-builtin
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/forward-builtin.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/forward-builtin.ll"
+        )
+        set_tests_properties(absolute.emit-forward-builtin PROPERTIES
+            FIXTURES_SETUP absolute-forward-builtin-ir
+        )
+        add_test(
             NAME absolute.emit-multidimensional-slices
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/multidimensional-slices.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/multidimensional-slices.ll"
@@ -1466,6 +1478,14 @@ if(BUILD_TESTING)
             set_tests_properties(absolute.run-out-parameters PROPERTIES
                 FIXTURES_REQUIRED absolute-out-parameters-ir
                 PASS_REGULAR_EXPRESSION "out-parameters=ok"
+            )
+            add_test(
+                NAME absolute.run-forward-builtin
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/forward-builtin.ll"
+            )
+            set_tests_properties(absolute.run-forward-builtin PROPERTIES
+                FIXTURES_REQUIRED absolute-forward-builtin-ir
+                PASS_REGULAR_EXPRESSION "forward-builtin=ok"
             )
             add_test(
                 NAME absolute.run-multidimensional-slices

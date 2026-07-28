@@ -125,20 +125,27 @@ namespace Absolute {
             return;
         }
 
-        if (name == "move") {
-            if (expression.arguments.size() != 1) Fail("move expects exactly one argument");
+        if (name == "forward" || name == "move") {
+            if (expression.arguments.size() != 1) Fail(name + " expects exactly one argument");
             Expression* argument = expression.arguments.front().get();
-            llvm::Value* address = EvaluateAddress(argument);
-            llvm::Type* type = TypeFromName(SemanticType(argument));
-            value = builder.CreateLoad(type, address, "move.value");
-            valueCreatesManagedOwner = IsStrongManagedPointerTypeName(SemanticType(argument));
-            if (ArrayRankName(SemanticType(argument)) > 0) {
-                valueCreatesArrayOwner = true;
-                valueArrayOwner = builder.CreateExtractValue(value, {1}, "move.array.owner");
-            }
-            uint64_t size = SizeOfTypeName(SemanticType(argument));
-            if (size > 0) {
-                builder.CreateMemSet(address, builder.getInt8(0), size, llvm::MaybeAlign(8));
+            const ExpressionInfo* info = analyzer && argument
+                ? analyzer->GetExpressionInfo(*argument) : nullptr;
+            const bool isLValue = info && info->isLValue;
+            if (isLValue) {
+                llvm::Value* address = EvaluateAddress(argument);
+                llvm::Type* type = TypeFromName(SemanticType(argument));
+                value = builder.CreateLoad(type, address, name + ".value");
+                valueCreatesManagedOwner = IsStrongManagedPointerTypeName(SemanticType(argument));
+                if (ArrayRankName(SemanticType(argument)) > 0) {
+                    valueCreatesArrayOwner = true;
+                    valueArrayOwner = builder.CreateExtractValue(value, {1}, "move.array.owner");
+                }
+                uint64_t size = SizeOfTypeName(SemanticType(argument));
+                if (size > 0 && name == "move") {
+                    builder.CreateMemSet(address, builder.getInt8(0), size, llvm::MaybeAlign(8));
+                }
+            } else {
+                value = Evaluate(argument);
             }
             return;
         }

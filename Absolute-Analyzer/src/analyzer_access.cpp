@@ -466,6 +466,43 @@ namespace Absolute {
                 return;
             }
 
+            if (callName == "forward") {
+                if (arguments.size() != 1) {
+                    Report("forward expects exactly one argument");
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                const Result& argument = arguments.front();
+                const bool constSource = argument.isLValue &&
+                    IsConstMutationTarget(expr->arguments.front().get(), argument);
+                if (constSource)
+                    Report("forward cannot invalidate a const source",
+                        "E_MOVE_CONST_SOURCE", argument.symbol);
+
+                const Symbol* source = table.Get(argument.symbol);
+                const bool strongManaged = IsStrongManagedPointerType(argument.type);
+                const bool managedOwner = strongManaged && source &&
+                    (source->kind == SymbolKind::Field || source->managedOwner);
+
+                const bool shouldMove = !argument.isLValue || argument.isMoveResult;
+                if (shouldMove && argument.symbol != InvalidSymbolId && argument.isLValue) {
+                    if (auto flow = valueFlow.find(argument.symbol); flow != valueFlow.end()) {
+                        flow->second.initialization = InitializationState::Uninitialized;
+                        flow->second.pointerValidity = PointerValidity::MaybeNull;
+                    }
+                }
+                Result result = {table.Lookup(callName), argument.type, false};
+                result.createsManagedOwner = managedOwner;
+                result.initialization = InitializationState::Initialized;
+                result.pointerValidity = IsPointerType(argument.type)
+                    ? argument.pointerValidity : PointerValidity::NotPointer;
+                result.pointerOwner = managedOwner
+                    ? argument.symbol : argument.pointerOwner;
+                result.isMoveResult = shouldMove;
+                Save(expr, result);
+                return;
+            }
+
             if (callName == "seal") {
                 if (!explicitTypeArguments.empty())
                     Report("seal does not accept explicit type arguments",

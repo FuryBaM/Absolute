@@ -743,7 +743,7 @@ namespace Absolute {
 
     bool CodeGenerator::Impl::IsBuiltinFunction(const std::string& name) const {
         return name == "print" || name == "println" || name == "format" ||
-            name == "toString" || name == "assert" || name == "copy" || name == "move" ||
+            name == "toString" || name == "assert" || name == "copy" || name == "move" || name == "forward" ||
             name == "seal" || name == "unseal" ||
             name == "load" || name == "isLoaded" || name == "loadError" ||
             name == "taskGroupAdd" || name == "tuple";
