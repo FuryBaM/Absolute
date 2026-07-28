@@ -114,6 +114,17 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "runtime-scheduler-metrics=ok"
         TIMEOUT 30)
 
+    add_executable(absolute-runtime-scheduler-stress-test
+        tests/runtime-scheduler-stress.cpp)
+    target_link_libraries(absolute-runtime-scheduler-stress-test
+        PRIVATE Absolute-Runtime)
+    add_test(
+        NAME absolute.runtime-scheduler-stress
+        COMMAND absolute-runtime-scheduler-stress-test)
+    set_tests_properties(absolute.runtime-scheduler-stress PROPERTIES
+        PASS_REGULAR_EXPRESSION "runtime-scheduler-stress=ok"
+        TIMEOUT 60)
+
     if(TARGET Absolute-Unless-Plugin)
         add_test(
             NAME absolute.syntax-plugin

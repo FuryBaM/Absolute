@@ -821,8 +821,10 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   runnable/suspended и cumulative completed, queue samples/total/max latency,
   worker busy time/utilization, steals, wake-ups, blocked time и starvation
   events для queue episodes от 100 ms.
-- [ ] Добавить stress на spawn/await storm, cancel-vs-complete, destroy-vs-wait,
-  channel close races, timeout races и nested task groups.
+- [x] Добавить отдельный native/TSan stress harness на spawn/await storm,
+  cancel-vs-complete, destroy-vs-wait, channel close races, timeout races и
+  nested task groups. Один task handle по-прежнему имеет ровно одного
+  consuming-владельца (`await`, `destroy` или `TaskGroup`).
 - [x] Удалить временную зависимость корректности bounded channels от минимального
   количества worker threads после внедрения suspension.
 

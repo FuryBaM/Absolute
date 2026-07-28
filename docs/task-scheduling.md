@@ -179,6 +179,13 @@ startup.
 Windows uses native Fibers. Linux and macOS use `ucontext`; Android/Termux uses
 the Termux `libucontext` package installed by the project bootstrap script.
 
+The native scheduler stress harness continuously exercises nested spawn/await,
+completion racing cancellation and timed observation, destroy waiting for
+completion, channel close wake-ups, and recursively nested task groups. A task
+handle remains a linear ownership token: exactly one owner may consume it with
+`await`, `destroy`, or transfer it into a `TaskGroup`. Concurrently consuming
+the same raw handle twice is intentionally outside the runtime contract.
+
 Linux and Android/Termux use a one-shot `epoll` reactor for TCP
 connect/accept/send/receive and UDP send/receive calls made by scheduler tasks.
 The reactor can track multiple read and write waiters and their deadlines for

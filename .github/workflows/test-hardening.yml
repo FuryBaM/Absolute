@@ -222,6 +222,10 @@ jobs:
             -fsanitize=thread -fno-omit-frame-pointer \
             tests/runtime-scheduler-tsan.cpp "$runtime" \
             -pthread -ldl -o build-tsan/runtime-scheduler-tsan
+          clang++-${ABSOLUTE_LLVM_VERSION} -std=c++20 -O1 -g \
+            -fsanitize=thread -fno-omit-frame-pointer \
+            tests/runtime-scheduler-stress.cpp "$runtime" \
+            -pthread -ldl -o build-tsan/runtime-scheduler-stress
 
       - name: Run scheduler under ThreadSanitizer
         id: test
@@ -239,6 +243,8 @@ jobs:
           for iteration in $(seq 1 "$repeats"); do
             echo "TSan iteration $iteration/$repeats" | tee -a hardening-logs/tsan.log
             timeout 90s build-tsan/runtime-scheduler-tsan \
+              2>&1 | tee -a hardening-logs/tsan.log
+            timeout 90s build-tsan/runtime-scheduler-stress \
               2>&1 | tee -a hardening-logs/tsan.log
           done
 
@@ -267,6 +273,7 @@ jobs:
           path: |
             hardening-logs
             build-tsan/runtime-scheduler-tsan
+            build-tsan/runtime-scheduler-stress
             core
             core.*
           if-no-files-found: ignore
