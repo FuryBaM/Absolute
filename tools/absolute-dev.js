@@ -3,6 +3,7 @@
 
 /**
  * Absolute developer CLI:
+ *   node tools/absolute-dev.js --version
  *   node tools/absolute-dev.js build-compiler [build-windows args...]
  *   node tools/absolute-dev.js compiler [absolutec args...]
  *   node tools/absolute-dev.js compile <file.abs|project.absproj> [compiler args...]
@@ -40,6 +41,7 @@ Single files:
   absolute run <file.abs> [compiler options...] [-- program arguments...]
 
 Toolchain:
+  absolute --version
   absolute build-compiler [--bootstrap] [--frontend] [-Clean] [--test]
   absolute test [-- ctest arguments...]
   absolute compiler <absolutec arguments...>
@@ -891,6 +893,10 @@ function main(argv) {
         return 0;
     }
     switch (command) {
+    case '--version':
+    case '-V':
+    case 'version':
+        return runCompiler(['--version']);
     case 'new':
     case 'init':
         return createProject(rest);

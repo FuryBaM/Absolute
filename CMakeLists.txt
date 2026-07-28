@@ -1523,6 +1523,18 @@ if(BUILD_TESTING)
     set_tests_properties(absolute.cfunc-errors PROPERTIES WILL_FAIL TRUE)
 
     find_program(ABSOLUTE_NODE_EXECUTABLE NAMES node nodejs)
+    if(ABSOLUTE_NODE_EXECUTABLE)
+        add_test(
+            NAME absolute.cli-version
+            COMMAND "${CMAKE_COMMAND}" -E env
+                "ABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>"
+                "${ABSOLUTE_NODE_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tools/absolute-dev.js"
+                --version
+        )
+        set_tests_properties(absolute.cli-version PROPERTIES
+            PASS_REGULAR_EXPRESSION "absolutec ${ABSOLUTE_VERSION}")
+    endif()
     set(ABSOLUTE_BINDGEN_CLANG "")
     if(EXISTS "${PROJECT_SOURCE_DIR}/.absolute/toolchains/llvm-18.1.8/bin/clang${CMAKE_EXECUTABLE_SUFFIX}")
         set(ABSOLUTE_BINDGEN_CLANG
