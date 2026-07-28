@@ -12,6 +12,7 @@
 #include "socket_reactor.h"
 
 #if defined(_WIN32)
+#define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <mswsock.h>
 #include <winsock2.h>
@@ -42,6 +43,18 @@ namespace {
     };
 
     thread_local std::string lastNetworkError;
+
+    std::int32_t EffectiveSocketTimeout(SocketState* state) {
+        const std::int32_t configured =
+            state ? state->timeoutMilliseconds : 0;
+        const std::int32_t taskRemaining =
+            Absolute::RuntimeDetail::CurrentTaskDeadlineMilliseconds();
+        if (taskRemaining < 0) return configured;
+        const std::int32_t taskTimeout =
+            (std::max)(1, taskRemaining);
+        return configured > 0
+            ? (std::min)(configured, taskTimeout) : taskTimeout;
+    }
 
     template <class Result, class Operation>
     Result RunNetworkIo(Operation&& operation) {
@@ -194,7 +207,7 @@ namespace {
             state) {
             if (Absolute::RuntimeDetail::WaitSocketReady(
                     state->socket, events,
-                    state->timeoutMilliseconds)) {
+                    EffectiveSocketTimeout(state))) {
                 return true;
             }
             if (errno == ETIMEDOUT) {
@@ -214,12 +227,13 @@ namespace {
                 ((events & Absolute::RuntimeDetail::SocketReadyWrite) != 0
                     ? POLLOUT : 0)),
             0};
+        const std::int32_t effectiveTimeout =
+            EffectiveSocketTimeout(state);
         int result = 0;
         do {
             result = poll(
                 &descriptor, 1,
-                state->timeoutMilliseconds > 0
-                    ? state->timeoutMilliseconds : -1);
+                effectiveTimeout > 0 ? effectiveTimeout : -1);
         } while (result < 0 && errno == EINTR);
         if (result > 0) return true;
         if (result == 0) {
@@ -502,7 +516,8 @@ extern "C" void* absolute_net_tcp_connect(const char* host, std::int32_t port) {
             Absolute::RuntimeDetail::SocketCompletionResult completion;
             if (!Absolute::RuntimeDetail::RunSocketCompletion(
                     candidate, &StartWindowsConnect,
-                    &operation, completion)) {
+                    &operation, completion,
+                    EffectiveSocketTimeout(nullptr))) {
                 CaptureCompletionError("ConnectEx", completion.error);
                 CloseNative(candidate);
                 continue;
@@ -627,7 +642,7 @@ extern "C" void* absolute_net_tcp_accept(void* handle) {
             if (!Absolute::RuntimeDetail::RunSocketCompletion(
                     listener->socket, &StartWindowsAccept,
                     &operation, completion,
-                    listener->timeoutMilliseconds)) {
+                    EffectiveSocketTimeout(listener))) {
                 CaptureCompletionError("AcceptEx", completion.error);
                 CloseNative(accepted);
                 return nullptr;
@@ -696,7 +711,7 @@ extern "C" std::int32_t absolute_net_tcp_send(void* handle, const char* text) {
                 if (!Absolute::RuntimeDetail::RunSocketCompletion(
                         state->socket, &StartWindowsSend,
                         &operation, completion,
-                        state->timeoutMilliseconds)) {
+                        EffectiveSocketTimeout(state))) {
                     CaptureCompletionError("WSASend", completion.error);
                     return std::int32_t{-1};
                 }
@@ -761,7 +776,7 @@ extern "C" const char* absolute_net_tcp_receive(
                 if (!Absolute::RuntimeDetail::RunSocketCompletion(
                         state->socket, &StartWindowsReceive,
                         &operation, completion,
-                        state->timeoutMilliseconds)) {
+                        EffectiveSocketTimeout(state))) {
                     CaptureCompletionError("WSARecv", completion.error);
                     return nullptr;
                 }
@@ -983,7 +998,7 @@ extern "C" std::int32_t absolute_net_udp_send_to(void* handle, const char* host,
                 if (!Absolute::RuntimeDetail::RunSocketCompletion(
                         state->socket, &StartWindowsSendTo,
                         &operation, completion,
-                        state->timeoutMilliseconds)) {
+                        EffectiveSocketTimeout(state))) {
                     CaptureCompletionError(
                         "WSASendTo", completion.error);
                     return std::int32_t{-1};
@@ -1048,7 +1063,7 @@ extern "C" const char* absolute_net_udp_receive_from(void* handle, std::int32_t 
                 if (!Absolute::RuntimeDetail::RunSocketCompletion(
                         state->socket, &StartWindowsReceiveFrom,
                         &operation, completion,
-                        state->timeoutMilliseconds)) {
+                        EffectiveSocketTimeout(state))) {
                     CaptureCompletionError(
                         "WSARecvFrom", completion.error);
                     return nullptr;

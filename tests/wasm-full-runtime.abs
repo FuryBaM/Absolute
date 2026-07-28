@@ -14,7 +14,13 @@ async void wasmTaskGroupChild() {
     std.task.delay(1);
 }
 
-int32 main() {
+async void wasmDeadlineChild() {
+    std.task.setDeadlineAfter(0);
+    assert(std.task.cancelled(), "wasm task deadline cancellation");
+    assert(std.task.deadlineRemaining() == 0, "wasm task deadline reached");
+}
+
+async int32 main() {
     assert(std.time.now(std.time.Unit.Milliseconds) > 0, "host wall clock");
     assert(std.time.mono(std.time.Unit.Nanoseconds) > 0, "host monotonic clock");
     assert(std.random.entropy() != 0, "host random entropy");
@@ -97,6 +103,8 @@ int32 main() {
         taskSet.join();
         assert(taskSet.count() == 0, "task group joins child");
     }
+    task<void> deadlineChild = spawn wasmDeadlineChild();
+    await deadlineChild;
 
     println("wasm-full-runtime=ok");
     return 0;

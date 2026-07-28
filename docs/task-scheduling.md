@@ -65,8 +65,43 @@ async int32 main() {
 ```
 
 Cancellation does not forcibly interrupt user code. A child must reach a
-cancellation check or finish normally. Automatic propagation into timers and
-I/O belongs to the next scheduler milestone.
+cancellation check or finish normally.
+
+## Cancellation and deadline propagation
+
+Every native task owns a small reference-counted control node pointing only to
+its parent node. `spawn` links the new task to the currently running task.
+Cancellation and deadlines are therefore inherited through the complete task
+tree without retaining task handles, introducing cycles, or imposing borrowing
+rules on application values.
+
+`std.task.setDeadlineAfter(milliseconds)` sets a monotonic deadline on the
+current task. A later call may tighten but never extend an existing deadline.
+All descendants observe the earliest deadline in their ancestry.
+`std.task.deadlineRemaining()` returns rounded-up milliseconds, `0` after the
+deadline, and `-1` when the task tree has no deadline. An expired deadline also
+makes `std.task.cancelled()` return `true`.
+
+```absolute
+async void child() {
+    // This delay is capped by the inherited parent deadline.
+    std.task.delay(10000);
+    assert(std.task.cancelled(), "deadline reached");
+}
+
+async void parent() {
+    std.task.setDeadlineAfter(50);
+    task<void> work = spawn child();
+    await work;
+}
+```
+
+Scheduler delays and native TCP/UDP connect, accept, send, and receive waits use
+the earlier of their operation timeout and the inherited task deadline.
+Cancellation remains cooperative: it does not unwind arbitrary user code,
+force-release a held mutex, or terminate a blocking DNS/filesystem system call.
+Those calls retain memory safety and expose the expired/cancelled state when
+control returns to the task.
 
 ## Scheduler v2 runtime
 

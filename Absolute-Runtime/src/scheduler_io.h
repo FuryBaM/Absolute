@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <type_traits>
 #include <utility>
 
@@ -9,6 +10,7 @@ namespace Absolute::RuntimeDetail {
     using IoRegistration = void (*)(void*, IoCompletion, void*);
 
     bool IsSchedulerTask() noexcept;
+    std::int32_t CurrentTaskDeadlineMilliseconds() noexcept;
     void RunBlockingIoImpl(BlockingIoOperation operation, void* context);
     void SuspendForIo(IoRegistration registration, void* context);
 

@@ -774,19 +774,101 @@ const char* absolute_load_error(void) {
 /* Max context bytes copied to/from a host worker (i64 slots from codegen). */
 enum { ABSOLUTE_WASM_TASK_CONTEXT_MAX = 512 };
 
+int64_t absolute_time_monotonic_nanos(void);
+
+typedef struct WasmTaskControl {
+    struct WasmTaskControl* parent;
+    int32_t references;
+    int32_t cancelled;
+    int64_t deadline_nanos;
+} WasmTaskControl;
+
 typedef struct WasmTask {
     void* context;
     uint64_t error_handle;
     uint64_t error_type;
     int32_t job_id; /* host pool job slot, or -1 when run synchronously */
     int done;
-    int cancelled;
+    WasmTaskControl* control;
 } WasmTask;
 
 static int32_t g_task_core = -1;
 static int32_t g_task_priority = 0;
 static const char* g_task_role = "";
 static WasmTask* g_current_task = NULL;
+
+static void wasm_task_control_retain(WasmTaskControl* control) {
+    if (!control) return;
+#if defined(ABSOLUTE_WASM_SHARED)
+    __atomic_add_fetch(&control->references, 1, __ATOMIC_RELAXED);
+#else
+    ++control->references;
+#endif
+}
+
+static void wasm_task_control_release(WasmTaskControl* control) {
+    if (!control) return;
+    int32_t references = 0;
+#if defined(ABSOLUTE_WASM_SHARED)
+    references =
+        __atomic_sub_fetch(&control->references, 1, __ATOMIC_ACQ_REL);
+#else
+    references = --control->references;
+#endif
+    if (references != 0) return;
+    WasmTaskControl* parent = control->parent;
+    free(control);
+    wasm_task_control_release(parent);
+}
+
+static WasmTaskControl* wasm_task_control_create(
+    WasmTaskControl* parent) {
+    WasmTaskControl* control =
+        (WasmTaskControl*)heap_alloc(sizeof(WasmTaskControl));
+    if (!control) return NULL;
+    control->parent = parent;
+    control->references = 1;
+    control->cancelled = 0;
+    control->deadline_nanos = 0;
+    wasm_task_control_retain(parent);
+    return control;
+}
+
+static int64_t wasm_task_effective_deadline(
+    WasmTaskControl* control) {
+    int64_t effective = 0;
+    for (WasmTaskControl* current = control;
+         current; current = current->parent) {
+#if defined(ABSOLUTE_WASM_SHARED)
+        const int64_t candidate = __atomic_load_n(
+            &current->deadline_nanos, __ATOMIC_ACQUIRE);
+#else
+        const int64_t candidate = current->deadline_nanos;
+#endif
+        if (candidate > 0 &&
+            (effective == 0 || candidate < effective))
+            effective = candidate;
+    }
+    return effective;
+}
+
+static uint8_t wasm_task_control_cancelled(
+    WasmTaskControl* control) {
+    for (WasmTaskControl* current = control;
+         current; current = current->parent) {
+#if defined(ABSOLUTE_WASM_SHARED)
+        if (__atomic_load_n(
+                &current->cancelled, __ATOMIC_ACQUIRE))
+            return 1;
+#else
+        if (current->cancelled) return 1;
+#endif
+    }
+    const int64_t deadline =
+        wasm_task_effective_deadline(control);
+    return deadline > 0 &&
+        deadline <= absolute_time_monotonic_nanos();
+}
 
 #if !defined(ABSOLUTE_WASM_USE_WASI)
 __attribute__((import_module("env"), import_name("absolute_task_pool_size")))
@@ -829,7 +911,10 @@ void* absolute_task_spawn_config(
     task->error_type = 0;
     task->job_id = -1;
     task->done = 0;
-    task->cancelled = 0;
+    task->control = wasm_task_control_create(
+        g_current_task ? g_current_task->control : NULL);
+    if (!task->control)
+        abort();
 
     const int32_t prev_core = g_task_core;
     const int32_t prev_priority = g_task_priority;
@@ -913,6 +998,7 @@ void* absolute_task_await(void* handle) {
     if (task->error_handle)
         absolute_error_set(task->error_handle, task->error_type);
     void* context = task->context;
+    wasm_task_control_release(task->control);
     free(task);
     return context;
 }
@@ -933,18 +1019,13 @@ void absolute_task_destroy(void* handle) {
     if (task->error_handle)
         absolute_managed_destroy(task->error_handle);
     free(task->context);
+    wasm_task_control_release(task->control);
     free(task);
 }
 
 uint8_t absolute_task_current_cancelled(void) {
-    if (!g_current_task)
-        return 0;
-#if defined(ABSOLUTE_WASM_SHARED)
-    return __atomic_load_n(
-        &g_current_task->cancelled, __ATOMIC_ACQUIRE) ? 1 : 0;
-#else
-    return g_current_task->cancelled ? 1 : 0;
-#endif
+    return g_current_task
+        ? wasm_task_control_cancelled(g_current_task->control) : 0;
 }
 
 void absolute_task_cancel(void* handle) {
@@ -952,10 +1033,51 @@ void absolute_task_cancel(void* handle) {
         return;
     WasmTask* task = (WasmTask*)handle;
 #if defined(ABSOLUTE_WASM_SHARED)
-    __atomic_store_n(&task->cancelled, 1, __ATOMIC_RELEASE);
+    __atomic_store_n(
+        &task->control->cancelled, 1, __ATOMIC_RELEASE);
 #else
-    task->cancelled = 1;
+    task->control->cancelled = 1;
 #endif
+}
+
+uint8_t absolute_task_current_set_deadline_after(
+    int32_t milliseconds) {
+    if (!g_current_task || milliseconds < 0)
+        return 0;
+    const int64_t now = absolute_time_monotonic_nanos();
+    const int64_t duration =
+        (int64_t)milliseconds * 1000000;
+    const int64_t maximum = INT64_MAX;
+    const int64_t deadline =
+        duration > maximum - now ? maximum : now + duration;
+    WasmTaskControl* control = g_current_task->control;
+#if defined(ABSOLUTE_WASM_SHARED)
+    int64_t current = __atomic_load_n(
+        &control->deadline_nanos, __ATOMIC_ACQUIRE);
+    while ((current == 0 || deadline < current) &&
+        !__atomic_compare_exchange_n(
+            &control->deadline_nanos, &current, deadline,
+            1, __ATOMIC_RELEASE, __ATOMIC_ACQUIRE)) {}
+#else
+    if (control->deadline_nanos == 0 ||
+        deadline < control->deadline_nanos)
+        control->deadline_nanos = deadline;
+#endif
+    return 1;
+}
+
+int32_t absolute_task_current_deadline_remaining(void) {
+    if (!g_current_task) return -1;
+    const int64_t deadline =
+        wasm_task_effective_deadline(g_current_task->control);
+    if (deadline == 0) return -1;
+    const int64_t remaining =
+        deadline - absolute_time_monotonic_nanos();
+    if (remaining <= 0) return 0;
+    const int64_t milliseconds =
+        (remaining + 999999) / 1000000;
+    return milliseconds > INT32_MAX
+        ? INT32_MAX : (int32_t)milliseconds;
 }
 
 typedef struct WasmTaskGroup {

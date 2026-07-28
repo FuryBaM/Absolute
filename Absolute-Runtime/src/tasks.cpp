@@ -9,6 +9,8 @@
 #include <deque>
 #include <exception>
 #include <iostream>
+#include <limits>
+#include <memory>
 #include <mutex>
 #include <queue>
 #include <string>
@@ -49,6 +51,73 @@ namespace {
         Done
     };
 
+    using TaskClock = std::chrono::steady_clock;
+
+    struct TaskControl {
+        std::shared_ptr<TaskControl> parent;
+        std::atomic<bool> cancelRequested{false};
+        std::atomic<std::int64_t> deadlineNanoseconds{0};
+    };
+
+    std::int64_t TaskNowNanoseconds() {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+            TaskClock::now().time_since_epoch()).count();
+    }
+
+    std::int64_t EffectiveDeadlineNanoseconds(
+        const std::shared_ptr<TaskControl>& control) {
+        std::int64_t effective = 0;
+        for (auto current = control; current; current = current->parent) {
+            const std::int64_t candidate =
+                current->deadlineNanoseconds.load(std::memory_order_acquire);
+            if (candidate > 0 && (effective == 0 || candidate < effective))
+                effective = candidate;
+        }
+        return effective;
+    }
+
+    bool ControlCancelled(const std::shared_ptr<TaskControl>& control) {
+        for (auto current = control; current; current = current->parent) {
+            if (current->cancelRequested.load(std::memory_order_acquire))
+                return true;
+        }
+        const std::int64_t deadline =
+            EffectiveDeadlineNanoseconds(control);
+        return deadline > 0 && deadline <= TaskNowNanoseconds();
+    }
+
+    bool SetControlDeadlineAfter(
+        const std::shared_ptr<TaskControl>& control, std::int32_t milliseconds) {
+        if (!control || milliseconds < 0) return false;
+        const std::int64_t now = TaskNowNanoseconds();
+        const std::int64_t maximum =
+            std::numeric_limits<std::int64_t>::max();
+        const std::int64_t duration =
+            static_cast<std::int64_t>(milliseconds) * 1'000'000;
+        const std::int64_t deadline =
+            duration > maximum - now ? maximum : now + duration;
+        std::int64_t current =
+            control->deadlineNanoseconds.load(std::memory_order_acquire);
+        while ((current == 0 || deadline < current) &&
+            !control->deadlineNanoseconds.compare_exchange_weak(
+                current, deadline,
+                std::memory_order_release, std::memory_order_acquire)) {}
+        return true;
+    }
+
+    std::int32_t RemainingDeadlineMilliseconds(
+        const std::shared_ptr<TaskControl>& control) {
+        const std::int64_t deadline =
+            EffectiveDeadlineNanoseconds(control);
+        if (deadline == 0) return -1;
+        const std::int64_t remaining = deadline - TaskNowNanoseconds();
+        if (remaining <= 0) return 0;
+        const std::int64_t milliseconds =
+            (remaining + 999'999) / 1'000'000;
+        return static_cast<std::int32_t>(std::min<std::int64_t>(
+            milliseconds, std::numeric_limits<std::int32_t>::max()));
+    }
+
     struct Task {
         std::mutex mutex;
         std::condition_variable completed;
@@ -63,7 +132,8 @@ namespace {
         std::uint64_t errorHandle = 0;
         std::uint64_t errorType = 0;
         TaskState state = TaskState::Pending;
-        std::atomic<bool> cancelRequested{false};
+        std::shared_ptr<TaskControl> control =
+            std::make_shared<TaskControl>();
         bool wakePending = false;
         bool finished = false;
         bool done = false;
@@ -557,6 +627,7 @@ extern "C" void* absolute_task_spawn_config(
     }
     Task* task = new Task;
     task->context = context;
+    if (currentTask) task->control->parent = currentTask->control;
     GetScheduler().Submit(task, entry, core, priority, role ? role : "");
     return task;
 }
@@ -645,9 +716,16 @@ namespace {
 
 extern "C" void absolute_task_delay(std::int32_t ms) {
     if (ms <= 0) return;
-    const auto deadline = std::chrono::steady_clock::now() +
+    auto deadline = TaskClock::now() +
         std::chrono::milliseconds(ms);
     if (currentTask) {
+        const std::int64_t taskDeadline =
+            EffectiveDeadlineNanoseconds(currentTask->control);
+        if (taskDeadline > 0) {
+            const auto inherited = TaskClock::time_point(
+                std::chrono::nanoseconds(taskDeadline));
+            if (inherited < deadline) deadline = inherited;
+        }
         currentScheduler->SuspendUntil(deadline);
         return;
     }
@@ -709,6 +787,11 @@ extern "C" std::int32_t absolute_task_when_any(void** handles, std::int32_t coun
 namespace Absolute::RuntimeDetail {
     bool IsSchedulerTask() noexcept {
         return currentTask != nullptr;
+    }
+
+    std::int32_t CurrentTaskDeadlineMilliseconds() noexcept {
+        return currentTask
+            ? RemainingDeadlineMilliseconds(currentTask->control) : -1;
     }
 
     void RunBlockingIoImpl(BlockingIoOperation operation, void* context) {
@@ -782,14 +865,24 @@ extern "C" void absolute_cancellation_token_destroy(void* token) {
 
 extern "C" void absolute_task_cancel(void* handle) {
     if (!handle) return;
-    static_cast<Task*>(handle)->cancelRequested.store(
+    static_cast<Task*>(handle)->control->cancelRequested.store(
         true, std::memory_order_release);
     NotifySchedulerProgress();
 }
 
 extern "C" bool absolute_task_current_cancelled() {
-    return currentTask && currentTask->cancelRequested.load(
-        std::memory_order_acquire);
+    return currentTask && ControlCancelled(currentTask->control);
+}
+
+extern "C" bool absolute_task_current_set_deadline_after(
+    std::int32_t milliseconds) {
+    return currentTask &&
+        SetControlDeadlineAfter(currentTask->control, milliseconds);
+}
+
+extern "C" std::int32_t absolute_task_current_deadline_remaining() {
+    return currentTask
+        ? RemainingDeadlineMilliseconds(currentTask->control) : -1;
 }
 
 extern "C" void* absolute_task_group_create() {
@@ -834,7 +927,8 @@ extern "C" void absolute_task_group_cancel(void* handle) {
     if (!group) return;
     std::lock_guard lock(group->mutex);
     for (Task* child : group->children)
-        child->cancelRequested.store(true, std::memory_order_release);
+        child->control->cancelRequested.store(
+            true, std::memory_order_release);
     NotifySchedulerProgress();
 }
 

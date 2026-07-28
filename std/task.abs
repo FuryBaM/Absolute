@@ -5,6 +5,8 @@ extern "C" bool absolute_task_current_role_is(string role);
 extern "C" int32 absolute_scheduler_worker_count();
 extern "C" void absolute_task_delay(int32 ms);
 extern "C" bool absolute_task_current_cancelled();
+extern "C" bool absolute_task_current_set_deadline_after(int32 milliseconds);
+extern "C" int32 absolute_task_current_deadline_remaining();
 extern "C" raw void* absolute_cancellation_token_create();
 extern "C" void absolute_cancellation_token_cancel(raw void* token);
 extern "C" bool absolute_cancellation_token_is_cancelled(raw void* token);
@@ -47,6 +49,17 @@ namespace std.task {
 
     bool cancelled() {
         return absolute_task_current_cancelled();
+    }
+
+    void setDeadlineAfter(int32 milliseconds) {
+        if (!absolute_task_current_set_deadline_after(milliseconds)) {
+            throw new Error(
+                "task deadline requires a running task and non-negative milliseconds");
+        }
+    }
+
+    int32 deadlineRemaining() {
+        return absolute_task_current_deadline_remaining();
     }
 
     class CancellationToken {

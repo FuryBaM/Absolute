@@ -112,6 +112,10 @@ uint8_t absolute_cancellation_token_is_cancelled(void* p) {
 }
 void absolute_cancellation_token_destroy(void* p) { free(p); }
 void absolute_task_delay(int32_t milliseconds) {
+    const int32_t deadline =
+        absolute_task_current_deadline_remaining();
+    if (deadline >= 0 && deadline < milliseconds)
+        milliseconds = deadline;
     if (milliseconds > 0) absolute_time_sleep_millis(milliseconds);
 }
 

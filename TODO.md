@@ -797,7 +797,10 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   приостановленную task в runnable state без polling.
 - [x] Добавить structured concurrency и `TaskGroup`: дочерние tasks принадлежат
   lexical scope и автоматически join/cancel при выходе.
-- [ ] Реализовать propagation cancellation и deadline через всю иерархию tasks.
+- [x] Реализовать propagation cancellation и deadline через всю иерархию tasks:
+  reference-counted parent control chain без циклов, наследуемый monotonic
+  deadline для scheduler delay и native socket waits, cooperative
+  `std.task.cancelled()` для всего поддерева.
 - [ ] Добавить work stealing между worker queues.
   - [x] Ограничить OS worker pool диапазоном `1..32` и добавить
     `ABSOLUTE_SCHEDULER_WORKERS`/`std.task.workerCount()`.

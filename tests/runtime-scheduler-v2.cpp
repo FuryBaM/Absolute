@@ -21,6 +21,8 @@ void* absolute_task_await(void* handle);
 void absolute_task_delay(std::int32_t milliseconds);
 std::int32_t absolute_scheduler_worker_count();
 bool absolute_task_current_cancelled();
+bool absolute_task_current_set_deadline_after(std::int32_t milliseconds);
+std::int32_t absolute_task_current_deadline_remaining();
 void* absolute_task_group_create();
 bool absolute_task_group_add(void* group, void* child);
 std::int32_t absolute_task_group_count(void* group);
@@ -110,6 +112,8 @@ void delayedTask(void* opaque) {
 
 std::atomic<std::int32_t> groupCompletions{0};
 std::atomic<std::int32_t> groupCancellations{0};
+std::atomic<std::int32_t> descendantCancellations{0};
+std::atomic<std::int32_t> descendantDeadlines{0};
 
 void groupedTask(void*) {
     absolute_task_delay(2);
@@ -120,6 +124,41 @@ void cancellableGroupedTask(void*) {
     while (!absolute_task_current_cancelled())
         absolute_task_delay(1);
     groupCancellations.fetch_add(1, std::memory_order_relaxed);
+}
+
+void cancellableDescendant(void*) {
+    while (!absolute_task_current_cancelled())
+        absolute_task_delay(1);
+    descendantCancellations.fetch_add(1, std::memory_order_relaxed);
+}
+
+void cancellationParent(void*) {
+    void* descendant = absolute_task_spawn_config(
+        cancellableDescendant, std::malloc(1),
+        -1, 0, "cancel-descendant");
+    std::free(absolute_task_await(descendant));
+}
+
+void deadlineDescendant(void*) {
+    const std::int32_t inherited =
+        absolute_task_current_deadline_remaining();
+    const auto started = std::chrono::steady_clock::now();
+    absolute_task_delay(1'000);
+    const auto elapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - started).count();
+    if (inherited >= 0 && inherited <= 100 &&
+        absolute_task_current_cancelled() && elapsed < 500) {
+        descendantDeadlines.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void deadlineParent(void*) {
+    require(absolute_task_current_set_deadline_after(30));
+    void* descendant = absolute_task_spawn_config(
+        deadlineDescendant, std::malloc(1),
+        -1, 0, "deadline-descendant");
+    std::free(absolute_task_await(descendant));
 }
 
 struct NetworkContext {
@@ -246,6 +285,14 @@ void timedReceive(void* opaque) {
         std::strstr(error, "timed out") != nullptr;
     std::free(const_cast<char*>(text));
 }
+
+void inheritedDeadlineReceive(void* opaque) {
+    require(absolute_task_current_set_deadline_after(40));
+    timedReceive(opaque);
+    auto* context = static_cast<TimedReceiveContext*>(opaque);
+    context->timedOut =
+        context->timedOut && absolute_task_current_cancelled();
+}
 #endif
 
 #if defined(__linux__) || defined(__APPLE__)
@@ -357,6 +404,23 @@ int main() {
     absolute_task_group_cancel_and_join(cancelledGroup);
     require(groupCancellations.load(std::memory_order_relaxed) == 1);
     absolute_task_group_destroy(cancelledGroup);
+
+    void* hierarchyGroup = absolute_task_group_create();
+    require(hierarchyGroup != nullptr);
+    require(absolute_task_group_add(hierarchyGroup,
+        absolute_task_spawn_config(
+            cancellationParent, std::malloc(1),
+            -1, 0, "cancel-parent")));
+    absolute_task_group_cancel_and_join(hierarchyGroup);
+    require(descendantCancellations.load(
+        std::memory_order_relaxed) == 1);
+    absolute_task_group_destroy(hierarchyGroup);
+
+    void* deadlineTask = absolute_task_spawn_config(
+        deadlineParent, std::malloc(1),
+        -1, 0, "deadline-parent");
+    std::free(absolute_task_await(deadlineTask));
+    require(descendantDeadlines.load(std::memory_order_relaxed) == 1);
 
     std::cerr << "phase=network-io\n";
     // Eight pending accepts exceed the two-thread fallback I/O pool. They can
@@ -487,6 +551,33 @@ int main() {
     absolute_net_tcp_close(timeoutServer);
     absolute_net_tcp_close(timeoutClient);
     absolute_net_tcp_close(timeoutListener);
+
+    std::cerr << "phase=inherited-socket-deadline\n";
+    void* inheritedListener =
+        absolute_net_tcp_listen("127.0.0.1", 0, 4);
+    require(inheritedListener != nullptr);
+    const std::int32_t inheritedPort =
+        absolute_net_tcp_port(inheritedListener);
+    require(inheritedPort > 0);
+    void* inheritedClient =
+        absolute_net_tcp_connect("127.0.0.1", inheritedPort);
+    require(inheritedClient != nullptr);
+    void* inheritedServer =
+        absolute_net_tcp_accept(inheritedListener);
+    require(inheritedServer != nullptr);
+    void* inheritedTimeoutTask = absolute_task_spawn_config(
+        inheritedDeadlineReceive,
+        new TimedReceiveContext{inheritedServer, false, 0},
+        -1, 3, "inherited-socket-deadline");
+    auto* inheritedTimeout =
+        await<TimedReceiveContext>(inheritedTimeoutTask);
+    require(inheritedTimeout->timedOut);
+    require(inheritedTimeout->elapsedMilliseconds >= 10);
+    require(inheritedTimeout->elapsedMilliseconds < 5'000);
+    delete inheritedTimeout;
+    absolute_net_tcp_close(inheritedServer);
+    absolute_net_tcp_close(inheritedClient);
+    absolute_net_tcp_close(inheritedListener);
 #endif
 
     std::cerr << "phase=udp-io\n";

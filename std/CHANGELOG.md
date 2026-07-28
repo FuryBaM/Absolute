@@ -6,6 +6,10 @@
   transfers its task handle to the group; `join()` waits for every child and
   `cancelAndJoin()` cooperatively cancels before joining.
 - Added `std.task.cancelled()` so child tasks can observe group cancellation.
+- Added hierarchical cancellation and monotonic deadlines through
+  `std.task.setDeadlineAfter()` and `deadlineRemaining()`. Descendants inherit
+  the earliest ancestor deadline, which also caps scheduler delays and native
+  socket waits.
 
 ## 0.4.0
 

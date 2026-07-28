@@ -108,7 +108,7 @@ Common triples:
 
 The end-to-end `absolute.run-wasm-full-runtime` regression covers clocks,
 entropy and launch arguments together with JSON, binary serialization,
-datetime, VFS, atomics, mutexes and cancellation.
+datetime, VFS, atomics, mutexes, `TaskGroup`, cancellation and task deadlines.
 
 | Import | Module | Purpose |
 |--------|--------|---------|
