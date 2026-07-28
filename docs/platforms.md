@@ -8,10 +8,10 @@ cross-target exception through `--target wasm32-...`.
 
 | Host OS | Arch | Compiler build | `absolutec` codegen / link | CI |
 |---------|------|----------------|----------------------------|----|
-| Windows 10+ | x64 | MSVC + portable LLVM 18.1.8 | COFF `.obj` + `link.exe` | Yes: frontend matrix + full LLVM Release job |
-| Linux | x64 | GCC/Clang + system or distro LLVM | ELF `.o` + host `c++` driver | Yes: Ubuntu Debug/Release with LLVM |
-| macOS | x64 or Apple Silicon (arm64) | Apple Clang / Homebrew LLVM | Mach-O `.o` + host C++ driver | Yes: smoke job (configure, build, `ctest`) |
-| Android / Termux | Usually arm64 | Termux Clang + Termux LLVM | Android ELF + Termux `clang++` | No; experimental on-device scripts |
+| Windows 10+ | x64 | MSVC + portable LLVM 18.1.8 | COFF `.obj` + `link.exe` | Yes: `windows-2022` frontend matrix + full LLVM Release job |
+| Linux | x64 | GCC/Clang + system or distro LLVM | ELF `.o` + host `c++` driver | Yes: `ubuntu-24.04` Debug/Release with LLVM |
+| macOS | Apple Silicon (arm64) | Apple Clang / Homebrew LLVM | Mach-O `.o` + host C++ driver | Yes: `macos-15` smoke job |
+| Android / Termux | Usually arm64 | Termux Clang + Termux LLVM | Android ELF + Termux `clang++` | Host contract in CI; on-device smoke needs a self-hosted runner |
 | Windows | ARM64 | Not productized | Would follow host if bootstrapped | No portable ARM64 LLVM bootstrap yet |
 | Linux | ARM64 | Untested host-native | Host triple if built on ARM | Optional future runner |
 
@@ -40,7 +40,7 @@ story exists.
 | Object format | Host LLVM object (COFF / ELF / Mach-O), or WebAssembly object |
 | Windows link | `ABSOLUTE_HOST_LINKER` (`link.exe`) + UCRT / system libs |
 | POSIX / Termux link | Host C++ driver (`c++` / `clang++`) + runtime + optional `-ldl` |
-| ASan (Windows) | Currently assumes x86_64 runtime library names |
+| ASan (Windows) | Assumes x86_64 LLVM 18 runtime names and the VS 2022 CRT used by the required runner; newer preview CRTs need a matching sanitizer runtime |
 | Desktop plugin | Win32 or X11 / headless; Termux currently uses headless mode |
 | Dynamic `load` | `.dll` on Windows, `.so` on Linux/Termux; macOS uses `dlopen` for `.dylib` |
 
@@ -50,14 +50,21 @@ Defined in `.github/workflows/ci.yml`:
 
 | Job | Runner | Scope |
 |-----|--------|-------|
-| `build-and-test` | `ubuntu-latest`, `windows-latest` × Debug/Release | Linux full LLVM; Windows frontend (`ABSOLUTE_ENABLE_LLVM=OFF`) |
-| `windows-llvm-release` | `windows-latest` | `build-windows.bat --bootstrap` (portable LLVM 18.1.8) |
-| `macos-smoke` | `macos-latest` | Homebrew LLVM, Release configure/build/`ctest` |
+| `build-and-test` | `ubuntu-24.04`, `windows-2022` × Debug/Release | Linux full LLVM; Windows frontend (`ABSOLUTE_ENABLE_LLVM=OFF`) |
+| `windows-llvm-release` | `windows-2022` | `build-windows.bat --bootstrap` (portable LLVM 18.1.8) |
+| `macos-smoke` | `macos-15` | Homebrew LLVM, Release configure/build/`ctest` |
+| `linux-wasm-smoke` | `ubuntu-24.04` | Node/WASI WebAssembly suite |
+| `termux-host-contract` | `ubuntu-24.04` | Termux-mode frontend build and CTest contract |
+| `language-stress-and-fuzz` | `ubuntu-24.04` | Concurrency, collections, properties, and compiler fuzz |
+| `runtime-thread-sanitizer` | `ubuntu-24.04` | Scheduler harness under TSan |
 
-`macos-latest` is typically **Apple Silicon** on current GitHub runners, so the
-smoke job exercises an **ARM64 macOS host** without a separate ARM Linux/Windows
-job. Termux is not in CI because GitHub does not provide a normal Termux/Android
-host runner; the scripts are validated structurally and exercised on-device.
+The pinned `macos-15` runner exercises an **ARM64 macOS host** without a separate
+ARM Linux/Windows job. GitHub does not provide a normal Termux/Android host
+runner, so CI validates the Termux build contract on Linux while true Bionic
+execution remains an on-device check.
+
+The complete version, timeout, artifact, retry, and required-gate contract is in
+[`ci-policy.md`](ci-policy.md).
 
 ## ARM64 status
 

@@ -10,8 +10,10 @@ concurrency:
 
 env:
   ABSOLUTE_LLVM_VERSION: "18"
+  ABSOLUTE_LLVM_RELEASE: "18.1.8"
   ABSOLUTE_NODE_VERSION: "24"
   ABSOLUTE_WASMTIME_VERSION: "45.0.0"
+  ABSOLUTE_WASI_SDK_VERSION: "25.0"
 
 jobs:
   build-and-test:
@@ -19,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-24.04, windows-2022]
         configuration: [Debug, Release]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -27,8 +29,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.ABSOLUTE_NODE_VERSION }}
+
       - name: Install pinned LLVM (Ubuntu)
+        id: bootstrap_linux
         if: runner.os == 'Linux'
+        timeout-minutes: 15
         shell: bash
         run: |
           retry() {
@@ -47,7 +55,9 @@ jobs:
             lld-${ABSOLUTE_LLVM_VERSION}
 
       - name: Configure with LLVM (Ubuntu)
+        id: configure_linux
         if: runner.os == 'Linux'
+        timeout-minutes: 10
         shell: bash
         run: |
           mkdir -p ci-logs
@@ -59,7 +69,9 @@ jobs:
             2>&1 | tee ci-logs/configure.log
 
       - name: Configure frontend (Windows)
+        id: configure_windows
         if: runner.os == 'Windows'
+        timeout-minutes: 10
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force ci-logs | Out-Null
@@ -69,7 +81,9 @@ jobs:
           exit $code
 
       - name: Build (Ubuntu)
+        id: build_linux
         if: runner.os == 'Linux'
+        timeout-minutes: 25
         shell: bash
         run: |
           set -o pipefail
@@ -77,7 +91,9 @@ jobs:
             2>&1 | tee ci-logs/build.log
 
       - name: Build (Windows)
+        id: build_windows
         if: runner.os == 'Windows'
+        timeout-minutes: 25
         shell: pwsh
         run: |
           $output = & cmake --build build --config ${{ matrix.configuration }} --parallel 2 2>&1
@@ -86,7 +102,9 @@ jobs:
           exit $code
 
       - name: Test (Ubuntu)
+        id: test_linux
         if: runner.os == 'Linux'
+        timeout-minutes: 20
         shell: bash
         run: |
           set -o pipefail
@@ -95,7 +113,9 @@ jobs:
             2>&1 | tee ci-logs/ctest.log
 
       - name: Test frontend contract (Windows)
+        id: test_windows
         if: runner.os == 'Windows'
+        timeout-minutes: 20
         shell: pwsh
         run: |
           # Native executable/package tests require the LLVM backend and are
@@ -107,6 +127,38 @@ jobs:
           $output | Tee-Object -FilePath ci-logs/ctest.log
           exit $code
 
+      - name: Classify failure phase
+        if: failure()
+        shell: pwsh
+        env:
+          BOOTSTRAP_LINUX: ${{ steps.bootstrap_linux.outcome }}
+          CONFIGURE_LINUX: ${{ steps.configure_linux.outcome }}
+          CONFIGURE_WINDOWS: ${{ steps.configure_windows.outcome }}
+          BUILD_LINUX: ${{ steps.build_linux.outcome }}
+          BUILD_WINDOWS: ${{ steps.build_windows.outcome }}
+          TEST_LINUX: ${{ steps.test_linux.outcome }}
+          TEST_WINDOWS: ${{ steps.test_windows.outcome }}
+        run: |
+          New-Item -ItemType Directory -Force ci-logs | Out-Null
+          $phases = [ordered]@{
+            'platform-bootstrap' = @($env:BOOTSTRAP_LINUX)
+            'configure' = @($env:CONFIGURE_LINUX, $env:CONFIGURE_WINDOWS)
+            'build-regression' = @($env:BUILD_LINUX, $env:BUILD_WINDOWS)
+            'test-regression' = @($env:TEST_LINUX, $env:TEST_WINDOWS)
+          }
+          $category = 'unknown'
+          foreach ($phase in $phases.GetEnumerator()) {
+            if ($phase.Value -contains 'failure') {
+              $category = $phase.Key
+              break
+            }
+          }
+          @(
+            "category=$category"
+            "runner=${{ matrix.os }}"
+            "configuration=${{ matrix.configuration }}"
+          ) | Set-Content ci-logs/failure-classification.txt
+
       - name: Record toolchain versions (Ubuntu)
         if: always() && runner.os == 'Linux'
         shell: bash
@@ -117,6 +169,7 @@ jobs:
             cmake --version
             clang-${ABSOLUTE_LLVM_VERSION} --version
             llvm-config-${ABSOLUTE_LLVM_VERSION} --version
+            ninja --version || true
             node --version || true
           } > ci-logs/toolchain.txt 2>&1
 
@@ -127,7 +180,9 @@ jobs:
           New-Item -ItemType Directory -Force ci-logs | Out-Null
           @(
             "OS=$([System.Environment]::OSVersion.VersionString)"
+            "VisualStudioVersion=$env:VisualStudioVersion"
             (& cmake --version 2>&1)
+            (& ninja --version 2>&1)
             (& node --version 2>&1)
           ) | Set-Content ci-logs/toolchain.txt
 
@@ -136,7 +191,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ci-${{ matrix.os }}-${{ matrix.configuration }}-failure
-          retention-days: 7
+          retention-days: 14
           if-no-files-found: ignore
           path: |
             ci-logs
@@ -144,10 +199,13 @@ jobs:
             build/**/*.ll
             build/**/*.wasm
             build/**/*.exe
+            build/*-app
+            build/*-test
+            build/*stress*
             build/**/absolutec
 
   windows-llvm-release:
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -159,20 +217,45 @@ jobs:
       - name: Cache portable LLVM SDK
         uses: actions/cache@v4
         with:
-          path: .absolute/toolchains/llvm-18.1.8
-          key: windows-llvm-18.1.8-sdk-v1
+          path: .absolute/toolchains/llvm-${{ env.ABSOLUTE_LLVM_RELEASE }}
+          key: windows-llvm-${{ env.ABSOLUTE_LLVM_RELEASE }}-sdk-v1
+
+      - name: Cache WASI SDK components
+        uses: actions/cache@v4
+        with:
+          path: |
+            .absolute/toolchains/wasi-sysroot-${{ env.ABSOLUTE_WASI_SDK_VERSION }}
+            .absolute/toolchains/wasi-builtins-${{ env.ABSOLUTE_WASI_SDK_VERSION }}
+          key: windows-wasi-${{ env.ABSOLUTE_WASI_SDK_VERSION }}-v1
 
       - name: Bootstrap portable LLVM SDK
+        id: bootstrap_llvm
         shell: pwsh
         timeout-minutes: 15
         run: |
           New-Item -ItemType Directory -Force ci-logs | Out-Null
-          $output = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/windows/bootstrap-llvm.ps1 2>&1
+          $output = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+            -File scripts/windows/bootstrap-llvm.ps1 `
+            -Version $env:ABSOLUTE_LLVM_RELEASE 2>&1
           $code = $LASTEXITCODE
           $output | Tee-Object -FilePath ci-logs/bootstrap.log
           exit $code
 
+      - name: Bootstrap pinned WASI SDK components
+        id: bootstrap_wasi
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $output = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+            -File scripts/windows/bootstrap-wasi-sysroot.ps1 `
+            -Version $env:ABSOLUTE_WASI_SDK_VERSION 2>&1
+          $code = $LASTEXITCODE
+          $output | Tee-Object -FilePath ci-logs/bootstrap.log -Append
+          exit $code
+
       - name: Build native LLVM backend
+        id: build
+        timeout-minutes: 25
         shell: cmd
         run: |
           call build-windows.bat --no-test > ci-logs\build.log 2>&1
@@ -181,6 +264,8 @@ jobs:
           exit /b %code%
 
       - name: Test native and WebAssembly targets
+        id: test
+        timeout-minutes: 25
         shell: cmd
         run: |
           set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -189,7 +274,7 @@ jobs:
           if not defined VSINSTALL exit /b 1
           call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat" >nul
           if errorlevel 1 exit /b %ERRORLEVEL%
-          set "LLVM_RT=%CD%\.absolute\toolchains\llvm-18.1.8\lib\clang\18\lib\windows"
+          set "LLVM_RT=%CD%\.absolute\toolchains\llvm-%ABSOLUTE_LLVM_RELEASE%\lib\clang\18\lib\windows"
           if not exist "%LLVM_RT%\clang_rt.asan_dynamic-x86_64.lib" exit /b 1
           set "LIB=%LLVM_RT%;%LIB%"
           ctest --test-dir .absolute\build\windows-release -C Release --output-on-failure --timeout 180 > ci-logs\ctest.log 2>&1
@@ -197,15 +282,37 @@ jobs:
           type ci-logs\ctest.log
           exit /b %code%
 
+      - name: Classify failure phase
+        if: failure()
+        shell: pwsh
+        env:
+          BOOTSTRAP_LLVM: ${{ steps.bootstrap_llvm.outcome }}
+          BOOTSTRAP_WASI: ${{ steps.bootstrap_wasi.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          TEST: ${{ steps.test.outcome }}
+        run: |
+          $category = if ($env:BOOTSTRAP_LLVM -eq 'failure' -or
+              $env:BOOTSTRAP_WASI -eq 'failure') {
+            'platform-bootstrap'
+          } elseif ($env:BUILD -eq 'failure') {
+            'build-regression'
+          } elseif ($env:TEST -eq 'failure') {
+            'test-regression'
+          } else {
+            'unknown'
+          }
+          "category=$category" | Set-Content ci-logs/failure-classification.txt
+
       - name: Record toolchain versions
         if: always()
         shell: pwsh
         run: |
+          $llvmConfig = ".absolute/toolchains/llvm-$env:ABSOLUTE_LLVM_RELEASE/bin/llvm-config.exe"
           @(
             "OS=$([System.Environment]::OSVersion.VersionString)"
             (& cmake --version 2>&1)
             (& node --version 2>&1)
-            (& .absolute/toolchains/llvm-18.1.8/bin/llvm-config.exe --version 2>&1)
+            (& $llvmConfig --version 2>&1)
           ) | Set-Content ci-logs/toolchain.txt
 
       - name: Upload failure diagnostics
@@ -213,7 +320,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ci-windows-llvm-release-failure
-          retention-days: 7
+          retention-days: 14
           if-no-files-found: ignore
           path: |
             ci-logs
@@ -223,23 +330,40 @@ jobs:
             .absolute/build/windows-release/**/*.exe
 
   macos-smoke:
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.ABSOLUTE_NODE_VERSION }}
+
       - name: Install pinned LLVM
+        id: bootstrap
+        timeout-minutes: 15
         shell: bash
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
-          brew install llvm@18
+          mkdir -p ci-logs
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              if [[ "$attempt" -lt 3 ]]; then sleep $((attempt * 10)); fi
+            done
+            return 1
+          }
+          retry brew install llvm@18
           LLVM_PREFIX="$(brew --prefix llvm@18)"
           echo "LLVM_PREFIX=${LLVM_PREFIX}" >> "$GITHUB_ENV"
           echo "LLVM_DIR=${LLVM_PREFIX}/lib/cmake/llvm" >> "$GITHUB_ENV"
           echo "${LLVM_PREFIX}/bin" >> "$GITHUB_PATH"
 
       - name: Configure Release with LLVM
+        id: configure
+        timeout-minutes: 10
         shell: bash
         run: |
           mkdir -p ci-logs
@@ -254,6 +378,8 @@ jobs:
             2>&1 | tee ci-logs/configure.log
 
       - name: Build
+        id: build
+        timeout-minutes: 20
         shell: bash
         run: |
           set -o pipefail
@@ -261,11 +387,31 @@ jobs:
             2>&1 | tee ci-logs/build.log
 
       - name: Test
+        id: test
+        timeout-minutes: 20
         shell: bash
         run: |
           set -o pipefail
           ctest --test-dir build -C Release --output-on-failure --timeout 180 \
             2>&1 | tee ci-logs/ctest.log
+
+      - name: Classify failure phase
+        if: failure()
+        shell: bash
+        env:
+          BOOTSTRAP: ${{ steps.bootstrap.outcome }}
+          CONFIGURE: ${{ steps.configure.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          TEST: ${{ steps.test.outcome }}
+        run: |
+          mkdir -p ci-logs
+          if [[ "$BOOTSTRAP" == failure ]]; then category=platform-bootstrap
+          elif [[ "$CONFIGURE" == failure ]]; then category=configure
+          elif [[ "$BUILD" == failure ]]; then category=build-regression
+          elif [[ "$TEST" == failure ]]; then category=test-regression
+          else category=unknown
+          fi
+          echo "category=$category" > ci-logs/failure-classification.txt
 
       - name: Record toolchain versions
         if: always()
@@ -286,7 +432,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ci-macos-smoke-failure
-          retention-days: 7
+          retention-days: 14
           if-no-files-found: ignore
           path: |
             ci-logs
@@ -296,7 +442,7 @@ jobs:
             build/**/absolutec
 
   linux-wasm-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
@@ -305,7 +451,17 @@ jobs:
         with:
           node-version: ${{ env.ABSOLUTE_NODE_VERSION }}
 
+      - name: Cache WASI SDK components
+        uses: actions/cache@v4
+        with:
+          path: |
+            .absolute/toolchains/wasi-sysroot-${{ env.ABSOLUTE_WASI_SDK_VERSION }}
+            .absolute/toolchains/wasi-builtins-${{ env.ABSOLUTE_WASI_SDK_VERSION }}
+          key: linux-wasi-${{ env.ABSOLUTE_WASI_SDK_VERSION }}-v1
+
       - name: Install pinned LLVM and tools
+        id: bootstrap
+        timeout-minutes: 15
         shell: bash
         run: |
           mkdir -p ci-logs
@@ -325,6 +481,9 @@ jobs:
             lld-${ABSOLUTE_LLVM_VERSION} \
             curl xz-utils
 
+          bash scripts/ci/bootstrap-wasi.sh "$ABSOLUTE_WASI_SDK_VERSION" \
+            | tee ci-logs/wasi-bootstrap.log
+
           archive="wasmtime-v${ABSOLUTE_WASMTIME_VERSION}-x86_64-linux.tar.xz"
           url="https://github.com/bytecodealliance/wasmtime/releases/download/v${ABSOLUTE_WASMTIME_VERSION}/${archive}"
           curl --fail --location --show-error --silent \
@@ -338,6 +497,8 @@ jobs:
           wasmtime --version | tee ci-logs/wasmtime-version.txt
 
       - name: Configure Release with LLVM
+        id: configure
+        timeout-minutes: 10
         shell: bash
         run: |
           set -o pipefail
@@ -349,6 +510,8 @@ jobs:
             2>&1 | tee ci-logs/configure.log
 
       - name: Build
+        id: build
+        timeout-minutes: 20
         shell: bash
         run: |
           set -o pipefail
@@ -356,11 +519,30 @@ jobs:
             2>&1 | tee ci-logs/build.log
 
       - name: Wasm tests
+        id: test
+        timeout-minutes: 15
         shell: bash
         run: |
           set -o pipefail
           ctest --test-dir build -C Release -R wasm --output-on-failure --timeout 180 \
             2>&1 | tee ci-logs/ctest.log
+
+      - name: Classify failure phase
+        if: failure()
+        shell: bash
+        env:
+          BOOTSTRAP: ${{ steps.bootstrap.outcome }}
+          CONFIGURE: ${{ steps.configure.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          TEST: ${{ steps.test.outcome }}
+        run: |
+          if [[ "$BOOTSTRAP" == failure ]]; then category=platform-bootstrap
+          elif [[ "$CONFIGURE" == failure ]]; then category=configure
+          elif [[ "$BUILD" == failure ]]; then category=build-regression
+          elif [[ "$TEST" == failure ]]; then category=test-regression
+          else category=unknown
+          fi
+          echo "category=$category" > ci-logs/failure-classification.txt
 
       - name: Record toolchain versions
         if: always()
@@ -382,7 +564,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ci-linux-wasm-smoke-failure
-          retention-days: 7
+          retention-days: 14
           if-no-files-found: ignore
           path: |
             ci-logs
@@ -393,12 +575,14 @@ jobs:
 
   termux-host-contract:
     name: termux-host-contract (non-Android)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
       - name: Validate Termux scripts
+        id: validate
+        timeout-minutes: 5
         shell: bash
         run: |
           mkdir -p ci-logs
@@ -408,6 +592,8 @@ jobs:
             2>&1 | tee ci-logs/bash-syntax.log
 
       - name: Configure Termux frontend contract
+        id: configure
+        timeout-minutes: 10
         shell: bash
         run: |
           set -o pipefail
@@ -418,15 +604,60 @@ jobs:
             -DABSOLUTE_BUILD_EXAMPLE_PLUGINS=OFF \
             -DBUILD_TESTING=ON \
             2>&1 | tee ci-logs/configure.log
+
+      - name: Build Termux frontend contract
+        id: build
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -o pipefail
           cmake --build build-termux-contract --parallel 2 \
             2>&1 | tee ci-logs/build.log
+
+      - name: Test Termux frontend contract
+        id: test
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -o pipefail
+          exclude='^(absolute\.plugin-resource-type|absolute\.run-plugin-resource-type|absolute\.run-package-manifest-dependencies)$'
+          ctest --test-dir build-termux-contract -C Release \
+            --output-on-failure --timeout 180 -E "$exclude" \
+            2>&1 | tee ci-logs/ctest.log
+
+      - name: Classify failure phase
+        if: failure()
+        shell: bash
+        env:
+          VALIDATE: ${{ steps.validate.outcome }}
+          CONFIGURE: ${{ steps.configure.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          TEST: ${{ steps.test.outcome }}
+        run: |
+          if [[ "$VALIDATE" == failure ]]; then category=platform-contract
+          elif [[ "$CONFIGURE" == failure ]]; then category=configure
+          elif [[ "$BUILD" == failure ]]; then category=build-regression
+          elif [[ "$TEST" == failure ]]; then category=test-regression
+          else category=unknown
+          fi
+          echo "category=$category" > ci-logs/failure-classification.txt
+
+      - name: Record toolchain versions
+        if: always()
+        shell: bash
+        run: |
+          {
+            uname -a
+            cmake --version
+            c++ --version
+          } > ci-logs/toolchain.txt 2>&1
 
       - name: Upload failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: ci-termux-host-contract-failure
-          retention-days: 7
+          retention-days: 14
           if-no-files-found: ignore
           path: |
             ci-logs
@@ -441,7 +672,7 @@ jobs:
       - macos-smoke
       - linux-wasm-smoke
       - termux-host-contract
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Require every supported CI job
         shell: bash

@@ -23,14 +23,17 @@ function Assert-Under([string]$Path, [string]$Parent) {
 }
 
 Assert-Under $InstallRoot $toolchainsRoot
-$marker = Join-Path $InstallRoot 'share\wasi-sysroot\include\wasi\api.h'
-if (-not (Test-Path -LiteralPath $marker)) {
-    $marker = Join-Path $InstallRoot 'include\wasi\api.h'
-}
-if ((Test-Path -LiteralPath $marker) -and -not $Force) {
+$headerMarkers = @(
+    (Join-Path $InstallRoot 'share\wasi-sysroot\include\wasi\api.h'),
+    (Join-Path $InstallRoot 'include\wasi\api.h'),
+    (Join-Path $InstallRoot 'include\wasm32-wasi\wasi\api.h'),
+    (Join-Path $InstallRoot 'include\wasm32-wasip1\wasi\api.h')
+)
+$installedHeader = $headerMarkers |
+    Where-Object { Test-Path -LiteralPath $_ } |
+    Select-Object -First 1
+if ($installedHeader -and -not $Force) {
     Write-Host "wasi-sysroot $Version already installed: $InstallRoot"
-    Write-Output $InstallRoot
-    exit 0
 }
 
 foreach ($command in 'curl.exe', 'tar.exe') {
@@ -45,30 +48,32 @@ $archiveName = "wasi-sysroot-$Version.tar.gz"
 $archive = Join-Path $downloadsRoot $archiveName
 $url = "https://github.com/WebAssembly/wasi-sdk/releases/download/$tag/$archiveName"
 
-if (-not (Test-Path -LiteralPath $archive) -or $Force) {
-    Write-Host "Downloading $url"
-    & curl.exe -fsSL -o $archive $url
-    if ($LASTEXITCODE -ne 0) { throw "curl failed for $url" }
-}
+if (-not $installedHeader -or $Force) {
+    if (-not (Test-Path -LiteralPath $archive) -or $Force) {
+        Write-Host "Downloading $url"
+        & curl.exe -fsSL --retry 5 --retry-all-errors --connect-timeout 20 -o $archive $url
+        if ($LASTEXITCODE -ne 0) { throw "curl failed for $url" }
+    }
 
-$extractRoot = Join-Path $downloadsRoot "wasi-sysroot-$Version-extract"
-if (Test-Path -LiteralPath $extractRoot) {
-    Remove-Item -LiteralPath $extractRoot -Recurse -Force
-}
-New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
-Write-Host "Extracting $archive"
-& tar.exe -xzf $archive -C $extractRoot
-if ($LASTEXITCODE -ne 0) { throw "tar extract failed" }
+    $extractRoot = Join-Path $downloadsRoot "wasi-sysroot-$Version-extract"
+    if (Test-Path -LiteralPath $extractRoot) {
+        Remove-Item -LiteralPath $extractRoot -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
+    Write-Host "Extracting $archive"
+    & tar.exe -xzf $archive -C $extractRoot
+    if ($LASTEXITCODE -ne 0) { throw "tar extract failed" }
 
-# Tarball usually contains a single top-level dir (wasi-sysroot or similar).
-$inner = Get-ChildItem -LiteralPath $extractRoot | Select-Object -First 1
-if (-not $inner) { throw "empty archive extract" }
+    # Tarball usually contains a single top-level dir (wasi-sysroot or similar).
+    $inner = Get-ChildItem -LiteralPath $extractRoot | Select-Object -First 1
+    if (-not $inner) { throw "empty archive extract" }
 
-if (Test-Path -LiteralPath $InstallRoot) {
-    Remove-Item -LiteralPath $InstallRoot -Recurse -Force
+    if (Test-Path -LiteralPath $InstallRoot) {
+        Remove-Item -LiteralPath $InstallRoot -Recurse -Force
+    }
+    Move-Item -LiteralPath $inner.FullName -Destination $InstallRoot
+    Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
-Move-Item -LiteralPath $inner.FullName -Destination $InstallRoot
-Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
 
 # Normalize: expose WASI_SYSROOT as the directory that contains include/ + lib/
 $candidates = @(
@@ -103,7 +108,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $builtinsRoot 'libclang_rt.builtins-
     -not (Get-ChildItem -Path $builtinsRoot -Recurse -Filter 'libclang_rt.builtins-wasm32.a' -ErrorAction SilentlyContinue)) {
     if (-not (Test-Path -LiteralPath $builtinsArchive) -or $Force) {
         Write-Host "Downloading $builtinsUrl"
-        & curl.exe -fsSL -o $builtinsArchive $builtinsUrl
+        & curl.exe -fsSL --retry 5 --retry-all-errors --connect-timeout 20 -o $builtinsArchive $builtinsUrl
         if ($LASTEXITCODE -ne 0) { throw "curl failed for $builtinsUrl" }
     }
     if (Test-Path -LiteralPath $builtinsRoot) {

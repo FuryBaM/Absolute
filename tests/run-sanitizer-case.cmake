@@ -4,6 +4,9 @@ endif()
 if(NOT DEFINED EXPECT)
     message(FATAL_ERROR "EXPECT is required")
 endif()
+if(NOT DEFINED TIMEOUT_SECONDS)
+    set(TIMEOUT_SECONDS 20)
+endif()
 
 set(asan_options "abort_on_error=1:symbolize=0")
 if(NOT DEFINED DETECT_LEAKS)
@@ -24,13 +27,14 @@ execute_process(
     COMMAND "${CMAKE_COMMAND}" -E env
         "ASAN_OPTIONS=${asan_options}"
         "${EXECUTABLE}"
+    TIMEOUT "${TIMEOUT_SECONDS}"
     RESULT_VARIABLE result
     OUTPUT_VARIABLE stdout
     ERROR_VARIABLE stderr
 )
 set(output "${stdout}\n${stderr}")
 
-if(result EQUAL 0)
+if("${result}" STREQUAL "0")
     message(FATAL_ERROR "sanitizer case unexpectedly succeeded:\n${output}")
 endif()
 if(NOT output MATCHES "${EXPECT}")
@@ -38,4 +42,9 @@ if(NOT output MATCHES "${EXPECT}")
         "sanitizer output did not match '${EXPECT}' (result ${result}):\n${output}")
 endif()
 
-message(STATUS "sanitizer case matched '${EXPECT}'")
+if("${result}" MATCHES "[Tt]imeout")
+    message(STATUS
+        "sanitizer case matched '${EXPECT}' before the platform runtime timed out")
+else()
+    message(STATUS "sanitizer case matched '${EXPECT}'")
+endif()

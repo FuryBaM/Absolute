@@ -5,6 +5,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 
 extern "C" {
@@ -96,6 +97,7 @@ void channelConsumer(void* opaque) {
 
 struct CancellationContext {
     void* token = nullptr;
+    std::atomic<bool>* start = nullptr;
     int iterations = 0;
     std::int64_t observations = 0;
     bool writer = false;
@@ -103,6 +105,9 @@ struct CancellationContext {
 
 void cancellationWorker(void* opaque) {
     auto* context = static_cast<CancellationContext*>(opaque);
+    while (!context->start->load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
     for (int iteration = 0; iteration < context->iterations; ++iteration) {
         if (context->writer) {
             absolute_cancellation_token_cancel(context->token);
@@ -190,17 +195,21 @@ int main() {
 
     std::cerr << "phase=cancellation\n";
     void* token = absolute_cancellation_token_create();
+    std::atomic<bool> startCancellationRace{false};
     std::vector<void*> cancellationTasks;
-    for (int index = 0; index < 4; ++index) {
-        auto* context = new CancellationContext{token, 20'000, 0, false};
-        cancellationTasks.push_back(absolute_task_spawn_config(
-            cancellationWorker, context, -1, 0, "cancel-reader"));
-    }
     for (int index = 0; index < 2; ++index) {
-        auto* context = new CancellationContext{token, 2'000, 0, true};
+        auto* context = new CancellationContext{
+            token, &startCancellationRace, 2'000, 0, true};
         cancellationTasks.push_back(absolute_task_spawn_config(
             cancellationWorker, context, -1, 2, "cancel-writer"));
     }
+    for (int index = 0; index < 4; ++index) {
+        auto* context = new CancellationContext{
+            token, &startCancellationRace, 20'000, 0, false};
+        cancellationTasks.push_back(absolute_task_spawn_config(
+            cancellationWorker, context, -1, 0, "cancel-reader"));
+    }
+    startCancellationRace.store(true, std::memory_order_release);
 
     std::int64_t cancellationObservations = 0;
     for (void* task : cancellationTasks) {

@@ -1,17 +1,8 @@
 name: Test hardening
 
 on:
+  push:
   pull_request:
-    paths:
-      - ".github/workflows/test-hardening.yml"
-      - "Absolute-Compiler/**"
-      - "Absolute-Parser/**"
-      - "Absolute-Analyzer/**"
-      - "Absolute-CodeGen/**"
-      - "Absolute-Runtime/**"
-      - "std/**"
-      - "tests/**"
-      - "tools/testing/**"
   workflow_dispatch:
   schedule:
     - cron: "23 2 * * *"
@@ -20,33 +11,56 @@ concurrency:
   group: test-hardening-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  ABSOLUTE_LLVM_VERSION: "18"
+
 jobs:
   language-stress-and-fuzz:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install LLVM and build tools
+        id: bootstrap
+        timeout-minutes: 15
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y llvm-dev clang lld cmake ninja-build
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              if [[ "$attempt" -lt 3 ]]; then sleep $((attempt * 10)); fi
+            done
+            return 1
+          }
+          retry sudo apt-get update
+          retry sudo apt-get install -y \
+            llvm-${ABSOLUTE_LLVM_VERSION}-dev \
+            clang-${ABSOLUTE_LLVM_VERSION} \
+            lld-${ABSOLUTE_LLVM_VERSION} \
+            cmake ninja-build
 
       - name: Build Release compiler
+        id: build
+        timeout-minutes: 20
         run: |
           cmake -S . -B build-hardening -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=clang++-${ABSOLUTE_LLVM_VERSION} \
             -DABSOLUTE_ENABLE_LLVM=ON \
             -DABSOLUTE_BUILD_EXAMPLE_PLUGINS=OFF \
             -DBUILD_TESTING=OFF \
-            -DLLVM_DIR="$(llvm-config --cmakedir)"
+            -DLLVM_DIR="$(llvm-config-${ABSOLUTE_LLVM_VERSION} --cmakedir)"
           cmake --build build-hardening --parallel 2
           compiler="$(find build-hardening -type f -name absolutec -perm -u+x | head -n 1)"
           test -n "$compiler"
           echo "ABSOLUTEC=$compiler" >> "$GITHUB_ENV"
 
       - name: Build hardening programs
+        id: build_programs
+        timeout-minutes: 10
         shell: bash
         run: |
           set -o pipefail
@@ -61,9 +75,13 @@ jobs:
           exit "$status"
 
       - name: Run iterator snapshot stress
+        id: iterator_stress
+        timeout-minutes: 5
         run: "$GITHUB_WORKSPACE/build-hardening/collection-snapshot-stress"
 
       - name: Repeat real scheduler stress
+        id: scheduler_stress
+        timeout-minutes: 20
         shell: bash
         run: |
           repeats=25
@@ -76,6 +94,8 @@ jobs:
           done
 
       - name: Generate and run collection properties
+        id: collection_properties
+        timeout-minutes: 10
         shell: bash
         run: |
           cases=40
@@ -94,6 +114,8 @@ jobs:
           "$GITHUB_WORKSPACE/build-hardening/collection-properties"
 
       - name: Grammar and mutation fuzz compiler
+        id: compiler_fuzz
+        timeout-minutes: 20
         shell: bash
         run: |
           set -o pipefail
@@ -113,6 +135,29 @@ jobs:
             --repro-dir fuzz-reproducers \
             2>&1 | tee hardening-logs/compiler-fuzz.log
 
+      - name: Classify failure phase
+        if: failure()
+        shell: bash
+        env:
+          BOOTSTRAP: ${{ steps.bootstrap.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          BUILD_PROGRAMS: ${{ steps.build_programs.outcome }}
+          ITERATOR_STRESS: ${{ steps.iterator_stress.outcome }}
+          SCHEDULER_STRESS: ${{ steps.scheduler_stress.outcome }}
+          COLLECTION_PROPERTIES: ${{ steps.collection_properties.outcome }}
+          COMPILER_FUZZ: ${{ steps.compiler_fuzz.outcome }}
+        run: |
+          mkdir -p hardening-logs
+          if [[ "$BOOTSTRAP" == failure ]]; then category=platform-bootstrap
+          elif [[ "$BUILD" == failure || "$BUILD_PROGRAMS" == failure ]]; then category=build-regression
+          elif [[ "$COMPILER_FUZZ" == failure ]]; then category=fuzz-regression
+          elif [[ "$ITERATOR_STRESS" == failure ||
+                  "$SCHEDULER_STRESS" == failure ||
+                  "$COLLECTION_PROPERTIES" == failure ]]; then category=runtime-regression
+          else category=unknown
+          fi
+          echo "category=$category" > hardening-logs/failure-classification.txt
+
       - name: Upload language hardening diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -121,26 +166,44 @@ jobs:
           path: |
             hardening-logs
             fuzz-reproducers
+            build-hardening/concurrency-stress
+            build-hardening/collection-snapshot-stress
+            build-hardening/collection-properties
           if-no-files-found: ignore
+          retention-days: 14
 
   runtime-thread-sanitizer:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Clang and Ninja
+        id: bootstrap
+        timeout-minutes: 15
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              if [[ "$attempt" -lt 3 ]]; then sleep $((attempt * 10)); fi
+            done
+            return 1
+          }
+          retry sudo apt-get update
+          retry sudo apt-get install -y \
+            clang-${ABSOLUTE_LLVM_VERSION} cmake ninja-build
 
       - name: Build instrumented runtime
+        id: build
+        timeout-minutes: 15
         run: |
           cmake -S . -B build-tsan -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_C_COMPILER=clang \
-            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER=clang-${ABSOLUTE_LLVM_VERSION} \
+            -DCMAKE_CXX_COMPILER=clang++-${ABSOLUTE_LLVM_VERSION} \
             -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1 -g" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" \
             -DABSOLUTE_ENABLE_LLVM=OFF \
@@ -149,18 +212,23 @@ jobs:
           cmake --build build-tsan --target Absolute-Runtime --parallel 2
 
       - name: Build scheduler TSan harness
+        id: build_harness
+        timeout-minutes: 5
         shell: bash
         run: |
           runtime="$(find build-tsan -maxdepth 2 -type f -name 'libAbsolute-Runtime.a' | head -n 1)"
           test -n "$runtime"
-          clang++ -std=c++20 -O1 -g -fsanitize=thread -fno-omit-frame-pointer \
+          clang++-${ABSOLUTE_LLVM_VERSION} -std=c++20 -O1 -g \
+            -fsanitize=thread -fno-omit-frame-pointer \
             tests/runtime-scheduler-tsan.cpp "$runtime" \
             -pthread -ldl -o build-tsan/runtime-scheduler-tsan
 
       - name: Run scheduler under ThreadSanitizer
+        id: test
+        timeout-minutes: 15
         shell: bash
         env:
-          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1:history_size=7
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1:history_size=7:log_path=hardening-logs/tsan-report
         run: |
           set -o pipefail
           mkdir -p hardening-logs
@@ -174,10 +242,46 @@ jobs:
               2>&1 | tee -a hardening-logs/tsan.log
           done
 
+      - name: Classify failure phase
+        if: failure()
+        shell: bash
+        env:
+          BOOTSTRAP: ${{ steps.bootstrap.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          BUILD_HARNESS: ${{ steps.build_harness.outcome }}
+          TEST: ${{ steps.test.outcome }}
+        run: |
+          mkdir -p hardening-logs
+          if [[ "$BOOTSTRAP" == failure ]]; then category=platform-bootstrap
+          elif [[ "$BUILD" == failure || "$BUILD_HARNESS" == failure ]]; then category=build-regression
+          elif [[ "$TEST" == failure ]]; then category=sanitizer-regression
+          else category=unknown
+          fi
+          echo "category=$category" > hardening-logs/failure-classification.txt
+
       - name: Upload TSan diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: runtime-tsan-diagnostics
-          path: hardening-logs
+          path: |
+            hardening-logs
+            build-tsan/runtime-scheduler-tsan
+            core
+            core.*
           if-no-files-found: ignore
+          retention-days: 14
+
+  hardening-required:
+    name: Hardening required gate
+    if: always()
+    needs:
+      - language-stress-and-fuzz
+      - runtime-thread-sanitizer
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require stress, fuzz, and TSan
+        shell: bash
+        run: |
+          test "${{ needs.language-stress-and-fuzz.result }}" = "success"
+          test "${{ needs.runtime-thread-sanitizer.result }}" = "success"

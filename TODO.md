@@ -618,7 +618,7 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   fixtures in `tests/bindgen/`.
 - [x] Проверить targets в CI (host-native matrix):
   Windows x64 (frontend + full LLVM), Linux x64 (full LLVM), macOS smoke
-  (`macos-latest`, typically arm64 host) — см. `docs/platforms.md` и
+  (`macos-15`, arm64 host) — см. `docs/platforms.md` и
   `.github/workflows/ci.yml`. Windows ARM64 и Linux ARM64 runners отложены.
 - [x] WebAssembly stack: `--target`, wasm-ld, runtime (heap/managed/errors/sync
   tasks/virtual FS/env/process), host imports (`absolute_log`, `absolute_http_get`,
@@ -731,14 +731,28 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 
 - [ ] Добиться стабильного прохождения Windows Debug/Release, Windows LLVM,
   Linux Debug/Release, Linux WASM, macOS smoke, Termux smoke и hardening/TSan.
-- [ ] Разделить platform-specific failures и реальные regression failures, чтобы
+  - [x] Зафиксировать hosted runners: `ubuntu-24.04`, `windows-2022`, `macos-15`;
+    Windows native Release локально проходит 409/409, Termux host contract —
+    143/143, scheduler harness — 100/100 повторов.
+  - [x] Исправить ложное падение TSan cancellation race: writer запускается до
+    readers, а общий release/acquire start gate исключает завершение readers до
+    начала гонки.
+  - [x] Ограничить дочерний процесс sanitizer negative-тестов: macOS timeout
+    допустим только после появления ожидаемой ASan-сигнатуры, поэтому зависание
+    runtime не маскирует отсутствие диагностики.
+  - [ ] Подтвердить новый commit полным hosted run обоих required gates без rerun.
+  - [ ] Подключить настоящий ARM64 Android/Termux self-hosted runner; Linux
+    `ABSOLUTE_TERMUX=ON` contract не выдавать за Bionic/on-device выполнение.
+- [x] Разделить platform-specific failures и реальные regression failures, чтобы
   нестабильная установка toolchain не маскировала поломку языка.
-- [ ] Зафиксировать поддерживаемые версии LLVM, Clang, MSVC, CMake, Ninja, Node,
-  WASI SDK и Android/Termux toolchain.
-- [ ] Добавить обязательный status gate для merge в основную рабочую ветку.
-- [ ] Сохранять логи, generated reproducers, sanitizer reports и failed binaries
+- [x] Зафиксировать поддерживаемые версии LLVM, Clang, MSVC, CMake, Ninja, Node,
+  WASI SDK и Android/Termux toolchain в `docs/ci-policy.md`.
+- [ ] Включить в ruleset ветки `master` обязательные уникальные checks
+  `CI required gate` и `Hardening required gate`; сами aggregate jobs готовы,
+  остаётся repository-admin настройка GitHub.
+- [x] Сохранять логи, generated reproducers, sanitizer reports и failed binaries
   как CI artifacts для каждого падения.
-- [ ] Установить отдельные timeout и retry-policy для build, runtime, fuzz и
+- [x] Установить отдельные timeout и retry-policy для build, runtime, fuzz и
   platform bootstrap, не скрывая детерминированные падения повторным запуском.
 
 ### P1 — Scheduler v2 без блокировки worker threads
