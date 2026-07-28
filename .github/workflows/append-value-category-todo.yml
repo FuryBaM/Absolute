@@ -4,8 +4,7 @@ on:
   push:
     branches:
       - agent/stabilize-foundation
-    paths:
-      - .github/workflows/append-value-category-todo.yml
+  workflow_dispatch:
 
 permissions:
   contents: write
