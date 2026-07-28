@@ -783,6 +783,7 @@ namespace Absolute {
         VarDeclExpr& parameter, const std::string& type,
         const std::string& callable, bool asyncCallable, bool cAbi) {
         if (!parameter.isReference) return;
+        if (parameter.isOut) return;
         const std::string name = ExtractIdentifier(parameter.name.get());
         std::string definitionName = type;
         std::string genericBase;

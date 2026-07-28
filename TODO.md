@@ -516,6 +516,8 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   - [ ] Расширить `std.http`: headers collection, HTTPS/TLS, redirects, streaming,
     timeout/cancellation и multipart.
   - [ ] `Semaphore`, `RwLock`, `ConditionVariable` и `Once`.
+  - [x] `std.mime` модуль для авто-определения MIME типов по расширению файла.
+  - [x] `std.form` модуль для парсинга `application/x-www-form-urlencoded` и `multipart/form-data`.
   - [x] `std.task.TaskGroup` с consuming transfer дочерних `task<void>`,
     cooperative cancellation и автоматическим cancel/join на выходе из scope.
 - [ ] P1 utilities:

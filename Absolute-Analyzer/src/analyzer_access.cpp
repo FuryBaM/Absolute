@@ -181,7 +181,7 @@ namespace Absolute {
         ValueFlowState flow;
         if (const auto found = valueFlow.find(id); found != valueFlow.end()) flow = found->second;
         if (value && symbol->kind != SymbolKind::Property && accessMode == AccessMode::Read) {
-            if (flow.initialization == InitializationState::Uninitialized)
+            if (!expr->isOutArgument && flow.initialization == InitializationState::Uninitialized)
                 Report("object '" + expr->name + "' is read before initialization",
                     "E_UNINITIALIZED_READ", id);
             else if (flow.initialization == InitializationState::MaybeUninitialized)
@@ -827,6 +827,13 @@ namespace Absolute {
                                     " overlaps another argument", "E_VALUE_REF_ALIAS",
                                     argument.symbol);
                                 break;
+                            }
+                        }
+                        if (expr->arguments[i] && expr->arguments[i]->isOutArgument) {
+                            if (argument.symbol != InvalidSymbolId) {
+                                if (auto flow = valueFlow.find(argument.symbol); flow != valueFlow.end()) {
+                                    flow->second.initialization = InitializationState::Initialized;
+                                }
                             }
                         }
                     }

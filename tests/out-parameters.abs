@@ -1,0 +1,20 @@
+void tryParseInt(string text, out int32 result) {
+    if (text == "42") {
+        result = 42;
+    } else {
+        result = 0;
+    }
+}
+
+int32 main() {
+    int32 val;
+    tryParseInt("42", out val);
+    assert(val == 42, "out int32 result match");
+
+    int32 val2;
+    tryParseInt("invalid", out val2);
+    assert(val2 == 0, "out int32 fallback match");
+
+    println("out-parameters=ok");
+    return 0;
+}

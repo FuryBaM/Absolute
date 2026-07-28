@@ -8,6 +8,7 @@ namespace Absolute {
         bool isConst = false;
         bool isStatic = false;
         bool isReference = false;
+        bool isOut = false;
         bool isParams = false;
 
         explicit VarDeclExpr(std::unique_ptr<Expression> type, std::unique_ptr<Expression> name, std::unique_ptr<Expression> value)

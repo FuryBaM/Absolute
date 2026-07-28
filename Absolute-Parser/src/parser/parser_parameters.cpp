@@ -22,6 +22,10 @@ namespace Absolute{
             const bool refAlias = CurrentToken() &&
                 CurrentToken()->type == TokenType::KEYWORD && CurrentToken()->value == "ref";
             if (refAlias) Consume(TokenType::KEYWORD, "ref");
+            const bool outAlias = CurrentToken() &&
+                ((CurrentToken()->type == TokenType::KEYWORD || CurrentToken()->type == TokenType::IDENTIFIER) &&
+                 CurrentToken()->value == "out");
+            if (outAlias) Consume(CurrentToken()->type);
             std::unique_ptr<TypeExpr> type = ParseType();
             const bool ampersandReference = CurrentToken() &&
                 CurrentToken()->type == TokenType::OPERATOR && CurrentToken()->value == "&";
@@ -31,7 +35,7 @@ namespace Absolute{
                     "A parameter reference must use either '&' or the 'ref' alias, not both");
                 throw std::runtime_error("Duplicate parameter reference marker");
             }
-            const bool isReference = refAlias || ampersandReference;
+            const bool isReference = refAlias || ampersandReference || outAlias;
             std::unique_ptr<Expression> nameExpr = ParsePrimaryExpr();
 
             Token* current = RequireCurrent("'=', ',' or ')'");
@@ -42,6 +46,7 @@ namespace Absolute{
                     std::move(type), std::move(nameExpr), std::move(value));
                 parameter->isConst = isConst;
                 parameter->isReference = isReference;
+                parameter->isOut = outAlias;
                 parameter->isParams = isParams;
                 parameters.push_back(std::move(parameter));
             }
@@ -50,6 +55,7 @@ namespace Absolute{
                     std::move(type), std::move(nameExpr), nullptr);
                 parameter->isConst = isConst;
                 parameter->isReference = isReference;
+                parameter->isOut = outAlias;
                 parameter->isParams = isParams;
                 parameters.push_back(std::move(parameter));
             }

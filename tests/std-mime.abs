@@ -1,0 +1,14 @@
+import "../std/mime.abs";
+
+int32 main() {
+    assert(std.mime.getMimeType("index.html") == "text/html", "html mime");
+    assert(std.mime.getMimeType("styles.css") == "text/css", "css mime");
+    assert(std.mime.getMimeType("app.js") == "text/javascript", "js mime");
+    assert(std.mime.getMimeType("data.json") == "application/json", "json mime");
+    assert(std.mime.getMimeType("logo.png") == "image/png", "png mime");
+    assert(std.mime.getMimeType("hero.svg") == "image/svg+xml", "svg mime");
+    assert(std.mime.getMimeType(".wasm") == "application/wasm", "wasm mime");
+
+    println("std-mime=ok");
+    return 0;
+}

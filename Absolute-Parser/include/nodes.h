@@ -1,4 +1,4 @@
-﻿#ifndef ABSOLUTE_PARSER_NODES_H
+#ifndef ABSOLUTE_PARSER_NODES_H
 #define ABSOLUTE_PARSER_NODES_H
 
 #include <algorithm>
@@ -45,6 +45,8 @@ namespace Absolute {
     };
 
     struct Expression : ASTNode {
+        bool isOutArgument = false;
+        bool isRefArgument = false;
         virtual void Accept(ExpressionVisitor& visitor) = 0;
     };
 

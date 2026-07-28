@@ -569,6 +569,14 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-testing.abs"
     )
     add_test(
+        NAME absolute.std-mime-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-mime.abs"
+    )
+    add_test(
+        NAME absolute.std-form-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-form.abs"
+    )
+    add_test(
         NAME absolute.script-main-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/script-main.abs"
     )
@@ -629,6 +637,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/implicit-conversion-errors.abs"
     )
     set_tests_properties(absolute.implicit-conversion-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.out-parameters-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/out-parameters.abs"
+    )
     add_test(
         NAME absolute.base-language-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/base-language-errors.abs"
@@ -1211,6 +1223,14 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-array-copy-ir
         )
         add_test(
+            NAME absolute.emit-out-parameters
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/out-parameters.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/out-parameters.ll"
+        )
+        set_tests_properties(absolute.emit-out-parameters PROPERTIES
+            FIXTURES_SETUP absolute-out-parameters-ir
+        )
+        add_test(
             NAME absolute.emit-multidimensional-slices
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/multidimensional-slices.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/multidimensional-slices.ll"
@@ -1438,6 +1458,14 @@ if(BUILD_TESTING)
             set_tests_properties(absolute.run-array-copy PROPERTIES
                 FIXTURES_REQUIRED absolute-array-copy-ir
                 PASS_REGULAR_EXPRESSION "array-copy=ok"
+            )
+            add_test(
+                NAME absolute.run-out-parameters
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/out-parameters.ll"
+            )
+            set_tests_properties(absolute.run-out-parameters PROPERTIES
+                FIXTURES_REQUIRED absolute-out-parameters-ir
+                PASS_REGULAR_EXPRESSION "out-parameters=ok"
             )
             add_test(
                 NAME absolute.run-multidimensional-slices
@@ -3126,6 +3154,36 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-std-testing PROPERTIES
             FIXTURES_REQUIRED absolute-std-testing-executable
             PASS_REGULAR_EXPRESSION "std-testing=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-mime
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-mime.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-mime-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-mime PROPERTIES
+            FIXTURES_SETUP absolute-std-mime-executable
+        )
+        add_test(NAME absolute.run-std-mime
+            COMMAND "${CMAKE_BINARY_DIR}/std-mime-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-mime PROPERTIES
+            FIXTURES_REQUIRED absolute-std-mime-executable
+            PASS_REGULAR_EXPRESSION "std-mime=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-form
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-form.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-form-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-form PROPERTIES
+            FIXTURES_SETUP absolute-std-form-executable
+        )
+        add_test(NAME absolute.run-std-form
+            COMMAND "${CMAKE_BINARY_DIR}/std-form-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-form PROPERTIES
+            FIXTURES_REQUIRED absolute-std-form-executable
+            PASS_REGULAR_EXPRESSION "std-form=ok"
         )
 
         add_test(
