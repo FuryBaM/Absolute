@@ -46,6 +46,9 @@ set(ABSOLUTE_WASI_LIBC_KIT_STRTOD
 # Default kit used by the coexistence test.
 set(ABSOLUTE_WASI_LIBC_KIT_DEFAULT ${ABSOLUTE_WASI_LIBC_KIT_STRTOD})
 
+get_filename_component(ABSOLUTE_WASI_LIBC_EXTRAS_ROOT
+    "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+
 # Extract kit objects from libc.a into OUT_DIR; sets OUT_VAR to list of paths.
 function(absolute_wasi_extract_kit libc_a out_dir kit_var out_var)
     if(NOT EXISTS "${libc_a}")
@@ -53,15 +56,15 @@ function(absolute_wasi_extract_kit libc_a out_dir kit_var out_var)
     endif()
     find_program(ABSOLUTE_LLVM_AR NAMES llvm-ar llvm-ar.exe
         HINTS
-            "${CMAKE_SOURCE_DIR}/.absolute/toolchains/llvm-18.1.8/bin"
-            "${CMAKE_BINARY_DIR}/../.absolute/toolchains/llvm-18.1.8/bin"
+            "${ABSOLUTE_WASI_LIBC_EXTRAS_ROOT}/.absolute/toolchains/llvm-18.1.8/bin"
             "${LLVM_TOOLS_BINARY_DIR}")
     if(NOT ABSOLUTE_LLVM_AR)
         message(FATAL_ERROR "llvm-ar required to extract wasi-libc objects")
     endif()
     file(MAKE_DIRECTORY "${out_dir}")
+    set(_kit_members ${${kit_var}})
     execute_process(
-        COMMAND "${ABSOLUTE_LLVM_AR}" x "${libc_a}"
+        COMMAND "${ABSOLUTE_LLVM_AR}" x "${libc_a}" ${_kit_members}
         WORKING_DIRECTORY "${out_dir}"
         RESULT_VARIABLE _ar_status
         OUTPUT_VARIABLE _ar_out
@@ -84,9 +87,8 @@ endfunction()
 # Optional compiler-rt builtins (provides __multi3 etc. for wasi-libc).
 function(absolute_wasi_find_builtins out_var)
     file(GLOB _builtin_candidates
-        "${CMAKE_SOURCE_DIR}/.absolute/toolchains/wasi-builtins-*/**/libclang_rt.builtins-wasm32.a"
-        "${CMAKE_BINARY_DIR}/../.absolute/toolchains/wasi-builtins-*/**/libclang_rt.builtins-wasm32.a"
-        "${CMAKE_SOURCE_DIR}/.absolute/toolchains/wasi-sysroot-*/lib/wasm32-wasi/libclang_rt.builtins-wasm32.a"
+        "${ABSOLUTE_WASI_LIBC_EXTRAS_ROOT}/.absolute/toolchains/wasi-builtins-*/**/libclang_rt.builtins-wasm32.a"
+        "${ABSOLUTE_WASI_LIBC_EXTRAS_ROOT}/.absolute/toolchains/wasi-sysroot-*/lib/wasm32-wasi/libclang_rt.builtins-wasm32.a"
     )
     if(_builtin_candidates)
         list(GET _builtin_candidates 0 _first)

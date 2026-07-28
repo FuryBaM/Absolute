@@ -28,18 +28,23 @@ if(NOT DEFINED WASI_RUN_JS)
     set(WASI_RUN_JS "${CMAKE_CURRENT_LIST_DIR}/../tools/absolute-wasm-wasi-run.js")
 endif()
 
+get_filename_component(_absolute_repo_root
+    "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+set(_absolute_wasm_tool_hints
+    "${_absolute_repo_root}/.absolute/toolchains/llvm-18.1.8/bin")
+if(DEFINED WASM_LD AND EXISTS "${WASM_LD}")
+    get_filename_component(_absolute_wasm_ld_dir "${WASM_LD}" DIRECTORY)
+    list(APPEND _absolute_wasm_tool_hints "${_absolute_wasm_ld_dir}")
+endif()
+
 find_program(ABSOLUTE_WASM_CLANG NAMES clang clang.exe
-    HINTS
-        "${CMAKE_SOURCE_DIR}/.absolute/toolchains/llvm-18.1.8/bin"
-        "${CMAKE_BINARY_DIR}/../.absolute/toolchains/llvm-18.1.8/bin")
+    HINTS ${_absolute_wasm_tool_hints})
 if(NOT ABSOLUTE_WASM_CLANG)
     message(FATAL_ERROR "clang required to compile wasi-libc probe")
 endif()
 if(NOT DEFINED WASM_LD OR NOT EXISTS "${WASM_LD}")
     find_program(WASM_LD NAMES wasm-ld wasm-ld.exe
-        HINTS
-            "${CMAKE_SOURCE_DIR}/.absolute/toolchains/llvm-18.1.8/bin"
-            "${CMAKE_BINARY_DIR}/../.absolute/toolchains/llvm-18.1.8/bin")
+        HINTS ${_absolute_wasm_tool_hints})
 endif()
 if(NOT WASM_LD)
     message(FATAL_ERROR "wasm-ld not found")
