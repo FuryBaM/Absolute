@@ -47,6 +47,12 @@ representative arrays/OOP/managed-pointer IR, and verifies that IR with the
 matching `llvm-as`. The full semantic, runtime, native, and WebAssembly suites
 remain pinned to LLVM 18.
 
+The required Linux and Windows LLVM jobs run the same versioned ABI linker
+corpus. Native outputs must be ELF on Linux and PE from the MSVC linker on
+Windows; the WebAssembly entry must be a wasm module from `wasm-ld`. All three
+paths execute the same sources and compare complete stdout with the same
+manifest oracle.
+
 ## Failure classes
 
 CI writes `failure-classification.txt` before uploading diagnostics:

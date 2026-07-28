@@ -842,7 +842,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   отдельный обязательный Release-контракт собирает `absolutec`, сверяет точную
   major-версию SDK, прогоняет differential O0–O3 и валидирует representative
   LLVM IR через соответствующий `llvm-as`.
-- [ ] Сравнивать Windows MSVC linker, Linux ELF linker и WASM linker на одном ABI corpus.
+- [x] Сравнивать Windows MSVC linker, Linux ELF linker и WASM linker на одном
+  ABI corpus: общий versioned manifest проверяет arrays, value/reference ABI,
+  structs, interfaces, generic callbacks, managed/raw pointers и C exports;
+  каждый runner сверяет формат артефакта, exit code и полный stdout с одним
+  oracle.
 - [ ] Включить в corpus arithmetic overflow, signed/unsigned conversions, floats,
   constant folding, generics, lambdas, interfaces, exceptions, `defer`, async,
   managed/weak/raw pointers, arrays, slices и snapshot collections.

@@ -1699,6 +1699,45 @@ if(BUILD_TESTING)
                     "${LLVM_TOOLS_BINARY_DIR}"
                     "${PROJECT_SOURCE_DIR}/.absolute/toolchains/llvm-18.1.8/bin")
         endif()
+        if(Python3_Interpreter_FOUND)
+            if(WIN32)
+                get_filename_component(
+                    ABSOLUTE_ABI_LINKER_NAME "${CMAKE_LINKER}" NAME)
+                if(ABSOLUTE_ABI_LINKER_NAME MATCHES "^lld-link")
+                    set(ABSOLUTE_ABI_NATIVE_BACKEND windows-lld-link)
+                else()
+                    set(ABSOLUTE_ABI_NATIVE_BACKEND windows-msvc)
+                endif()
+                set(ABSOLUTE_ABI_NATIVE_FORMAT pe)
+            elseif(APPLE)
+                set(ABSOLUTE_ABI_NATIVE_BACKEND macos-mach-o)
+                set(ABSOLUTE_ABI_NATIVE_FORMAT macho)
+            elseif(ANDROID OR ABSOLUTE_TERMUX)
+                set(ABSOLUTE_ABI_NATIVE_BACKEND termux-elf)
+                set(ABSOLUTE_ABI_NATIVE_FORMAT elf)
+            else()
+                set(ABSOLUTE_ABI_NATIVE_BACKEND linux-elf)
+                set(ABSOLUTE_ABI_NATIVE_FORMAT elf)
+            endif()
+            add_test(
+                NAME absolute.abi-linker-corpus-native
+                COMMAND "${Python3_EXECUTABLE}"
+                    "${PROJECT_SOURCE_DIR}/tools/testing/abi_linker_corpus.py"
+                    --compiler "$<TARGET_FILE:Absolute-Compiler>"
+                    --corpus
+                        "${PROJECT_SOURCE_DIR}/tests/abi-linker-corpus.json"
+                    --work-dir
+                        "${CMAKE_BINARY_DIR}/abi-linker-corpus/native/$<CONFIG>"
+                    --backend native
+                    --backend-label "${ABSOLUTE_ABI_NATIVE_BACKEND}"
+                    --expected-format "${ABSOLUTE_ABI_NATIVE_FORMAT}")
+            set_tests_properties(
+                absolute.abi-linker-corpus-native PROPERTIES
+                PASS_REGULAR_EXPRESSION
+                    "abi-linker-corpus=ok backend=${ABSOLUTE_ABI_NATIVE_BACKEND}"
+                LABELS "abi;linker;native"
+                TIMEOUT 300)
+        endif()
         if(ABSOLUTE_NODE_FOR_WASM AND ABSOLUTE_WASM_LD_FOR_TEST)
             add_test(
                 NAME absolute.run-wasm-export
@@ -1712,6 +1751,28 @@ if(BUILD_TESTING)
             )
             if(ABSOLUTE_WASM_SHIM_OBJECT)
                 if(Python3_Interpreter_FOUND)
+                    add_test(
+                        NAME absolute.abi-linker-corpus-wasm
+                        COMMAND "${Python3_EXECUTABLE}"
+                            "${PROJECT_SOURCE_DIR}/tools/testing/abi_linker_corpus.py"
+                            --compiler "$<TARGET_FILE:Absolute-Compiler>"
+                            --corpus
+                                "${PROJECT_SOURCE_DIR}/tests/abi-linker-corpus.json"
+                            --work-dir
+                                "${CMAKE_BINARY_DIR}/abi-linker-corpus/wasm/$<CONFIG>"
+                            --backend wasm
+                            --backend-label wasm-ld
+                            --expected-format wasm
+                            --node "${ABSOLUTE_NODE_FOR_WASM}"
+                            --wasm-host
+                                "${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js"
+                            --wasm-ld "${ABSOLUTE_WASM_LD_FOR_TEST}")
+                    set_tests_properties(
+                        absolute.abi-linker-corpus-wasm PROPERTIES
+                        PASS_REGULAR_EXPRESSION
+                            "abi-linker-corpus=ok backend=wasm-ld"
+                        LABELS "abi;linker;wasm"
+                        TIMEOUT 300)
                     add_test(
                         NAME absolute.native-wasm-differential
                         COMMAND "${Python3_EXECUTABLE}"

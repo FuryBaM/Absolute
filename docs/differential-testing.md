@@ -29,11 +29,28 @@ both backends with the oracle. Its sources, native executables, wasm modules,
 Node runner, and mismatch report live under
 `<build>/differential/native-wasm/<configuration>`.
 
+The fixed `tests/abi-linker-corpus.json` manifest is the common linker ABI
+contract. Its sources cover arrays, small and large value types, value
+references, interface and virtual dispatch, generic callback fields,
+managed/raw pointers, and C exports. The same manifest and exact stdout oracle
+are consumed by:
+
+- `absolute.abi-linker-corpus-native`, labelled `windows-msvc`, `linux-elf`, or
+  `macos-mach-o` according to the configured host linker;
+- `absolute.abi-linker-corpus-wasm`, linked by `wasm-ld` and executed through
+  the official Absolute Node host.
+
+The runner also checks the linked file magic (`PE`, `ELF`, `Mach-O`, or
+WebAssembly), so a successful process alone cannot hide a wrong output target.
+Per-case executables/modules, `results.json`, and a structured `failure.json`
+are retained under `<build>/abi-linker-corpus/<backend>/<configuration>`.
+
 Run the focused test through a configured build:
 
 ```text
 ctest --test-dir <build> -R absolute.optimization-differential --output-on-failure
 ctest --test-dir <build> -R absolute.native-wasm-differential --output-on-failure
+ctest --test-dir <build> -L linker --output-on-failure
 ```
 
 Or invoke the runner directly:

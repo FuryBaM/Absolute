@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "arrays",
+      "source": "tests/arrays.abs",
+      "stdout": "arrays=90"
+    },
+    {
+      "name": "struct-values",
+      "source": "tests/structs-codegen.abs",
+      "stdout": "structs=ok"
+    },
+    {
+      "name": "interfaces",
+      "source": "tests/interfaces-codegen.abs",
+      "stdout": "interfaces=ok"
+    },
+    {
+      "name": "generic-callbacks",
+      "source": "tests/generic-callback-abi.abs",
+      "stdout": "generic-callback-abi=ok"
+    },
+    {
+      "name": "managed-raw-pointers",
+      "source": "tests/pointer-functions.abs",
+      "stdout": "pointer-functions=ok"
+    },
+    {
+      "name": "value-references",
+      "source": "tests/value-references.abs",
+      "stdout": "value-references=ok"
+    },
+    {
+      "name": "c-exports",
+      "source": "tests/export-c-abi.abs",
+      "stdout": "export=42"
+    }
+  ]
+}

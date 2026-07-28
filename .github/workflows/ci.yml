@@ -199,6 +199,7 @@ jobs:
             build/**/*.ll
             build/**/*.wasm
             build/**/*.exe
+            build/abi-linker-corpus
             build/*-app
             build/*-test
             build/*stress*
@@ -433,6 +434,7 @@ jobs:
             .absolute/build/windows-release/**/*.ll
             .absolute/build/windows-release/**/*.wasm
             .absolute/build/windows-release/**/*.exe
+            .absolute/build/windows-release/abi-linker-corpus
 
   macos-smoke:
     runs-on: macos-15
@@ -544,6 +546,7 @@ jobs:
             build/Testing/Temporary
             build/**/*.ll
             build/**/*.wasm
+            build/abi-linker-corpus
             build/**/absolutec
 
   linux-wasm-smoke:
@@ -676,6 +679,7 @@ jobs:
             build/Testing/Temporary
             build/**/*.ll
             build/**/*.wasm
+            build/abi-linker-corpus
             build/**/absolutec
 
   termux-host-contract:
