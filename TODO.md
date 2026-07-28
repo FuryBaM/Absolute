@@ -968,3 +968,39 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   (plugins: `.absplugin` + SemVer; std: `absolute.std` + `docs/standard-library.md`).
 - [ ] Ошибки компилятора всегда содержат файл, строку, колонку и понятный diagnostic code.
 - [ ] Есть минимум один реальный desktop/game example и одна reusable library на Absolute.
+
+## P0 — обнаруженные пробелы в корректности владения памятью
+
+- [ ] Закрыть strong ownership cycle через `move(owner)` в owning-поле, включая
+  `root.child = move(root)` и более глубокие back-edge пути. Analyzer должен
+  сопоставлять источник перемещаемого owner с ownership-путём назначения и выдавать
+  `E_MANAGED_OWNERSHIP_CYCLE`; добавить semantic/error/runtime regression-тесты.
+- [ ] Унифицировать cleanup при перезаписи локального managed-owner: перед
+  `absolute_managed_destroy` обязательно вызвать generated pointee destructor,
+  включая virtual slot 0 для class/interface, struct cleanup, пользовательский
+  `destroy()` и рекурсивное освобождение strong-полей. Добавить тест перезаписи
+  владельца с вложенным child и leak-check.
+- [ ] Исправить move-assignment resource-owning aggregate: старое значение destination
+  должно полностью очищаться перед записью нового, независимо от того, является
+  destination локальной переменной, полем или временным storage. Отдельно определить
+  и проверить self-move, исключение между cleanup и store и повторную инициализацию.
+- [ ] Добавить типизированное уничтожение непринятой transfer capsule. Capsule должна
+  хранить destructor/rehome metadata либо достаточную runtime type information,
+  чтобы cancel/reject/close/destroy освобождали весь object graph, а не только
+  корневой allocation slot.
+- [ ] Сделать managed slot table потокобезопасной и со стабильными адресами:
+  исключить гонки `slots`/`freeSlots`, reallocation `slots.data()`, неатомарные
+  публикации pointer/generation/type и конфликт fast path с create/destroy/transfer.
+  Добавить многопоточный stress под TSan.
+- [ ] До появления полноценной element-wise семантики запретить массивы элементов,
+  для которых `TypeOwnsResources(element)` истинно. Затем реализовать корректные
+  element destroy/move/clone, rollback при частичной инициализации, правила slices
+  и запрет shallow `memcpy` владельцев.
+- [ ] Заменить недостаточно точный `pointerOwner: SymbolId` на ownership region/place
+  identity, способный представлять `root`, `root.child`, `root.child.payload` и
+  алиасы полей. Уничтожение корня должно статически помечать алиасы вложенных полей
+  expired; перенос через move, ветвления, return и field reassignment должен
+  сохранять или корректно объединять region state.
+- [ ] Для всех перечисленных случаев добавить минимальные semantic/error/LLVM/runtime
+  тесты и запускать их в ownership torture suite под ASan, LSan, UBSan и TSan,
+  где соответствующий sanitizer применим.
