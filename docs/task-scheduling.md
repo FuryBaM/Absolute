@@ -123,7 +123,20 @@ idle worker visits the other queues through a rotating victim cursor and steals
 ready work. Only tasks whose fiber has not started may be stolen. After its
 first execution a fiber is pinned to its owner queue, so a suspended
 continuation cannot migrate across threads or invalidate thread-local state.
-Pinned continuations are always taken by their owner before new local work.
+
+Runnable priority levels use smooth weighted scheduling. Priorities `-3..3`
+have weights `1, 2, 3, 4, 6, 8, 12`: higher priorities receive a statistical
+advantage, while every continuously runnable level retains a non-zero share and
+cannot be starved by a permanent high-priority backlog. Roles at one priority
+are served round-robin. When both pinned continuations and new local tasks exist
+at the chosen priority, the scheduler alternates between those sources.
+Stealers apply the same weighted policy to work that is allowed to migrate.
+
+These rules intentionally do not promise an exact global execution order:
+multiple workers, wake-ups, timers, and stealing make that order brittle.
+Fairness applies whenever control returns to the scheduler. A task that never
+suspends, waits, or finishes is not preempted and can still occupy its OS
+worker.
 
 Windows uses native Fibers. Linux and macOS use `ucontext`; Android/Termux uses
 the Termux `libucontext` package installed by the project bootstrap script.

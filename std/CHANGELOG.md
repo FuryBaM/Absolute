@@ -13,6 +13,10 @@
 - Added work stealing between native scheduler worker queues. Nested task
   fan-out stays local until idle workers steal tasks that have not started;
   suspended fibers remain pinned to their original worker.
+- Added starvation-free smooth weighted priority scheduling and round-robin
+  role lanes. High-priority work keeps a statistical advantage without making
+  lower runnable priorities impossible, and pinned/new work alternates within
+  one priority.
 
 ## 0.4.0
 

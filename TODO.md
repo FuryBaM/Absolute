@@ -807,8 +807,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   ещё не запущенные fibers; возобновляемые fibers остаются pinned к владельцу.
   - [x] Ограничить OS worker pool диапазоном `1..32` и добавить
     `ABSOLUTE_SCHEDULER_WORKERS`/`std.task.workerCount()`.
-- [ ] Формализовать fairness между `role`, starvation protection и статистическое
-  преимущество priority без требования хрупкого точного порядка исполнения.
+- [x] Формализовать fairness между `role`, starvation protection и статистическое
+  преимущество priority: smooth weighted scheduling с весами
+  `1/2/3/4/6/8/12` для priority `-3..3`, round-robin между активными role lanes
+  и чередование pinned/новых задач одного уровня без требования хрупкого
+  точного порядка исполнения.
 - [ ] Проверять CPU affinity как best-effort capability с понятным fallback.
 - [ ] Добавить scheduler metrics: runnable/suspended/completed tasks, queue latency,
   worker utilization, steals, wake-ups, blocked time и starvation counters.

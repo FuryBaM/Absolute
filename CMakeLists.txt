@@ -92,6 +92,17 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "runtime-scheduler-work-stealing=ok"
         TIMEOUT 30)
 
+    add_executable(absolute-runtime-scheduler-fairness-test
+        tests/runtime-scheduler-fairness.cpp)
+    target_link_libraries(absolute-runtime-scheduler-fairness-test
+        PRIVATE Absolute-Runtime)
+    add_test(
+        NAME absolute.runtime-scheduler-fairness
+        COMMAND absolute-runtime-scheduler-fairness-test)
+    set_tests_properties(absolute.runtime-scheduler-fairness PROPERTIES
+        PASS_REGULAR_EXPRESSION "runtime-scheduler-fairness=ok"
+        TIMEOUT 30)
+
     if(TARGET Absolute-Unless-Plugin)
         add_test(
             NAME absolute.syntax-plugin

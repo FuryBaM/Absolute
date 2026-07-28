@@ -199,12 +199,21 @@ namespace {
     class Scheduler {
         std::mutex mutex;
         std::condition_variable available;
-        struct WorkerQueue {
+        struct LaneSet {
             std::array<
                 std::unordered_map<std::string, std::deque<Work>>, 7> lanes;
             std::array<std::deque<std::string>, 7> readyRoles;
-            std::deque<Work> pinned;
+            std::array<size_t, 7> counts{};
         };
+        struct WorkerQueue {
+            LaneSet ready;
+            LaneSet pinned;
+            std::array<std::int64_t, 7> localCredits{};
+            std::array<std::int64_t, 7> stealCredits{};
+            std::array<bool, 7> takePinnedNext{};
+        };
+        static constexpr std::array<std::int64_t, 7> priorityWeights{
+            1, 2, 3, 4, 6, 8, 12};
         std::vector<WorkerQueue> queues;
         std::vector<size_t> stealCursors;
         std::vector<std::thread> workers;
@@ -233,42 +242,88 @@ namespace {
             if (stopping && queued == 0) available.notify_all();
         }
 
-        bool TakeReadyLocked(WorkerQueue& queue, Work& work) {
-            for (size_t bucket = queue.readyRoles.size(); bucket > 0; --bucket) {
-                const size_t index = bucket - 1;
-                if (queue.readyRoles[index].empty()) continue;
-                std::string role =
-                    std::move(queue.readyRoles[index].front());
-                queue.readyRoles[index].pop_front();
-                auto lane = queue.lanes[index].find(role);
-                work = std::move(lane->second.front());
-                lane->second.pop_front();
-                ConsumeQueuedLocked();
-                if (lane->second.empty()) queue.lanes[index].erase(lane);
-                else queue.readyRoles[index].push_back(std::move(role));
-                return true;
+        int ChoosePriorityLocked(
+            std::array<std::int64_t, 7>& credits,
+            const LaneSet& first, const LaneSet* second = nullptr) {
+            std::int64_t activeWeight = 0;
+            std::int64_t bestCredit =
+                std::numeric_limits<std::int64_t>::min();
+            int selected = -1;
+            for (size_t index = 0; index < priorityWeights.size(); ++index) {
+                const bool isActive =
+                    first.counts[index] > 0 ||
+                    (second && second->counts[index] > 0);
+                if (!isActive) {
+                    credits[index] = 0;
+                    continue;
+                }
+                activeWeight += priorityWeights[index];
+                credits[index] += priorityWeights[index];
+                if (credits[index] > bestCredit ||
+                    (credits[index] == bestCredit &&
+                        static_cast<int>(index) > selected)) {
+                    bestCredit = credits[index];
+                    selected = static_cast<int>(index);
+                }
             }
-            return false;
+            if (selected >= 0)
+                credits[static_cast<size_t>(selected)] -= activeWeight;
+            return selected;
+        }
+
+        bool TakeLaneLocked(
+            LaneSet& lanes, size_t bucket, Work& work) {
+            if (lanes.counts[bucket] == 0) return false;
+            if (lanes.readyRoles[bucket].empty()) std::abort();
+            std::string role =
+                std::move(lanes.readyRoles[bucket].front());
+            lanes.readyRoles[bucket].pop_front();
+            auto lane = lanes.lanes[bucket].find(role);
+            if (lane == lanes.lanes[bucket].end() || lane->second.empty())
+                std::abort();
+            work = std::move(lane->second.front());
+            lane->second.pop_front();
+            --lanes.counts[bucket];
+            ConsumeQueuedLocked();
+            if (lane->second.empty()) lanes.lanes[bucket].erase(lane);
+            else lanes.readyRoles[bucket].push_back(std::move(role));
+            return true;
+        }
+
+        bool TakeLocalLocked(WorkerQueue& queue, Work& work) {
+            const int selected = ChoosePriorityLocked(
+                queue.localCredits, queue.ready, &queue.pinned);
+            if (selected < 0) return false;
+            const size_t bucket = static_cast<size_t>(selected);
+            const bool hasReady = queue.ready.counts[bucket] > 0;
+            const bool hasPinned = queue.pinned.counts[bucket] > 0;
+            const bool usePinned =
+                hasPinned && (!hasReady || queue.takePinnedNext[bucket]);
+            if (hasReady && hasPinned)
+                queue.takePinnedNext[bucket] = !usePinned;
+            return TakeLaneLocked(
+                usePinned ? queue.pinned : queue.ready, bucket, work);
+        }
+
+        bool TakeStealableLocked(WorkerQueue& queue, Work& work) {
+            const int selected = ChoosePriorityLocked(
+                queue.stealCredits, queue.ready);
+            return selected >= 0 && TakeLaneLocked(
+                queue.ready, static_cast<size_t>(selected), work);
         }
 
         bool TakeLocked(Work& work, int workerIndex) {
             if (queued == 0) return false;
             const size_t localIndex = static_cast<size_t>(workerIndex);
             WorkerQueue& local = queues[localIndex];
-            if (!local.pinned.empty()) {
-                work = std::move(local.pinned.front());
-                local.pinned.pop_front();
-                ConsumeQueuedLocked();
-                return true;
-            }
-            if (TakeReadyLocked(local, work)) return true;
+            if (TakeLocalLocked(local, work)) return true;
 
             const size_t count = queues.size();
             if (count < 2) return false;
             size_t victim = stealCursors[localIndex] % count;
             for (size_t checked = 0; checked < count; ++checked) {
                 if (victim != localIndex &&
-                    TakeReadyLocked(queues[victim], work)) {
+                    TakeStealableLocked(queues[victim], work)) {
                     stealCursors[localIndex] = (victim + 1) % count;
                     successfulSteals.fetch_add(
                         1, std::memory_order_relaxed);
@@ -280,23 +335,27 @@ namespace {
             return false;
         }
 
-        void EnqueueReadyLocked(size_t queueIndex, Work work) {
-            WorkerQueue& queue = queues[queueIndex];
+        void EnqueueLaneLocked(LaneSet& lanes, Work work) {
             const size_t bucket =
                 static_cast<size_t>(work.priority + 3);
             const std::string role = work.role;
-            std::deque<Work>& lane = queue.lanes[bucket][role];
-            if (lane.empty()) queue.readyRoles[bucket].push_back(role);
+            std::deque<Work>& lane = lanes.lanes[bucket][role];
+            if (lane.empty()) lanes.readyRoles[bucket].push_back(role);
             lane.push_back(std::move(work));
+            ++lanes.counts[bucket];
             ++queued;
+        }
+
+        void EnqueueReadyLocked(size_t queueIndex, Work work) {
+            EnqueueLaneLocked(
+                queues[queueIndex].ready, std::move(work));
         }
 
         void EnqueueLocked(Task* task) {
             if (task->ownerWorker >= 0) {
-                queues[static_cast<size_t>(task->ownerWorker)]
-                    .pinned.push_back({
+                EnqueueLaneLocked(
+                    queues[static_cast<size_t>(task->ownerWorker)].pinned, {
                     task, task->entry, task->core, task->priority, task->role});
-                ++queued;
                 return;
             }
             size_t queueIndex = nextSubmissionQueue++ % queues.size();
