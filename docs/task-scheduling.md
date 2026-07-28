@@ -117,6 +117,14 @@ The default pool size is the available hardware concurrency capped at 32.
 `std.task.workerCount()` reports the selected value. This override is intended
 for constrained hosts and deterministic scheduler tests.
 
+Each worker owns priority and role lanes. External submissions are distributed
+round-robin, while a task's nested spawns enter its worker's local queue. An
+idle worker visits the other queues through a rotating victim cursor and steals
+ready work. Only tasks whose fiber has not started may be stolen. After its
+first execution a fiber is pinned to its owner queue, so a suspended
+continuation cannot migrate across threads or invalidate thread-local state.
+Pinned continuations are always taken by their owner before new local work.
+
 Windows uses native Fibers. Linux and macOS use `ucontext`; Android/Termux uses
 the Termux `libucontext` package installed by the project bootstrap script.
 

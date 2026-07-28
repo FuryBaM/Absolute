@@ -199,9 +199,14 @@ namespace {
     class Scheduler {
         std::mutex mutex;
         std::condition_variable available;
-        std::array<std::unordered_map<std::string, std::deque<Work>>, 7> lanes;
-        std::array<std::deque<std::string>, 7> readyRoles;
-        std::vector<std::deque<Work>> pinned;
+        struct WorkerQueue {
+            std::array<
+                std::unordered_map<std::string, std::deque<Work>>, 7> lanes;
+            std::array<std::deque<std::string>, 7> readyRoles;
+            std::deque<Work> pinned;
+        };
+        std::vector<WorkerQueue> queues;
+        std::vector<size_t> stealCursors;
         std::vector<std::thread> workers;
         struct Timer {
             std::chrono::steady_clock::time_point deadline;
@@ -217,47 +222,88 @@ namespace {
         };
         std::priority_queue<Timer, std::vector<Timer>, TimerLater> timers;
         size_t queued = 0;
+        size_t nextSubmissionQueue = 0;
         std::uint64_t nextTimerSequence = 0;
+        std::atomic<std::uint64_t> successfulSteals{0};
         bool stopping = false;
 
-        bool TakeLocked(Work& work, int workerIndex) {
-            if (queued == 0) return false;
-            std::deque<Work>& local = pinned[static_cast<size_t>(workerIndex)];
-            if (!local.empty()) {
-                work = std::move(local.front());
-                local.pop_front();
-                --queued;
-                return true;
-            }
-            for (size_t bucket = readyRoles.size(); bucket > 0; --bucket) {
+        void ConsumeQueuedLocked() {
+            if (queued == 0) std::abort();
+            --queued;
+            if (stopping && queued == 0) available.notify_all();
+        }
+
+        bool TakeReadyLocked(WorkerQueue& queue, Work& work) {
+            for (size_t bucket = queue.readyRoles.size(); bucket > 0; --bucket) {
                 const size_t index = bucket - 1;
-                if (readyRoles[index].empty()) continue;
-                std::string role = std::move(readyRoles[index].front());
-                readyRoles[index].pop_front();
-                auto lane = lanes[index].find(role);
+                if (queue.readyRoles[index].empty()) continue;
+                std::string role =
+                    std::move(queue.readyRoles[index].front());
+                queue.readyRoles[index].pop_front();
+                auto lane = queue.lanes[index].find(role);
                 work = std::move(lane->second.front());
                 lane->second.pop_front();
-                --queued;
-                if (lane->second.empty()) lanes[index].erase(lane);
-                else readyRoles[index].push_back(std::move(role));
+                ConsumeQueuedLocked();
+                if (lane->second.empty()) queue.lanes[index].erase(lane);
+                else queue.readyRoles[index].push_back(std::move(role));
                 return true;
             }
             return false;
         }
 
+        bool TakeLocked(Work& work, int workerIndex) {
+            if (queued == 0) return false;
+            const size_t localIndex = static_cast<size_t>(workerIndex);
+            WorkerQueue& local = queues[localIndex];
+            if (!local.pinned.empty()) {
+                work = std::move(local.pinned.front());
+                local.pinned.pop_front();
+                ConsumeQueuedLocked();
+                return true;
+            }
+            if (TakeReadyLocked(local, work)) return true;
+
+            const size_t count = queues.size();
+            if (count < 2) return false;
+            size_t victim = stealCursors[localIndex] % count;
+            for (size_t checked = 0; checked < count; ++checked) {
+                if (victim != localIndex &&
+                    TakeReadyLocked(queues[victim], work)) {
+                    stealCursors[localIndex] = (victim + 1) % count;
+                    successfulSteals.fetch_add(
+                        1, std::memory_order_relaxed);
+                    return true;
+                }
+                victim = (victim + 1) % count;
+            }
+            stealCursors[localIndex] = victim;
+            return false;
+        }
+
+        void EnqueueReadyLocked(size_t queueIndex, Work work) {
+            WorkerQueue& queue = queues[queueIndex];
+            const size_t bucket =
+                static_cast<size_t>(work.priority + 3);
+            const std::string role = work.role;
+            std::deque<Work>& lane = queue.lanes[bucket][role];
+            if (lane.empty()) queue.readyRoles[bucket].push_back(role);
+            lane.push_back(std::move(work));
+            ++queued;
+        }
+
         void EnqueueLocked(Task* task) {
             if (task->ownerWorker >= 0) {
-                pinned[static_cast<size_t>(task->ownerWorker)].push_back({
+                queues[static_cast<size_t>(task->ownerWorker)]
+                    .pinned.push_back({
                     task, task->entry, task->core, task->priority, task->role});
                 ++queued;
                 return;
             }
-            const size_t bucket = static_cast<size_t>(task->priority + 3);
-            std::deque<Work>& lane = lanes[bucket][task->role];
-            if (lane.empty()) readyRoles[bucket].push_back(task->role);
-            lane.push_back({
+            size_t queueIndex = nextSubmissionQueue++ % queues.size();
+            if (currentScheduler == this && currentWorkerIndex >= 0)
+                queueIndex = static_cast<size_t>(currentWorkerIndex);
+            EnqueueReadyLocked(queueIndex, {
                 task, task->entry, task->core, task->priority, task->role});
-            ++queued;
         }
 
         void WakeLocked(Task* task) {
@@ -407,7 +453,10 @@ namespace {
         Scheduler() {
             schedulerInstance.store(this, std::memory_order_release);
             const unsigned count = ResolveWorkerCount();
-            pinned.resize(count);
+            queues.resize(count);
+            stealCursors.resize(count);
+            for (unsigned index = 0; index < count; ++index)
+                stealCursors[index] = (index + 1) % count;
             workers.reserve(count);
             for (unsigned index = 0; index < count; ++index)
                 workers.emplace_back([this, index] {
@@ -434,11 +483,12 @@ namespace {
             task->state = TaskState::Runnable;
             {
                 std::lock_guard lock(mutex);
-                const size_t bucket = static_cast<size_t>(priority + 3);
-                std::deque<Work>& lane = lanes[bucket][role];
-                if (lane.empty()) readyRoles[bucket].push_back(role);
-                lane.push_back({task, entry, core, priority, std::move(role)});
-                ++queued;
+                size_t queueIndex =
+                    nextSubmissionQueue++ % queues.size();
+                if (currentScheduler == this && currentWorkerIndex >= 0)
+                    queueIndex = static_cast<size_t>(currentWorkerIndex);
+                EnqueueReadyLocked(queueIndex, {
+                    task, entry, core, priority, std::move(role)});
             }
             NotifyProgress();
         }
@@ -488,6 +538,10 @@ namespace {
 
         std::int32_t WorkerCount() const {
             return static_cast<std::int32_t>(workers.size());
+        }
+
+        std::uint64_t StealCount() const {
+            return successfulSteals.load(std::memory_order_relaxed);
         }
     };
 
@@ -648,6 +702,10 @@ extern "C" bool absolute_task_current_role_is(const char* role) {
 
 extern "C" std::int32_t absolute_scheduler_worker_count() {
     return GetScheduler().WorkerCount();
+}
+
+extern "C" std::uint64_t absolute_scheduler_steal_count() {
+    return GetScheduler().StealCount();
 }
 
 extern "C" void* absolute_task_await(void* handle) {

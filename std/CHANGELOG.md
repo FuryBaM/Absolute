@@ -10,6 +10,9 @@
   `std.task.setDeadlineAfter()` and `deadlineRemaining()`. Descendants inherit
   the earliest ancestor deadline, which also caps scheduler delays and native
   socket waits.
+- Added work stealing between native scheduler worker queues. Nested task
+  fan-out stays local until idle workers steal tasks that have not started;
+  suspended fibers remain pinned to their original worker.
 
 ## 0.4.0
 

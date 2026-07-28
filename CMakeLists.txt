@@ -81,6 +81,17 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "runtime-scheduler-v2=ok"
         TIMEOUT 30)
 
+    add_executable(absolute-runtime-scheduler-work-stealing-test
+        tests/runtime-scheduler-work-stealing.cpp)
+    target_link_libraries(absolute-runtime-scheduler-work-stealing-test
+        PRIVATE Absolute-Runtime)
+    add_test(
+        NAME absolute.runtime-scheduler-work-stealing
+        COMMAND absolute-runtime-scheduler-work-stealing-test)
+    set_tests_properties(absolute.runtime-scheduler-work-stealing PROPERTIES
+        PASS_REGULAR_EXPRESSION "runtime-scheduler-work-stealing=ok"
+        TIMEOUT 30)
+
     if(TARGET Absolute-Unless-Plugin)
         add_test(
             NAME absolute.syntax-plugin

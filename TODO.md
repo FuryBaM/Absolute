@@ -801,7 +801,10 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   reference-counted parent control chain без циклов, наследуемый monotonic
   deadline для scheduler delay и native socket waits, cooperative
   `std.task.cancelled()` для всего поддерева.
-- [ ] Добавить work stealing между worker queues.
+- [x] Добавить work stealing между worker queues: внешние submissions
+  распределяются round-robin, вложенный spawn попадает в локальную очередь,
+  свободные workers обходят victim queues по вращающемуся cursor и крадут только
+  ещё не запущенные fibers; возобновляемые fibers остаются pinned к владельцу.
   - [x] Ограничить OS worker pool диапазоном `1..32` и добавить
     `ABSOLUTE_SCHEDULER_WORKERS`/`std.task.workerCount()`.
 - [ ] Формализовать fairness между `role`, starvation protection и статистическое
