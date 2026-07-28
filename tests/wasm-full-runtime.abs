@@ -21,6 +21,10 @@ async void wasmDeadlineChild() {
 }
 
 async int32 main() {
+    assert(!std.task.affinitySupported(), "wasm affinity unsupported");
+    assert(!std.task.coreAvailable(0), "wasm core affinity unavailable");
+    assert(!std.task.affinityApplied(), "wasm affinity not applied");
+
     assert(std.time.now(std.time.Unit.Milliseconds) > 0, "host wall clock");
     assert(std.time.mono(std.time.Unit.Nanoseconds) > 0, "host monotonic clock");
     assert(std.random.entropy() != 0, "host random entropy");

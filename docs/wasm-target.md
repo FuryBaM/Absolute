@@ -109,6 +109,9 @@ Common triples:
 The end-to-end `absolute.run-wasm-full-runtime` regression covers clocks,
 entropy and launch arguments together with JSON, binary serialization,
 datetime, VFS, atomics, mutexes, `TaskGroup`, cancellation and task deadlines.
+CPU affinity is an explicit unsupported capability on WASM:
+`std.task.affinitySupported()`, `coreAvailable()`, and `affinityApplied()` all
+return `false`, while requested core metadata remains available to task hosts.
 
 | Import | Module | Purpose |
 |--------|--------|---------|

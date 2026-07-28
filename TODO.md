@@ -812,7 +812,11 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   `1/2/3/4/6/8/12` для priority `-3..3`, round-robin между активными role lanes
   и чередование pinned/новых задач одного уровня без требования хрупкого
   точного порядка исполнения.
-- [ ] Проверять CPU affinity как best-effort capability с понятным fallback.
+- [x] Проверять CPU affinity как best-effort capability с понятным fallback:
+  `std.task.affinitySupported()`, `coreAvailable(core)` и per-task
+  `affinityApplied()`; Linux/Termux учитывают исходную allowed CPU mask,
+  Windows поддерживает logical cores через processor groups, macOS/WASM явно
+  сообщают unsupported, а отказ ОС не мешает выполнению task.
 - [ ] Добавить scheduler metrics: runnable/suspended/completed tasks, queue latency,
   worker utilization, steals, wake-ups, blocked time и starvation counters.
 - [ ] Добавить stress на spawn/await storm, cancel-vs-complete, destroy-vs-wait,

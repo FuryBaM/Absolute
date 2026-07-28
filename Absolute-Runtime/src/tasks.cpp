@@ -150,6 +150,7 @@ namespace {
     thread_local int currentCore = -1;
     thread_local int currentPriority = 0;
     thread_local std::string currentRole;
+    thread_local bool currentAffinityApplied = false;
     class Scheduler;
     thread_local Scheduler* currentScheduler = nullptr;
     thread_local Task* currentTask = nullptr;
@@ -157,29 +158,107 @@ namespace {
     thread_local int currentWorkerIndex = -1;
     std::atomic<Scheduler*> schedulerInstance{nullptr};
 
+    class AffinityCapabilities {
+#if defined(_WIN32)
+        std::vector<std::pair<WORD, DWORD>> groups;
+#elif defined(__linux__)
+        cpu_set_t allowed{};
+#endif
+        bool supported = false;
+
+    public:
+        AffinityCapabilities() {
+#if defined(_WIN32)
+            const WORD groupCount = GetActiveProcessorGroupCount();
+            groups.reserve(groupCount);
+            for (WORD group = 0; group < groupCount; ++group) {
+                const DWORD count = GetActiveProcessorCount(group);
+                if (count > 0) groups.emplace_back(group, count);
+            }
+            supported = !groups.empty();
+#elif defined(__linux__)
+            CPU_ZERO(&allowed);
+            supported = pthread_getaffinity_np(
+                pthread_self(), sizeof(allowed), &allowed) == 0;
+#endif
+        }
+
+        bool Supported() const { return supported; }
+
+        bool CoreAvailable(int core) const {
+            if (!supported || core < 0) return false;
+#if defined(_WIN32)
+            std::uint64_t remaining = static_cast<std::uint64_t>(core);
+            for (const auto& [group, count] : groups) {
+                (void)group;
+                if (remaining < count) return true;
+                remaining -= count;
+            }
+            return false;
+#elif defined(__linux__)
+            return core < CPU_SETSIZE && CPU_ISSET(core, &allowed);
+#else
+            return false;
+#endif
+        }
+
+#if defined(_WIN32)
+        bool ResolveCore(int core, WORD& group, BYTE& processor) const {
+            if (!CoreAvailable(core)) return false;
+            std::uint64_t remaining = static_cast<std::uint64_t>(core);
+            for (const auto& [candidateGroup, count] : groups) {
+                if (remaining < count) {
+                    group = candidateGroup;
+                    processor = static_cast<BYTE>(remaining);
+                    return true;
+                }
+                remaining -= count;
+            }
+            return false;
+        }
+#endif
+    };
+
+    const AffinityCapabilities& GetAffinityCapabilities() {
+        static const AffinityCapabilities capabilities;
+        return capabilities;
+    }
+
     class ScopedAffinity {
 #if defined(_WIN32)
-        DWORD_PTR previous = 0;
+        GROUP_AFFINITY previous{};
+        bool restore = false;
 #elif defined(__linux__)
         cpu_set_t previous{};
         bool restore = false;
 #endif
+        bool applied = false;
 
     public:
         explicit ScopedAffinity(int core) {
-            if (core < 0) return;
+            const AffinityCapabilities& capabilities =
+                GetAffinityCapabilities();
+            if (!capabilities.CoreAvailable(core)) return;
 #if defined(_WIN32)
-            constexpr int bitCount = static_cast<int>(sizeof(DWORD_PTR) * 8);
-            if (core < bitCount)
-                previous = SetThreadAffinityMask(GetCurrentThread(), DWORD_PTR{1} << core);
+            WORD group = 0;
+            BYTE processor = 0;
+            if (!capabilities.ResolveCore(core, group, processor))
+                return;
+            GROUP_AFFINITY requested{};
+            requested.Group = group;
+            requested.Mask = KAFFINITY{1} << processor;
+            restore = SetThreadGroupAffinity(
+                GetCurrentThread(), &requested, &previous) != 0;
+            applied = restore;
 #elif defined(__linux__)
-            if (core < CPU_SETSIZE &&
-                pthread_getaffinity_np(pthread_self(), sizeof(previous), &previous) == 0) {
+            if (pthread_getaffinity_np(
+                pthread_self(), sizeof(previous), &previous) == 0) {
                 cpu_set_t requested;
                 CPU_ZERO(&requested);
                 CPU_SET(core, &requested);
                 restore = pthread_setaffinity_np(
                     pthread_self(), sizeof(requested), &requested) == 0;
+                applied = restore;
             }
 #else
             (void)core;
@@ -188,12 +267,18 @@ namespace {
 
         ~ScopedAffinity() {
 #if defined(_WIN32)
-            if (previous) SetThreadAffinityMask(GetCurrentThread(), previous);
+            if (restore) {
+                GROUP_AFFINITY ignored{};
+                SetThreadGroupAffinity(
+                    GetCurrentThread(), &previous, &ignored);
+            }
 #elif defined(__linux__)
             if (restore)
                 pthread_setaffinity_np(pthread_self(), sizeof(previous), &previous);
 #endif
         }
+
+        bool Applied() const { return applied; }
     };
 
     class Scheduler {
@@ -412,6 +497,8 @@ namespace {
             currentRole = work.role;
             currentTask = work.task;
             ScopedAffinity affinity(work.core);
+            const bool previousAffinityApplied = currentAffinityApplied;
+            currentAffinityApplied = affinity.Applied();
 
             if (work.task->ownerWorker < 0)
                 work.task->ownerWorker = currentWorkerIndex;
@@ -458,6 +545,7 @@ namespace {
             currentCore = previousCore;
             currentPriority = previousPriority;
             currentRole = std::move(previousRole);
+            currentAffinityApplied = previousAffinityApplied;
         }
 
         void Run(int workerIndex) {
@@ -601,6 +689,14 @@ namespace {
 
         std::uint64_t StealCount() const {
             return successfulSteals.load(std::memory_order_relaxed);
+        }
+
+        bool AffinitySupported() const {
+            return GetAffinityCapabilities().Supported();
+        }
+
+        bool CoreAvailable(int core) const {
+            return GetAffinityCapabilities().CoreAvailable(core);
         }
     };
 
@@ -761,6 +857,18 @@ extern "C" bool absolute_task_current_role_is(const char* role) {
 
 extern "C" std::int32_t absolute_scheduler_worker_count() {
     return GetScheduler().WorkerCount();
+}
+
+extern "C" bool absolute_scheduler_affinity_supported() {
+    return GetScheduler().AffinitySupported();
+}
+
+extern "C" bool absolute_scheduler_core_available(std::int32_t core) {
+    return GetScheduler().CoreAvailable(core);
+}
+
+extern "C" bool absolute_task_current_affinity_applied() {
+    return currentTask && currentAffinityApplied;
 }
 
 extern "C" std::uint64_t absolute_scheduler_steal_count() {

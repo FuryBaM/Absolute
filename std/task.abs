@@ -3,6 +3,9 @@ extern "C" int32 absolute_task_current_priority();
 extern "C" string absolute_task_current_role();
 extern "C" bool absolute_task_current_role_is(string role);
 extern "C" int32 absolute_scheduler_worker_count();
+extern "C" bool absolute_scheduler_affinity_supported();
+extern "C" bool absolute_scheduler_core_available(int32 core);
+extern "C" bool absolute_task_current_affinity_applied();
 extern "C" void absolute_task_delay(int32 ms);
 extern "C" bool absolute_task_current_cancelled();
 extern "C" bool absolute_task_current_set_deadline_after(int32 milliseconds);
@@ -37,6 +40,18 @@ namespace std.task {
 
     int32 workerCount() {
         return absolute_scheduler_worker_count();
+    }
+
+    bool affinitySupported() {
+        return absolute_scheduler_affinity_supported();
+    }
+
+    bool coreAvailable(int32 core) {
+        return absolute_scheduler_core_available(core);
+    }
+
+    bool affinityApplied() {
+        return absolute_task_current_affinity_applied();
     }
 
     void delay(int32 ms) {

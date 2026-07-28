@@ -984,6 +984,19 @@ int32_t absolute_scheduler_worker_count(void) {
     return host_workers > 0 ? host_workers : 1;
 }
 
+uint8_t absolute_scheduler_affinity_supported(void) {
+    return 0;
+}
+
+uint8_t absolute_scheduler_core_available(int32_t core) {
+    (void)core;
+    return 0;
+}
+
+uint8_t absolute_task_current_affinity_applied(void) {
+    return 0;
+}
+
 void* absolute_task_await(void* handle) {
     if (!handle)
         abort();

@@ -31,9 +31,24 @@ with `spawn`. An omitted field inherits the `@task` value; without either
 attribute the defaults are `core = -1`, `priority = 0`, and an empty role.
 
 The runtime applies and then restores native worker-thread affinity where the
-host supports it. Unsupported or unavailable affinity requests do not prevent
-the task from running; the requested logical core remains visible as metadata.
-The `std/task.abs` module exposes `std.task.core()`, `priority()`, `role()`, and
+host supports it. Unsupported, unavailable, or OS-rejected affinity requests
+do not prevent the task from running; `std.task.core()` continues to report the
+requested logical core as scheduling metadata.
+
+`std.task.affinitySupported()` reports whether the runtime has a native
+affinity backend. `std.task.coreAvailable(core)` checks a concrete logical core
+against the capability snapshot captured before workers start. Linux and
+Termux use the inherited allowed CPU mask, including non-contiguous container
+CPU sets. Windows maps the zero-based logical index across processor groups.
+macOS and WASM currently report affinity as unsupported.
+
+Inside a running task, `std.task.affinityApplied()` reports whether the current
+worker was actually pinned for that execution slice. It can be false even when
+`coreAvailable(core)` is true if the OS or host policy rejects the request;
+that is the explicit best-effort fallback. The original worker affinity is
+restored whenever the fiber returns to the scheduler.
+
+The `std/task.abs` module also exposes `priority()`, `role()`, and
 `hasRole(...)` for the currently executing task.
 
 ## Structured concurrency

@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <vector>
 
 #if defined(__linux__) || defined(__APPLE__)
@@ -20,6 +21,10 @@ void* absolute_task_spawn_config(
 void* absolute_task_await(void* handle);
 void absolute_task_delay(std::int32_t milliseconds);
 std::int32_t absolute_scheduler_worker_count();
+bool absolute_scheduler_affinity_supported();
+bool absolute_scheduler_core_available(std::int32_t core);
+std::int32_t absolute_task_current_core();
+bool absolute_task_current_affinity_applied();
 bool absolute_task_current_cancelled();
 bool absolute_task_current_set_deadline_after(std::int32_t milliseconds);
 std::int32_t absolute_task_current_deadline_remaining();
@@ -108,6 +113,24 @@ void delayedTask(void* opaque) {
     auto* context = static_cast<DelayContext*>(opaque);
     if (context->delay) absolute_task_delay(20);
     context->value = context->delay ? 1 : 2;
+}
+
+struct AffinityContext {
+    std::int32_t requestedCore = -1;
+    bool supported = false;
+    bool available = false;
+    bool applied = false;
+    bool metadataPreserved = false;
+};
+
+void affinityProbe(void* opaque) {
+    auto* context = static_cast<AffinityContext*>(opaque);
+    context->supported = absolute_scheduler_affinity_supported();
+    context->available =
+        absolute_scheduler_core_available(context->requestedCore);
+    context->applied = absolute_task_current_affinity_applied();
+    context->metadataPreserved =
+        absolute_task_current_core() == context->requestedCore;
 }
 
 std::atomic<std::int32_t> groupCompletions{0};
@@ -337,6 +360,47 @@ int main() {
 #endif
 
     if (absolute_scheduler_worker_count() != 1) std::abort();
+    require(!absolute_task_current_affinity_applied());
+
+    std::cerr << "phase=affinity\n";
+    const bool affinitySupported =
+        absolute_scheduler_affinity_supported();
+    std::int32_t availableCore = -1;
+    for (std::int32_t core = 0; core < 4'096; ++core) {
+        if (absolute_scheduler_core_available(core)) {
+            availableCore = core;
+            break;
+        }
+    }
+    require(affinitySupported == (availableCore >= 0));
+    require(!absolute_scheduler_core_available(-1));
+    require(!absolute_scheduler_core_available(
+        std::numeric_limits<std::int32_t>::max()));
+
+    if (availableCore >= 0) {
+        auto* available = new AffinityContext{availableCore};
+        void* task = absolute_task_spawn_config(
+            affinityProbe, available, availableCore,
+            0, "affinity-available");
+        available = await<AffinityContext>(task);
+        require(available->supported);
+        require(available->available);
+        require(!available->applied || available->available);
+        require(available->metadataPreserved);
+        delete available;
+    }
+
+    constexpr std::int32_t unavailableCore =
+        std::numeric_limits<std::int32_t>::max();
+    auto* fallback = new AffinityContext{unavailableCore};
+    void* fallbackTask = absolute_task_spawn_config(
+        affinityProbe, fallback, unavailableCore,
+        0, "affinity-fallback");
+    fallback = await<AffinityContext>(fallbackTask);
+    require(!fallback->available);
+    require(!fallback->applied);
+    require(fallback->metadataPreserved);
+    delete fallback;
 
     std::cerr << "phase=channel\n";
     // The high-priority producer fills the capacity-one queue first. With the

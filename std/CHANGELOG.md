@@ -17,6 +17,10 @@
   role lanes. High-priority work keeps a statistical advantage without making
   lower runnable priorities impossible, and pinned/new work alternates within
   one priority.
+- Added explicit best-effort CPU-affinity capabilities through
+  `std.task.affinitySupported()`, `coreAvailable()`, and `affinityApplied()`.
+  Failed or unsupported pinning preserves requested-core metadata and falls
+  back to normal scheduling without aborting the task.
 
 ## 0.4.0
 
