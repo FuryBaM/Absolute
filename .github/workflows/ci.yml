@@ -204,6 +204,111 @@ jobs:
             build/*stress*
             build/**/absolutec
 
+  llvm-compatibility:
+    name: llvm-compatibility (LLVM ${{ matrix.llvm }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - llvm: "18"
+            image: ubuntu:24.04
+          - llvm: "19"
+            image: ubuntu:24.04
+          - llvm: "20"
+            image: ubuntu:24.04
+          - llvm: "21"
+            image: ubuntu:26.04
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    timeout-minutes: 35
+
+    steps:
+      - name: Install LLVM ${{ matrix.llvm }} host toolchain
+        id: bootstrap
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              if [[ "$attempt" -lt 3 ]]; then sleep $((attempt * 10)); fi
+            done
+            return 1
+          }
+          retry apt-get update
+          retry apt-get install -y --no-install-recommends \
+            ca-certificates git build-essential cmake ninja-build python3 \
+            libzstd-dev \
+            llvm-${{ matrix.llvm }}-dev \
+            llvm-${{ matrix.llvm }}-tools \
+            clang-${{ matrix.llvm }} \
+            lld-${{ matrix.llvm }}
+
+      - uses: actions/checkout@v4
+
+      - name: Run LLVM compatibility contract
+        id: contract
+        timeout-minutes: 25
+        shell: bash
+        env:
+          ABSOLUTE_CI_JOBS: "2"
+        run: |
+          mkdir -p ci-logs
+          set -o pipefail
+          bash scripts/ci/test-llvm-compatibility.sh \
+            "${{ matrix.llvm }}" \
+            "${GITHUB_WORKSPACE}/build-llvm-${{ matrix.llvm }}" \
+            2>&1 | tee ci-logs/llvm-${{ matrix.llvm }}-contract.log
+
+      - name: Classify failure phase
+        if: failure()
+        shell: bash
+        env:
+          BOOTSTRAP: ${{ steps.bootstrap.outcome }}
+          CONTRACT: ${{ steps.contract.outcome }}
+        run: |
+          mkdir -p ci-logs
+          if [[ "$BOOTSTRAP" == failure ]]; then category=platform-bootstrap
+          elif [[ "$CONTRACT" == failure ]]; then category=llvm-compatibility
+          else category=unknown
+          fi
+          {
+            echo "category=$category"
+            echo "llvm=${{ matrix.llvm }}"
+            echo "image=${{ matrix.image }}"
+          } > ci-logs/failure-classification.txt
+
+      - name: Record toolchain versions
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p ci-logs
+          {
+            . /etc/os-release
+            echo "container=$PRETTY_NAME"
+            uname -a
+            cmake --version
+            clang-${{ matrix.llvm }} --version
+            llvm-config-${{ matrix.llvm }} --version
+            ninja --version
+            python3 --version
+          } > ci-logs/toolchain.txt 2>&1
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-llvm-${{ matrix.llvm }}-compatibility-failure
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            ci-logs
+            build-llvm-${{ matrix.llvm }}/CMakeFiles/CMake*.log
+            build-llvm-${{ matrix.llvm }}/Testing/Temporary
+            build-llvm-${{ matrix.llvm }}/differential
+            build-llvm-${{ matrix.llvm }}/llvm-compatibility-ir
+
   windows-llvm-release:
     runs-on: windows-2022
     timeout-minutes: 60
@@ -668,6 +773,7 @@ jobs:
     if: always()
     needs:
       - build-and-test
+      - llvm-compatibility
       - windows-llvm-release
       - macos-smoke
       - linux-wasm-smoke
@@ -678,6 +784,7 @@ jobs:
         shell: bash
         run: |
           test "${{ needs.build-and-test.result }}" = "success"
+          test "${{ needs.llvm-compatibility.result }}" = "success"
           test "${{ needs.windows-llvm-release.result }}" = "success"
           test "${{ needs.macos-smoke.result }}" = "success"
           test "${{ needs.linux-wasm-smoke.result }}" = "success"

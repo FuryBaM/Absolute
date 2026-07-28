@@ -51,6 +51,7 @@ Defined in `.github/workflows/ci.yml`:
 | Job | Runner | Scope |
 |-----|--------|-------|
 | `build-and-test` | `ubuntu-24.04`, `windows-2022` × Debug/Release | Linux full LLVM; Windows frontend (`ABSOLUTE_ENABLE_LLVM=OFF`) |
+| `llvm-compatibility` | Ubuntu 24.04/26.04 containers | Release backend contract with LLVM 18, 19, 20 and 21 |
 | `windows-llvm-release` | `windows-2022` | `build-windows.bat --bootstrap` (portable LLVM 18.1.8) |
 | `macos-smoke` | `macos-15` | Homebrew LLVM, Release configure/build/`ctest` |
 | `linux-wasm-smoke` | `ubuntu-24.04` | Node/WASI WebAssembly suite |

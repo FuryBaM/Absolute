@@ -838,7 +838,10 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   фиксированный seed и checksum-oracle общие с optimization differential,
   полный stdout/exit code native executable сравнивается с
   `wasm32-unknown-unknown` через официальный Absolute WASM host.
-- [ ] Добавить матрицу LLVM 18/19/20/21 там, где host toolchain доступен.
+- [x] Добавить матрицу LLVM 18/19/20/21 там, где host toolchain доступен:
+  отдельный обязательный Release-контракт собирает `absolutec`, сверяет точную
+  major-версию SDK, прогоняет differential O0–O3 и валидирует representative
+  LLVM IR через соответствующий `llvm-as`.
 - [ ] Сравнивать Windows MSVC linker, Linux ELF linker и WASM linker на одном ABI corpus.
 - [ ] Включить в corpus arithmetic overflow, signed/unsigned conversions, floats,
   constant folding, generics, lambdas, interfaces, exceptions, `defer`, async,

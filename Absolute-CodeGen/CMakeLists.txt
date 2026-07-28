@@ -17,8 +17,21 @@ if(LLVM_PACKAGE_VERSION VERSION_LESS 18)
     message(FATAL_ERROR "Absolute requires LLVM 18 or newer; found ${LLVM_PACKAGE_VERSION}")
 endif()
 
-if(LLVM_PACKAGE_VERSION VERSION_GREATER_EQUAL 19)
-    message(WARNING "Absolute is validated with LLVM 18; LLVM ${LLVM_PACKAGE_VERSION} may require API adjustments")
+string(REGEX MATCH "^[0-9]+" ABSOLUTE_LLVM_MAJOR "${LLVM_PACKAGE_VERSION}")
+set(ABSOLUTE_EXPECT_LLVM_MAJOR "" CACHE STRING
+    "Require an exact LLVM major version (used by compatibility CI)")
+if(ABSOLUTE_EXPECT_LLVM_MAJOR AND
+   NOT ABSOLUTE_LLVM_MAJOR STREQUAL ABSOLUTE_EXPECT_LLVM_MAJOR)
+    message(FATAL_ERROR
+        "Expected LLVM ${ABSOLUTE_EXPECT_LLVM_MAJOR}, but LLVMConfig reports ${LLVM_PACKAGE_VERSION}")
+endif()
+
+if(LLVM_PACKAGE_VERSION VERSION_GREATER_EQUAL 22)
+    message(WARNING
+        "Absolute is validated with LLVM 18 through 21; LLVM ${LLVM_PACKAGE_VERSION} may require API adjustments")
+else()
+    message(STATUS
+        "Absolute LLVM compatibility range: 18 through 21 (using ${LLVM_PACKAGE_VERSION})")
 endif()
 
 # Official portable Windows LLVM 18 archives contain an absolute DIA SDK path

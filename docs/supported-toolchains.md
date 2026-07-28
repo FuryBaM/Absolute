@@ -8,8 +8,8 @@ runner image must not silently redefine the compiler contract.
 | Component | Supported baseline | CI / release validation |
 | --- | --- | --- |
 | CMake | 3.20 or newer | Version shipped by the selected runner or local platform |
-| C++ compiler | C++20-capable Clang, MSVC or Apple Clang | Linux Clang 18, Windows MSVC, macOS Apple Clang with LLVM 18 libraries |
-| LLVM development SDK | 18 through 21 | LLVM 18 in Linux/macOS/Windows CI; LLVM 21 in Termux |
+| C++ compiler | C++20-capable Clang, MSVC or Apple Clang | Linux Clang 18 through 21 compatibility matrix, Windows MSVC, macOS Apple Clang |
+| LLVM development SDK | 18 through 21 | Release codegen contract on every major; full Linux/macOS/Windows suite on LLVM 18; LLVM 21 on Termux |
 | Windows LLVM SDK | 18.1.8 | Portable SDK under `.absolute/toolchains/llvm-18.1.8` |
 | Node.js | 24 | WebAssembly host tests |
 | Wasmtime | 45.0.0 | Linux WASI smoke tests |
@@ -27,6 +27,16 @@ they must compile the backend and pass the runtime/IR checks first.
 CI uses Ubuntu 24.04 with the versioned `llvm-18-dev`, `llvm-18-tools`,
 `clang-18` and `lld-18` packages. Debug and Release configurations run as
 separate matrix entries. A failure in one entry does not cancel the others.
+
+An additional Release compatibility matrix uses distro development packages:
+LLVM 18, 19 and 20 on Ubuntu 24.04, and LLVM 21 on Ubuntu 26.04. It checks the
+exact SDK major, builds `absolutec`, runs the O0-through-O3 differential corpus,
+and parses representative generated IR with the matching `llvm-as`. Run the
+same contract locally on Linux with:
+
+```bash
+bash scripts/ci/test-llvm-compatibility.sh 21 /tmp/absolute-llvm-21
+```
 
 ### Windows
 

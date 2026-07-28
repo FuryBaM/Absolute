@@ -10,6 +10,7 @@ diagnostic artifacts.
 |-------|---------------|----------|
 | `build-and-test` | `ubuntu-24.04` | LLVM Debug and Release, complete CTest suite |
 | `build-and-test` | `windows-2022` | MSVC frontend Debug and Release contracts |
+| `llvm-compatibility` | Ubuntu 24.04/26.04 containers | LLVM 18, 19, 20 and 21 Release codegen contract |
 | `windows-llvm-release` | `windows-2022` | Portable LLVM native and WebAssembly Release suite |
 | `macos-smoke` | `macos-15` | ARM64 Release configure, build, and CTest |
 | `linux-wasm-smoke` | `ubuntu-24.04` | Node and WASI WebAssembly tests |
@@ -26,7 +27,7 @@ requires an ARM64 self-hosted runner and remains an infrastructure task.
 | Component | Supported / pinned contract |
 |-----------|-----------------------------|
 | C++ language | C++20 |
-| LLVM and Clang | 18.x; Windows portable SDK is exactly 18.1.8 |
+| LLVM and Clang | 18 through 21; full Linux/Windows suite and portable Windows SDK remain pinned to 18.x/18.1.8 |
 | MSVC | Visual Studio 2022 17.x in required CI; VS 2019+ frontend/native builds remain accepted locally, while the LLVM 18 Windows ASan suite is validated against the VS 2022 CRT |
 | CMake | 3.20 minimum; 3.20 through current 4.x is the compatibility range |
 | Ninja | 1.11 minimum; Windows bootstrap uses 1.13.2 |
@@ -38,6 +39,13 @@ requires an ARM64 self-hosted runner and remains an infrastructure task.
 Every job records the concrete runner and tool versions in its diagnostic log.
 Changing a pinned major version is a deliberate compatibility change and must
 be reviewed together with this table.
+
+The LLVM compatibility entries intentionally do not duplicate the complete
+CTest suite. Each entry builds the Release compiler against exactly one LLVM
+major, runs the O0-through-O3 differential executable corpus, emits
+representative arrays/OOP/managed-pointer IR, and verifies that IR with the
+matching `llvm-as`. The full semantic, runtime, native, and WebAssembly suites
+remain pinned to LLVM 18.
 
 ## Failure classes
 
