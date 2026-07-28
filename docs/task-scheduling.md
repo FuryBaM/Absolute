@@ -35,3 +35,22 @@ host supports it. Unsupported or unavailable affinity requests do not prevent
 the task from running; the requested logical core remains visible as metadata.
 The `std/task.abs` module exposes `std.task.core()`, `priority()`, `role()`, and
 `hasRole(...)` for the currently executing task.
+
+## Scheduler v2 runtime
+
+Native tasks run on stackful fibers owned by a bounded OS worker pool. Once a
+fiber starts, it remains pinned to that worker so thread-local state is never
+migrated between OS threads. Waiting for another task, a bounded channel,
+`TransferChannel`, the runtime mutex, or `std.task.delay` suspends the fiber and
+returns its worker to the scheduler. Completion, channel operations, mutex
+unlock, and timer expiry enqueue the suspended task again.
+
+The default pool size is the available hardware concurrency capped at 32.
+`ABSOLUTE_SCHEDULER_WORKERS=1..32` overrides it before the first task is spawned;
+`std.task.workerCount()` reports the selected value. This override is intended
+for constrained hosts and deterministic scheduler tests.
+
+Windows uses native Fibers. Linux and macOS use `ucontext`; Android/Termux uses
+the Termux `libucontext` package installed by the project bootstrap script.
+Blocking filesystem and network calls are not yet connected to an I/O reactor
+and remain the next Scheduler v2 integration step.

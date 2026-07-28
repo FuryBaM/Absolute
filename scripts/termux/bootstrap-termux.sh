@@ -62,6 +62,7 @@ packages=(
     pkg-config
     python
     libffi
+    libucontext
     libxml2
     ncurses
     zlib

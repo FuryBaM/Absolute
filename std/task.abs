@@ -2,6 +2,7 @@ extern "C" int32 absolute_task_current_core();
 extern "C" int32 absolute_task_current_priority();
 extern "C" string absolute_task_current_role();
 extern "C" bool absolute_task_current_role_is(string role);
+extern "C" int32 absolute_scheduler_worker_count();
 extern "C" void absolute_task_delay(int32 ms);
 extern "C" raw void* absolute_cancellation_token_create();
 extern "C" void absolute_cancellation_token_cancel(raw void* token);
@@ -23,6 +24,10 @@ namespace std.task {
 
     bool hasRole(string expected) {
         return absolute_task_current_role_is(expected);
+    }
+
+    int32 workerCount() {
+        return absolute_scheduler_worker_count();
     }
 
     void delay(int32 ms) {

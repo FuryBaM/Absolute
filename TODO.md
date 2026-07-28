@@ -759,12 +759,21 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 
 - [ ] Ввести suspension/resume task при ожидании channel, timeout, I/O и sync
   primitive вместо блокировки настоящего OS thread.
-- [ ] Сделать wake-up через scheduler queue: `send`/completion возвращает
+  - [x] Реализовать stackful fiber backend: Win32 Fibers, POSIX `ucontext`,
+    Termux `libucontext`; после первого запуска fiber закреплён за worker и не
+    мигрирует вместе с TLS.
+  - [x] Перевести `await`, bounded `Channel`, `TransferChannel`, runtime mutex и
+    task delay на suspension с возвратом OS worker в scheduler.
+  - [ ] Подключить filesystem/network ожидания к reactor backend без блокирующих
+    host-вызовов.
+- [x] Сделать wake-up через scheduler queue: `send`/completion возвращает
   приостановленную task в runnable state без polling.
 - [ ] Добавить structured concurrency и `TaskGroup`: дочерние tasks принадлежат
   lexical scope и автоматически join/cancel при выходе.
 - [ ] Реализовать propagation cancellation и deadline через всю иерархию tasks.
-- [ ] Добавить work stealing между worker queues и ограничение количества OS threads.
+- [ ] Добавить work stealing между worker queues.
+  - [x] Ограничить OS worker pool диапазоном `1..32` и добавить
+    `ABSOLUTE_SCHEDULER_WORKERS`/`std.task.workerCount()`.
 - [ ] Формализовать fairness между `role`, starvation protection и статистическое
   преимущество priority без требования хрупкого точного порядка исполнения.
 - [ ] Проверять CPU affinity как best-effort capability с понятным fallback.
@@ -772,7 +781,7 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   worker utilization, steals, wake-ups, blocked time и starvation counters.
 - [ ] Добавить stress на spawn/await storm, cancel-vs-complete, destroy-vs-wait,
   channel close races, timeout races и nested task groups.
-- [ ] Удалить временную зависимость корректности bounded channels от минимального
+- [x] Удалить временную зависимость корректности bounded channels от минимального
   количества worker threads после внедрения suspension.
 
 ### P2 — differential testing компилятора и backend-ов

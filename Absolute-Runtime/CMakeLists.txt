@@ -16,12 +16,17 @@ add_library(Absolute-Runtime STATIC
     src/pointers.cpp
     src/process.cpp
     src/random.cpp
+    src/scheduler_fiber.h
     src/string.cpp
     src/tasks.cpp
     src/time.cpp
 )
 target_compile_features(Absolute-Runtime PUBLIC cxx_std_20)
 target_link_libraries(Absolute-Runtime PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
+if(ANDROID OR DEFINED ENV{TERMUX_VERSION})
+    find_library(ABSOLUTE_LIBUCONTEXT NAMES ucontext REQUIRED)
+    target_link_libraries(Absolute-Runtime PUBLIC "${ABSOLUTE_LIBUCONTEXT}")
+endif()
 if(WIN32)
     target_link_libraries(Absolute-Runtime PUBLIC ws2_32 shell32)
 endif()

@@ -17,6 +17,7 @@ async int32 overriddenOptions(int32 value) {
 }
 
 async int32 main() {
+    assert(std.task.workerCount() >= 1, "scheduler worker count");
     task<int32> inherited = spawn inheritedOptions(41);
 
     @spawn(core = 0, priority = 3, role = "urgent")

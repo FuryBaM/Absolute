@@ -888,6 +888,11 @@ uint8_t absolute_task_current_role_is(const char* role) {
     return (*role == 0 && *current == 0) ? 1 : 0;
 }
 
+int32_t absolute_scheduler_worker_count(void) {
+    const int32_t host_workers = absolute_host_task_pool_size();
+    return host_workers > 0 ? host_workers : 1;
+}
+
 void* absolute_task_await(void* handle) {
     if (!handle)
         abort();

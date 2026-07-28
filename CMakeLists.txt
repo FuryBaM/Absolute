@@ -60,6 +60,17 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(absolute-runtime-scheduler-v2-test
+        tests/runtime-scheduler-v2.cpp)
+    target_link_libraries(absolute-runtime-scheduler-v2-test
+        PRIVATE Absolute-Runtime)
+    add_test(
+        NAME absolute.runtime-scheduler-v2
+        COMMAND absolute-runtime-scheduler-v2-test)
+    set_tests_properties(absolute.runtime-scheduler-v2 PROPERTIES
+        PASS_REGULAR_EXPRESSION "runtime-scheduler-v2=ok"
+        TIMEOUT 30)
+
     if(TARGET Absolute-Unless-Plugin)
         add_test(
             NAME absolute.syntax-plugin
