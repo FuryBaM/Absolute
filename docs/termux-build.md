@@ -19,9 +19,9 @@ bash build-termux.sh --bootstrap
 ```
 
 `--bootstrap` installs Clang, CMake, Ninja, LLVM, the matching
-`libllvm-static` component archives, `llvm-tools`, `libpolly`, LLD, Node.js,
-and the native libraries needed by LLVM. It does not run a full `pkg upgrade`
-unless `--upgrade` is also supplied.
+`libllvm-static` component archives, `llvm-tools`, `libpolly`, `libucontext`,
+LLD, Node.js, and the native libraries needed by LLVM. It does not run a full
+`pkg upgrade` unless `--upgrade` is also supplied.
 
 The compiler is written under:
 
@@ -115,7 +115,17 @@ Termux splits LLVM into several packages. A full Absolute backend build needs:
 - `llvm-tools` for development executables exported by `LLVMConfig.cmake`,
   including `FileCheck`;
 - `libpolly` for `LLVMPolly.so`, which is also exported by the same LLVM CMake
-  package even when Absolute does not directly use Polly.
+  package even when Absolute does not directly use Polly;
+- `libucontext` for the Scheduler v2 fiber context switch API on Android/Bionic.
+
+If a checkout was bootstrapped before Scheduler v2 added `libucontext`, install
+the new dependency once and rerun the clean build:
+
+```bash
+pkg update
+pkg install libucontext
+bash build-termux.sh --clean --test
+```
 
 If CMake reports that `libLLVMDemangle.a` does not exist:
 
@@ -147,9 +157,9 @@ subproject enables both C and C++ because LLVM performs a small C compile/link
 check while locating libffi.
 
 The bootstrap and build scripts check the static component archive, `FileCheck`,
-and `LLVMPolly.so` before starting CMake, so an incomplete Termux LLVM split
-package is reported with the exact package command instead of a failure deep
-inside `LLVMExports.cmake`.
+`LLVMPolly.so`, and the `libucontext` pkg-config/header contract before starting
+CMake, so an incomplete Termux package set is reported with the exact repair
+command instead of a failure deep inside CMake package discovery.
 
 ## Notes
 

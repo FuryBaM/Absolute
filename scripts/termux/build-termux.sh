@@ -74,12 +74,26 @@ if ((bootstrap)); then
     bash "$repo_root/scripts/termux/bootstrap-termux.sh" "${bootstrap_args[@]}"
 fi
 
-for tool in cmake ninja clang clang++; do
+for tool in cmake ninja clang clang++ pkg-config; do
     command -v "$tool" >/dev/null 2>&1 || {
         echo "Required tool '$tool' was not found. Run: bash build-termux.sh --bootstrap" >&2
         exit 1
     }
 done
+
+if ! pkg-config --exists libucontext; then
+    echo "Required Termux dependency 'libucontext' was not found." >&2
+    echo "Install it with: pkg install libucontext" >&2
+    echo "Or rerun: bash build-termux.sh --bootstrap --clean --test" >&2
+    exit 1
+fi
+ucontext_include_dir="$(pkg-config --variable=includedir libucontext)"
+if [[ ! -f "$ucontext_include_dir/libucontext/libucontext.h" ]]; then
+    echo "libucontext pkg-config metadata exists, but its header is missing:" >&2
+    echo "  $ucontext_include_dir/libucontext/libucontext.h" >&2
+    echo "Repair it with: pkg reinstall libucontext" >&2
+    exit 1
+fi
 
 mode=release
 llvm_enabled=ON

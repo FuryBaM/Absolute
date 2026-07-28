@@ -25,8 +25,32 @@ add_library(Absolute-Runtime STATIC
 target_compile_features(Absolute-Runtime PUBLIC cxx_std_20)
 target_link_libraries(Absolute-Runtime PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
 if(ANDROID OR DEFINED ENV{TERMUX_VERSION})
-    find_library(ABSOLUTE_LIBUCONTEXT NAMES ucontext REQUIRED)
-    target_link_libraries(Absolute-Runtime PUBLIC "${ABSOLUTE_LIBUCONTEXT}")
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(ABSOLUTE_UCONTEXT QUIET IMPORTED_TARGET libucontext)
+    endif()
+    if(TARGET PkgConfig::ABSOLUTE_UCONTEXT)
+        target_link_libraries(Absolute-Runtime PUBLIC
+            PkgConfig::ABSOLUTE_UCONTEXT)
+    else()
+        find_path(ABSOLUTE_LIBUCONTEXT_INCLUDE_DIR
+            NAMES libucontext/libucontext.h
+            HINTS "$ENV{PREFIX}/include")
+        find_library(ABSOLUTE_LIBUCONTEXT_LIBRARY
+            NAMES ucontext
+            HINTS "$ENV{PREFIX}/lib")
+        if(NOT ABSOLUTE_LIBUCONTEXT_INCLUDE_DIR OR
+                NOT ABSOLUTE_LIBUCONTEXT_LIBRARY)
+            message(FATAL_ERROR
+                "Termux/Android Scheduler v2 requires libucontext. "
+                "Run 'pkg install libucontext' in Termux or "
+                "'bash build-termux.sh --bootstrap --clean --test'.")
+        endif()
+        target_include_directories(Absolute-Runtime PRIVATE
+            "${ABSOLUTE_LIBUCONTEXT_INCLUDE_DIR}")
+        target_link_libraries(Absolute-Runtime PUBLIC
+            "${ABSOLUTE_LIBUCONTEXT_LIBRARY}")
+    endif()
 endif()
 if(WIN32)
     target_link_libraries(Absolute-Runtime PUBLIC ws2_32 shell32)

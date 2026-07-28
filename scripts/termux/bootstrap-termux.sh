@@ -119,6 +119,19 @@ if [[ ! -f "$PREFIX/lib/LLVMPolly.so" ]]; then
     exit 1
 fi
 
+if ! pkg-config --exists libucontext; then
+    echo "libucontext was installed, but pkg-config cannot find it." >&2
+    echo "Repair it with: pkg reinstall libucontext" >&2
+    exit 1
+fi
+ucontext_include_dir="$(pkg-config --variable=includedir libucontext)"
+ucontext_libdir="$(pkg-config --variable=libdir libucontext)"
+if [[ ! -f "$ucontext_include_dir/libucontext/libucontext.h" ]]; then
+    echo "libucontext header is missing: $ucontext_include_dir/libucontext/libucontext.h" >&2
+    echo "Repair it with: pkg reinstall libucontext" >&2
+    exit 1
+fi
+
 llvm_version="$(llvm-config --version 2>/dev/null || echo unknown)"
 echo
 echo "Termux toolchain is ready."
@@ -129,6 +142,7 @@ echo "  LLVM_DIR:     $llvm_dir"
 echo "  LLVM static:  $PREFIX/lib/libLLVMDemangle.a"
 echo "  LLVM tools:   $PREFIX/bin/FileCheck"
 echo "  LLVM Polly:   $PREFIX/lib/LLVMPolly.so"
+echo "  libucontext:  $ucontext_libdir"
 echo
 echo "Next:"
 echo "  bash build-termux.sh"
