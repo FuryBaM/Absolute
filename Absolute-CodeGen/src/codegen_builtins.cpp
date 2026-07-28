@@ -155,33 +155,96 @@ namespace Absolute {
 
         if (name == "copy") {
             if (expression.arguments.size() != 1)
-                Fail("copy expects exactly one array or slice argument");
+                Fail("copy expects exactly one array, slice, or cloneable value argument");
             Expression* argument = expression.arguments.front().get();
             const std::string typeName = SemanticType(argument);
             const size_t rank = ArrayRankName(typeName);
-            if (rank == 0) Fail("copy expects an array or slice");
 
-            ArrayView source = ViewOfArray(argument);
-            const bool releaseTemporarySource = valueCreatesArrayOwner;
-            llvm::Value* temporarySourceOwner = valueArrayOwner;
-            llvm::Value* elementCount = builder.getInt64(1);
-            for (llvm::Value* dimension : source.dimensions)
-                elementCount = builder.CreateMul(elementCount, dimension, "copy.element.count");
-            llvm::Value* byteCount = builder.CreateMul(elementCount,
-                builder.getInt64(SizeOfTypeName(ArrayElementTypeName(typeName, rank))),
-                "copy.byte.count");
-            llvm::Value* copiedData = builder.CreateCall(Malloc(), {byteCount}, "copy.data");
-            builder.CreateMemCpy(copiedData, llvm::MaybeAlign(16),
-                source.address, llvm::MaybeAlign(1), byteCount);
-            if (releaseTemporarySource)
-                builder.CreateCall(Free(), {temporarySourceOwner});
-            source.address = copiedData;
-            source.owner = copiedData;
-            value = BuildArrayDescriptor(source);
-            valueCreatesManagedOwner = false;
+            if (rank > 0) {
+                ArrayView source = ViewOfArray(argument);
+                const bool releaseTemporarySource = valueCreatesArrayOwner;
+                llvm::Value* temporarySourceOwner = valueArrayOwner;
+                llvm::Value* elementCount = builder.getInt64(1);
+                for (llvm::Value* dimension : source.dimensions)
+                    elementCount = builder.CreateMul(
+                        elementCount, dimension, "copy.element.count");
+                llvm::Value* byteCount = builder.CreateMul(elementCount,
+                    builder.getInt64(SizeOfTypeName(ArrayElementTypeName(typeName, rank))),
+                    "copy.byte.count");
+                llvm::Value* copiedData = builder.CreateCall(Malloc(), {byteCount}, "copy.data");
+                builder.CreateMemCpy(copiedData, llvm::MaybeAlign(16),
+                    source.address, llvm::MaybeAlign(1), byteCount);
+                if (releaseTemporarySource)
+                    builder.CreateCall(Free(), {temporarySourceOwner});
+                source.address = copiedData;
+                source.owner = copiedData;
+                value = BuildArrayDescriptor(source);
+                valueCreatesManagedOwner = false;
+                valueManagedPointee = nullptr;
+                valueCreatesArrayOwner = true;
+                valueArrayOwner = copiedData;
+                return;
+            }
+
+            const std::string aggregateName = ClassNameFromType(typeName);
+            const std::string methodKey = CallableKey("clone", {});
+            llvm::Value* object = ObjectPointer(argument, typeName);
+            const ClassMethod* cloneMethod = nullptr;
+            llvm::Value* callee = nullptr;
+
+            if (auto found = classes.find(aggregateName); found != classes.end()) {
+                const auto method = found->second.methods.find(methodKey);
+                if (method == found->second.methods.end())
+                    Fail("class '" + aggregateName + "' has no clone() method");
+                cloneMethod = &method->second;
+                if (cloneMethod->virtualSlot) {
+                    llvm::Value* vtableAddress = builder.CreateStructGEP(
+                        found->second.llvmType, object, 0, "clone.vtable.address");
+                    llvm::Value* vtable = builder.CreateLoad(
+                        builder.getPtrTy(), vtableAddress, "clone.vtable");
+                    llvm::Value* slot = builder.CreateGEP(builder.getPtrTy(), vtable,
+                        builder.getInt64(*cloneMethod->virtualSlot), "clone.virtual.slot");
+                    callee = builder.CreateLoad(
+                        builder.getPtrTy(), slot, "clone.virtual.method");
+                }
+                else {
+                    callee = module->getFunction(cloneMethod->linkName);
+                }
+            }
+            else if (auto found = interfaces.find(aggregateName); found != interfaces.end()) {
+                const auto method = found->second.methods.find(methodKey);
+                if (method == found->second.methods.end() || !method->second.virtualSlot)
+                    Fail("interface '" + aggregateName + "' has no clone() dispatch slot");
+                cloneMethod = &method->second;
+                llvm::Value* vtable = builder.CreateLoad(
+                    builder.getPtrTy(), object, "clone.interface.vtable");
+                llvm::Value* slot = builder.CreateGEP(builder.getPtrTy(), vtable,
+                    builder.getInt64(*cloneMethod->virtualSlot), "clone.interface.slot");
+                callee = builder.CreateLoad(
+                    builder.getPtrTy(), slot, "clone.interface.method");
+            }
+            else if (auto found = structs.find(aggregateName); found != structs.end()) {
+                const auto method = found->second.methods.find(methodKey);
+                if (method == found->second.methods.end())
+                    Fail("struct '" + aggregateName + "' has no clone() method");
+                cloneMethod = &method->second;
+                callee = module->getFunction(cloneMethod->linkName);
+            }
+            else {
+                Fail("copy expects an array, slice, or cloneable aggregate");
+            }
+
+            if (!cloneMethod || !callee)
+                Fail("missing clone() implementation for type '" + aggregateName + "'");
+            value = EmitAbiCall(MethodFunctionType(*cloneMethod), callee,
+                cloneMethod->returnType, {object}, cloneMethod->parameterTypes, {},
+                "copy.clone.result");
+            EmitExceptionCheck();
+            valueCreatesManagedOwner =
+                IsStrongManagedPointerTypeName(cloneMethod->returnType);
             valueManagedPointee = nullptr;
-            valueCreatesArrayOwner = true;
-            valueArrayOwner = copiedData;
+            valueCreatesArrayOwner = false;
+            valueArrayOwner = nullptr;
             return;
         }
 

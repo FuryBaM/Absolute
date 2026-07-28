@@ -745,6 +745,13 @@ or struct. Class and interface deletion dispatches through a destructor entry in
 vtable slot zero, so derived fields are cleaned even through a base pointer. See
 [docs/resource-ownership.md](docs/resource-ownership.md) for the full rules.
 
+Deep copying is explicit rather than based on C++ copy constructors. Arrays and
+slices use `copy(values)`; user types expose a public zero-argument
+`clone() const`, and `copy(value)` invokes it. Class/interface clone methods
+return a fresh managed pointer and participate in normal virtual dispatch.
+Resource-free struct assignment remains a cheap field-wise value copy. See
+[docs/copy-clone.md](docs/copy-clone.md).
+
 Use `raw T*` only for C interop or C++-style address operations. Raw pointers do
 not participate in generation checks or automatic lifetime management:
 

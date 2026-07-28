@@ -63,10 +63,13 @@ results, and moves into ordinary borrowed managed parameters are rejected. See
 ## Value semantics boundary
 
 A struct or class value that recursively contains an owning resource cannot be
-bitwise copied safely. For now the analyzer rejects aggregate assignment,
-by-value arguments, and by-value returns for those types. A future explicit
-`move` operation will transfer the resource and clear the source. Resource-free
-structs keep the existing value ABI and copy semantics.
+bitwise copied safely. The analyzer rejects ordinary aggregate assignment,
+by-value arguments, and by-value returns for those types. Explicit `move(...)`
+transfers the resource and clears the source. An explicit `copy(value)` is
+available only when the type supplies a public zero-argument `clone() const`
+method that creates an independent owner. Resource-free structs keep the
+existing value ABI and copy semantics. See
+[`copy-clone.md`](copy-clone.md).
 
 Static managed, array, and aggregate fields remain unsupported. Plugin-defined
 resources also remain pending until the versioned plugin API can register their

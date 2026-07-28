@@ -59,6 +59,7 @@ namespace Absolute {
         table.Declare(SymbolKind::Function, "loadError", "string", {});
         table.Declare(SymbolKind::Function, "taskGroupAdd", "bool",
             {"raw void*", "task<void>"});
+        table.Declare(SymbolKind::Function, "copy", "dynamic", {"dynamic"});
         for (Program* program : programs) if (program) CollectProgramTypeNames(*program);
         phase = Phase::CollectDeclarations;
         for (Program* program : programs) if (program) AnalyzeProgram(*program);
@@ -1821,8 +1822,25 @@ namespace Absolute {
                 return true;
             if (currentMethodConst &&
                 (symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Property ||
-                    symbol->kind == SymbolKind::Indexer))
-                return true;
+                    symbol->kind == SymbolKind::Indexer)) {
+                Expression* receiverRoot = expression;
+                bool hasExplicitReceiver = false;
+                while (receiverRoot) {
+                    if (auto* member = dynamic_cast<MemberAccessExpr*>(receiverRoot)) {
+                        hasExplicitReceiver = true;
+                        receiverRoot = member->base.get();
+                    }
+                    else if (auto* array = dynamic_cast<ArrayAccessExpr*>(receiverRoot)) {
+                        receiverRoot = array->base.get();
+                    }
+                    else break;
+                }
+                const auto* receiverIdentifier =
+                    dynamic_cast<IdentifierExpr*>(receiverRoot);
+                if (!hasExplicitReceiver ||
+                    (receiverIdentifier && receiverIdentifier->name == "this"))
+                    return true;
+            }
         }
 
         Expression* current = expression;

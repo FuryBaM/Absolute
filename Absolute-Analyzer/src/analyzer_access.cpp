@@ -487,17 +487,100 @@ namespace Absolute {
 
             if (callName == "copy") {
                 if (arguments.size() != 1) {
-                    Report("copy expects exactly one array or slice argument", "E_COPY_ARGUMENT_COUNT");
+                    Report("copy expects exactly one array, slice, or cloneable value argument",
+                        "E_COPY_ARGUMENT_COUNT");
                     Save(expr, {table.Lookup(callName), "error", false});
                     return;
                 }
-                if (ArrayRank(arguments.front().type) == 0 && arguments.front().type != "error") {
-                    Report("copy expects an array or slice, got '" + arguments.front().type + "'",
-                        "E_COPY_ARGUMENT_TYPE");
+
+                const Result& source = arguments.front();
+                if (ArrayRank(source.type) > 0) {
+                    Save(expr, {table.Lookup(callName), source.type, false});
+                    return;
+                }
+                if (source.type == "error") {
                     Save(expr, {table.Lookup(callName), "error", false});
                     return;
                 }
-                Save(expr, {table.Lookup(callName), arguments.front().type, false});
+
+                const std::string objectType = IsPointerType(source.type)
+                    ? PointerPointee(source.type) : source.type;
+                std::string definitionName = objectType;
+                std::string genericBase;
+                std::vector<std::string> genericArguments;
+                if (ParseGenericTypeName(objectType, genericBase, genericArguments))
+                    definitionName = genericBase;
+                const auto definition = types.find(definitionName);
+                if (definition == types.end() ||
+                    (definition->second.kind != TypeKind::Struct &&
+                        definition->second.kind != TypeKind::Class &&
+                        definition->second.kind != TypeKind::Interface)) {
+                    Report("copy expects an array, slice, or cloneable aggregate, got '" +
+                        source.type + "'", "E_COPY_ARGUMENT_TYPE", source.symbol);
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                if (!source.isLValue) {
+                    Report("copy of a cloneable value requires a stable lvalue source",
+                        "E_CLONE_SOURCE_LVALUE", source.symbol);
+                }
+                if (source.pointerValidity == PointerValidity::Deleted ||
+                    source.pointerValidity == PointerValidity::Expired) {
+                    Report("copy source is an invalid pointer",
+                        "E_INVALID_POINTER_ARGUMENT", source.symbol);
+                }
+                else if (source.pointerValidity == PointerValidity::MaybeInvalid) {
+                    Report("copy source may be an invalid pointer",
+                        "E_MAYBE_INVALID_POINTER_ARGUMENT", source.symbol);
+                }
+
+                const std::vector<MemberSignature> members = FindMembers(source.type, "clone");
+                std::vector<const MemberSignature*> candidates;
+                for (const MemberSignature& member : members) {
+                    if (member.kind == SymbolKind::Method && !member.isStatic &&
+                        member.parameterTypes.empty()) {
+                        candidates.push_back(&member);
+                    }
+                }
+                if (candidates.empty()) {
+                    Report("type '" + source.type +
+                        "' is not cloneable; declare 'public T clone() const'",
+                        "E_COPY_NOT_CLONEABLE", source.symbol);
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                if (candidates.size() > 1) {
+                    Report("clone() is ambiguous for type '" + source.type + "'",
+                        "E_CLONE_AMBIGUOUS", source.symbol);
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+
+                const MemberSignature& clone = *candidates.front();
+                if (clone.access != AccessLevel::Public) {
+                    Report("clone() used by copy(...) must be public",
+                        "E_CLONE_ACCESS", clone.symbol);
+                }
+                if (!clone.isConst) {
+                    Report("clone() used by copy(...) must be const",
+                        "E_CLONE_CONST", clone.symbol);
+                }
+
+                const std::string expectedReturn =
+                    definition->second.kind == TypeKind::Struct
+                    ? objectType : objectType + "*";
+                if (clone.type != expectedReturn) {
+                    Report("clone() for type '" + objectType + "' must return '" +
+                        expectedReturn + "', got '" + clone.type + "'",
+                        "E_CLONE_RETURN_TYPE", clone.symbol);
+                }
+
+                Result cloned = {table.Lookup(callName), clone.type, false};
+                cloned.createsManagedOwner = IsStrongManagedPointerType(clone.type);
+                cloned.pointerValidity = IsPointerType(clone.type)
+                    ? PointerValidity::Live : PointerValidity::NotPointer;
+                cloned.isMoveResult = TypeOwnsResources(clone.type);
+                Save(expr, cloned);
                 return;
             }
 

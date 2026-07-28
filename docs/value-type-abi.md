@@ -49,6 +49,11 @@ pairs, or reuse a temporary only under the normal as-if rule: the optimization
 must not introduce aliasing and must not change observable pointer, cleanup, or
 mutation behavior.
 
+User-defined deep copying is explicit: `copy(value)` calls a public
+zero-argument `clone() const` lifecycle method. It never changes the implicit
+field-wise copy ABI described above. See
+[`copy-clone.md`](copy-clone.md).
+
 Parameter-only `T&`/`const T&` borrows are designed separately from ownership
 and are not part of the implemented ABI yet. Their proposed lowering, escape
 rules, and benchmark evidence are documented in

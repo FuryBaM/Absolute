@@ -738,6 +738,15 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-copy.abs"
     )
     add_test(
+        NAME absolute.clone-copy-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/clone-copy.abs"
+    )
+    add_test(
+        NAME absolute.clone-copy-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/clone-copy-errors.abs"
+    )
+    set_tests_properties(absolute.clone-copy-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.multidimensional-slices-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/multidimensional-slices.abs"
     )
@@ -2433,6 +2442,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-classes-codegen PROPERTIES
             FIXTURES_REQUIRED absolute-classes-codegen-executable
             PASS_REGULAR_EXPRESSION "classes=42"
+        )
+        add_test(
+            NAME absolute.build-clone-copy
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/clone-copy.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/clone-copy-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-clone-copy PROPERTIES
+            FIXTURES_SETUP absolute-clone-copy-executable
+        )
+        add_test(NAME absolute.run-clone-copy
+            COMMAND "${CMAKE_BINARY_DIR}/clone-copy-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-clone-copy PROPERTIES
+            FIXTURES_REQUIRED absolute-clone-copy-executable
+            PASS_REGULAR_EXPRESSION "clone-copy=ok"
         )
         add_test(
             NAME absolute.build-resource-fields
