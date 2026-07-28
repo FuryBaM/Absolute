@@ -733,7 +733,9 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   Linux Debug/Release, Linux WASM, macOS smoke, Termux smoke и hardening/TSan.
   - [x] Зафиксировать hosted runners: `ubuntu-24.04`, `windows-2022`, `macos-15`;
     Windows native Release локально проходит 409/409, Termux host contract —
-    143/143, scheduler harness — 100/100 повторов.
+    143/143, scheduler harness — 100/100 повторов. Ручной on-device прогон на
+    ARM64 Android/Bionic с Termux Clang/LLVM 21.1.8 проходит 411/411 доступных
+    тестов; Scheduler v2 дополнительно стабилен в 20/20 повторах.
   - [x] Исправить ложное падение TSan cancellation race: writer запускается до
     readers, а общий release/acquire start gate исключает завершение readers до
     начала гонки.

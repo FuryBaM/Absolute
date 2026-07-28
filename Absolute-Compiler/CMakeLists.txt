@@ -63,6 +63,15 @@ if(TARGET Absolute-CodeGen)
             ABSOLUTE_RUNTIME_DL_LIBRARY="${CMAKE_DL_LIBS}"
         )
     endif()
+    if(ANDROID OR DEFINED ENV{TERMUX_VERSION})
+        # Absolute-Runtime is a static archive. Its libucontext dependency must
+        # also be present when absolutec links a generated native executable or
+        # shared library; CMake's transitive target link does not participate in
+        # that separate compiler-driver invocation.
+        target_compile_definitions(Absolute-Compiler PRIVATE
+            ABSOLUTE_RUNTIME_UCONTEXT_LIBRARY="ucontext"
+        )
+    endif()
     # Prefer the LLVM SDK that Absolute was configured against.
     # Do not pick Windows PE wasm-ld.exe when configuring under Linux/WSL.
     set(_absolute_wasm_ld_hints)

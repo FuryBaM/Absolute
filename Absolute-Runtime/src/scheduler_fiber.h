@@ -9,7 +9,14 @@
 #define NOMINMAX
 #include <windows.h>
 #elif defined(__ANDROID__)
+// Termux libucontext 1.5 names its private mcontext tag `sigcontext`.
+// Bionic exposes the same tag through asm/sigcontext.h, which is pulled in by
+// libc++ threading headers. The tag is not part of the function ABI, so give
+// only libucontext's declaration a private name while preserving its layout and
+// public libucontext_* typedefs/functions.
+#define sigcontext absolute_libucontext_sigcontext
 #include <libucontext/libucontext.h>
+#undef sigcontext
 #else
 #include <ucontext.h>
 #endif

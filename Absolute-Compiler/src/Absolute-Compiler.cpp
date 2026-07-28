@@ -852,6 +852,9 @@ namespace {
 #ifdef ABSOLUTE_RUNTIME_DL_LIBRARY
         arguments << "-l" ABSOLUTE_RUNTIME_DL_LIBRARY "\n";
 #endif
+#ifdef ABSOLUTE_RUNTIME_UCONTEXT_LIBRARY
+        arguments << "-l" ABSOLUTE_RUNTIME_UCONTEXT_LIBRARY "\n";
+#endif
         for (const fs::path& library : compilation.nativeLibraries)
             arguments << QuoteResponseArgument(library) << '\n';
         for (const fs::path& path : compilation.nativeSearchPaths)
@@ -940,6 +943,9 @@ namespace {
 #endif
 #ifdef ABSOLUTE_RUNTIME_DL_LIBRARY
         arguments << "-l" ABSOLUTE_RUNTIME_DL_LIBRARY "\n";
+#endif
+#ifdef ABSOLUTE_RUNTIME_UCONTEXT_LIBRARY
+        arguments << "-l" ABSOLUTE_RUNTIME_UCONTEXT_LIBRARY "\n";
 #endif
         for (const fs::path& nativeLibrary : compilation.nativeLibraries)
             arguments << QuoteResponseArgument(nativeLibrary) << '\n';
