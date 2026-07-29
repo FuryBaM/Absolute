@@ -94,6 +94,27 @@ namespace Absolute {
         Unknown
     };
 
+    enum class ValueCategory {
+        Value,
+        Place
+    };
+
+    struct PlaceInfo {
+        bool readable = true;
+        bool writable = true;
+        bool addressable = true;
+    };
+
+    enum class PointerRole {
+        None,
+        ManagedOwner,
+        ManagedSub,
+        Weak,
+        RawOwner,
+        RawView,
+        Ref
+    };
+
     struct ANALYZER_API ExpressionInfo {
         SymbolId symbol = InvalidSymbolId;
         std::string type;
@@ -108,6 +129,9 @@ namespace Absolute {
         bool asyncCall = false;
         bool createsRawOwner = false;
         bool isMoveResult = false;
+        ValueCategory category = ValueCategory::Value;
+        PlaceInfo placeInfo;
+        PointerRole pointerRole = PointerRole::None;
         std::vector<std::string> parameterTypes;
     };
 
@@ -222,6 +246,9 @@ namespace Absolute {
             bool asyncCall = false;
             bool createsRawOwner = false;
             bool isMoveResult = false;
+            ValueCategory category = ValueCategory::Value;
+            PlaceInfo placeInfo;
+            PointerRole pointerRole = PointerRole::None;
         };
 
         enum class KeepState {

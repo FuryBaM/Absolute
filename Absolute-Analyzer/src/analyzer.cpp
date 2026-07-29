@@ -517,12 +517,26 @@ namespace Absolute {
 
     void Analyzer::Save(Expression* expression, Result value) {
         result = std::move(value);
-        if (expression) expressionInfo[expression] = {
-            result.symbol, result.type, result.isLValue,
-            result.createsManagedOwner, result.referencesManagedOwner,
-            result.initialization, result.pointerValidity, result.pointerOwner,
-            result.taskState, result.createsTask, result.asyncCall,
-            result.createsRawOwner, result.isMoveResult};
+        if (expression) {
+            ExpressionInfo info;
+            info.symbol = result.symbol;
+            info.type = result.type;
+            info.isLValue = result.isLValue;
+            info.category = result.category;
+            info.placeInfo = result.placeInfo;
+            info.pointerRole = result.pointerRole;
+            info.createsManagedOwner = result.createsManagedOwner;
+            info.referencesManagedOwner = result.referencesManagedOwner;
+            info.initialization = result.initialization;
+            info.pointerValidity = result.pointerValidity;
+            info.pointerOwner = result.pointerOwner;
+            info.taskState = result.taskState;
+            info.createsTask = result.createsTask;
+            info.asyncCall = result.asyncCall;
+            info.createsRawOwner = result.createsRawOwner;
+            info.isMoveResult = result.isMoveResult;
+            expressionInfo[expression] = std::move(info);
+        }
     }
 
     bool Analyzer::IsKnownType(const std::string& name) const {

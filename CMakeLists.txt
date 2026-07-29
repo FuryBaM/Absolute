@@ -659,6 +659,11 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-p0-cycles.abs"
     )
     set_tests_properties(absolute.ownership-p0-cycles-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.ownership-p1-places-roles-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-p1-places-roles.abs"
+    )
+    set_tests_properties(absolute.ownership-p1-places-roles-errors PROPERTIES WILL_FAIL TRUE)
     foreach(flow_error IN ITEMS uninitialized-errors pointer-flow-errors)
         add_test(
             NAME "absolute.${flow_error}"

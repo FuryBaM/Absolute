@@ -435,6 +435,10 @@ namespace Absolute {
                     Report("weak managed pointers do not own a resource and cannot be moved",
                         "E_WEAK_MOVE", argument.symbol);
                 }
+                else if (IsValueReferenceType(argument.type) || (source && (source->valueReference || source->constValueReference))) {
+                    Report("reference parameter or alias cannot be moved; move requires an owner place",
+                        "E_REF_MOVE", argument.symbol);
+                }
                 else if (strongManaged && !managedOwner) {
                     Report("managed subscriber cannot be moved; move requires an owner",
                         "E_MANAGED_MOVE_REQUIRES_OWNER", argument.symbol);

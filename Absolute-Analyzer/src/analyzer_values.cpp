@@ -683,6 +683,7 @@ namespace Absolute {
             }
         }
         const auto keep = keepLifetimes.find(target.symbol);
+        const Symbol* targetSymbol = table.Get(target.symbol);
         if (target.initialization == InitializationState::Uninitialized)
             Report("pointer is deleted before initialization", "E_DELETE_UNINITIALIZED", target.symbol);
         else if (target.initialization == InitializationState::MaybeUninitialized)
@@ -697,6 +698,9 @@ namespace Absolute {
         if (IsWeakPointerType(target.type))
             Report("weak managed pointer cannot be deleted; delete its owner instead",
                 "E_WEAK_DELETE", target.symbol);
+        if (IsValueReferenceType(target.type) || (targetSymbol && (targetSymbol->valueReference || targetSymbol->constValueReference)))
+            Report("reference parameter or alias cannot be deleted",
+                "E_REF_DELETE", target.symbol);
         if (IsManagedPointerType(target.type) && target.pointerValidity != PointerValidity::Null &&
             target.pointerOwner != target.symbol)
             Report("managed subscriber cannot be deleted; delete its owner instead",

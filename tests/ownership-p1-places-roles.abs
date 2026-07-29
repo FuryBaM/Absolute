@@ -1,0 +1,29 @@
+struct Point {
+    public int32 x;
+    public int32 y;
+}
+
+class Node {
+    public int32 val;
+}
+
+void testRefMove(ref Point pt) {
+    Point moved = move(pt);
+}
+
+void testRefDelete(ref Point pt) {
+    delete pt;
+}
+
+void testWeakMove(weak Node* w) {
+    Node* moved = move(w);
+}
+
+void testWeakDelete(weak Node* w) {
+    delete w;
+}
+
+void main() {
+    Point p;
+    testRefMove(p);
+}
