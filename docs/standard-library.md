@@ -22,7 +22,7 @@ Dependents declare:
 ```json
 {
   "dependencies": {
-    "absolute.std": "^0.7.0"
+    "absolute.std": "^0.8.0"
   }
 }
 ```
@@ -179,6 +179,42 @@ Job* received = jobs.receive();
 and returns an opaque one-shot capsule handle. A successful send empties the
 typed `Transfer<T>` capsule; a rejected send restores it. Closing or destroying a transfer
 channel destroys every queued owner that was not received.
+
+### Synchronization primitives
+
+`std.concurrent` provides resource-owning `Mutex`, `Semaphore`, `RwLock`,
+`ConditionVariable`, and `Once` handles. Native blocking operations recognize
+an Absolute scheduler task and suspend its fiber; calls from ordinary native
+threads block through the corresponding runtime condition variable.
+
+```absolute
+std.concurrent.Semaphore* slots =
+    new std.concurrent.Semaphore(0, 4);
+slots.release(2);
+slots.acquire();
+
+std.concurrent.RwLock* state = new std.concurrent.RwLock();
+state.lockRead();
+// read shared state
+state.unlockRead();
+```
+
+`Semaphore.release()` rejects overflow beyond its configured maximum.
+`RwLock` allows concurrent readers and gives waiting writers priority.
+`ConditionVariable.wait(mutex)` must be called while that `Mutex` is locked;
+it atomically releases the mutex while waiting and reacquires it before
+returning. Always wait in a predicate loop because condition waits may wake
+spuriously.
+
+`Once.call(initializer)` runs exactly one successful initializer. If the
+initializer throws, `Once` returns to the idle state, wakes waiters, and allows
+another caller to retry.
+
+The owning wrapper must outlive every task or thread using `nativeHandle()`.
+All waiters must finish and every acquired permit/lock must be released before
+the wrapper is destroyed. Shared-memory WebAssembly uses atomic wait/notify;
+non-shared WebAssembly only has meaningful uncontended synchronization because
+there is no concurrent memory agent.
 
 ### Launch arguments through `std.env`
 

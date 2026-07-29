@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.0
+
+- Added scheduler-aware `Semaphore`, writer-preferring `RwLock`,
+  `ConditionVariable`, and retry-on-error `Once` primitives.
+- Blocking native operations suspend an Absolute fiber instead of occupying a
+  scheduler worker; the same runtime entry points also support ordinary native
+  threads.
+- Added atomic/shared-memory WebAssembly implementations and uncontended
+  support in non-shared WebAssembly.
+- Added repeated scheduler, native-thread, and WebAssembly execution coverage
+  for permit accounting, reader/writer exclusion, condition wake-ups, and
+  exactly-once initialization.
+
 ## 0.7.0
 
 - Added case-insensitive typed HTTP header collections to requests, responses,

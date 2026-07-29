@@ -1,0 +1,213 @@
+import "../std/concurrent.abs";
+import "../std/task.abs";
+
+class OnceProbe {
+    public static int32 calls = 0;
+}
+
+void initializeOnce() {
+    OnceProbe.calls = OnceProbe.calls + 1;
+}
+
+void failOnce() {
+    throw new Error("once initializer failed");
+}
+
+async int32 semaphoreWorker(int64 semaphoreAddress, int64 counterAddress) {
+    raw void* semaphore = semaphoreAddress as raw void*;
+    raw void* counter = counterAddress as raw void*;
+    absolute_semaphore_acquire(semaphore);
+    absolute_atomic_fetch_add(counter, 1);
+    return 1;
+}
+
+void updatePeak(raw void* peak, int64 candidate) {
+    while (true) {
+        int64 observed = absolute_atomic_load(peak);
+        if (observed >= candidate) {
+            return;
+        }
+        if (absolute_atomic_compare_exchange(
+                peak, observed, candidate)) {
+            return;
+        }
+    }
+}
+
+async int32 readWorker(
+    int64 rwlockAddress,
+    int64 activeReadersAddress,
+    int64 peakReadersAddress) {
+    raw void* rwlock = rwlockAddress as raw void*;
+    raw void* activeReaders = activeReadersAddress as raw void*;
+    raw void* peakReaders = peakReadersAddress as raw void*;
+    absolute_rwlock_lock_read(rwlock);
+    int64 active = absolute_atomic_fetch_add(activeReaders, 1) + 1;
+    updatePeak(peakReaders, active);
+    std.task.delay(10);
+    absolute_atomic_fetch_sub(activeReaders, 1);
+    absolute_rwlock_unlock_read(rwlock);
+    return 1;
+}
+
+async int32 writeWorker(
+    int64 rwlockAddress,
+    int64 activeReadersAddress,
+    int64 storedValueAddress) {
+    raw void* rwlock = rwlockAddress as raw void*;
+    raw void* activeReaders = activeReadersAddress as raw void*;
+    raw void* storedValue = storedValueAddress as raw void*;
+    absolute_rwlock_lock_write(rwlock);
+    int32 ok = absolute_atomic_load(activeReaders) == 0 ? 1 : 0;
+    absolute_atomic_store(storedValue, 42);
+    std.task.delay(2);
+    absolute_rwlock_unlock_write(rwlock);
+    return ok;
+}
+
+async int32 conditionWaiter(
+    int64 conditionAddress,
+    int64 mutexAddress,
+    int64 readyAddress) {
+    raw void* condition = conditionAddress as raw void*;
+    raw void* mutex = mutexAddress as raw void*;
+    raw void* ready = readyAddress as raw void*;
+    absolute_mutex_lock(mutex);
+    while (absolute_atomic_load(ready) == 0) {
+        absolute_condition_wait(condition, mutex);
+    }
+    absolute_mutex_unlock(mutex);
+    return 1;
+}
+
+async int32 onceWorker(int64 onceAddress, int64 callsAddress) {
+    raw void* once = onceAddress as raw void*;
+    raw void* calls = callsAddress as raw void*;
+    if (absolute_once_begin(once)) {
+        absolute_atomic_fetch_add(calls, 1);
+        std.task.delay(5);
+        absolute_once_complete(once);
+    }
+    return 1;
+}
+
+async int32 main() {
+    std.concurrent.Semaphore* defaultSemaphore =
+        new std.concurrent.Semaphore();
+    assert(defaultSemaphore.available == 0, "default semaphore");
+    delete defaultSemaphore;
+
+    std.concurrent.Semaphore* semaphore =
+        new std.concurrent.Semaphore(0, 2);
+    std.concurrent.AtomicInt* semaphoreCounter =
+        new std.concurrent.AtomicInt(0);
+    int64 semaphoreAddress = semaphore.nativeHandle() as int64;
+    int64 semaphoreCounterAddress =
+        semaphoreCounter.nativeHandle() as int64;
+    task<int32> semaphoreTask = spawn semaphoreWorker(
+        semaphoreAddress, semaphoreCounterAddress);
+    std.task.delay(2);
+    assert(semaphoreCounter.load() == 0, "semaphore blocks");
+    assert(semaphore.release(), "semaphore release");
+    assert(await semaphoreTask == 1, "semaphore worker");
+    assert(semaphoreCounter.load() == 1, "semaphore wake");
+    assert(!semaphore.tryAcquire(), "semaphore empty");
+    assert(semaphore.release(2), "semaphore multi release");
+    assert(semaphore.available == 2, "semaphore available");
+    assert(!semaphore.release(1), "semaphore overflow rejected");
+    semaphore.acquire();
+    semaphore.acquire();
+    delete semaphoreCounter;
+    delete semaphore;
+
+    std.concurrent.RwLock* rwlock = new std.concurrent.RwLock();
+    std.concurrent.AtomicInt* activeReaders =
+        new std.concurrent.AtomicInt(0);
+    std.concurrent.AtomicInt* peakReaders =
+        new std.concurrent.AtomicInt(0);
+    std.concurrent.AtomicInt* storedValue =
+        new std.concurrent.AtomicInt(0);
+    int64 rwlockAddress = rwlock.nativeHandle() as int64;
+    int64 activeReadersAddress = activeReaders.nativeHandle() as int64;
+    int64 peakReadersAddress = peakReaders.nativeHandle() as int64;
+    int64 storedValueAddress = storedValue.nativeHandle() as int64;
+    task<int32> readerOne = spawn readWorker(
+        rwlockAddress, activeReadersAddress, peakReadersAddress);
+    task<int32> readerTwo = spawn readWorker(
+        rwlockAddress, activeReadersAddress, peakReadersAddress);
+    std.task.delay(2);
+    task<int32> writer = spawn writeWorker(
+        rwlockAddress, activeReadersAddress, storedValueAddress);
+    assert(await readerOne == 1, "first reader");
+    assert(await readerTwo == 1, "second reader");
+    assert(await writer == 1, "writer excluded readers");
+    assert(peakReaders.load() >= 2, "readers overlap");
+    assert(storedValue.load() == 42, "writer stored value");
+    assert(rwlock.tryLockRead(), "rwlock try read");
+    assert(!rwlock.tryLockWrite(), "writer excluded by reader");
+    rwlock.unlockRead();
+    assert(rwlock.tryLockWrite(), "rwlock try write");
+    assert(!rwlock.tryLockRead(), "reader excluded by writer");
+    rwlock.unlockWrite();
+    delete storedValue;
+    delete peakReaders;
+    delete activeReaders;
+    delete rwlock;
+
+    std.concurrent.Mutex* mutex = new std.concurrent.Mutex();
+    std.concurrent.ConditionVariable* condition =
+        new std.concurrent.ConditionVariable();
+    std.concurrent.AtomicInt* ready = new std.concurrent.AtomicInt(0);
+    int64 mutexAddress = mutex.nativeHandle() as int64;
+    int64 conditionAddress = condition.nativeHandle() as int64;
+    int64 readyAddress = ready.nativeHandle() as int64;
+    task<int32> waiting = spawn conditionWaiter(
+        conditionAddress, mutexAddress, readyAddress);
+    std.task.delay(2);
+    mutex.lock();
+    ready.store(1);
+    condition.notifyOne();
+    mutex.unlock();
+    assert(await waiting == 1, "condition variable wake");
+    delete ready;
+    delete condition;
+    delete mutex;
+
+    std.concurrent.Once* once = new std.concurrent.Once();
+    std.concurrent.AtomicInt* onceCalls = new std.concurrent.AtomicInt(0);
+    int64 onceAddress = once.nativeHandle() as int64;
+    int64 onceCallsAddress = onceCalls.nativeHandle() as int64;
+    task<int32> onceOne = spawn onceWorker(
+        onceAddress, onceCallsAddress);
+    task<int32> onceTwo = spawn onceWorker(
+        onceAddress, onceCallsAddress);
+    task<int32> onceThree = spawn onceWorker(
+        onceAddress, onceCallsAddress);
+    task<int32> onceFour = spawn onceWorker(
+        onceAddress, onceCallsAddress);
+    await onceOne;
+    await onceTwo;
+    await onceThree;
+    await onceFour;
+    assert(onceCalls.load() == 1, "once exactly one initializer");
+    assert(once.isComplete(), "once complete state");
+    delete onceCalls;
+    delete once;
+
+    std.concurrent.Once* wrapperOnce = new std.concurrent.Once();
+    bool failureCaught = false;
+    try {
+        wrapperOnce.call(failOnce);
+    }
+    catch (Error* error) {
+        failureCaught = true;
+    }
+    assert(failureCaught, "once propagates initializer error");
+    wrapperOnce.call(initializeOnce);
+    wrapperOnce.call(initializeOnce);
+    assert(OnceProbe.calls == 1, "once wrapper retries then completes");
+    delete wrapperOnce;
+
+    println("std-concurrent-primitives=ok");
+    return 0;
+}

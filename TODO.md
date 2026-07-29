@@ -517,7 +517,8 @@ Task-isolate, закрытый message envelope и transfer capsule описан
     - [x] Типизированная case-insensitive headers collection для client/server.
     - [x] Redirects, body streaming callback, timeout/cancellation и multipart.
     - [ ] HTTPS/TLS transport с проверкой сертификатов и platform trust store.
-  - [ ] `Semaphore`, `RwLock`, `ConditionVariable` и `Once`.
+  - [x] `Semaphore`, writer-preferring `RwLock`, `ConditionVariable` и
+    retry-on-error `Once` для native scheduler/threads и WebAssembly runtime.
   - [x] `std.mime` модуль для авто-определения MIME типов по расширению файла.
   - [x] `std.form` модуль для парсинга `application/x-www-form-urlencoded` и `multipart/form-data`.
   - [x] `std.task.TaskGroup` с consuming transfer дочерних `task<void>`,

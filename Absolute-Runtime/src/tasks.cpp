@@ -1079,6 +1079,39 @@ namespace {
         bool locked = false;
     };
 
+    struct SemaphoreImpl {
+        std::mutex mutex;
+        std::condition_variable available;
+        std::deque<Task*> waiters;
+        std::int32_t permits = 0;
+        std::int32_t maximum = 1;
+    };
+
+    struct RwLockImpl {
+        std::mutex mutex;
+        std::condition_variable available;
+        std::deque<Task*> readerWaiters;
+        std::deque<Task*> writerWaiters;
+        std::int32_t readers = 0;
+        std::int32_t waitingWriters = 0;
+        bool writer = false;
+    };
+
+    struct ConditionVariableImpl {
+        std::mutex mutex;
+        std::condition_variable available;
+        std::deque<Task*> taskWaiters;
+        std::uint64_t generation = 0;
+        std::int32_t nativeWaiters = 0;
+    };
+
+    struct OnceImpl {
+        std::mutex mutex;
+        std::condition_variable available;
+        std::deque<Task*> waiters;
+        std::int32_t state = 0; // 0 = idle, 1 = running, 2 = complete
+    };
+
     struct ChannelImpl {
         std::mutex mutex;
         std::condition_variable cv_send;
@@ -1732,4 +1765,345 @@ extern "C" bool absolute_mutex_try_lock(void* mutex) {
 extern "C" void absolute_mutex_destroy(void* mutex) {
     if (!mutex) return;
     delete static_cast<MutexImpl*>(mutex);
+}
+
+extern "C" void* absolute_semaphore_create(
+    std::int32_t initialPermits, std::int32_t maximumPermits) {
+    if (maximumPermits <= 0 || initialPermits < 0 ||
+        initialPermits > maximumPermits) {
+        return nullptr;
+    }
+    SemaphoreImpl* semaphore = new SemaphoreImpl();
+    semaphore->permits = initialPermits;
+    semaphore->maximum = maximumPermits;
+    return semaphore;
+}
+
+extern "C" void absolute_semaphore_acquire(void* handle) {
+    if (!handle) return;
+    SemaphoreImpl* semaphore = static_cast<SemaphoreImpl*>(handle);
+    while (true) {
+        std::unique_lock lock(semaphore->mutex);
+        if (semaphore->permits > 0) {
+            --semaphore->permits;
+            return;
+        }
+        if (!currentTask) {
+            semaphore->available.wait(
+                lock, [&] { return semaphore->permits > 0; });
+            continue;
+        }
+        semaphore->waiters.push_back(currentTask);
+        currentScheduler->PrepareSuspend();
+        lock.unlock();
+        currentScheduler->YieldCurrent();
+    }
+}
+
+extern "C" bool absolute_semaphore_try_acquire(void* handle) {
+    if (!handle) return false;
+    SemaphoreImpl* semaphore = static_cast<SemaphoreImpl*>(handle);
+    std::lock_guard lock(semaphore->mutex);
+    if (semaphore->permits <= 0) return false;
+    --semaphore->permits;
+    return true;
+}
+
+extern "C" bool absolute_semaphore_release(
+    void* handle, std::int32_t permits) {
+    if (!handle || permits <= 0) return false;
+    SemaphoreImpl* semaphore = static_cast<SemaphoreImpl*>(handle);
+    std::vector<Task*> resumed;
+    {
+        std::lock_guard lock(semaphore->mutex);
+        if (permits > semaphore->maximum - semaphore->permits)
+            return false;
+        semaphore->permits += permits;
+        while (permits > 0 && !semaphore->waiters.empty()) {
+            resumed.push_back(semaphore->waiters.front());
+            semaphore->waiters.pop_front();
+            --permits;
+        }
+    }
+    semaphore->available.notify_all();
+    for (Task* waiter : resumed) ResumeSchedulerTask(waiter);
+    return true;
+}
+
+extern "C" std::int32_t absolute_semaphore_available(void* handle) {
+    if (!handle) return 0;
+    SemaphoreImpl* semaphore = static_cast<SemaphoreImpl*>(handle);
+    std::lock_guard lock(semaphore->mutex);
+    return semaphore->permits;
+}
+
+extern "C" void absolute_semaphore_destroy(void* handle) {
+    if (!handle) return;
+    delete static_cast<SemaphoreImpl*>(handle);
+}
+
+extern "C" void* absolute_rwlock_create() {
+    return new RwLockImpl();
+}
+
+extern "C" void absolute_rwlock_lock_read(void* handle) {
+    if (!handle) return;
+    RwLockImpl* rwlock = static_cast<RwLockImpl*>(handle);
+    while (true) {
+        std::unique_lock lock(rwlock->mutex);
+        if (!rwlock->writer && rwlock->waitingWriters == 0) {
+            ++rwlock->readers;
+            return;
+        }
+        if (!currentTask) {
+            rwlock->available.wait(lock, [&] {
+                return !rwlock->writer && rwlock->waitingWriters == 0;
+            });
+            continue;
+        }
+        rwlock->readerWaiters.push_back(currentTask);
+        currentScheduler->PrepareSuspend();
+        lock.unlock();
+        currentScheduler->YieldCurrent();
+    }
+}
+
+extern "C" bool absolute_rwlock_try_lock_read(void* handle) {
+    if (!handle) return false;
+    RwLockImpl* rwlock = static_cast<RwLockImpl*>(handle);
+    std::lock_guard lock(rwlock->mutex);
+    if (rwlock->writer || rwlock->waitingWriters > 0) return false;
+    ++rwlock->readers;
+    return true;
+}
+
+extern "C" void absolute_rwlock_unlock_read(void* handle) {
+    if (!handle) return;
+    RwLockImpl* rwlock = static_cast<RwLockImpl*>(handle);
+    Task* writer = nullptr;
+    {
+        std::lock_guard lock(rwlock->mutex);
+        if (rwlock->readers <= 0) return;
+        --rwlock->readers;
+        if (rwlock->readers == 0 && !rwlock->writerWaiters.empty()) {
+            writer = rwlock->writerWaiters.front();
+            rwlock->writerWaiters.pop_front();
+        }
+    }
+    rwlock->available.notify_all();
+    ResumeSchedulerTask(writer);
+}
+
+extern "C" void absolute_rwlock_lock_write(void* handle) {
+    if (!handle) return;
+    RwLockImpl* rwlock = static_cast<RwLockImpl*>(handle);
+    bool registered = false;
+    while (true) {
+        std::unique_lock lock(rwlock->mutex);
+        if (!registered) {
+            ++rwlock->waitingWriters;
+            registered = true;
+        }
+        if (!rwlock->writer && rwlock->readers == 0) {
+            --rwlock->waitingWriters;
+            rwlock->writer = true;
+            return;
+        }
+        if (!currentTask) {
+            rwlock->available.wait(lock, [&] {
+                return !rwlock->writer && rwlock->readers == 0;
+            });
+            continue;
+        }
+        rwlock->writerWaiters.push_back(currentTask);
+        currentScheduler->PrepareSuspend();
+        lock.unlock();
+        currentScheduler->YieldCurrent();
+    }
+}
+
+extern "C" bool absolute_rwlock_try_lock_write(void* handle) {
+    if (!handle) return false;
+    RwLockImpl* rwlock = static_cast<RwLockImpl*>(handle);
+    std::lock_guard lock(rwlock->mutex);
+    if (rwlock->writer || rwlock->readers != 0) return false;
+    rwlock->writer = true;
+    return true;
+}
+
+extern "C" void absolute_rwlock_unlock_write(void* handle) {
+    if (!handle) return;
+    RwLockImpl* rwlock = static_cast<RwLockImpl*>(handle);
+    Task* writer = nullptr;
+    std::vector<Task*> readers;
+    {
+        std::lock_guard lock(rwlock->mutex);
+        if (!rwlock->writer) return;
+        rwlock->writer = false;
+        if (!rwlock->writerWaiters.empty()) {
+            writer = rwlock->writerWaiters.front();
+            rwlock->writerWaiters.pop_front();
+        } else {
+            while (!rwlock->readerWaiters.empty()) {
+                readers.push_back(rwlock->readerWaiters.front());
+                rwlock->readerWaiters.pop_front();
+            }
+        }
+    }
+    rwlock->available.notify_all();
+    ResumeSchedulerTask(writer);
+    for (Task* reader : readers) ResumeSchedulerTask(reader);
+}
+
+extern "C" void absolute_rwlock_destroy(void* handle) {
+    if (!handle) return;
+    delete static_cast<RwLockImpl*>(handle);
+}
+
+extern "C" void* absolute_condition_create() {
+    return new ConditionVariableImpl();
+}
+
+extern "C" void absolute_condition_wait(
+    void* conditionHandle, void* mutexHandle) {
+    if (!conditionHandle || !mutexHandle) return;
+    ConditionVariableImpl* condition =
+        static_cast<ConditionVariableImpl*>(conditionHandle);
+    if (currentTask) {
+        {
+            std::lock_guard lock(condition->mutex);
+            condition->taskWaiters.push_back(currentTask);
+            currentScheduler->PrepareSuspend();
+            absolute_mutex_unlock(mutexHandle);
+        }
+        currentScheduler->YieldCurrent();
+        absolute_mutex_lock(mutexHandle);
+        return;
+    }
+    std::unique_lock lock(condition->mutex);
+    const std::uint64_t observed = condition->generation;
+    ++condition->nativeWaiters;
+    absolute_mutex_unlock(mutexHandle);
+    condition->available.wait(
+        lock, [&] { return condition->generation != observed; });
+    --condition->nativeWaiters;
+    lock.unlock();
+    absolute_mutex_lock(mutexHandle);
+}
+
+extern "C" void absolute_condition_notify_one(void* handle) {
+    if (!handle) return;
+    ConditionVariableImpl* condition =
+        static_cast<ConditionVariableImpl*>(handle);
+    Task* waiter = nullptr;
+    bool notifyNative = false;
+    {
+        std::lock_guard lock(condition->mutex);
+        if (!condition->taskWaiters.empty()) {
+            waiter = condition->taskWaiters.front();
+            condition->taskWaiters.pop_front();
+        } else if (condition->nativeWaiters > 0) {
+            ++condition->generation;
+            notifyNative = true;
+        }
+    }
+    if (notifyNative) condition->available.notify_one();
+    ResumeSchedulerTask(waiter);
+}
+
+extern "C" void absolute_condition_notify_all(void* handle) {
+    if (!handle) return;
+    ConditionVariableImpl* condition =
+        static_cast<ConditionVariableImpl*>(handle);
+    std::vector<Task*> waiters;
+    bool notifyNative = false;
+    {
+        std::lock_guard lock(condition->mutex);
+        while (!condition->taskWaiters.empty()) {
+            waiters.push_back(condition->taskWaiters.front());
+            condition->taskWaiters.pop_front();
+        }
+        if (condition->nativeWaiters > 0) {
+            ++condition->generation;
+            notifyNative = true;
+        }
+    }
+    if (notifyNative) condition->available.notify_all();
+    for (Task* waiter : waiters) ResumeSchedulerTask(waiter);
+}
+
+extern "C" void absolute_condition_destroy(void* handle) {
+    if (!handle) return;
+    delete static_cast<ConditionVariableImpl*>(handle);
+}
+
+extern "C" void* absolute_once_create() {
+    return new OnceImpl();
+}
+
+extern "C" bool absolute_once_begin(void* handle) {
+    if (!handle) return false;
+    OnceImpl* once = static_cast<OnceImpl*>(handle);
+    while (true) {
+        std::unique_lock lock(once->mutex);
+        if (once->state == 2) return false;
+        if (once->state == 0) {
+            once->state = 1;
+            return true;
+        }
+        if (!currentTask) {
+            once->available.wait(lock, [&] { return once->state != 1; });
+            continue;
+        }
+        once->waiters.push_back(currentTask);
+        currentScheduler->PrepareSuspend();
+        lock.unlock();
+        currentScheduler->YieldCurrent();
+    }
+}
+
+extern "C" void absolute_once_complete(void* handle) {
+    if (!handle) return;
+    OnceImpl* once = static_cast<OnceImpl*>(handle);
+    std::vector<Task*> waiters;
+    {
+        std::lock_guard lock(once->mutex);
+        if (once->state != 1) return;
+        once->state = 2;
+        while (!once->waiters.empty()) {
+            waiters.push_back(once->waiters.front());
+            once->waiters.pop_front();
+        }
+    }
+    once->available.notify_all();
+    for (Task* waiter : waiters) ResumeSchedulerTask(waiter);
+}
+
+extern "C" void absolute_once_reset(void* handle) {
+    if (!handle) return;
+    OnceImpl* once = static_cast<OnceImpl*>(handle);
+    std::vector<Task*> waiters;
+    {
+        std::lock_guard lock(once->mutex);
+        if (once->state != 1) return;
+        once->state = 0;
+        while (!once->waiters.empty()) {
+            waiters.push_back(once->waiters.front());
+            once->waiters.pop_front();
+        }
+    }
+    once->available.notify_all();
+    for (Task* waiter : waiters) ResumeSchedulerTask(waiter);
+}
+
+extern "C" bool absolute_once_is_complete(void* handle) {
+    if (!handle) return false;
+    OnceImpl* once = static_cast<OnceImpl*>(handle);
+    std::lock_guard lock(once->mutex);
+    return once->state == 2;
+}
+
+extern "C" void absolute_once_destroy(void* handle) {
+    if (!handle) return;
+    delete static_cast<OnceImpl*>(handle);
 }

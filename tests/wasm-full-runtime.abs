@@ -10,6 +10,14 @@ import "../std/random.abs";
 import "../std/task.abs";
 import "../std/time.abs";
 
+class WasmOnceProbe {
+    public static int32 calls = 0;
+}
+
+void initializeWasmOnce() {
+    WasmOnceProbe.calls = WasmOnceProbe.calls + 1;
+}
+
 async void wasmTaskGroupChild() {
     std.task.delay(1);
 }
@@ -94,6 +102,38 @@ async int32 main() {
     mutex.lock();
     mutex.unlock();
     mutex.dispose();
+
+    std.concurrent.Semaphore* semaphore =
+        new std.concurrent.Semaphore(1, 2);
+    assert(semaphore.tryAcquire(), "semaphore try acquire");
+    assert(!semaphore.tryAcquire(), "semaphore empty");
+    assert(semaphore.release(2), "semaphore release");
+    assert(semaphore.available == 2, "semaphore available");
+    semaphore.acquire();
+    semaphore.acquire();
+    semaphore.dispose();
+
+    std.concurrent.RwLock* rwlock = new std.concurrent.RwLock();
+    assert(rwlock.tryLockRead(), "rwlock read");
+    assert(!rwlock.tryLockWrite(), "rwlock writer excluded");
+    rwlock.unlockRead();
+    assert(rwlock.tryLockWrite(), "rwlock write");
+    assert(!rwlock.tryLockRead(), "rwlock reader excluded");
+    rwlock.unlockWrite();
+    rwlock.dispose();
+
+    std.concurrent.ConditionVariable* condition =
+        new std.concurrent.ConditionVariable();
+    condition.notifyOne();
+    condition.notifyAll();
+    condition.dispose();
+
+    std.concurrent.Once* once = new std.concurrent.Once();
+    once.call(initializeWasmOnce);
+    once.call(initializeWasmOnce);
+    assert(WasmOnceProbe.calls == 1, "wasm once");
+    assert(once.isComplete(), "wasm once complete");
+    once.dispose();
 
     std.task.CancellationToken* cancellation = new std.task.CancellationToken();
     assert(!cancellation.isCancelled(), "cancellation initial state");

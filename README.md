@@ -1299,6 +1299,11 @@ callbacks, cancellation, and multipart forms on top of TCP. The current
 transport supports plain `http://`; `https://` is rejected until TLS
 certificate validation and platform trust-store integration are implemented.
 
+`std/concurrent.abs` provides scheduler-aware mutexes, semaphores,
+reader/writer locks, condition variables, atomics, and exactly-once
+initialization. Blocking from an Absolute task suspends its fiber instead of
+occupying the scheduler worker.
+
 For a Release build, replace `Debug` with `Release`.
 
 ## Test

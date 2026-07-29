@@ -1,6 +1,6 @@
 {
   "name": "absolute.std",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "lib",
   "description": "Absolute standard library (std.*). Layout and SemVer policy: docs/standard-library.md",
   "sources": [

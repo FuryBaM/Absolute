@@ -12,6 +12,35 @@ extern "C" void absolute_mutex_unlock(raw void* mutex);
 extern "C" bool absolute_mutex_try_lock(raw void* mutex);
 extern "C" void absolute_mutex_destroy(raw void* mutex);
 
+extern "C" raw void* absolute_semaphore_create(int32 initialPermits, int32 maximumPermits);
+extern "C" void absolute_semaphore_acquire(raw void* semaphore);
+extern "C" bool absolute_semaphore_try_acquire(raw void* semaphore);
+extern "C" bool absolute_semaphore_release(raw void* semaphore, int32 permits);
+extern "C" int32 absolute_semaphore_available(raw void* semaphore);
+extern "C" void absolute_semaphore_destroy(raw void* semaphore);
+
+extern "C" raw void* absolute_rwlock_create();
+extern "C" void absolute_rwlock_lock_read(raw void* rwlock);
+extern "C" bool absolute_rwlock_try_lock_read(raw void* rwlock);
+extern "C" void absolute_rwlock_unlock_read(raw void* rwlock);
+extern "C" void absolute_rwlock_lock_write(raw void* rwlock);
+extern "C" bool absolute_rwlock_try_lock_write(raw void* rwlock);
+extern "C" void absolute_rwlock_unlock_write(raw void* rwlock);
+extern "C" void absolute_rwlock_destroy(raw void* rwlock);
+
+extern "C" raw void* absolute_condition_create();
+extern "C" void absolute_condition_wait(raw void* condition, raw void* mutex);
+extern "C" void absolute_condition_notify_one(raw void* condition);
+extern "C" void absolute_condition_notify_all(raw void* condition);
+extern "C" void absolute_condition_destroy(raw void* condition);
+
+extern "C" raw void* absolute_once_create();
+extern "C" bool absolute_once_begin(raw void* once);
+extern "C" void absolute_once_complete(raw void* once);
+extern "C" void absolute_once_reset(raw void* once);
+extern "C" bool absolute_once_is_complete(raw void* once);
+extern "C" void absolute_once_destroy(raw void* once);
+
 namespace std.concurrent {
 
     class AtomicInt {
@@ -39,6 +68,10 @@ namespace std.concurrent {
 
         public bool compareExchange(int64 expected, int64 desired) {
             return absolute_atomic_compare_exchange(handle, expected, desired);
+        }
+
+        public raw void* nativeHandle() {
+            return handle;
         }
 
         public void destroy() {
@@ -70,9 +103,180 @@ namespace std.concurrent {
             return absolute_mutex_try_lock(handle);
         }
 
+        public raw void* nativeHandle() {
+            return handle;
+        }
+
         public void destroy() {
             if (handle != null) {
                 absolute_mutex_destroy(handle);
+                handle = null;
+            }
+        }
+
+        public void dispose() { destroy(); }
+    }
+
+    class Semaphore {
+        private raw void* handle;
+
+        public Semaphore() {
+            handle = absolute_semaphore_create(0, 1);
+        }
+
+        public Semaphore(int32 initialPermits, int32 maximumPermits) {
+            handle = absolute_semaphore_create(
+                initialPermits, maximumPermits);
+            if (handle == null) {
+                throw new Error(
+                    "invalid semaphore permit range");
+            }
+        }
+
+        public void acquire() {
+            absolute_semaphore_acquire(handle);
+        }
+
+        public bool tryAcquire() {
+            return absolute_semaphore_try_acquire(handle);
+        }
+
+        public bool release(int32 permits) {
+            return absolute_semaphore_release(handle, permits);
+        }
+
+        public bool release() {
+            return release(1);
+        }
+
+        public int32 available {
+            get { return absolute_semaphore_available(handle); }
+        }
+
+        public raw void* nativeHandle() {
+            return handle;
+        }
+
+        public void destroy() {
+            if (handle != null) {
+                absolute_semaphore_destroy(handle);
+                handle = null;
+            }
+        }
+
+        public void dispose() { destroy(); }
+    }
+
+    class RwLock {
+        private raw void* handle;
+
+        public RwLock() {
+            handle = absolute_rwlock_create();
+        }
+
+        public void lockRead() {
+            absolute_rwlock_lock_read(handle);
+        }
+
+        public bool tryLockRead() {
+            return absolute_rwlock_try_lock_read(handle);
+        }
+
+        public void unlockRead() {
+            absolute_rwlock_unlock_read(handle);
+        }
+
+        public void lockWrite() {
+            absolute_rwlock_lock_write(handle);
+        }
+
+        public bool tryLockWrite() {
+            return absolute_rwlock_try_lock_write(handle);
+        }
+
+        public void unlockWrite() {
+            absolute_rwlock_unlock_write(handle);
+        }
+
+        public raw void* nativeHandle() {
+            return handle;
+        }
+
+        public void destroy() {
+            if (handle != null) {
+                absolute_rwlock_destroy(handle);
+                handle = null;
+            }
+        }
+
+        public void dispose() { destroy(); }
+    }
+
+    class ConditionVariable {
+        private raw void* handle;
+
+        public ConditionVariable() {
+            handle = absolute_condition_create();
+        }
+
+        public void wait(Mutex* mutex) {
+            absolute_condition_wait(handle, mutex.nativeHandle());
+        }
+
+        public void notifyOne() {
+            absolute_condition_notify_one(handle);
+        }
+
+        public void notifyAll() {
+            absolute_condition_notify_all(handle);
+        }
+
+        public raw void* nativeHandle() {
+            return handle;
+        }
+
+        public void destroy() {
+            if (handle != null) {
+                absolute_condition_destroy(handle);
+                handle = null;
+            }
+        }
+
+        public void dispose() { destroy(); }
+    }
+
+    class Once {
+        private raw void* handle;
+
+        public Once() {
+            handle = absolute_once_create();
+        }
+
+        public void call(func<void> initializer) {
+            if (!absolute_once_begin(handle)) {
+                return;
+            }
+            try {
+                initializer();
+                absolute_once_complete(handle);
+            }
+            catch (Error* error) {
+                absolute_once_reset(handle);
+                throw;
+            }
+        }
+
+        public bool isComplete() {
+            return absolute_once_is_complete(handle);
+        }
+
+        public raw void* nativeHandle() {
+            return handle;
+        }
+
+        public void destroy() {
+            if (handle != null) {
+                absolute_once_destroy(handle);
                 handle = null;
             }
         }

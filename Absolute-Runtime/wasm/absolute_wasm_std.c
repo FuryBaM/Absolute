@@ -7,6 +7,13 @@
 
 typedef struct WasmAtomicI64 { int64_t value; } WasmAtomicI64;
 typedef struct WasmMutex { int32_t state; } WasmMutex;
+typedef struct WasmSemaphore {
+    int32_t permits;
+    int32_t maximum;
+} WasmSemaphore;
+typedef struct WasmRwLock { int32_t state; } WasmRwLock;
+typedef struct WasmCondition { int32_t generation; } WasmCondition;
+typedef struct WasmOnce { int32_t state; } WasmOnce;
 typedef struct WasmCancellation { int32_t cancelled; } WasmCancellation;
 
 void* absolute_atomic_create(int64_t initial) {
@@ -88,6 +95,267 @@ void absolute_mutex_unlock(void* p) {
 #endif
 }
 void absolute_mutex_destroy(void* p) { free(p); }
+
+void* absolute_semaphore_create(int32_t initial, int32_t maximum) {
+    if (maximum <= 0 || initial < 0 || initial > maximum) return NULL;
+    WasmSemaphore* semaphore =
+        (WasmSemaphore*)heap_alloc(sizeof(WasmSemaphore));
+    if (!semaphore) return NULL;
+    semaphore->permits = initial;
+    semaphore->maximum = maximum;
+    return semaphore;
+}
+uint8_t absolute_semaphore_try_acquire(void* p) {
+    if (!p) return 0;
+    WasmSemaphore* semaphore = (WasmSemaphore*)p;
+#if defined(ABSOLUTE_WASM_SHARED)
+    int32_t current =
+        __atomic_load_n(&semaphore->permits, __ATOMIC_ACQUIRE);
+    while (current > 0) {
+        if (__atomic_compare_exchange_n(
+                &semaphore->permits, &current, current - 1, 0,
+                __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
+            return 1;
+        }
+    }
+    return 0;
+#else
+    if (semaphore->permits <= 0) return 0;
+    --semaphore->permits;
+    return 1;
+#endif
+}
+void absolute_semaphore_acquire(void* p) {
+    if (!p) return;
+    WasmSemaphore* semaphore = (WasmSemaphore*)p;
+    while (!absolute_semaphore_try_acquire(p)) {
+#if defined(ABSOLUTE_WASM_SHARED)
+        __builtin_wasm_memory_atomic_wait32(
+            &semaphore->permits, 0, 1000000);
+#endif
+    }
+}
+uint8_t absolute_semaphore_release(void* p, int32_t permits) {
+    if (!p || permits <= 0) return 0;
+    WasmSemaphore* semaphore = (WasmSemaphore*)p;
+#if defined(ABSOLUTE_WASM_SHARED)
+    int32_t current =
+        __atomic_load_n(&semaphore->permits, __ATOMIC_ACQUIRE);
+    for (;;) {
+        if (permits > semaphore->maximum - current) return 0;
+        if (__atomic_compare_exchange_n(
+                &semaphore->permits, &current, current + permits, 0,
+                __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
+            __builtin_wasm_memory_atomic_notify(
+                &semaphore->permits, (uint32_t)permits);
+            return 1;
+        }
+    }
+#else
+    if (permits > semaphore->maximum - semaphore->permits) return 0;
+    semaphore->permits += permits;
+    return 1;
+#endif
+}
+int32_t absolute_semaphore_available(void* p) {
+    if (!p) return 0;
+#if defined(ABSOLUTE_WASM_SHARED)
+    return __atomic_load_n(
+        &((WasmSemaphore*)p)->permits, __ATOMIC_ACQUIRE);
+#else
+    return ((WasmSemaphore*)p)->permits;
+#endif
+}
+void absolute_semaphore_destroy(void* p) { free(p); }
+
+void* absolute_rwlock_create(void) {
+    WasmRwLock* rwlock = (WasmRwLock*)heap_alloc(sizeof(WasmRwLock));
+    if (rwlock) rwlock->state = 0;
+    return rwlock;
+}
+uint8_t absolute_rwlock_try_lock_read(void* p) {
+    if (!p) return 0;
+    WasmRwLock* rwlock = (WasmRwLock*)p;
+#if defined(ABSOLUTE_WASM_SHARED)
+    int32_t current =
+        __atomic_load_n(&rwlock->state, __ATOMIC_ACQUIRE);
+    while (current >= 0) {
+        if (__atomic_compare_exchange_n(
+                &rwlock->state, &current, current + 1, 0,
+                __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
+            return 1;
+        }
+    }
+    return 0;
+#else
+    if (rwlock->state < 0) return 0;
+    ++rwlock->state;
+    return 1;
+#endif
+}
+void absolute_rwlock_lock_read(void* p) {
+    if (!p) return;
+    WasmRwLock* rwlock = (WasmRwLock*)p;
+    while (!absolute_rwlock_try_lock_read(p)) {
+#if defined(ABSOLUTE_WASM_SHARED)
+        __builtin_wasm_memory_atomic_wait32(
+            &rwlock->state, -1, 1000000);
+#endif
+    }
+}
+void absolute_rwlock_unlock_read(void* p) {
+    if (!p) return;
+    WasmRwLock* rwlock = (WasmRwLock*)p;
+#if defined(ABSOLUTE_WASM_SHARED)
+    __atomic_fetch_sub(&rwlock->state, 1, __ATOMIC_RELEASE);
+    __builtin_wasm_memory_atomic_notify(&rwlock->state, 1);
+#else
+    if (rwlock->state > 0) --rwlock->state;
+#endif
+}
+uint8_t absolute_rwlock_try_lock_write(void* p) {
+    if (!p) return 0;
+    WasmRwLock* rwlock = (WasmRwLock*)p;
+#if defined(ABSOLUTE_WASM_SHARED)
+    int32_t expected = 0;
+    return __atomic_compare_exchange_n(
+        &rwlock->state, &expected, -1, 0,
+        __ATOMIC_ACQUIRE, __ATOMIC_RELAXED) ? 1 : 0;
+#else
+    if (rwlock->state != 0) return 0;
+    rwlock->state = -1;
+    return 1;
+#endif
+}
+void absolute_rwlock_lock_write(void* p) {
+    if (!p) return;
+    WasmRwLock* rwlock = (WasmRwLock*)p;
+    while (!absolute_rwlock_try_lock_write(p)) {
+#if defined(ABSOLUTE_WASM_SHARED)
+        int32_t observed =
+            __atomic_load_n(&rwlock->state, __ATOMIC_RELAXED);
+        __builtin_wasm_memory_atomic_wait32(
+            &rwlock->state, observed, 1000000);
+#endif
+    }
+}
+void absolute_rwlock_unlock_write(void* p) {
+    if (!p) return;
+    WasmRwLock* rwlock = (WasmRwLock*)p;
+#if defined(ABSOLUTE_WASM_SHARED)
+    __atomic_store_n(&rwlock->state, 0, __ATOMIC_RELEASE);
+    __builtin_wasm_memory_atomic_notify(&rwlock->state, UINT32_MAX);
+#else
+    if (rwlock->state == -1) rwlock->state = 0;
+#endif
+}
+void absolute_rwlock_destroy(void* p) { free(p); }
+
+void* absolute_condition_create(void) {
+    WasmCondition* condition =
+        (WasmCondition*)heap_alloc(sizeof(WasmCondition));
+    if (condition) condition->generation = 0;
+    return condition;
+}
+void absolute_condition_wait(void* conditionHandle, void* mutexHandle) {
+    if (!conditionHandle || !mutexHandle) return;
+    WasmCondition* condition = (WasmCondition*)conditionHandle;
+#if defined(ABSOLUTE_WASM_SHARED)
+    int32_t observed =
+        __atomic_load_n(&condition->generation, __ATOMIC_ACQUIRE);
+    absolute_mutex_unlock(mutexHandle);
+    __builtin_wasm_memory_atomic_wait32(
+        &condition->generation, observed, -1);
+    absolute_mutex_lock(mutexHandle);
+#else
+    /* Non-shared wasm cannot be notified by another worker. */
+    (void)condition;
+#endif
+}
+void absolute_condition_notify_one(void* p) {
+    if (!p) return;
+    WasmCondition* condition = (WasmCondition*)p;
+#if defined(ABSOLUTE_WASM_SHARED)
+    __atomic_fetch_add(&condition->generation, 1, __ATOMIC_RELEASE);
+    __builtin_wasm_memory_atomic_notify(&condition->generation, 1);
+#else
+    ++condition->generation;
+#endif
+}
+void absolute_condition_notify_all(void* p) {
+    if (!p) return;
+    WasmCondition* condition = (WasmCondition*)p;
+#if defined(ABSOLUTE_WASM_SHARED)
+    __atomic_fetch_add(&condition->generation, 1, __ATOMIC_RELEASE);
+    __builtin_wasm_memory_atomic_notify(
+        &condition->generation, UINT32_MAX);
+#else
+    ++condition->generation;
+#endif
+}
+void absolute_condition_destroy(void* p) { free(p); }
+
+void* absolute_once_create(void) {
+    WasmOnce* once = (WasmOnce*)heap_alloc(sizeof(WasmOnce));
+    if (once) once->state = 0;
+    return once;
+}
+uint8_t absolute_once_begin(void* p) {
+    if (!p) return 0;
+    WasmOnce* once = (WasmOnce*)p;
+    for (;;) {
+#if defined(ABSOLUTE_WASM_SHARED)
+        int32_t state = __atomic_load_n(&once->state, __ATOMIC_ACQUIRE);
+        if (state == 2) return 0;
+        if (state == 0) {
+            int32_t expected = 0;
+            if (__atomic_compare_exchange_n(
+                    &once->state, &expected, 1, 0,
+                    __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
+                return 1;
+            }
+            continue;
+        }
+        __builtin_wasm_memory_atomic_wait32(&once->state, 1, 1000000);
+#else
+        if (once->state == 2) return 0;
+        if (once->state == 0) {
+            once->state = 1;
+            return 1;
+        }
+#endif
+    }
+}
+void absolute_once_complete(void* p) {
+    if (!p) return;
+    WasmOnce* once = (WasmOnce*)p;
+#if defined(ABSOLUTE_WASM_SHARED)
+    __atomic_store_n(&once->state, 2, __ATOMIC_RELEASE);
+    __builtin_wasm_memory_atomic_notify(&once->state, UINT32_MAX);
+#else
+    once->state = 2;
+#endif
+}
+void absolute_once_reset(void* p) {
+    if (!p) return;
+    WasmOnce* once = (WasmOnce*)p;
+#if defined(ABSOLUTE_WASM_SHARED)
+    __atomic_store_n(&once->state, 0, __ATOMIC_RELEASE);
+    __builtin_wasm_memory_atomic_notify(&once->state, UINT32_MAX);
+#else
+    once->state = 0;
+#endif
+}
+uint8_t absolute_once_is_complete(void* p) {
+    if (!p) return 0;
+#if defined(ABSOLUTE_WASM_SHARED)
+    return __atomic_load_n(
+        &((WasmOnce*)p)->state, __ATOMIC_ACQUIRE) == 2;
+#else
+    return ((WasmOnce*)p)->state == 2;
+#endif
+}
+void absolute_once_destroy(void* p) { free(p); }
 
 void* absolute_cancellation_token_create(void) {
     WasmCancellation* token = (WasmCancellation*)heap_alloc(sizeof(WasmCancellation));

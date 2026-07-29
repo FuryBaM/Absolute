@@ -100,6 +100,17 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "runtime-managed-memory=ok"
         TIMEOUT 30)
 
+    add_executable(absolute-runtime-concurrent-primitives-test
+        tests/runtime-concurrent-primitives.cpp)
+    target_link_libraries(absolute-runtime-concurrent-primitives-test
+        PRIVATE Absolute-Runtime)
+    add_test(
+        NAME absolute.runtime-concurrent-primitives
+        COMMAND absolute-runtime-concurrent-primitives-test)
+    set_tests_properties(absolute.runtime-concurrent-primitives PROPERTIES
+        PASS_REGULAR_EXPRESSION "runtime-concurrent-primitives=ok"
+        TIMEOUT 30)
+
     add_executable(absolute-runtime-scheduler-work-stealing-test
         tests/runtime-scheduler-work-stealing.cpp)
     target_link_libraries(absolute-runtime-scheduler-work-stealing-test
@@ -902,6 +913,11 @@ if(BUILD_TESTING)
     add_test(
         NAME absolute.async-concurrency-advanced-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/async-concurrency-advanced.abs"
+    )
+    add_test(
+        NAME absolute.std-concurrent-primitives-semantic
+        COMMAND Absolute-Compiler
+            "${PROJECT_SOURCE_DIR}/tests/std-concurrent-primitives.abs"
     )
     add_test(
         NAME absolute.std-typed-channel-semantic
@@ -3747,6 +3763,25 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-async-concurrency-advanced PROPERTIES
             FIXTURES_REQUIRED absolute-async-concurrency-advanced-executable
             PASS_REGULAR_EXPRESSION "async-concurrency-advanced=ok"
+        )
+        add_test(
+            NAME absolute.build-std-concurrent-primitives
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/tests/std-concurrent-primitives.abs"
+                --build-exe
+                -o "${CMAKE_BINARY_DIR}/std-concurrent-primitives-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(
+            absolute.build-std-concurrent-primitives PROPERTIES
+            FIXTURES_SETUP absolute-std-concurrent-primitives-executable
+        )
+        add_test(NAME absolute.run-std-concurrent-primitives
+            COMMAND
+                "${CMAKE_BINARY_DIR}/std-concurrent-primitives-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(
+            absolute.run-std-concurrent-primitives PROPERTIES
+            FIXTURES_REQUIRED absolute-std-concurrent-primitives-executable
+            PASS_REGULAR_EXPRESSION "std-concurrent-primitives=ok"
         )
         add_test(
             NAME absolute.build-std-typed-channel
