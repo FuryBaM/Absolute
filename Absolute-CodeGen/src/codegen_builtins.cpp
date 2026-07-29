@@ -83,6 +83,16 @@ namespace Absolute {
             return;
         }
 
+        if (name == "debugBreak") {
+            if (!expression.arguments.empty())
+                Fail("debugBreak expects no arguments");
+            llvm::Function* trap = llvm::Intrinsic::getDeclaration(
+                module.get(), llvm::Intrinsic::debugtrap);
+            builder.CreateCall(trap);
+            value = nullptr;
+            return;
+        }
+
         if (name == "unsafeArrayGet" || name == "unsafeArraySet") {
             const bool isSet = name == "unsafeArraySet";
             const size_t expectedCount = isSet ? 3 : 2;
@@ -240,6 +250,11 @@ namespace Absolute {
                         builder.CreateStore(
                             llvm::ConstantPointerNull::get(builder.getPtrTy()),
                             variable->arrayOwnerStorage);
+                        if (variable->debugStorage)
+                            builder.CreateStore(
+                                llvm::Constant::getNullValue(
+                                    variable->debugStorage->getAllocatedType()),
+                                variable->debugStorage);
                         if (variable->ownershipFlagStorage)
                             builder.CreateStore(
                                 builder.getFalse(),

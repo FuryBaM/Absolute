@@ -19,6 +19,7 @@
             bool ownsAggregateResources = false;
             llvm::AllocaInst* arrayOwnerStorage = nullptr;
             llvm::AllocaInst* ownershipFlagStorage = nullptr;
+            llvm::AllocaInst* debugStorage = nullptr;
         };
 
         struct ArrayView {
@@ -152,6 +153,15 @@
         llvm::LLVMContext context;
         std::unique_ptr<llvm::Module> module;
         llvm::IRBuilder<> builder;
+        bool debugInfoEnabled = false;
+        OptimizationLevel currentOptimizationLevel = OptimizationLevel::O3;
+        std::unique_ptr<llvm::DIBuilder> debugBuilder;
+        llvm::DICompileUnit* debugCompileUnit = nullptr;
+        llvm::DIFile* defaultDebugFile = nullptr;
+        llvm::DIScope* currentDebugScope = nullptr;
+        std::vector<llvm::DIScope*> debugScopeStack;
+        std::unordered_map<std::string, llvm::DIFile*> debugFiles;
+        std::unordered_map<std::string, llvm::DIType*> debugTypes;
         llvm::Value* value = nullptr;
         Phase phase = Phase::DeclareFunctions;
         std::vector<std::unordered_map<std::string, Variable>> scopes;

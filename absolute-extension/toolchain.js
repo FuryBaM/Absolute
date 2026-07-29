@@ -190,12 +190,25 @@ function resolveCompilerPath(configured, roots = []) {
 
 function buildDirectories(roots) {
     const result = [];
+    const preferredBuilds = process.platform === 'win32'
+        ? ['windows-release', 'windows-clang-cl-release',
+            'windows-release-sccache', 'msvc-release']
+        : ['release', 'linux-release'];
+    const buildRank = name => {
+        const index = preferredBuilds.indexOf(name);
+        return index < 0 ? preferredBuilds.length : index;
+    };
     for (const root of roots) {
         for (const parent of [path.join(root, '.absolute', 'build'), path.join(root, 'build')]) {
             if (!fs.existsSync(parent)) continue;
             result.push(parent);
             try {
-                for (const entry of fs.readdirSync(parent, { withFileTypes: true })) {
+                const entries = fs.readdirSync(parent, { withFileTypes: true })
+                    .filter(entry => entry.isDirectory())
+                    .sort((left, right) =>
+                        buildRank(left.name) - buildRank(right.name) ||
+                        left.name.localeCompare(right.name));
+                for (const entry of entries) {
                     if (entry.isDirectory()) result.push(path.join(parent, entry.name));
                 }
             } catch (_) { }
@@ -204,14 +217,26 @@ function buildDirectories(roots) {
     return uniqueExisting(result);
 }
 
-function firstFile(builds, variants) {
+function firstFile(builds, variants, accept = undefined) {
     for (const build of builds) {
         for (const parts of variants) {
             const candidate = path.join(build, ...parts);
-            if (fs.existsSync(candidate)) return path.resolve(candidate);
+            if (fs.existsSync(candidate) && (!accept || accept(candidate)))
+                return path.resolve(candidate);
         }
     }
     return undefined;
+}
+
+function usablePluginManifest(candidate) {
+    try {
+        const manifest = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+        if (!manifest.library || typeof manifest.library !== 'string') return false;
+        const library = path.resolve(path.dirname(candidate), manifest.library);
+        return fs.existsSync(library);
+    } catch (_) {
+        return false;
+    }
 }
 
 function discoverPlugins(roots = []) {
@@ -221,7 +246,7 @@ function discoverPlugins(roots = []) {
     const desktop = firstFile(builds, [
         ['plugins', 'desktop', 'absolute-desktop.absplugin'],
         ['plugins', 'desktop', 'Release', 'absolute-desktop.absplugin']
-    ]);
+    ], usablePluginManifest);
     const math = firstFile(builds, [
         ['plugins', 'math', `absolute-math${libraryExtension}`],
         ['plugins', 'math', 'Release', `absolute-math${libraryExtension}`]

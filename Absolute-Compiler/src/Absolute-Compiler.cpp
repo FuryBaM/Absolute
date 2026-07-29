@@ -53,6 +53,7 @@ namespace {
         bool buildLibrary = false;
         bool parseOnly = false;
         bool sanitizeAddress = false;
+        bool debugInfo = false;
         std::optional<OptimizationLevel> optimizationLevel;
         std::string targetTriple; // empty => host default
         fs::path output;
@@ -132,6 +133,7 @@ namespace {
         std::vector<fs::path> nativeLibraries;
         std::vector<fs::path> nativeSearchPaths;
         bool sanitizeAddress = false;
+        bool debugInfo = false;
         OptimizationLevel optimizationLevel = OptimizationLevel::O3;
     };
 
@@ -146,6 +148,7 @@ namespace {
             << "  --parse-only | --emit-llvm | --emit-object | --build-exe | --build-library\n"
             << "  --target <triple>     host default, or e.g. wasm32-unknown-unknown\n"
             << "  -O0 | -O1 | -O2 | -O3\n"
+            << "  -g                    emit source and local-variable debug information\n"
             << "  --sanitize=address    (host targets only)\n"
             << "  --plugin path | --plugin-path directory | -o output\n";
     }
@@ -159,6 +162,7 @@ namespace {
             else if (argument == "--build-library") result.buildLibrary = true;
             else if (argument == "--parse-only") result.parseOnly = true;
             else if (argument == "--sanitize=address") result.sanitizeAddress = true;
+            else if (argument == "-g" || argument == "--debug-info") result.debugInfo = true;
             else if (argument == "-O0") {
                 result.optimizationLevel = OptimizationLevel::O0;
             }
@@ -499,7 +503,8 @@ namespace {
         if (canonical.extension() != ".abs")
             throw std::runtime_error("Absolute source must use the .abs extension: " + canonical.string());
 
-        std::unique_ptr<Program> program = ParseCode(Tokenize(ReadFile(canonical)));
+        std::unique_ptr<Program> program = ParseCode(
+            Tokenize(ReadFile(canonical)), canonical.string());
         if (!program) throw std::runtime_error("Parsing failed: " + canonical.string());
         ImportCollector imports;
         for (const auto& statement : program->statements) if (statement) statement->Accept(imports);
@@ -508,7 +513,8 @@ namespace {
             std::vector<fs::path> resolved = ResolveImportPath(canonical.parent_path(), imported.target, project);
             if (resolved.empty()) {
                 if (const std::string* virtualSource = FindPluginVirtualModule(imported.target)) {
-                    programs.push_back(ParseCode(Tokenize(*virtualSource)));
+                    programs.push_back(ParseCode(Tokenize(*virtualSource),
+                        "<plugin:" + imported.target + ">"));
                 }
                 else if (imported.isFile) {
                     throw std::runtime_error("Imported source does not exist: " + imported.target);
@@ -734,7 +740,8 @@ namespace {
         fs::path object = modulePath;
         object.replace_extension(".o");
         generator.GenerateObject(program, compilation.moduleName, object.string(),
-            false, targetTriple, compilation.optimizationLevel);
+            false, targetTriple, compilation.optimizationLevel,
+            compilation.debugInfo);
 
         std::vector<std::string> linkArgs = {
             "--no-entry",
@@ -842,7 +849,8 @@ namespace {
 #endif
         generator.GenerateObject(program, compilation.moduleName, object.string(),
             compilation.sanitizeAddress, {},
-            compilation.optimizationLevel);
+            compilation.optimizationLevel,
+            compilation.debugInfo);
 
         fs::path response = executable;
         response += ".absolute-link.rsp";
@@ -850,6 +858,11 @@ namespace {
 #ifdef _WIN32
         arguments << "/nologo\n/out:" << QuoteResponseArgument(executable)
             << "\n/subsystem:console\n/stack:67108864\n" << QuoteResponseArgument(object) << '\n';
+        if (compilation.debugInfo) {
+            fs::path pdb = executable;
+            pdb.replace_extension(".pdb");
+            arguments << "/debug:full\n/pdb:" << QuoteResponseArgument(pdb) << '\n';
+        }
 #ifdef ABSOLUTE_RUNTIME_LIBRARY
         arguments << QuoteResponseArgument(ABSOLUTE_RUNTIME_LIBRARY) << '\n';
 #endif
@@ -882,6 +895,7 @@ namespace {
         for (const fs::path& path : compilation.nativeSearchPaths)
             arguments << "-L" << QuoteResponseArgument(path) << '\n';
         if (compilation.sanitizeAddress) arguments << "-fsanitize=address\n";
+        if (compilation.debugInfo) arguments << "-g\n";
         arguments << "-o\n" << QuoteResponseArgument(executable) << '\n';
 #endif
         WriteFile(response, arguments.str());
@@ -935,7 +949,8 @@ namespace {
 #endif
         generator.GenerateObject(program, compilation.moduleName, object.string(),
             compilation.sanitizeAddress, {},
-            compilation.optimizationLevel);
+            compilation.optimizationLevel,
+            compilation.debugInfo);
 
         fs::path response = library;
         response += ".absolute-link.rsp";
@@ -946,6 +961,11 @@ namespace {
         arguments << "/nologo\n/dll\n/out:" << QuoteResponseArgument(library)
             << "\n/implib:" << QuoteResponseArgument(importLibrary)
             << '\n' << QuoteResponseArgument(object) << '\n';
+        if (compilation.debugInfo) {
+            fs::path pdb = library;
+            pdb.replace_extension(".pdb");
+            arguments << "/debug:full\n/pdb:" << QuoteResponseArgument(pdb) << '\n';
+        }
 #ifdef ABSOLUTE_RUNTIME_LIBRARY
         arguments << QuoteResponseArgument(ABSOLUTE_RUNTIME_LIBRARY) << '\n';
 #endif
@@ -975,6 +995,7 @@ namespace {
         for (const fs::path& path : compilation.nativeSearchPaths)
             arguments << "-L" << QuoteResponseArgument(path) << '\n';
         if (compilation.sanitizeAddress) arguments << "-fsanitize=address\n";
+        if (compilation.debugInfo) arguments << "-g\n";
         arguments << "-o\n" << QuoteResponseArgument(library) << '\n';
 #endif
         WriteFile(response, arguments.str());
@@ -1032,6 +1053,7 @@ int main(int argc, char* argv[]) {
         for (const fs::path& plugin : commandLine.plugins) plugins.Load(plugin);
         Compilation compilation = LoadCompilation(commandLine.input, plugins);
         compilation.sanitizeAddress = commandLine.sanitizeAddress;
+        compilation.debugInfo = commandLine.debugInfo;
         compilation.optimizationLevel =
             commandLine.optimizationLevel.value_or(
                 OptimizationLevel::O3);
@@ -1054,7 +1076,8 @@ int main(int argc, char* argv[]) {
             if (commandLine.emitLlvm) {
                 const std::string ir = generator.Generate(*compilation.program, compilation.moduleName,
                     commandLine.targetTriple,
-                    commandLine.optimizationLevel);
+                    commandLine.optimizationLevel,
+                    compilation.debugInfo);
                 if (commandLine.output.empty()) std::cout << ir;
                 else WriteFile(commandLine.output, ir);
             }
@@ -1074,7 +1097,8 @@ int main(int argc, char* argv[]) {
                 generator.GenerateObject(*compilation.program, compilation.moduleName,
                     output.string(), compilation.sanitizeAddress,
                     commandLine.targetTriple,
-                    compilation.optimizationLevel);
+                    compilation.optimizationLevel,
+                    compilation.debugInfo);
             }
             else if (commandLine.buildLibrary) {
                 if (wasmTarget || !commandLine.targetTriple.empty()) {

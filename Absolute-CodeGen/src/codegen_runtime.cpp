@@ -836,7 +836,7 @@ namespace Absolute {
     bool CodeGenerator::Impl::IsBuiltinFunction(const std::string& name) const {
         return name == "print" || name == "println" || name == "format" ||
             name == "toString" || name == "assert" || name == "copy" ||
-            name == "move" || name == "isOwner" ||
+            name == "move" || name == "isOwner" || name == "debugBreak" ||
             name == "adoptRaw" || name == "retainRaw" || name == "borrowRaw" || name == "share" ||
             name == "unsafeArrayGet" || name == "unsafeArraySet" ||
             name == "unsafeArrayData" ||

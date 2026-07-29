@@ -4,7 +4,9 @@
 namespace Absolute {
     extern "C++" {
         PARSER_API std::vector<Token> Tokenize(const std::string& code);
-        PARSER_API std::unique_ptr<Program> ParseCode(const std::vector<Token>& tokens);
+        PARSER_API std::unique_ptr<Program> ParseCode(
+            const std::vector<Token>& tokens,
+            const std::string& sourceFile = {});
     }
 
     class PARSER_API Parser {
@@ -12,9 +14,11 @@ namespace Absolute {
         std::vector<Token> tokens;
         std::vector<Token> modifiers;
         std::vector<Attribute> attributes;
+        std::string sourceFile;
         size_t pos = 0;
 
-        Parser(std::vector<Token> tokens) : tokens(std::move(tokens)) {}
+        Parser(std::vector<Token> tokens, std::string sourceFile = {})
+            : tokens(std::move(tokens)), sourceFile(std::move(sourceFile)) {}
 
         ~Parser() = default;
 
@@ -61,6 +65,7 @@ namespace Absolute {
         bool IsTemplateArgumentList(size_t start, size_t* close = nullptr) const;
 
         std::unique_ptr<Expression> ParseExpression();
+        std::unique_ptr<Expression> ParseExpressionImpl();
         std::vector<std::unique_ptr<VarDeclExpr>> ParseParameters();
         std::vector<std::unique_ptr<Expression>> ParseArguments();
         std::unique_ptr<AssignmentExpr> ParseAssignmentExpr(std::unique_ptr<Expression> leftValue);
@@ -93,6 +98,7 @@ namespace Absolute {
 
         std::unique_ptr<Program> Parse();
         std::unique_ptr<Statement> ParseStatement();
+        std::unique_ptr<Statement> ParseStatementImpl();
         std::unique_ptr<Statement> ParseIdentifier();
         std::unique_ptr<CompoundStmt> ParseCompoundStatement();
         std::unique_ptr<VarDeclStmt> ParseVarDeclaration();

@@ -811,6 +811,51 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-stability.abs"
     )
     add_test(
+        NAME absolute.debug-info-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/debug-info.abs"
+    )
+    add_test(
+        NAME absolute.debug-info-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/debug-info-errors.abs"
+    )
+    set_tests_properties(absolute.debug-info-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.debug-info-ir
+        COMMAND "${CMAKE_COMMAND}"
+            -DCOMPILER=$<TARGET_FILE:Absolute-Compiler>
+            -DSOURCE=${PROJECT_SOURCE_DIR}/tests/debug-info.abs
+            -DOUTPUT=${CMAKE_BINARY_DIR}/debug-info.ll
+            -DWIN32_EXPECTED=${WIN32}
+            -P "${PROJECT_SOURCE_DIR}/tests/check-debug-info-ir.cmake"
+    )
+    set(debug_info_executable
+        "${CMAKE_BINARY_DIR}/debug-info-app${CMAKE_EXECUTABLE_SUFFIX}")
+    add_test(
+        NAME absolute.build-debug-info
+        COMMAND Absolute-Compiler
+            "${PROJECT_SOURCE_DIR}/tests/debug-info.abs"
+            -g -O0 --build-exe -o "${debug_info_executable}"
+    )
+    set_tests_properties(absolute.build-debug-info PROPERTIES
+        FIXTURES_SETUP absolute-debug-info-executable)
+    add_test(
+        NAME absolute.debug-info-artifacts
+        COMMAND "${CMAKE_COMMAND}"
+            -DEXECUTABLE=${debug_info_executable}
+            -DWIN32_EXPECTED=${WIN32}
+            -DPDBUTIL=${LLVM_TOOLS_BINARY_DIR}/llvm-pdbutil${CMAKE_EXECUTABLE_SUFFIX}
+            -P "${PROJECT_SOURCE_DIR}/tests/check-debug-info-artifacts.cmake"
+    )
+    set_tests_properties(absolute.debug-info-artifacts PROPERTIES
+        FIXTURES_REQUIRED absolute-debug-info-executable)
+    add_test(
+        NAME absolute.run-debug-info
+        COMMAND "${debug_info_executable}"
+    )
+    set_tests_properties(absolute.run-debug-info PROPERTIES
+        FIXTURES_REQUIRED absolute-debug-info-executable
+        PASS_REGULAR_EXPRESSION "debug-info=ok")
+    add_test(
         NAME absolute.ownership-semantics-matrix-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-semantics-matrix-errors.abs"
     )

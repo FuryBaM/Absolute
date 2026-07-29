@@ -10,8 +10,10 @@ namespace Absolute{
         return ExpandSyntaxPlugins(lexer(code));
     }
 
-    std::unique_ptr<Program> ParseCode(const std::vector<Token>& tokens) {
-        Parser parser(tokens);
+    std::unique_ptr<Program> ParseCode(
+        const std::vector<Token>& tokens,
+        const std::string& sourceFile) {
+        Parser parser(tokens, sourceFile);
         return parser.Parse();
     }
 
@@ -33,6 +35,17 @@ namespace Absolute{
     }
 
     std::unique_ptr<Expression> Parser::ParseExpression() {
+        const Token* start = CurrentToken();
+        std::unique_ptr<Expression> expression = ParseExpressionImpl();
+        if (expression && start) {
+            expression->sourceFile = sourceFile;
+            expression->line = start->line;
+            expression->column = start->column;
+        }
+        return expression;
+    }
+
+    std::unique_ptr<Expression> Parser::ParseExpressionImpl() {
         Token* token = CurrentToken();
         if (!token) {
             ReportSyntaxError(token, "Token is null");
@@ -176,6 +189,18 @@ namespace Absolute{
     }
 
     std::unique_ptr<Statement> Parser::ParseStatement()
+    {
+        const Token* start = CurrentToken();
+        std::unique_ptr<Statement> statement = ParseStatementImpl();
+        if (statement && start) {
+            statement->sourceFile = sourceFile;
+            statement->line = start->line;
+            statement->column = start->column;
+        }
+        return statement;
+    }
+
+    std::unique_ptr<Statement> Parser::ParseStatementImpl()
     {
         ParseAttributes();
         ParseModifiers();

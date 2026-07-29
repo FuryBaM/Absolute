@@ -125,6 +125,7 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(VarDeclExpr* expr) {
+        impl->SetDebugLocation(expr);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("global variables are not implemented yet");
         if (impl->scopes.empty()) impl->Fail("variable declaration outside a scope");
@@ -189,6 +190,25 @@ namespace Absolute {
             if (!impl->scopes.back().emplace(name, std::move(variable)).second)
                 impl->Fail("duplicate variable '" + name + "'");
 
+            if (impl->debugBuilder) {
+                Impl::ArrayView debugView;
+                debugView.address = address;
+                debugView.elementType = elementType;
+                debugView.typeName = declaredTypeName;
+                debugView.dimensions = dimensions;
+                debugView.owner = llvm::ConstantPointerNull::get(
+                    impl->builder.getPtrTy());
+                llvm::Value* debugDescriptor =
+                    impl->BuildArrayDescriptor(debugView);
+                llvm::AllocaInst* debugStorage = impl->CreateEntryAlloca(
+                    *function, debugDescriptor->getType(),
+                    name + ".debug.descriptor");
+                impl->builder.CreateStore(debugDescriptor, debugStorage);
+                impl->DeclareDebugVariable(
+                    name, declaredTypeName, debugStorage, expr);
+                impl->RequireVariable(name).debugStorage = debugStorage;
+            }
+
             if (literal) {
                 std::vector<Expression*> values;
                 FlattenArrayValues(*literal, values);
@@ -237,6 +257,15 @@ namespace Absolute {
             if (!impl->scopes.back().emplace(name, std::move(variable)).second) {
                 impl->Fail("duplicate variable '" + name + "'");
             }
+            if (impl->debugBuilder) {
+                llvm::AllocaInst* debugStorage = impl->CreateEntryAlloca(
+                    *function, descriptor->getType(),
+                    name + ".debug.descriptor");
+                impl->builder.CreateStore(descriptor, debugStorage);
+                impl->DeclareDebugVariable(
+                    name, declaredTypeName, debugStorage, expr);
+                impl->RequireVariable(name).debugStorage = debugStorage;
+            }
             impl->value = impl->BuildArrayDescriptor(view);
             impl->valueCreatesManagedOwner = false;
             impl->valueCreatesArrayOwner = false;
@@ -269,6 +298,8 @@ namespace Absolute {
         initial = impl->Coerce(initial, type,
             expr->value ? impl->SemanticType(expr->value.get()) : typeName, typeName);
         impl->builder.CreateStore(initial, address);
+        impl->DeclareDebugVariable(
+            name, typeName, address, expr);
         if (functionValue)
             impl->RequireVariable(name).ownsAggregateResources = true;
         if (staticOwner && createsOwner && managedPointee) {
@@ -661,6 +692,7 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(InstanceDeclExpr* expr) {
+        impl->SetDebugLocation(expr);
         llvm::Function* function = impl->CurrentFunction();
         if (!function || impl->scopes.empty()) impl->Fail("object declaration outside a function");
         const std::string name = IdentifierName(expr->identifierName.get());
@@ -696,6 +728,15 @@ namespace Absolute {
                 if (!impl->scopes.back().emplace(name, std::move(variable)).second) {
                     impl->Fail("duplicate array variable '" + name + "'");
                 }
+                if (impl->debugBuilder) {
+                    llvm::AllocaInst* debugStorage = impl->CreateEntryAlloca(
+                        *function, descriptor->getType(),
+                        name + ".debug.descriptor");
+                    impl->builder.CreateStore(descriptor, debugStorage);
+                    impl->DeclareDebugVariable(
+                        name, typeName, debugStorage, expr);
+                    impl->RequireVariable(name).debugStorage = debugStorage;
+                }
                 impl->value = impl->BuildArrayDescriptor(view);
                 impl->valueCreatesManagedOwner = false;
                 impl->valueCreatesArrayOwner = false;
@@ -726,6 +767,8 @@ namespace Absolute {
                 Impl::Variable{address, type, typeName, staticOwner, false, nullptr, {},
                     nullptr, symbol}).second)
                 impl->Fail("duplicate variable '" + name + "'");
+            impl->DeclareDebugVariable(
+                name, typeName, address, expr);
             if (functionValue)
                 impl->RequireVariable(name).ownsAggregateResources = true;
             if (staticOwner && createsOwner && managedPointee) {
@@ -767,6 +810,8 @@ namespace Absolute {
         variable.ownsAggregateResources = impl->TypeNeedsCleanup(typeName);
         if (!impl->scopes.back().emplace(name, std::move(variable)).second)
             impl->Fail("duplicate object '" + name + "'");
+        impl->DeclareDebugVariable(
+            name, typeName, address, expr);
         impl->value = impl->builder.CreateLoad(llvmType, address, name + ".value");
         impl->valueCreatesManagedOwner = false;
     }
@@ -966,6 +1011,10 @@ namespace Absolute {
         const std::string savedClass = impl->currentClassName;
         llvm::Value* savedThis = impl->currentThis;
         const auto savedSubstitutions = impl->currentGenericSubstitutions;
+        llvm::DIScope* savedDebugScope = impl->currentDebugScope;
+        const auto savedDebugScopeStack = impl->debugScopeStack;
+        const llvm::DebugLoc savedDebugLocation =
+            impl->builder.getCurrentDebugLocation();
 
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(impl->context, "entry", lambda);
         impl->builder.SetInsertPoint(entry);
@@ -976,6 +1025,8 @@ namespace Absolute {
         impl->caughtExceptions.clear();
         impl->deferredScopes.clear();
         impl->PushScope();
+        impl->BeginDebugFunction(
+            *lambda, expr, "lambda." + std::to_string(lambdaId));
         impl->currentReturnTypeName = returnType;
         impl->currentClassName.clear();
         impl->currentThis = nullptr;
@@ -996,6 +1047,9 @@ namespace Absolute {
             if (!impl->scopes.back().emplace(captures[index].name,
                 std::move(variable)).second)
                 impl->Fail("duplicate lambda capture '" + captures[index].name + "'");
+            impl->DeclareDebugVariable(
+                captures[index].name, captures[index].type,
+                address, expr);
             if (captures[index].name == "this") {
                 impl->currentThis = impl->builder.CreateLoad(
                     captureTypes[index], address, "lambda.this");
@@ -1044,6 +1098,7 @@ namespace Absolute {
         }
 
         impl->PopScope();
+        impl->EndDebugFunction();
         impl->scopes = std::move(savedScopes);
         impl->loops = std::move(savedLoops);
         impl->exceptionTargets = std::move(savedExceptionTargets);
@@ -1056,6 +1111,9 @@ namespace Absolute {
         impl->currentThis = savedThis;
         impl->currentGenericSubstitutions = savedSubstitutions;
         impl->builder.restoreIP(savedInsertPoint);
+        impl->currentDebugScope = savedDebugScope;
+        impl->debugScopeStack = savedDebugScopeStack;
+        impl->builder.SetCurrentDebugLocation(savedDebugLocation);
 
         llvm::Value* environmentValue = llvm::ConstantPointerNull::get(
             impl->builder.getPtrTy());
@@ -1089,9 +1147,12 @@ namespace Absolute {
                 llvm::Function::InternalLinkage,
                 "__absolute.lambda.destroy." + std::to_string(lambdaId), *impl->module);
             const auto destroySaved = impl->builder.saveIP();
+            const llvm::DebugLoc destroySavedDebugLocation =
+                impl->builder.getCurrentDebugLocation();
             llvm::BasicBlock* destroyEntry = llvm::BasicBlock::Create(
                 impl->context, "entry", destroyEnvironment);
             impl->builder.SetInsertPoint(destroyEntry);
+            impl->builder.SetCurrentDebugLocation(llvm::DebugLoc());
             llvm::Value* destroyedEnvironment = destroyEnvironment->getArg(0);
             for (size_t index = 0; index < captures.size(); ++index) {
                 std::string capturedReturn;
@@ -1108,6 +1169,7 @@ namespace Absolute {
             impl->builder.CreateCall(impl->Free(), {destroyedEnvironment});
             impl->builder.CreateRetVoid();
             impl->builder.restoreIP(destroySaved);
+            impl->builder.SetCurrentDebugLocation(destroySavedDebugLocation);
         }
 
         if (captures.empty()) {

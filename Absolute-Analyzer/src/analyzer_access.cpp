@@ -389,6 +389,14 @@ namespace Absolute {
                 return;
             }
 
+            if (callName == "debugBreak") {
+                if (!arguments.empty())
+                    Report("debugBreak expects no arguments",
+                        "E_DEBUG_BREAK_ARGUMENT_COUNT");
+                Save(expr, {table.Lookup(callName), "void", false});
+                return;
+            }
+
             if (callName == "unsafeArrayGet" || callName == "unsafeArraySet") {
                 const bool isSet = callName == "unsafeArraySet";
                 const size_t expectedCount = isSet ? 3 : 2;

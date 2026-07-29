@@ -34,6 +34,40 @@
     </Expand>
   </Type>
 
+  <Type Name="AbsoluteArray1D&lt;*&gt;">
+    <DisplayString>{{data={data} owner={owner} len={length0}}}</DisplayString>
+    <Expand>
+      <Item Name="data">data</Item>
+      <Item Name="owner">owner</Item>
+      <Item Name="length">length0</Item>
+      <ArrayItems Condition="data != 0">
+        <Size>length0</Size>
+        <ValuePointer>data</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+
+  <Type Name="AbsoluteArray2D&lt;*&gt;">
+    <DisplayString>{{data={data} owner={owner} shape=[{length0}, {length1}]}}</DisplayString>
+    <Expand>
+      <Item Name="data">data</Item>
+      <Item Name="owner">owner</Item>
+      <Item Name="length[0]">length0</Item>
+      <Item Name="length[1]">length1</Item>
+    </Expand>
+  </Type>
+
+  <Type Name="AbsoluteArray3D&lt;*&gt;">
+    <DisplayString>{{data={data} owner={owner} shape=[{length0}, {length1}, {length2}]}}</DisplayString>
+    <Expand>
+      <Item Name="data">data</Item>
+      <Item Name="owner">owner</Item>
+      <Item Name="length[0]">length0</Item>
+      <Item Name="length[1]">length1</Item>
+      <Item Name="length[2]">length2</Item>
+    </Expand>
+  </Type>
+
   <Type Name="AbsoluteManagedHandle">
     <DisplayString Condition="raw == 0">null managed</DisplayString>
     <DisplayString Condition="raw != 0">
@@ -43,7 +77,24 @@
       <Item Name="raw">raw</Item>
       <Item Name="slot">(unsigned int)(raw &amp; 0xffffffff)</Item>
       <Item Name="generation">(unsigned int)(raw &gt;&gt; 32)</Item>
-      <Item Name="valid">raw != 0</Item>
+      <Item Name="valid" Optional="true">absolute_managed_valid(raw)</Item>
+      <Item Name="pointee address" Optional="true">absolute_managed_get(raw)</Item>
+    </Expand>
+  </Type>
+
+  <!-- Compiler-emitted semantic managed handle types, for example
+       AbsoluteManagedHandle&lt;Document*&gt;. -->
+  <Type Name="AbsoluteManagedHandle&lt;*&gt;">
+    <DisplayString Condition="raw == 0">null / moved / expired</DisplayString>
+    <DisplayString Condition="raw != 0">
+      managed slot={(unsigned int)(raw &amp; 0xffffffff)} gen={(unsigned int)(raw &gt;&gt; 32)}
+    </DisplayString>
+    <Expand>
+      <Item Name="raw">raw</Item>
+      <Item Name="slot">(unsigned int)(raw &amp; 0xffffffff)</Item>
+      <Item Name="generation">(unsigned int)(raw &gt;&gt; 32)</Item>
+      <Item Name="valid" Optional="true">absolute_managed_valid(raw)</Item>
+      <Item Name="pointee address" Optional="true">absolute_managed_get(raw)</Item>
     </Expand>
   </Type>
 

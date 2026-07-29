@@ -299,7 +299,7 @@ function executeProcessAndWait(command, args, cwd, useShell = false, environment
     });
 }
 
-async function buildAbsolute(requestedSource) {
+async function buildAbsolute(requestedSource, debug = false) {
     const editor = vscode.window.activeTextEditor;
     let source = requestedSource;
     if (!source && editor && (editor.document.languageId === 'absolute' ||
@@ -380,7 +380,8 @@ async function buildAbsolute(requestedSource) {
             .replace(/\{input\}/g, shellQuote(input))
             .replace(/\{output\}/g, shellQuote(executable))
             .replace(/\{workspace\}/g, shellQuote(workspace))
-            .replace(/\{plugins\}/g, pluginText);
+            .replace(/\{plugins\}/g, pluginText)
+            .replace(/\{debug\}/g, debug ? '-g -O0' : '');
         directCommand = command;
         directShell = true;
     } else {
@@ -399,6 +400,7 @@ async function buildAbsolute(requestedSource) {
         const args = [];
         if (path.extname(input) === '.absproj') args.push('build');
         args.push(input, ...configuredValue(configuration, localSettings, 'compilerArguments', []), ...pluginArguments,
+            ...(debug ? ['-g', '-O0'] : []),
             projectType === 'lib' ? '--build-library' : '--build-exe', '-o', executable);
         if (folder) execution = new vscode.ProcessExecution(compiler, args, {
             cwd: workspace,
@@ -501,7 +503,7 @@ async function openProject(resource) {
 async function runProject(resource, debug = false) {
     const projectFile = await chooseProject(resource, true);
     if (!projectFile) return;
-    const artifact = await buildAbsolute(projectFile);
+    const artifact = await buildAbsolute(projectFile, debug);
     if (!artifact) return;
     if (artifact.projectType === 'lib') {
         vscode.window.showInformationMessage(`Absolute library built: ${artifact.executable}`);
@@ -692,7 +694,7 @@ async function activate(context) {
             if (artifact) await runArtifact(artifact, artifact.runArguments);
         }),
         vscode.commands.registerCommand('absolute.debugFile', async () => {
-            const artifact = await buildAbsolute();
+            const artifact = await buildAbsolute(undefined, true);
             if (artifact) await startNativeDebug(artifact, { args: artifact.runArguments });
         }),
         // Map breakpoints placed in absolute-opaque: virtual documents back to the host .abs line.
@@ -728,7 +730,7 @@ async function activate(context) {
                         workspace: expandVariables(launch.cwd || folder?.uri.fsPath || path.dirname(program), folder, program),
                         folder
                     };
-                } else artifact = await buildAbsolute(launch.source);
+                } else artifact = await buildAbsolute(launch.source, true);
                 if (artifact) setTimeout(() => startNativeDebug(artifact, launch), 0);
                 return undefined;
             }

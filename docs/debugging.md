@@ -14,6 +14,47 @@ Visualizer files ship in [`debugging/`](../debugging/):
 | `absolute_debug_types.h` | Optional cast helpers for the watch window |
 
 The extension sets `visualizerFile` to `debugging/Absolute.natvis` when present.
+`F5` builds with `-g -O0`, so breakpoints can be placed directly on executable
+lines in `.abs` files. `Ctrl+F5` keeps the regular optimized build.
+
+The command-line equivalent is:
+
+```bat
+absolutec program.abs -g -O0 --build-exe -o program.exe
+```
+
+On Windows this emits CodeView information plus `program.pdb`. On Linux and
+macOS it emits DWARF. `debugBreak()` is a zero-argument builtin that lowers to a
+native debugger trap and can be guarded by normal program logic:
+
+```absolute
+if (shouldPause) {
+    debugBreak();
+}
+```
+
+### Locals, places, values, and roles
+
+Named parameters and locals carry their Absolute source names and types.
+
+- A local or mutable parameter is a debugger-visible **place**. Watch `counter`
+  for its current value and `&counter` for its storage address.
+- A by-value parameter has independent storage, so its address differs from the
+  caller's place.
+- `ref` parameters resolve to the caller's place; their address is stable across
+  the call.
+- Managed owner, subscriber, and weak values use the same visible handle type.
+  The compiler also exposes a synthetic `<parameter>.isOwner` boolean for
+  callable parameters. This reflects the runtime role delivered by an ordinary
+  call or `move(...)`.
+- The managed NatVis view shows slot, generation, current validity, and the
+  current pointee address. The last two fields call read-only runtime lookup
+  helpers and may be unavailable when debugger function evaluation is disabled.
+- Arrays show `data`, allocation `owner`, every dimension, and 1D elements.
+
+An arbitrary unnamed expression is an SSA temporary and is not promised a
+stable address. Assign it to a named local when it must be watched across source
+steps.
 
 ### Layouts
 
@@ -32,8 +73,8 @@ The extension sets `visualizerFile` to `debugging/Absolute.natvis` when present.
 
 **Task** — opaque `void*` task record (`absolute_task_*` runtime).
 
-Without full DWARF/CodeView emission from `absolutec`, locals may appear as
-untyped storage. Cast in the watch window:
+For old binaries built without `-g`, locals may still appear as untyped
+storage. Cast them in the watch window:
 
 ```text
 (AbsoluteArray1D*)&myArray

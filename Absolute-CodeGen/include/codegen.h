@@ -29,11 +29,13 @@ namespace Absolute {
         // targetTriple empty => host default (llvm::sys::getDefaultTargetTriple()).
         std::string Generate(Program& program, const std::string& moduleName,
             const std::string& targetTriple = {},
-            std::optional<OptimizationLevel> optimizationLevel = std::nullopt);
+            std::optional<OptimizationLevel> optimizationLevel = std::nullopt,
+            bool debugInfo = false);
         void GenerateObject(Program& program, const std::string& moduleName,
             const std::string& outputPath, bool sanitizeAddress = false,
             const std::string& targetTriple = {},
-            OptimizationLevel optimizationLevel = OptimizationLevel::O3);
+            OptimizationLevel optimizationLevel = OptimizationLevel::O3,
+            bool debugInfo = false);
 
         void Visit(PrimitiveTypeExpr* expr) override;
         void Visit(UserTypeExpr* expr) override;

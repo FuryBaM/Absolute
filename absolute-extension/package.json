@@ -156,7 +156,7 @@
         "absolute.buildCommand": {
           "type": "string",
           "default": "",
-          "description": "Optional shell build command. Placeholders: {input}, {output}, {workspace}, {plugins}. Overrides compilerPath for native builds."
+          "description": "Optional shell build command. Placeholders: {input}, {output}, {workspace}, {plugins}, {debug}. Overrides compilerPath for native builds."
         },
         "absolute.outputDirectory": {
           "type": "string",

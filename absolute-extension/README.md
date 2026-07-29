@@ -29,6 +29,12 @@ Language support for `.abs` files with:
 
 See also [docs/debugging.md](https://github.com/FuryBaM/Absolute/blob/main/docs/debugging.md) for natvis, GDB printers, and layouts.
 
+`F5` builds native output with `-g -O0`, emits PDB/CodeView on Windows or DWARF
+elsewhere, and supports source breakpoints in `.abs` files. Locals, addresses,
+array descriptors, managed handles, and synthetic parameter role values such as
+`node.isOwner` are available in the native debugger. `debugBreak()` provides an
+in-language conditional trap.
+
 ## Settings
 
 | Setting | Purpose |

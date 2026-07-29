@@ -33,6 +33,10 @@ namespace Absolute {
     };
 
     struct ASTNode {
+        std::string sourceFile;
+        int line = 0;
+        int column = 0;
+
         virtual ~ASTNode() = default;
 
         virtual void print(int indent = 0) {

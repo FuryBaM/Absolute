@@ -61,6 +61,245 @@ namespace Absolute {
         }
     }
 
+    llvm::DIFile* CodeGenerator::Impl::DebugFile(const ASTNode* node) {
+        if (!debugBuilder) return nullptr;
+        const std::string source = node && !node->sourceFile.empty()
+            ? node->sourceFile : module->getModuleIdentifier();
+        if (const auto found = debugFiles.find(source);
+            found != debugFiles.end()) return found->second;
+
+        std::filesystem::path path(source);
+        const std::string filename = path.filename().string().empty()
+            ? source : path.filename().string();
+        const std::string directory = path.has_parent_path()
+            ? path.parent_path().string() : std::string(".");
+        llvm::DIFile* file = debugBuilder->createFile(filename, directory);
+        debugFiles.emplace(source, file);
+        return file;
+    }
+
+    llvm::DIType* CodeGenerator::Impl::DebugType(
+        const std::string& originalTypeName) {
+        if (!debugBuilder) return nullptr;
+        const std::string typeName =
+            ValueReferenceBaseTypeName(originalTypeName);
+        if (const auto found = debugTypes.find(typeName);
+            found != debugTypes.end()) return found->second;
+
+        llvm::DIType* type = nullptr;
+        auto basic = [&](uint64_t bits, unsigned encoding) {
+            return debugBuilder->createBasicType(typeName, bits, encoding);
+        };
+        if (const size_t rank = ArrayRankName(typeName); rank > 0) {
+            llvm::DIFile* file = defaultDebugFile;
+            const uint32_t pointerBits = module->getDataLayout().isDefault()
+                ? 64 : module->getDataLayout().getPointerSizeInBits();
+            llvm::DIType* elementPointer = debugBuilder->createPointerType(
+                DebugType(ArrayElementTypeName(typeName, rank)), pointerBits);
+            llvm::DIType* voidPointer = debugBuilder->createPointerType(
+                debugBuilder->createUnspecifiedType("void"), pointerBits);
+            llvm::DIType* lengthType = debugBuilder->createBasicType(
+                "int64", 64, llvm::dwarf::DW_ATE_signed);
+            std::vector<llvm::Metadata*> members;
+            members.push_back(debugBuilder->createMemberType(
+                file, "data", file, 0, pointerBits, pointerBits, 0,
+                llvm::DINode::FlagZero, elementPointer));
+            members.push_back(debugBuilder->createMemberType(
+                file, "owner", file, 0, pointerBits, pointerBits,
+                pointerBits, llvm::DINode::FlagZero, voidPointer));
+            for (size_t dimension = 0; dimension < rank; ++dimension) {
+                members.push_back(debugBuilder->createMemberType(
+                    file, "length" + std::to_string(dimension),
+                    file, 0, 64, 64,
+                    pointerBits * 2 + dimension * 64,
+                    llvm::DINode::FlagZero, lengthType));
+            }
+            const uint64_t size = pointerBits * 2 + rank * 64;
+            type = debugBuilder->createStructType(
+                file, "AbsoluteArray" + std::to_string(rank) + "D<" +
+                    ArrayElementTypeName(typeName, rank) + ">",
+                file, 0, size, pointerBits, llvm::DINode::FlagZero,
+                nullptr, debugBuilder->getOrCreateArray(members));
+        }
+        else if (IsRawPointerTypeName(typeName)) {
+            type = debugBuilder->createPointerType(
+                DebugType(PointerPointeeName(typeName)),
+                module->getDataLayout().getPointerSizeInBits());
+        }
+        else if (IsManagedPointerTypeName(typeName)) {
+            llvm::DIFile* file = defaultDebugFile;
+            llvm::DIType* raw = debugBuilder->createBasicType(
+                "uint64", 64, llvm::dwarf::DW_ATE_unsigned);
+            llvm::Metadata* members[] = {
+                debugBuilder->createMemberType(
+                    file, "raw", file, 0, 64, 64, 0,
+                    llvm::DINode::FlagZero, raw)
+            };
+            type = debugBuilder->createStructType(
+                file, "AbsoluteManagedHandle<" + typeName + ">",
+                file, 0, 64, 64, llvm::DINode::FlagZero,
+                nullptr, debugBuilder->getOrCreateArray(members));
+        }
+        else if (typeName == "bool")
+            type = basic(8, llvm::dwarf::DW_ATE_boolean);
+        else if (typeName == "char" || typeName.starts_with("uint")) {
+            const uint64_t bits = typeName == "char" ? 8 :
+                static_cast<uint64_t>(std::stoul(typeName.substr(4)));
+            type = basic(bits, llvm::dwarf::DW_ATE_unsigned);
+        }
+        else if (typeName.starts_with("int")) {
+            type = basic(
+                static_cast<uint64_t>(std::stoul(typeName.substr(3))),
+                llvm::dwarf::DW_ATE_signed);
+        }
+        else if (typeName == "float")
+            type = basic(32, llvm::dwarf::DW_ATE_float);
+        else if (typeName == "double")
+            type = basic(64, llvm::dwarf::DW_ATE_float);
+        else if (typeName == "string")
+            type = debugBuilder->createPointerType(
+                debugBuilder->createBasicType(
+                    "char", 8, llvm::dwarf::DW_ATE_signed_char),
+                module->getDataLayout().getPointerSizeInBits());
+        else {
+            llvm::StructType* llvmType = nullptr;
+            const std::vector<ClassField>* fields = nullptr;
+            const ASTNode* declaration = nullptr;
+            if (const auto found = structs.find(typeName);
+                found != structs.end()) {
+                llvmType = found->second.llvmType;
+                fields = &found->second.fields;
+                declaration = found->second.statement;
+            }
+            else if (const auto found = classes.find(typeName);
+                found != classes.end()) {
+                llvmType = found->second.llvmType;
+                fields = &found->second.fields;
+                declaration = found->second.statement;
+            }
+            if (!llvmType || !fields || module->getDataLayout().isDefault()) {
+                type = debugBuilder->createUnspecifiedType(typeName);
+            }
+            else {
+                // Break recursive raw-pointer type graphs while member
+                // metadata is assembled.
+                debugTypes.emplace(
+                    typeName, debugBuilder->createUnspecifiedType(typeName));
+                llvm::DIFile* file = DebugFile(declaration);
+                const llvm::StructLayout* layout =
+                    module->getDataLayout().getStructLayout(llvmType);
+                std::vector<llvm::Metadata*> members;
+                for (const ClassField& field : *fields) {
+                    llvm::Type* fieldType =
+                        llvmType->getStructElementType(field.index);
+                    members.push_back(debugBuilder->createMemberType(
+                        file, field.name, file,
+                        declaration && declaration->line > 0
+                            ? static_cast<unsigned>(declaration->line) : 0U,
+                        module->getDataLayout()
+                            .getTypeAllocSizeInBits(fieldType),
+                        static_cast<uint32_t>(module->getDataLayout()
+                            .getABITypeAlign(fieldType).value() * 8),
+                        layout->getElementOffsetInBits(field.index),
+                        llvm::DINode::FlagZero,
+                        DebugType(field.typeName)));
+                }
+                type = debugBuilder->createStructType(
+                    file, typeName, file,
+                    declaration && declaration->line > 0
+                        ? static_cast<unsigned>(declaration->line) : 0U,
+                    module->getDataLayout()
+                        .getTypeAllocSizeInBits(llvmType),
+                    static_cast<uint32_t>(module->getDataLayout()
+                        .getABITypeAlign(llvmType).value() * 8),
+                    llvm::DINode::FlagZero, nullptr,
+                    debugBuilder->getOrCreateArray(members));
+            }
+        }
+        debugTypes.insert_or_assign(typeName, type);
+        return type;
+    }
+
+    void CodeGenerator::Impl::BeginDebugFunction(
+        llvm::Function& function, const ASTNode* node,
+        const std::string& sourceName) {
+        if (!debugBuilder) return;
+        llvm::DIFile* file = DebugFile(node);
+        const unsigned line = node && node->line > 0
+            ? static_cast<unsigned>(node->line) : 1U;
+        llvm::DISubroutineType* signature =
+            debugBuilder->createSubroutineType(
+                debugBuilder->getOrCreateTypeArray({}));
+        llvm::DISubprogram::DISPFlags flags =
+            llvm::DISubprogram::SPFlagDefinition;
+        if (currentOptimizationLevel != OptimizationLevel::O0)
+            flags |= llvm::DISubprogram::SPFlagOptimized;
+        llvm::DISubprogram* subprogram = debugBuilder->createFunction(
+            file, sourceName, function.getName(), file, line,
+            signature, line, llvm::DINode::FlagPrototyped, flags);
+        function.setSubprogram(subprogram);
+        currentDebugScope = subprogram;
+        debugScopeStack.clear();
+        debugScopeStack.push_back(subprogram);
+        builder.SetCurrentDebugLocation(
+            llvm::DILocation::get(context, line, 1, subprogram));
+    }
+
+    void CodeGenerator::Impl::EndDebugFunction() {
+        debugScopeStack.clear();
+        currentDebugScope = nullptr;
+        builder.SetCurrentDebugLocation(llvm::DebugLoc());
+    }
+
+    void CodeGenerator::Impl::PushDebugScope(const ASTNode* node) {
+        if (!debugBuilder || !currentDebugScope) return;
+        llvm::DIFile* file = DebugFile(node);
+        const unsigned line = node && node->line > 0
+            ? static_cast<unsigned>(node->line) : 1U;
+        const unsigned column = node && node->column > 0
+            ? static_cast<unsigned>(node->column) : 1U;
+        currentDebugScope = debugBuilder->createLexicalBlock(
+            currentDebugScope, file, line, column);
+        debugScopeStack.push_back(currentDebugScope);
+    }
+
+    void CodeGenerator::Impl::PopDebugScope() {
+        if (!debugBuilder || debugScopeStack.size() <= 1) return;
+        debugScopeStack.pop_back();
+        currentDebugScope = debugScopeStack.back();
+    }
+
+    void CodeGenerator::Impl::SetDebugLocation(const ASTNode* node) {
+        if (!debugBuilder || !currentDebugScope || !node ||
+            node->line <= 0) return;
+        builder.SetCurrentDebugLocation(llvm::DILocation::get(
+            context, static_cast<unsigned>(node->line),
+            static_cast<unsigned>(std::max(node->column, 1)),
+            currentDebugScope));
+    }
+
+    void CodeGenerator::Impl::DeclareDebugVariable(
+        const std::string& name, const std::string& typeName,
+        llvm::Value* storage, const ASTNode* node,
+        bool parameter, unsigned argumentIndex) {
+        if (!debugBuilder || !currentDebugScope || !storage) return;
+        llvm::DIFile* file = DebugFile(node);
+        const unsigned line = node && node->line > 0
+            ? static_cast<unsigned>(node->line) : 1U;
+        llvm::DILocalVariable* variable = parameter
+            ? debugBuilder->createParameterVariable(
+                currentDebugScope, name, argumentIndex,
+                file, line, DebugType(typeName), true)
+            : debugBuilder->createAutoVariable(
+                currentDebugScope, name, file, line,
+                DebugType(typeName), true);
+        const llvm::DILocation* location = llvm::DILocation::get(
+            context, line, 1, currentDebugScope);
+        debugBuilder->insertDeclare(
+            storage, variable, debugBuilder->createExpression(),
+            location, builder.GetInsertBlock());
+    }
+
     llvm::Constant* CodeGenerator::Impl::GlobalConstant(Expression* expression, llvm::Type* type) {
         if (!expression) return llvm::Constant::getNullValue(type);
         if (auto* number = dynamic_cast<NumberLiteralExpr*>(expression)) {
@@ -278,6 +517,8 @@ namespace Absolute {
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
         builder.SetInsertPoint(entry);
         PushScope();
+        BeginDebugFunction(*function, &statement,
+            specialization ? specialization->name : statement.name->value);
         const std::string oldReturnTypeName = currentReturnTypeName;
         llvm::Value* oldReturnStorage = currentReturnStorage;
         currentReturnTypeName = specialization
@@ -308,6 +549,7 @@ namespace Absolute {
                 PopScope();
                 currentReturnTypeName = oldReturnTypeName;
                 currentReturnStorage = oldReturnStorage;
+                EndDebugFunction();
                 builder.ClearInsertionPoint();
                 currentGenericSubstitutions = oldSubstitutions;
                 currentNamespace = oldNamespace;
@@ -330,6 +572,7 @@ namespace Absolute {
         PopScope();
         currentReturnTypeName = oldReturnTypeName;
         currentReturnStorage = oldReturnStorage;
+        EndDebugFunction();
         builder.ClearInsertionPoint();
         currentGenericSubstitutions = oldSubstitutions;
         currentNamespace = oldNamespace;
@@ -357,6 +600,9 @@ namespace Absolute {
                 name + ".is_owner");
             builder.CreateStore(ownershipArgument,
                 variable.ownershipFlagStorage);
+            DeclareDebugVariable(
+                name + ".isOwner", "bool",
+                variable.ownershipFlagStorage, &parameter);
         };
         if (ArrayRankName(typeName) > 0) {
             ArrayView view = ArrayViewFromValue(&argument, typeName);
@@ -381,6 +627,16 @@ namespace Absolute {
             bindOwnershipFlag(variable);
             if (!scopes.back().emplace(name, std::move(variable)).second)
                 Fail("duplicate parameter '" + name + "'");
+            if (debugBuilder) {
+                llvm::AllocaInst* debugStorage = CreateEntryAlloca(
+                    *argument.getParent(), argument.getType(),
+                    name + ".debug.descriptor");
+                builder.CreateStore(&argument, debugStorage);
+                DeclareDebugVariable(
+                    name, typeName, debugStorage, &parameter,
+                    true, argument.getArgNo() + 1);
+                RequireVariable(name).debugStorage = debugStorage;
+            }
             return;
         }
         if (!external && (valueReference || IsIndirectValueType(typeName))) {
@@ -391,6 +647,9 @@ namespace Absolute {
             bindOwnershipFlag(variable);
             if (!scopes.back().emplace(name, std::move(variable)).second)
                 Fail("duplicate parameter '" + name + "'");
+            DeclareDebugVariable(
+                name, typeName, &argument, &parameter,
+                true, argument.getArgNo() + 1);
             return;
         }
         // C ABI may pass bool as i8; store Absolute locals as the language type (i1).
@@ -406,6 +665,9 @@ namespace Absolute {
         bindOwnershipFlag(variable);
         if (!scopes.back().emplace(name, std::move(variable)).second)
             Fail("duplicate parameter '" + name + "'");
+        DeclareDebugVariable(
+            name, typeName, address, &parameter,
+            true, argument.getArgNo() + 1);
     }
 
     void CodeGenerator::Impl::FinishClassCallable(llvm::Function& function) {
@@ -433,6 +695,9 @@ namespace Absolute {
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
         builder.SetInsertPoint(entry);
         PushScope();
+        BeginDebugFunction(
+            *function, method.statement,
+            info.name + "." + method.statement->name->value);
         const std::string oldClass = currentClassName;
         llvm::Value* oldThis = currentThis;
         const std::string oldReturn = currentReturnTypeName;
@@ -491,6 +756,7 @@ namespace Absolute {
         currentReturnTypeName = oldReturn;
         currentReturnStorage = oldReturnStorage;
         currentGenericSubstitutions = oldSubstitutions;
+        EndDebugFunction();
         builder.ClearInsertionPoint();
     }
 
@@ -501,6 +767,10 @@ namespace Absolute {
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
         builder.SetInsertPoint(entry);
         PushScope();
+        BeginDebugFunction(
+            *function, constructor ? static_cast<ASTNode*>(constructor)
+                                   : static_cast<ASTNode*>(info.statement),
+            info.name + "." + info.name);
         const std::string oldClass = currentClassName;
         llvm::Value* oldThis = currentThis;
         const std::string oldReturn = currentReturnTypeName;
@@ -608,6 +878,7 @@ namespace Absolute {
         currentThis = oldThis;
         currentReturnTypeName = oldReturn;
         currentGenericSubstitutions = oldSubstitutions;
+        EndDebugFunction();
         builder.ClearInsertionPoint();
     }
 
@@ -639,6 +910,9 @@ namespace Absolute {
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
         builder.SetInsertPoint(entry);
         PushScope();
+        BeginDebugFunction(
+            *function, method.statement,
+            info.name + "." + method.statement->name->value);
         const std::string oldClass = currentClassName;
         llvm::Value* oldThis = currentThis;
         const std::string oldReturn = currentReturnTypeName;
@@ -669,6 +943,7 @@ namespace Absolute {
         currentReturnTypeName = oldReturn;
         currentReturnStorage = oldReturnStorage;
         currentGenericSubstitutions = oldSubstitutions;
+        EndDebugFunction();
         builder.ClearInsertionPoint();
     }
 
@@ -687,6 +962,9 @@ namespace Absolute {
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
         builder.SetInsertPoint(entry);
         PushScope();
+        BeginDebugFunction(
+            *function, method.statement,
+            info.name + "." + method.statement->name->value);
         const std::string oldClass = currentClassName;
         llvm::Value* oldThis = currentThis;
         const std::string oldReturn = currentReturnTypeName;
@@ -745,6 +1023,7 @@ namespace Absolute {
         currentReturnTypeName = oldReturn;
         currentReturnStorage = oldReturnStorage;
         currentGenericSubstitutions = oldSubstitutions;
+        EndDebugFunction();
         builder.ClearInsertionPoint();
     }
 
@@ -763,6 +1042,8 @@ namespace Absolute {
             llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
             builder.SetInsertPoint(entry);
             PushScope();
+            BeginDebugFunction(
+                *function, constructor, info.name + "." + info.name);
             const std::string oldClass = currentClassName;
             llvm::Value* oldThis = currentThis;
             const std::string oldReturn = currentReturnTypeName;
@@ -789,6 +1070,7 @@ namespace Absolute {
             currentThis = oldThis;
             currentReturnTypeName = oldReturn;
             currentGenericSubstitutions = oldSubstitutions;
+            EndDebugFunction();
             builder.ClearInsertionPoint();
         }
     }
@@ -809,6 +1091,33 @@ namespace Absolute {
         module = std::make_unique<llvm::Module>(moduleName, context);
         if (!targetTriple.empty()) module->setTargetTriple(targetTriple);
         if (!dataLayout.empty()) module->setDataLayout(dataLayout);
+        debugBuilder.reset();
+        debugCompileUnit = nullptr;
+        defaultDebugFile = nullptr;
+        currentDebugScope = nullptr;
+        debugFiles.clear();
+        debugTypes.clear();
+        if (debugInfoEnabled) {
+            debugBuilder = std::make_unique<llvm::DIBuilder>(*module);
+            defaultDebugFile = DebugFile();
+            debugCompileUnit = debugBuilder->createCompileUnit(
+                llvm::dwarf::DW_LANG_C_plus_plus_14,
+                defaultDebugFile,
+                "Absolute Compiler",
+                currentOptimizationLevel != OptimizationLevel::O0,
+                "", 0);
+            module->addModuleFlag(
+                llvm::Module::Warning, "Debug Info Version",
+                llvm::DEBUG_METADATA_VERSION);
+            if (llvm::Triple(module->getTargetTriple()).isOSWindows()) {
+                module->addModuleFlag(
+                    llvm::Module::Warning, "CodeView", 1);
+            }
+            else {
+                module->addModuleFlag(
+                    llvm::Module::Warning, "Dwarf Version", 4);
+            }
+        }
         scopes.clear();
         globals.clear();
         arrayDescriptorTypes.clear();
@@ -877,6 +1186,7 @@ namespace Absolute {
             }
         }
 
+        if (debugBuilder) debugBuilder->finalize();
         std::string verifierMessage;
         llvm::raw_string_ostream verifierStream(verifierMessage);
         if (llvm::verifyModule(*module, &verifierStream)) {
@@ -914,7 +1224,11 @@ namespace Absolute {
 
     std::string CodeGenerator::Impl::Generate(Program& program, const std::string& moduleName,
         const std::string& targetTriple,
-        std::optional<OptimizationLevel> optimizationLevel) {
+        std::optional<OptimizationLevel> optimizationLevel,
+        bool debugInfo) {
+        debugInfoEnabled = debugInfo;
+        currentOptimizationLevel =
+            optimizationLevel.value_or(OptimizationLevel::O0);
         const std::string triple = ResolveTargetTriple(targetTriple);
         llvm::Module& generatedModule =
             BuildModule(program, moduleName, triple);
@@ -932,8 +1246,11 @@ namespace Absolute {
     void CodeGenerator::Impl::GenerateObject(Program& program, const std::string& moduleName,
         const std::string& outputPath, bool sanitizeAddress,
         const std::string& targetTriple,
-        OptimizationLevel optimizationLevel) {
+        OptimizationLevel optimizationLevel,
+        bool debugInfo) {
         InitializeCodegenTargets();
+        debugInfoEnabled = debugInfo;
+        currentOptimizationLevel = optimizationLevel;
 
         const std::string tripleName = ResolveTargetTriple(targetTriple);
         const llvm::Triple triple(tripleName);

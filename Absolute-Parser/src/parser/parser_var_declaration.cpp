@@ -4,6 +4,7 @@
 namespace Absolute {
     std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclExpr()
     {
+        const Token* start = CurrentToken();
         std::unique_ptr<TypeExpr> type = ParseType();
         if (CurrentToken() && CurrentToken()->type == TokenType::OPERATOR &&
             CurrentToken()->value == "&") {
@@ -16,13 +17,27 @@ namespace Absolute {
 
         // Объявление переменной без инициализации
         if (IsEndOfStatement(*CurrentToken()) || CurrentToken()->type == TokenType::KEYWORD) {
-            return std::make_unique<VarDeclExpr>(std::move(type), std::move(nameExpr), nullptr);
+            auto declaration = std::make_unique<VarDeclExpr>(
+                std::move(type), std::move(nameExpr), nullptr);
+            if (start) {
+                declaration->sourceFile = sourceFile;
+                declaration->line = start->line;
+                declaration->column = start->column;
+            }
+            return declaration;
         }
         // Объявление переменной с инициализацией
         else if (CurrentToken()->type == TokenType::OPERATOR) {
             Consume(TokenType::OPERATOR);
             std::unique_ptr<Expression> value = ParseExpression();
-            return std::make_unique<VarDeclExpr>(std::move(type), std::move(nameExpr), std::move(value));
+            auto declaration = std::make_unique<VarDeclExpr>(
+                std::move(type), std::move(nameExpr), std::move(value));
+            if (start) {
+                declaration->sourceFile = sourceFile;
+                declaration->line = start->line;
+                declaration->column = start->column;
+            }
+            return declaration;
         }
         std::exit(EXIT_FAILURE);
         return nullptr;

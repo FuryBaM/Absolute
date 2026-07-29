@@ -182,17 +182,18 @@ namespace Absolute {
 
     std::string CodeGenerator::Generate(Program& program, const std::string& moduleName,
         const std::string& targetTriple,
-        std::optional<OptimizationLevel> optimizationLevel) {
+        std::optional<OptimizationLevel> optimizationLevel,
+        bool debugInfo) {
         return impl->Generate(
-            program, moduleName, targetTriple, optimizationLevel);
+            program, moduleName, targetTriple, optimizationLevel, debugInfo);
     }
 
     void CodeGenerator::GenerateObject(
         Program& program, const std::string& moduleName, const std::string& outputPath,
         bool sanitizeAddress, const std::string& targetTriple,
-        OptimizationLevel optimizationLevel) {
+        OptimizationLevel optimizationLevel, bool debugInfo) {
         impl->GenerateObject(
             program, moduleName, outputPath, sanitizeAddress,
-            targetTriple, optimizationLevel);
+            targetTriple, optimizationLevel, debugInfo);
     }
 }

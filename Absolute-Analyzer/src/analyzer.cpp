@@ -57,6 +57,7 @@ namespace Absolute {
         table.Declare(SymbolKind::Function, "format", "string", {"string", "..."});
         table.Declare(SymbolKind::Function, "toString", "string", {"dynamic"});
         table.Declare(SymbolKind::Function, "assert", "void", {"bool", "string?"});
+        table.Declare(SymbolKind::Function, "debugBreak", "void", {});
         table.Declare(SymbolKind::Function, "load", "bool", {"string"});
         table.Declare(SymbolKind::Function, "isLoaded", "bool", {"string"});
         table.Declare(SymbolKind::Function, "loadError", "string", {});

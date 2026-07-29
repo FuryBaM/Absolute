@@ -40,9 +40,25 @@
 
         std::string Generate(Program& program, const std::string& moduleName,
             const std::string& targetTriple = {},
-            std::optional<OptimizationLevel> optimizationLevel = std::nullopt);
+            std::optional<OptimizationLevel> optimizationLevel = std::nullopt,
+            bool debugInfo = false);
 
         void GenerateObject(Program& program, const std::string& moduleName,
             const std::string& outputPath, bool sanitizeAddress = false,
             const std::string& targetTriple = {},
-            OptimizationLevel optimizationLevel = OptimizationLevel::O3);
+            OptimizationLevel optimizationLevel = OptimizationLevel::O3,
+            bool debugInfo = false);
+
+        llvm::DIFile* DebugFile(const ASTNode* node = nullptr);
+        llvm::DIType* DebugType(const std::string& typeName);
+        void BeginDebugFunction(
+            llvm::Function& function, const ASTNode* node,
+            const std::string& sourceName);
+        void EndDebugFunction();
+        void PushDebugScope(const ASTNode* node);
+        void PopDebugScope();
+        void SetDebugLocation(const ASTNode* node);
+        void DeclareDebugVariable(
+            const std::string& name, const std::string& typeName,
+            llvm::Value* storage, const ASTNode* node,
+            bool parameter = false, unsigned argumentIndex = 0);

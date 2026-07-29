@@ -151,6 +151,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(SingleStatement* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies || !stmt->expr) return;
+        impl->SetDebugLocation(stmt);
         impl->valueCreatesArrayOwner = false;
         impl->valueArrayOwner = nullptr;
         if (impl->SemanticType(stmt->expr.get()) == "void") stmt->expr->Accept(*this);
@@ -161,16 +162,20 @@ namespace Absolute {
 
     void CodeGenerator::Visit(CompoundStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
+        impl->PushDebugScope(stmt);
         impl->PushScope();
         for (const auto& statement : stmt->statements) {
             if (!statement || impl->builder.GetInsertBlock()->getTerminator()) break;
             statement->Accept(*this);
         }
         impl->PopScope(true);
+        impl->PopDebugScope();
     }
 
     void CodeGenerator::Visit(FunctionCallStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies || !stmt->value) return;
+        impl->SetDebugLocation(stmt);
         impl->valueCreatesArrayOwner = false;
         impl->valueArrayOwner = nullptr;
         if (impl->SemanticType(stmt->value.get()) == "void") stmt->value->Accept(*this);
@@ -195,6 +200,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(ReturnStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("return outside a function");
         if (function->getReturnType()->isVoidTy() && !impl->currentReturnStorage) {
@@ -248,6 +254,7 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(AssignmentStmt* stmt) {
+        impl->SetDebugLocation(stmt);
         if (impl->phase == Impl::Phase::EmitBodies && stmt->expr) stmt->expr->Accept(*this);
     }
 
@@ -259,6 +266,7 @@ namespace Absolute {
             return;
         }
         if (!impl->CurrentFunction()) return;
+        impl->SetDebugLocation(stmt);
         const Attribute* previousSpawnAttribute = impl->currentSpawnAttribute;
         impl->currentSpawnAttribute = stmt->FindAttribute("spawn");
         stmt->expr->Accept(*this);
@@ -327,6 +335,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(IfStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("if outside a function");
 
@@ -356,6 +365,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(SwitchStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("switch outside a function");
 
@@ -388,6 +398,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(ThrowStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         llvm::Value* handle = nullptr;
         llvm::Value* type = nullptr;
         SymbolId transferredOwner = InvalidSymbolId;
@@ -417,6 +428,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(TryStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("try outside a function");
 
@@ -513,6 +525,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(DeferStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         if (!impl->CurrentFunction() || impl->deferredScopes.empty())
             impl->Fail("defer outside a function scope");
         impl->deferredScopes.back().push_back(stmt);
@@ -520,6 +533,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(ForStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("for outside a function");
 
@@ -552,6 +566,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(WhileStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("while outside a function");
 
@@ -592,6 +607,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(DoWhileStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("do-while outside a function");
 
@@ -613,6 +629,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(ForEachStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("foreach outside a function");
         const std::string iterableType = impl->SemanticType(stmt->iterable.get());
@@ -780,8 +797,8 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(ContinueStmt* stmt) {
-        (void)stmt;
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         if (impl->loops.empty()) impl->Fail("continue outside a loop");
         impl->EmitTransferCleanups(impl->loops.back().scopeCount, true);
         if (impl->builder.GetInsertBlock()->getTerminator()) return;
@@ -789,8 +806,8 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(BreakStmt* stmt) {
-        (void)stmt;
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         if (impl->loops.empty()) impl->Fail("break outside a loop");
         impl->EmitTransferCleanups(impl->loops.back().scopeCount, true);
         if (impl->builder.GetInsertBlock()->getTerminator()) return;
