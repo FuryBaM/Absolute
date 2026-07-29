@@ -6,11 +6,13 @@ namespace Absolute{
     {
         bool raw = false;
         bool weak = false;
+        bool shared = false;
         if (CurrentToken() && CurrentToken()->type == TokenType::KEYWORD &&
-            (CurrentToken()->value == "raw" || CurrentToken()->value == "weak")) {
+            (CurrentToken()->value == "raw" || CurrentToken()->value == "weak" || CurrentToken()->value == "shared")) {
             raw = CurrentToken()->value == "raw";
             weak = CurrentToken()->value == "weak";
-            Consume(TokenType::KEYWORD, raw ? "raw" : "weak");
+            shared = CurrentToken()->value == "shared";
+            Consume(TokenType::KEYWORD, CurrentToken()->value);
         }
         Token* current = RequireCurrent("a type");
         std::unique_ptr<TypeExpr> base;

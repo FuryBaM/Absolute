@@ -646,6 +646,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/forward-builtin.abs"
     )
     add_test(
+        NAME absolute.memory-ownership-advanced-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/memory-ownership-advanced.abs"
+    )
+    add_test(
         NAME absolute.base-language-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/base-language-errors.abs"
     )
@@ -1243,6 +1247,14 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-forward-builtin-ir
         )
         add_test(
+            NAME absolute.emit-memory-ownership-advanced
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/memory-ownership-advanced.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/memory-ownership-advanced.ll"
+        )
+        set_tests_properties(absolute.emit-memory-ownership-advanced PROPERTIES
+            FIXTURES_SETUP absolute-memory-ownership-advanced-ir
+        )
+        add_test(
             NAME absolute.emit-multidimensional-slices
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/multidimensional-slices.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/multidimensional-slices.ll"
@@ -1486,6 +1498,14 @@ if(BUILD_TESTING)
             set_tests_properties(absolute.run-forward-builtin PROPERTIES
                 FIXTURES_REQUIRED absolute-forward-builtin-ir
                 PASS_REGULAR_EXPRESSION "forward-builtin=ok"
+            )
+            add_test(
+                NAME absolute.run-memory-ownership-advanced
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/memory-ownership-advanced.ll"
+            )
+            set_tests_properties(absolute.run-memory-ownership-advanced PROPERTIES
+                FIXTURES_REQUIRED absolute-memory-ownership-advanced-ir
+                PASS_REGULAR_EXPRESSION "memory-ownership-advanced=ok"
             )
             add_test(
                 NAME absolute.run-multidimensional-slices

@@ -1,0 +1,15 @@
+class Document {
+    public string title;
+    public Document(string t) {
+        title = t;
+    }
+}
+
+void main() {
+    raw Document* rawPtr = new raw Document("test");
+    Document* adopted = adoptRaw(rawPtr);
+    Document* retained = retainRaw(adopted);
+    shared Document* sharedDoc = share(move(retained));
+    assert(adopted.title == "test", "adopted title check");
+    print("memory-ownership-advanced=ok");
+}

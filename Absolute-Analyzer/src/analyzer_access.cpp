@@ -503,6 +503,99 @@ namespace Absolute {
                 return;
             }
 
+            if (callName == "adoptRaw") {
+                if (arguments.empty() || arguments.size() > 2) {
+                    Report("adoptRaw expects 1 or 2 arguments: raw T* and optional deleter", "E_ADOPT_RAW_ARGUMENTS");
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                const Result& argument = arguments.front();
+                if (!IsRawPointerType(argument.type)) {
+                    Report("adoptRaw requires a raw pointer 'raw T*'", "E_ADOPT_RAW_TYPE");
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                if (argument.symbol != InvalidSymbolId) {
+                    if (auto flow = valueFlow.find(argument.symbol); flow != valueFlow.end()) {
+                        flow->second.initialization = InitializationState::Uninitialized;
+                        flow->second.pointerValidity = PointerValidity::MaybeNull;
+                    }
+                    if (auto keep = keepLifetimes.find(argument.symbol); keep != keepLifetimes.end()) {
+                        keep->second.state = KeepState::Deleted;
+                    }
+                }
+                std::string targetType = PointerPointee(argument.type) + "*";
+                Result result = {table.Lookup(callName), targetType, false};
+                result.createsManagedOwner = true;
+                result.initialization = InitializationState::Initialized;
+                result.pointerValidity = PointerValidity::Live;
+                Save(expr, result);
+                return;
+            }
+
+            if (callName == "retainRaw") {
+                if (arguments.empty() || arguments.size() > 2) {
+                    Report("retainRaw expects 1 or 2 arguments", "E_RETAIN_RAW_ARGUMENTS");
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                const Result& argument = arguments.front();
+                if (!IsRawPointerType(argument.type) && !IsManagedPointerType(argument.type)) {
+                    Report("retainRaw requires a pointer target", "E_RETAIN_RAW_TYPE");
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                std::string targetType = IsRawPointerType(argument.type)
+                    ? PointerPointee(argument.type) + "*" : argument.type;
+                Result result = {table.Lookup(callName), targetType, false};
+                result.createsManagedOwner = true;
+                result.initialization = InitializationState::Initialized;
+                result.pointerValidity = PointerValidity::Live;
+                Save(expr, result);
+                return;
+            }
+
+            if (callName == "borrowRaw") {
+                if (arguments.size() != 1) {
+                    Report("borrowRaw expects exactly 1 argument", "E_BORROW_RAW_ARGUMENTS");
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                const Result& argument = arguments.front();
+                if (!IsRawPointerType(argument.type)) {
+                    Report("borrowRaw requires a raw pointer 'raw T*'", "E_BORROW_RAW_TYPE");
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                std::string targetType = "view " + PointerPointee(argument.type);
+                Result result = {table.Lookup(callName), targetType, false};
+                result.initialization = InitializationState::Initialized;
+                result.pointerValidity = PointerValidity::Live;
+                Save(expr, result);
+                return;
+            }
+
+            if (callName == "share") {
+                if (arguments.size() != 1) {
+                    Report("share expects exactly 1 argument", "E_SHARE_ARGUMENTS");
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                const Result& argument = arguments.front();
+                if (!IsStrongManagedPointerType(argument.type)) {
+                    Report("share requires a strong managed pointer 'T*'", "E_SHARE_TYPE");
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                std::string targetType = "shared " + argument.type;
+                Result result = {table.Lookup(callName), targetType, false};
+                result.createsManagedOwner = true;
+                result.initialization = InitializationState::Initialized;
+                result.pointerValidity = PointerValidity::Live;
+                Save(expr, result);
+                return;
+            }
+
             if (callName == "seal") {
                 if (!explicitTypeArguments.empty())
                     Report("seal does not accept explicit type arguments",

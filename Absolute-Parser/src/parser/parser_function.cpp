@@ -38,7 +38,7 @@ namespace Absolute {
     {
         size_t index = pos;
         if (index < tokens.size() && tokens[index].type == TokenType::KEYWORD &&
-            (tokens[index].value == "raw" || tokens[index].value == "weak"))
+            (tokens[index].value == "raw" || tokens[index].value == "weak" || tokens[index].value == "shared"))
             ++index;
         if (index >= tokens.size()) return false;
         if (tokens[index].type == TokenType::KEYWORD && IsPrimitiveType(tokens[index].value)) {

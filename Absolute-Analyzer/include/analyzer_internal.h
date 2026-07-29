@@ -46,6 +46,10 @@ namespace Absolute {
             return type.starts_with("weak ") && type.ends_with("*");
         }
 
+        inline bool IsSharedPointerType(const std::string& type) {
+            return type.starts_with("shared ") && type.ends_with("*");
+        }
+
         inline bool IsManagedPointerType(const std::string& type) {
             return !IsRawPointerType(type) && type.ends_with("*");
         }
@@ -55,12 +59,13 @@ namespace Absolute {
         }
 
         inline bool IsPointerType(const std::string& type) {
-            return IsRawPointerType(type) || IsManagedPointerType(type);
+            return IsRawPointerType(type) || IsManagedPointerType(type) || IsSharedPointerType(type);
         }
 
         inline std::string PointerPointee(std::string type) {
             if (IsRawPointerType(type)) type.erase(0, 4);
             else if (IsWeakPointerType(type)) type.erase(0, 5);
+            else if (IsSharedPointerType(type)) type.erase(0, 7);
             if (!type.empty() && type.back() == '*') type.pop_back();
             return type;
         }
@@ -322,6 +327,7 @@ namespace Absolute {
         inline bool IsBuiltinFunction(const std::string& name) {
             return name == "print" || name == "println" || name == "format" ||
                 name == "toString" || name == "assert" || name == "copy" || name == "move" || name == "forward" ||
+                name == "adoptRaw" || name == "retainRaw" || name == "borrowRaw" || name == "share" ||
                 name == "seal" || name == "unseal" ||
                 name == "load" || name == "isLoaded" || name == "loadError" ||
                 name == "taskGroupAdd" || name == "tuple";

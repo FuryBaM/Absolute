@@ -150,6 +150,32 @@ namespace Absolute {
             return;
         }
 
+        if (name == "adoptRaw" || name == "retainRaw" || name == "borrowRaw" || name == "share") {
+            if (expression.arguments.empty()) Fail(name + " expects at least 1 argument");
+            llvm::Value* argValue = Evaluate(expression.arguments.front().get());
+            if (name == "borrowRaw" || name == "share") {
+                value = argValue;
+                return;
+            }
+            llvm::Value* deleterVal = expression.arguments.size() > 1
+                ? Evaluate(expression.arguments[1].get())
+                : llvm::ConstantPointerNull::get(builder.getPtrTy());
+            if (!argValue->getType()->isPointerTy()) {
+                argValue = builder.CreateIntToPtr(argValue, builder.getPtrTy());
+            }
+            if (name == "adoptRaw") {
+                llvm::FunctionType* funcType = llvm::FunctionType::get(
+                    builder.getInt64Ty(), {builder.getPtrTy(), builder.getPtrTy()}, false);
+                llvm::FunctionCallee fn = module->getOrInsertFunction("absolute_managed_adopt_raw", funcType);
+                value = builder.CreateCall(fn, {argValue, deleterVal}, "adopt.handle");
+                valueCreatesManagedOwner = true;
+            } else if (name == "retainRaw") {
+                value = argValue;
+                valueCreatesManagedOwner = true;
+            }
+            return;
+        }
+
         if (name == "seal") {
             if (expression.arguments.size() != 1)
                 Fail("seal expects exactly one moved managed owner");
