@@ -513,8 +513,10 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   - [x] `std.io`: `Reader`, `Writer`, buffered streams и memory streams.
 - [ ] P1 platform:
   - [x] Расширить `std.fs`: directory listing/walk, metadata, temporary files и watcher.
-  - [ ] Расширить `std.http`: headers collection, HTTPS/TLS, redirects, streaming,
-    timeout/cancellation и multipart.
+  - [ ] Расширить `std.http`:
+    - [x] Типизированная case-insensitive headers collection для client/server.
+    - [x] Redirects, body streaming callback, timeout/cancellation и multipart.
+    - [ ] HTTPS/TLS transport с проверкой сертификатов и platform trust store.
   - [ ] `Semaphore`, `RwLock`, `ConditionVariable` и `Once`.
   - [x] `std.mime` модуль для авто-определения MIME типов по расширению файла.
   - [x] `std.form` модуль для парсинга `application/x-www-form-urlencoded` и `multipart/form-data`.

@@ -4,7 +4,7 @@ Source tree for the Absolute `std.*` namespaces.
 
 | | |
 |--|--|
-| Package | `absolute.std` **0.6.0** (`abspackage.json`) |
+| Package | `absolute.std` **0.7.0** (`abspackage.json`) |
 | Policy | [`docs/standard-library.md`](../docs/standard-library.md) |
 
 ## Quick import
@@ -39,6 +39,22 @@ asset.push("wall.png");
 string[] files = std.fs.walk("assets");
 std.fs.Metadata info = std.fs.metadata(files[0]);
 ```
+
+HTTP requests use typed, case-insensitive headers and explicit request options:
+
+```absolute
+std.http.Headers* headers = new std.http.Headers();
+headers.put("Accept", "application/json");
+std.http.RequestOptions* options = new std.http.RequestOptions();
+options.timeoutMilliseconds = 2000;
+std.http.HttpResponse* response =
+    std.http.request("GET", "http://localhost:8080/data", "", headers, options);
+println(response.headers.value("Content-Type"));
+```
+
+Redirects, cancellation, body callbacks, and multipart form-data are supported
+over plain HTTP. HTTPS is rejected explicitly until the transport has
+certificate validation and platform trust-store integration.
 
 Priority queues accept a comparator. A negative result means that `left` is
 dequeued before `right`; equal priorities preserve insertion order:
@@ -95,4 +111,4 @@ See the namespace ↔ file map in `docs/standard-library.md`.
 ## Versioning
 
 - SemVer on the package: breaking Stable APIs bump **MINOR** while `0.x`, **MAJOR** from `1.0.0`.
-- Prefer `^0.6.0` only if you accept 0.x preview churn; pin tighter for production.
+- Prefer `^0.7.0` only if you accept 0.x preview churn; pin tighter for production.

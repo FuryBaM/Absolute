@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.0
+
+- Added case-insensitive typed HTTP header collections to requests, responses,
+  and server contexts.
+- Added bounded redirects, configurable socket timeouts and response-size
+  limits, and cooperative request cancellation.
+- Added response-body streaming callbacks and multipart form-data encoding
+  compatible with `std.form.parseMultipart`.
+- Added native localhost execution coverage for client/server headers,
+  redirects, streaming, cancellation, and multipart, plus WebAssembly
+  regressions for the portable HTTP model.
+- HTTPS remains explicit and unsupported until the socket transport gains TLS
+  certificate validation and a platform trust-store backend.
+
 ## 0.6.0
 
 - Added deterministic `std.fs.list()` and recursive `walk()` snapshots plus a

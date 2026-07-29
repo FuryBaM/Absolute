@@ -1257,7 +1257,7 @@ The in-tree standard library lives under `std/` and is packaged as
 are defined in [`docs/standard-library.md`](docs/standard-library.md). Package
 identity: [`std/abspackage.json`](std/abspackage.json).
 
-## Filesystem and TCP
+## Filesystem, TCP, and HTTP
 
 `std/fs.abs` provides UTF-8 path helpers, whole-file text operations, directory
 creation, copy/rename/remove, and the resource-owning `std.fs.File` stream:
@@ -1294,7 +1294,10 @@ delete listener;
 Text returned by a stream/socket read is a borrowed UTF-8 view valid until the
 next read on that same object; top-level filesystem result strings are valid
 until the next top-level result-producing filesystem call on the current thread.
-UDP, HTTP/URI, and async I/O are intentionally separate follow-up layers.
+`std/http.abs` builds typed request/response headers, redirects, streaming body
+callbacks, cancellation, and multipart forms on top of TCP. The current
+transport supports plain `http://`; `https://` is rejected until TLS
+certificate validation and platform trust-store integration are implemented.
 
 For a Release build, replace `Debug` with `Release`.
 

@@ -22,7 +22,7 @@ Dependents declare:
 ```json
 {
   "dependencies": {
-    "absolute.std": "^0.6.0"
+    "absolute.std": "^0.7.0"
   }
 }
 ```
@@ -291,6 +291,39 @@ if (watcher.poll()) {
 `createTempDirectory(prefix)` use the host temporary location on native
 targets and `/tmp` in the WebAssembly virtual filesystem. `Watcher.poll()` is
 non-blocking and reports deterministic created, modified, or removed events.
+
+### HTTP requests and server contexts
+
+`std.http.Headers` stores ordered, case-insensitive HTTP fields. `add()` keeps
+another field, while `put()` replaces the first matching field. `value()`,
+`contains()`, `remove()`, and `at()` provide typed access without exposing the
+wire representation.
+
+`RequestOptions` configures the socket timeout, redirect limit, response-size
+limit, redirect policy, and an owned `CancellationToken`. Calling
+`options.cancellation.cancel()` makes the next cooperative request boundary
+fail with `Error`.
+
+```absolute
+std.http.Headers* headers = new std.http.Headers();
+headers.put("X-Request-Id", "42");
+std.http.RequestOptions* options = new std.http.RequestOptions();
+options.timeoutMilliseconds = 2000;
+
+std.http.HttpResponse* response = std.http.request(
+    "GET", "http://127.0.0.1:8080/status", "", headers, options);
+println(response.statusCode);
+println(response.headers.value("Content-Type"));
+```
+
+`fetchStream()` delivers response-body chunks to a `func<void, string>`
+callback. `multipartBody()` and `postMultipart()` encode `std.form.FormData`.
+`HttpServer.accept()` exposes parsed request headers, and `HttpContext.send()`
+accepts either a content type or a typed response header collection.
+
+The current socket transport accepts `http://` only. `https://` is rejected
+explicitly: TLS will become supported only with certificate validation,
+hostname verification, and platform trust-store integration.
 
 Application projects may provide default arguments:
 

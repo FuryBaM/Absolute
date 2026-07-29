@@ -1,38 +1,199 @@
 import "string.abs";
 import "net.abs";
 import "uri.abs";
+import "task.abs";
+import "form.abs";
+import "collections/vector.abs";
 
 namespace std.http {
+    struct Header {
+        public string name;
+        public string value;
+
+        public Header clone() const {
+            Header result;
+            result.name = name;
+            result.value = value;
+            return result;
+        }
+    }
+
+    Header createHeader(string name, string value) {
+        Header result;
+        result.name = name;
+        result.value = value;
+        return result;
+    }
+
+    class Headers {
+        private std.collections.Vector<Header>* entries;
+
+        public Headers() {
+            entries = new std.collections.Vector<Header>();
+        }
+
+        private int32 find(string name) {
+            string normalized = std.text.toLower(name);
+            int32 index = 0;
+            while (index < entries.count) {
+                Header entry = entries[index];
+                if (std.text.toLower(entry.name) == normalized) {
+                    return index;
+                }
+                index = index + 1;
+            }
+            return -1;
+        }
+
+        public int32 count {
+            get { return entries.count; }
+        }
+
+        public void add(string name, string value) {
+            entries.push(createHeader(name, value));
+        }
+
+        public void put(string name, string value) {
+            int32 index = find(name);
+            if (index < 0) {
+                add(name, value);
+                return;
+            }
+            entries[index] = createHeader(name, value);
+        }
+
+        public bool contains(string name) {
+            return find(name) >= 0;
+        }
+
+        public string value(string name) {
+            int32 index = find(name);
+            if (index < 0) { return ""; }
+            Header entry = entries[index];
+            return entry.value;
+        }
+
+        public Header at(int32 index) {
+            return entries[index];
+        }
+
+        public void remove(string name) {
+            int32 index = find(name);
+            if (index >= 0) { entries.removeAt(index); }
+        }
+
+        public string toText() {
+            std.text.StringBuilder* builder = new std.text.StringBuilder();
+            defer delete builder;
+            int32 index = 0;
+            while (index < entries.count) {
+                Header entry = entries[index];
+                builder.append(entry.name);
+                builder.append(": ");
+                builder.append(entry.value);
+                builder.append("\r\n");
+                index = index + 1;
+            }
+            return builder.toString();
+        }
+
+        public Headers* clone() {
+            Headers* result = new Headers();
+            int32 index = 0;
+            while (index < entries.count) {
+                Header entry = entries[index];
+                result.add(entry.name, entry.value);
+                index = index + 1;
+            }
+            return result;
+        }
+
+        public void destroy() {
+            entries = null;
+        }
+
+        public void dispose() { destroy(); }
+    }
+
+    Headers* parseHeaders(string text) {
+        Headers* result = new Headers();
+        string[] lines = std.text.split(text, "\r\n");
+        int32 index = 0;
+        while (index < lines.length) {
+            int32 separator = std.text.indexOf(lines[index], ":");
+            if (separator > 0) {
+                string name = std.text.trim(
+                    std.text.substring(lines[index], 0, separator));
+                string value = std.text.trim(std.text.substring(
+                    lines[index],
+                    separator + 1,
+                    std.text.codePointCount(lines[index]) - separator - 1));
+                result.add(name, value);
+            }
+            index = index + 1;
+        }
+        return result;
+    }
+
+    class RequestOptions {
+        public int32 timeoutMilliseconds;
+        public int32 maximumRedirects;
+        public int32 maximumResponseBytes;
+        public bool followRedirects;
+        public std.task.CancellationToken* cancellation;
+
+        public RequestOptions() {
+            timeoutMilliseconds = 5000;
+            maximumRedirects = 5;
+            maximumResponseBytes = 16 * 1024 * 1024;
+            followRedirects = true;
+            cancellation = new std.task.CancellationToken();
+        }
+
+        public bool isCancelled() {
+            return std.task.cancelled() || cancellation.isCancelled();
+        }
+
+        public void destroy() { cancellation = null; }
+        public void dispose() { destroy(); }
+    }
+
     class HttpRequest {
         public string method;
         public string url;
-        public string headers;
+        public Headers* headers;
         public string body;
 
         public HttpRequest(string methodVal, string urlVal, string bodyVal) {
             method = methodVal;
             url = urlVal;
-            headers = "";
+            headers = new Headers();
             body = bodyVal;
         }
+
+        public void destroy() { headers = null; }
+        public void dispose() { destroy(); }
     }
 
     class HttpResponse {
         public int32 statusCode;
         public string statusText;
-        public string headers;
+        public Headers* headers;
         public string body;
 
         public HttpResponse() {
             statusCode = 200;
             statusText = "OK";
-            headers = "";
+            headers = new Headers();
             body = "";
         }
 
         public bool isSuccess() {
             return statusCode >= 200 && statusCode < 300;
         }
+
+        public void destroy() { headers = null; }
+        public void dispose() { destroy(); }
     }
 
     HttpResponse* parseResponse(string responseRaw) {
@@ -48,7 +209,7 @@ namespace std.http {
             headerEnd + 4,
             std.text.codePointCount(responseRaw) - (headerEnd + 4));
         string headerPart = std.text.substring(responseRaw, 0, headerEnd);
-        response.headers = headerPart;
+        response.headers = parseHeaders(headerPart);
 
         int32 firstLineEnd = std.text.indexOf(headerPart, "\r\n");
         string statusLine = headerPart;
@@ -80,12 +241,16 @@ namespace std.http {
         return response;
     }
 
-    std.net.TcpSocket* connectWithRetry(string host, int32 port) {
+    std.net.TcpSocket* connectWithRetry(
+        string host, int32 port, RequestOptions* options) {
         int32 attempts = 0;
         while (attempts < 20) {
+            if (options.isCancelled()) {
+                throw new Error("HTTP request cancelled");
+            }
             try {
                 std.net.TcpSocket* socket = std.net.connect(host, port);
-                socket.setTimeout(5000);
+                socket.setTimeout(options.timeoutMilliseconds);
                 return socket;
             }
             catch (Error* e) {
@@ -95,50 +260,264 @@ namespace std.http {
         throw new Error(format("HTTP failed to connect to {}:{}", host, port));
     }
 
-    HttpResponse* fetch(string urlStr) {
-        std.uri.Uri* uri = std.uri.parse(urlStr);
-        defer delete uri;
-
-        std.net.TcpSocket* socket = connectWithRetry(uri.host, uri.port);
-        defer delete socket;
-
-        string path = uri.path;
-        if (uri.query != "") {
-            path = format("{}?{}", path, uri.query);
+    string receiveAll(
+        std.net.TcpSocket* socket, RequestOptions* options,
+        func<void, string> onChunk, bool streamBody) {
+        std.text.StringBuilder* result = new std.text.StringBuilder();
+        defer delete result;
+        int32 receivedBytes = 0;
+        bool bodyStarted = false;
+        while (true) {
+            if (options.isCancelled()) {
+                throw new Error("HTTP request cancelled");
+            }
+            string chunk = socket.receive(8192);
+            if (chunk == "") {
+                if (std.net.error() != "") {
+                    throw new Error(format(
+                        "HTTP receive failed: {}", std.net.error()));
+                }
+                break;
+            }
+            receivedBytes = receivedBytes + std.text.byteCount(chunk);
+            if (receivedBytes > options.maximumResponseBytes) {
+                throw new Error("HTTP response exceeds maximumResponseBytes");
+            }
+            result.append(chunk);
+            if (streamBody) {
+                if (bodyStarted) {
+                    onChunk(chunk);
+                } else {
+                    string received = result.toString();
+                    int32 headerEnd = std.text.indexOf(received, "\r\n\r\n");
+                    if (headerEnd >= 0) {
+                        bodyStarted = true;
+                        int32 bodyStart = headerEnd + 4;
+                        int32 bodyLength =
+                            std.text.codePointCount(received) - bodyStart;
+                        if (bodyLength > 0) {
+                            onChunk(std.text.substring(
+                                received, bodyStart, bodyLength));
+                        }
+                    }
+                }
+            }
         }
-        string reqStr = format(
-            "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-            path,
-            uri.host);
-        socket.send(reqStr);
-
-        string responseRaw = socket.receive(65536);
-        return parseResponse(responseRaw);
+        return result.toString();
     }
 
-    HttpResponse* post(string urlStr, string bodyText, string contentType) {
-        std.uri.Uri* uri = std.uri.parse(urlStr);
-        defer delete uri;
+    string receiveAll(std.net.TcpSocket* socket, RequestOptions* options) {
+        return receiveAll(socket, options, null, false);
+    }
 
-        std.net.TcpSocket* socket = connectWithRetry(uri.host, uri.port);
-        defer delete socket;
-
+    string requestTarget(std.uri.Uri* uri) {
         string path = uri.path;
         if (uri.query != "") {
             path = format("{}?{}", path, uri.query);
         }
-        int32 bodyLen = std.text.byteCount(bodyText);
+        return path;
+    }
+
+    string redirectUrl(string currentUrl, string location) {
+        if (std.text.startsWith(location, "http://") ||
+            std.text.startsWith(location, "https://")) {
+            return location;
+        }
+        std.uri.Uri* current = std.uri.parse(currentUrl);
+        defer delete current;
+        if (std.text.startsWith(location, "/")) {
+            current.path = location;
+            current.query = "";
+            current.fragment = "";
+            return current.toString();
+        }
+        string basePath = current.path;
+        int32 slash = std.text.lastIndexOf(basePath, "/");
+        if (slash >= 0) {
+            basePath = std.text.substring(basePath, 0, slash + 1);
+        }
+        current.path = format("{}{}", basePath, location);
+        current.query = "";
+        current.fragment = "";
+        return current.toString();
+    }
+
+    bool isRedirect(int32 statusCode) {
+        return statusCode == 301 || statusCode == 302 ||
+            statusCode == 303 || statusCode == 307 || statusCode == 308;
+    }
+
+    HttpResponse* sendOnce(
+        string method, string urlStr, string bodyText,
+        Headers* requestHeaders, RequestOptions* options,
+        func<void, string> onChunk, bool streamBody) {
+        std.uri.Uri* uri = std.uri.parse(urlStr);
+        defer delete uri;
+        if (uri.scheme != "http") {
+            throw new Error(format(
+                "HTTP scheme '{}' is not supported by the socket transport; HTTPS/TLS backend is pending",
+                uri.scheme));
+        }
+
+        std.net.TcpSocket* socket =
+            connectWithRetry(uri.host, uri.port, options);
+        defer delete socket;
+
+        Headers* headers = requestHeaders.clone();
+        defer delete headers;
+        if (!headers.contains("Host")) {
+            headers.put("Host", uri.host);
+        }
+        headers.put("Connection", "close");
+        if (bodyText != "" || method == "POST" || method == "PUT" ||
+            method == "PATCH") {
+            headers.put("Content-Length", format(
+                "{}", std.text.byteCount(bodyText)));
+        }
         string reqStr = format(
-            "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            path,
-            uri.host,
-            contentType,
-            bodyLen,
+            "{} {} HTTP/1.1\r\n{}\r\n{}",
+            method,
+            requestTarget(uri),
+            headers.toText(),
             bodyText);
         socket.send(reqStr);
 
-        string responseRaw = socket.receive(65536);
+        string responseRaw =
+            receiveAll(socket, options, onChunk, streamBody);
         return parseResponse(responseRaw);
+    }
+
+    HttpResponse* request(
+        string method, string urlStr, string bodyText,
+        Headers* headers, RequestOptions* options) {
+        string currentUrl = urlStr;
+        string currentMethod = method;
+        string currentBody = bodyText;
+        int32 redirects = 0;
+        while (true) {
+            HttpResponse* response = sendOnce(
+                currentMethod, currentUrl, currentBody,
+                headers, options, null, false);
+            if (!options.followRedirects || !isRedirect(response.statusCode)) {
+                return response;
+            }
+            string location = response.headers.value("Location");
+            if (location == "") { return response; }
+            if (redirects >= options.maximumRedirects) {
+                delete response;
+                throw new Error("HTTP redirect limit exceeded");
+            }
+            currentUrl = redirectUrl(currentUrl, location);
+            if (response.statusCode == 303 ||
+                ((response.statusCode == 301 || response.statusCode == 302) &&
+                    currentMethod == "POST")) {
+                currentMethod = "GET";
+                currentBody = "";
+            }
+            redirects = redirects + 1;
+            delete response;
+        }
+        throw new Error("unreachable HTTP redirect state");
+    }
+
+    HttpResponse* request(
+        string method, string urlStr, string bodyText, Headers* headers) {
+        RequestOptions* options = new RequestOptions();
+        defer delete options;
+        return request(method, urlStr, bodyText, headers, options);
+    }
+
+    HttpResponse* fetch(string urlStr, RequestOptions* options) {
+        Headers* headers = new Headers();
+        defer delete headers;
+        return request("GET", urlStr, "", headers, options);
+    }
+
+    HttpResponse* fetch(string urlStr) {
+        RequestOptions* options = new RequestOptions();
+        defer delete options;
+        return fetch(urlStr, options);
+    }
+
+    HttpResponse* post(
+        string urlStr, string bodyText, string contentType,
+        RequestOptions* options) {
+        Headers* headers = new Headers();
+        defer delete headers;
+        headers.put("Content-Type", contentType);
+        return request("POST", urlStr, bodyText, headers, options);
+    }
+
+    HttpResponse* post(string urlStr, string bodyText, string contentType) {
+        RequestOptions* options = new RequestOptions();
+        defer delete options;
+        return post(urlStr, bodyText, contentType, options);
+    }
+
+    HttpResponse* fetchStream(
+        string urlStr, func<void, string> onChunk,
+        RequestOptions* options) {
+        Headers* headers = new Headers();
+        defer delete headers;
+        return sendOnce(
+            "GET", urlStr, "", headers, options, onChunk, true);
+    }
+
+    HttpResponse* fetchStream(
+        string urlStr, func<void, string> onChunk) {
+        RequestOptions* options = new RequestOptions();
+        defer delete options;
+        return fetchStream(urlStr, onChunk, options);
+    }
+
+    string multipartBody(std.form.FormData* form, string boundary) {
+        if (boundary == "") {
+            throw new Error("multipart boundary cannot be empty");
+        }
+        std.text.StringBuilder* body = new std.text.StringBuilder();
+        defer delete body;
+        int32 index = 0;
+        while (index < form.entries.count) {
+            std.form.FormEntry entry = form.entries[index];
+            string safeName = std.text.replace(entry.name, "\"", "");
+            string safeFilename =
+                std.text.replace(entry.filename, "\"", "");
+            body.append(format("--{}\r\n", boundary));
+            body.append(format(
+                "Content-Disposition: form-data; name=\"{}\"",
+                safeName));
+            if (entry.isFile) {
+                body.append(format("; filename=\"{}\"", safeFilename));
+            }
+            body.append("\r\n");
+            if (entry.isFile && entry.contentType != "") {
+                body.append(format(
+                    "Content-Type: {}\r\n", entry.contentType));
+            }
+            body.append("\r\n");
+            body.append(entry.value);
+            body.append("\r\n");
+            index = index + 1;
+        }
+        body.append(format("--{}--\r\n", boundary));
+        return body.toString();
+    }
+
+    HttpResponse* postMultipart(
+        string urlStr, std.form.FormData* form, string boundary,
+        RequestOptions* options) {
+        return post(
+            urlStr,
+            multipartBody(form, boundary),
+            format("multipart/form-data; boundary={}", boundary),
+            options);
+    }
+
+    HttpResponse* postMultipart(
+        string urlStr, std.form.FormData* form, string boundary) {
+        RequestOptions* options = new RequestOptions();
+        defer delete options;
+        return postMultipart(urlStr, form, boundary, options);
     }
 
     class HttpContext {
@@ -151,10 +530,33 @@ namespace std.http {
         }
 
         public void send(int32 statusCode, string contentType, string bodyText) {
+            Headers* headers = new Headers();
+            defer delete headers;
+            headers.put("Content-Type", contentType);
+            send(statusCode, headers, bodyText);
+        }
+
+        public void send(
+            int32 statusCode, Headers* responseHeaders, string bodyText) {
             if (socketHandle == null) {
                 return;
             }
             string statusMsg = "OK";
+            if (statusCode == 301) {
+                statusMsg = "Moved Permanently";
+            }
+            if (statusCode == 302) {
+                statusMsg = "Found";
+            }
+            if (statusCode == 303) {
+                statusMsg = "See Other";
+            }
+            if (statusCode == 307) {
+                statusMsg = "Temporary Redirect";
+            }
+            if (statusCode == 308) {
+                statusMsg = "Permanent Redirect";
+            }
             if (statusCode == 404) {
                 statusMsg = "Not Found";
             }
@@ -163,12 +565,15 @@ namespace std.http {
             }
 
             int32 bodyLen = std.text.byteCount(bodyText);
+            Headers* headers = responseHeaders.clone();
+            defer delete headers;
+            headers.put("Content-Length", format("{}", bodyLen));
+            headers.put("Connection", "close");
             string respStr = format(
-                "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                "HTTP/1.1 {} {}\r\n{}\r\n{}",
                 statusCode,
                 statusMsg,
-                contentType,
-                bodyLen,
+                headers.toText(),
                 bodyText);
             absolute_net_tcp_send(socketHandle, respStr);
             absolute_net_tcp_close(socketHandle);
@@ -244,7 +649,19 @@ namespace std.http {
                     std.text.codePointCount(rawReq) - (bodyStart + 4));
             }
 
-            return new HttpContext(reqMethod, reqUrl, reqBody, nativeSock);
+            HttpContext* context =
+                new HttpContext(reqMethod, reqUrl, reqBody, nativeSock);
+            if (bodyStart >= 0) {
+                int32 firstLineEnd = std.text.indexOf(rawReq, "\r\n");
+                if (firstLineEnd >= 0 && firstLineEnd < bodyStart) {
+                    string headerText = std.text.substring(
+                        rawReq,
+                        firstLineEnd + 2,
+                        bodyStart - (firstLineEnd + 2));
+                    context.request.headers = parseHeaders(headerText);
+                }
+            }
+            return context;
         }
 
         public void close() {
