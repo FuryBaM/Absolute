@@ -54,6 +54,32 @@ const unsealHover = lang.hoverFor(index, unsealSample, positionOf(unsealSample, 
 assert(unsealHover.contents.value.includes('unseal<T>'));
 assert(unsealHover.contents.value.includes('new managed owner'));
 
+const locatedDiagnostics = lang.parseCompilerDiagnostics(
+    `${path.join(repo, 'tests', 'array-errors.abs')}:4:5: ` +
+        'Semantic error: array initializer size does not match dimension 1',
+    path.join(repo, 'tests', 'array-errors.abs'),
+    'int32 main() {\n    int32 wrongSize[3] = {1, 2};\n}'
+);
+assert.strictEqual(locatedDiagnostics.length, 1);
+assert.deepStrictEqual(locatedDiagnostics[0].range.start,
+    { line: 3, character: 4 });
+assert.strictEqual(locatedDiagnostics[0].message,
+    'array initializer size does not match dimension 1');
+
+const asyncSource = 'async int32 managedCapture(Node* value) {\n    return 1;\n}';
+const asyncDiagnostic = lang.parseCompilerDiagnostics(
+    `${path.join(repo, 'tests', 'async-lifetime-errors.abs')}:1:34: ` +
+        "Semantic error: async parameter 'value' cannot capture 'Node*'",
+    path.join(repo, 'tests', 'async-lifetime-errors.abs'),
+    asyncSource
+);
+assert.deepStrictEqual(asyncDiagnostic[0].range,
+    {
+        start: { line: 0, character: 33 },
+        end: { line: 0, character: 38 }
+    },
+    'compiler diagnostics should underline the complete source token');
+
 const windowCompletion = lang.completionItems(
     index,
     `${sample}\nwindow.`,

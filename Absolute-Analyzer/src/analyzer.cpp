@@ -19,6 +19,7 @@ namespace Absolute {
         importedNamespaces.clear();
         expressionInfo.clear();
         diagnostics.clear();
+        diagnosticNodeStack.clear();
         currentType.clear();
         currentReturnType.clear();
         expectedType.clear();
@@ -118,8 +119,13 @@ namespace Absolute {
     }
 
     void Analyzer::PrintDiagnostics(std::ostream& output) const {
-        for (const Diagnostic& diagnostic : diagnostics)
-            output << "Semantic error: " << diagnostic.message << std::endl;
+        for (const Diagnostic& diagnostic : diagnostics) {
+            if (!diagnostic.sourceFile.empty() && diagnostic.line > 0) {
+                output << diagnostic.sourceFile << ':' << diagnostic.line
+                    << ':' << std::max(diagnostic.column, 1) << ": ";
+            }
+            output << "Semantic error: " << diagnostic.message << '\n';
+        }
     }
 
     const SymbolTable& Analyzer::Symbols() const { return table; }
@@ -148,6 +154,14 @@ namespace Absolute {
 
     const std::vector<Diagnostic>& Analyzer::Diagnostics() const { return diagnostics; }
 
+    void Analyzer::PushDiagnosticNode(const ASTNode* node) {
+        diagnosticNodeStack.push_back(node);
+    }
+
+    void Analyzer::PopDiagnosticNode() {
+        if (!diagnosticNodeStack.empty()) diagnosticNodeStack.pop_back();
+    }
+
     FunctionDeclStmt* Analyzer::FunctionDeclaration(SymbolId symbol) const {
         const auto found = functionDeclarations.find(symbol);
         return found == functionDeclarations.end() ? nullptr : found->second;
@@ -171,7 +185,38 @@ namespace Absolute {
     void Analyzer::AnalyzeProgram(Program& program) { AcceptAll(program.statements, *this); }
 
     void Analyzer::Report(std::string message, std::string code, SymbolId symbol) {
-        diagnostics.push_back({std::move(message), std::move(code), symbol});
+        const ASTNode* node = diagnosticNodeStack.empty()
+            ? nullptr : diagnosticNodeStack.back();
+        ReportAt(node, std::move(message), std::move(code), symbol);
+    }
+
+    void Analyzer::ReportAt(
+        const ASTNode* node, std::string message, std::string code, SymbolId symbol) {
+        Diagnostic diagnostic;
+        diagnostic.message = std::move(message);
+        diagnostic.code = std::move(code);
+        diagnostic.symbol = symbol;
+        if (node) {
+            diagnostic.sourceFile = node->sourceFile;
+            diagnostic.line = node->line;
+            diagnostic.column = node->column;
+        }
+        diagnostics.push_back(std::move(diagnostic));
+    }
+
+    void Analyzer::ReportAt(
+        const Token* token, std::string message, std::string code, SymbolId symbol) {
+        Diagnostic diagnostic;
+        diagnostic.message = std::move(message);
+        diagnostic.code = std::move(code);
+        diagnostic.symbol = symbol;
+        if (!diagnosticNodeStack.empty() && diagnosticNodeStack.back())
+            diagnostic.sourceFile = diagnosticNodeStack.back()->sourceFile;
+        if (token) {
+            diagnostic.line = token->line;
+            diagnostic.column = token->column;
+        }
+        diagnostics.push_back(std::move(diagnostic));
     }
 
     void Analyzer::ValidateAttributes(
@@ -557,8 +602,14 @@ namespace Absolute {
         callable = false;
         callableParameters.clear();
         result = {};
-        if (expression) expression->Accept(*this);
-        else result.type = "void";
+        if (expression) {
+            PushDiagnosticNode(expression);
+            expression->Accept(*this);
+            PopDiagnosticNode();
+        }
+        else {
+            result.type = "void";
+        }
         return result;
     }
 
@@ -1141,7 +1192,8 @@ namespace Absolute {
         if (!IsKnownType(returnType))
             Report("unknown return type '" + returnType + "' of function '" + statement.name->value + "'");
         if (asyncFunction && !IsAsyncTaskValueType(returnType))
-            Report("async function '" + statement.name->value + "' cannot return '" +
+            ReportAt(statement.name.get(),
+                "async function '" + statement.name->value + "' cannot return '" +
                 returnType + "': the task ABI only owns lifetime-independent scalar and enum values",
                 "E_ASYNC_RESULT_LIFETIME");
 
@@ -1179,6 +1231,7 @@ namespace Absolute {
         for (size_t index = 0; index < statement.parameters.size(); ++index) {
             const VarDeclExpr& parameter = *statement.parameters[index];
             if (!parameter.isParams) continue;
+            PushDiagnosticNode(&parameter);
             const std::string parameterType = ResolveDeclaredType(
                 *statement.parameters[index]);
             if (index + 1 != statement.parameters.size())
@@ -1203,6 +1256,7 @@ namespace Absolute {
                 TypeOwnsResources(ArrayElementType(parameterType)))
                 Report("params element type cannot own resources",
                     "E_PARAMS_RESOURCE_ELEMENT");
+            PopDiagnosticNode();
         }
         const std::string oldReturn = currentReturnType;
         const bool oldAsync = currentFunctionAsync;
@@ -1252,12 +1306,14 @@ namespace Absolute {
             parameterIndex < statement.parameters.size(); ++parameterIndex) {
             const auto& parameter = statement.parameters[parameterIndex];
             if (!parameter) continue;
+            PushDiagnosticNode(parameter.get());
             const std::string name = ExtractIdentifier(parameter->name.get());
             std::string type = ResolveDeclaredType(*parameter);
             ValidateValueReferenceParameter(*parameter, type,
                 statement.name->value, asyncFunction, statement.UsesCAbi());
             if (asyncFunction && !IsAsyncTaskValueType(type))
-                Report("async parameter '" + name + "' cannot capture '" + type +
+                ReportAt(parameter->name.get(),
+                    "async parameter '" + name + "' cannot capture '" + type +
                     "': the task context cannot own its lifetime safely",
                     "E_ASYNC_CAPTURE_LIFETIME");
             if (statement.UsesCAbi())
@@ -1296,6 +1352,7 @@ namespace Absolute {
                 if (!IsAssignable(type, value.type))
                     Report("default value of parameter '" + name + "' has type '" + value.type + "', expected '" + type + "'");
             }
+            PopDiagnosticNode();
         }
         if (!statement.IsExternal()) AcceptIfPresent(statement.body, *this);
         if (!statement.IsExternal() && returnType != "void" && !flowTerminated &&

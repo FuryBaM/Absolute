@@ -146,6 +146,9 @@ namespace Absolute {
         std::string message;
         std::string code;
         SymbolId symbol = InvalidSymbolId;
+        std::string sourceFile;
+        int line = 0;
+        int column = 0;
     };
 
     struct ANALYZER_API LambdaCapture {
@@ -305,6 +308,7 @@ namespace Absolute {
         std::unordered_set<std::string> importedNamespaces;
         std::unordered_map<const Expression*, ExpressionInfo> expressionInfo;
         std::vector<Diagnostic> diagnostics;
+        std::vector<const ASTNode*> diagnosticNodeStack;
         Phase phase = Phase::CollectDeclarations;
         Result result;
         int typeContextDepth = 0;
@@ -392,6 +396,8 @@ namespace Absolute {
         SymbolId InstantiateGenericFunction(
             SymbolId origin, const std::vector<std::string>& arguments);
         const std::vector<LambdaCapture>& LambdaCaptures(const LambdaExpr& expression) const;
+        void PushDiagnosticNode(const ASTNode* node);
+        void PopDiagnosticNode();
 
         void Visit(PrimitiveTypeExpr* expr) override;
         void Visit(UserTypeExpr* expr) override;
@@ -457,6 +463,10 @@ namespace Absolute {
         void CollectTypeName(Statement& statement);
         void AnalyzeProgram(Program& program);
         void Report(std::string message, std::string code = {}, SymbolId symbol = InvalidSymbolId);
+        void ReportAt(const ASTNode* node, std::string message,
+            std::string code = {}, SymbolId symbol = InvalidSymbolId);
+        void ReportAt(const Token* token, std::string message,
+            std::string code = {}, SymbolId symbol = InvalidSymbolId);
         void ValidateAttributes(const Statement& statement, const std::string& target, bool callableTarget);
         Result Evaluate(Expression* expression);
         Result EvaluateExpected(Expression* expression, const std::string& type);

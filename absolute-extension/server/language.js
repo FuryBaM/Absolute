@@ -255,32 +255,59 @@ function formatDocument(text, options = {}) {
     return formatted;
 }
 
-function parseCompilerDiagnostics(stderrText, uri) {
+function diagnosticTokenEnd(sourceLines, line, startChar) {
+    const text = sourceLines && sourceLines[line];
+    if (!text || startChar >= text.length) return startChar + 1;
+    const tail = text.slice(startChar);
+    const word = tail.match(/^[A-Za-z_][A-Za-z0-9_]*/);
+    if (word) return startChar + word[0].length;
+    const number = tail.match(/^(?:\d+(?:\.\d*)?|\.\d+)/);
+    if (number) return startChar + number[0].length;
+    return startChar + 1;
+}
+
+function parseCompilerDiagnostics(stderrText, uri, sourceText) {
     const diagnostics = [];
     const lines = String(stderrText || '').split(/\r?\n/);
+    const sourceLines = typeof sourceText === 'string'
+        ? sourceText.split(/\r?\n/) : null;
     for (const line of lines) {
         if (!line.trim()) continue;
         let severity = 1; // Error
         if (/warning/i.test(line)) severity = 2;
-        const loc = line.match(/at line\s+(\d+)(?:,\s*column\s+(\d+))?/i);
-        const message = line
+        const structured = line.match(
+            /^(.*):(\d+):(\d+):\s*(Semantic error|Syntax Error|Lexical error|Error):\s*(.*)$/i);
+        const legacyLocation = line.match(
+            /at line\s+(\d+)(?:,\s*column\s+(\d+))?/i);
+        let message = (structured ? structured[5] : line)
             .replace(/^Semantic error:\s*/i, '')
             .replace(/^Syntax Error:\s*/i, '')
             .replace(/^Lexical error:\s*/i, '')
             .replace(/^Error:\s*/i, '')
+            .replace(/\s+at line\s+\d+(?:,\s*column\s+\d+)?\s*$/i, '')
             .trim() || line;
         let startLine = 0;
         let startChar = 0;
-        if (loc) {
-            startLine = Math.max(0, parseInt(loc[1], 10) - 1);
-            startChar = Math.max(0, (parseInt(loc[2] || '1', 10) || 1) - 1);
+        if (structured) {
+            const diagnosticPath = path.resolve(structured[1]);
+            if (uri && path.resolve(uri).toLowerCase() !== diagnosticPath.toLowerCase())
+                continue;
+            startLine = Math.max(0, parseInt(structured[2], 10) - 1);
+            startChar = Math.max(0, parseInt(structured[3], 10) - 1);
+        } else if (legacyLocation) {
+            startLine = Math.max(0, parseInt(legacyLocation[1], 10) - 1);
+            startChar = Math.max(
+                0, (parseInt(legacyLocation[2] || '1', 10) || 1) - 1);
         } else if (!/semantic error|syntax error|lexical error|error:/i.test(line)) {
             continue;
         }
         diagnostics.push({
             range: {
                 start: { line: startLine, character: startChar },
-                end: { line: startLine, character: startChar + 1 }
+                end: {
+                    line: startLine,
+                    character: diagnosticTokenEnd(sourceLines, startLine, startChar)
+                }
             },
             severity,
             source: 'absolutec',
@@ -305,7 +332,8 @@ function runCompilerDiagnostics(filePath, compilerPath, extraArgs = []) {
         );
         if (result.error) throw result.error;
         const text = `${result.stdout || ''}\n${result.stderr || ''}`;
-        return parseCompilerDiagnostics(text, filePath);
+        const sourceText = fs.readFileSync(filePath, 'utf8');
+        return parseCompilerDiagnostics(text, filePath, sourceText);
     } catch (error) {
         return [{
             range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },

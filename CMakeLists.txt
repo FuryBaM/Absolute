@@ -867,6 +867,14 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.array-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
+        NAME absolute.diagnostic-locations
+        COMMAND "${CMAKE_COMMAND}"
+            -DCOMPILER=$<TARGET_FILE:Absolute-Compiler>
+            -DSOURCE=${PROJECT_SOURCE_DIR}/tests/array-errors.abs
+            -DASYNC_SOURCE=${PROJECT_SOURCE_DIR}/tests/async-lifetime-errors.abs
+            -P "${PROJECT_SOURCE_DIR}/tests/check-diagnostic-locations.cmake"
+    )
+    add_test(
         NAME absolute.array-advanced-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-advanced.abs"
     )

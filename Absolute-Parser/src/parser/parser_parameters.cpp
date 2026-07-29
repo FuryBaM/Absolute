@@ -37,7 +37,13 @@ namespace Absolute{
                 throw std::runtime_error("Duplicate parameter reference marker");
             }
             const bool isReference = refAlias || ampersandReference || outAlias;
+            const Token* nameStart = CurrentToken();
             std::unique_ptr<Expression> nameExpr = ParsePrimaryExpr();
+            if (nameExpr && nameStart) {
+                nameExpr->sourceFile = sourceFile;
+                nameExpr->line = nameStart->line;
+                nameExpr->column = nameStart->column;
+            }
 
             Token* current = RequireCurrent("'=', ',' or ')'");
             if (current->type == TokenType::OPERATOR && current->value == "=") {

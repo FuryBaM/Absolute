@@ -26,7 +26,19 @@ namespace Absolute {
     namespace {
         template <typename T, typename Visitor>
         void AcceptIfPresent(const std::unique_ptr<T>& node, Visitor& visitor) {
-            if (node) node->Accept(visitor);
+            if (!node) return;
+            if constexpr (requires {
+                visitor.PushDiagnosticNode(
+                    static_cast<const ASTNode*>(node.get()));
+                visitor.PopDiagnosticNode();
+            }) {
+                visitor.PushDiagnosticNode(node.get());
+                node->Accept(visitor);
+                visitor.PopDiagnosticNode();
+            }
+            else {
+                node->Accept(visitor);
+            }
         }
 
         template <typename T, typename Visitor>
