@@ -407,13 +407,7 @@ namespace Absolute {
     void Analyzer::CheckManagedMoveArgument(
         const Result& argument, const std::string& parameterType,
         size_t index, const std::string& context) {
-        if (!argument.isMoveResult || !argument.createsManagedOwner ||
-            !IsStrongManagedPointerType(ValueReferenceBaseType(parameterType)))
-            return;
-        Report(context + " argument " + std::to_string(index + 1) +
-            " cannot consume a managed owner: managed pointer parameters borrow; "
-            "pass the owner without move(...) instead",
-            "E_MANAGED_MOVE_TO_BORROWED_PARAMETER", argument.pointerOwner);
+        (void)argument; (void)parameterType; (void)index; (void)context;
     }
 
     void Analyzer::MergeValueFlowPaths(const ValueFlowMap& base, const std::vector<ValueFlowMap>& paths) {

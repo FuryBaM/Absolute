@@ -15,16 +15,37 @@ void processView(Document* doc) {
     printDoc(doc);
 }
 
-void main() {
-    Document* test1 = new Document("Doc1"); // test1 is ManagedOwner (strong_count = 1)
-    Document* test2 = test1;                // test2 is ManagedSub (view)
+void processOwnerAndBorrow(Document* doc) {
+    // doc was passed via move(test1), so doc is Owner inside processOwnerAndBorrow
+    printDoc(doc); // passes View to printDoc
+}
 
-    // 1. Pass test1 and test2 to processView without move():
-    // Both arguments borrow the managed pointer. test1 remains the valid owner.
+void saveToDatabase(Document* d) {
+    print("saved:");
+    print(d.title);
+    print(";");
+}
+
+void processOwnerAndTransfer(Document* doc) {
+    // doc was passed via move(test3), transfers ownership further to saveToDatabase
+    saveToDatabase(move(doc));
+}
+
+void main() {
+    Document* test1 = new Document("Doc1");
+    Document* test2 = test1;
+
+    // 1. Pass View: test1 remains valid owner
     processView(test1);
     processView(test2);
+    assert(test1.title == "Doc1", "test1 valid after view pass");
 
-    assert(test1.title == "Doc1", "test1 remains valid owner");
+    // 2. Pass Owner: test1 transferred via move(test1)
+    processOwnerAndBorrow(move(test1));
+
+    // 3. Create test3 and transfer via move(test3) -> processOwnerAndTransfer -> saveToDatabase
+    Document* test3 = new Document("Doc2");
+    processOwnerAndTransfer(move(test3));
 
     print("ownership-model-execution=ok");
 }
