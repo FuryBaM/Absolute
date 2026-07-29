@@ -108,7 +108,7 @@ namespace std.collections {
 
         public void enqueue(T value) {
             if (_count == _capacity) { grow(); }
-            items[_count] = forward(value);
+            items[_count] = move(value);
             insertionOrders[_count] = nextInsertionOrder;
             nextInsertionOrder = nextInsertionOrder + 1;
             siftUp(_count);

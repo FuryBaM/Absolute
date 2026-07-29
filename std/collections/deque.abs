@@ -76,14 +76,14 @@ namespace std.collections {
         public void pushFront(T value) {
             if (_count == _capacity) { grow(); }
             head = (head + _capacity - 1) % _capacity;
-            items[head] = forward(value);
+            items[head] = move(value);
             _count = _count + 1;
         }
 
         public void pushBack(T value) {
             if (_count == _capacity) { grow(); }
             int32 index = (head + _count) % _capacity;
-            items[index] = forward(value);
+            items[index] = move(value);
             _count = _count + 1;
         }
 

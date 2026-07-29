@@ -125,7 +125,7 @@ namespace Absolute {
             return;
         }
 
-        if (name == "forward" || name == "move") {
+        if (name == "move") {
             if (expression.arguments.size() != 1) Fail(name + " expects exactly one argument");
             Expression* argument = expression.arguments.front().get();
             const ExpressionInfo* info = analyzer && argument

@@ -641,10 +641,7 @@ if(BUILD_TESTING)
         NAME absolute.out-parameters-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/out-parameters.abs"
     )
-    add_test(
-        NAME absolute.forward-builtin-semantic
-        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/forward-builtin.abs"
-    )
+
     add_test(
         NAME absolute.memory-ownership-advanced-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/memory-ownership-advanced.abs"
@@ -1248,14 +1245,7 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.emit-out-parameters PROPERTIES
             FIXTURES_SETUP absolute-out-parameters-ir
         )
-        add_test(
-            NAME absolute.emit-forward-builtin
-            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/forward-builtin.abs"
-                --emit-llvm -o "${CMAKE_BINARY_DIR}/forward-builtin.ll"
-        )
-        set_tests_properties(absolute.emit-forward-builtin PROPERTIES
-            FIXTURES_SETUP absolute-forward-builtin-ir
-        )
+
         add_test(
             NAME absolute.emit-memory-ownership-advanced
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/memory-ownership-advanced.abs"
@@ -1501,14 +1491,7 @@ if(BUILD_TESTING)
                 FIXTURES_REQUIRED absolute-out-parameters-ir
                 PASS_REGULAR_EXPRESSION "out-parameters=ok"
             )
-            add_test(
-                NAME absolute.run-forward-builtin
-                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/forward-builtin.ll"
-            )
-            set_tests_properties(absolute.run-forward-builtin PROPERTIES
-                FIXTURES_REQUIRED absolute-forward-builtin-ir
-                PASS_REGULAR_EXPRESSION "forward-builtin=ok"
-            )
+
             add_test(
                 NAME absolute.run-memory-ownership-advanced
                 COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/memory-ownership-advanced.ll"
