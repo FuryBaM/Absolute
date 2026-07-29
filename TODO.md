@@ -1005,39 +1005,46 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   тесты и запускать их в ownership torture suite под ASan, LSan, UBSan и TSan,
   где соответствующий sanitizer применим.
 
-## P1 — категории выражений, places и forwarding
+## P1 — категории выражений, places и ownership flow
 
 - [ ] Заменить перегруженный `bool isLValue` на явную категорию выражения
-  `ValueCategory { Value, Place }`. Категория отвечает только на вопрос, является
-  ли выражение вычисленным значением или стабильным местом хранения; ownership и
-  consuming semantics не кодировать внутри неё.
-- [ ] Ввести `PlaceInfo { readable, writable, addressable }` и использовать его для
-  переменных, параметров, полей, properties и indexers. Writable property остаётся
-  place без физического адреса; const-place readable/addressable, но не writable.
-  `deletable` не хранить в `PlaceInfo`, а выводить из типа и ownership-роли.
-- [ ] Разнести форму выражения и владение по независимым данным: как минимум
-  `OwnershipRole`, `createsOwner` и `consumesSource`. Свежий `new`/return/call
-  создаёт owner без существующего источника; `move(place)` создаёт owner-result и
-  явно инвалидирует source.
-- [ ] Перевести текущий `move` на новую модель: требовать readable+writable place,
-  запрещать const/weak/subscriber/invalid source, возвращать `Value` с
-  `consumesSource=true` и сохранять ownership region для переноса aliases.
-- [ ] Формализовать forwarding parameters и отдельный `ForwardingMode`
-  (`None`, `Borrowed`, `Consuming`) либо эквивалентную call-site metadata.
-  `forward(...)` разрешать только для forwarding-параметров, а не для произвольных
-  локальных owners; для обычного места использовать само значение или `move(...)`.
-- [ ] Сделать `forward(borrowedParameter)` сохранением borrow/place-доступа, а
-  `forward(consumingParameter)` — consuming value с переносом owner и
-  инвалидированием источника. Не выводить forwarding через
-  `!argument.isLValue || argument.isMoveResult`.
-- [ ] Закрыть ошибки текущей реализации `forward`: не допускать второго owner из
-  `forward(localOwner)`, не терять `createsOwner` у свежего rvalue, не разрешать
-  forwarding weak/subscriber/const/invalid values и не оставлять consuming result
-  непоглощённым.
-- [ ] Обновить Analyzer `Result`/`ExpressionInfo`, `Save`, value-flow, argument и
-  return checks, а также CodeGen address/value lowering так, чтобы place access,
-  ownership creation и source consumption обрабатывались независимо.
-- [ ] Зафиксировать модель в отдельной документации и добавить semantic/error/LLVM/
-  runtime tests: variable/const/field/property/indexer, `T&`/`const T&`, fresh
-  temporary, `new`, function return, nested generic wrappers, `move`, forwarding
-  borrowed/consuming parameters, unused result и повторное использование source.
+  `ValueCategory { Value, Place }`. Категория описывает только форму выражения:
+  вычисленное значение либо стабильное место хранения; pointer-role и владение
+  не кодировать внутри неё.
+- [ ] Ввести `PlaceInfo { readable, writable, addressable }` для переменных,
+  параметров, полей, properties и indexers. Writable property является place
+  даже без физического адреса; const-place readable/addressable, но не writable.
+  Возможность `delete` выводить из pointer-role и ownership-state, а не из place.
+- [ ] Разнести pointer-role и ownership effect. Использовать роли наподобие
+  `ManagedOwner`, `ManagedSub`, `Weak`, `RawOwner`, `RawView` и `Ref`, а для
+  результата выражения отдельно хранить `createsOwner`, `consumesSource` и
+  identity исходного place/ownership region, когда источник поглощается.
+- [ ] Зафиксировать основное правило managed-владения: использование owner без
+  `move` даёт безопасный sub/view и не меняет владельца; `move(ownerPlace)`
+  передаёт владение, инвалидирует source и создаёт owning value. Свежий `new`,
+  owner-returning call или return уже создаёт owning value без поглощаемого place.
+- [ ] Удалить `forward` из пользовательской модели языка и не вводить forwarding
+  parameters или скрытый входной ownership-mode. Обычная передача означает view,
+  передача владения выражается только явным `move` либо свежим owning result;
+  внутренний HIR helper не должен становиться отдельной source-семантикой.
+- [ ] Оставить `weak T*` простым generation-checked наблюдателем: weak ничего не
+  удерживает, не освобождает и не участвует в ownership flow. Для weak запретить
+  `move`, `delete`, owner-параметры и любые попытки повышения до strong owner;
+  разрешить присваивание наблюдателя, null/expired check и checked dereference.
+- [ ] Разделить raw-указатели на `RawOwner` и `RawView`. Обычное использование
+  `RawOwner` передаёт только raw view и сохраняет обязанность `delete` у source;
+  `move(rawOwner)` переносит именно обязанность вызвать `delete`, инвалидирует
+  source и делает получателя новым raw-owner. Для `RawView` запретить `move` и
+  `delete`, поскольку он не владеет allocation.
+- [ ] Считать `T&`/`const T&` и source-алиас `ref` чистым borrow на чужой place.
+  Reference не получает ownership даже при ссылке на owner, поэтому для него
+  запрещены `move`, `delete` и передача в owner-контракт; владение передаётся
+  только через исходный owner-place.
+- [ ] Перевести Analyzer `Result`/`ExpressionInfo`, `Save`, value-flow, argument,
+  assignment и return checks, а также CodeGen address/value lowering на новую
+  модель без `isMoveResult`/`forward`-эвристик. Source invalidation и cleanup
+  obligation должны следовать за ownership region, а не за машинным адресом.
+- [ ] Добавить semantic/error/LLVM/runtime tests для managed owner/sub, weak,
+  raw owner/view и `T&`/`const T&`: обычная передача, `move`, fresh owner-result,
+  повторное использование moved-from source, потерянный owning result, double
+  delete, попытка move/delete через weak/ref/raw-view и cleanup на всех путях.
