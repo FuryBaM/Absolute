@@ -508,9 +508,9 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   - [x] Типизированный `Channel<T>` с явной моделью передачи ownership между tasks:
     codec-based value messages, checked close/receive semantics, `seal(move(owner))`
     and one-shot `std.concurrent.TransferChannel<T>` with native/WASM regressions.
-- [ ] P0 data / I/O:
-  - [ ] `std.bytes.ByteBuffer`: position/limit/capacity, slices и endian-aware primitives.
-  - [ ] `std.io`: `Reader`, `Writer`, buffered streams и memory streams.
+- [x] P0 data / I/O:
+  - [x] `std.bytes.ByteBuffer`: position/limit/capacity, slices и endian-aware primitives.
+  - [x] `std.io`: `Reader`, `Writer`, buffered streams и memory streams.
 - [ ] P1 platform:
   - [ ] Расширить `std.fs`: directory listing/walk, metadata, temporary files и watcher.
   - [ ] Расширить `std.http`: headers collection, HTTPS/TLS, redirects, streaming,
