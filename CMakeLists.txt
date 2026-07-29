@@ -647,6 +647,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/memory-ownership-advanced.abs"
     )
     add_test(
+        NAME absolute.ownership-model-execution-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-model-execution.abs"
+    )
+    add_test(
         NAME absolute.base-language-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/base-language-errors.abs"
     )
@@ -1247,6 +1251,15 @@ if(BUILD_TESTING)
         )
 
         add_test(
+            NAME absolute.emit-ownership-model-execution
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-model-execution.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/ownership-model-execution.ll"
+        )
+        set_tests_properties(absolute.emit-ownership-model-execution PROPERTIES
+            FIXTURES_SETUP absolute-ownership-model-execution-ir
+        )
+
+        add_test(
             NAME absolute.emit-memory-ownership-advanced
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/memory-ownership-advanced.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/memory-ownership-advanced.ll"
@@ -1490,6 +1503,15 @@ if(BUILD_TESTING)
             set_tests_properties(absolute.run-out-parameters PROPERTIES
                 FIXTURES_REQUIRED absolute-out-parameters-ir
                 PASS_REGULAR_EXPRESSION "out-parameters=ok"
+            )
+
+            add_test(
+                NAME absolute.run-ownership-model-execution
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/ownership-model-execution.ll"
+            )
+            set_tests_properties(absolute.run-ownership-model-execution PROPERTIES
+                FIXTURES_REQUIRED absolute-ownership-model-execution-ir
+                PASS_REGULAR_EXPRESSION "ownership-model-execution=ok"
             )
 
             add_test(

@@ -1,0 +1,30 @@
+class Document {
+    public string title;
+    public Document(string t) {
+        title = t;
+    }
+}
+
+void printDoc(Document* d) {
+    print(d.title);
+    print(";");
+}
+
+void processView(Document* doc) {
+    // doc is a borrowing view (ManagedSub)
+    printDoc(doc);
+}
+
+void main() {
+    Document* test1 = new Document("Doc1"); // test1 is ManagedOwner (strong_count = 1)
+    Document* test2 = test1;                // test2 is ManagedSub (view)
+
+    // 1. Pass test1 and test2 to processView without move():
+    // Both arguments borrow the managed pointer. test1 remains the valid owner.
+    processView(test1);
+    processView(test2);
+
+    assert(test1.title == "Doc1", "test1 remains valid owner");
+
+    print("ownership-model-execution=ok");
+}
