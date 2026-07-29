@@ -21,8 +21,8 @@ target triple = "x86_64-pc-windows-msvc"
 @array.bounds.message.2 = private unnamed_addr constant [26 x i8] c"Array index out of bounds\00", align 1
 @array.bounds.message.3 = private unnamed_addr constant [26 x i8] c"Array index out of bounds\00", align 1
 @array.bounds.message.4 = private unnamed_addr constant [26 x i8] c"Array index out of bounds\00", align 1
-@function.null.message = private unnamed_addr constant [26 x i8] c"Array index out of bounds\00", align 1
-@function.null.message.5 = private unnamed_addr constant [26 x i8] c"Array index out of bounds\00", align 1
+@function.null.message = private unnamed_addr constant [28 x i8] c"Runtime safety check failed\00", align 1
+@function.null.message.5 = private unnamed_addr constant [28 x i8] c"Runtime safety check failed\00", align 1
 @array.bounds.message.6 = private unnamed_addr constant [26 x i8] c"Array index out of bounds\00", align 1
 @array.bounds.message.7 = private unnamed_addr constant [26 x i8] c"Array index out of bounds\00", align 1
 @array.bounds.message.8 = private unnamed_addr constant [26 x i8] c"Array index out of bounds\00", align 1
@@ -129,29 +129,40 @@ array.bounds.failure:                             ; preds = %entry
   unreachable
 }
 
-define void @"std.collections.HashMapIterator<int32,int32>.__ctor$std_2Ecollections_2EHashKeyValuePair_3Cint32_2Cint32_3E_5B_5D"(ptr %this, %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" %entries) {
+define void @"std.collections.HashMapIterator<int32,int32>.__ctor$std_2Ecollections_2EHashKeyValuePair_3Cint32_2Cint32_3E_5B_5D"(ptr %this, %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" %entries, i1 %entries.is_owner) {
 entry:
+  %entries.is_owner1 = alloca i1, align 1
   %entries.array.owner = alloca ptr, align 8
   %array.data = extractvalue %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" %entries, 0
   %array.owner = extractvalue %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" %entries, 1
   %array.dimension = extractvalue %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" %entries, 2
   store ptr %array.owner, ptr %entries.array.owner, align 8
+  store i1 %entries.is_owner, ptr %entries.is_owner1, align 1
   %snapshot.address = getelementptr inbounds %"absolute.class.std.collections.HashMapIterator<int32,int32>", ptr %this, i32 0, i32 1
-  %entries.array.owner1 = load ptr, ptr %entries.array.owner, align 8
+  %entries.array.owner2 = load ptr, ptr %entries.array.owner, align 8
   %copy.element.count = mul i64 1, %array.dimension
   %copy.byte.count = mul i64 %copy.element.count, 8
   %copy.data = call ptr @malloc(i64 %copy.byte.count)
   call void @llvm.memcpy.p0.p0.i64(ptr align 16 %copy.data, ptr align 1 %array.data, i64 %copy.byte.count, i1 false)
-  %array.data2 = insertvalue %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" undef, ptr %copy.data, 0
-  %array.owner3 = insertvalue %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" %array.data2, ptr %copy.data, 1
-  %array.dimension4 = insertvalue %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" %array.owner3, i64 %array.dimension, 2
+  %array.data3 = insertvalue %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" undef, ptr %copy.data, 0
+  %array.owner4 = insertvalue %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" %array.data3, ptr %copy.data, 1
+  %array.dimension5 = insertvalue %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" %array.owner4, i64 %array.dimension, 2
   %field.cleanup.array = load %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1", ptr %snapshot.address, align 8
   %field.cleanup.array.owner = extractvalue %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" %field.cleanup.array, 1
   call void @free(ptr %field.cleanup.array.owner)
   store %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" zeroinitializer, ptr %snapshot.address, align 8
-  store %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" %array.dimension4, ptr %snapshot.address, align 8
+  store %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" %array.dimension5, ptr %snapshot.address, align 8
   %index.address = getelementptr inbounds %"absolute.class.std.collections.HashMapIterator<int32,int32>", ptr %this, i32 0, i32 2
   store i32 -1, ptr %index.address, align 4
+  %role.is.owner = load i1, ptr %entries.is_owner1, align 1
+  br i1 %role.is.owner, label %role.owner.cleanup, label %role.cleanup.end
+
+role.owner.cleanup:                               ; preds = %entry
+  %cleanup.array.owner = load ptr, ptr %entries.array.owner, align 8
+  call void @free(ptr %cleanup.array.owner)
+  br label %role.cleanup.end
+
+role.cleanup.end:                                 ; preds = %role.owner.cleanup, %entry
   ret void
 }
 
@@ -1353,7 +1364,7 @@ error.continue:                                   ; preds = %entry
   %array.data = extractvalue %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" %toArray.result, 0
   %array.owner = extractvalue %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" %toArray.result, 1
   %array.dimension = extractvalue %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" %toArray.result, 2
-  call void @"std.collections.HashMapIterator<int32,int32>.__ctor$std_2Ecollections_2EHashKeyValuePair_3Cint32_2Cint32_3E_5B_5D"(ptr %managed.pointee, %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" %toArray.result)
+  call void @"std.collections.HashMapIterator<int32,int32>.__ctor$std_2Ecollections_2EHashKeyValuePair_3Cint32_2Cint32_3E_5B_5D"(ptr %managed.pointee, %"absolute.array.std.collections.HashKeyValuePair<int32,int32>.1" %toArray.result, i1 true)
   %error.pending1 = call i1 @absolute_error_pending()
   br i1 %error.pending1, label %error.propagate2, label %error.continue3
 
@@ -1802,13 +1813,17 @@ array.bounds.failure35:                           ; preds = %array.bounds.succes
   unreachable
 }
 
-define void @"std.collections.HashMap<int32,int32>.__ctor$func_3Cint64_2Cint32_3E$func_3Cbool_2Cint32_2Cint32_3E"(ptr %this, ptr %hash, ptr %equals) {
+define void @"std.collections.HashMap<int32,int32>.__ctor$func_3Cint64_2Cint32_3E$func_3Cbool_2Cint32_2Cint32_3E"(ptr %this, ptr %hash, i1 %hash.is_owner, ptr %equals, i1 %equals.is_owner) {
 entry:
   %index = alloca i32, align 4
-  %equals2 = alloca ptr, align 8
+  %equals.is_owner4 = alloca i1, align 1
+  %equals3 = alloca ptr, align 8
+  %hash.is_owner2 = alloca i1, align 1
   %hash1 = alloca ptr, align 8
   store ptr %hash, ptr %hash1, align 8
-  store ptr %equals, ptr %equals2, align 8
+  store i1 %hash.is_owner, ptr %hash.is_owner2, align 1
+  store ptr %equals, ptr %equals3, align 8
+  store i1 %equals.is_owner, ptr %equals.is_owner4, align 1
   %hashFunction.address = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 7
   %hash.value = load ptr, ptr %hash1, align 8
   call void @__absolute.closure.retain(ptr %hash.value)
@@ -1817,17 +1832,17 @@ entry:
   store ptr null, ptr %hashFunction.address, align 8
   store ptr %hash.value, ptr %hashFunction.address, align 8
   %equalityFunction.address = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 8
-  %equals.value = load ptr, ptr %equals2, align 8
+  %equals.value = load ptr, ptr %equals3, align 8
   call void @__absolute.closure.retain(ptr %equals.value)
-  %closure.cleanup.value3 = load ptr, ptr %equalityFunction.address, align 8
-  call void @__absolute.closure.release(ptr %closure.cleanup.value3)
+  %closure.cleanup.value5 = load ptr, ptr %equalityFunction.address, align 8
+  call void @__absolute.closure.release(ptr %closure.cleanup.value5)
   store ptr null, ptr %equalityFunction.address, align 8
   store ptr %equals.value, ptr %equalityFunction.address, align 8
   %_capacity.address = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 6
   store i32 8, ptr %_capacity.address, align 4
   %keys.address = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 1
-  %_capacity.address4 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 6
-  %_capacity.value = load i32, ptr %_capacity.address4, align 4
+  %_capacity.address6 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 6
+  %_capacity.value = load i32, ptr %_capacity.address6, align 4
   %int.cast = sext i32 %_capacity.value to i64
   %array.alloc.bytes = mul i64 %int.cast, 4
   %array.data.alloc = call ptr @malloc(i64 %array.alloc.bytes)
@@ -1840,57 +1855,57 @@ entry:
   store %absolute.array.int32.1 zeroinitializer, ptr %keys.address, align 8
   store %absolute.array.int32.1 %array.dimension, ptr %keys.address, align 8
   %values.address = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 2
-  %_capacity.address5 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 6
-  %_capacity.value6 = load i32, ptr %_capacity.address5, align 4
-  %int.cast7 = sext i32 %_capacity.value6 to i64
-  %array.alloc.bytes8 = mul i64 %int.cast7, 4
-  %array.data.alloc9 = call ptr @malloc(i64 %array.alloc.bytes8)
-  %array.data10 = insertvalue %absolute.array.int32.1 undef, ptr %array.data.alloc9, 0
-  %array.owner11 = insertvalue %absolute.array.int32.1 %array.data10, ptr %array.data.alloc9, 1
-  %array.dimension12 = insertvalue %absolute.array.int32.1 %array.owner11, i64 %int.cast7, 2
-  %field.cleanup.array13 = load %absolute.array.int32.1, ptr %values.address, align 8
-  %field.cleanup.array.owner14 = extractvalue %absolute.array.int32.1 %field.cleanup.array13, 1
-  call void @free(ptr %field.cleanup.array.owner14)
+  %_capacity.address7 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 6
+  %_capacity.value8 = load i32, ptr %_capacity.address7, align 4
+  %int.cast9 = sext i32 %_capacity.value8 to i64
+  %array.alloc.bytes10 = mul i64 %int.cast9, 4
+  %array.data.alloc11 = call ptr @malloc(i64 %array.alloc.bytes10)
+  %array.data12 = insertvalue %absolute.array.int32.1 undef, ptr %array.data.alloc11, 0
+  %array.owner13 = insertvalue %absolute.array.int32.1 %array.data12, ptr %array.data.alloc11, 1
+  %array.dimension14 = insertvalue %absolute.array.int32.1 %array.owner13, i64 %int.cast9, 2
+  %field.cleanup.array15 = load %absolute.array.int32.1, ptr %values.address, align 8
+  %field.cleanup.array.owner16 = extractvalue %absolute.array.int32.1 %field.cleanup.array15, 1
+  call void @free(ptr %field.cleanup.array.owner16)
   store %absolute.array.int32.1 zeroinitializer, ptr %values.address, align 8
-  store %absolute.array.int32.1 %array.dimension12, ptr %values.address, align 8
+  store %absolute.array.int32.1 %array.dimension14, ptr %values.address, align 8
   %states.address = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 3
-  %_capacity.address15 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 6
-  %_capacity.value16 = load i32, ptr %_capacity.address15, align 4
-  %int.cast17 = sext i32 %_capacity.value16 to i64
-  %array.alloc.bytes18 = mul i64 %int.cast17, 4
-  %array.data.alloc19 = call ptr @malloc(i64 %array.alloc.bytes18)
-  %array.data20 = insertvalue %absolute.array.int32.1 undef, ptr %array.data.alloc19, 0
-  %array.owner21 = insertvalue %absolute.array.int32.1 %array.data20, ptr %array.data.alloc19, 1
-  %array.dimension22 = insertvalue %absolute.array.int32.1 %array.owner21, i64 %int.cast17, 2
-  %field.cleanup.array23 = load %absolute.array.int32.1, ptr %states.address, align 8
-  %field.cleanup.array.owner24 = extractvalue %absolute.array.int32.1 %field.cleanup.array23, 1
-  call void @free(ptr %field.cleanup.array.owner24)
+  %_capacity.address17 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 6
+  %_capacity.value18 = load i32, ptr %_capacity.address17, align 4
+  %int.cast19 = sext i32 %_capacity.value18 to i64
+  %array.alloc.bytes20 = mul i64 %int.cast19, 4
+  %array.data.alloc21 = call ptr @malloc(i64 %array.alloc.bytes20)
+  %array.data22 = insertvalue %absolute.array.int32.1 undef, ptr %array.data.alloc21, 0
+  %array.owner23 = insertvalue %absolute.array.int32.1 %array.data22, ptr %array.data.alloc21, 1
+  %array.dimension24 = insertvalue %absolute.array.int32.1 %array.owner23, i64 %int.cast19, 2
+  %field.cleanup.array25 = load %absolute.array.int32.1, ptr %states.address, align 8
+  %field.cleanup.array.owner26 = extractvalue %absolute.array.int32.1 %field.cleanup.array25, 1
+  call void @free(ptr %field.cleanup.array.owner26)
   store %absolute.array.int32.1 zeroinitializer, ptr %states.address, align 8
-  store %absolute.array.int32.1 %array.dimension22, ptr %states.address, align 8
+  store %absolute.array.int32.1 %array.dimension24, ptr %states.address, align 8
   store i32 0, ptr %index, align 4
   br label %while.condition
 
 while.condition:                                  ; preds = %array.bounds.success, %entry
   %index.value = load i32, ptr %index, align 4
-  %_capacity.address25 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 6
-  %_capacity.value26 = load i32, ptr %_capacity.address25, align 4
-  %less = icmp slt i32 %index.value, %_capacity.value26
+  %_capacity.address27 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 6
+  %_capacity.value28 = load i32, ptr %_capacity.address27, align 4
+  %less = icmp slt i32 %index.value, %_capacity.value28
   br i1 %less, label %while.body, label %while.end
 
 while.body:                                       ; preds = %while.condition
-  %states.address27 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 3
-  %states.value = load %absolute.array.int32.1, ptr %states.address27, align 8
-  %array.data28 = extractvalue %absolute.array.int32.1 %states.value, 0
-  %array.owner29 = extractvalue %absolute.array.int32.1 %states.value, 1
-  %array.dimension30 = extractvalue %absolute.array.int32.1 %states.value, 2
-  %states.address31 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 3
-  %states.value32 = load %absolute.array.int32.1, ptr %states.address31, align 8
-  %array.data33 = extractvalue %absolute.array.int32.1 %states.value32, 0
-  %array.owner34 = extractvalue %absolute.array.int32.1 %states.value32, 1
-  %array.dimension35 = extractvalue %absolute.array.int32.1 %states.value32, 2
-  %index.value36 = load i32, ptr %index, align 4
-  %array.index.wide = sext i32 %index.value36 to i64
-  %array.index.valid = icmp ult i64 %array.index.wide, %array.dimension35
+  %states.address29 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 3
+  %states.value = load %absolute.array.int32.1, ptr %states.address29, align 8
+  %array.data30 = extractvalue %absolute.array.int32.1 %states.value, 0
+  %array.owner31 = extractvalue %absolute.array.int32.1 %states.value, 1
+  %array.dimension32 = extractvalue %absolute.array.int32.1 %states.value, 2
+  %states.address33 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 3
+  %states.value34 = load %absolute.array.int32.1, ptr %states.address33, align 8
+  %array.data35 = extractvalue %absolute.array.int32.1 %states.value34, 0
+  %array.owner36 = extractvalue %absolute.array.int32.1 %states.value34, 1
+  %array.dimension37 = extractvalue %absolute.array.int32.1 %states.value34, 2
+  %index.value38 = load i32, ptr %index, align 4
+  %array.index.wide = sext i32 %index.value38 to i64
+  %array.index.valid = icmp ult i64 %array.index.wide, %array.dimension37
   br i1 %array.index.valid, label %array.bounds.success, label %array.bounds.failure, !prof !0
 
 while.end:                                        ; preds = %while.condition
@@ -1898,13 +1913,14 @@ while.end:                                        ; preds = %while.condition
   store i32 0, ptr %_count.address, align 4
   %tombstoneCount.address = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 5
   store i32 0, ptr %tombstoneCount.address, align 4
-  ret void
+  %role.is.owner = load i1, ptr %hash.is_owner2, align 1
+  br i1 %role.is.owner, label %role.owner.cleanup, label %role.cleanup.end
 
 array.bounds.success:                             ; preds = %while.body
-  %array.element.address = getelementptr inbounds i32, ptr %array.data33, i32 %index.value36
+  %array.element.address = getelementptr inbounds i32, ptr %array.data35, i32 %index.value38
   store i32 0, ptr %array.element.address, align 4
-  %index.value37 = load i32, ptr %index, align 4
-  %add = add i32 %index.value37, 1
+  %index.value39 = load i32, ptr %index, align 4
+  %add = add i32 %index.value39, 1
   store i32 %add, ptr %index, align 4
   br label %while.condition
 
@@ -1912,18 +1928,41 @@ array.bounds.failure:                             ; preds = %while.body
   %0 = call i32 @puts(ptr @array.bounds.message.31)
   call void @exit(i32 1)
   unreachable
+
+role.owner.cleanup:                               ; preds = %while.end
+  %closure.cleanup.value40 = load ptr, ptr %hash1, align 8
+  call void @__absolute.closure.release(ptr %closure.cleanup.value40)
+  store ptr null, ptr %hash1, align 8
+  br label %role.cleanup.end
+
+role.cleanup.end:                                 ; preds = %role.owner.cleanup, %while.end
+  %role.is.owner43 = load i1, ptr %equals.is_owner4, align 1
+  br i1 %role.is.owner43, label %role.owner.cleanup41, label %role.cleanup.end42
+
+role.owner.cleanup41:                             ; preds = %role.cleanup.end
+  %closure.cleanup.value44 = load ptr, ptr %equals3, align 8
+  call void @__absolute.closure.release(ptr %closure.cleanup.value44)
+  store ptr null, ptr %equals3, align 8
+  br label %role.cleanup.end42
+
+role.cleanup.end42:                               ; preds = %role.owner.cleanup41, %role.cleanup.end
+  ret void
 }
 
-define void @"std.collections.HashMap<int32,int32>.__ctor$func_3Cint64_2Cint32_3E$func_3Cbool_2Cint32_2Cint32_3E$int32"(ptr %this, ptr %hash, ptr %equals, i32 %initialCapacity) {
+define void @"std.collections.HashMap<int32,int32>.__ctor$func_3Cint64_2Cint32_3E$func_3Cbool_2Cint32_2Cint32_3E$int32"(ptr %this, ptr %hash, i1 %hash.is_owner, ptr %equals, i1 %equals.is_owner, i32 %initialCapacity) {
 entry:
   %index = alloca i32, align 4
-  %initialCapacity3 = alloca i32, align 4
-  %equals2 = alloca ptr, align 8
+  %initialCapacity5 = alloca i32, align 4
+  %equals.is_owner4 = alloca i1, align 1
+  %equals3 = alloca ptr, align 8
+  %hash.is_owner2 = alloca i1, align 1
   %hash1 = alloca ptr, align 8
   store ptr %hash, ptr %hash1, align 8
-  store ptr %equals, ptr %equals2, align 8
-  store i32 %initialCapacity, ptr %initialCapacity3, align 4
-  %initialCapacity.value = load i32, ptr %initialCapacity3, align 4
+  store i1 %hash.is_owner, ptr %hash.is_owner2, align 1
+  store ptr %equals, ptr %equals3, align 8
+  store i1 %equals.is_owner, ptr %equals.is_owner4, align 1
+  store i32 %initialCapacity, ptr %initialCapacity5, align 4
+  %initialCapacity.value = load i32, ptr %initialCapacity5, align 4
   %less = icmp slt i32 %initialCapacity.value, 1
   br i1 %less, label %if.body, label %if.end
 
@@ -1931,21 +1970,21 @@ if.end:                                           ; preds = %entry
   %hashFunction.address = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 7
   %hash.value = load ptr, ptr %hash1, align 8
   call void @__absolute.closure.retain(ptr %hash.value)
-  %closure.cleanup.value = load ptr, ptr %hashFunction.address, align 8
-  call void @__absolute.closure.release(ptr %closure.cleanup.value)
+  %closure.cleanup.value18 = load ptr, ptr %hashFunction.address, align 8
+  call void @__absolute.closure.release(ptr %closure.cleanup.value18)
   store ptr null, ptr %hashFunction.address, align 8
   store ptr %hash.value, ptr %hashFunction.address, align 8
   %equalityFunction.address = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 8
-  %equals.value = load ptr, ptr %equals2, align 8
+  %equals.value = load ptr, ptr %equals3, align 8
   call void @__absolute.closure.retain(ptr %equals.value)
-  %closure.cleanup.value4 = load ptr, ptr %equalityFunction.address, align 8
-  call void @__absolute.closure.release(ptr %closure.cleanup.value4)
+  %closure.cleanup.value19 = load ptr, ptr %equalityFunction.address, align 8
+  call void @__absolute.closure.release(ptr %closure.cleanup.value19)
   store ptr null, ptr %equalityFunction.address, align 8
   store ptr %equals.value, ptr %equalityFunction.address, align 8
   %_capacity.address = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 6
-  %initialCapacity.value5 = load i32, ptr %initialCapacity3, align 4
-  %less6 = icmp slt i32 %initialCapacity.value5, 4
-  br i1 %less6, label %ternary.true, label %ternary.false
+  %initialCapacity.value20 = load i32, ptr %initialCapacity5, align 4
+  %less21 = icmp slt i32 %initialCapacity.value20, 4
+  br i1 %less21, label %ternary.true, label %ternary.false
 
 if.body:                                          ; preds = %entry
   %managed.handle = call i64 @absolute_managed_create(i64 ptrtoint (ptr getelementptr (%absolute.class.Error, ptr null, i32 1) to i64))
@@ -1960,28 +1999,68 @@ if.body:                                          ; preds = %entry
 
 error.propagate:                                  ; preds = %if.body
   call void @absolute_managed_destroy(i64 %managed.handle)
-  ret void
+  %role.is.owner = load i1, ptr %hash.is_owner2, align 1
+  br i1 %role.is.owner, label %role.owner.cleanup, label %role.cleanup.end
 
 error.continue:                                   ; preds = %if.body
   %exception.dynamic.type = call i64 @absolute_managed_type(i64 %managed.handle)
   %0 = icmp ne i64 %exception.dynamic.type, 0
   %exception.effective.type = select i1 %0, i64 %exception.dynamic.type, i64 6860172195720241041
   call void @absolute_error_set(i64 %managed.handle, i64 %exception.effective.type)
+  %role.is.owner12 = load i1, ptr %hash.is_owner2, align 1
+  br i1 %role.is.owner12, label %role.owner.cleanup10, label %role.cleanup.end11
+
+role.owner.cleanup:                               ; preds = %error.propagate
+  %closure.cleanup.value = load ptr, ptr %hash1, align 8
+  call void @__absolute.closure.release(ptr %closure.cleanup.value)
+  store ptr null, ptr %hash1, align 8
+  br label %role.cleanup.end
+
+role.cleanup.end:                                 ; preds = %role.owner.cleanup, %error.propagate
+  %role.is.owner8 = load i1, ptr %equals.is_owner4, align 1
+  br i1 %role.is.owner8, label %role.owner.cleanup6, label %role.cleanup.end7
+
+role.owner.cleanup6:                              ; preds = %role.cleanup.end
+  %closure.cleanup.value9 = load ptr, ptr %equals3, align 8
+  call void @__absolute.closure.release(ptr %closure.cleanup.value9)
+  store ptr null, ptr %equals3, align 8
+  br label %role.cleanup.end7
+
+role.cleanup.end7:                                ; preds = %role.owner.cleanup6, %role.cleanup.end
+  ret void
+
+role.owner.cleanup10:                             ; preds = %error.continue
+  %closure.cleanup.value13 = load ptr, ptr %hash1, align 8
+  call void @__absolute.closure.release(ptr %closure.cleanup.value13)
+  store ptr null, ptr %hash1, align 8
+  br label %role.cleanup.end11
+
+role.cleanup.end11:                               ; preds = %role.owner.cleanup10, %error.continue
+  %role.is.owner16 = load i1, ptr %equals.is_owner4, align 1
+  br i1 %role.is.owner16, label %role.owner.cleanup14, label %role.cleanup.end15
+
+role.owner.cleanup14:                             ; preds = %role.cleanup.end11
+  %closure.cleanup.value17 = load ptr, ptr %equals3, align 8
+  call void @__absolute.closure.release(ptr %closure.cleanup.value17)
+  store ptr null, ptr %equals3, align 8
+  br label %role.cleanup.end15
+
+role.cleanup.end15:                               ; preds = %role.owner.cleanup14, %role.cleanup.end11
   ret void
 
 ternary.true:                                     ; preds = %if.end
   br label %ternary.end
 
 ternary.false:                                    ; preds = %if.end
-  %initialCapacity.value7 = load i32, ptr %initialCapacity3, align 4
+  %initialCapacity.value22 = load i32, ptr %initialCapacity5, align 4
   br label %ternary.end
 
 ternary.end:                                      ; preds = %ternary.false, %ternary.true
-  %ternary.result = phi i32 [ 4, %ternary.true ], [ %initialCapacity.value7, %ternary.false ]
+  %ternary.result = phi i32 [ 4, %ternary.true ], [ %initialCapacity.value22, %ternary.false ]
   store i32 %ternary.result, ptr %_capacity.address, align 4
   %keys.address = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 1
-  %_capacity.address8 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 6
-  %_capacity.value = load i32, ptr %_capacity.address8, align 4
+  %_capacity.address23 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 6
+  %_capacity.value = load i32, ptr %_capacity.address23, align 4
   %int.cast = sext i32 %_capacity.value to i64
   %array.alloc.bytes = mul i64 %int.cast, 4
   %array.data.alloc = call ptr @malloc(i64 %array.alloc.bytes)
@@ -1994,57 +2073,57 @@ ternary.end:                                      ; preds = %ternary.false, %ter
   store %absolute.array.int32.1 zeroinitializer, ptr %keys.address, align 8
   store %absolute.array.int32.1 %array.dimension, ptr %keys.address, align 8
   %values.address = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 2
-  %_capacity.address9 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 6
-  %_capacity.value10 = load i32, ptr %_capacity.address9, align 4
-  %int.cast11 = sext i32 %_capacity.value10 to i64
-  %array.alloc.bytes12 = mul i64 %int.cast11, 4
-  %array.data.alloc13 = call ptr @malloc(i64 %array.alloc.bytes12)
-  %array.data14 = insertvalue %absolute.array.int32.1 undef, ptr %array.data.alloc13, 0
-  %array.owner15 = insertvalue %absolute.array.int32.1 %array.data14, ptr %array.data.alloc13, 1
-  %array.dimension16 = insertvalue %absolute.array.int32.1 %array.owner15, i64 %int.cast11, 2
-  %field.cleanup.array17 = load %absolute.array.int32.1, ptr %values.address, align 8
-  %field.cleanup.array.owner18 = extractvalue %absolute.array.int32.1 %field.cleanup.array17, 1
-  call void @free(ptr %field.cleanup.array.owner18)
+  %_capacity.address24 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 6
+  %_capacity.value25 = load i32, ptr %_capacity.address24, align 4
+  %int.cast26 = sext i32 %_capacity.value25 to i64
+  %array.alloc.bytes27 = mul i64 %int.cast26, 4
+  %array.data.alloc28 = call ptr @malloc(i64 %array.alloc.bytes27)
+  %array.data29 = insertvalue %absolute.array.int32.1 undef, ptr %array.data.alloc28, 0
+  %array.owner30 = insertvalue %absolute.array.int32.1 %array.data29, ptr %array.data.alloc28, 1
+  %array.dimension31 = insertvalue %absolute.array.int32.1 %array.owner30, i64 %int.cast26, 2
+  %field.cleanup.array32 = load %absolute.array.int32.1, ptr %values.address, align 8
+  %field.cleanup.array.owner33 = extractvalue %absolute.array.int32.1 %field.cleanup.array32, 1
+  call void @free(ptr %field.cleanup.array.owner33)
   store %absolute.array.int32.1 zeroinitializer, ptr %values.address, align 8
-  store %absolute.array.int32.1 %array.dimension16, ptr %values.address, align 8
+  store %absolute.array.int32.1 %array.dimension31, ptr %values.address, align 8
   %states.address = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 3
-  %_capacity.address19 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 6
-  %_capacity.value20 = load i32, ptr %_capacity.address19, align 4
-  %int.cast21 = sext i32 %_capacity.value20 to i64
-  %array.alloc.bytes22 = mul i64 %int.cast21, 4
-  %array.data.alloc23 = call ptr @malloc(i64 %array.alloc.bytes22)
-  %array.data24 = insertvalue %absolute.array.int32.1 undef, ptr %array.data.alloc23, 0
-  %array.owner25 = insertvalue %absolute.array.int32.1 %array.data24, ptr %array.data.alloc23, 1
-  %array.dimension26 = insertvalue %absolute.array.int32.1 %array.owner25, i64 %int.cast21, 2
-  %field.cleanup.array27 = load %absolute.array.int32.1, ptr %states.address, align 8
-  %field.cleanup.array.owner28 = extractvalue %absolute.array.int32.1 %field.cleanup.array27, 1
-  call void @free(ptr %field.cleanup.array.owner28)
+  %_capacity.address34 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 6
+  %_capacity.value35 = load i32, ptr %_capacity.address34, align 4
+  %int.cast36 = sext i32 %_capacity.value35 to i64
+  %array.alloc.bytes37 = mul i64 %int.cast36, 4
+  %array.data.alloc38 = call ptr @malloc(i64 %array.alloc.bytes37)
+  %array.data39 = insertvalue %absolute.array.int32.1 undef, ptr %array.data.alloc38, 0
+  %array.owner40 = insertvalue %absolute.array.int32.1 %array.data39, ptr %array.data.alloc38, 1
+  %array.dimension41 = insertvalue %absolute.array.int32.1 %array.owner40, i64 %int.cast36, 2
+  %field.cleanup.array42 = load %absolute.array.int32.1, ptr %states.address, align 8
+  %field.cleanup.array.owner43 = extractvalue %absolute.array.int32.1 %field.cleanup.array42, 1
+  call void @free(ptr %field.cleanup.array.owner43)
   store %absolute.array.int32.1 zeroinitializer, ptr %states.address, align 8
-  store %absolute.array.int32.1 %array.dimension26, ptr %states.address, align 8
+  store %absolute.array.int32.1 %array.dimension41, ptr %states.address, align 8
   store i32 0, ptr %index, align 4
   br label %while.condition
 
 while.condition:                                  ; preds = %array.bounds.success, %ternary.end
   %index.value = load i32, ptr %index, align 4
-  %_capacity.address29 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 6
-  %_capacity.value30 = load i32, ptr %_capacity.address29, align 4
-  %less31 = icmp slt i32 %index.value, %_capacity.value30
-  br i1 %less31, label %while.body, label %while.end
+  %_capacity.address44 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 6
+  %_capacity.value45 = load i32, ptr %_capacity.address44, align 4
+  %less46 = icmp slt i32 %index.value, %_capacity.value45
+  br i1 %less46, label %while.body, label %while.end
 
 while.body:                                       ; preds = %while.condition
-  %states.address32 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 3
-  %states.value = load %absolute.array.int32.1, ptr %states.address32, align 8
-  %array.data33 = extractvalue %absolute.array.int32.1 %states.value, 0
-  %array.owner34 = extractvalue %absolute.array.int32.1 %states.value, 1
-  %array.dimension35 = extractvalue %absolute.array.int32.1 %states.value, 2
-  %states.address36 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 3
-  %states.value37 = load %absolute.array.int32.1, ptr %states.address36, align 8
-  %array.data38 = extractvalue %absolute.array.int32.1 %states.value37, 0
-  %array.owner39 = extractvalue %absolute.array.int32.1 %states.value37, 1
-  %array.dimension40 = extractvalue %absolute.array.int32.1 %states.value37, 2
-  %index.value41 = load i32, ptr %index, align 4
-  %array.index.wide = sext i32 %index.value41 to i64
-  %array.index.valid = icmp ult i64 %array.index.wide, %array.dimension40
+  %states.address47 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 3
+  %states.value = load %absolute.array.int32.1, ptr %states.address47, align 8
+  %array.data48 = extractvalue %absolute.array.int32.1 %states.value, 0
+  %array.owner49 = extractvalue %absolute.array.int32.1 %states.value, 1
+  %array.dimension50 = extractvalue %absolute.array.int32.1 %states.value, 2
+  %states.address51 = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 3
+  %states.value52 = load %absolute.array.int32.1, ptr %states.address51, align 8
+  %array.data53 = extractvalue %absolute.array.int32.1 %states.value52, 0
+  %array.owner54 = extractvalue %absolute.array.int32.1 %states.value52, 1
+  %array.dimension55 = extractvalue %absolute.array.int32.1 %states.value52, 2
+  %index.value56 = load i32, ptr %index, align 4
+  %array.index.wide = sext i32 %index.value56 to i64
+  %array.index.valid = icmp ult i64 %array.index.wide, %array.dimension55
   br i1 %array.index.valid, label %array.bounds.success, label %array.bounds.failure, !prof !0
 
 while.end:                                        ; preds = %while.condition
@@ -2052,13 +2131,14 @@ while.end:                                        ; preds = %while.condition
   store i32 0, ptr %_count.address, align 4
   %tombstoneCount.address = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %this, i32 0, i32 5
   store i32 0, ptr %tombstoneCount.address, align 4
-  ret void
+  %role.is.owner60 = load i1, ptr %hash.is_owner2, align 1
+  br i1 %role.is.owner60, label %role.owner.cleanup58, label %role.cleanup.end59
 
 array.bounds.success:                             ; preds = %while.body
-  %array.element.address = getelementptr inbounds i32, ptr %array.data38, i32 %index.value41
+  %array.element.address = getelementptr inbounds i32, ptr %array.data53, i32 %index.value56
   store i32 0, ptr %array.element.address, align 4
-  %index.value42 = load i32, ptr %index, align 4
-  %add = add i32 %index.value42, 1
+  %index.value57 = load i32, ptr %index, align 4
+  %add = add i32 %index.value57, 1
   store i32 %add, ptr %index, align 4
   br label %while.condition
 
@@ -2066,6 +2146,25 @@ array.bounds.failure:                             ; preds = %while.body
   %1 = call i32 @puts(ptr @array.bounds.message.33)
   call void @exit(i32 1)
   unreachable
+
+role.owner.cleanup58:                             ; preds = %while.end
+  %closure.cleanup.value61 = load ptr, ptr %hash1, align 8
+  call void @__absolute.closure.release(ptr %closure.cleanup.value61)
+  store ptr null, ptr %hash1, align 8
+  br label %role.cleanup.end59
+
+role.cleanup.end59:                               ; preds = %role.owner.cleanup58, %while.end
+  %role.is.owner64 = load i1, ptr %equals.is_owner4, align 1
+  br i1 %role.is.owner64, label %role.owner.cleanup62, label %role.cleanup.end63
+
+role.owner.cleanup62:                             ; preds = %role.cleanup.end59
+  %closure.cleanup.value65 = load ptr, ptr %equals3, align 8
+  call void @__absolute.closure.release(ptr %closure.cleanup.value65)
+  store ptr null, ptr %equals3, align 8
+  br label %role.cleanup.end63
+
+role.cleanup.end63:                               ; preds = %role.owner.cleanup62, %role.cleanup.end59
+  ret void
 }
 
 define internal void @"std.collections.HashMap<int32,int32>.__destroy"(ptr %this) {
@@ -2138,7 +2237,7 @@ entry:
   call void @llvm.memset.p0.i64(ptr align 8 %managed.pointee, i8 0, i64 ptrtoint (ptr getelementptr (%"absolute.class.std.collections.HashMap<int32,int32>", ptr null, i32 1) to i64), i1 false)
   %vtable.address = getelementptr inbounds %"absolute.class.std.collections.HashMap<int32,int32>", ptr %managed.pointee, i32 0, i32 0
   store ptr @"std.collections.HashMap<int32,int32>.__vtable", ptr %vtable.address, align 8
-  call void @"std.collections.HashMap<int32,int32>.__ctor$func_3Cint64_2Cint32_3E$func_3Cbool_2Cint32_2Cint32_3E"(ptr %managed.pointee, ptr @__absolute.closure.value.hashInt32, ptr @__absolute.closure.value.equalsInt32)
+  call void @"std.collections.HashMap<int32,int32>.__ctor$func_3Cint64_2Cint32_3E$func_3Cbool_2Cint32_2Cint32_3E"(ptr %managed.pointee, ptr @__absolute.closure.value.hashInt32, i1 true, ptr @__absolute.closure.value.equalsInt32, i1 true)
   %error.pending = call i1 @absolute_error_pending()
   br i1 %error.pending, label %error.propagate, label %error.continue
 
