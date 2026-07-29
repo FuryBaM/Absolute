@@ -10,7 +10,6 @@ namespace Absolute {
         bool isReference = false;
         bool isOut = false;
         bool isParams = false;
-        bool isConsume = false;
 
         explicit VarDeclExpr(std::unique_ptr<Expression> type, std::unique_ptr<Expression> name, std::unique_ptr<Expression> value)
             : type(std::move(type)), name(std::move(name)), value(std::move(value)) {

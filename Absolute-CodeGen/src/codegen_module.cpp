@@ -192,6 +192,9 @@ namespace Absolute {
             parameterTypeNames.push_back(specialization
                 ? specialization->parameterTypes[index] : CallableParameterTypeName(*parameter));
             parameterTypes.push_back(AbiParameterType(parameterTypeNames.back(), external));
+            if (ParameterSupportsOwnershipName(
+                parameterTypeNames.back(), external))
+                parameterTypes.push_back(builder.getInt1Ty());
         }
 
         const Symbol* symbol = specialization ? specialization : (analyzer
@@ -232,8 +235,15 @@ namespace Absolute {
         if (AbiReturnOffset(returnTypeName, external) != 0)
             function->getArg(argumentIndex++)->setName("__result");
         ApplyValueReferenceParameterAttributes(*function, argumentIndex, parameterTypeNames);
-        for (const auto& parameter : statement.parameters)
-            function->getArg(argumentIndex++)->setName(IdentifierName(parameter->name.get()));
+        for (size_t index = 0; index < statement.parameters.size(); ++index) {
+            function->getArg(argumentIndex++)->setName(
+                IdentifierName(statement.parameters[index]->name.get()));
+            if (ParameterSupportsOwnershipName(
+                parameterTypeNames[index], external))
+                function->getArg(argumentIndex++)->setName(
+                    IdentifierName(statement.parameters[index]->name.get()) +
+                    ".is_owner");
+        }
         currentGenericSubstitutions = oldSubstitutions;
         return function;
     }
@@ -281,8 +291,13 @@ namespace Absolute {
             const auto& parameter = statement.parameters[index];
             const std::string typeName = specialization
                 ? specialization->parameterTypes[index] : CallableParameterTypeName(*parameter);
-            BindCallableParameter(*function->getArg(argumentIndex++), *parameter,
-                typeName, statement.UsesCAbi());
+            llvm::Argument* argument = function->getArg(argumentIndex++);
+            llvm::Argument* ownershipArgument =
+                ParameterSupportsOwnershipName(
+                    typeName, statement.UsesCAbi())
+                ? function->getArg(argumentIndex++) : nullptr;
+            BindCallableParameter(*argument, *parameter,
+                typeName, statement.UsesCAbi(), ownershipArgument);
         }
 
         if (statement.body) statement.body->Accept(visitor);
@@ -322,14 +337,27 @@ namespace Absolute {
 
     void CodeGenerator::Impl::BindCallableParameter(
         llvm::Argument& argument, VarDeclExpr& parameter,
-        const std::string& explicitTypeName, bool external) {
+        const std::string& explicitTypeName, bool external,
+        llvm::Argument* ownershipArgument) {
         const std::string name = IdentifierName(parameter.name.get());
         const std::string declaredTypeName = explicitTypeName.empty()
             ? SubstituteCodegenType(CallableParameterTypeName(parameter), currentGenericSubstitutions)
             : explicitTypeName;
-        const bool consumes = IsConsumeParameterTypeName(declaredTypeName);
         const bool valueReference = IsValueReferenceTypeName(declaredTypeName);
         const std::string typeName = ValueReferenceBaseTypeName(declaredTypeName);
+        const bool rolePolymorphic =
+            ParameterSupportsOwnershipName(declaredTypeName, external);
+        const bool staticallyOwns = rolePolymorphic;
+        auto bindOwnershipFlag = [&](Variable& variable) {
+            if (!rolePolymorphic) return;
+            if (!ownershipArgument)
+                Fail("resource parameter is missing its ownership role");
+            variable.ownershipFlagStorage = CreateEntryAlloca(
+                *argument.getParent(), builder.getInt1Ty(),
+                name + ".is_owner");
+            builder.CreateStore(ownershipArgument,
+                variable.ownershipFlagStorage);
+        };
         if (ArrayRankName(typeName) > 0) {
             ArrayView view = ArrayViewFromValue(&argument, typeName);
             Variable variable;
@@ -347,9 +375,10 @@ namespace Absolute {
                 view.owner ? view.owner
                     : llvm::ConstantPointerNull::get(builder.getPtrTy()),
                 variable.arrayOwnerStorage);
-            variable.ownsArrayStorage = consumes;
-            variable.arrayOwnerSymbol = consumes
+            variable.ownsArrayStorage = staticallyOwns;
+            variable.arrayOwnerSymbol = staticallyOwns
                 ? variable.symbol : InvalidSymbolId;
+            bindOwnershipFlag(variable);
             if (!scopes.back().emplace(name, std::move(variable)).second)
                 Fail("duplicate parameter '" + name + "'");
             return;
@@ -358,7 +387,8 @@ namespace Absolute {
             Variable variable{&argument, TypeFromName(typeName), typeName, false, false,
                 nullptr, {}, nullptr, SemanticSymbol(&parameter)};
             variable.ownsAggregateResources =
-                consumes && TypeNeedsCleanup(typeName);
+                staticallyOwns && TypeNeedsCleanup(typeName);
+            bindOwnershipFlag(variable);
             if (!scopes.back().emplace(name, std::move(variable)).second)
                 Fail("duplicate parameter '" + name + "'");
             return;
@@ -370,9 +400,10 @@ namespace Absolute {
         Variable variable{address, storageType, typeName, false, false, nullptr, {},
             nullptr, SemanticSymbol(&parameter)};
         variable.managedOwner =
-            consumes && IsStrongManagedPointerTypeName(typeName);
+            staticallyOwns && IsStrongManagedPointerTypeName(typeName);
         variable.ownsAggregateResources =
-            consumes && TypeNeedsCleanup(typeName);
+            staticallyOwns && TypeNeedsCleanup(typeName);
+        bindOwnershipFlag(variable);
         if (!scopes.back().emplace(name, std::move(variable)).second)
             Fail("duplicate parameter '" + name + "'");
     }
@@ -415,9 +446,18 @@ namespace Absolute {
         currentReturnStorage = returnOffset != 0 ? function->getArg(0) : nullptr;
         currentThis = method.isStatic ? nullptr : function->getArg(returnOffset);
         const unsigned offset = returnOffset + (method.isStatic ? 0U : 1U);
-        for (size_t index = 0; index < method.statement->parameters.size(); ++index)
-            BindCallableParameter(*function->getArg(static_cast<unsigned>(index) + offset),
-                *method.statement->parameters[index], method.parameterTypes[index]);
+        unsigned parameterArgumentIndex = offset;
+        for (size_t index = 0; index < method.statement->parameters.size(); ++index) {
+            llvm::Argument* argument = function->getArg(parameterArgumentIndex++);
+            const std::string parameterType = SubstituteCodegenType(
+                method.parameterTypes[index], method.substitutions);
+            llvm::Argument* ownershipArgument =
+                ParameterSupportsOwnershipName(parameterType)
+                ? function->getArg(parameterArgumentIndex++) : nullptr;
+            BindCallableParameter(*argument,
+                *method.statement->parameters[index], parameterType,
+                false, ownershipArgument);
+        }
         if (method.statement->autoPropertyAccessor) {
             llvm::Value* storage = ImplicitFieldAddress(
                 PropertyBackingFieldName(method.statement->propertyName));
@@ -469,10 +509,21 @@ namespace Absolute {
         currentClassName = info.name;
         currentThis = function->getArg(0);
         currentReturnTypeName = "void";
-        if (constructor)
-            for (size_t index = 0; index < constructor->parameters.size(); ++index)
-                BindCallableParameter(*function->getArg(static_cast<unsigned>(index + 1)),
-                    *constructor->parameters[index]);
+        if (constructor) {
+            unsigned parameterArgumentIndex = 1;
+            const std::vector<std::string> parameterTypes =
+                ConstructorParameterTypeNames(constructor, info.substitutions);
+            for (size_t index = 0; index < constructor->parameters.size(); ++index) {
+                llvm::Argument* argument =
+                    function->getArg(parameterArgumentIndex++);
+                llvm::Argument* ownershipArgument =
+                    ParameterSupportsOwnershipName(parameterTypes[index])
+                    ? function->getArg(parameterArgumentIndex++) : nullptr;
+                BindCallableParameter(*argument,
+                    *constructor->parameters[index], parameterTypes[index],
+                    false, ownershipArgument);
+            }
+        }
         if (!info.baseClass.empty()) {
             auto base = classes.find(info.baseClass);
             if (base == classes.end()) Fail("missing base class '" + info.baseClass + "'");
@@ -527,6 +578,7 @@ namespace Absolute {
                 if (!baseConstructor)
                     Fail("missing base constructor for '" + info.baseClass + "'");
                 std::vector<llvm::Value*> arguments;
+                std::vector<llvm::Value*> ownershipFlags;
                 std::vector<std::string> parameterTypes = baseParameterTypes;
                 if (constructor && constructor->hasExplicitBaseCall) {
                     for (size_t index = 0;
@@ -538,10 +590,14 @@ namespace Absolute {
                         arguments.push_back(EvaluateCallArgument(
                             constructor->baseArguments[index].get(),
                             temporaryArrays, temporaryClosures, parameterType));
+                        ownershipFlags.push_back(ArgumentOwnershipFlag(
+                            constructor->baseArguments[index].get(),
+                            parameterType));
                     }
                 }
                 EmitAbiCall(baseConstructor->getFunctionType(), baseConstructor, "void",
-                    {currentThis}, parameterTypes, arguments, "base.constructor.result");
+                    {currentThis}, parameterTypes, arguments, "base.constructor.result",
+                    false, ownershipFlags);
                 EmitExceptionCheck();
             }
         }
@@ -595,9 +651,16 @@ namespace Absolute {
         currentReturnStorage = returnOffset != 0 ? function->getArg(0) : nullptr;
         currentThis = method.isStatic ? nullptr : function->getArg(returnOffset);
         const unsigned offset = returnOffset + (method.isStatic ? 0U : 1U);
-        for (size_t index = 0; index < method.statement->parameters.size(); ++index)
-            BindCallableParameter(*function->getArg(static_cast<unsigned>(index) + offset),
-                *method.statement->parameters[index], method.parameterTypes[index]);
+        unsigned parameterArgumentIndex = offset;
+        for (size_t index = 0; index < method.statement->parameters.size(); ++index) {
+            llvm::Argument* argument = function->getArg(parameterArgumentIndex++);
+            llvm::Argument* ownershipArgument =
+                ParameterSupportsOwnershipName(method.parameterTypes[index])
+                ? function->getArg(parameterArgumentIndex++) : nullptr;
+            BindCallableParameter(*argument,
+                *method.statement->parameters[index], method.parameterTypes[index],
+                false, ownershipArgument);
+        }
         method.statement->body->Accept(visitor);
         FinishClassCallable(*function);
         PopScope();
@@ -637,9 +700,18 @@ namespace Absolute {
         currentReturnStorage = returnOffset != 0 ? function->getArg(0) : nullptr;
         currentThis = method.isStatic ? nullptr : function->getArg(returnOffset);
         const unsigned offset = returnOffset + (method.isStatic ? 0U : 1U);
-        for (size_t index = 0; index < method.statement->parameters.size(); ++index)
-            BindCallableParameter(*function->getArg(static_cast<unsigned>(index) + offset),
-                *method.statement->parameters[index], method.parameterTypes[index]);
+        unsigned parameterArgumentIndex = offset;
+        for (size_t index = 0; index < method.statement->parameters.size(); ++index) {
+            llvm::Argument* argument = function->getArg(parameterArgumentIndex++);
+            const std::string parameterType = SubstituteCodegenType(
+                method.parameterTypes[index], method.substitutions);
+            llvm::Argument* ownershipArgument =
+                ParameterSupportsOwnershipName(parameterType)
+                ? function->getArg(parameterArgumentIndex++) : nullptr;
+            BindCallableParameter(*argument,
+                *method.statement->parameters[index], parameterType,
+                false, ownershipArgument);
+        }
         if (method.statement->autoPropertyAccessor) {
             llvm::Value* storage = ImplicitFieldAddress(
                 PropertyBackingFieldName(method.statement->propertyName));
@@ -699,9 +771,17 @@ namespace Absolute {
             currentClassName = info.name;
             currentThis = function->getArg(0);
             currentReturnTypeName = "void";
-            for (size_t index = 0; index < constructor->parameters.size(); ++index)
-                BindCallableParameter(*function->getArg(static_cast<unsigned>(index + 1)),
-                    *constructor->parameters[index]);
+            unsigned parameterArgumentIndex = 1;
+            for (size_t index = 0; index < constructor->parameters.size(); ++index) {
+                llvm::Argument* argument =
+                    function->getArg(parameterArgumentIndex++);
+                llvm::Argument* ownershipArgument =
+                    ParameterSupportsOwnershipName(parameterTypes[index])
+                    ? function->getArg(parameterArgumentIndex++) : nullptr;
+                BindCallableParameter(*argument,
+                    *constructor->parameters[index], parameterTypes[index],
+                    false, ownershipArgument);
+            }
             if (constructor->body) constructor->body->Accept(visitor);
             FinishClassCallable(*function);
             PopScope();

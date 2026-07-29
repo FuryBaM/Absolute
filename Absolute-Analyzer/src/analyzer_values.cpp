@@ -651,6 +651,9 @@ namespace Absolute {
                         value.type + "', expected '" + expected + "'");
                 CheckManagedMoveArgument(value, declaredExpected, index, "constructor");
             }
+            if (selected)
+                RecordOwnershipCall(selected->symbol, evaluated, parameters,
+                    "constructor '" + constructedType + "'");
             Result allocation{InvalidSymbolId,
                 (rawAllocation ? "raw " : "") + constructedType + "*", false,
                 !rawAllocation, false, InitializationState::Initialized,
@@ -694,7 +697,19 @@ namespace Absolute {
             }
         }
         const auto keep = keepLifetimes.find(target.symbol);
-        const Symbol* targetSymbol = table.Get(target.symbol);
+        Symbol* targetSymbol = table.Get(target.symbol);
+        if (targetSymbol && targetSymbol->rolePolymorphic &&
+            !ownerGuardedParameters.contains(targetSymbol->id)) {
+            if (Symbol* callable = table.Get(targetSymbol->callableOwner)) {
+                if (callable->parameterRequiresOwner.size() <=
+                    targetSymbol->parameterIndex)
+                    callable->parameterRequiresOwner.resize(
+                        targetSymbol->parameterIndex + 1, false);
+                callable->parameterRequiresOwner[
+                    targetSymbol->parameterIndex] = true;
+                targetSymbol->requiresOwner = true;
+            }
+        }
         if (target.initialization == InitializationState::Uninitialized)
             Report("pointer is deleted before initialization", "E_DELETE_UNINITIALIZED", target.symbol);
         else if (target.initialization == InitializationState::MaybeUninitialized)

@@ -114,18 +114,20 @@ array.bounds.failure:                             ; preds = %entry
   unreachable
 }
 
-define void @"std.collections.VectorIterator<int32>.__ctor$int32_5B_5D$int32"(ptr %this, %absolute.array.int32.1 %source, i32 %sourceLength) {
+define void @"std.collections.VectorIterator<int32>.__ctor$int32_5B_5D$int32"(ptr %this, %absolute.array.int32.1 %source, i1 %source.is_owner, i32 %sourceLength) {
 entry:
-  %sourceLength1 = alloca i32, align 4
+  %sourceLength2 = alloca i32, align 4
+  %source.is_owner1 = alloca i1, align 1
   %source.array.owner = alloca ptr, align 8
   %array.data = extractvalue %absolute.array.int32.1 %source, 0
   %array.owner = extractvalue %absolute.array.int32.1 %source, 1
   %array.dimension = extractvalue %absolute.array.int32.1 %source, 2
   store ptr %array.owner, ptr %source.array.owner, align 8
-  store i32 %sourceLength, ptr %sourceLength1, align 4
+  store i1 %source.is_owner, ptr %source.is_owner1, align 1
+  store i32 %sourceLength, ptr %sourceLength2, align 4
   %snapshot.address = getelementptr inbounds %"absolute.class.std.collections.VectorIterator<int32>", ptr %this, i32 0, i32 1
-  %source.array.owner2 = load ptr, ptr %source.array.owner, align 8
-  %sourceLength.value = load i32, ptr %sourceLength1, align 4
+  %source.array.owner3 = load ptr, ptr %source.array.owner, align 8
+  %sourceLength.value = load i32, ptr %sourceLength2, align 4
   %int.cast = sext i32 %sourceLength.value to i64
   %slice.order.valid = icmp sge i64 %int.cast, 0
   %slice.lower.valid = and i1 true, %slice.order.valid
@@ -136,35 +138,44 @@ entry:
 array.bounds.success:                             ; preds = %entry
   %slice.dim.length = sub i64 %int.cast, 0
   %slice.data = getelementptr inbounds i32, ptr %array.data, i64 0
-  %array.data3 = insertvalue %absolute.array.int32.1 undef, ptr %slice.data, 0
-  %array.owner4 = insertvalue %absolute.array.int32.1 %array.data3, ptr %source.array.owner2, 1
-  %array.dimension5 = insertvalue %absolute.array.int32.1 %array.owner4, i64 %slice.dim.length, 2
-  %array.data6 = extractvalue %absolute.array.int32.1 %array.dimension5, 0
-  %array.owner7 = extractvalue %absolute.array.int32.1 %array.dimension5, 1
-  %array.dimension8 = extractvalue %absolute.array.int32.1 %array.dimension5, 2
-  %copy.element.count = mul i64 1, %array.dimension8
+  %array.data4 = insertvalue %absolute.array.int32.1 undef, ptr %slice.data, 0
+  %array.owner5 = insertvalue %absolute.array.int32.1 %array.data4, ptr %source.array.owner3, 1
+  %array.dimension6 = insertvalue %absolute.array.int32.1 %array.owner5, i64 %slice.dim.length, 2
+  %array.data7 = extractvalue %absolute.array.int32.1 %array.dimension6, 0
+  %array.owner8 = extractvalue %absolute.array.int32.1 %array.dimension6, 1
+  %array.dimension9 = extractvalue %absolute.array.int32.1 %array.dimension6, 2
+  %copy.element.count = mul i64 1, %array.dimension9
   %copy.byte.count = mul i64 %copy.element.count, 4
   %copy.data = call ptr @malloc(i64 %copy.byte.count)
-  call void @llvm.memcpy.p0.p0.i64(ptr align 16 %copy.data, ptr align 1 %array.data6, i64 %copy.byte.count, i1 false)
-  %array.data9 = insertvalue %absolute.array.int32.1 undef, ptr %copy.data, 0
-  %array.owner10 = insertvalue %absolute.array.int32.1 %array.data9, ptr %copy.data, 1
-  %array.dimension11 = insertvalue %absolute.array.int32.1 %array.owner10, i64 %array.dimension8, 2
+  call void @llvm.memcpy.p0.p0.i64(ptr align 16 %copy.data, ptr align 1 %array.data7, i64 %copy.byte.count, i1 false)
+  %array.data10 = insertvalue %absolute.array.int32.1 undef, ptr %copy.data, 0
+  %array.owner11 = insertvalue %absolute.array.int32.1 %array.data10, ptr %copy.data, 1
+  %array.dimension12 = insertvalue %absolute.array.int32.1 %array.owner11, i64 %array.dimension9, 2
   %field.cleanup.array = load %absolute.array.int32.1, ptr %snapshot.address, align 8
   %field.cleanup.array.owner = extractvalue %absolute.array.int32.1 %field.cleanup.array, 1
   call void @free(ptr %field.cleanup.array.owner)
   store %absolute.array.int32.1 zeroinitializer, ptr %snapshot.address, align 8
-  store %absolute.array.int32.1 %array.dimension11, ptr %snapshot.address, align 8
+  store %absolute.array.int32.1 %array.dimension12, ptr %snapshot.address, align 8
   %length.address = getelementptr inbounds %"absolute.class.std.collections.VectorIterator<int32>", ptr %this, i32 0, i32 2
-  %sourceLength.value12 = load i32, ptr %sourceLength1, align 4
-  store i32 %sourceLength.value12, ptr %length.address, align 4
+  %sourceLength.value13 = load i32, ptr %sourceLength2, align 4
+  store i32 %sourceLength.value13, ptr %length.address, align 4
   %index.address = getelementptr inbounds %"absolute.class.std.collections.VectorIterator<int32>", ptr %this, i32 0, i32 3
   store i32 -1, ptr %index.address, align 4
-  ret void
+  %role.is.owner = load i1, ptr %source.is_owner1, align 1
+  br i1 %role.is.owner, label %role.owner.cleanup, label %role.cleanup.end
 
 array.bounds.failure:                             ; preds = %entry
   %0 = call i32 @puts(ptr @array.bounds.message.1)
   call void @exit(i32 1)
   unreachable
+
+role.owner.cleanup:                               ; preds = %array.bounds.success
+  %cleanup.array.owner = load ptr, ptr %source.array.owner, align 8
+  call void @free(ptr %cleanup.array.owner)
+  br label %role.cleanup.end
+
+role.cleanup.end:                                 ; preds = %role.owner.cleanup, %array.bounds.success
+  ret void
 }
 
 define internal void @"std.collections.VectorIterator<int32>.__destroy"(ptr %this) {
@@ -756,106 +767,117 @@ array.bounds.failure:                             ; preds = %while.body
   unreachable
 }
 
-define void @"std.collections.VectorBuilder<int32>.__ctor$int32_5B_5D$int32"(ptr %this, %absolute.array.int32.1 %initialSource, i32 %initialCount) {
+define void @"std.collections.VectorBuilder<int32>.__ctor$int32_5B_5D$int32"(ptr %this, %absolute.array.int32.1 %initialSource, i1 %initialSource.is_owner, i32 %initialCount) {
 entry:
   %i = alloca i32, align 4
-  %initialCount1 = alloca i32, align 4
+  %initialCount2 = alloca i32, align 4
+  %initialSource.is_owner1 = alloca i1, align 1
   %initialSource.array.owner = alloca ptr, align 8
   %array.data = extractvalue %absolute.array.int32.1 %initialSource, 0
   %array.owner = extractvalue %absolute.array.int32.1 %initialSource, 1
   %array.dimension = extractvalue %absolute.array.int32.1 %initialSource, 2
   store ptr %array.owner, ptr %initialSource.array.owner, align 8
-  store i32 %initialCount, ptr %initialCount1, align 4
+  store i1 %initialSource.is_owner, ptr %initialSource.is_owner1, align 1
+  store i32 %initialCount, ptr %initialCount2, align 4
   %_count.address = getelementptr inbounds %"absolute.class.std.collections.VectorBuilder<int32>", ptr %this, i32 0, i32 2
-  %initialCount.value = load i32, ptr %initialCount1, align 4
+  %initialCount.value = load i32, ptr %initialCount2, align 4
   store i32 %initialCount.value, ptr %_count.address, align 4
   %_capacity.address = getelementptr inbounds %"absolute.class.std.collections.VectorBuilder<int32>", ptr %this, i32 0, i32 3
-  %initialCount.value2 = load i32, ptr %initialCount1, align 4
-  %greater = icmp sgt i32 %initialCount.value2, 4
+  %initialCount.value3 = load i32, ptr %initialCount2, align 4
+  %greater = icmp sgt i32 %initialCount.value3, 4
   br i1 %greater, label %ternary.true, label %ternary.false
 
 ternary.true:                                     ; preds = %entry
-  %initialCount.value3 = load i32, ptr %initialCount1, align 4
+  %initialCount.value4 = load i32, ptr %initialCount2, align 4
   br label %ternary.end
 
 ternary.false:                                    ; preds = %entry
   br label %ternary.end
 
 ternary.end:                                      ; preds = %ternary.false, %ternary.true
-  %ternary.result = phi i32 [ %initialCount.value3, %ternary.true ], [ 4, %ternary.false ]
+  %ternary.result = phi i32 [ %initialCount.value4, %ternary.true ], [ 4, %ternary.false ]
   store i32 %ternary.result, ptr %_capacity.address, align 4
   %buffer.address = getelementptr inbounds %"absolute.class.std.collections.VectorBuilder<int32>", ptr %this, i32 0, i32 1
-  %_capacity.address4 = getelementptr inbounds %"absolute.class.std.collections.VectorBuilder<int32>", ptr %this, i32 0, i32 3
-  %_capacity.value = load i32, ptr %_capacity.address4, align 4
+  %_capacity.address5 = getelementptr inbounds %"absolute.class.std.collections.VectorBuilder<int32>", ptr %this, i32 0, i32 3
+  %_capacity.value = load i32, ptr %_capacity.address5, align 4
   %int.cast = sext i32 %_capacity.value to i64
   %array.alloc.bytes = mul i64 %int.cast, 4
   %array.data.alloc = call ptr @malloc(i64 %array.alloc.bytes)
-  %array.data5 = insertvalue %absolute.array.int32.1 undef, ptr %array.data.alloc, 0
-  %array.owner6 = insertvalue %absolute.array.int32.1 %array.data5, ptr %array.data.alloc, 1
-  %array.dimension7 = insertvalue %absolute.array.int32.1 %array.owner6, i64 %int.cast, 2
+  %array.data6 = insertvalue %absolute.array.int32.1 undef, ptr %array.data.alloc, 0
+  %array.owner7 = insertvalue %absolute.array.int32.1 %array.data6, ptr %array.data.alloc, 1
+  %array.dimension8 = insertvalue %absolute.array.int32.1 %array.owner7, i64 %int.cast, 2
   %field.cleanup.array = load %absolute.array.int32.1, ptr %buffer.address, align 8
   %field.cleanup.array.owner = extractvalue %absolute.array.int32.1 %field.cleanup.array, 1
   call void @free(ptr %field.cleanup.array.owner)
   store %absolute.array.int32.1 zeroinitializer, ptr %buffer.address, align 8
-  store %absolute.array.int32.1 %array.dimension7, ptr %buffer.address, align 8
+  store %absolute.array.int32.1 %array.dimension8, ptr %buffer.address, align 8
   store i32 0, ptr %i, align 4
   br label %while.condition
 
-while.condition:                                  ; preds = %array.bounds.success24, %ternary.end
+while.condition:                                  ; preds = %array.bounds.success25, %ternary.end
   %i.value = load i32, ptr %i, align 4
-  %_count.address8 = getelementptr inbounds %"absolute.class.std.collections.VectorBuilder<int32>", ptr %this, i32 0, i32 2
-  %_count.value = load i32, ptr %_count.address8, align 4
+  %_count.address9 = getelementptr inbounds %"absolute.class.std.collections.VectorBuilder<int32>", ptr %this, i32 0, i32 2
+  %_count.value = load i32, ptr %_count.address9, align 4
   %less = icmp slt i32 %i.value, %_count.value
   br i1 %less, label %while.body, label %while.end
 
 while.body:                                       ; preds = %while.condition
-  %buffer.address9 = getelementptr inbounds %"absolute.class.std.collections.VectorBuilder<int32>", ptr %this, i32 0, i32 1
-  %buffer.value = load %absolute.array.int32.1, ptr %buffer.address9, align 8
-  %array.data10 = extractvalue %absolute.array.int32.1 %buffer.value, 0
-  %array.owner11 = extractvalue %absolute.array.int32.1 %buffer.value, 1
-  %array.dimension12 = extractvalue %absolute.array.int32.1 %buffer.value, 2
-  %buffer.address13 = getelementptr inbounds %"absolute.class.std.collections.VectorBuilder<int32>", ptr %this, i32 0, i32 1
-  %buffer.value14 = load %absolute.array.int32.1, ptr %buffer.address13, align 8
-  %array.data15 = extractvalue %absolute.array.int32.1 %buffer.value14, 0
-  %array.owner16 = extractvalue %absolute.array.int32.1 %buffer.value14, 1
-  %array.dimension17 = extractvalue %absolute.array.int32.1 %buffer.value14, 2
-  %i.value18 = load i32, ptr %i, align 4
-  %array.index.wide = sext i32 %i.value18 to i64
-  %array.index.valid = icmp ult i64 %array.index.wide, %array.dimension17
+  %buffer.address10 = getelementptr inbounds %"absolute.class.std.collections.VectorBuilder<int32>", ptr %this, i32 0, i32 1
+  %buffer.value = load %absolute.array.int32.1, ptr %buffer.address10, align 8
+  %array.data11 = extractvalue %absolute.array.int32.1 %buffer.value, 0
+  %array.owner12 = extractvalue %absolute.array.int32.1 %buffer.value, 1
+  %array.dimension13 = extractvalue %absolute.array.int32.1 %buffer.value, 2
+  %buffer.address14 = getelementptr inbounds %"absolute.class.std.collections.VectorBuilder<int32>", ptr %this, i32 0, i32 1
+  %buffer.value15 = load %absolute.array.int32.1, ptr %buffer.address14, align 8
+  %array.data16 = extractvalue %absolute.array.int32.1 %buffer.value15, 0
+  %array.owner17 = extractvalue %absolute.array.int32.1 %buffer.value15, 1
+  %array.dimension18 = extractvalue %absolute.array.int32.1 %buffer.value15, 2
+  %i.value19 = load i32, ptr %i, align 4
+  %array.index.wide = sext i32 %i.value19 to i64
+  %array.index.valid = icmp ult i64 %array.index.wide, %array.dimension18
   br i1 %array.index.valid, label %array.bounds.success, label %array.bounds.failure, !prof !0
 
 while.end:                                        ; preds = %while.condition
   %_finished.address = getelementptr inbounds %"absolute.class.std.collections.VectorBuilder<int32>", ptr %this, i32 0, i32 4
   store i1 false, ptr %_finished.address, align 1
-  ret void
+  %role.is.owner = load i1, ptr %initialSource.is_owner1, align 1
+  br i1 %role.is.owner, label %role.owner.cleanup, label %role.cleanup.end
 
 array.bounds.success:                             ; preds = %while.body
-  %array.element.address = getelementptr inbounds i32, ptr %array.data15, i32 %i.value18
-  %initialSource.array.owner19 = load ptr, ptr %initialSource.array.owner, align 8
+  %array.element.address = getelementptr inbounds i32, ptr %array.data16, i32 %i.value19
   %initialSource.array.owner20 = load ptr, ptr %initialSource.array.owner, align 8
-  %i.value21 = load i32, ptr %i, align 4
-  %array.index.wide22 = sext i32 %i.value21 to i64
-  %array.index.valid23 = icmp ult i64 %array.index.wide22, %array.dimension
-  br i1 %array.index.valid23, label %array.bounds.success24, label %array.bounds.failure25, !prof !0
+  %initialSource.array.owner21 = load ptr, ptr %initialSource.array.owner, align 8
+  %i.value22 = load i32, ptr %i, align 4
+  %array.index.wide23 = sext i32 %i.value22 to i64
+  %array.index.valid24 = icmp ult i64 %array.index.wide23, %array.dimension
+  br i1 %array.index.valid24, label %array.bounds.success25, label %array.bounds.failure26, !prof !0
 
 array.bounds.failure:                             ; preds = %while.body
   %0 = call i32 @puts(ptr @array.bounds.message.16)
   call void @exit(i32 1)
   unreachable
 
-array.bounds.success24:                           ; preds = %array.bounds.success
-  %array.element.address26 = getelementptr inbounds i32, ptr %array.data, i32 %i.value21
-  %array.element = load i32, ptr %array.element.address26, align 4
+array.bounds.success25:                           ; preds = %array.bounds.success
+  %array.element.address27 = getelementptr inbounds i32, ptr %array.data, i32 %i.value22
+  %array.element = load i32, ptr %array.element.address27, align 4
   store i32 %array.element, ptr %array.element.address, align 4
-  %i.value27 = load i32, ptr %i, align 4
-  %add = add i32 %i.value27, 1
+  %i.value28 = load i32, ptr %i, align 4
+  %add = add i32 %i.value28, 1
   store i32 %add, ptr %i, align 4
   br label %while.condition
 
-array.bounds.failure25:                           ; preds = %array.bounds.success
+array.bounds.failure26:                           ; preds = %array.bounds.success
   %1 = call i32 @puts(ptr @array.bounds.message.17)
   call void @exit(i32 1)
   unreachable
+
+role.owner.cleanup:                               ; preds = %while.end
+  %cleanup.array.owner = load ptr, ptr %initialSource.array.owner, align 8
+  call void @free(ptr %cleanup.array.owner)
+  br label %role.cleanup.end
+
+role.cleanup.end:                                 ; preds = %role.owner.cleanup, %while.end
+  ret void
 }
 
 define internal void @"std.collections.VectorBuilder<int32>.__destroy"(ptr %this) {
@@ -1340,7 +1362,7 @@ entry:
   %items.value = load %absolute.array.int32.1, ptr %items.address, align 8
   %_count.address = getelementptr inbounds %"absolute.class.std.collections.Vector<int32>", ptr %this, i32 0, i32 2
   %_count.value = load i32, ptr %_count.address, align 4
-  call void @"std.collections.VectorBuilder<int32>.__ctor$int32_5B_5D$int32"(ptr %managed.pointee, %absolute.array.int32.1 %items.value, i32 %_count.value)
+  call void @"std.collections.VectorBuilder<int32>.__ctor$int32_5B_5D$int32"(ptr %managed.pointee, %absolute.array.int32.1 %items.value, i1 false, i32 %_count.value)
   %error.pending = call i1 @absolute_error_pending()
   br i1 %error.pending, label %error.propagate, label %error.continue
 
@@ -1551,7 +1573,7 @@ entry:
   %items.value = load %absolute.array.int32.1, ptr %items.address, align 8
   %_count.address = getelementptr inbounds %"absolute.class.std.collections.Vector<int32>", ptr %this, i32 0, i32 2
   %_count.value = load i32, ptr %_count.address, align 4
-  call void @"std.collections.VectorIterator<int32>.__ctor$int32_5B_5D$int32"(ptr %managed.pointee, %absolute.array.int32.1 %items.value, i32 %_count.value)
+  call void @"std.collections.VectorIterator<int32>.__ctor$int32_5B_5D$int32"(ptr %managed.pointee, %absolute.array.int32.1 %items.value, i1 false, i32 %_count.value)
   %error.pending = call i1 @absolute_error_pending()
   br i1 %error.pending, label %error.propagate, label %error.continue
 

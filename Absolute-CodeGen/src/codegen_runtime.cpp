@@ -89,6 +89,25 @@ namespace Absolute {
         }
         for (auto& [name, variable] : scopes[index]) {
             (void)name;
+            const auto emitWhenOwner = [&](auto&& emitCleanup) {
+                if (!variable.ownershipFlagStorage) {
+                    emitCleanup();
+                    return;
+                }
+                llvm::Function* function = CurrentFunction();
+                llvm::BasicBlock* cleanup = llvm::BasicBlock::Create(
+                    context, "role.owner.cleanup", function);
+                llvm::BasicBlock* complete = llvm::BasicBlock::Create(
+                    context, "role.cleanup.end", function);
+                llvm::Value* owns = builder.CreateLoad(
+                    builder.getInt1Ty(), variable.ownershipFlagStorage,
+                    "role.is.owner");
+                builder.CreateCondBr(owns, cleanup, complete);
+                builder.SetInsertPoint(cleanup);
+                emitCleanup();
+                BranchIfNeeded(complete);
+                builder.SetInsertPoint(complete);
+            };
             if (IsTaskTypeName(variable.typeName)) {
                 llvm::Value* handle = builder.CreateLoad(variable.type, variable.address, "cleanup.task");
                 builder.CreateCall(TaskDestroy(), {handle});
@@ -98,26 +117,35 @@ namespace Absolute {
             const bool transfersThisOwner = transferredOwner != InvalidSymbolId &&
                 variable.symbol == transferredOwner;
             if (variable.ownsArrayStorage && !transfersThisOwner) {
-                llvm::Value* owner = variable.arrayOwnerStorage
-                    ? builder.CreateLoad(
-                        builder.getPtrTy(), variable.arrayOwnerStorage,
-                        "cleanup.array.owner")
-                    : variable.arrayOwner;
-                builder.CreateCall(Free(), {owner});
+                emitWhenOwner([&] {
+                    llvm::Value* owner = variable.arrayOwnerStorage
+                        ? builder.CreateLoad(
+                            builder.getPtrTy(), variable.arrayOwnerStorage,
+                            "cleanup.array.owner")
+                        : variable.arrayOwner;
+                    builder.CreateCall(Free(), {owner});
+                });
                 continue;
             }
             if (variable.ownsAggregateResources) {
-                EmitValueCleanup(variable.address, variable.typeName);
+                emitWhenOwner([&] {
+                    EmitValueCleanup(variable.address, variable.typeName);
+                });
                 continue;
             }
             if (!variable.managedOwner || transfersThisOwner) continue;
-            llvm::Value* handle = builder.CreateLoad(variable.type, variable.address, "cleanup.handle");
-            llvm::Value* pointee = EmitManagedGet(handle, false);
-            EmitPointeeCleanup(pointee, variable.typeName);
-            builder.CreateCall(ManagedDestroy(), {handle});
-            builder.CreateStore(builder.getInt64(0), variable.address);
-            if (variable.managedPointee)
-                builder.CreateStore(llvm::ConstantPointerNull::get(builder.getPtrTy()), variable.managedPointee);
+            emitWhenOwner([&] {
+                llvm::Value* handle = builder.CreateLoad(
+                    variable.type, variable.address, "cleanup.handle");
+                llvm::Value* pointee = EmitManagedGet(handle, false);
+                EmitPointeeCleanup(pointee, variable.typeName);
+                builder.CreateCall(ManagedDestroy(), {handle});
+                builder.CreateStore(builder.getInt64(0), variable.address);
+                if (variable.managedPointee)
+                    builder.CreateStore(
+                        llvm::ConstantPointerNull::get(builder.getPtrTy()),
+                        variable.managedPointee);
+            });
         }
     }
 
@@ -197,6 +225,25 @@ namespace Absolute {
         return EmitManagedGet(handle, true);
     }
 
+    llvm::Value* CodeGenerator::Impl::ArgumentOwnershipFlag(
+        Expression* expression, const std::string& parameterType) {
+        if (!ParameterSupportsOwnershipName(parameterType) ||
+            !analyzer || !expression)
+            return builder.getFalse();
+        const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
+        if (!info) return builder.getFalse();
+        const std::string valueType =
+            ValueReferenceBaseTypeName(parameterType);
+        bool transfers = false;
+        if (IsStrongManagedPointerTypeName(valueType))
+            transfers = info->createsManagedOwner;
+        else if (ArrayRankName(valueType) > 0)
+            transfers = info->createsArrayOwner;
+        else
+            transfers = info->isMoveResult || !info->isLValue;
+        return builder.getInt1(transfers);
+    }
+
     llvm::Value* CodeGenerator::Impl::EvaluateCallArgument(
         Expression* expression, std::vector<llvm::Value*>& temporaryArrayOwners,
         std::vector<llvm::Value*>& temporaryClosureOwners,
@@ -215,8 +262,10 @@ namespace Absolute {
             return temporary;
         }
         llvm::Value* argument = Evaluate(expression);
-        if (valueCreatesArrayOwner &&
-            !IsConsumeParameterTypeName(parameterType))
+        const bool transfersArrayOwner =
+            valueCreatesArrayOwner && llvm::cast<llvm::ConstantInt>(
+                ArgumentOwnershipFlag(expression, parameterType))->isOne();
+        if (valueCreatesArrayOwner && !transfersArrayOwner)
             temporaryArrayOwners.push_back(valueArrayOwner);
         if (valueCreatesClosureOwner) temporaryClosureOwners.push_back(argument);
         if (!parameterType.empty()) {
@@ -233,7 +282,8 @@ namespace Absolute {
         std::vector<llvm::Value*>& temporaryArrayOwners,
         std::vector<llvm::Value*>& temporaryClosureOwners,
         const std::vector<std::string>& rawParameterTypes,
-        bool variadicParameter) {
+        bool variadicParameter,
+        std::vector<llvm::Value*>* ownershipFlags) {
         std::vector<std::string> parameterTypes = rawParameterTypes;
         for (std::string& parameter : parameterTypes)
             parameter = SubstituteCodegenType(parameter, currentGenericSubstitutions);
@@ -241,10 +291,17 @@ namespace Absolute {
         std::vector<llvm::Value*> arguments;
         if (!variadicParameter) {
             arguments.reserve(expressions.size());
-            for (size_t index = 0; index < expressions.size(); ++index)
+            if (ownershipFlags) ownershipFlags->reserve(expressions.size());
+            for (size_t index = 0; index < expressions.size(); ++index) {
+                const std::string parameterType = index < parameterTypes.size()
+                    ? parameterTypes[index] : std::string{};
+                if (ownershipFlags)
+                    ownershipFlags->push_back(
+                        ArgumentOwnershipFlag(expressions[index], parameterType));
                 arguments.push_back(EvaluateCallArgument(
                     expressions[index], temporaryArrayOwners, temporaryClosureOwners,
-                    index < parameterTypes.size() ? parameterTypes[index] : std::string{}));
+                    parameterType));
+            }
             valueCreatesArrayOwner = false;
             valueArrayOwner = nullptr;
             return arguments;
@@ -256,14 +313,22 @@ namespace Absolute {
 
         arguments.reserve(parameterTypes.size());
         for (size_t index = 0; index < fixedCount; ++index)
+        {
+            if (ownershipFlags)
+                ownershipFlags->push_back(
+                    ArgumentOwnershipFlag(expressions[index], parameterTypes[index]));
             arguments.push_back(EvaluateCallArgument(
                 expressions[index], temporaryArrayOwners, temporaryClosureOwners,
                 parameterTypes[index]));
+        }
 
         const std::string& arrayType = parameterTypes.back();
         const bool directArray = expressions.size() == parameterTypes.size() &&
             SemanticType(expressions.back()) == ValueReferenceBaseTypeName(arrayType);
         if (directArray) {
+            if (ownershipFlags)
+                ownershipFlags->push_back(
+                    ArgumentOwnershipFlag(expressions.back(), arrayType));
             arguments.push_back(EvaluateCallArgument(
                 expressions.back(), temporaryArrayOwners, temporaryClosureOwners,
                 arrayType));
@@ -290,6 +355,7 @@ namespace Absolute {
         arguments.push_back(BuildArrayDescriptor(
             {storage, elementType, ValueReferenceBaseTypeName(arrayType),
                 {builder.getInt64(count)}, nullptr}));
+        if (ownershipFlags) ownershipFlags->push_back(builder.getFalse());
         valueCreatesArrayOwner = false;
         valueArrayOwner = nullptr;
         return arguments;
@@ -330,8 +396,11 @@ namespace Absolute {
         std::vector<llvm::Type*> parameters;
         if (AbiReturnOffset(returnType) != 0) parameters.push_back(builder.getPtrTy());
         parameters.push_back(builder.getPtrTy());
-        for (const std::string& parameter : parameterTypes)
+        for (const std::string& parameter : parameterTypes) {
             parameters.push_back(AbiParameterType(parameter));
+            if (ParameterSupportsOwnershipName(parameter))
+                parameters.push_back(builder.getInt1Ty());
+        }
         return llvm::FunctionType::get(AbiReturnType(returnType), parameters, false);
     }
 
@@ -524,9 +593,14 @@ namespace Absolute {
         builder.CreateCondBr(condition, success, failure,
             llvm::MDBuilder(context).createBranchWeights(2000, 1));
         builder.SetInsertPoint(failure);
-        const std::string message = name == "array.size"
-            ? "Array size must be greater than zero"
-            : "Array index out of bounds";
+        const std::string message =
+            name == "array.size"
+                ? "Array size must be greater than zero"
+                : name == "array.bounds"
+                    ? "Array index out of bounds"
+                    : name.ends_with(".requires.owner")
+                        ? "Ownership operation requires an owner argument"
+                        : "Runtime safety check failed";
         builder.CreateCall(Puts(), {builder.CreateGlobalStringPtr(message, name + ".message")});
         builder.CreateCall(ExitFailure(), {builder.getInt32(1)});
         builder.CreateUnreachable();
@@ -761,7 +835,8 @@ namespace Absolute {
 
     bool CodeGenerator::Impl::IsBuiltinFunction(const std::string& name) const {
         return name == "print" || name == "println" || name == "format" ||
-            name == "toString" || name == "assert" || name == "copy" || name == "move" ||
+            name == "toString" || name == "assert" || name == "copy" ||
+            name == "move" || name == "isOwner" ||
             name == "adoptRaw" || name == "retainRaw" || name == "borrowRaw" || name == "share" ||
             name == "unsafeArrayGet" || name == "unsafeArraySet" ||
             name == "unsafeArrayData" ||

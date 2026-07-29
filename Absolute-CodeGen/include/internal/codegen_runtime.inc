@@ -40,7 +40,11 @@
             std::vector<llvm::Value*>& temporaryArrayOwners,
             std::vector<llvm::Value*>& temporaryClosureOwners,
             const std::vector<std::string>& parameterTypes,
-            bool variadicParameter);
+            bool variadicParameter,
+            std::vector<llvm::Value*>* ownershipFlags = nullptr);
+
+        llvm::Value* ArgumentOwnershipFlag(
+            Expression* expression, const std::string& parameterType);
 
         void ConsumeTaskArgument(Expression* expression,
             const std::string& parameterType);

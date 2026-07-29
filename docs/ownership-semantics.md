@@ -1,36 +1,57 @@
 # Ownership and argument semantics
 
-Absolute separates the shape of an expression from the lifetime contract of a
-parameter.
+Absolute separates a parameter's type from the ownership role of each call.
+There are no `owner`, `sub`, or `consume` parameter modifiers.
 
-| Form | Meaning | May mutate caller | May outlive call | Cleanup owner |
-| --- | --- | ---: | ---: | --- |
-| `T value` | independent value | no | yes, as its own value | normal value rules |
-| `T& place` / `ref T place` | exclusive place borrow | yes | no | caller |
-| `const T& value` | shared value borrow | no | no | caller or call temporary |
-| `T* ptr` | managed borrow (`ManagedSub`) | pointee only | no ownership transfer | caller |
-| `consume T* ptr` | managed ownership transfer | pointee only | callee may move onward | callee |
-| `raw T* ptr` | unchecked-address view | yes | programmer-controlled | explicit raw owner |
-| `weak T* ptr` | generation-checked observer | pointee while live | no ownership | strong owner |
+| Form | Meaning | May mutate caller | Lifetime / cleanup |
+| --- | --- | ---: | --- |
+| `T value` | independent resource-free value | no | normal value rules |
+| `T& place` / `ref T place` | exclusive place borrow | yes | caller |
+| `const T& value` | shared value borrow | no | caller or call temporary |
+| `T* ptr` called with `ptr` | managed view | pointee only | caller retains ownership |
+| `T* ptr` called with `move(ptr)` | managed owner | pointee only | callee RAII |
+| `raw T* ptr` | unchecked-address view | yes | explicit raw owner |
+| `weak T* ptr` | generation-checked observer | pointee while live | strong owner |
+
+The same role-polymorphic rule applies to owning arrays and resource-owning
+aggregates. The internal Absolute ABI carries one hidden ownership bit beside
+each such parameter. It is not a source-language type or keyword.
 
 An lvalue is a **place**: it has identity and may be readable, writable, and
 addressable. Literals, call results, copies, and `move(...)` results are
 **values**. `&place` creates a raw address view; `*pointer` yields a place when
 the pointer is valid.
 
-`move(ownerPlace)` consumes an owning place and produces an owner value. The
-source becomes moved-from until reinitialized. A fresh `new T(...)` is already
-an owner value and can enter a consume parameter directly. Ordinary pointer
-parameters borrow and reject both `move(owner)` and a fresh anonymous owner,
-because neither has a destination responsible for cleanup.
+`move(ownerPlace)` transfers the owner value and immediately leaves the source
+moved-from. It does not turn a subscriber or weak observer into an owner.
+A fresh owning result, such as `new T(...)` or `copy(array)`, also enters a
+resource parameter with the owner role.
 
-Consume parameters are supported for strong managed pointers, owning arrays,
-and resource-owning aggregates, including specialized generic `consume T*`
-parameters. Raw and weak pointers are views. Value references are synchronous
-aliases. These categories do not implicitly convert into one another.
+Inside a role-polymorphic function, `isOwner(parameter)` reads the incoming
+role. An owner-role parameter is destroyed on every exit unless it is moved or
+returned onward. A view-role parameter is never destroyed by the callee.
+
+If a function unconditionally moves, deletes, stores, or returns a parameter as
+an owner, the analyzer infers that this parameter requires ownership. Direct
+calls must then use `move(owner)` or a fresh owner value. Code that accepts both
+roles guards the ownership path:
+
+```absolute
+void process(Node* node) {
+    if (isOwner(node)) {
+        Node* saved = move(node);
+        // ...
+    }
+    else {
+        // borrowed view
+    }
+}
+```
+
+Raw and weak pointers remain explicit pointer representations because they
+change safety and cleanup behavior; they are not ownership roles.
 
 The executable matrix is `tests/ownership-semantics-matrix.abs`; its negative
-counterpart checks illegal combinations and transfers. The value/reference
-benchmark is under `benchmarks/value-ref-suite`, while broader raw, managed,
-heap-node, graph, and virtual-object comparisons are under
+counterpart checks invalid owner-required calls and subscriber/weak moves.
+Benchmarks live under `benchmarks/value-ref-suite` and
 `benchmarks/pointer-object-suite`.

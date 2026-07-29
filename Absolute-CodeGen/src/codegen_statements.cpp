@@ -207,6 +207,19 @@ namespace Absolute {
         llvm::Type* expectedReturn = impl->currentReturnStorage
             ? impl->TypeFromName(impl->currentReturnTypeName)
             : function->getReturnType();
+        if (auto* returnedIdentifier =
+            dynamic_cast<IdentifierExpr*>(stmt->expr.get())) {
+            if (Impl::Variable* returned =
+                impl->FindVariable(returnedIdentifier->name);
+                returned && returned->ownershipFlagStorage &&
+                impl->TypeNeedsCleanup(impl->currentReturnTypeName)) {
+                llvm::Value* owns = impl->builder.CreateLoad(
+                    impl->builder.getInt1Ty(),
+                    returned->ownershipFlagStorage,
+                    "return.is_owner");
+                impl->EmitOrExit(owns, "return.requires.owner");
+            }
+        }
         llvm::Value* result = impl->Coerce(
             impl->Evaluate(stmt->expr.get()), expectedReturn,
             impl->SemanticType(stmt->expr.get()), impl->currentReturnTypeName);

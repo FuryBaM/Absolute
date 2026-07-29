@@ -113,8 +113,6 @@ namespace Absolute {
                 const std::string parameterType = ResolveDeclaredType(*parameter);
                 ValidateValueReferenceParameter(*parameter, parameterType,
                     currentType + "." + stmt->name->value);
-                ValidateConsumeParameter(*parameter, parameterType,
-                    currentType + "." + stmt->name->value);
                 if (!IsKnownType(parameterType))
                     Report("unknown parameter type '" + parameterType + "' of interface method '" +
                         currentType + "." + stmt->name->value + "'");
@@ -155,6 +153,20 @@ namespace Absolute {
             Report("return is not allowed inside defer", "E_DEFER_CONTROL_TRANSFER");
         if (functionDepth == 0) Report("return statement is outside a function");
         const Result value = EvaluateExpected(stmt->expr.get(), currentReturnType);
+        if (Symbol* source = table.Get(value.symbol);
+            source && source->rolePolymorphic &&
+            !ownerGuardedParameters.contains(source->id) &&
+            ParameterSupportsOwnership(currentReturnType)) {
+            if (Symbol* callable = table.Get(source->callableOwner)) {
+                if (callable->parameterRequiresOwner.size() <=
+                    source->parameterIndex)
+                    callable->parameterRequiresOwner.resize(
+                        source->parameterIndex + 1, false);
+                callable->parameterRequiresOwner[
+                    source->parameterIndex] = true;
+                source->requiresOwner = true;
+            }
+        }
         if (!IsAssignable(currentReturnType, value.type))
             Report("return type '" + value.type + "' does not match '" + currentReturnType + "'");
         bool transfersAggregateOwner = value.isMoveResult;
@@ -192,7 +204,8 @@ namespace Absolute {
             value.type != "null") {
             const Symbol* owner = table.Get(value.pointerOwner);
             if (value.createsManagedOwner ||
-                (owner && owner->managedOwner && owner->scopeDepth > 0))
+                (owner && owner->managedOwner && !owner->rolePolymorphic &&
+                    owner->scopeDepth > 0))
                 Report("returning a weak reference to a local owner would produce an immediately expired handle",
                     "E_WEAK_RETURN_LOCAL_OWNER", value.symbol);
         }
@@ -261,7 +274,13 @@ namespace Absolute {
             flowTerminated = false;
             const Result condition = Evaluate(branch.condition.get());
             if (!IsConditionType(condition.type)) Report("if condition must be boolean-compatible");
+            const SymbolId guardedOwner =
+                OwnerGuardParameter(branch.condition.get());
+            if (guardedOwner != InvalidSymbolId)
+                ownerGuardedParameters.insert(guardedOwner);
             AcceptIfPresent(branch.body, *this);
+            if (guardedOwner != InvalidSymbolId)
+                ownerGuardedParameters.erase(guardedOwner);
             if (!flowTerminated) {
                 continuingPaths.push_back(keepLifetimes);
                 continuingValuePaths.push_back(valueFlow);

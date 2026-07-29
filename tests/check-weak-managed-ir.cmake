@@ -4,8 +4,10 @@ endif()
 
 file(READ "${IR_FILE}" ir)
 
-if(NOT ir MATCHES "define i64 @observe\\(i64 %node\\)")
-    message(FATAL_ERROR "weak return must use the existing managed handle ABI")
+if(NOT ir MATCHES
+    "define i64 @observe\\(i64 %node, i1 %node[.]is_owner\\)")
+    message(FATAL_ERROR
+        "weak return must preserve the managed handle and hidden role ABI")
 endif()
 if(NOT ir MATCHES "call i1 @absolute_managed_valid\\(i64")
     message(FATAL_ERROR "weak truthiness must validate the generation-checked handle")

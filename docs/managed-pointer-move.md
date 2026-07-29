@@ -38,37 +38,35 @@ binding reusable.
 
 ## Valid destinations
 
-A managed owner move may be consumed by:
+A managed owner move may be received by:
 
 - a new strong managed variable;
 - assignment to an empty or existing owner variable;
 - an owning strong field;
 - a managed owner return;
-- an explicit `consume T*` parameter.
+- an ordinary `T*` parameter, with its hidden role set to owner.
 
-Ordinary managed pointer parameters are borrowed in Absolute. Passing
-`move(owner)` to such a parameter is rejected because the callee has no owning
-parameter role and would otherwise lose the allocation. Pass `owner` without
-`move(...)` for a synchronous borrow.
-
-Use `consume` when the callee must receive ownership:
+Managed pointer parameters are role-polymorphic. Passing `owner` is a
+synchronous borrow. Passing `move(owner)` transfers the owner role; the source
+becomes moved-from at the call and the callee destroys the resource on exit
+unless it moves the parameter onward.
 
 ```absolute
-void close(consume Node* node) {
-    // node is the owner here and is destroyed on every exit unless moved onward
+void close(Node* node) {
+    // Using move(node) makes this function owner-required.
 }
 
 close(move(owner));  // owner place becomes moved-from
 close(new Node());   // a fresh owner value transfers directly
 ```
 
-`consume` is also available for owning arrays and resource-owning structs.
-It is part of the callable signature, so overload selection can distinguish a
-borrow from an ownership transfer. It cannot be combined with `ref`, `out`,
-`params`, `const`, default values, `async`, or the C ABI. Raw and weak pointers
-are views and therefore cannot be consume parameters.
+No ownership keyword is part of the callable signature. The analyzer infers an
+owner requirement from an unguarded `move`, `delete`, owning store, or owning
+return of the parameter. A function that intentionally handles either role can
+branch on `isOwner(node)`. The same ABI role applies to owning arrays and
+resource-owning structs. Raw and weak pointers are always views.
 
-For a task or channel boundary, `seal(move(owner))` is the explicit consuming
+For a task or channel boundary, `seal(move(owner))` is the explicit transferring
 operation. It rotates the managed handle generation immediately, invalidating
 all aliases left in the sender, and returns an opaque capsule handle.
 `unseal<T>(capsule)` consumes that handle and creates the new `T*` owner.

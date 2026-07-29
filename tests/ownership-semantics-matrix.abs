@@ -36,28 +36,54 @@ int32 inspect(const Pair& value) {
     return value.left + value.right;
 }
 
+int32 inspectArray(int32[] values) {
+    return values[0] + values[2];
+}
+
+int32 inspectBuffer(OwnedBuffer buffer) {
+    return buffer.sum();
+}
+
 int32 borrowNode(Node* node) {
     return node.value;
 }
 
-void consumeNode(consume Node* node) {
-    assert(node.value > 0, "consume managed owner is readable");
+bool seesOwner(Node* node) {
+    return isOwner(node);
 }
 
-Node* forwardNode(consume Node* node) {
+Node* extractOwner(Node* node) {
+    if (isOwner(node)) {
+        return move(node);
+    }
+    return null;
+}
+
+void dropNode(Node* node) {
+    assert(node.value > 0, "transferred managed owner is readable");
+}
+
+Node* forwardNode(Node* node) {
     return move(node);
 }
 
-T* forwardGeneric<T>(consume T* value) {
+T* forwardGeneric<T>(T* value) {
     return move(value);
 }
 
-void consumeArray(consume int32[] values) {
-    assert(values[0] + values[2] == 4, "consume array receives storage");
+void dropArray(int32[] values) {
+    assert(values[0] + values[2] == 4, "transferred array receives storage");
 }
 
-void consumeBuffer(consume OwnedBuffer buffer) {
-    assert(buffer.sum() == 33, "consume aggregate receives nested owner");
+void dropBuffer(OwnedBuffer buffer) {
+    assert(buffer.sum() == 33, "transferred aggregate receives nested owner");
+}
+
+int32 formerRoleWordsAreIdentifiers() {
+    int32 consume = 1;
+    int32 owner = 2;
+    int32 sub = 3;
+    return consume + owner + sub;
 }
 
 int32 main() {
@@ -80,36 +106,67 @@ int32 main() {
     *address = 9;
     assert(scalar == 9, "address and dereference preserve place identity");
     println("ownership-matrix:raw=ok");
+    assert(formerRoleWordsAreIdentifiers() == 6,
+        "consume, owner, and sub are ordinary identifiers");
 
     Node* owner = new Node(21);
     Node* subscriber = owner;
     weak Node* observer = owner;
+    assert(isOwner(owner) && !isOwner(subscriber),
+        "isOwner distinguishes an owner place from a subscriber place");
     assert(borrowNode(owner) == 21 && borrowNode(subscriber) == 21,
         "ordinary managed pointer parameters borrow owner and subscriber");
-    consumeNode(move(owner));
+    assert(!seesOwner(owner),
+        "ordinary owner argument is projected as a view");
+
+    Node* roleOwner = new Node(19);
+    Node* roleSubscriber = roleOwner;
+    weak Node* roleObserver = roleOwner;
+    assert(seesOwner(move(roleOwner)),
+        "move passes the owner role into a polymorphic parameter");
+    assert(!roleSubscriber && !roleObserver,
+        "owner-role parameter is destroyed by RAII on return");
+
+    Node* borrowCandidate = new Node(23);
+    Node* borrowedExtraction = extractOwner(borrowCandidate);
+    assert(!borrowedExtraction && borrowCandidate.value == 23,
+        "isOwner guard leaves a borrowed argument with its caller");
+    Node* transferCandidate = new Node(29);
+    Node* transferredExtraction = extractOwner(move(transferCandidate));
+    assert(transferredExtraction.value == 29,
+        "isOwner guard can move an incoming owner onward");
+    delete borrowCandidate;
+    delete transferredExtraction;
+    println("ownership-matrix:role-polymorphic=ok");
+
+    dropNode(move(owner));
     assert(!subscriber && !observer,
-        "consume destroys transferred owner and expires sub and weak handles");
-    println("ownership-matrix:managed-consume=ok");
+        "callee RAII destroys transferred owner and expires sub and weak handles");
+    println("ownership-matrix:managed-transfer=ok");
 
     Node* returned = forwardNode(new Node(31));
-    assert(returned.value == 31, "fresh owner can enter consume and move out");
+    assert(returned.value == 31, "fresh owner can enter and move out");
     delete returned;
     println("ownership-matrix:managed-forward=ok");
 
     Node* genericOwner = new Node(41);
     Node* genericReturned = forwardGeneric<Node>(move(genericOwner));
     assert(genericReturned.value == 41,
-        "generic consume T pointer preserves ownership");
+        "generic T pointer preserves transferred ownership");
     delete genericReturned;
     println("ownership-matrix:generic=ok");
 
     int32[] values = copy({1, 2, 3});
-    consumeArray(move(values));
+    assert(inspectArray(values) == 4,
+        "ordinary owning-array argument is borrowed");
+    dropArray(move(values));
     println("ownership-matrix:array=ok");
 
     OwnedBuffer buffer;
     buffer.initialize(10);
-    consumeBuffer(move(buffer));
+    assert(inspectBuffer(buffer) == 33 && buffer.sum() == 33,
+        "ordinary resource aggregate argument is borrowed");
+    dropBuffer(move(buffer));
     println("ownership-matrix:aggregate=ok");
 
     println("ownership-semantics-matrix=ok");

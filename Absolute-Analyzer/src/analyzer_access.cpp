@@ -173,10 +173,9 @@ namespace Absolute {
             !symbol->exportedFunction;
         if (functionValue && std::any_of(symbol->parameterTypes.begin(),
             symbol->parameterTypes.end(), [](const std::string& parameter) {
-                return IsValueReferenceType(parameter) ||
-                    IsConsumeParameterType(parameter);
+                return IsValueReferenceType(parameter);
             }))
-            Report("function with reference or consume parameters cannot be stored in a func value",
+            Report("function with reference parameters cannot be stored in a func value",
                 "E_OWNERSHIP_FUNCTION_VALUE", id);
         if (cFunctionValue && !expectedCFunction && !expectedType.empty() &&
             ParseFunctionType(expectedType, expectedReturn, expectedParameters))
@@ -477,6 +476,20 @@ namespace Absolute {
                 return;
             }
 
+            if (callName == "isOwner") {
+                if (arguments.size() != 1) {
+                    Report("isOwner expects exactly one argument",
+                        "E_IS_OWNER_ARGUMENT_COUNT");
+                }
+                else if (!ParameterSupportsOwnership(arguments.front().type)) {
+                    Report("isOwner requires a managed pointer, array, or "
+                        "resource-owning value",
+                        "E_IS_OWNER_ARGUMENT_TYPE", arguments.front().symbol);
+                }
+                Save(expr, {table.Lookup(callName), "bool", false});
+                return;
+            }
+
             if (callName == "move") {
                 if (arguments.size() != 1) {
                     Report("move expects exactly one argument");
@@ -494,6 +507,18 @@ namespace Absolute {
                         "E_MOVE_CONST_SOURCE", argument.symbol);
 
                 Symbol* source = table.Get(argument.symbol);
+                if (source && source->rolePolymorphic &&
+                    !ownerGuardedParameters.contains(source->id)) {
+                    if (Symbol* callable = table.Get(source->callableOwner)) {
+                        if (callable->parameterRequiresOwner.size() <=
+                            source->parameterIndex)
+                            callable->parameterRequiresOwner.resize(
+                                source->parameterIndex + 1, false);
+                        callable->parameterRequiresOwner[
+                            source->parameterIndex] = true;
+                        source->requiresOwner = true;
+                    }
+                }
                 const bool strongManaged = IsStrongManagedPointerType(argument.type);
                 const bool arrayValue = ArrayRank(argument.type) > 0;
                 const bool arrayOwner = arrayValue && source && source->ownsArrayStorage;
@@ -988,18 +1013,6 @@ namespace Absolute {
                         }
                     }
                 }
-                bool transfersAggregateOwner = argument.isMoveResult;
-                if (const Symbol* source = table.Get(argument.symbol)) {
-                    transfersAggregateOwner = transfersAggregateOwner ||
-                        source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;
-                }
-                if (!IsValueReferenceType(parameterType) &&
-                    ArrayRank(parameterValueType) == 0 && !IsPointerType(parameterValueType) &&
-                    TypeOwnsResources(parameterValueType) && !transfersAggregateOwner) {
-                    Report("resource-owning aggregate argument '" + parameterValueType +
-                        "' cannot be copied by value; use move(...) for lvalues",
-                        "E_RESOURCE_AGGREGATE_ARGUMENT", argument.symbol);
-                }
                 CheckManagedMoveArgument(argument, parameterType, i, "function");
                 if (IsTaskType(parameterValueType)) {
                     if (argument.taskState == TaskState::Awaited) {
@@ -1020,6 +1033,16 @@ namespace Absolute {
             else if (argument.pointerValidity == PointerValidity::MaybeInvalid)
                 Report("argument " + std::to_string(i + 1) + " may pass an invalid pointer",
                     "E_MAYBE_INVALID_POINTER_ARGUMENT", argument.symbol);
+        }
+        if (selected) {
+            std::vector<Result> ownershipArguments;
+            if (selected->extensionFunction && hasReceiver)
+                ownershipArguments.push_back(receiver);
+            ownershipArguments.insert(
+                ownershipArguments.end(), arguments.begin(), arguments.end());
+            RecordOwnershipCall(selected->id, ownershipArguments,
+                selected->parameterTypes,
+                "call to '" + selected->name + "'");
         }
         if (hasReceiver && (receiver.pointerValidity == PointerValidity::Deleted ||
             receiver.pointerValidity == PointerValidity::Expired))

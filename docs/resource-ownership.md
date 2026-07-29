@@ -56,19 +56,21 @@ zeroed and becomes compile-time moved-from, and existing subscriber/weak
 lifetime tracking follows the destination. A moved-from binding cannot be read
 or deleted until it is initialized with a fresh owner.
 
-Moving subscribers, weak or const references, invalid pointers, discarded move
-results, and moves into ordinary borrowed managed parameters are rejected.
-Functions that take ownership declare `consume T*`, `consume T[]`, or
-`consume ResourceValue`; they clean up the parameter unless it is moved onward.
+Moving subscribers, weak or const references, invalid pointers, and discarded
+move results are rejected. An ordinary resource parameter receives a view when
+called with an lvalue and ownership when called with `move(owner)` or a fresh
+owner. The callee cleans up an owner-role parameter unless it is moved onward.
+An unguarded move/delete/owning return makes the parameter owner-required;
+`isOwner(parameter)` allows one body to handle both roles.
 See
 [managed-pointer-move.md](managed-pointer-move.md) for the exact contract.
 
 ## Value semantics boundary
 
 A struct or class value that recursively contains an owning resource cannot be
-bitwise copied safely. The analyzer rejects ordinary aggregate assignment,
-by-value arguments, and by-value returns for those types. Explicit `move(...)`
-transfers the resource and clears the source. An explicit `copy(value)` is
+bitwise copied safely. The analyzer rejects ordinary aggregate assignment and
+unsafe ownership escapes. A resource parameter is a non-owning view by default;
+explicit `move(...)` transfers the resource and clears the source. An explicit `copy(value)` is
 available only when the type supplies a public zero-argument `clone() const`
 method that creates an independent owner. Resource-free structs keep the
 existing value ABI and copy semantics. See

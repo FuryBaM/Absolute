@@ -13,7 +13,8 @@
         void EmitFunction(FunctionDeclStmt& statement, const Symbol* specialization);
 
         void BindCallableParameter(llvm::Argument& argument, VarDeclExpr& parameter,
-            const std::string& typeName = {}, bool external = false);
+            const std::string& typeName = {}, bool external = false,
+            llvm::Argument* ownershipArgument = nullptr);
 
         void FinishClassCallable(llvm::Function& function);
 

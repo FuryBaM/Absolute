@@ -175,10 +175,8 @@ namespace Absolute {
     }
 
     std::string CodeGenerator::Impl::CallableParameterTypeName(VarDeclExpr& expression) {
-        return ConsumeParameterTypeName(
-            ValueReferenceTypeName(
-                DeclaredTypeName(expression), expression.isConst, expression.isReference),
-            expression.isConsume);
+        return ValueReferenceTypeName(
+            DeclaredTypeName(expression), expression.isConst, expression.isReference);
     }
 
 
@@ -763,8 +761,13 @@ namespace Absolute {
         const std::string returnType = SubstituteCodegenType(method.returnType, method.substitutions);
         if (AbiReturnOffset(returnType) != 0) parameters.push_back(builder.getPtrTy());
         if (!method.isStatic) parameters.push_back(builder.getPtrTy());
-        for (const std::string& parameter : method.parameterTypes)
-            parameters.push_back(AbiParameterType(SubstituteCodegenType(parameter, method.substitutions)));
+        for (const std::string& parameter : method.parameterTypes) {
+            const std::string type =
+                SubstituteCodegenType(parameter, method.substitutions);
+            parameters.push_back(AbiParameterType(type));
+            if (ParameterSupportsOwnershipName(type))
+                parameters.push_back(builder.getInt1Ty());
+        }
         return llvm::FunctionType::get(AbiReturnType(returnType), parameters, false);
     }
 
@@ -782,9 +785,18 @@ namespace Absolute {
         if (offset != 0) function->getArg(0)->setName("__result");
         if (!method.isStatic) function->getArg(offset++)->setName("this");
         ApplyValueReferenceParameterAttributes(*function, offset, method.parameterTypes);
-        for (size_t index = 0; index < method.statement->parameters.size(); ++index)
-            function->getArg(static_cast<unsigned>(index) + offset)->setName(
+        unsigned argumentIndex = offset;
+        for (size_t index = 0;
+            index < method.statement->parameters.size(); ++index) {
+            function->getArg(argumentIndex++)->setName(
                 IdentifierName(method.statement->parameters[index]->name.get()));
+            const std::string type = SubstituteCodegenType(
+                method.parameterTypes[index], method.substitutions);
+            if (ParameterSupportsOwnershipName(type))
+                function->getArg(argumentIndex++)->setName(
+                    IdentifierName(method.statement->parameters[index]->name.get()) +
+                    ".is_owner");
+        }
         return function;
     }
 
@@ -951,7 +963,11 @@ namespace Absolute {
             ConstructorParameterTypeNames(constructor, info.substitutions);
         std::vector<llvm::Type*> parameters{builder.getPtrTy()};
         for (const std::string& parameterType : parameterTypes)
+        {
             parameters.push_back(AbiParameterType(parameterType));
+            if (ParameterSupportsOwnershipName(parameterType))
+                parameters.push_back(builder.getInt1Ty());
+        }
         llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
         const std::string name = ConstructorLinkName(info.name, parameterTypes);
         llvm::Function* function = module->getFunction(name);
@@ -964,9 +980,15 @@ namespace Absolute {
         ApplyValueReferenceParameterAttributes(*function, 1, parameterTypes);
         function->getArg(0)->setName("this");
         if (constructor)
-            for (size_t index = 0; index < constructor->parameters.size(); ++index)
-                function->getArg(static_cast<unsigned>(index + 1))->setName(
+            for (size_t index = 0, argumentIndex = 1;
+                index < constructor->parameters.size(); ++index) {
+                function->getArg(static_cast<unsigned>(argumentIndex++))->setName(
                     IdentifierName(constructor->parameters[index]->name.get()));
+                if (ParameterSupportsOwnershipName(parameterTypes[index]))
+                    function->getArg(static_cast<unsigned>(argumentIndex++))->setName(
+                        IdentifierName(constructor->parameters[index]->name.get()) +
+                        ".is_owner");
+            }
         return function;
     }
 
@@ -988,7 +1010,11 @@ namespace Absolute {
                 ConstructorParameterTypeNames(constructor, info.substitutions);
             std::vector<llvm::Type*> parameters{builder.getPtrTy()};
             for (const std::string& parameterType : parameterTypes)
+            {
                 parameters.push_back(AbiParameterType(parameterType));
+                if (ParameterSupportsOwnershipName(parameterType))
+                    parameters.push_back(builder.getInt1Ty());
+            }
             llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
             const std::string name = ConstructorLinkName(info.name, parameterTypes);
             llvm::Function* function = module->getFunction(name);

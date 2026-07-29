@@ -28,7 +28,8 @@ $dotnetBin = Join-Path $buildRoot 'dotnet-bin'
 $dotnetObj = Join-Path $buildRoot 'dotnet-obj'
 $localCompilerBuild = Join-Path $buildRoot 'compiler'
 $arrayCompilerBuild = Join-Path $repoRoot 'benchmarks\array-suite\.benchmark-build\compiler'
-$compilerBuild = if (Test-Path -LiteralPath (Join-Path $arrayCompilerBuild 'CMakeCache.txt')) {
+$compilerBuild = if ($Backend -eq 'windows' -and
+    (Test-Path -LiteralPath (Join-Path $arrayCompilerBuild 'CMakeCache.txt'))) {
     $arrayCompilerBuild
 } else {
     $localCompilerBuild
@@ -163,7 +164,8 @@ else {
         '-DCMAKE_BUILD_TYPE=Release', '-DABSOLUTE_ENABLE_LLVM=ON', "-DLLVM_DIR=$llvmDirectory"
     )
     Invoke-External 'Build Absolute Release compiler' 'wsl.exe' @(
-        $wslCmake, '--build', $compilerBuildWsl, '--parallel'
+        $wslCmake, '--build', $compilerBuildWsl, '--parallel',
+        '--target', 'Absolute-Compiler'
     )
     $absoluteCompiler = Join-Path $compilerBuild 'Release\absolutec'
     $absoluteCompilerWsl = Convert-ToWslPath $absoluteCompiler

@@ -18,6 +18,7 @@
             SymbolId arrayOwnerSymbol = InvalidSymbolId;
             bool ownsAggregateResources = false;
             llvm::AllocaInst* arrayOwnerStorage = nullptr;
+            llvm::AllocaInst* ownershipFlagStorage = nullptr;
         };
 
         struct ArrayView {

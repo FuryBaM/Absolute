@@ -61,6 +61,11 @@ namespace Absolute {
         bool canWrite = true;
         bool arrayStorageEscapes = false;
         bool ownsArrayStorage = false;
+        bool rolePolymorphic = false;
+        bool requiresOwner = false;
+        size_t parameterIndex = static_cast<size_t>(-1);
+        SymbolId callableOwner = InvalidSymbolId;
+        std::vector<bool> parameterRequiresOwner;
         AccessLevel access = AccessLevel::Public;
         AccessLevel readAccess = AccessLevel::Public;
         AccessLevel writeAccess = AccessLevel::Public;
@@ -348,6 +353,16 @@ namespace Absolute {
         std::vector<LambdaFunctionBoundary> lambdaFunctionBoundaries;
         std::unordered_map<const LambdaExpr*, std::vector<LambdaCapture>> lambdaCaptures;
         AccessLevel pendingMemberAccess = AccessLevel::Public;
+        SymbolId currentCallable = InvalidSymbolId;
+        std::unordered_set<SymbolId> ownerGuardedParameters;
+
+        struct DeferredOwnershipCall {
+            SymbolId callable = InvalidSymbolId;
+            std::vector<bool> ownerArguments;
+            std::vector<SymbolId> argumentSymbols;
+            std::string context;
+        };
+        std::vector<DeferredOwnershipCall> deferredOwnershipCalls;
 
     public:
         explicit Analyzer(std::vector<Program*> programs)
@@ -466,9 +481,6 @@ namespace Absolute {
         void ValidateValueReferenceParameter(VarDeclExpr& parameter,
             const std::string& type, const std::string& callable,
             bool asyncCallable = false, bool cAbi = false);
-        void ValidateConsumeParameter(VarDeclExpr& parameter,
-            const std::string& type, const std::string& callable,
-            bool asyncCallable = false, bool cAbi = false);
         void ValidateCAbiType(const std::string& type, const std::string& where,
             bool isReturn);
         std::vector<std::string> ResolveParameterTypes(const std::vector<std::unique_ptr<VarDeclExpr>>& parameters);
@@ -523,6 +535,15 @@ namespace Absolute {
         void CheckManagedMoveArgument(const Result& argument,
             const std::string& parameterType, size_t index,
             const std::string& context);
+        bool ParameterSupportsOwnership(const std::string& type) const;
+        bool TransfersOwnership(const Result& argument,
+            const std::string& parameterType) const;
+        void RecordOwnershipCall(SymbolId callable,
+            const std::vector<Result>& arguments,
+            const std::vector<std::string>& parameterTypes,
+            const std::string& context);
+        void ValidateDeferredOwnershipCalls();
+        SymbolId OwnerGuardParameter(Expression* condition) const;
         void CheckTaskScopesFrom(size_t firstScope, const std::string& exitKind);
     };
 }

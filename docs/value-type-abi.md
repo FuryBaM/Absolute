@@ -29,7 +29,7 @@ For example, source signatures equivalent to:
 ```absolute
 Large makeLarge(int64 seed);
 Large Box.read();
-void consume(Large value);
+void acceptLarge(Large value);
 ```
 
 are lowered conceptually as:
@@ -37,7 +37,7 @@ are lowered conceptually as:
 ```llvm
 define void @makeLarge(ptr %__result, i64 %seed)
 define void @Box.read(ptr %__result, ptr %this)
-define void @consume(ptr %value)
+define void @acceptLarge(ptr %value)
 ```
 
 ## Copy and move rules
@@ -58,11 +58,11 @@ Parameter-only `T&`/`const T&` borrows are implemented separately from
 ownership. Their lowering, escape rules, and benchmark evidence are documented in
 [`value-references.md`](value-references.md).
 
-An explicit `consume T` parameter is the ownership counterpart for a
-resource-owning aggregate. The caller must pass `move(ownerPlace)` or a fresh
-owner value. The callee runs normal aggregate cleanup on every exit unless it
-moves the parameter onward. Ordinary `T` parameters never silently consume
-resources.
+A resource-owning `T` parameter carries a hidden ownership-role bit. Calling it
+with an lvalue produces a non-owning view; calling it with
+`move(ownerPlace)` or a fresh owner value transfers ownership. The callee runs
+normal aggregate cleanup only for the owner role and only if it does not move
+the parameter onward.
 
 All objects linked through this internal ABI must be rebuilt with the same
 compiler ABI revision. `extern "C"` declarations and `export "C"` definitions

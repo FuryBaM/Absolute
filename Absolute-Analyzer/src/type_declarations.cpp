@@ -468,6 +468,19 @@ namespace Absolute {
             Report("constructor '" + stmt->name->value + "' must match type '" + currentType + "'");
         ++functionDepth;
         const bool oldConstructor = currentConstructor;
+        const SymbolId oldCallable = currentCallable;
+        currentCallable = InvalidSymbolId;
+        const std::vector<std::string> declaredParameterTypes =
+            ResolveParameterTypes(stmt->parameters);
+        for (const MemberSignature& constructor : types[currentType].constructors) {
+            if (constructor.parameterTypes == declaredParameterTypes) {
+                currentCallable = constructor.symbol;
+                break;
+            }
+        }
+        if (Symbol* callable = table.Get(currentCallable))
+            callable->parameterRequiresOwner.assign(
+                stmt->parameters.size(), false);
         currentConstructor = true;
         table.EnterScope();
         keepLifetimes.clear();
@@ -481,28 +494,33 @@ namespace Absolute {
         flowTerminated = false;
         PushKeepScope();
         PushValueFlowScope();
-        for (const auto& parameter : stmt->parameters) {
+        for (size_t parameterIndex = 0;
+            parameterIndex < stmt->parameters.size(); ++parameterIndex) {
+            const auto& parameter = stmt->parameters[parameterIndex];
             const std::string name = parameter ? ExtractIdentifier(parameter->name.get()) : std::string{};
             const std::string type = parameter ? ResolveDeclaredType(*parameter) : "error";
             if (parameter)
                 ValidateValueReferenceParameter(*parameter, type, currentType + ".__ctor");
             if (parameter)
-                ValidateConsumeParameter(*parameter, type, currentType + ".__ctor");
             if (const auto declared = table.Declare(SymbolKind::Parameter, name, type)) {
                 Symbol* symbol = table.Get(*declared);
                 symbol->isConst = parameter && parameter->isConst;
                 symbol->valueReference = parameter && parameter->isReference;
                 symbol->constValueReference = parameter && parameter->isReference && parameter->isConst;
+                symbol->rolePolymorphic = parameter &&
+                    ParameterSupportsOwnership(type);
+                symbol->parameterIndex = parameterIndex;
+                symbol->callableOwner = currentCallable;
                 if (parameter && IsStrongManagedPointerType(type)) {
-                    symbol->managedOwner = parameter->isConsume;
-                    symbol->managedBorrower = !parameter->isConsume;
+                    symbol->managedOwner = symbol->rolePolymorphic;
+                    symbol->managedBorrower = true;
                 }
                 else if (IsWeakPointerType(type)) symbol->managedBorrower = true;
                 if (parameter && ArrayRank(type) > 0)
-                    symbol->ownsArrayStorage = parameter->isConsume;
+                    symbol->ownsArrayStorage = symbol->rolePolymorphic;
                 RegisterFlowSymbol(*declared, {InitializationState::Initialized,
                     IsPointerType(type) ? PointerValidity::Unknown : PointerValidity::NotPointer,
-                    parameter && parameter->isConsume && IsStrongManagedPointerType(type)
+                    symbol->rolePolymorphic && IsStrongManagedPointerType(type)
                         ? *declared : InvalidSymbolId,
                     IsTaskType(type) ? TaskState::Unknown : TaskState::NotTask});
             }
@@ -568,7 +586,12 @@ namespace Absolute {
                                     std::to_string(index + 1) + " cannot borrow a const value",
                                     "E_VALUE_REF_CONST_ARGUMENT", argument.symbol);
                         }
+                        CheckManagedMoveArgument(argument, expectedType, index,
+                            "base constructor");
                     }
+                    RecordOwnershipCall(selected->symbol, baseArgs,
+                        selected->parameterTypes,
+                        "base constructor '" + baseClass + "'");
                 }
             }
         }
@@ -580,6 +603,8 @@ namespace Absolute {
         table.ExitScope();
         --functionDepth;
         currentConstructor = oldConstructor;
+        currentCallable = oldCallable;
+        ownerGuardedParameters.clear();
     }
 
     void Analyzer::Visit(EnumDeclStmt* stmt) {

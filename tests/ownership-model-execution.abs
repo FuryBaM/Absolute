@@ -15,19 +15,19 @@ void processView(Document* doc) {
     printDoc(doc);
 }
 
-void processOwnerAndBorrow(consume Document* doc) {
-    // consume makes doc the owner inside processOwnerAndBorrow
+void processOwnerAndBorrow(Document* doc) {
+    // move at the call site makes doc the owner inside processOwnerAndBorrow
     printDoc(doc); // passes View to printDoc
 }
 
-void saveToDatabase(consume Document* d) {
+void saveToDatabase(Document* d) {
     print("saved:");
     print(d.title);
     print(";");
 }
 
-void processOwnerAndTransfer(consume Document* doc) {
-    // consume owns doc, then move transfers it further to saveToDatabase
+void processOwnerAndTransfer(Document* doc) {
+    // doc owns here, then move transfers it further to saveToDatabase
     saveToDatabase(move(doc));
 }
 

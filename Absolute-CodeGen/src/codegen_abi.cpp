@@ -31,6 +31,15 @@ namespace Absolute {
         return TypeFromName(ValueReferenceBaseTypeName(name));
     }
 
+    bool CodeGenerator::Impl::ParameterSupportsOwnershipName(
+        const std::string& name, bool external) {
+        if (external || IsValueReferenceTypeName(name)) return false;
+        const std::string valueType = ValueReferenceBaseTypeName(name);
+        return IsStrongManagedPointerTypeName(valueType) ||
+            ArrayRankName(valueType) > 0 ||
+            (!IsPointerTypeName(valueType) && TypeNeedsCleanup(valueType));
+    }
+
     unsigned CodeGenerator::Impl::AbiReturnOffset(
         const std::string& name, bool external) {
         return !external && IsIndirectValueType(name) ? 1U : 0U;
@@ -43,7 +52,8 @@ namespace Absolute {
         const std::vector<std::string>& parameterTypeNames,
         const std::vector<llvm::Value*>& argumentValues,
         const std::string& resultName,
-        bool external) {
+        bool external,
+        const std::vector<llvm::Value*>& ownershipFlags) {
         if (parameterTypeNames.size() != argumentValues.size())
             Fail("internal ABI argument metadata mismatch");
 
@@ -87,6 +97,15 @@ namespace Absolute {
             else {
                 loweredArguments.push_back(Coerce(argumentValues[index],
                     functionType->getParamType(loweredIndex++)));
+            }
+            if (ParameterSupportsOwnershipName(typeName, external)) {
+                if (loweredIndex >= functionType->getNumParams())
+                    Fail("missing ownership-role ABI argument");
+                llvm::Value* role = index < ownershipFlags.size() &&
+                    ownershipFlags[index]
+                    ? ownershipFlags[index] : builder.getFalse();
+                loweredArguments.push_back(Coerce(
+                    role, functionType->getParamType(loweredIndex++)));
             }
         }
         if (loweredArguments.size() != functionType->getNumParams())

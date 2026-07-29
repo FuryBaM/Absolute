@@ -10,10 +10,6 @@ namespace Absolute {
         return IsCanonicalValueReferenceType(type);
     }
 
-    inline bool IsConsumeParameterType(const std::string& type) {
-        return IsCanonicalConsumeParameterType(type);
-    }
-
     inline bool IsConstValueReferenceType(const std::string& type) {
         return IsCanonicalConstValueReferenceType(type);
     }
@@ -27,10 +23,6 @@ namespace Absolute {
         return CanonicalValueReferenceType(type, isConst, isReference);
     }
 
-    inline std::string ConsumeParameterType(
-        const std::string& type, bool isConsume) {
-        return CanonicalConsumeParameterType(type, isConsume);
-    }
     namespace {
         template <typename T, typename Visitor>
         void AcceptIfPresent(const std::unique_ptr<T>& node, Visitor& visitor) {
@@ -165,9 +157,6 @@ namespace Absolute {
 
         inline std::string SubstituteGenericType(const std::string& type,
             const std::unordered_map<std::string, std::string>& substitutions) {
-            if (IsConsumeParameterType(type))
-                return ConsumeParameterType(
-                    SubstituteGenericType(ValueReferenceBaseType(type), substitutions), true);
             if (IsValueReferenceType(type))
                 return ValueReferenceType(
                     SubstituteGenericType(ValueReferenceBaseType(type), substitutions),
@@ -338,7 +327,8 @@ namespace Absolute {
 
         inline bool IsBuiltinFunction(const std::string& name) {
             return name == "print" || name == "println" || name == "format" ||
-                name == "toString" || name == "assert" || name == "copy" || name == "move" ||
+                name == "toString" || name == "assert" || name == "copy" ||
+                name == "move" || name == "isOwner" ||
                 name == "adoptRaw" || name == "retainRaw" || name == "borrowRaw" || name == "share" ||
                 name == "unsafeArrayGet" || name == "unsafeArraySet" ||
                 name == "unsafeArrayData" ||

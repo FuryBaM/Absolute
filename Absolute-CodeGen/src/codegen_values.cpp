@@ -536,6 +536,7 @@ namespace Absolute {
             impl->InitializeObject(pointer, info);
             if (llvm::Function* constructor = impl->LookupConstructorFunction(info.name, expr)) {
                 std::vector<llvm::Value*> arguments;
+                std::vector<llvm::Value*> ownershipFlags;
                 std::vector<std::string> parameterTypes;
                 if (const ExpressionInfo* callInfo = impl->analyzer
                     ? impl->analyzer->GetExpressionInfo(*expr) : nullptr)
@@ -545,12 +546,19 @@ namespace Absolute {
                         info.constructors.front(), info.substitutions);
                 std::vector<llvm::Value*> temporaryArrays;
                 std::vector<llvm::Value*> temporaryClosures;
-                for (size_t index = 0; index < expr->arguments.size(); ++index)
+                for (size_t index = 0; index < expr->arguments.size(); ++index) {
+                    const std::string parameterType =
+                        index < parameterTypes.size()
+                        ? parameterTypes[index] : std::string{};
+                    ownershipFlags.push_back(impl->ArgumentOwnershipFlag(
+                        expr->arguments[index].get(), parameterType));
                     arguments.push_back(impl->EvaluateCallArgument(
                         expr->arguments[index].get(), temporaryArrays, temporaryClosures,
-                        index < parameterTypes.size() ? parameterTypes[index] : std::string{}));
+                        parameterType));
+                }
                 impl->EmitAbiCall(constructor->getFunctionType(), constructor, "void",
-                    {pointer}, parameterTypes, arguments, "constructor.result");
+                    {pointer}, parameterTypes, arguments, "constructor.result",
+                    false, ownershipFlags);
                 impl->EmitExceptionCheck(
                     rawAllocation ? nullptr : result,
                     rawAllocation ? pointer : nullptr);
@@ -570,6 +578,7 @@ namespace Absolute {
                 llvm::Function* constructor = impl->LookupConstructorFunction(info.name, expr);
                 if (!constructor) impl->Fail("missing constructor for '" + info.name + "'");
                 std::vector<llvm::Value*> arguments;
+                std::vector<llvm::Value*> ownershipFlags;
                 std::vector<std::string> parameterTypes;
                 if (const ExpressionInfo* callInfo = impl->analyzer
                     ? impl->analyzer->GetExpressionInfo(*expr) : nullptr)
@@ -579,12 +588,19 @@ namespace Absolute {
                         info.constructors.front(), info.substitutions);
                 std::vector<llvm::Value*> temporaryArrays;
                 std::vector<llvm::Value*> temporaryClosures;
-                for (size_t index = 0; index < expr->arguments.size(); ++index)
+                for (size_t index = 0; index < expr->arguments.size(); ++index) {
+                    const std::string parameterType =
+                        index < parameterTypes.size()
+                        ? parameterTypes[index] : std::string{};
+                    ownershipFlags.push_back(impl->ArgumentOwnershipFlag(
+                        expr->arguments[index].get(), parameterType));
                     arguments.push_back(impl->EvaluateCallArgument(
                         expr->arguments[index].get(), temporaryArrays, temporaryClosures,
-                        index < parameterTypes.size() ? parameterTypes[index] : std::string{}));
+                        parameterType));
+                }
                 impl->EmitAbiCall(constructor->getFunctionType(), constructor, "void",
-                    {pointer}, parameterTypes, arguments, "constructor.result");
+                    {pointer}, parameterTypes, arguments, "constructor.result",
+                    false, ownershipFlags);
                 impl->EmitExceptionCheck(
                     rawAllocation ? nullptr : result,
                     rawAllocation ? pointer : nullptr);
@@ -616,6 +632,16 @@ namespace Absolute {
             const std::string name = IdentifierName(expr->target.get());
             if (!name.empty()) {
                 Impl::Variable& variable = impl->RequireVariable(name);
+                if (variable.ownershipFlagStorage) {
+                    llvm::Value* owns = impl->builder.CreateLoad(
+                        impl->builder.getInt1Ty(),
+                        variable.ownershipFlagStorage,
+                        "delete.is_owner");
+                    impl->EmitOrExit(owns, "delete.requires.owner");
+                    impl->builder.CreateStore(
+                        impl->builder.getFalse(),
+                        variable.ownershipFlagStorage);
+                }
                 if (variable.managedPointee)
                     impl->builder.CreateStore(
                         llvm::ConstantPointerNull::get(impl->builder.getPtrTy()), variable.managedPointee);
@@ -979,8 +1005,11 @@ namespace Absolute {
         for (size_t index = 0; index < expr->parameters.size(); ++index) {
             llvm::Argument* argument = lambda->getArg(argumentIndex++);
             argument->setName(IdentifierName(expr->parameters[index]->name.get()));
+            llvm::Argument* ownershipArgument =
+                impl->ParameterSupportsOwnershipName(parameterTypes[index])
+                ? lambda->getArg(argumentIndex++) : nullptr;
             impl->BindCallableParameter(*argument, *expr->parameters[index],
-                parameterTypes[index]);
+                parameterTypes[index], false, ownershipArgument);
         }
 
         if (expr->expressionBody) {

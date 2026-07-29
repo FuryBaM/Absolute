@@ -12,11 +12,13 @@ namespace Absolute {
         if (const PluginBinaryOperator* pluginOperator =
                 FindPluginBinaryOperator(leftType, expr->op, rightType)) {
             llvm::Function* function = impl->module->getFunction(impl->ResolvedName(expr));
-            if (!function || function->arg_size() != 2)
+            if (!function)
                 impl->Fail("missing plugin operator function '" + pluginOperator->functionName + "'");
-            left = impl->Coerce(left, function->getFunctionType()->getParamType(0));
-            right = impl->Coerce(right, function->getFunctionType()->getParamType(1));
-            impl->value = impl->builder.CreateCall(function, {left, right}, "plugin.operator");
+            const std::vector<std::string> parameterTypes{leftType, rightType};
+            impl->value = impl->EmitAbiCall(
+                function->getFunctionType(), function,
+                pluginOperator->resultType, {}, parameterTypes,
+                {left, right}, "plugin.operator");
             impl->EmitExceptionCheck();
             // Plugin operators borrow their operands. Destroy temporary managed
             // owners after the call, while named variables remain owned by their

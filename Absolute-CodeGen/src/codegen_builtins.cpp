@@ -178,6 +178,37 @@ namespace Absolute {
             return;
         }
 
+        if (name == "isOwner") {
+            if (expression.arguments.size() != 1)
+                Fail("isOwner expects exactly one argument");
+            Expression* argument = expression.arguments.front().get();
+            if (auto* identifier = dynamic_cast<IdentifierExpr*>(argument)) {
+                if (Variable* variable = FindVariable(identifier->name);
+                    variable && variable->ownershipFlagStorage) {
+                    value = builder.CreateLoad(
+                        builder.getInt1Ty(),
+                        variable->ownershipFlagStorage,
+                        "is.owner");
+                    return;
+                }
+            }
+            const ExpressionInfo* info = analyzer
+                ? analyzer->GetExpressionInfo(*argument) : nullptr;
+            const Symbol* symbol = info
+                ? analyzer->GetSymbol(info->symbol) : nullptr;
+            const bool owns =
+                (info && (info->createsManagedOwner ||
+                    info->createsArrayOwner ||
+                    info->pointerRole == PointerRole::ManagedOwner ||
+                    info->pointerRole == PointerRole::RawOwner)) ||
+                (symbol && (symbol->managedOwner ||
+                    symbol->ownsArrayStorage)) ||
+                (info && !info->isLValue &&
+                    TypeNeedsCleanup(info->type));
+            value = builder.getInt1(owns);
+            return;
+        }
+
         if (name == "move") {
             if (expression.arguments.size() != 1) Fail(name + " expects exactly one argument");
             Expression* argument = expression.arguments.front().get();
@@ -186,6 +217,16 @@ namespace Absolute {
             const bool isLValue = info && info->isLValue;
             if (isLValue) {
                 const std::string argumentType = SemanticType(argument);
+                if (auto* identifier = dynamic_cast<IdentifierExpr*>(argument)) {
+                    if (Variable* variable = FindVariable(identifier->name);
+                        variable && variable->ownershipFlagStorage) {
+                        llvm::Value* owns = builder.CreateLoad(
+                            builder.getInt1Ty(),
+                            variable->ownershipFlagStorage,
+                            "move.is_owner");
+                        EmitOrExit(owns, "move.requires.owner");
+                    }
+                }
                 if (ArrayRankName(argumentType) > 0) {
                     ArrayView source = ViewOfArray(argument);
                     value = BuildArrayDescriptor(source);
@@ -199,6 +240,10 @@ namespace Absolute {
                         builder.CreateStore(
                             llvm::ConstantPointerNull::get(builder.getPtrTy()),
                             variable->arrayOwnerStorage);
+                        if (variable->ownershipFlagStorage)
+                            builder.CreateStore(
+                                builder.getFalse(),
+                                variable->ownershipFlagStorage);
                     }
                     else {
                         llvm::Value* address = EvaluateAddress(argument);
@@ -215,6 +260,13 @@ namespace Absolute {
                 llvm::Type* type = TypeFromName(argumentType);
                 value = builder.CreateLoad(type, address, name + ".value");
                 valueCreatesManagedOwner = IsStrongManagedPointerTypeName(argumentType);
+                if (auto* identifier = dynamic_cast<IdentifierExpr*>(argument)) {
+                    if (Variable* variable = FindVariable(identifier->name);
+                        variable && variable->ownershipFlagStorage)
+                        builder.CreateStore(
+                            builder.getFalse(),
+                            variable->ownershipFlagStorage);
+                }
                 const uint64_t size = SizeOfTypeName(argumentType);
                 if (size > 0) {
                     builder.CreateMemSet(

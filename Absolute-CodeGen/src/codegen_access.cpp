@@ -218,16 +218,22 @@ namespace Absolute {
             llvm::Value* environment = impl->builder.CreateLoad(
                 impl->builder.getPtrTy(), environmentAddress, "closure.environment");
             std::vector<llvm::Value*> arguments;
+            std::vector<llvm::Value*> ownershipFlags;
             std::vector<llvm::Value*> temporaryArrayOwners;
             std::vector<llvm::Value*> temporaryClosureOwners;
-            for (size_t index = 0; index < expr->arguments.size(); ++index)
+            for (size_t index = 0; index < expr->arguments.size(); ++index) {
+                const std::string parameterType =
+                    index < functionValueParameters.size()
+                    ? functionValueParameters[index] : std::string{};
+                ownershipFlags.push_back(impl->ArgumentOwnershipFlag(
+                    expr->arguments[index].get(), parameterType));
                 arguments.push_back(impl->EvaluateCallArgument(
                     expr->arguments[index].get(), temporaryArrayOwners,
-                    temporaryClosureOwners, index < functionValueParameters.size()
-                        ? functionValueParameters[index] : std::string{}));
+                    temporaryClosureOwners, parameterType));
+            }
             impl->value = impl->EmitAbiCall(functionType, callee,
                 functionValueReturn, {environment}, functionValueParameters, arguments,
-                "function.value.result");
+                "function.value.result", false, ownershipFlags);
             impl->ReleaseArrayTemporaries(temporaryArrayOwners);
             impl->ReleaseClosureTemporaries(temporaryClosureOwners);
             if (temporaryClosure) impl->builder.CreateCall(
@@ -242,6 +248,7 @@ namespace Absolute {
             llvm::Function* function = impl->module->getFunction(name);
             if (!function) impl->Fail("unknown static method '" + name + "'");
             std::vector<llvm::Value*> arguments;
+            std::vector<llvm::Value*> ownershipFlags;
             std::vector<llvm::Value*> temporaryArrayOwners;
             std::vector<llvm::Value*> temporaryClosureOwners;
             std::vector<Expression*> argumentExpressions;
@@ -249,9 +256,11 @@ namespace Absolute {
                 argumentExpressions.push_back(argument.get());
             arguments = impl->EvaluateCallArguments(argumentExpressions,
                 temporaryArrayOwners, temporaryClosureOwners,
-                selected->parameterTypes, selected->variadicParameter);
+                selected->parameterTypes, selected->variadicParameter,
+                &ownershipFlags);
             llvm::Value* result = impl->EmitAbiCall(function->getFunctionType(), function,
-                selected->type, {}, selected->parameterTypes, arguments, "static.method.result");
+                selected->type, {}, selected->parameterTypes, arguments,
+                "static.method.result", false, ownershipFlags);
             impl->ReleaseArrayTemporaries(temporaryArrayOwners);
             impl->ReleaseClosureTemporaries(temporaryClosureOwners);
             if (symbolMayThrow(selected)) impl->EmitExceptionCheck();
@@ -302,6 +311,7 @@ namespace Absolute {
             if (!method || !callee)
                 impl->Fail("missing implicit instance method '" + methodName + "'");
             std::vector<llvm::Value*> arguments;
+            std::vector<llvm::Value*> ownershipFlags;
             std::vector<llvm::Value*> temporaryArrayOwners;
             std::vector<llvm::Value*> temporaryClosureOwners;
             std::vector<Expression*> argumentExpressions;
@@ -309,10 +319,11 @@ namespace Absolute {
                 argumentExpressions.push_back(argument.get());
             arguments = impl->EvaluateCallArguments(argumentExpressions,
                 temporaryArrayOwners, temporaryClosureOwners,
-                method->parameterTypes, selected->variadicParameter);
+                method->parameterTypes, selected->variadicParameter,
+                &ownershipFlags);
             impl->value = impl->EmitAbiCall(impl->MethodFunctionType(*method), callee,
                 method->returnType, {impl->currentThis}, method->parameterTypes,
-                arguments, methodName + ".result");
+                arguments, methodName + ".result", false, ownershipFlags);
             impl->ReleaseArrayTemporaries(temporaryArrayOwners);
             impl->ReleaseClosureTemporaries(temporaryClosureOwners);
             if (!method->statement || !HasModifier(*method->statement, "nothrow"))
@@ -330,6 +341,7 @@ namespace Absolute {
                 llvm::Function* function = impl->module->getFunction(name);
                 if (!function) impl->Fail("unknown extension method '" + name + "'");
                 std::vector<llvm::Value*> arguments;
+                std::vector<llvm::Value*> ownershipFlags;
                 std::vector<llvm::Value*> temporaryArrayOwners;
                 std::vector<llvm::Value*> temporaryClosureOwners;
                 std::vector<Expression*> argumentExpressions{member->base.get()};
@@ -337,10 +349,11 @@ namespace Absolute {
                     argumentExpressions.push_back(argument.get());
                 arguments = impl->EvaluateCallArguments(argumentExpressions,
                     temporaryArrayOwners, temporaryClosureOwners,
-                    selected->parameterTypes, selected->variadicParameter);
+                    selected->parameterTypes, selected->variadicParameter,
+                    &ownershipFlags);
                 llvm::Value* result = impl->EmitAbiCall(function->getFunctionType(), function,
                     selected->type, {}, selected->parameterTypes, arguments,
-                    member->member + ".extension.result");
+                    member->member + ".extension.result", false, ownershipFlags);
                 impl->ReleaseArrayTemporaries(temporaryArrayOwners);
                 impl->ReleaseClosureTemporaries(temporaryClosureOwners);
                 if (symbolMayThrow(selected)) impl->EmitExceptionCheck();
@@ -367,6 +380,7 @@ namespace Absolute {
                 llvm::Value* object = impl->ObjectPointer(member->base.get(), baseType);
                 llvm::FunctionType* methodType = impl->MethodFunctionType(method->second);
                 std::vector<llvm::Value*> arguments;
+                std::vector<llvm::Value*> ownershipFlags;
                 std::vector<llvm::Value*> temporaryArrayOwners;
                 std::vector<llvm::Value*> temporaryClosureOwners;
                 std::vector<Expression*> argumentExpressions;
@@ -375,7 +389,8 @@ namespace Absolute {
                 arguments = impl->EvaluateCallArguments(argumentExpressions,
                     temporaryArrayOwners, temporaryClosureOwners,
                     method->second.parameterTypes,
-                    selected && selected->variadicParameter);
+                    selected && selected->variadicParameter,
+                    &ownershipFlags);
 
                 llvm::Value* callee = nullptr;
                 if (method->second.virtualSlot) {
@@ -393,7 +408,7 @@ namespace Absolute {
                 }
                 llvm::Value* result = impl->EmitAbiCall(methodType, callee,
                     method->second.returnType, {object}, method->second.parameterTypes,
-                    arguments, member->member + ".result");
+                    arguments, member->member + ".result", false, ownershipFlags);
                 impl->ReleaseArrayTemporaries(temporaryArrayOwners);
                 impl->ReleaseClosureTemporaries(temporaryClosureOwners);
                 if (!method->second.statement ||
@@ -419,6 +434,7 @@ namespace Absolute {
                 llvm::Value* object = impl->ObjectPointer(member->base.get(), baseType);
                 llvm::FunctionType* methodType = impl->MethodFunctionType(method->second);
                 std::vector<llvm::Value*> arguments;
+                std::vector<llvm::Value*> ownershipFlags;
                 std::vector<llvm::Value*> temporaryArrayOwners;
                 std::vector<llvm::Value*> temporaryClosureOwners;
                 std::vector<Expression*> argumentExpressions;
@@ -427,7 +443,8 @@ namespace Absolute {
                 arguments = impl->EvaluateCallArguments(argumentExpressions,
                     temporaryArrayOwners, temporaryClosureOwners,
                     method->second.parameterTypes,
-                    selected && selected->variadicParameter);
+                    selected && selected->variadicParameter,
+                    &ownershipFlags);
                 llvm::Value* vtable = impl->builder.CreateLoad(
                     impl->builder.getPtrTy(), object, "interface.vtable");
                 llvm::Value* slot = impl->builder.CreateGEP(
@@ -437,7 +454,8 @@ namespace Absolute {
                     impl->builder.getPtrTy(), slot, "interface.method");
                 llvm::Value* result = impl->EmitAbiCall(methodType, callee,
                     method->second.returnType, {object}, method->second.parameterTypes,
-                    arguments, member->member + ".interface.result");
+                    arguments, member->member + ".interface.result",
+                    false, ownershipFlags);
                 impl->ReleaseArrayTemporaries(temporaryArrayOwners);
                 impl->ReleaseClosureTemporaries(temporaryClosureOwners);
                 if (!method->second.statement ||
@@ -459,6 +477,7 @@ namespace Absolute {
                 llvm::Value* object = impl->ObjectPointer(member->base.get(), baseType);
                 llvm::FunctionType* methodType = impl->MethodFunctionType(method->second);
                 std::vector<llvm::Value*> arguments;
+                std::vector<llvm::Value*> ownershipFlags;
                 std::vector<llvm::Value*> temporaryArrayOwners;
                 std::vector<llvm::Value*> temporaryClosureOwners;
                 std::vector<Expression*> argumentExpressions;
@@ -467,12 +486,13 @@ namespace Absolute {
                 arguments = impl->EvaluateCallArguments(argumentExpressions,
                     temporaryArrayOwners, temporaryClosureOwners,
                     method->second.parameterTypes,
-                    selected && selected->variadicParameter);
+                    selected && selected->variadicParameter,
+                    &ownershipFlags);
                 llvm::Function* callee = impl->module->getFunction(method->second.linkName);
                 if (!callee) impl->Fail("missing method function '" + method->second.linkName + "'");
                 llvm::Value* result = impl->EmitAbiCall(methodType, callee,
                     method->second.returnType, {object}, method->second.parameterTypes,
-                    arguments, member->member + ".result");
+                    arguments, member->member + ".result", false, ownershipFlags);
                 impl->ReleaseArrayTemporaries(temporaryArrayOwners);
                 impl->ReleaseClosureTemporaries(temporaryClosureOwners);
                 if (!method->second.statement ||
@@ -492,6 +512,7 @@ namespace Absolute {
         llvm::Function* function = impl->module->getFunction(name);
         if (!function) impl->Fail("unknown function '" + name + "'");
         std::vector<llvm::Value*> arguments;
+        std::vector<llvm::Value*> ownershipFlags;
         std::vector<llvm::Value*> temporaryArrayOwners;
         std::vector<llvm::Value*> temporaryClosureOwners;
         arguments.reserve(expr->arguments.size());
@@ -505,18 +526,20 @@ namespace Absolute {
             parameterTypes = selected->parameterTypes;
             arguments = impl->EvaluateCallArguments(argumentExpressions,
                 temporaryArrayOwners, temporaryClosureOwners,
-                parameterTypes, selected->variadicParameter);
+                parameterTypes, selected->variadicParameter,
+                &ownershipFlags);
         }
         else {
             arguments = impl->EvaluateCallArguments(argumentExpressions,
                 temporaryArrayOwners, temporaryClosureOwners,
-                parameterTypes, false);
+                parameterTypes, false, &ownershipFlags);
         }
         const std::string returnType = selected ? selected->type : impl->SemanticType(expr);
         const bool external = selected &&
             (selected->externalFunction || selected->exportedFunction);
         llvm::Value* result = impl->EmitAbiCall(function->getFunctionType(), function,
-            returnType, {}, parameterTypes, arguments, name + ".result", external);
+            returnType, {}, parameterTypes, arguments, name + ".result",
+            external, ownershipFlags);
         impl->ReleaseArrayTemporaries(temporaryArrayOwners);
         impl->ReleaseClosureTemporaries(temporaryClosureOwners);
         if ((!selected || !selected->externalFunction) && symbolMayThrow(selected))
