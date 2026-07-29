@@ -28,7 +28,7 @@ namespace Absolute {
         if (!external && IsValueReferenceTypeName(name)) return builder.getPtrTy();
         if (!external && IsIndirectValueType(name)) return builder.getPtrTy();
         if (external && ValueReferenceBaseTypeName(name) == "bool") return builder.getInt8Ty();
-        return TypeFromName(name);
+        return TypeFromName(ValueReferenceBaseTypeName(name));
     }
 
     unsigned CodeGenerator::Impl::AbiReturnOffset(

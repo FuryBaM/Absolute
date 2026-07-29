@@ -67,10 +67,10 @@ classes, primitives, and generic aggregates reject it explicitly.
 
 ## Benchmark evidence
 
-`benchmarks/value-ref-suite` compares the existing by-value ABI with a raw
-pointer used strictly as a physical-ABI proxy for `const T&`. The
-workload passes a 128-byte resource-free struct to an `@noinline` read-only
-function 20 million times. Both variants produce checksum `1518646656`.
+`benchmarks/value-ref-suite` compares the by-value ABI, the implemented
+`const T&` ABI, and a raw-address control. The workload passes a 128-byte
+resource-free struct to an `@noinline` read-only function 20 million times.
+Every variant must produce the same checksum.
 
 On 2026-07-22, an AMD Ryzen 7 5700U Windows Release run with three warmups and
 15 alternating samples produced:
@@ -85,6 +85,7 @@ parameters at opaque call boundaries, but not large enough to replace value
 semantics implicitly. Small values remain by-value, and the programmer opts in
 where ABI stability or measured copying cost matters.
 
-The raw-pointer benchmark does not claim source-level safety equivalence. It
-only measures the upper bound of removing the caller-side aggregate copy; the
-rules above supply the missing null, mutation, ownership, and escape guarantees.
+The historical table predates the direct `const T&` workload and is retained as
+baseline evidence. New runs report all three modes. The raw-pointer control
+does not claim source-level safety equivalence; it only measures the physical
+address-passing floor.

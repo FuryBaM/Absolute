@@ -44,6 +44,7 @@ namespace Absolute {
                 nullptr);
             result->isConst = parameter.isConst;
             result->isReference = parameter.isReference;
+            result->isConsume = parameter.isConsume;
             return result;
         }
 

@@ -157,6 +157,11 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(FunctionCallExpr* expr) {
+        impl->valueCreatesManagedOwner = false;
+        impl->valueManagedPointee = nullptr;
+        impl->valueCreatesArrayOwner = false;
+        impl->valueArrayOwner = nullptr;
+        impl->valueCreatesClosureOwner = false;
         const ExpressionInfo* callInfo = impl->analyzer ? impl->analyzer->GetExpressionInfo(*expr) : nullptr;
         const Symbol* selected = callInfo ? impl->analyzer->GetSymbol(callInfo->symbol) : nullptr;
         const auto symbolMayThrow = [&](const Symbol* symbol) {

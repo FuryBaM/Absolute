@@ -84,6 +84,15 @@ namespace Absolute {
             return IsManagedPointerTypeName(name) && !IsWeakPointerTypeName(name);
         }
 
+        inline bool IsConsumeParameterTypeName(const std::string& name) {
+            return IsCanonicalConsumeParameterType(name);
+        }
+
+        inline std::string ConsumeParameterTypeName(
+            const std::string& name, bool consumes) {
+            return CanonicalConsumeParameterType(name, consumes);
+        }
+
         inline bool IsPointerTypeName(const std::string& name) {
             return IsRawPointerTypeName(name) || IsManagedPointerTypeName(name);
         }
@@ -193,6 +202,10 @@ namespace Absolute {
                 size_t endPos = type.find_last_not_of(" \t");
                 type = type.substr(startPos, endPos - startPos + 1);
             }
+            if (IsConsumeParameterTypeName(type))
+                return ConsumeParameterTypeName(
+                    SubstituteCodegenType(ValueReferenceBaseTypeName(type), substitutions),
+                    true);
             if (IsValueReferenceTypeName(type))
                 return ValueReferenceTypeName(
                     SubstituteCodegenType(ValueReferenceBaseTypeName(type), substitutions),

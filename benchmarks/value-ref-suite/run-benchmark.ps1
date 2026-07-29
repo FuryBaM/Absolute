@@ -31,9 +31,11 @@ if (-not $compiler) {
 
 $executables = @{
     'by-value' = Join-Path $buildRoot 'by-value.exe'
+    'const-ref' = Join-Path $buildRoot 'const-ref.exe'
     'raw-borrow' = Join-Path $buildRoot 'raw-borrow.exe'
 }
-foreach ($mode in @('by-value', 'raw-borrow')) {
+$modes = @('by-value', 'const-ref', 'raw-borrow')
+foreach ($mode in $modes) {
     $source = Join-Path $suiteRoot "absolute\$mode.abs"
     & $compiler $source --build-exe -o $executables[$mode]
     if ($LASTEXITCODE -ne 0) { throw "Absolute compilation failed for $mode." }
@@ -51,14 +53,15 @@ function Invoke-Workload([string]$mode) {
 }
 
 for ($warmup = 0; $warmup -lt $Warmups; ++$warmup) {
-    Invoke-Workload 'by-value' | Out-Null
-    Invoke-Workload 'raw-borrow' | Out-Null
+    foreach ($mode in $modes) { Invoke-Workload $mode | Out-Null }
 }
 
-$measurements = @{'by-value' = @(); 'raw-borrow' = @()}
+$measurements = @{'by-value' = @(); 'const-ref' = @(); 'raw-borrow' = @()}
 $expectedChecksum = $null
 for ($sample = 0; $sample -lt $Samples; ++$sample) {
-    $order = if (($sample % 2) -eq 0) { @('by-value', 'raw-borrow') } else { @('raw-borrow', 'by-value') }
+    $offset = $sample % $modes.Count
+    $order = @($modes[$offset..($modes.Count - 1)] + $modes[0..($offset - 1)])
+    if ($offset -eq 0) { $order = $modes }
     foreach ($mode in $order) {
         $result = Invoke-Workload $mode
         if ($null -eq $expectedChecksum) { $expectedChecksum = $result.Checksum }
@@ -77,11 +80,12 @@ function Get-Median([double[]]$values) {
 }
 
 $copyMedian = Get-Median $measurements['by-value']
+$referenceMedian = Get-Median $measurements['const-ref']
 $borrowMedian = Get-Median $measurements['raw-borrow']
-$speedup = $copyMedian / $borrowMedian
+$speedup = $copyMedian / $referenceMedian
 $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $csvPath = Join-Path $resultsRoot "value-ref-$timestamp.csv"
-$rows = foreach ($mode in @('by-value', 'raw-borrow')) {
+$rows = foreach ($mode in $modes) {
     $values = [double[]]$measurements[$mode]
     [pscustomobject]@{
         mode = $mode
@@ -97,6 +101,7 @@ $rows = foreach ($mode in @('by-value', 'raw-borrow')) {
 $rows | Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding utf8
 
 Write-Host "by-value median : $($copyMedian.ToString('F6', $invariant)) s"
-Write-Host "raw borrow median: $($borrowMedian.ToString('F6', $invariant)) s"
-Write-Host "borrow speedup   : $($speedup.ToString('F2', $invariant))x"
+Write-Host "const ref median: $($referenceMedian.ToString('F6', $invariant)) s"
+Write-Host "raw view median : $($borrowMedian.ToString('F6', $invariant)) s"
+Write-Host "ref speedup     : $($speedup.ToString('F2', $invariant))x"
 Write-Host "results          : $csvPath"

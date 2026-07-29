@@ -175,8 +175,10 @@ namespace Absolute {
     }
 
     std::string CodeGenerator::Impl::CallableParameterTypeName(VarDeclExpr& expression) {
-        return ValueReferenceTypeName(
-            DeclaredTypeName(expression), expression.isConst, expression.isReference);
+        return ConsumeParameterTypeName(
+            ValueReferenceTypeName(
+                DeclaredTypeName(expression), expression.isConst, expression.isReference),
+            expression.isConsume);
     }
 
 

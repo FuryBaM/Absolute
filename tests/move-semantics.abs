@@ -30,7 +30,7 @@ int32 testVariableMove() {
     return destination.read();
 }
 
-void processResource(ResourceBase param) {
+void processResource(consume ResourceBase param) {
     assert(param.read() == 41, "parameter got ownership");
 }
 

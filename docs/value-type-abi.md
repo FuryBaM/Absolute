@@ -54,10 +54,15 @@ zero-argument `clone() const` lifecycle method. It never changes the implicit
 field-wise copy ABI described above. See
 [`copy-clone.md`](copy-clone.md).
 
-Parameter-only `T&`/`const T&` borrows are designed separately from ownership
-and are not part of the implemented ABI yet. Their proposed lowering, escape
-rules, and benchmark evidence are documented in
+Parameter-only `T&`/`const T&` borrows are implemented separately from
+ownership. Their lowering, escape rules, and benchmark evidence are documented in
 [`value-references.md`](value-references.md).
+
+An explicit `consume T` parameter is the ownership counterpart for a
+resource-owning aggregate. The caller must pass `move(ownerPlace)` or a fresh
+owner value. The callee runs normal aggregate cleanup on every exit unless it
+moves the parameter onward. Ordinary `T` parameters never silently consume
+resources.
 
 All objects linked through this internal ABI must be rebuilt with the same
 compiler ABI revision. `extern "C"` declarations and `export "C"` definitions

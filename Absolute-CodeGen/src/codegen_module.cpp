@@ -287,6 +287,17 @@ namespace Absolute {
 
         if (statement.body) statement.body->Accept(visitor);
         if (!builder.GetInsertBlock()->getTerminator()) {
+            EmitScopeCleanup(scopes.size() - 1);
+            if (!builder.GetInsertBlock() ||
+                builder.GetInsertBlock()->getTerminator()) {
+                PopScope();
+                currentReturnTypeName = oldReturnTypeName;
+                currentReturnStorage = oldReturnStorage;
+                builder.ClearInsertionPoint();
+                currentGenericSubstitutions = oldSubstitutions;
+                currentNamespace = oldNamespace;
+                return;
+            }
             if (currentReturnStorage)
                 builder.CreateStore(llvm::Constant::getNullValue(
                     TypeFromName(currentReturnTypeName)), currentReturnStorage);
@@ -316,6 +327,7 @@ namespace Absolute {
         const std::string declaredTypeName = explicitTypeName.empty()
             ? SubstituteCodegenType(CallableParameterTypeName(parameter), currentGenericSubstitutions)
             : explicitTypeName;
+        const bool consumes = IsConsumeParameterTypeName(declaredTypeName);
         const bool valueReference = IsValueReferenceTypeName(declaredTypeName);
         const std::string typeName = ValueReferenceBaseTypeName(declaredTypeName);
         if (ArrayRankName(typeName) > 0) {
@@ -335,14 +347,19 @@ namespace Absolute {
                 view.owner ? view.owner
                     : llvm::ConstantPointerNull::get(builder.getPtrTy()),
                 variable.arrayOwnerStorage);
+            variable.ownsArrayStorage = consumes;
+            variable.arrayOwnerSymbol = consumes
+                ? variable.symbol : InvalidSymbolId;
             if (!scopes.back().emplace(name, std::move(variable)).second)
                 Fail("duplicate parameter '" + name + "'");
             return;
         }
         if (!external && (valueReference || IsIndirectValueType(typeName))) {
-            if (!scopes.back().emplace(name,
-                Variable{&argument, TypeFromName(typeName), typeName, false, false, nullptr, {},
-                    nullptr, SemanticSymbol(&parameter)}).second)
+            Variable variable{&argument, TypeFromName(typeName), typeName, false, false,
+                nullptr, {}, nullptr, SemanticSymbol(&parameter)};
+            variable.ownsAggregateResources =
+                consumes && TypeNeedsCleanup(typeName);
+            if (!scopes.back().emplace(name, std::move(variable)).second)
                 Fail("duplicate parameter '" + name + "'");
             return;
         }
@@ -350,14 +367,21 @@ namespace Absolute {
         llvm::Type* storageType = TypeFromName(typeName);
         llvm::AllocaInst* address = CreateEntryAlloca(*argument.getParent(), storageType, name);
         builder.CreateStore(Coerce(&argument, storageType), address);
-        if (!scopes.back().emplace(name,
-            Variable{address, storageType, typeName, false, false, nullptr, {},
-                nullptr, SemanticSymbol(&parameter)}).second)
+        Variable variable{address, storageType, typeName, false, false, nullptr, {},
+            nullptr, SemanticSymbol(&parameter)};
+        variable.managedOwner =
+            consumes && IsStrongManagedPointerTypeName(typeName);
+        variable.ownsAggregateResources =
+            consumes && TypeNeedsCleanup(typeName);
+        if (!scopes.back().emplace(name, std::move(variable)).second)
             Fail("duplicate parameter '" + name + "'");
     }
 
     void CodeGenerator::Impl::FinishClassCallable(llvm::Function& function) {
         if (!builder.GetInsertBlock()->getTerminator()) {
+            EmitScopeCleanup(scopes.size() - 1);
+            if (!builder.GetInsertBlock() ||
+                builder.GetInsertBlock()->getTerminator()) return;
             if (currentReturnStorage)
                 builder.CreateStore(llvm::Constant::getNullValue(
                     TypeFromName(currentReturnTypeName)), currentReturnStorage);

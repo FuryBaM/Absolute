@@ -750,9 +750,9 @@ if(BUILD_TESTING)
             "${PROJECT_SOURCE_DIR}/benchmarks/value-ref-suite/absolute/by-value.abs"
     )
     add_test(
-        NAME absolute.value-ref-raw-borrow-semantic
+        NAME absolute.value-ref-const-ref-semantic
         COMMAND Absolute-Compiler
-            "${PROJECT_SOURCE_DIR}/benchmarks/value-ref-suite/absolute/raw-borrow.abs"
+            "${PROJECT_SOURCE_DIR}/benchmarks/value-ref-suite/absolute/const-ref.abs"
     )
     add_test(
         NAME absolute.value-references-semantic
@@ -790,6 +790,16 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/managed-pointer-move-errors.abs"
     )
     set_tests_properties(absolute.managed-pointer-move-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.ownership-semantics-matrix
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-semantics-matrix.abs"
+    )
+    add_test(
+        NAME absolute.ownership-semantics-matrix-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-semantics-matrix-errors.abs"
+    )
+    set_tests_properties(absolute.ownership-semantics-matrix-errors PROPERTIES
+        WILL_FAIL TRUE)
     add_test(
         NAME absolute.array-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-errors.abs"
@@ -3526,6 +3536,39 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-managed-pointer-move PROPERTIES
             FIXTURES_REQUIRED absolute-managed-pointer-move-executable
             PASS_REGULAR_EXPRESSION "managed-move=ok"
+            FAIL_REGULAR_EXPRESSION "managed pointer\\(s\\) leaked;memory leak detected"
+        )
+        add_test(
+            NAME absolute.emit-ownership-semantics-matrix
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/tests/ownership-semantics-matrix.abs"
+                --emit-llvm -O3
+                -o "${CMAKE_BINARY_DIR}/ownership-semantics-matrix.ll"
+        )
+        set_tests_properties(absolute.emit-ownership-semantics-matrix PROPERTIES
+            FIXTURES_SETUP absolute-ownership-semantics-matrix-ir)
+        add_test(
+            NAME absolute.check-ownership-semantics-matrix-ir
+            COMMAND ${CMAKE_COMMAND}
+                -DIR_FILE=${CMAKE_BINARY_DIR}/ownership-semantics-matrix.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-ownership-semantics-matrix-ir.cmake"
+        )
+        set_tests_properties(absolute.check-ownership-semantics-matrix-ir PROPERTIES
+            FIXTURES_REQUIRED absolute-ownership-semantics-matrix-ir)
+        add_test(
+            NAME absolute.build-ownership-semantics-matrix
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/tests/ownership-semantics-matrix.abs"
+                --build-exe -O3
+                -o "${CMAKE_BINARY_DIR}/ownership-semantics-matrix-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-ownership-semantics-matrix PROPERTIES
+            FIXTURES_SETUP absolute-ownership-semantics-matrix-executable)
+        add_test(NAME absolute.run-ownership-semantics-matrix
+            COMMAND "${CMAKE_BINARY_DIR}/ownership-semantics-matrix-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-ownership-semantics-matrix PROPERTIES
+            FIXTURES_REQUIRED absolute-ownership-semantics-matrix-executable
+            PASS_REGULAR_EXPRESSION "ownership-semantics-matrix=ok"
             FAIL_REGULAR_EXPRESSION "managed pointer\\(s\\) leaked;memory leak detected"
         )
         add_test(

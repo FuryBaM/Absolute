@@ -16,6 +16,11 @@ namespace Absolute{
             const bool isParams = CurrentToken()->type == TokenType::KEYWORD &&
                 CurrentToken()->value == "params";
             if (isParams) Consume(TokenType::KEYWORD, "params");
+            const bool isConsume =
+                (CurrentToken()->type == TokenType::KEYWORD ||
+                    CurrentToken()->type == TokenType::IDENTIFIER) &&
+                CurrentToken()->value == "consume";
+            if (isConsume) Consume(CurrentToken()->type, "consume");
             const bool isConst = CurrentToken()->type == TokenType::KEYWORD &&
                 CurrentToken()->value == "const";
             if (isConst) Consume(TokenType::KEYWORD, "const");
@@ -48,6 +53,7 @@ namespace Absolute{
                 parameter->isReference = isReference;
                 parameter->isOut = outAlias;
                 parameter->isParams = isParams;
+                parameter->isConsume = isConsume;
                 parameters.push_back(std::move(parameter));
             }
             else {
@@ -57,6 +63,7 @@ namespace Absolute{
                 parameter->isReference = isReference;
                 parameter->isOut = outAlias;
                 parameter->isParams = isParams;
+                parameter->isConsume = isConsume;
                 parameters.push_back(std::move(parameter));
             }
 

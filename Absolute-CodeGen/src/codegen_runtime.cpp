@@ -215,7 +215,9 @@ namespace Absolute {
             return temporary;
         }
         llvm::Value* argument = Evaluate(expression);
-        if (valueCreatesArrayOwner) temporaryArrayOwners.push_back(valueArrayOwner);
+        if (valueCreatesArrayOwner &&
+            !IsConsumeParameterTypeName(parameterType))
+            temporaryArrayOwners.push_back(valueArrayOwner);
         if (valueCreatesClosureOwner) temporaryClosureOwners.push_back(argument);
         if (!parameterType.empty()) {
             const std::string targetType = ValueReferenceBaseTypeName(parameterType);
@@ -243,6 +245,8 @@ namespace Absolute {
                 arguments.push_back(EvaluateCallArgument(
                     expressions[index], temporaryArrayOwners, temporaryClosureOwners,
                     index < parameterTypes.size() ? parameterTypes[index] : std::string{}));
+            valueCreatesArrayOwner = false;
+            valueArrayOwner = nullptr;
             return arguments;
         }
         if (parameterTypes.empty()) Fail("params callable has no array parameter");
@@ -263,6 +267,8 @@ namespace Absolute {
             arguments.push_back(EvaluateCallArgument(
                 expressions.back(), temporaryArrayOwners, temporaryClosureOwners,
                 arrayType));
+            valueCreatesArrayOwner = false;
+            valueArrayOwner = nullptr;
             return arguments;
         }
 
@@ -284,6 +290,8 @@ namespace Absolute {
         arguments.push_back(BuildArrayDescriptor(
             {storage, elementType, ValueReferenceBaseTypeName(arrayType),
                 {builder.getInt64(count)}, nullptr}));
+        valueCreatesArrayOwner = false;
+        valueArrayOwner = nullptr;
         return arguments;
     }
 

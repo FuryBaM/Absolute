@@ -486,14 +486,24 @@ namespace Absolute {
             const std::string type = parameter ? ResolveDeclaredType(*parameter) : "error";
             if (parameter)
                 ValidateValueReferenceParameter(*parameter, type, currentType + ".__ctor");
+            if (parameter)
+                ValidateConsumeParameter(*parameter, type, currentType + ".__ctor");
             if (const auto declared = table.Declare(SymbolKind::Parameter, name, type)) {
                 Symbol* symbol = table.Get(*declared);
                 symbol->isConst = parameter && parameter->isConst;
                 symbol->valueReference = parameter && parameter->isReference;
                 symbol->constValueReference = parameter && parameter->isReference && parameter->isConst;
+                if (parameter && IsStrongManagedPointerType(type)) {
+                    symbol->managedOwner = parameter->isConsume;
+                    symbol->managedBorrower = !parameter->isConsume;
+                }
+                else if (IsWeakPointerType(type)) symbol->managedBorrower = true;
+                if (parameter && ArrayRank(type) > 0)
+                    symbol->ownsArrayStorage = parameter->isConsume;
                 RegisterFlowSymbol(*declared, {InitializationState::Initialized,
                     IsPointerType(type) ? PointerValidity::Unknown : PointerValidity::NotPointer,
-                    InvalidSymbolId,
+                    parameter && parameter->isConsume && IsStrongManagedPointerType(type)
+                        ? *declared : InvalidSymbolId,
                     IsTaskType(type) ? TaskState::Unknown : TaskState::NotTask});
             }
             else Report("parameter '" + name + "' is already declared");

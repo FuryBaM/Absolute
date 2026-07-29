@@ -22,7 +22,7 @@ namespace std.io {
             buffer = ByteBuffer.allocate(capacity);
         }
 
-        public MemoryStream(ByteBuffer* existing) {
+        public MemoryStream(consume ByteBuffer* existing) {
             buffer = move(existing);
         }
 
@@ -60,7 +60,7 @@ namespace std.io {
         private Reader* reader;
         private ByteBuffer* buffer;
 
-        public BufferedReader(Reader* r, int64 bufferSize) {
+        public BufferedReader(consume Reader* r, int64 bufferSize) {
             reader = move(r);
             buffer = ByteBuffer.allocate(bufferSize > 0 ? bufferSize : 4096);
             buffer.setLimit(0); // empty initially
@@ -102,7 +102,7 @@ namespace std.io {
         private Writer* writer;
         private ByteBuffer* buffer;
 
-        public BufferedWriter(Writer* w, int64 bufferSize) {
+        public BufferedWriter(consume Writer* w, int64 bufferSize) {
             writer = move(w);
             buffer = ByteBuffer.allocate(bufferSize > 0 ? bufferSize : 4096);
         }

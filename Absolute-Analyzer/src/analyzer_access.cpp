@@ -172,9 +172,12 @@ namespace Absolute {
             symbol->genericParameters.empty() && !symbol->externalFunction &&
             !symbol->exportedFunction;
         if (functionValue && std::any_of(symbol->parameterTypes.begin(),
-            symbol->parameterTypes.end(), IsValueReferenceType))
-            Report("function with value-reference parameters cannot be stored in a func value",
-                "E_VALUE_REF_FUNCTION_VALUE", id);
+            symbol->parameterTypes.end(), [](const std::string& parameter) {
+                return IsValueReferenceType(parameter) ||
+                    IsConsumeParameterType(parameter);
+            }))
+            Report("function with reference or consume parameters cannot be stored in a func value",
+                "E_OWNERSHIP_FUNCTION_VALUE", id);
         if (cFunctionValue && !expectedCFunction && !expectedType.empty() &&
             ParseFunctionType(expectedType, expectedReturn, expectedParameters))
             Report("C ABI function '" + expr->name +
@@ -239,7 +242,7 @@ namespace Absolute {
                 if (i < expected.size() && !IsAssignable(expectedValueType, argument.type))
                     Report("constructor argument " + std::to_string(i + 1) + " has type '" + argument.type +
                         "', expected '" + expectedValueType + "'");
-                CheckManagedMoveArgument(argument, expectedValueType, i, "constructor");
+                CheckManagedMoveArgument(argument, expectedType, i, "constructor");
                 if (IsValueReferenceType(expectedType) &&
                     !IsConstValueReferenceType(expectedType)) {
                     if (!argument.isLValue)
@@ -494,9 +497,7 @@ namespace Absolute {
                 const bool strongManaged = IsStrongManagedPointerType(argument.type);
                 const bool arrayValue = ArrayRank(argument.type) > 0;
                 const bool arrayOwner = arrayValue && source && source->ownsArrayStorage;
-                const bool managedOwner = strongManaged && source &&
-                    (source->kind == SymbolKind::Field || source->kind == SymbolKind::Variable ||
-                     source->kind == SymbolKind::Parameter || source->managedOwner);
+                const bool managedOwner = strongManaged && source && source->managedOwner;
                 if (IsWeakPointerType(argument.type)) {
                     Report("weak managed pointers do not own a resource and cannot be moved",
                         "E_WEAK_MOVE", argument.symbol);
@@ -999,7 +1000,7 @@ namespace Absolute {
                         "' cannot be copied by value; use move(...) for lvalues",
                         "E_RESOURCE_AGGREGATE_ARGUMENT", argument.symbol);
                 }
-                CheckManagedMoveArgument(argument, parameterValueType, i, "function");
+                CheckManagedMoveArgument(argument, parameterType, i, "function");
                 if (IsTaskType(parameterValueType)) {
                     if (argument.taskState == TaskState::Awaited) {
                         Report("task argument " + std::to_string(i + 1) +

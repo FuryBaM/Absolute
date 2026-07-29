@@ -43,12 +43,30 @@ A managed owner move may be consumed by:
 - a new strong managed variable;
 - assignment to an empty or existing owner variable;
 - an owning strong field;
-- a managed owner return.
+- a managed owner return;
+- an explicit `consume T*` parameter.
 
 Ordinary managed pointer parameters are borrowed in Absolute. Passing
 `move(owner)` to such a parameter is rejected because the callee has no owning
 parameter role and would otherwise lose the allocation. Pass `owner` without
 `move(...)` for a synchronous borrow.
+
+Use `consume` when the callee must receive ownership:
+
+```absolute
+void close(consume Node* node) {
+    // node is the owner here and is destroyed on every exit unless moved onward
+}
+
+close(move(owner));  // owner place becomes moved-from
+close(new Node());   // a fresh owner value transfers directly
+```
+
+`consume` is also available for owning arrays and resource-owning structs.
+It is part of the callable signature, so overload selection can distinguish a
+borrow from an ownership transfer. It cannot be combined with `ref`, `out`,
+`params`, `const`, default values, `async`, or the C ABI. Raw and weak pointers
+are views and therefore cannot be consume parameters.
 
 For a task or channel boundary, `seal(move(owner))` is the explicit consuming
 operation. It rotates the managed handle generation immediately, invalidating

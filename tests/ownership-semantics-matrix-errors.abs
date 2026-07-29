@@ -1,0 +1,52 @@
+struct Plain {
+    int32 value;
+}
+
+class Node {
+    public int32 value;
+
+    public Node(int32 initial) {
+        value = initial;
+    }
+}
+
+void borrow(Node* node) {
+}
+
+void take(consume Node* node) {
+}
+
+void invalidRaw(consume raw Node* node) {
+}
+
+void invalidWeak(consume weak Node* node) {
+}
+
+void invalidPlain(consume Plain value) {
+}
+
+void invalidRef(consume ref Plain value) {
+}
+
+void invalidConst(consume const Node* node) {
+}
+
+void invalidDefault(consume Node* node = null) {
+}
+
+async void invalidAsync(consume Node* node) {
+}
+
+extern "C" void invalidExternal(consume Node* node);
+
+void main() {
+    Node* owner = new Node(1);
+    Node* subscriber = owner;
+    weak Node* observer = owner;
+
+    take(owner);
+    take(subscriber);
+    take(observer);
+    borrow(move(owner));
+    borrow(new Node(2));
+}

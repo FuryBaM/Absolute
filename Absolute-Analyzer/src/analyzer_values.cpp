@@ -641,13 +641,15 @@ namespace Absolute {
                     parameter = SubstituteGenericType(parameter, substitutions);
             }
             for (size_t index = 0; index < expr->arguments.size(); ++index) {
-                const std::string expected = index < parameters.size()
-                    ? ValueReferenceBaseType(parameters[index]) : std::string{};
+                const std::string declaredExpected = index < parameters.size()
+                    ? parameters[index] : std::string{};
+                const std::string expected =
+                    ValueReferenceBaseType(declaredExpected);
                 const Result& value = evaluated[index];
                 if (!expected.empty() && !IsAssignable(expected, value.type))
                     Report("constructor argument " + std::to_string(index + 1) + " has type '" +
                         value.type + "', expected '" + expected + "'");
-                CheckManagedMoveArgument(value, expected, index, "constructor");
+                CheckManagedMoveArgument(value, declaredExpected, index, "constructor");
             }
             Result allocation{InvalidSymbolId,
                 (rawAllocation ? "raw " : "") + constructedType + "*", false,

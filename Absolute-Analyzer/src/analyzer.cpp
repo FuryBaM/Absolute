@@ -407,7 +407,36 @@ namespace Absolute {
     void Analyzer::CheckManagedMoveArgument(
         const Result& argument, const std::string& parameterType,
         size_t index, const std::string& context) {
-        (void)argument; (void)parameterType; (void)index; (void)context;
+        const bool consumes = IsConsumeParameterType(parameterType);
+        const std::string valueType = ValueReferenceBaseType(parameterType);
+        const Symbol* source = table.Get(argument.symbol);
+        const bool managedResource = IsStrongManagedPointerType(valueType);
+        const bool arrayResource = ArrayRank(valueType) > 0;
+        const bool aggregateResource = !IsPointerType(valueType) &&
+            ArrayRank(valueType) == 0 && TypeOwnsResources(valueType);
+        const bool managedTransfer = managedResource && argument.createsManagedOwner;
+        const bool arrayTransfer = arrayResource && argument.createsArrayOwner;
+        const bool aggregateTransfer = aggregateResource &&
+            (argument.isMoveResult || !argument.isLValue ||
+                (source && (source->kind == SymbolKind::Function ||
+                    source->kind == SymbolKind::Method)));
+        const bool transfersOwner =
+            managedTransfer || arrayTransfer || aggregateTransfer;
+        const std::string argumentName = context + " argument " +
+            std::to_string(index + 1);
+
+        if (consumes && !transfersOwner) {
+            Report(argumentName + " must transfer an owner to consume parameter '" +
+                valueType + "'; use move(owner) for an owner place",
+                "E_CONSUME_REQUIRES_OWNER", argument.symbol);
+        }
+        else if (!consumes && (argument.isMoveResult ||
+            argument.createsManagedOwner) &&
+            (managedResource || arrayResource || aggregateResource)) {
+            Report(argumentName + " transfers ownership to a borrowed parameter '" +
+                valueType + "'; declare the parameter as consume",
+                "E_MOVE_TO_BORROWED_PARAMETER", argument.symbol);
+        }
     }
 
     void Analyzer::MergeValueFlowPaths(const ValueFlowMap& base, const std::vector<ValueFlowMap>& paths) {
@@ -510,6 +539,35 @@ namespace Absolute {
     }
 
     void Analyzer::Save(Expression* expression, Result value) {
+        value.category = value.isLValue ? ValueCategory::Place : ValueCategory::Value;
+        if (value.isLValue) {
+            if (const Symbol* symbol = table.Get(value.symbol)) {
+                value.placeInfo.readable = symbol->canRead;
+                value.placeInfo.writable = !symbol->isConst && symbol->canWrite;
+                value.placeInfo.addressable =
+                    symbol->kind != SymbolKind::Property &&
+                    symbol->kind != SymbolKind::Indexer;
+            }
+        }
+        else {
+            value.placeInfo = {false, false, false};
+        }
+        const Symbol* symbol = table.Get(value.symbol);
+        if (IsValueReferenceType(value.type) || (symbol && symbol->valueReference))
+            value.pointerRole = PointerRole::Ref;
+        else if (IsWeakPointerType(value.type))
+            value.pointerRole = PointerRole::Weak;
+        else if (IsRawPointerType(value.type)) {
+            const auto rawLifetime = keepLifetimes.find(value.symbol);
+            const bool liveRawOwner = rawLifetime != keepLifetimes.end() &&
+                rawLifetime->second.state == KeepState::Live;
+            value.pointerRole = (value.createsRawOwner || liveRawOwner)
+                ? PointerRole::RawOwner : PointerRole::RawView;
+        }
+        else if (IsStrongManagedPointerType(value.type))
+            value.pointerRole = (value.createsManagedOwner ||
+                (symbol && symbol->managedOwner))
+                ? PointerRole::ManagedOwner : PointerRole::ManagedSub;
         result = std::move(value);
         if (expression) {
             ExpressionInfo info;
@@ -535,7 +593,8 @@ namespace Absolute {
     }
 
     bool Analyzer::IsKnownType(const std::string& name) const {
-        if (IsValueReferenceType(name)) return IsKnownType(ValueReferenceBaseType(name));
+        if (IsValueReferenceType(name) || IsConsumeParameterType(name))
+            return IsKnownType(ValueReferenceBaseType(name));
         if (IsPointerType(name)) return IsKnownType(PointerPointee(name));
         if (IsTaskType(name)) return IsKnownType(TaskValueType(name));
         for (auto scope = genericTypeScopes.rbegin(); scope != genericTypeScopes.rend(); ++scope)
@@ -582,7 +641,7 @@ namespace Absolute {
     }
 
     bool Analyzer::IsAssignable(const std::string& target, const std::string& source) const {
-        if (IsValueReferenceType(target))
+        if (IsValueReferenceType(target) || IsConsumeParameterType(target))
             return IsAssignable(ValueReferenceBaseType(target), source);
         if (target == "error" || source == "error" || target == "dynamic" || source == "dynamic") return true;
         if (target == source) return true;
@@ -613,7 +672,8 @@ namespace Absolute {
     }
 
     bool Analyzer::TypeOwnsResources(const std::string& name) const {
-        if (IsValueReferenceType(name)) return TypeOwnsResources(ValueReferenceBaseType(name));
+        if (IsValueReferenceType(name) || IsConsumeParameterType(name))
+            return TypeOwnsResources(ValueReferenceBaseType(name));
         std::unordered_set<std::string> visiting;
         const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
             if (IsStrongManagedPointerType(candidate) || ArrayRank(candidate) > 0) return true;
@@ -782,8 +842,10 @@ namespace Absolute {
         resolved.reserve(parameters.size());
         for (const auto& parameter : parameters)
             resolved.push_back(parameter
-                ? ValueReferenceType(ResolveDeclaredType(*parameter),
-                    parameter->isConst, parameter->isReference)
+                ? ConsumeParameterType(
+                    ValueReferenceType(ResolveDeclaredType(*parameter),
+                        parameter->isConst, parameter->isReference),
+                    parameter->isConsume)
                 : "error");
         return resolved;
     }
@@ -818,6 +880,36 @@ namespace Absolute {
         if (cAbi)
             Report("C ABI callable '" + callable + "' cannot declare Absolute value references",
                 "E_VALUE_REF_C_ABI");
+    }
+
+    void Analyzer::ValidateConsumeParameter(
+        VarDeclExpr& parameter, const std::string& type,
+        const std::string& callable, bool asyncCallable, bool cAbi) {
+        if (!parameter.isConsume) return;
+        const std::string name = ExtractIdentifier(parameter.name.get());
+        if (parameter.isReference || parameter.isOut || parameter.isParams ||
+            parameter.isConst) {
+            Report("consume parameter '" + name + "' of '" + callable +
+                "' cannot also be ref, out, params, or const",
+                "E_CONSUME_PARAMETER_MODIFIERS");
+        }
+        const bool supported = IsStrongManagedPointerType(type) ||
+            ArrayRank(type) > 0 ||
+            (!IsPointerType(type) && TypeOwnsResources(type));
+        if (!supported) {
+            Report("consume parameter '" + name + "' of '" + callable +
+                "' requires an owning managed pointer, array, or resource-owning value type",
+                "E_CONSUME_PARAMETER_TYPE");
+        }
+        if (parameter.value)
+            Report("consume parameter '" + name + "' cannot have a default value",
+                "E_CONSUME_PARAMETER_DEFAULT");
+        if (asyncCallable)
+            Report("async callable '" + callable + "' cannot declare consume parameters",
+                "E_CONSUME_PARAMETER_ASYNC");
+        if (cAbi)
+            Report("C ABI callable '" + callable + "' cannot declare consume parameters",
+                "E_CONSUME_PARAMETER_C_ABI");
     }
 
     void Analyzer::ValidateCAbiType(const std::string& type, const std::string& where,
@@ -1121,6 +1213,8 @@ namespace Absolute {
             std::string type = ResolveDeclaredType(*parameter);
             ValidateValueReferenceParameter(*parameter, type,
                 statement.name->value, asyncFunction, statement.UsesCAbi());
+            ValidateConsumeParameter(*parameter, type,
+                statement.name->value, asyncFunction, statement.UsesCAbi());
             if (asyncFunction && !IsAsyncTaskValueType(type))
                 Report("async parameter '" + name + "' cannot capture '" + type +
                     "': the task context cannot own its lifetime safely",
@@ -1135,14 +1229,21 @@ namespace Absolute {
                     symbol->isConst = parameter->isConst;
                     symbol->valueReference = parameter->isReference;
                     symbol->constValueReference = parameter->isReference && parameter->isConst;
-                    if (IsManagedPointerType(type)) symbol->managedBorrower = true;
+                    if (IsStrongManagedPointerType(type)) {
+                        symbol->managedOwner = parameter->isConsume;
+                        symbol->managedBorrower = !parameter->isConsume;
+                    }
+                    else if (IsWeakPointerType(type)) symbol->managedBorrower = true;
+                    if (ArrayRank(type) > 0)
+                        symbol->ownsArrayStorage = parameter->isConsume;
                 }
             }
             else Report("parameter '" + name + "' is already declared");
         RegisterFlowSymbol(parameterId, {
                 InitializationState::Initialized,
                 IsPointerType(type) ? PointerValidity::Unknown : PointerValidity::NotPointer,
-                InvalidSymbolId,
+                parameter->isConsume && IsStrongManagedPointerType(type)
+                    ? parameterId : InvalidSymbolId,
                 IsTaskType(type) ? TaskState::Unknown : TaskState::NotTask});
             if (parameter->value) {
                 const Result value = Evaluate(parameter->value.get());
@@ -1589,7 +1690,7 @@ namespace Absolute {
     }
 
     int Analyzer::ConversionCost(const std::string& target, const std::string& source) const {
-        if (IsValueReferenceType(target))
+        if (IsValueReferenceType(target) || IsConsumeParameterType(target))
             return ConversionCost(ValueReferenceBaseType(target), source);
         if (target == source) return 0;
         if (!IsAssignable(target, source)) return -1;
@@ -1733,16 +1834,36 @@ namespace Absolute {
                 ConversionCost(ValueReferenceBaseType(concreteParameters.back()),
                     arguments.back().type) >= 0;
             for (size_t index = 0; index < arguments.size(); ++index) {
+                std::string declaredParameter;
                 std::string parameterType;
-                if (!variadic || index < fixedCount)
+                if (!variadic || index < fixedCount) {
+                    declaredParameter = concreteParameters[index];
                     parameterType = ValueReferenceBaseType(concreteParameters[index]);
-                else if (directVariadicArray)
+                }
+                else if (directVariadicArray) {
+                    declaredParameter = concreteParameters.back();
                     parameterType = ValueReferenceBaseType(concreteParameters.back());
-                else
+                }
+                else {
+                    declaredParameter = ArrayElementType(concreteParameters.back());
                     parameterType = ArrayElementType(
                         ValueReferenceBaseType(concreteParameters.back()));
+                }
+                const Result& argument = arguments[index];
+                const bool resourceType =
+                    IsStrongManagedPointerType(parameterType) ||
+                    ArrayRank(parameterType) > 0 ||
+                    (!IsPointerType(parameterType) &&
+                        TypeOwnsResources(parameterType));
+                const bool transfersOwner = argument.createsManagedOwner ||
+                    argument.createsArrayOwner ||
+                    (resourceType && !IsPointerType(parameterType) &&
+                        (argument.isMoveResult || !argument.isLValue));
+                if (resourceType &&
+                    IsConsumeParameterType(declaredParameter) != transfersOwner)
+                    cost += 100;
                 const int conversion = ConversionCost(
-                    parameterType, arguments[index].type);
+                    parameterType, argument.type);
                 if (conversion < 0) {
                     applicable = false;
                     break;

@@ -10,6 +10,10 @@ namespace Absolute {
         return IsCanonicalValueReferenceType(type);
     }
 
+    inline bool IsConsumeParameterType(const std::string& type) {
+        return IsCanonicalConsumeParameterType(type);
+    }
+
     inline bool IsConstValueReferenceType(const std::string& type) {
         return IsCanonicalConstValueReferenceType(type);
     }
@@ -21,6 +25,11 @@ namespace Absolute {
     inline std::string ValueReferenceType(
         const std::string& type, bool isConst, bool isReference) {
         return CanonicalValueReferenceType(type, isConst, isReference);
+    }
+
+    inline std::string ConsumeParameterType(
+        const std::string& type, bool isConsume) {
+        return CanonicalConsumeParameterType(type, isConsume);
     }
     namespace {
         template <typename T, typename Visitor>
@@ -156,6 +165,9 @@ namespace Absolute {
 
         inline std::string SubstituteGenericType(const std::string& type,
             const std::unordered_map<std::string, std::string>& substitutions) {
+            if (IsConsumeParameterType(type))
+                return ConsumeParameterType(
+                    SubstituteGenericType(ValueReferenceBaseType(type), substitutions), true);
             if (IsValueReferenceType(type))
                 return ValueReferenceType(
                     SubstituteGenericType(ValueReferenceBaseType(type), substitutions),

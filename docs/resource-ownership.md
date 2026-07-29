@@ -57,7 +57,10 @@ lifetime tracking follows the destination. A moved-from binding cannot be read
 or deleted until it is initialized with a fresh owner.
 
 Moving subscribers, weak or const references, invalid pointers, discarded move
-results, and moves into ordinary borrowed managed parameters are rejected. See
+results, and moves into ordinary borrowed managed parameters are rejected.
+Functions that take ownership declare `consume T*`, `consume T[]`, or
+`consume ResourceValue`; they clean up the parameter unless it is moved onward.
+See
 [managed-pointer-move.md](managed-pointer-move.md) for the exact contract.
 
 ## Value semantics boundary
