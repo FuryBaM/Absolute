@@ -554,7 +554,6 @@ namespace Absolute {
                         flow->second.initialization = InitializationState::Uninitialized;
                         flow->second.pointerValidity = PointerValidity::MaybeNull;
                     }
-                    if (arrayValue && source) source->ownsArrayStorage = false;
                 }
                 Result result = {table.Lookup(callName), argument.type, false};
                 result.createsManagedOwner = managedOwner;

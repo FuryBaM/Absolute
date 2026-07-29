@@ -181,7 +181,8 @@ namespace Absolute {
                 "E_RESOURCE_AGGREGATE_RETURN", value.symbol);
         }
         if (ArrayRank(currentReturnType) > 0 && value.type != "error") {
-            bool storageEscapes = IsExplicitArrayCopy(stmt->expr.get());
+            bool storageEscapes = IsExplicitArrayCopy(stmt->expr.get()) ||
+                value.createsArrayOwner || value.isMoveResult;
             if (const Symbol* symbol = table.Get(value.symbol)) {
                 storageEscapes = storageEscapes || symbol->arrayStorageEscapes ||
                     symbol->scopeDepth == 0 || symbol->kind == SymbolKind::Function ||

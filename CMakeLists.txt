@@ -156,6 +156,18 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.optimization-differential PROPERTIES
             PASS_REGULAR_EXPRESSION "optimization-differential=ok"
             TIMEOUT 180)
+        add_test(
+            NAME absolute.ownership-stability-differential
+            COMMAND "${Python3_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tools/testing/ownership_stability.py"
+                --compiler "$<TARGET_FILE:Absolute-Compiler>"
+                --source "${PROJECT_SOURCE_DIR}/tests/ownership-stability.abs"
+                --work-dir
+                    "${CMAKE_BINARY_DIR}/differential/ownership/$<CONFIG>"
+                --configuration "$<CONFIG>")
+        set_tests_properties(absolute.ownership-stability-differential PROPERTIES
+            PASS_REGULAR_EXPRESSION "ownership-stability-differential=ok"
+            TIMEOUT 240)
     endif()
 
     if(TARGET Absolute-Unless-Plugin)
@@ -793,6 +805,10 @@ if(BUILD_TESTING)
     add_test(
         NAME absolute.ownership-semantics-matrix
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-semantics-matrix.abs"
+    )
+    add_test(
+        NAME absolute.ownership-stability
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-stability.abs"
     )
     add_test(
         NAME absolute.ownership-semantics-matrix-errors
@@ -1981,6 +1997,17 @@ if(BUILD_TESTING)
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-managed.cmake"
                 )
                 add_test(
+                    NAME absolute.run-wasm-ownership-stability
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/ownership-stability.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/ownership-stability.wasm
+                        -DMARKER=ownership-stability=ok
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-marker.cmake"
+                )
+                add_test(
                     NAME absolute.run-wasm-std-string
                     COMMAND "${CMAKE_COMMAND}"
                         -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
@@ -2498,6 +2525,25 @@ if(BUILD_TESTING)
             # The compiler's static leak diagnostics remain covered separately.
             set_tests_properties(absolute.run-sanitizer-leak PROPERTIES DISABLED TRUE)
         endif()
+        add_test(
+            NAME absolute.build-sanitizer-ownership-stability
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/tests/ownership-stability.abs"
+                --sanitize=address --build-exe -O1
+                -o "${CMAKE_BINARY_DIR}/sanitizer-ownership-stability-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-sanitizer-ownership-stability PROPERTIES
+            FIXTURES_SETUP absolute-sanitizer-ownership-stability-executable)
+        add_test(
+            NAME absolute.run-sanitizer-ownership-stability
+            COMMAND "${CMAKE_COMMAND}"
+                -DEXECUTABLE=${CMAKE_BINARY_DIR}/sanitizer-ownership-stability-app${CMAKE_EXECUTABLE_SUFFIX}
+                -DEXPECT=ownership-stability=ok
+                -P "${PROJECT_SOURCE_DIR}/tests/run-sanitizer-clean.cmake"
+        )
+        set_tests_properties(absolute.run-sanitizer-ownership-stability PROPERTIES
+            FIXTURES_REQUIRED absolute-sanitizer-ownership-stability-executable
+            TIMEOUT 45)
         add_test(
             NAME absolute.emit-object
             COMMAND Absolute-Compiler build "${CMAKE_BINARY_DIR}/NativeFfi-$<CONFIG>.absproj"
@@ -3569,6 +3615,39 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-ownership-semantics-matrix PROPERTIES
             FIXTURES_REQUIRED absolute-ownership-semantics-matrix-executable
             PASS_REGULAR_EXPRESSION "ownership-semantics-matrix=ok"
+            FAIL_REGULAR_EXPRESSION "managed pointer\\(s\\) leaked;memory leak detected"
+        )
+        add_test(
+            NAME absolute.emit-ownership-stability
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/tests/ownership-stability.abs"
+                --emit-llvm -O3
+                -o "${CMAKE_BINARY_DIR}/ownership-stability.ll"
+        )
+        set_tests_properties(absolute.emit-ownership-stability PROPERTIES
+            FIXTURES_SETUP absolute-ownership-stability-ir)
+        add_test(
+            NAME absolute.check-ownership-stability-ir
+            COMMAND ${CMAKE_COMMAND}
+                -DIR_FILE=${CMAKE_BINARY_DIR}/ownership-stability.ll
+                -P "${PROJECT_SOURCE_DIR}/tests/check-ownership-stability-ir.cmake"
+        )
+        set_tests_properties(absolute.check-ownership-stability-ir PROPERTIES
+            FIXTURES_REQUIRED absolute-ownership-stability-ir)
+        add_test(
+            NAME absolute.build-ownership-stability
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/tests/ownership-stability.abs"
+                --build-exe -O3
+                -o "${CMAKE_BINARY_DIR}/ownership-stability-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-ownership-stability PROPERTIES
+            FIXTURES_SETUP absolute-ownership-stability-executable)
+        add_test(NAME absolute.run-ownership-stability
+            COMMAND "${CMAKE_BINARY_DIR}/ownership-stability-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-ownership-stability PROPERTIES
+            FIXTURES_REQUIRED absolute-ownership-stability-executable
+            PASS_REGULAR_EXPRESSION "ownership-stability=ok[\r\n]+1151250"
             FAIL_REGULAR_EXPRESSION "managed pointer\\(s\\) leaked;memory leak detected"
         )
         add_test(
