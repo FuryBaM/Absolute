@@ -329,6 +329,12 @@ namespace Absolute {
             variable.arrayDimensions = view.dimensions;
             variable.symbol = SemanticSymbol(&parameter);
             variable.arrayOwner = view.owner;
+            variable.arrayOwnerStorage = CreateEntryAlloca(
+                *argument.getParent(), builder.getPtrTy(), name + ".array.owner");
+            builder.CreateStore(
+                view.owner ? view.owner
+                    : llvm::ConstantPointerNull::get(builder.getPtrTy()),
+                variable.arrayOwnerStorage);
             if (!scopes.back().emplace(name, std::move(variable)).second)
                 Fail("duplicate parameter '" + name + "'");
             return;

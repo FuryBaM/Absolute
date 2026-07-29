@@ -529,6 +529,7 @@ namespace Absolute {
             info.asyncCall = result.asyncCall;
             info.createsRawOwner = result.createsRawOwner;
             info.isMoveResult = result.isMoveResult;
+            info.createsArrayOwner = result.createsArrayOwner;
             expressionInfo[expression] = std::move(info);
         }
     }

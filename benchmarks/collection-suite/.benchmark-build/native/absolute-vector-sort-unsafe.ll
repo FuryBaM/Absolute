@@ -1,5 +1,5 @@
-; ModuleID = 'vector-push-sum.abs'
-source_filename = "vector-push-sum.abs"
+; ModuleID = 'vector-sort-unsafe.abs'
+source_filename = "vector-sort-unsafe.abs"
 target triple = "x86_64-pc-windows-msvc"
 
 %absolute.class.Error = type { ptr, ptr }
@@ -1713,33 +1713,42 @@ entry:
 
 define i32 @main() {
 entry:
-  %popCount = alloca i32, align 4
+  %last = alloca i32, align 4
+  %first = alloca i32, align 4
   %checksum = alloca i64, align 8
+  %cur = alloca i32, align 4
+  %j = alloca i32, align 4
+  %key = alloca i32, align 4
+  %outer = alloca i32, align 4
+  %data = alloca ptr, align 8
   %i = alloca i32, align 4
-  %v.cached.pointee = alloca ptr, align 8
-  %v = alloca i64, align 8
-  %N = alloca i32, align 4
-  store i32 1000000, ptr %N, align 4
+  %state = alloca i32, align 4
+  %values.cached.pointee = alloca ptr, align 8
+  %values = alloca i64, align 8
+  %SIZE = alloca i32, align 4
+  store i32 100000, ptr %SIZE, align 4
   %managed.handle = call i64 @absolute_managed_create(i64 ptrtoint (ptr getelementptr (%"absolute.class.std.collections.Vector<int32>", ptr null, i32 1) to i64))
   call void @absolute_managed_set_type(i64 %managed.handle, i64 -6152174195361087120)
   %managed.pointee = call ptr @absolute_managed_require(i64 %managed.handle)
   call void @llvm.memset.p0.i64(ptr align 8 %managed.pointee, i8 0, i64 ptrtoint (ptr getelementptr (%"absolute.class.std.collections.Vector<int32>", ptr null, i32 1) to i64), i1 false)
   %vtable.address = getelementptr inbounds %"absolute.class.std.collections.Vector<int32>", ptr %managed.pointee, i32 0, i32 0
   store ptr @"std.collections.Vector<int32>.__vtable", ptr %vtable.address, align 8
-  call void @"std.collections.Vector<int32>.__ctor"(ptr %managed.pointee)
+  %SIZE.value = load i32, ptr %SIZE, align 4
+  call void @"std.collections.Vector<int32>.__ctor$int32"(ptr %managed.pointee, i32 %SIZE.value)
   %error.pending = call i1 @absolute_error_pending()
   br i1 %error.pending, label %error.propagate, label %error.continue
 
 error.propagate:                                  ; preds = %entry
   call void @absolute_managed_destroy(i64 %managed.handle)
-  %cleanup.handle = load i64, ptr %v, align 4
+  %cleanup.handle = load i64, ptr %values, align 4
   %managed.pointee1 = call ptr @absolute_managed_get(i64 %cleanup.handle)
   %aggregate.present = icmp ne ptr %managed.pointee1, null
   br i1 %aggregate.present, label %aggregate.cleanup, label %aggregate.cleanup.end
 
 error.continue:                                   ; preds = %entry
-  store i64 %managed.handle, ptr %v, align 4
-  store ptr %managed.pointee, ptr %v.cached.pointee, align 8
+  store i64 %managed.handle, ptr %values, align 4
+  store ptr %managed.pointee, ptr %values.cached.pointee, align 8
+  store i32 123456789, ptr %state, align 4
   store i32 0, ptr %i, align 4
   br label %while.condition
 
@@ -1752,147 +1761,169 @@ aggregate.cleanup:                                ; preds = %error.propagate
 
 aggregate.cleanup.end:                            ; preds = %aggregate.cleanup, %error.propagate
   call void @absolute_managed_destroy(i64 %cleanup.handle)
-  store i64 0, ptr %v, align 4
+  store i64 0, ptr %values, align 4
   call void @absolute_error_report()
   ret i32 1
 
 while.condition:                                  ; preds = %while.body, %error.continue
   %i.value = load i32, ptr %i, align 4
-  %N.value = load i32, ptr %N, align 4
-  %less = icmp slt i32 %i.value, %N.value
+  %SIZE.value2 = load i32, ptr %SIZE, align 4
+  %less = icmp slt i32 %i.value, %SIZE.value2
   br i1 %less, label %while.body, label %while.end
 
 while.body:                                       ; preds = %while.condition
-  %v.value = load i64, ptr %v, align 4
-  %v.cached.pointee2 = load ptr, ptr %v.cached.pointee, align 8
-  %i.value3 = load i32, ptr %i, align 4
-  %mul = mul i32 %i.value3, 17
-  %add = add i32 %mul, 3
-  call void @"std.collections.Vector<int32>.push$int32"(ptr %v.cached.pointee2, i32 %add)
+  %state.value = load i32, ptr %state, align 4
+  %mul = mul i32 %state.value, 1664525
+  %add = add i32 %mul, 1013904223
+  store i32 %add, ptr %state, align 4
+  %values.value = load i64, ptr %values, align 4
+  %values.cached.pointee3 = load ptr, ptr %values.cached.pointee, align 8
+  %state.value4 = load i32, ptr %state, align 4
+  call void @"std.collections.Vector<int32>.push$int32"(ptr %values.cached.pointee3, i32 %state.value4)
   %assignment.current = load i32, ptr %i, align 4
-  %add4 = add i32 %assignment.current, 1
-  store i32 %add4, ptr %i, align 4
+  %add5 = add i32 %assignment.current, 1
+  store i32 %add5, ptr %i, align 4
   br label %while.condition
 
 while.end:                                        ; preds = %while.condition
+  %values.value6 = load i64, ptr %values, align 4
+  %values.cached.pointee7 = load ptr, ptr %values.cached.pointee, align 8
+  %unsafeData.result = call ptr @"std.collections.Vector<int32>.unsafeData"(ptr %values.cached.pointee7)
+  store ptr %unsafeData.result, ptr %data, align 8
+  store i32 1, ptr %outer, align 4
+  br label %while.condition8
+
+while.condition8:                                 ; preds = %while.end17, %while.end
+  %outer.value = load i32, ptr %outer, align 4
+  %SIZE.value11 = load i32, ptr %SIZE, align 4
+  %less12 = icmp slt i32 %outer.value, %SIZE.value11
+  br i1 %less12, label %while.body9, label %while.end10
+
+while.body9:                                      ; preds = %while.condition8
+  %data.value = load ptr, ptr %data, align 8
+  %outer.value13 = load i32, ptr %outer, align 4
+  %int.cast = sext i32 %outer.value13 to i64
+  %pointer.offset = getelementptr i32, ptr %data.value, i64 %int.cast
+  %pointer.value = load i32, ptr %pointer.offset, align 4
+  store i32 %pointer.value, ptr %key, align 4
+  %outer.value14 = load i32, ptr %outer, align 4
+  %sub = sub i32 %outer.value14, 1
+  store i32 %sub, ptr %j, align 4
+  br label %while.condition15
+
+while.end10:                                      ; preds = %while.condition8
   store i64 0, ptr %checksum, align 4
   store i32 0, ptr %i, align 4
-  br label %while.condition5
+  br label %while.condition39
 
-while.condition5:                                 ; preds = %while.body6, %while.end
-  %i.value8 = load i32, ptr %i, align 4
-  %N.value9 = load i32, ptr %N, align 4
-  %less10 = icmp slt i32 %i.value8, %N.value9
-  br i1 %less10, label %while.body6, label %while.end7
+while.condition15:                                ; preds = %if.end, %while.body9
+  %j.value = load i32, ptr %j, align 4
+  %greater.equal = icmp sge i32 %j.value, 0
+  br i1 %greater.equal, label %while.body16, label %while.end17
 
-while.body6:                                      ; preds = %while.condition5
-  %i.value11 = load i32, ptr %i, align 4
-  %v.value12 = load i64, ptr %v, align 4
-  %v.cached.pointee13 = load ptr, ptr %v.cached.pointee, align 8
-  %property.result = call i32 @"std.collections.Vector<int32>.__absolute_indexer_get$int32"(ptr %v.cached.pointee13, i32 %i.value11)
-  %assignment.current14 = load i64, ptr %checksum, align 4
-  %int.cast = sext i32 %property.result to i64
-  %add15 = add i64 %assignment.current14, %int.cast
-  store i64 %add15, ptr %checksum, align 4
-  %assignment.current16 = load i32, ptr %i, align 4
-  %add17 = add i32 %assignment.current16, 1
-  store i32 %add17, ptr %i, align 4
-  br label %while.condition5
+while.body16:                                     ; preds = %while.condition15
+  %data.value18 = load ptr, ptr %data, align 8
+  %j.value19 = load i32, ptr %j, align 4
+  %int.cast20 = sext i32 %j.value19 to i64
+  %pointer.offset21 = getelementptr i32, ptr %data.value18, i64 %int.cast20
+  %pointer.value22 = load i32, ptr %pointer.offset21, align 4
+  store i32 %pointer.value22, ptr %cur, align 4
+  %cur.value = load i32, ptr %cur, align 4
+  %key.value = load i32, ptr %key, align 4
+  %less.equal = icmp sle i32 %cur.value, %key.value
+  br i1 %less.equal, label %if.body, label %if.end
 
-while.end7:                                       ; preds = %while.condition5
-  store i32 500000, ptr %popCount, align 4
-  store i32 0, ptr %i, align 4
-  br label %while.condition18
+while.end17:                                      ; preds = %if.body, %while.condition15
+  %data.value31 = load ptr, ptr %data, align 8
+  %j.value32 = load i32, ptr %j, align 4
+  %add33 = add i32 %j.value32, 1
+  %int.cast34 = sext i32 %add33 to i64
+  %pointer.offset35 = getelementptr i32, ptr %data.value31, i64 %int.cast34
+  %key.value36 = load i32, ptr %key, align 4
+  store i32 %key.value36, ptr %pointer.offset35, align 4
+  %assignment.current37 = load i32, ptr %outer, align 4
+  %add38 = add i32 %assignment.current37, 1
+  store i32 %add38, ptr %outer, align 4
+  br label %while.condition8, !llvm.loop !1
 
-while.condition18:                                ; preds = %error.continue27, %while.end7
-  %i.value21 = load i32, ptr %i, align 4
-  %popCount.value = load i32, ptr %popCount, align 4
-  %less22 = icmp slt i32 %i.value21, %popCount.value
-  br i1 %less22, label %while.body19, label %while.end20
+if.end:                                           ; preds = %while.body16
+  %data.value23 = load ptr, ptr %data, align 8
+  %j.value24 = load i32, ptr %j, align 4
+  %add25 = add i32 %j.value24, 1
+  %int.cast26 = sext i32 %add25 to i64
+  %pointer.offset27 = getelementptr i32, ptr %data.value23, i64 %int.cast26
+  %cur.value28 = load i32, ptr %cur, align 4
+  store i32 %cur.value28, ptr %pointer.offset27, align 4
+  %assignment.current29 = load i32, ptr %j, align 4
+  %sub30 = sub i32 %assignment.current29, 1
+  store i32 %sub30, ptr %j, align 4
+  br label %while.condition15
 
-while.body19:                                     ; preds = %while.condition18
-  %v.value23 = load i64, ptr %v, align 4
-  %v.cached.pointee24 = load ptr, ptr %v.cached.pointee, align 8
-  %pop.result = call i32 @"std.collections.Vector<int32>.pop"(ptr %v.cached.pointee24)
-  %error.pending25 = call i1 @absolute_error_pending()
-  br i1 %error.pending25, label %error.propagate26, label %error.continue27
+if.body:                                          ; preds = %while.body16
+  br label %while.end17
 
-while.end20:                                      ; preds = %while.condition18
-  %v.value38 = load i64, ptr %v, align 4
-  %v.cached.pointee39 = load ptr, ptr %v.cached.pointee, align 8
-  %property.result40 = call i32 @"std.collections.Vector<int32>.__absolute_property_get_count"(ptr %v.cached.pointee39)
-  %error.pending41 = call i1 @absolute_error_pending()
-  br i1 %error.pending41, label %error.propagate42, label %error.continue43
+while.condition39:                                ; preds = %while.body40, %while.end10
+  %i.value42 = load i32, ptr %i, align 4
+  %SIZE.value43 = load i32, ptr %SIZE, align 4
+  %less44 = icmp slt i32 %i.value42, %SIZE.value43
+  br i1 %less44, label %while.body40, label %while.end41
 
-error.propagate26:                                ; preds = %while.body19
-  %cleanup.handle28 = load i64, ptr %v, align 4
-  %managed.pointee29 = call ptr @absolute_managed_get(i64 %cleanup.handle28)
-  %aggregate.present32 = icmp ne ptr %managed.pointee29, null
-  br i1 %aggregate.present32, label %aggregate.cleanup30, label %aggregate.cleanup.end31
+while.body40:                                     ; preds = %while.condition39
+  %data.value45 = load ptr, ptr %data, align 8
+  %i.value46 = load i32, ptr %i, align 4
+  %int.cast47 = sext i32 %i.value46 to i64
+  %pointer.offset48 = getelementptr i32, ptr %data.value45, i64 %int.cast47
+  %pointer.value49 = load i32, ptr %pointer.offset48, align 4
+  %assignment.current50 = load i64, ptr %checksum, align 4
+  %int.cast51 = sext i32 %pointer.value49 to i64
+  %add52 = add i64 %assignment.current50, %int.cast51
+  store i64 %add52, ptr %checksum, align 4
+  %assignment.current53 = load i32, ptr %i, align 4
+  %add54 = add i32 %assignment.current53, 1
+  store i32 %add54, ptr %i, align 4
+  br label %while.condition39
 
-error.continue27:                                 ; preds = %while.body19
-  %assignment.current36 = load i32, ptr %i, align 4
-  %add37 = add i32 %assignment.current36, 1
-  store i32 %add37, ptr %i, align 4
-  br label %while.condition18
-
-aggregate.cleanup30:                              ; preds = %error.propagate26
-  %aggregate.vtable33 = load ptr, ptr %managed.pointee29, align 8
-  %aggregate.destroy.slot34 = getelementptr ptr, ptr %aggregate.vtable33, i64 0
-  %aggregate.destroy35 = load ptr, ptr %aggregate.destroy.slot34, align 8
-  call void %aggregate.destroy35(ptr %managed.pointee29)
-  br label %aggregate.cleanup.end31
-
-aggregate.cleanup.end31:                          ; preds = %aggregate.cleanup30, %error.propagate26
-  call void @absolute_managed_destroy(i64 %cleanup.handle28)
-  store i64 0, ptr %v, align 4
-  store ptr null, ptr %v.cached.pointee, align 8
-  call void @absolute_error_report()
-  ret i32 1
-
-error.propagate42:                                ; preds = %while.end20
-  %cleanup.handle44 = load i64, ptr %v, align 4
-  %managed.pointee45 = call ptr @absolute_managed_get(i64 %cleanup.handle44)
-  %aggregate.present48 = icmp ne ptr %managed.pointee45, null
-  br i1 %aggregate.present48, label %aggregate.cleanup46, label %aggregate.cleanup.end47
-
-error.continue43:                                 ; preds = %while.end20
-  %assignment.current52 = load i64, ptr %checksum, align 4
-  %int.cast53 = sext i32 %property.result40 to i64
-  %add54 = add i64 %assignment.current52, %int.cast53
-  store i64 %add54, ptr %checksum, align 4
+while.end41:                                      ; preds = %while.condition39
+  %data.value55 = load ptr, ptr %data, align 8
+  %pointer.value56 = load i32, ptr %data.value55, align 4
+  store i32 %pointer.value56, ptr %first, align 4
+  %data.value57 = load ptr, ptr %data, align 8
+  %SIZE.value58 = load i32, ptr %SIZE, align 4
+  %sub59 = sub i32 %SIZE.value58, 1
+  %int.cast60 = sext i32 %sub59 to i64
+  %pointer.offset61 = getelementptr i32, ptr %data.value57, i64 %int.cast60
+  %pointer.value62 = load i32, ptr %pointer.offset61, align 4
+  store i32 %pointer.value62, ptr %last, align 4
+  %first.value = load i32, ptr %first, align 4
+  %int.cast63 = sext i32 %first.value to i64
+  %mul64 = mul i64 %int.cast63, 31
+  %assignment.current65 = load i64, ptr %checksum, align 4
+  %add66 = add i64 %assignment.current65, %mul64
+  store i64 %add66, ptr %checksum, align 4
+  %last.value = load i32, ptr %last, align 4
+  %int.cast67 = sext i32 %last.value to i64
+  %mul68 = mul i64 %int.cast67, 17
+  %assignment.current69 = load i64, ptr %checksum, align 4
+  %add70 = add i64 %assignment.current69, %mul68
+  store i64 %add70, ptr %checksum, align 4
   %checksum.value = load i64, ptr %checksum, align 4
   %print.result = call i32 (ptr, ...) @printf(ptr @print.format, i64 %checksum.value)
-  %cleanup.handle55 = load i64, ptr %v, align 4
-  %managed.pointee56 = call ptr @absolute_managed_get(i64 %cleanup.handle55)
-  %aggregate.present59 = icmp ne ptr %managed.pointee56, null
-  br i1 %aggregate.present59, label %aggregate.cleanup57, label %aggregate.cleanup.end58
+  %cleanup.handle71 = load i64, ptr %values, align 4
+  %managed.pointee72 = call ptr @absolute_managed_get(i64 %cleanup.handle71)
+  %aggregate.present75 = icmp ne ptr %managed.pointee72, null
+  br i1 %aggregate.present75, label %aggregate.cleanup73, label %aggregate.cleanup.end74
 
-aggregate.cleanup46:                              ; preds = %error.propagate42
-  %aggregate.vtable49 = load ptr, ptr %managed.pointee45, align 8
-  %aggregate.destroy.slot50 = getelementptr ptr, ptr %aggregate.vtable49, i64 0
-  %aggregate.destroy51 = load ptr, ptr %aggregate.destroy.slot50, align 8
-  call void %aggregate.destroy51(ptr %managed.pointee45)
-  br label %aggregate.cleanup.end47
+aggregate.cleanup73:                              ; preds = %while.end41
+  %aggregate.vtable76 = load ptr, ptr %managed.pointee72, align 8
+  %aggregate.destroy.slot77 = getelementptr ptr, ptr %aggregate.vtable76, i64 0
+  %aggregate.destroy78 = load ptr, ptr %aggregate.destroy.slot77, align 8
+  call void %aggregate.destroy78(ptr %managed.pointee72)
+  br label %aggregate.cleanup.end74
 
-aggregate.cleanup.end47:                          ; preds = %aggregate.cleanup46, %error.propagate42
-  call void @absolute_managed_destroy(i64 %cleanup.handle44)
-  store i64 0, ptr %v, align 4
-  store ptr null, ptr %v.cached.pointee, align 8
-  call void @absolute_error_report()
-  ret i32 1
-
-aggregate.cleanup57:                              ; preds = %error.continue43
-  %aggregate.vtable60 = load ptr, ptr %managed.pointee56, align 8
-  %aggregate.destroy.slot61 = getelementptr ptr, ptr %aggregate.vtable60, i64 0
-  %aggregate.destroy62 = load ptr, ptr %aggregate.destroy.slot61, align 8
-  call void %aggregate.destroy62(ptr %managed.pointee56)
-  br label %aggregate.cleanup.end58
-
-aggregate.cleanup.end58:                          ; preds = %aggregate.cleanup57, %error.continue43
-  call void @absolute_managed_destroy(i64 %cleanup.handle55)
-  store i64 0, ptr %v, align 4
-  store ptr null, ptr %v.cached.pointee, align 8
+aggregate.cleanup.end74:                          ; preds = %aggregate.cleanup73, %while.end41
+  call void @absolute_managed_destroy(i64 %cleanup.handle71)
+  store i64 0, ptr %values, align 4
+  store ptr null, ptr %values.cached.pointee, align 8
   ret i32 0
 }
 
@@ -1938,3 +1969,5 @@ attributes #1 = { cold noreturn }
 attributes #2 = { nocallback nofree nounwind willreturn memory(argmem: readwrite) }
 
 !0 = !{!"branch_weights", i32 2000, i32 1}
+!1 = distinct !{!1, !2}
+!2 = !{!"llvm.loop.unroll.count", i32 8}

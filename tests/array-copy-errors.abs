@@ -7,6 +7,15 @@ int32[] invalidBorrowedReturn(int32[] values) {
     return values[1:];
 }
 
+class InvalidArrayOwnerBox {
+    public int32[] values;
+
+    public void captureStackArray() {
+        int32 local[2] = {1, 2};
+        values = move(local);
+    }
+}
+
 int32 main() {
     int32 values[2] = {1, 2};
     copy();

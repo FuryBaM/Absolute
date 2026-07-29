@@ -115,7 +115,7 @@ namespace Absolute {
                 llvm::MDNode::get(context,
                     {llvm::MDString::get(context, "llvm.loop.unroll.count"),
                      llvm::ConstantAsMetadata::get(
-                         llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 4))})
+                        llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 8))})
             };
             llvm::MDNode* loopId = llvm::MDNode::getDistinct(context, operands);
             loopId->replaceOperandWith(0, loopId);
@@ -556,7 +556,7 @@ namespace Absolute {
         if (stmt->body) stmt->body->Accept(*this);
         llvm::BasicBlock* backEdgeBlock = impl->builder.GetInsertBlock();
         impl->BranchIfNeeded(conditionBlock);
-        // Four copies amortize outer-loop control without the code-size and
+        // Eight copies amortize outer-loop control without the code-size and
         // register-pressure regression caused by unrestricted forced unrolling.
         if (ContainsDirectNestedLoop(stmt->body.get())) {
             SetNestedLoopUnrollCount(llvm::dyn_cast_or_null<llvm::BranchInst>(

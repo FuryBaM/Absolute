@@ -17,6 +17,7 @@
             bool ownsArrayStorage = false;
             SymbolId arrayOwnerSymbol = InvalidSymbolId;
             bool ownsAggregateResources = false;
+            llvm::AllocaInst* arrayOwnerStorage = nullptr;
         };
 
         struct ArrayView {

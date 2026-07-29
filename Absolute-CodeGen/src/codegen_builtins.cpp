@@ -123,6 +123,19 @@ namespace Absolute {
             return;
         }
 
+        if (name == "unsafeArrayData") {
+            if (expression.arguments.size() != 1)
+                Fail("unsafeArrayData expects exactly one argument");
+            ArrayView view = ViewOfArray(expression.arguments.front().get());
+            if (view.dimensions.size() != 1)
+                Fail("unsafeArrayData requires a one-dimensional array");
+            value = view.address;
+            valueCreatesManagedOwner = false;
+            valueCreatesArrayOwner = false;
+            valueCreatesClosureOwner = false;
+            return;
+        }
+
         if (name == "load") {
             if (expression.arguments.size() != 1)
                 Fail("load expects exactly one library path");
@@ -172,17 +185,41 @@ namespace Absolute {
                 ? analyzer->GetExpressionInfo(*argument) : nullptr;
             const bool isLValue = info && info->isLValue;
             if (isLValue) {
-                llvm::Value* address = EvaluateAddress(argument);
-                llvm::Type* type = TypeFromName(SemanticType(argument));
-                value = builder.CreateLoad(type, address, name + ".value");
-                valueCreatesManagedOwner = IsStrongManagedPointerTypeName(SemanticType(argument));
-                if (ArrayRankName(SemanticType(argument)) > 0) {
+                const std::string argumentType = SemanticType(argument);
+                if (ArrayRankName(argumentType) > 0) {
+                    ArrayView source = ViewOfArray(argument);
+                    value = BuildArrayDescriptor(source);
+                    valueCreatesManagedOwner = false;
                     valueCreatesArrayOwner = true;
-                    valueArrayOwner = builder.CreateExtractValue(value, {1}, "move.array.owner");
+                    valueArrayOwner = source.owner;
+                    if (auto* identifier = dynamic_cast<IdentifierExpr*>(argument)) {
+                        Variable* variable = FindVariable(identifier->name);
+                        if (!variable || !variable->arrayOwnerStorage)
+                            Fail("moved array variable has no owner storage");
+                        builder.CreateStore(
+                            llvm::ConstantPointerNull::get(builder.getPtrTy()),
+                            variable->arrayOwnerStorage);
+                    }
+                    else {
+                        llvm::Value* address = EvaluateAddress(argument);
+                        llvm::Type* descriptorType = TypeFromName(argumentType);
+                        const llvm::DataLayout& layout = module->getDataLayout();
+                        builder.CreateMemSet(
+                            address, builder.getInt8(0),
+                            layout.getTypeAllocSize(descriptorType).getFixedValue(),
+                            llvm::MaybeAlign(layout.getABITypeAlign(descriptorType)));
+                    }
+                    return;
                 }
-                uint64_t size = SizeOfTypeName(SemanticType(argument));
-                if (size > 0 && name == "move") {
-                    builder.CreateMemSet(address, builder.getInt8(0), size, llvm::MaybeAlign(8));
+                llvm::Value* address = EvaluateAddress(argument);
+                llvm::Type* type = TypeFromName(argumentType);
+                value = builder.CreateLoad(type, address, name + ".value");
+                valueCreatesManagedOwner = IsStrongManagedPointerTypeName(argumentType);
+                const uint64_t size = SizeOfTypeName(argumentType);
+                if (size > 0) {
+                    builder.CreateMemSet(
+                        address, builder.getInt8(0), size,
+                        llvm::MaybeAlign(8));
                 }
             } else {
                 value = Evaluate(argument);

@@ -43,6 +43,12 @@ one-dimensional, unchecked compiler intrinsics. They perform no length check
 and an invalid index is undefined behavior. Safe application code should use
 ordinary `array[index]`.
 
+`unsafeArrayData(array)` returns a `raw T*` to the first element. The pointer
+borrows the array storage, must not be deleted, and is invalidated when its
+owner is destroyed or replaces the backing allocation. `Vector.unsafeData()`
+exposes the same explicitly unsafe view; callers must not retain it across
+`push` or another structural mutation.
+
 The intrinsics exist for standard-library containers that already validate a
 logical index against their own element count. For example, `Vector` checks
 `0 <= index < count` and then uses the intrinsic to avoid repeating a second
@@ -52,10 +58,11 @@ only its already-proven internal access is unchecked.
 ## Aggregate fields
 
 An array-valued class or struct field is an owning resource slot. Store a fresh
-`copy(...)`, an owning function result, or a global borrowed descriptor into the
-field. A local array or slice cannot escape into a field because its backing
-storage may disappear before the aggregate. Reassignment frees the old non-null
-owner, and the aggregate destructor frees the final value.
+`copy(...)`, transfer a local owning descriptor with `move(...)`, store an
+owning function result, or use a global borrowed descriptor. A local array or
+slice cannot otherwise escape into a field because its backing storage may
+disappear before the aggregate. Reassignment frees the old non-null owner, and
+the aggregate destructor frees the final value.
 
 The analyzer rejects local or borrowed views that escape through a return or an
 aggregate field unless an explicit `copy(...)`, returned owner, or global view

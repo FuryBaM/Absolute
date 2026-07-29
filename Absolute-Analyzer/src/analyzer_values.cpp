@@ -63,14 +63,20 @@ namespace Absolute {
                 "E_WEAK_REQUIRES_EXISTING_OWNER", target.symbol);
         }
         if (owningField && ArrayRank(target.type) > 0) {
-            bool transfersOwner = IsExplicitArrayCopy(expr->value.get());
+            bool transfersOwner = value.createsArrayOwner ||
+                IsExplicitArrayCopy(expr->value.get());
             if (const Symbol* source = table.Get(value.symbol)) {
                 transfersOwner = transfersOwner || source->scopeDepth == 0 ||
                     source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;
             }
             if (!transfersOwner)
-                Report("array resource fields require copy(...), a returned array, or a global view",
+                Report("array resource fields require copy(...), move(...), a returned array, or a global view",
                     "E_ARRAY_FIELD_REQUIRES_OWNER", target.symbol);
+        }
+        if (ArrayRank(target.type) > 0) {
+            if (Symbol* symbol = table.Get(target.symbol))
+                symbol->ownsArrayStorage = symbol->ownsArrayStorage ||
+                    value.createsArrayOwner;
         }
         bool transfersAggregateOwner = value.isMoveResult;
         if (const Symbol* source = table.Get(value.symbol)) {
@@ -303,6 +309,8 @@ namespace Absolute {
                         source->kind == SymbolKind::Method;
                 }
                 symbol->arrayStorageEscapes = storageEscapes;
+                symbol->ownsArrayStorage = value.createsArrayOwner ||
+                    IsExplicitArrayCopy(expr->value.get());
             }
         }
         if (IsWeakPointerType(type) && value.createsManagedOwner) {
@@ -588,6 +596,7 @@ namespace Absolute {
             Result allocation{InvalidSymbolId, constructedType, false,
                 true, false, InitializationState::Initialized,
                 PointerValidity::Live, InvalidSymbolId};
+            allocation.createsArrayOwner = true;
             Save(expr, std::move(allocation));
             return;
         }

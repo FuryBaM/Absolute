@@ -181,6 +181,11 @@ namespace Absolute {
             variable.arrayElementType = elementType;
             variable.arrayDimensions = dimensions;
             variable.symbol = impl->SemanticSymbol(expr);
+            variable.arrayOwnerStorage = impl->CreateEntryAlloca(
+                *function, impl->builder.getPtrTy(), name + ".array.owner");
+            impl->builder.CreateStore(
+                llvm::ConstantPointerNull::get(impl->builder.getPtrTy()),
+                variable.arrayOwnerStorage);
             if (!impl->scopes.back().emplace(name, std::move(variable)).second)
                 impl->Fail("duplicate variable '" + name + "'");
 
@@ -217,6 +222,12 @@ namespace Absolute {
             variable.symbol = impl->SemanticSymbol(expr);
             variable.arrayOwner = view.owner;
             variable.ownsArrayStorage = ownsStorage;
+            variable.arrayOwnerStorage = impl->CreateEntryAlloca(
+                *function, impl->builder.getPtrTy(), name + ".array.owner");
+            impl->builder.CreateStore(
+                view.owner ? view.owner
+                    : llvm::ConstantPointerNull::get(impl->builder.getPtrTy()),
+                variable.arrayOwnerStorage);
             if (ownsStorage) variable.arrayOwnerSymbol = variable.symbol;
             else if (Impl::Variable* source = impl->FindVariable(
                 impl->SemanticSymbol(expr->value.get()))) {
@@ -644,6 +655,12 @@ namespace Absolute {
                 variable.symbol = impl->SemanticSymbol(expr);
                 variable.arrayOwner = view.owner;
                 variable.ownsArrayStorage = ownsStorage;
+                variable.arrayOwnerStorage = impl->CreateEntryAlloca(
+                    *function, impl->builder.getPtrTy(), name + ".array.owner");
+                impl->builder.CreateStore(
+                    view.owner ? view.owner
+                        : llvm::ConstantPointerNull::get(impl->builder.getPtrTy()),
+                    variable.arrayOwnerStorage);
                 if (ownsStorage) variable.arrayOwnerSymbol = variable.symbol;
                 else if (Impl::Variable* source = impl->FindVariable(
                     impl->SemanticSymbol(expr->value.get()))) {

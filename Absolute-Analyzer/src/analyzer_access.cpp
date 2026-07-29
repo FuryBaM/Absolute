@@ -306,8 +306,10 @@ namespace Absolute {
                     }
                 }
             }
-            Save(expr, {callableValue.symbol, returnType, false,
-                IsStrongManagedPointerType(returnType), false});
+            Result callResult{callableValue.symbol, returnType, false,
+                IsStrongManagedPointerType(returnType), false};
+            callResult.createsArrayOwner = ArrayRank(returnType) > 0;
+            Save(expr, std::move(callResult));
             expressionInfo[expr].parameterTypes = parameterTypes;
             return;
         }
@@ -412,6 +414,34 @@ namespace Absolute {
                 return;
             }
 
+            if (callName == "unsafeArrayData") {
+                if (arguments.size() != 1) {
+                    Report("unsafeArrayData expects exactly one argument",
+                        "E_UNSAFE_ARRAY_DATA_ARGUMENT_COUNT");
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                const std::string& arrayType = arguments.front().type;
+                if (ArrayRank(arrayType) != 1 && arrayType != "error") {
+                    Report("unsafeArrayData requires a one-dimensional array",
+                        "E_UNSAFE_ARRAY_DATA_TYPE", arguments.front().symbol);
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                const std::string elementType = ArrayRank(arrayType) == 1
+                    ? ArrayElementType(arrayType) : std::string("error");
+                Result result = {
+                    table.Lookup(callName), "raw " + elementType + "*", false};
+                result.pointerValidity = PointerValidity::Live;
+                // This intrinsic is the explicit unsafe escape hatch. Its
+                // lifetime cannot be proven once the raw storage view leaves
+                // the array expression, so no safe owner relation is claimed.
+                result.pointerOwner = InvalidSymbolId;
+                result.pointerRole = PointerRole::RawView;
+                Save(expr, result);
+                return;
+            }
+
             if (callName == "load") {
                 if (arguments.size() != 1) {
                     Report("load expects exactly one library path", "E_LOAD_ARGUMENT_COUNT");
@@ -460,8 +490,10 @@ namespace Absolute {
                     Report("move cannot invalidate a const source",
                         "E_MOVE_CONST_SOURCE", argument.symbol);
 
-                const Symbol* source = table.Get(argument.symbol);
+                Symbol* source = table.Get(argument.symbol);
                 const bool strongManaged = IsStrongManagedPointerType(argument.type);
+                const bool arrayValue = ArrayRank(argument.type) > 0;
+                const bool arrayOwner = arrayValue && source && source->ownsArrayStorage;
                 const bool managedOwner = strongManaged && source &&
                     (source->kind == SymbolKind::Field || source->kind == SymbolKind::Variable ||
                      source->kind == SymbolKind::Parameter || source->managedOwner);
@@ -477,6 +509,10 @@ namespace Absolute {
                     Report("managed subscriber cannot be moved; move requires an owner",
                         "E_MANAGED_MOVE_REQUIRES_OWNER", argument.symbol);
                 }
+                else if (arrayValue && !arrayOwner) {
+                    Report("borrowed array or slice cannot be moved; move requires an owning array",
+                        "E_ARRAY_MOVE_REQUIRES_OWNER", argument.symbol);
+                }
                 if (argument.pointerValidity == PointerValidity::Deleted ||
                     argument.pointerValidity == PointerValidity::Expired ||
                     argument.pointerValidity == PointerValidity::MaybeInvalid) {
@@ -485,12 +521,14 @@ namespace Absolute {
                 }
 
                 const bool validSource = argument.isLValue && !constSource &&
-                    !IsWeakPointerType(argument.type) && (!strongManaged || managedOwner);
+                    !IsWeakPointerType(argument.type) && (!strongManaged || managedOwner) &&
+                    (!arrayValue || arrayOwner);
                 if (validSource && argument.symbol != InvalidSymbolId) {
                     if (auto flow = valueFlow.find(argument.symbol); flow != valueFlow.end()) {
                         flow->second.initialization = InitializationState::Uninitialized;
                         flow->second.pointerValidity = PointerValidity::MaybeNull;
                     }
+                    if (arrayValue && source) source->ownsArrayStorage = false;
                 }
                 Result result = {table.Lookup(callName), argument.type, false};
                 result.createsManagedOwner = managedOwner;
@@ -500,6 +538,7 @@ namespace Absolute {
                 result.pointerOwner = managedOwner
                     ? argument.symbol : argument.pointerOwner;
                 result.isMoveResult = true;
+                result.createsArrayOwner = arrayOwner;
                 Save(expr, result);
                 return;
             }
@@ -632,7 +671,9 @@ namespace Absolute {
 
                 const Result& source = arguments.front();
                 if (ArrayRank(source.type) > 0) {
-                    Save(expr, {table.Lookup(callName), source.type, false});
+                    Result copied{table.Lookup(callName), source.type, false};
+                    copied.createsArrayOwner = true;
+                    Save(expr, std::move(copied));
                     return;
                 }
                 if (source.type == "error") {
@@ -1030,10 +1071,12 @@ namespace Absolute {
         }
         if (asyncCall && spawnContextDepth == 0)
             Report("async function must be started with spawn", "E_ASYNC_CALL_REQUIRES_SPAWN", symbolId);
-        Save(expr, {symbolId, returnType, false, IsStrongManagedPointerType(returnType), false,
+        Result callResult{symbolId, returnType, false, IsStrongManagedPointerType(returnType), false,
             InitializationState::Initialized,
             IsPointerType(returnType) ? PointerValidity::Unknown : PointerValidity::NotPointer,
-            InvalidSymbolId, TaskState::NotTask, false, asyncCall});
+            InvalidSymbolId, TaskState::NotTask, false, asyncCall};
+        callResult.createsArrayOwner = ArrayRank(returnType) > 0;
+        Save(expr, std::move(callResult));
     }
 
     void Analyzer::Visit(ArrayAccessExpr* expr) {

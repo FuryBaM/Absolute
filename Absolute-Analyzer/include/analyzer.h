@@ -60,6 +60,7 @@ namespace Absolute {
         bool canRead = true;
         bool canWrite = true;
         bool arrayStorageEscapes = false;
+        bool ownsArrayStorage = false;
         AccessLevel access = AccessLevel::Public;
         AccessLevel readAccess = AccessLevel::Public;
         AccessLevel writeAccess = AccessLevel::Public;
@@ -133,6 +134,7 @@ namespace Absolute {
         PlaceInfo placeInfo;
         PointerRole pointerRole = PointerRole::None;
         std::vector<std::string> parameterTypes;
+        bool createsArrayOwner = false;
     };
 
     struct ANALYZER_API Diagnostic {
@@ -249,6 +251,7 @@ namespace Absolute {
             ValueCategory category = ValueCategory::Value;
             PlaceInfo placeInfo;
             PointerRole pointerRole = PointerRole::None;
+            bool createsArrayOwner = false;
         };
 
         enum class KeepState {

@@ -4,11 +4,11 @@ endif()
 
 file(READ "${IR_FILE}" ir)
 
-string(REGEX MATCHALL "llvm[.]loop[.]unroll[.]count[^\n]*i32 4" unroll_markers "${ir}")
+string(REGEX MATCHALL "llvm[.]loop[.]unroll[.]count[^\n]*i32 8" unroll_markers "${ir}")
 list(LENGTH unroll_markers unroll_count)
 if(NOT unroll_count EQUAL 1)
     message(FATAL_ERROR
-        "expected only the insertion-sort loop containing a nested loop to request unroll count 4, found ${unroll_count} markers")
+        "expected only the insertion-sort loop containing a nested loop to request unroll count 8, found ${unroll_count} markers")
 endif()
 
 if(NOT ir MATCHES "call void @llvm[.]assume[^\n]*position[.]after[.]loop[.]in[.]range")

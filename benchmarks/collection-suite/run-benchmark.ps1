@@ -79,6 +79,10 @@ try {
         & $absoluteCompiler $source --emit-llvm -o $llvmIr
         if ($LASTEXITCODE -ne 0) { throw "Absolute LLVM IR emission failed for $algorithm." }
     }
+    $unsafeSortSource = Join-Path $suiteRoot 'absolute\vector-sort-unsafe.abs'
+    $unsafeSortIr = Join-Path $nativeOut 'absolute-vector-sort-unsafe.ll'
+    & $absoluteCompiler $unsafeSortSource --emit-llvm -o $unsafeSortIr
+    if ($LASTEXITCODE -ne 0) { throw 'Absolute LLVM IR emission failed for vector-sort-unsafe.' }
 }
 finally {
     Pop-Location
@@ -107,6 +111,26 @@ foreach ($algorithm in $algorithms) {
     & link.exe @linkArgs 2>&1 | Where-Object { $_ -notmatch 'LNK(4098|4217)' } | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "Linker failed for $algorithm." }
 }
+
+$unsafeSortIr = Join-Path $nativeOut 'absolute-vector-sort-unsafe.ll'
+$unsafeSortObject = Join-Path $nativeOut 'absolute-vector-sort-unsafe.obj'
+$unsafeSortExecutable = Join-Path $nativeOut 'absolute-vector-sort-unsafe.exe'
+cmd /c "`"$clangExe`" --target=x86_64-pc-windows-msvc -O3 -march=native -DNDEBUG -c `"$unsafeSortIr`" -o `"$unsafeSortObject`" 2>nul"
+if ($LASTEXITCODE -ne 0) { throw 'Clang optimization failed for vector-sort-unsafe.' }
+$unsafeLinkArgs = @(
+    '/nologo',
+    "/out:$unsafeSortExecutable",
+    '/subsystem:console',
+    '/stack:67108864',
+    $unsafeSortObject,
+    $absoluteRuntime,
+    'libcmt.lib',
+    'libvcruntime.lib',
+    'libucrt.lib',
+    'kernel32.lib'
+)
+& link.exe @unsafeLinkArgs 2>&1 | Where-Object { $_ -notmatch 'LNK(4098|4217)' } | Write-Host
+if ($LASTEXITCODE -ne 0) { throw 'Linker failed for vector-sort-unsafe.' }
 
 # ---- Compile C++ benchmark ----
 Write-Host '[Compile C++ benchmark with MSVC]'
@@ -142,6 +166,7 @@ function Measure-Benchmark([string]$language, [string]$algorithm) {
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     switch ($language) {
         'Absolute'   { $output = & (Join-Path $nativeOut "absolute-$algorithm.exe") }
+        'Absolute unchecked' { $output = & $unsafeSortExecutable }
         'C++'        { $output = & $cppExecutable $algorithm }
         'C#'         { $output = & $dotnetExecutable $algorithm }
         'Java'       { $output = & java.exe -cp $javaOut Benchmark $algorithm }
@@ -191,6 +216,19 @@ foreach ($algorithm in $algorithms) {
     }
 }
 
+$unsafeMeasurements = [System.Collections.Generic.List[double]]::new()
+if ($Warmups -gt 0) {
+    Write-Host '[Warm up: vector-sort, Absolute unchecked]'
+    for ($round = 0; $round -lt $Warmups; ++$round) {
+        [void](Measure-Benchmark 'Absolute unchecked' 'vector-sort')
+    }
+}
+Write-Host "[Measure: vector-sort, $Samples samples for Absolute unchecked]"
+for ($round = 0; $round -lt $Samples; ++$round) {
+    $unsafeMeasurements.Add(
+        (Measure-Benchmark 'Absolute unchecked' 'vector-sort'))
+}
+
 if ($IncludePython -eq 1) {
     Write-Host '[Measure Python: one sample per algorithm]'
     foreach ($algorithm in $algorithms) {
@@ -216,6 +254,16 @@ foreach ($algorithm in $algorithms) {
             Checksum    = $expected[$algorithm]
         }
     }
+}
+$unsafeValues = $unsafeMeasurements.ToArray()
+$rows += [pscustomobject]@{
+    Algorithm     = 'vector-sort'
+    Language      = 'Absolute unchecked'
+    Samples       = $unsafeValues.Count
+    MedianSeconds = (Get-Median $unsafeValues).ToString('F6', $invariant)
+    MinSeconds    = ($unsafeValues | Measure-Object -Minimum).Minimum.ToString('F6', $invariant)
+    MaxSeconds    = ($unsafeValues | Measure-Object -Maximum).Maximum.ToString('F6', $invariant)
+    Checksum      = $expected['vector-sort']
 }
 
 Write-Host ''

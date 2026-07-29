@@ -140,8 +140,13 @@ namespace Absolute {
             return;
         }
         if (variable->isArray) {
+            llvm::Value* owner = variable->arrayOwnerStorage
+                ? impl->builder.CreateLoad(
+                    impl->builder.getPtrTy(), variable->arrayOwnerStorage,
+                    expr->name + ".array.owner")
+                : variable->arrayOwner;
             impl->value = impl->BuildArrayDescriptor({variable->address, variable->arrayElementType,
-                variable->typeName, variable->arrayDimensions, variable->arrayOwner});
+                variable->typeName, variable->arrayDimensions, owner});
             impl->valueCreatesManagedOwner = false;
             impl->valueCreatesArrayOwner = false;
             impl->valueArrayOwner = nullptr;

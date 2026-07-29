@@ -98,7 +98,12 @@ namespace Absolute {
             const bool transfersThisOwner = transferredOwner != InvalidSymbolId &&
                 variable.symbol == transferredOwner;
             if (variable.ownsArrayStorage && !transfersThisOwner) {
-                builder.CreateCall(Free(), {variable.arrayOwner});
+                llvm::Value* owner = variable.arrayOwnerStorage
+                    ? builder.CreateLoad(
+                        builder.getPtrTy(), variable.arrayOwnerStorage,
+                        "cleanup.array.owner")
+                    : variable.arrayOwner;
+                builder.CreateCall(Free(), {owner});
                 continue;
             }
             if (variable.ownsAggregateResources) {
@@ -484,8 +489,13 @@ namespace Absolute {
         if (auto* identifier = dynamic_cast<IdentifierExpr*>(expression)) {
             if (Variable* variable = FindVariable(identifier->name)) {
                 if (!variable->isArray) Fail("object is not an array");
+                llvm::Value* owner = variable->arrayOwnerStorage
+                    ? builder.CreateLoad(
+                        builder.getPtrTy(), variable->arrayOwnerStorage,
+                        identifier->name + ".array.owner")
+                    : variable->arrayOwner;
                 return {variable->address, variable->arrayElementType,
-                    variable->typeName, variable->arrayDimensions, variable->arrayOwner};
+                    variable->typeName, variable->arrayDimensions, owner};
             }
         }
         const std::string typeName = SemanticType(expression);
@@ -746,6 +756,7 @@ namespace Absolute {
             name == "toString" || name == "assert" || name == "copy" || name == "move" ||
             name == "adoptRaw" || name == "retainRaw" || name == "borrowRaw" || name == "share" ||
             name == "unsafeArrayGet" || name == "unsafeArraySet" ||
+            name == "unsafeArrayData" ||
             name == "seal" || name == "unseal" ||
             name == "load" || name == "isLoaded" || name == "loadError" ||
             name == "taskGroupAdd" || name == "tuple";

@@ -1,0 +1,50 @@
+import "std/collections/vector.abs";
+
+int32 main() {
+    int32 SIZE = 100000;
+    std.collections.Vector<int32>* values =
+        new std.collections.Vector<int32>(SIZE);
+
+    uint32 state = 123456789;
+    int32 i = 0;
+    while (i < SIZE) {
+        state = state * 1664525 + 1013904223;
+        values.push(state as int32);
+        i += 1;
+    }
+
+    // Matches C++ std::vector::operator[] semantics: one audited raw view,
+    // no structural mutation while the view is live, and unchecked indexing.
+    raw int32* data = values.unsafeData();
+    int32 outer = 1;
+    while (outer < SIZE) {
+        int32 key = *(data + outer);
+        int32 j = outer - 1;
+
+        while (j >= 0) {
+            int32 cur = *(data + j);
+            if (cur <= key) {
+                break;
+            }
+            *(data + (j + 1)) = cur;
+            j -= 1;
+        }
+
+        *(data + (j + 1)) = key;
+        outer += 1;
+    }
+
+    int64 checksum = 0;
+    i = 0;
+    while (i < SIZE) {
+        checksum += *(data + i);
+        i += 1;
+    }
+    int32 first = *data;
+    int32 last = *(data + (SIZE - 1));
+    checksum += (first as int64) * 31;
+    checksum += (last as int64) * 17;
+
+    println(checksum);
+    return 0;
+}

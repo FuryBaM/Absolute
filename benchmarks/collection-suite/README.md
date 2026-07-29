@@ -20,9 +20,15 @@ This suite compares the Absolute standard collection library (`std/collections/v
 - Python: CPython 3.13 (`list`, `dict`)
 - Timing: End-to-end process execution wall time (including runtime startup / JIT compilation)
 
+The table also reports `Absolute unchecked` for `vector-sort`. That variant
+reserves the final capacity and holds one `Vector.unsafeData()` raw view while
+sorting, matching the unchecked indexing contract of C++
+`std::vector::operator[]`. The ordinary `Absolute` row remains the safe
+bounds-checked collection API.
+
 ## Benchmark Source Files
 
-- Absolute: [`absolute/vector-push-sum.abs`](absolute/vector-push-sum.abs), [`absolute/vector-sort.abs`](absolute/vector-sort.abs), [`absolute/hashmap-insert-lookup.abs`](absolute/hashmap-insert-lookup.abs)
+- Absolute: [`absolute/vector-push-sum.abs`](absolute/vector-push-sum.abs), [`absolute/vector-sort.abs`](absolute/vector-sort.abs), [`absolute/vector-sort-unsafe.abs`](absolute/vector-sort-unsafe.abs), [`absolute/hashmap-insert-lookup.abs`](absolute/hashmap-insert-lookup.abs)
 - C++: [`benchmark.cpp`](benchmark.cpp)
 - C#: [`Program.cs`](Program.cs)
 - Java: [`Benchmark.java`](Benchmark.java)
