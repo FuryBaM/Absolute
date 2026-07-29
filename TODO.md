@@ -1023,7 +1023,7 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   `move` даёт безопасный sub/view и не меняет владельца; `move(ownerPlace)`
   передаёт владение, инвалидирует source и создаёт owning value. Свежий `new`,
   owner-returning call или return уже создаёт owning value без поглощаемого place.
-- [ ] Удалить `forward` из пользовательской модели языка и не вводить forwarding
+- [x] Удалить `forward` из пользовательской модели языка и не вводить forwarding
   parameters или скрытый входной ownership-mode. Обычная передача означает view,
   передача владения выражается только явным `move` либо свежим owning result;
   внутренний HIR helper не должен становиться отдельной source-семантикой.
