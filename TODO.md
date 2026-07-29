@@ -511,12 +511,13 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] P0 data / I/O:
   - [x] `std.bytes.ByteBuffer`: position/limit/capacity, slices и endian-aware primitives.
   - [x] `std.io`: `Reader`, `Writer`, buffered streams и memory streams.
-- [ ] P1 platform:
+- [x] P1 platform:
   - [x] Расширить `std.fs`: directory listing/walk, metadata, temporary files и watcher.
-  - [ ] Расширить `std.http`:
+  - [x] Расширить `std.http`:
     - [x] Типизированная case-insensitive headers collection для client/server.
     - [x] Redirects, body streaming callback, timeout/cancellation и multipart.
-    - [ ] HTTPS/TLS transport с проверкой сертификатов и platform trust store.
+    - [x] HTTPS/TLS transport: WinHTTP/Windows trust store, системный libcurl
+      на Unix и host-backed HTTPS GET для WebAssembly.
   - [x] `Semaphore`, writer-preferring `RwLock`, `ConditionVariable` и
     retry-on-error `Once` для native scheduler/threads и WebAssembly runtime.
   - [x] `std.mime` модуль для авто-определения MIME типов по расширению файла.

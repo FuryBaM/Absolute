@@ -379,6 +379,126 @@ uint8_t absolute_cancellation_token_is_cancelled(void* p) {
 #endif
 }
 void absolute_cancellation_token_destroy(void* p) { free(p); }
+
+/* ---------- host-backed HTTPS response stream ---------- */
+
+typedef struct WasmHttpTlsResponse {
+    uint8_t* body;
+    int32_t length;
+    int32_t offset;
+    char* scratch;
+    int32_t scratchCapacity;
+} WasmHttpTlsResponse;
+
+static char g_http_tls_error[256];
+static const char g_http_tls_headers[] =
+    "HTTP/1.1 200 OK\r\n"
+    "Content-Type: application/octet-stream\r\n"
+    "Connection: close\r\n";
+
+void* absolute_http_tls_open(
+    const char* method, const char* url, const char* headers,
+    const char* body, int32_t timeoutMilliseconds,
+    int32_t maximumResponseBytes) {
+    (void)headers;
+    (void)body;
+    (void)timeoutMilliseconds;
+    g_http_tls_error[0] = '\0';
+    if (!method || strcmp(method, "GET") != 0) {
+        fs_copy_path(
+            g_http_tls_error, sizeof(g_http_tls_error),
+            "WebAssembly HTTPS host currently supports GET only");
+        return NULL;
+    }
+    if (!url || maximumResponseBytes <= 0) {
+        fs_copy_path(
+            g_http_tls_error, sizeof(g_http_tls_error),
+            "invalid WebAssembly HTTPS request");
+        return NULL;
+    }
+    WasmHttpTlsResponse* response =
+        (WasmHttpTlsResponse*)heap_alloc(
+            sizeof(WasmHttpTlsResponse));
+    if (!response) return NULL;
+    memset(response, 0, sizeof(*response));
+    response->body =
+        (uint8_t*)heap_alloc((size_t)maximumResponseBytes + 1);
+    if (!response->body) {
+        free(response);
+        return NULL;
+    }
+    const int32_t received = absolute_http_get(
+        url, response->body, maximumResponseBytes);
+    if (received < 0) {
+        fs_copy_path(
+            g_http_tls_error, sizeof(g_http_tls_error),
+            "HTTPS URL is unavailable from the WebAssembly host");
+        free(response->body);
+        free(response);
+        return NULL;
+    }
+    response->body[received] = 0;
+    response->length = received;
+    return response;
+}
+
+const char* absolute_http_tls_headers(void* p) {
+    if (!p) {
+        fs_copy_path(
+            g_http_tls_error, sizeof(g_http_tls_error),
+            "HTTPS response is closed");
+        return "";
+    }
+    g_http_tls_error[0] = '\0';
+    return g_http_tls_headers;
+}
+
+const char* absolute_http_tls_receive(
+    void* p, int32_t maximumBytes) {
+    WasmHttpTlsResponse* response = (WasmHttpTlsResponse*)p;
+    if (!response || maximumBytes <= 0) return "";
+    const int32_t remaining =
+        response->length - response->offset;
+    const int32_t count =
+        remaining < maximumBytes ? remaining : maximumBytes;
+    if (count <= 0) {
+        g_http_tls_error[0] = '\0';
+        return "";
+    }
+    if (response->scratchCapacity < count + 1) {
+        char* next = (char*)realloc(
+            response->scratch, (size_t)count + 1);
+        if (!next) {
+            fs_copy_path(
+                g_http_tls_error, sizeof(g_http_tls_error),
+                "HTTPS receive allocation failed");
+            return "";
+        }
+        response->scratch = next;
+        response->scratchCapacity = count + 1;
+    }
+    memcpy(
+        response->scratch,
+        response->body + response->offset,
+        (size_t)count);
+    response->scratch[count] = '\0';
+    response->offset += count;
+    g_http_tls_error[0] = '\0';
+    return response->scratch;
+}
+
+void absolute_http_tls_close(void* p) {
+    WasmHttpTlsResponse* response = (WasmHttpTlsResponse*)p;
+    if (!response) return;
+    free(response->scratch);
+    free(response->body);
+    free(response);
+}
+
+const char* absolute_http_tls_error(void) {
+    return g_http_tls_error;
+}
+
 void absolute_task_delay(int32_t milliseconds) {
     const int32_t deadline =
         absolute_task_current_deadline_remaining();

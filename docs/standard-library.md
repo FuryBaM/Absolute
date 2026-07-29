@@ -22,7 +22,7 @@ Dependents declare:
 ```json
 {
   "dependencies": {
-    "absolute.std": "^0.8.0"
+    "absolute.std": "^0.9.0"
   }
 }
 ```
@@ -357,9 +357,16 @@ callback. `multipartBody()` and `postMultipart()` encode `std.form.FormData`.
 `HttpServer.accept()` exposes parsed request headers, and `HttpContext.send()`
 accepts either a content type or a typed response header collection.
 
-The current socket transport accepts `http://` only. `https://` is rejected
-explicitly: TLS will become supported only with certificate validation,
-hostname verification, and platform trust-store integration.
+`https://` uses a verified platform transport. Windows delegates TLS,
+hostname, expiry, and chain validation to WinHTTP and the Windows trust store.
+Unix loads the installed system libcurl and explicitly enables peer and
+hostname verification. Neither backend exposes a certificate-bypass option.
+Redirects remain controlled by `RequestOptions` rather than being followed
+inside the TLS backend.
+
+WebAssembly delegates HTTPS GET to the embedding host's HTTP cache/fetch
+integration. Other HTTPS methods currently return an explicit host-capability
+error; native transports support the same methods as plain HTTP.
 
 Application projects may provide default arguments:
 

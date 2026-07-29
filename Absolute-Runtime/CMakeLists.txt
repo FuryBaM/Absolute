@@ -11,6 +11,7 @@ add_library(Absolute-Runtime STATIC
     src/env.cpp
     src/errors.cpp
     src/filesystem.cpp
+    src/http_tls.cpp
     src/json.cpp
     src/libraries.cpp
     src/network.cpp
@@ -57,7 +58,7 @@ if(ANDROID OR DEFINED ENV{TERMUX_VERSION})
     endif()
 endif()
 if(WIN32)
-    target_link_libraries(Absolute-Runtime PUBLIC ws2_32 shell32)
+    target_link_libraries(Absolute-Runtime PUBLIC ws2_32 shell32 winhttp)
 endif()
 
 if(MSVC)

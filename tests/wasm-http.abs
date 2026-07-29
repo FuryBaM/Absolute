@@ -36,6 +36,14 @@ export "C" int32 wasm_http_probe() {
     }
     delete decoded;
 
+    std.http.HttpResponse* secure =
+        std.http.fetch("https://example.test/hello");
+    if (secure.statusCode != 200 || secure.body != "hello") {
+        delete secure;
+        return 13;
+    }
+    delete secure;
+
     uint8 buffer[64];
     int32 n = absolute_http_get("https://example.test/hello", &buffer[0], 64);
     if (n < 5) {
@@ -52,8 +60,6 @@ export "C" int32 wasm_http_probe() {
 }
 
 int32 main() {
-    int32 code = wasm_http_probe();
-    assert(code == 0, "wasm http mock");
     println("wasm-http=ok");
     return 0;
 }

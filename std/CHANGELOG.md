@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.0
+
+- Added verified HTTPS transport to `std.http` without certificate-bypass
+  switches.
+- Windows uses WinHTTP with the Windows trust store and default hostname,
+  expiry, and chain validation. Unix dynamically uses the system libcurl ABI
+  with peer and hostname verification enabled.
+- Preserved `RequestOptions` timeout, response-size, cancellation, redirect,
+  header, and streaming behavior across HTTP and HTTPS.
+- Added host-backed HTTPS GET to the WebAssembly HTTP model.
+- Validated trusted and expired-certificate endpoints on Windows and Unix;
+  Windows was additionally executed under AddressSanitizer.
+
 ## 0.8.0
 
 - Added scheduler-aware `Semaphore`, writer-preferring `RwLock`,

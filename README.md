@@ -1295,9 +1295,9 @@ Text returned by a stream/socket read is a borrowed UTF-8 view valid until the
 next read on that same object; top-level filesystem result strings are valid
 until the next top-level result-producing filesystem call on the current thread.
 `std/http.abs` builds typed request/response headers, redirects, streaming body
-callbacks, cancellation, and multipart forms on top of TCP. The current
-transport supports plain `http://`; `https://` is rejected until TLS
-certificate validation and platform trust-store integration are implemented.
+callbacks, cancellation, and multipart forms on top of TCP and verified TLS.
+Windows HTTPS uses WinHTTP and the Windows trust store; Unix uses system
+libcurl with peer and hostname verification.
 
 `std/concurrent.abs` provides scheduler-aware mutexes, semaphores,
 reader/writer locks, condition variables, atomics, and exactly-once

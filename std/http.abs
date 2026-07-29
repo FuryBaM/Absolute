@@ -5,6 +5,15 @@ import "task.abs";
 import "form.abs";
 import "collections/vector.abs";
 
+extern "C" raw uint8* absolute_http_tls_open(
+    string method, string url, string headers, string body,
+    int32 timeoutMilliseconds, int32 maximumResponseBytes);
+extern "C" string absolute_http_tls_headers(raw uint8* handle);
+extern "C" string absolute_http_tls_receive(
+    raw uint8* handle, int32 maximumBytes);
+extern "C" void absolute_http_tls_close(raw uint8* handle);
+extern "C" string absolute_http_tls_error();
+
 namespace std.http {
     struct Header {
         public string name;
@@ -353,15 +362,11 @@ namespace std.http {
         func<void, string> onChunk, bool streamBody) {
         std.uri.Uri* uri = std.uri.parse(urlStr);
         defer delete uri;
-        if (uri.scheme != "http") {
+        if (uri.scheme != "http" && uri.scheme != "https") {
             throw new Error(format(
-                "HTTP scheme '{}' is not supported by the socket transport; HTTPS/TLS backend is pending",
+                "HTTP scheme '{}' is not supported",
                 uri.scheme));
         }
-
-        std.net.TcpSocket* socket =
-            connectWithRetry(uri.host, uri.port, options);
-        defer delete socket;
 
         Headers* headers = requestHeaders.clone();
         defer delete headers;
@@ -380,6 +385,66 @@ namespace std.http {
             requestTarget(uri),
             headers.toText(),
             bodyText);
+
+        if (uri.scheme == "https") {
+            if (options.isCancelled()) {
+                throw new Error("HTTPS request cancelled");
+            }
+            raw uint8* tls = absolute_http_tls_open(
+                method, urlStr, headers.toText(), bodyText,
+                options.timeoutMilliseconds,
+                options.maximumResponseBytes);
+            if (tls == null) {
+                throw new Error(format(
+                    "HTTPS request failed: {}",
+                    absolute_http_tls_error()));
+            }
+            defer absolute_http_tls_close(tls);
+
+            std.text.StringBuilder* response =
+                new std.text.StringBuilder();
+            defer delete response;
+            string responseHeaders =
+                absolute_http_tls_headers(tls);
+            response.append(responseHeaders);
+            if (!std.text.endsWith(
+                    responseHeaders, "\r\n\r\n")) {
+                if (std.text.endsWith(responseHeaders, "\r\n")) {
+                    response.append("\r\n");
+                } else {
+                    response.append("\r\n\r\n");
+                }
+            }
+            int32 receivedBytes =
+                std.text.byteCount(response.toString());
+            while (true) {
+                if (options.isCancelled()) {
+                    throw new Error("HTTPS request cancelled");
+                }
+                string chunk =
+                    absolute_http_tls_receive(tls, 8192);
+                string tlsError = absolute_http_tls_error();
+                if (tlsError != "") {
+                    throw new Error(format(
+                        "HTTPS receive failed: {}", tlsError));
+                }
+                if (chunk == "") { break; }
+                receivedBytes =
+                    receivedBytes + std.text.byteCount(chunk);
+                if (receivedBytes >
+                    options.maximumResponseBytes) {
+                    throw new Error(
+                        "HTTPS response exceeds maximumResponseBytes");
+                }
+                response.append(chunk);
+                if (streamBody) { onChunk(chunk); }
+            }
+            return parseResponse(response.toString());
+        }
+
+        std.net.TcpSocket* socket =
+            connectWithRetry(uri.host, uri.port, options);
+        defer delete socket;
         socket.send(reqStr);
 
         string responseRaw =
