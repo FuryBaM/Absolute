@@ -1,0 +1,8 @@
+class Node {
+    public Node* child;
+}
+
+void main() {
+    Node* root = new Node();
+    root.child = move(root);
+}

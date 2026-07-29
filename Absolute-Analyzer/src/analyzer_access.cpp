@@ -430,7 +430,7 @@ namespace Absolute {
                 const Symbol* source = table.Get(argument.symbol);
                 const bool strongManaged = IsStrongManagedPointerType(argument.type);
                 const bool managedOwner = strongManaged && source &&
-                    (source->kind == SymbolKind::Field || source->managedOwner);
+                    (source->kind == SymbolKind::Field || source->kind == SymbolKind::Variable || source->managedOwner);
                 if (IsWeakPointerType(argument.type)) {
                     Report("weak managed pointers do not own a resource and cannot be moved",
                         "E_WEAK_MOVE", argument.symbol);

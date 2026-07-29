@@ -31,11 +31,14 @@ namespace Absolute {
         const bool owningField = targetSymbol &&
             (targetSymbol->kind == SymbolKind::Field ||
              targetSymbol->kind == SymbolKind::Property);
-        if (owningField && IsStrongManagedPointerType(target.type) &&
-            value.type != "null" && !value.createsManagedOwner) {
+        if (owningField && IsStrongManagedPointerType(target.type) && value.type != "null") {
             bool createsOwnershipCycle = false;
             if (auto* member = dynamic_cast<MemberAccessExpr*>(expr->target.get())) {
-                const SymbolId root = LookupSymbol(ExtractIdentifier(member->base.get()));
+                Expression* rootExpr = member->base.get();
+                while (auto* parentMember = dynamic_cast<MemberAccessExpr*>(rootExpr)) {
+                    rootExpr = parentMember->base.get();
+                }
+                const SymbolId root = LookupSymbol(ExtractIdentifier(rootExpr));
                 SymbolId targetOwner = root;
                 if (const auto flow = valueFlow.find(root);
                     flow != valueFlow.end() && flow->second.pointerOwner != InvalidSymbolId)
@@ -48,7 +51,7 @@ namespace Absolute {
                     "use weak T* for the back-edge",
                     "E_MANAGED_OWNERSHIP_CYCLE", target.symbol);
             }
-            else {
+            else if (!value.createsManagedOwner) {
                 Report("managed resource fields require a fresh owner or null; "
                     "store a copy/owner instead of a subscriber",
                     "E_RESOURCE_FIELD_REQUIRES_OWNER", target.symbol);

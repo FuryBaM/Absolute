@@ -4,6 +4,7 @@
 #include <limits>
 #include <vector>
 #include <atomic>
+#include <mutex>
 
 namespace {
     struct Slot {
@@ -19,7 +20,7 @@ extern "C" {
 }
 
 namespace {
-
+    std::mutex slotsMutex;
     std::vector<Slot> slots;
     std::vector<std::uint32_t> freeSlots;
 
@@ -45,6 +46,7 @@ namespace {
 }
 
 extern "C" void absolute_managed_check_leaks() {
+    std::lock_guard<std::mutex> lock(slotsMutex);
     std::uint32_t leakCount = 0;
     for (size_t i = 0; i < slots.size(); ++i) {
         if (slots[i].pointer != nullptr) {
@@ -71,6 +73,7 @@ extern "C" std::uint64_t absolute_managed_create(std::uint64_t size) {
         std::abort();
     }
 
+    std::lock_guard<std::mutex> lock(slotsMutex);
     std::uint32_t id;
     if (!freeSlots.empty()) {
         id = freeSlots.back();
@@ -93,6 +96,7 @@ extern "C" std::uint64_t absolute_managed_create(std::uint64_t size) {
 }
 
 extern "C" void* absolute_managed_get(std::uint64_t handle) {
+    std::lock_guard<std::mutex> lock(slotsMutex);
     Slot* slot = Find(handle);
     return slot ? slot->pointer : nullptr;
 }
@@ -102,10 +106,12 @@ extern "C" bool absolute_managed_valid(std::uint64_t handle) {
 }
 
 extern "C" void absolute_managed_set_type(std::uint64_t handle, std::uint64_t type) {
+    std::lock_guard<std::mutex> lock(slotsMutex);
     if (Slot* slot = Find(handle)) slot->type = type;
 }
 
 extern "C" std::uint64_t absolute_managed_type(std::uint64_t handle) {
+    std::lock_guard<std::mutex> lock(slotsMutex);
     if (Slot* slot = Find(handle)) return slot->type;
     return 0;
 }
@@ -117,6 +123,7 @@ extern "C" void* absolute_managed_require(std::uint64_t handle) {
 }
 
 extern "C" void absolute_managed_destroy(std::uint64_t handle) {
+    std::lock_guard<std::mutex> lock(slotsMutex);
     Slot* slot = Find(handle);
     if (!slot || !slot->pointer) return;
     const std::uint32_t id = HandleId(handle);
@@ -129,6 +136,7 @@ extern "C" void absolute_managed_destroy(std::uint64_t handle) {
 }
 
 extern "C" std::uint64_t absolute_managed_transfer(std::uint64_t handle) {
+    std::lock_guard<std::mutex> lock(slotsMutex);
     Slot* slot = Find(handle);
     if (!slot || !slot->pointer) {
         std::cerr << "Absolute runtime error: cannot transfer a null or expired managed owner\n";
@@ -144,6 +152,7 @@ namespace {
     struct CapsuleImpl {
         std::uint64_t handle = 0;
         std::atomic<bool> transferred{false};
+        void (*deleter_fn)(void*) = nullptr;
     };
 }
 
@@ -172,6 +181,10 @@ extern "C" void absolute_capsule_destroy(void* capsulePtr) {
     if (!capsulePtr) return;
     CapsuleImpl* capsule = static_cast<CapsuleImpl*>(capsulePtr);
     if (!capsule->transferred.load() && capsule->handle != 0) {
+        if (capsule->deleter_fn) {
+            void* rawObj = absolute_managed_get(capsule->handle);
+            if (rawObj) capsule->deleter_fn(rawObj);
+        }
         absolute_managed_destroy(capsule->handle);
     }
     delete capsule;
