@@ -1,0 +1,21 @@
+import "std/bytes.abs";
+import "std/io.abs";
+
+int32 main() {
+    // MemoryStream test
+    MemoryStream* mem = new MemoryStream(128);
+    mem.writeByte(65 as uint8);
+    mem.writeByte(66 as uint8);
+    mem.writeByte(67 as uint8);
+
+    ByteBuffer* buf = mem.getBuffer();
+    buf.flip();
+
+    assert(mem.readByte() == 65, "readByte 65");
+    assert(mem.readByte() == 66, "readByte 66");
+    assert(mem.readByte() == 67, "readByte 67");
+    assert(mem.readByte() == -1, "readByte EOF");
+
+    print("io-streams-test=ok");
+    return 0;
+}

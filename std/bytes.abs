@@ -1,0 +1,329 @@
+extern "C" raw void* absolute_byte_buffer_create(int64 capacity);
+extern "C" raw void* absolute_byte_buffer_wrap(raw void* data, int64 size);
+extern "C" void absolute_byte_buffer_free(raw void* handle);
+extern "C" raw void* absolute_byte_buffer_slice(raw void* handle, int64 offset, int64 length);
+extern "C" raw uint8* absolute_byte_buffer_get_data(raw void* handle);
+extern "C" int64 absolute_byte_buffer_capacity(raw void* handle);
+extern "C" uint8 absolute_byte_buffer_get_byte(raw void* handle, int64 offset);
+extern "C" void absolute_byte_buffer_set_byte(raw void* handle, int64 offset, uint8 val);
+extern "C" void absolute_byte_buffer_compact(raw void* handle, int64 position, int64 remaining);
+
+namespace std.bytes {
+    class ByteBuffer {
+        private raw void* handle;
+        private int64 _position;
+        private int64 _limit;
+        private int64 _capacity;
+        private int64 _mark;
+        private bool _isLittleEndian;
+
+        public ByteBuffer(int64 cap) {
+            handle = absolute_byte_buffer_create(cap);
+            _capacity = absolute_byte_buffer_capacity(handle);
+            _limit = _capacity;
+            _position = 0;
+            _mark = -1;
+            _isLittleEndian = true;
+        }
+
+        public static ByteBuffer* allocate(int64 capacity) {
+            return new ByteBuffer(capacity);
+        }
+
+        public static ByteBuffer* wrap(raw void* data, int64 size) {
+            ByteBuffer* buf = new ByteBuffer(0);
+            if (buf.handle) {
+                absolute_byte_buffer_free(buf.handle);
+            }
+            buf.handle = absolute_byte_buffer_wrap(data, size);
+            buf._capacity = absolute_byte_buffer_capacity(buf.handle);
+            buf._limit = buf._capacity;
+            buf._position = 0;
+            buf._mark = -1;
+            buf._isLittleEndian = true;
+            return buf;
+        }
+
+        public void destroy() {
+            if (handle) {
+                absolute_byte_buffer_free(handle);
+                handle = null;
+            }
+        }
+
+        public void dispose() { destroy(); }
+
+        public int64 capacity() { return _capacity; }
+        public int64 position() { return _position; }
+
+        public void setPosition(int64 newPos) {
+            if (newPos < 0 || newPos > _limit) {
+                throw new Error("Invalid position bounds");
+            }
+            _position = newPos;
+            if (_mark > _position) { _mark = -1; }
+        }
+
+        public int64 limit() { return _limit; }
+
+        public void setLimit(int64 newLimit) {
+            if (newLimit < 0 || newLimit > _capacity) {
+                throw new Error("Invalid limit bounds");
+            }
+            _limit = newLimit;
+            if (_position > _limit) { _position = _limit; }
+            if (_mark > _limit) { _mark = -1; }
+        }
+
+        public int64 remaining() {
+            int64 rem = _limit - _position;
+            return rem > 0 ? rem : 0;
+        }
+
+        public bool hasRemaining() {
+            return _position < _limit;
+        }
+
+        public void mark() {
+            _mark = _position;
+        }
+
+        public void reset() {
+            if (_mark < 0) {
+                throw new Error("Mark not set");
+            }
+            _position = _mark;
+        }
+
+        public void clear() {
+            _position = 0;
+            _limit = _capacity;
+            _mark = -1;
+        }
+
+        public void flip() {
+            _limit = _position;
+            _position = 0;
+            _mark = -1;
+        }
+
+        public void rewind() {
+            _position = 0;
+            _mark = -1;
+        }
+
+        public void compact() {
+            int64 rem = remaining();
+            absolute_byte_buffer_compact(handle, _position, rem);
+            _position = rem;
+            _limit = _capacity;
+            _mark = -1;
+        }
+
+        public void order(bool isLittle) {
+            _isLittleEndian = isLittle;
+        }
+
+        public bool isLittleEndian() { return _isLittleEndian; }
+
+        public ByteBuffer* slice() {
+            return sliceAt(_position, remaining());
+        }
+
+        public ByteBuffer* sliceAt(int64 offset, int64 length) {
+            ByteBuffer* sliceBuf = new ByteBuffer(0);
+            if (sliceBuf.handle) {
+                absolute_byte_buffer_free(sliceBuf.handle);
+            }
+            sliceBuf.handle = absolute_byte_buffer_slice(handle, offset, length);
+            sliceBuf._capacity = absolute_byte_buffer_capacity(sliceBuf.handle);
+            sliceBuf._limit = sliceBuf._capacity;
+            sliceBuf._position = 0;
+            sliceBuf._mark = -1;
+            sliceBuf._isLittleEndian = _isLittleEndian;
+            return move(sliceBuf);
+        }
+
+        public raw uint8* rawPointer() { return absolute_byte_buffer_get_data(handle); }
+
+        // Byte operations
+        public uint8 getByte() {
+            if (_position >= _limit) { throw new Error("Buffer overflow reading byte"); }
+            uint8 val = absolute_byte_buffer_get_byte(handle, _position);
+            _position = _position + 1;
+            return val;
+        }
+
+        public uint8 getByteAt(int64 index) {
+            if (index < 0 || index >= _limit) { throw new Error("Index out of bounds"); }
+            return absolute_byte_buffer_get_byte(handle, index);
+        }
+
+        public void putByte(uint8 val) {
+            if (_position >= _limit) { throw new Error("Buffer overflow writing byte"); }
+            absolute_byte_buffer_set_byte(handle, _position, val);
+            _position = _position + 1;
+        }
+
+        public void putByteAt(int64 index, uint8 val) {
+            if (index < 0 || index >= _limit) { throw new Error("Index out of bounds"); }
+            absolute_byte_buffer_set_byte(handle, index, val);
+        }
+
+        // Int16 operations
+        public int16 getInt16() {
+            int16 val = getInt16At(_position);
+            _position = _position + 2;
+            return val;
+        }
+
+        public int16 getInt16At(int64 index) {
+            if (index < 0 || index + 2 > _limit) { throw new Error("Buffer overflow reading int16"); }
+            int32 b0 = absolute_byte_buffer_get_byte(handle, index);
+            int32 b1 = absolute_byte_buffer_get_byte(handle, index + 1);
+            int32 v = 0;
+            if (_isLittleEndian) {
+                v = b0 | (b1 << 8);
+            } else {
+                v = (b0 << 8) | b1;
+            }
+            return v as int16;
+        }
+
+        public void putInt16(int16 val) {
+            putInt16At(_position, val);
+            _position = _position + 2;
+        }
+
+        public void putInt16At(int64 index, int16 val) {
+            if (index < 0 || index + 2 > _limit) { throw new Error("Buffer overflow writing int16"); }
+            int32 v = val as int32;
+            if (_isLittleEndian) {
+                absolute_byte_buffer_set_byte(handle, index, (v & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 1, ((v >> 8) & 255) as uint8);
+            } else {
+                absolute_byte_buffer_set_byte(handle, index, ((v >> 8) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 1, (v & 255) as uint8);
+            }
+        }
+
+        // Int32 operations
+        public int32 getInt32() {
+            int32 val = getInt32At(_position);
+            _position = _position + 4;
+            return val;
+        }
+
+        public int32 getInt32At(int64 index) {
+            if (index < 0 || index + 4 > _limit) { throw new Error("Buffer overflow reading int32"); }
+            int32 b0 = absolute_byte_buffer_get_byte(handle, index);
+            int32 b1 = absolute_byte_buffer_get_byte(handle, index + 1);
+            int32 b2 = absolute_byte_buffer_get_byte(handle, index + 2);
+            int32 b3 = absolute_byte_buffer_get_byte(handle, index + 3);
+            int32 v = 0;
+            if (_isLittleEndian) {
+                v = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+            } else {
+                v = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+            }
+            return v;
+        }
+
+        public void putInt32(int32 val) {
+            putInt32At(_position, val);
+            _position = _position + 4;
+        }
+
+        public void putInt32At(int64 index, int32 val) {
+            if (index < 0 || index + 4 > _limit) { throw new Error("Buffer overflow writing int32"); }
+            if (_isLittleEndian) {
+                absolute_byte_buffer_set_byte(handle, index, (val & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 1, ((val >> 8) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 2, ((val >> 16) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 3, ((val >> 24) & 255) as uint8);
+            } else {
+                absolute_byte_buffer_set_byte(handle, index, ((val >> 24) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 1, ((val >> 16) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 2, ((val >> 8) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 3, (val & 255) as uint8);
+            }
+        }
+
+        // Int64 operations
+        public int64 getInt64() {
+            int64 val = getInt64At(_position);
+            _position = _position + 8;
+            return val;
+        }
+
+        public int64 getInt64At(int64 index) {
+            if (index < 0 || index + 8 > _limit) { throw new Error("Buffer overflow reading int64"); }
+            int64 b0 = absolute_byte_buffer_get_byte(handle, index);
+            int64 b1 = absolute_byte_buffer_get_byte(handle, index + 1);
+            int64 b2 = absolute_byte_buffer_get_byte(handle, index + 2);
+            int64 b3 = absolute_byte_buffer_get_byte(handle, index + 3);
+            int64 b4 = absolute_byte_buffer_get_byte(handle, index + 4);
+            int64 b5 = absolute_byte_buffer_get_byte(handle, index + 5);
+            int64 b6 = absolute_byte_buffer_get_byte(handle, index + 6);
+            int64 b7 = absolute_byte_buffer_get_byte(handle, index + 7);
+            int64 v = 0;
+            if (_isLittleEndian) {
+                v = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24) |
+                    (b4 << 32) | (b5 << 40) | (b6 << 48) | (b7 << 56);
+            } else {
+                v = (b0 << 56) | (b1 << 48) | (b2 << 40) | (b3 << 32) |
+                    (b4 << 24) | (b5 << 16) | (b6 << 8) | b7;
+            }
+            return v;
+        }
+
+        public void putInt64(int64 val) {
+            putInt64At(_position, val);
+            _position = _position + 8;
+        }
+
+        public void putInt64At(int64 index, int64 val) {
+            if (index < 0 || index + 8 > _limit) { throw new Error("Buffer overflow writing int64"); }
+            if (_isLittleEndian) {
+                absolute_byte_buffer_set_byte(handle, index, (val & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 1, ((val >> 8) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 2, ((val >> 16) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 3, ((val >> 24) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 4, ((val >> 32) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 5, ((val >> 40) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 6, ((val >> 48) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 7, ((val >> 56) & 255) as uint8);
+            } else {
+                absolute_byte_buffer_set_byte(handle, index, ((val >> 56) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 1, ((val >> 48) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 2, ((val >> 40) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 3, ((val >> 32) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 4, ((val >> 24) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 5, ((val >> 16) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 6, ((val >> 8) & 255) as uint8);
+                absolute_byte_buffer_set_byte(handle, index + 7, (val & 255) as uint8);
+            }
+        }
+
+        // Float & Double operations
+        public float getFloat() {
+            int32 bits = getInt32();
+            return bits as float;
+        }
+
+        public void putFloat(float val) {
+            int32 bits = val as int32;
+            putInt32(bits);
+        }
+
+        public double getDouble() {
+            int64 bits = getInt64();
+            return bits as double;
+        }
+
+        public void putDouble(double val) {
+            int64 bits = val as int64;
+            putInt64(bits);
+        }
+    }
+}

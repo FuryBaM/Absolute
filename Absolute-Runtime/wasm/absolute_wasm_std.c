@@ -239,6 +239,80 @@ void absolute_binary_reader_seek(void* p,int64_t pos) {
     r->position=(size_t)pos>r->size?r->size:(size_t)pos;
 }
 
+typedef struct {
+    uint8_t* data;
+    int64_t capacity;
+    int32_t is_owner;
+} WasmByteBuffer;
+
+void* absolute_byte_buffer_create(int64_t capacity) {
+    if (capacity <= 0) capacity = 1024;
+    WasmByteBuffer* buf = (WasmByteBuffer*)malloc(sizeof(WasmByteBuffer));
+    buf->data = (uint8_t*)calloc(1, (size_t)capacity);
+    buf->capacity = capacity;
+    buf->is_owner = 1;
+    return buf;
+}
+
+void* absolute_byte_buffer_wrap(const void* data, int64_t size) {
+    WasmByteBuffer* buf = (WasmByteBuffer*)malloc(sizeof(WasmByteBuffer));
+    buf->data = (uint8_t*)data;
+    buf->capacity = size > 0 ? size : 0;
+    buf->is_owner = 0;
+    return buf;
+}
+
+void absolute_byte_buffer_free(void* p) {
+    if (!p) return;
+    WasmByteBuffer* buf = (WasmByteBuffer*)p;
+    if (buf->is_owner && buf->data) free(buf->data);
+    free(buf);
+}
+
+void* absolute_byte_buffer_slice(void* p, int64_t offset, int64_t length) {
+    if (!p) return NULL;
+    WasmByteBuffer* buf = (WasmByteBuffer*)p;
+    if (offset < 0) offset = 0;
+    if (offset > buf->capacity) offset = buf->capacity;
+    if (length < 0) length = 0;
+    if (offset + length > buf->capacity) length = buf->capacity - offset;
+    WasmByteBuffer* slice = (WasmByteBuffer*)malloc(sizeof(WasmByteBuffer));
+    slice->data = buf->data + offset;
+    slice->capacity = length;
+    slice->is_owner = 0;
+    return slice;
+}
+
+uint8_t* absolute_byte_buffer_get_data(void* p) {
+    return p ? ((WasmByteBuffer*)p)->data : NULL;
+}
+
+int64_t absolute_byte_buffer_capacity(void* p) {
+    return p ? ((WasmByteBuffer*)p)->capacity : 0;
+}
+
+uint8_t absolute_byte_buffer_get_byte(void* p, int64_t offset) {
+    if (!p) return 0;
+    WasmByteBuffer* buf = (WasmByteBuffer*)p;
+    if (offset < 0 || offset >= buf->capacity) return 0;
+    return buf->data[offset];
+}
+
+void absolute_byte_buffer_set_byte(void* p, int64_t offset, uint8_t val) {
+    if (!p) return;
+    WasmByteBuffer* buf = (WasmByteBuffer*)p;
+    if (offset < 0 || offset >= buf->capacity) return;
+    buf->data[offset] = val;
+}
+
+void absolute_byte_buffer_compact(void* p, int64_t position, int64_t remaining) {
+    if (!p) return;
+    WasmByteBuffer* buf = (WasmByteBuffer*)p;
+    if (position <= 0 || remaining <= 0) return;
+    if (position + remaining > buf->capacity) remaining = buf->capacity - position;
+    memmove(buf->data, buf->data + position, (size_t)remaining);
+}
+
 /* ---------- datetime ---------- */
 
 static char g_datetime_error[96], g_datetime_scratch[96];

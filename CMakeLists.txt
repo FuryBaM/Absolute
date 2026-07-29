@@ -651,6 +651,14 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-model-execution.abs"
     )
     add_test(
+        NAME absolute.bytes-bytebuffer-test-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/bytes-bytebuffer-test.abs"
+    )
+    add_test(
+        NAME absolute.io-streams-test-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/io-streams-test.abs"
+    )
+    add_test(
         NAME absolute.base-language-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/base-language-errors.abs"
     )
@@ -1258,6 +1266,22 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.emit-ownership-model-execution PROPERTIES
             FIXTURES_SETUP absolute-ownership-model-execution-ir
         )
+        add_test(
+            NAME absolute.emit-bytes-bytebuffer-test
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/bytes-bytebuffer-test.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/bytes-bytebuffer-test.ll"
+        )
+        set_tests_properties(absolute.emit-bytes-bytebuffer-test PROPERTIES
+            FIXTURES_SETUP absolute-bytes-bytebuffer-test-ir
+        )
+        add_test(
+            NAME absolute.emit-io-streams-test
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/io-streams-test.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/io-streams-test.ll"
+        )
+        set_tests_properties(absolute.emit-io-streams-test PROPERTIES
+            FIXTURES_SETUP absolute-io-streams-test-ir
+        )
 
         add_test(
             NAME absolute.emit-memory-ownership-advanced
@@ -1512,6 +1536,22 @@ if(BUILD_TESTING)
             set_tests_properties(absolute.run-ownership-model-execution PROPERTIES
                 FIXTURES_REQUIRED absolute-ownership-model-execution-ir
                 PASS_REGULAR_EXPRESSION "ownership-model-execution=ok"
+            )
+            add_test(
+                NAME absolute.run-bytes-bytebuffer-test
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/bytes-bytebuffer-test.ll"
+            )
+            set_tests_properties(absolute.run-bytes-bytebuffer-test PROPERTIES
+                FIXTURES_REQUIRED absolute-bytes-bytebuffer-test-ir
+                PASS_REGULAR_EXPRESSION "bytes-bytebuffer-test=ok"
+            )
+            add_test(
+                NAME absolute.run-io-streams-test
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/io-streams-test.ll"
+            )
+            set_tests_properties(absolute.run-io-streams-test PROPERTIES
+                FIXTURES_REQUIRED absolute-io-streams-test-ir
+                PASS_REGULAR_EXPRESSION "io-streams-test=ok"
             )
 
             add_test(

@@ -1,0 +1,49 @@
+import "std/bytes.abs";
+
+int32 main() {
+    ByteBuffer* buf = ByteBuffer.allocate(64);
+    assert(buf.capacity() == 64, "capacity check");
+    assert(buf.position() == 0, "initial position");
+    assert(buf.limit() == 64, "initial limit");
+
+    // Write primitives
+    buf.putByte(66 as uint8);
+    buf.putInt16(4660 as int16);
+    buf.putInt32(305419896);
+
+    assert(buf.position() == 7, "position after writes");
+
+    // Flip to read
+    buf.flip();
+    assert(buf.position() == 0, "position after flip");
+    assert(buf.limit() == 7, "limit after flip");
+
+    uint8 b = buf.getByte();
+    assert(b == (66 as uint8), "getByte check");
+
+    int16 i16 = buf.getInt16();
+    assert(i16 == (4660 as int16), "getInt16 check");
+
+    int32 i32 = buf.getInt32();
+    assert(i32 == 305419896, "getInt32 check");
+
+    // Test Big Endian
+    buf.clear();
+    buf.order(false); // Big Endian
+    buf.putInt32(305419896);
+    buf.flip();
+    int32 beVal = buf.getInt32();
+    assert(beVal == 305419896, "big endian int32 check");
+
+    // Test Slicing
+    buf.clear();
+    buf.putInt32(100);
+    buf.putInt32(200);
+    ByteBuffer* slice = buf.sliceAt(4, 4);
+    assert(slice.capacity() == 4, "slice capacity check");
+    int32 val = slice.getInt32();
+    assert(val == 200, "slice data check");
+
+    print("bytes-bytebuffer-test=ok");
+    return 0;
+}

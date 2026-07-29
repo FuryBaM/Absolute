@@ -1,0 +1,140 @@
+import "bytes.abs";
+import "string.abs";
+
+namespace std.io {
+    class Reader {
+        public int32 readByte() { return -1; }
+        public int64 read(ByteBuffer* dest) { return 0; }
+        public void close() {}
+    }
+
+    class Writer {
+        public void writeByte(uint8 b) {}
+        public void write(ByteBuffer* src) {}
+        public void flush() {}
+        public void close() {}
+    }
+
+    class MemoryStream {
+        private ByteBuffer* buffer;
+
+        public MemoryStream(int64 capacity) {
+            buffer = ByteBuffer.allocate(capacity);
+        }
+
+        public MemoryStream(ByteBuffer* existing) {
+            buffer = move(existing);
+        }
+
+        public ByteBuffer* getBuffer() { return buffer.slice(); }
+
+        public int32 readByte() {
+            if (!buffer.hasRemaining()) { return -1; }
+            return buffer.getByte() as int32;
+        }
+
+        public int64 read(ByteBuffer* dest) {
+            int64 count = 0;
+            while (buffer.hasRemaining() && dest.hasRemaining()) {
+                dest.putByte(buffer.getByte());
+                count = count + 1;
+            }
+            return count;
+        }
+
+        public void writeByte(uint8 b) {
+            buffer.putByte(b);
+        }
+
+        public void write(ByteBuffer* src) {
+            while (src.hasRemaining() && buffer.hasRemaining()) {
+                buffer.putByte(src.getByte());
+            }
+        }
+
+        public void flush() {}
+        public void close() {}
+    }
+
+    class BufferedReader {
+        private Reader* reader;
+        private ByteBuffer* buffer;
+
+        public BufferedReader(Reader* r, int64 bufferSize) {
+            reader = move(r);
+            buffer = ByteBuffer.allocate(bufferSize > 0 ? bufferSize : 4096);
+            buffer.setLimit(0); // empty initially
+        }
+
+        public int32 readByte() {
+            if (!buffer.hasRemaining()) {
+                buffer.clear();
+                int64 n = reader.read(buffer);
+                if (n <= 0) { return -1; }
+                buffer.flip();
+            }
+            return buffer.getByte() as int32;
+        }
+
+        public string readLine() {
+            std.text.StringBuilder* sb = new std.text.StringBuilder();
+            while (true) {
+                int32 ch = readByte();
+                if (ch < 0) { break; }
+                if (ch == 10) { // '\n'
+                    break;
+                }
+                if (ch != 13) { // skip '\r'
+                    sb.appendChar(ch);
+                }
+            }
+            string res = sb.toString();
+            sb.dispose();
+            return res;
+        }
+
+        public void close() {
+            if (reader) { reader.close(); }
+        }
+    }
+
+    class BufferedWriter {
+        private Writer* writer;
+        private ByteBuffer* buffer;
+
+        public BufferedWriter(Writer* w, int64 bufferSize) {
+            writer = move(w);
+            buffer = ByteBuffer.allocate(bufferSize > 0 ? bufferSize : 4096);
+        }
+
+        public void writeByte(uint8 b) {
+            if (!buffer.hasRemaining()) {
+                flush();
+            }
+            buffer.putByte(b);
+        }
+
+        public void write(ByteBuffer* src) {
+            while (src.hasRemaining()) {
+                if (!buffer.hasRemaining()) {
+                    flush();
+                }
+                buffer.putByte(src.getByte());
+            }
+        }
+
+        public void flush() {
+            if (buffer.position() > 0) {
+                buffer.flip();
+                if (writer) { writer.write(buffer); }
+                buffer.clear();
+            }
+            if (writer) { writer.flush(); }
+        }
+
+        public void close() {
+            flush();
+            if (writer) { writer.close(); }
+        }
+    }
+}

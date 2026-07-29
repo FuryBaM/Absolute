@@ -6,6 +6,7 @@ find_package(Threads REQUIRED)
 add_library(Absolute-Runtime STATIC
     src/android_pthread_affinity_compat.h
     src/binary.cpp
+    src/bytes.cpp
     src/datetime.cpp
     src/env.cpp
     src/errors.cpp
