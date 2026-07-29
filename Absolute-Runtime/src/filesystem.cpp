@@ -1,15 +1,21 @@
+#include <algorithm>
+#include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <new>
 #include <string>
 #include <system_error>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "scheduler_io.h"
 
@@ -24,8 +30,39 @@ namespace {
         std::string readBuffer;
     };
 
+    struct DirectoryState {
+        std::vector<std::filesystem::path> entries;
+        std::size_t index = 0;
+        std::string current;
+    };
+
+    struct FileSnapshot {
+        bool directory = false;
+        std::uintmax_t size = 0;
+        std::filesystem::file_time_type modified{};
+
+        bool operator==(const FileSnapshot& other) const {
+            return directory == other.directory && size == other.size &&
+                modified == other.modified;
+        }
+    };
+
+    struct WatchEvent {
+        std::int32_t kind = 0;
+        std::string path;
+    };
+
+    struct WatchState {
+        std::filesystem::path root;
+        bool recursive = false;
+        std::unordered_map<std::string, FileSnapshot> snapshot;
+        std::deque<WatchEvent> pending;
+        std::string currentPath;
+    };
+
     thread_local std::string lastFileSystemError;
     thread_local std::string lastFileSystemResult;
+    std::atomic<std::uint64_t> temporaryCounter{0};
 
     template <class Result, class Operation>
     Result RunFileIo(Operation&& operation) {
@@ -125,6 +162,67 @@ namespace {
 
     FileState* State(void* handle) {
         return static_cast<FileState*>(handle);
+    }
+
+    std::int64_t FileTimeMillis(
+        const std::filesystem::file_time_type& value) {
+        using namespace std::chrono;
+        const auto systemValue = time_point_cast<milliseconds>(
+            value - std::filesystem::file_time_type::clock::now() +
+            system_clock::now());
+        return duration_cast<milliseconds>(
+            systemValue.time_since_epoch()).count();
+    }
+
+    std::unordered_map<std::string, FileSnapshot> SnapshotDirectory(
+        const std::filesystem::path& root, bool recursive,
+        std::error_code& error) {
+        std::unordered_map<std::string, FileSnapshot> result;
+        auto add = [&](const std::filesystem::directory_entry& entry) {
+            FileSnapshot snapshot;
+            snapshot.directory = entry.is_directory(error);
+            if (error) return;
+            if (!snapshot.directory) {
+                snapshot.size = entry.file_size(error);
+                if (error) return;
+            }
+            snapshot.modified = entry.last_write_time(error);
+            if (error) return;
+            result.emplace(PortablePath(entry.path()), snapshot);
+        };
+        if (recursive) {
+            for (std::filesystem::recursive_directory_iterator iterator(root, error), end;
+                !error && iterator != end; iterator.increment(error))
+                add(*iterator);
+        }
+        else {
+            for (std::filesystem::directory_iterator iterator(root, error), end;
+                !error && iterator != end; iterator.increment(error))
+                add(*iterator);
+        }
+        return result;
+    }
+
+    std::filesystem::path UniqueTemporaryPath(
+        const char* prefix, const char* suffix, std::error_code& error) {
+        const std::filesystem::path root =
+            std::filesystem::temp_directory_path(error);
+        if (error) return {};
+        const std::string safePrefix =
+            prefix && *prefix ? prefix : "absolute-";
+        for (int attempt = 0; attempt < 128; ++attempt) {
+            const auto tick = std::chrono::steady_clock::now()
+                .time_since_epoch().count();
+            const auto id = temporaryCounter.fetch_add(
+                1, std::memory_order_relaxed);
+            std::filesystem::path candidate = root /
+                NativePath((safePrefix + std::to_string(tick) + "-" +
+                    std::to_string(id) + suffix).c_str());
+            if (!std::filesystem::exists(candidate, error)) return candidate;
+            if (error) return {};
+        }
+        error = std::make_error_code(std::errc::file_exists);
+        return {};
     }
 }
 
@@ -532,6 +630,257 @@ extern "C" std::int32_t absolute_fs_file_flush(void* handle) {
 extern "C" std::int32_t absolute_fs_file_eof(void* handle) {
     FileState* state = State(handle);
     return !state || !state->stream || std::feof(state->stream) ? 1 : 0;
+}
+
+extern "C" std::int32_t absolute_fs_metadata_type(const char* path) {
+    return RunFileIo<std::int32_t>([&] {
+        if (!path) {
+            lastFileSystemError = "metadata path is null";
+            return std::int32_t{-1};
+        }
+        std::error_code error;
+        const auto status = std::filesystem::symlink_status(
+            NativePath(path), error);
+        if (error) {
+            SetError(error);
+            return std::int32_t{-1};
+        }
+        ClearError();
+        if (!std::filesystem::exists(status)) return std::int32_t{0};
+        if (std::filesystem::is_regular_file(status)) return std::int32_t{1};
+        if (std::filesystem::is_directory(status)) return std::int32_t{2};
+        if (std::filesystem::is_symlink(status)) return std::int32_t{3};
+        return std::int32_t{4};
+    });
+}
+
+extern "C" std::int64_t absolute_fs_metadata_modified_millis(const char* path) {
+    return RunFileIo<std::int64_t>([&] {
+        if (!path) {
+            lastFileSystemError = "metadata path is null";
+            return std::int64_t{-1};
+        }
+        std::error_code error;
+        const auto value = std::filesystem::last_write_time(
+            NativePath(path), error);
+        if (error) {
+            SetError(error);
+            return std::int64_t{-1};
+        }
+        ClearError();
+        return FileTimeMillis(value);
+    });
+}
+
+extern "C" std::int32_t absolute_fs_metadata_read_only(const char* path) {
+    return RunFileIo<std::int32_t>([&] {
+        if (!path) {
+            lastFileSystemError = "metadata path is null";
+            return std::int32_t{-1};
+        }
+        std::error_code error;
+        const auto permissions = std::filesystem::status(
+            NativePath(path), error).permissions();
+        if (error) {
+            SetError(error);
+            return std::int32_t{-1};
+        }
+        const auto writable = std::filesystem::perms::owner_write |
+            std::filesystem::perms::group_write |
+            std::filesystem::perms::others_write;
+        ClearError();
+        return (permissions & writable) == std::filesystem::perms::none ? 1 : 0;
+    });
+}
+
+extern "C" void* absolute_fs_directory_open(
+    const char* path, std::int32_t recursive) {
+    return RunFileIo<void*>([&]() -> void* {
+        if (!path) {
+            lastFileSystemError = "directory path is null";
+            return nullptr;
+        }
+        std::error_code error;
+        auto state = new (std::nothrow) DirectoryState;
+        if (!state) {
+            lastFileSystemError = "directory iterator allocation failed";
+            return nullptr;
+        }
+        if (recursive) {
+            for (std::filesystem::recursive_directory_iterator iterator(
+                    NativePath(path), error), end;
+                !error && iterator != end; iterator.increment(error))
+                state->entries.push_back(iterator->path());
+        }
+        else {
+            for (std::filesystem::directory_iterator iterator(
+                    NativePath(path), error), end;
+                !error && iterator != end; iterator.increment(error))
+                state->entries.push_back(iterator->path());
+        }
+        if (error) {
+            SetError(error);
+            delete state;
+            return nullptr;
+        }
+        std::sort(state->entries.begin(), state->entries.end(),
+            [](const auto& left, const auto& right) {
+                return PortablePath(left) < PortablePath(right);
+            });
+        ClearError();
+        return state;
+    });
+}
+
+extern "C" const char* absolute_fs_directory_next(void* handle) {
+    DirectoryState* state = static_cast<DirectoryState*>(handle);
+    if (!state) {
+        lastFileSystemError = "directory iterator is closed";
+        return nullptr;
+    }
+    if (state->index >= state->entries.size()) {
+        ClearError();
+        return "";
+    }
+    state->current = PortablePath(state->entries[state->index++]);
+    ClearError();
+    return state->current.c_str();
+}
+
+extern "C" void absolute_fs_directory_close(void* handle) {
+    delete static_cast<DirectoryState*>(handle);
+}
+
+extern "C" const char* absolute_fs_temp_directory() {
+    std::error_code error;
+    auto path = std::filesystem::temp_directory_path(error);
+    if (error) {
+        SetError(error);
+        return nullptr;
+    }
+    if (path.filename().empty() && path.has_relative_path())
+        path = path.parent_path();
+    lastFileSystemResult = PortablePath(path);
+    ClearError();
+    return lastFileSystemResult.c_str();
+}
+
+extern "C" const char* absolute_fs_create_temp_file(const char* prefix) {
+    std::error_code error;
+    const auto path = UniqueTemporaryPath(prefix, ".tmp", error);
+    if (!error) {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        if (!output) error = std::make_error_code(std::errc::io_error);
+    }
+    if (error) {
+        SetError(error);
+        return nullptr;
+    }
+    lastFileSystemResult = PortablePath(path);
+    ClearError();
+    return lastFileSystemResult.c_str();
+}
+
+extern "C" const char* absolute_fs_create_temp_directory(const char* prefix) {
+    std::error_code error;
+    const auto path = UniqueTemporaryPath(prefix, "", error);
+    if (!error && !std::filesystem::create_directory(path, error) && !error)
+        error = std::make_error_code(std::errc::file_exists);
+    if (error) {
+        SetError(error);
+        return nullptr;
+    }
+    lastFileSystemResult = PortablePath(path);
+    ClearError();
+    return lastFileSystemResult.c_str();
+}
+
+extern "C" void* absolute_fs_watcher_open(
+    const char* path, std::int32_t recursive) {
+    return RunFileIo<void*>([&]() -> void* {
+        if (!path) {
+            lastFileSystemError = "watch path is null";
+            return nullptr;
+        }
+        auto state = new (std::nothrow) WatchState;
+        if (!state) {
+            lastFileSystemError = "watcher allocation failed";
+            return nullptr;
+        }
+        state->root = NativePath(path);
+        state->recursive = recursive != 0;
+        std::error_code error;
+        state->snapshot = SnapshotDirectory(
+            state->root, state->recursive, error);
+        if (error) {
+            SetError(error);
+            delete state;
+            return nullptr;
+        }
+        ClearError();
+        return state;
+    });
+}
+
+extern "C" std::int32_t absolute_fs_watcher_poll(void* handle) {
+    return RunFileIo<std::int32_t>([&] {
+        WatchState* state = static_cast<WatchState*>(handle);
+        if (!state) {
+            lastFileSystemError = "watcher is closed";
+            return std::int32_t{-1};
+        }
+        if (state->pending.empty()) {
+            std::error_code error;
+            auto current = SnapshotDirectory(
+                state->root, state->recursive, error);
+            if (error) {
+                SetError(error);
+                return std::int32_t{-1};
+            }
+            std::vector<WatchEvent> events;
+            for (const auto& [path, previous] : state->snapshot) {
+                const auto found = current.find(path);
+                if (found == current.end()) events.push_back({3, path});
+                else if (!(found->second == previous))
+                    events.push_back({2, path});
+            }
+            for (const auto& [path, value] : current) {
+                if (!state->snapshot.contains(path))
+                    events.push_back({1, path});
+            }
+            std::sort(events.begin(), events.end(),
+                [](const WatchEvent& left, const WatchEvent& right) {
+                    if (left.path != right.path) return left.path < right.path;
+                    return left.kind < right.kind;
+                });
+            for (auto& event : events)
+                state->pending.push_back(std::move(event));
+            state->snapshot = std::move(current);
+        }
+        if (state->pending.empty()) {
+            ClearError();
+            return std::int32_t{0};
+        }
+        WatchEvent event = std::move(state->pending.front());
+        state->pending.pop_front();
+        state->currentPath = std::move(event.path);
+        ClearError();
+        return event.kind;
+    });
+}
+
+extern "C" const char* absolute_fs_watcher_path(void* handle) {
+    WatchState* state = static_cast<WatchState*>(handle);
+    if (!state) {
+        lastFileSystemError = "watcher is closed";
+        return nullptr;
+    }
+    ClearError();
+    return state->currentPath.c_str();
+}
+
+extern "C" void absolute_fs_watcher_close(void* handle) {
+    delete static_cast<WatchState*>(handle);
 }
 
 extern "C" const char* absolute_fs_error() {

@@ -496,7 +496,7 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 
 #### Roadmap std после 0.3
 
-- [ ] P0 collections:
+- [x] P0 collections:
   - [x] `Deque<T>` на кольцевом буфере с O(1) вставкой и удалением с обоих концов.
   - [x] `Queue<T>` и `Stack<T>` как компактные типизированные фасады без отдельных storage engines.
   - [x] `PriorityQueue<T>` на стабильной бинарной куче с пользовательским comparator.
@@ -512,7 +512,7 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   - [x] `std.bytes.ByteBuffer`: position/limit/capacity, slices и endian-aware primitives.
   - [x] `std.io`: `Reader`, `Writer`, buffered streams и memory streams.
 - [ ] P1 platform:
-  - [ ] Расширить `std.fs`: directory listing/walk, metadata, temporary files и watcher.
+  - [x] Расширить `std.fs`: directory listing/walk, metadata, temporary files и watcher.
   - [ ] Расширить `std.http`: headers collection, HTTPS/TLS, redirects, streaming,
     timeout/cancellation и multipart.
   - [ ] `Semaphore`, `RwLock`, `ConditionVariable` и `Once`.

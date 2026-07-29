@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0
+
+- Added deterministic `std.fs.list()` and recursive `walk()` snapshots plus a
+  resource-owning `DirectoryIterator` for allocation-sensitive traversal.
+- Added portable filesystem metadata with entry type, byte size, modification
+  time, and read-only state.
+- Added platform temporary-directory discovery and collision-safe temporary
+  file/directory creation.
+- Added a polling `std.fs.Watcher` with created, modified, and removed events.
+  Native filesystems and the WebAssembly virtual filesystem expose the same
+  API and are covered by execution regressions.
+
 ## 0.5.0
 
 - Added structured concurrency through `std.task.TaskGroup`. Adding a child

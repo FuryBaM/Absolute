@@ -516,6 +516,7 @@ typedef struct VfsNode {
     char* data;
     size_t length;
     size_t capacity;
+    uint64_t version;
 } VfsNode;
 
 typedef struct VfsHandle {
@@ -527,12 +528,37 @@ typedef struct VfsHandle {
     int eof;
 } VfsHandle;
 
+typedef struct VfsDirectoryHandle {
+    int count;
+    int position;
+    int nodes[ABSOLUTE_VFS_MAX_FILES];
+} VfsDirectoryHandle;
+
+typedef struct VfsWatchEvent {
+    int kind;
+    char path[ABSOLUTE_VFS_MAX_PATH];
+} VfsWatchEvent;
+
+typedef struct VfsWatcher {
+    char root[ABSOLUTE_VFS_MAX_PATH];
+    int recursive;
+    int snapshot_count;
+    char snapshot_paths[ABSOLUTE_VFS_MAX_FILES][ABSOLUTE_VFS_MAX_PATH];
+    uint64_t snapshot_versions[ABSOLUTE_VFS_MAX_FILES];
+    int pending_count;
+    int pending_position;
+    VfsWatchEvent pending[ABSOLUTE_VFS_MAX_FILES * 2];
+    char current_path[ABSOLUTE_VFS_MAX_PATH];
+} VfsWatcher;
+
 static VfsNode g_vfs[ABSOLUTE_VFS_MAX_FILES];
 static VfsHandle g_vfs_handles[ABSOLUTE_VFS_MAX_OPEN];
 static char g_fs_error[128];
 static char g_fs_cwd[ABSOLUTE_VFS_MAX_PATH] = "/";
 static char g_fs_string_scratch[8192];
 static char g_fs_path_scratch[ABSOLUTE_VFS_MAX_PATH];
+static uint64_t g_fs_version = 1;
+static uint64_t g_fs_temp_counter = 1;
 
 static void fs_set_error(const char* message) {
     size_t i = 0;
@@ -686,6 +712,89 @@ static int fs_find(const char* path) {
     return -1;
 }
 
+static int fs_path_is_child(
+    const char* candidate, const char* root, int recursive) {
+    size_t root_length = strlen(root);
+    if (root_length == 1 && root[0] == '/')
+        root_length = 0;
+    if (root_length > 0) {
+        if (strncmp(candidate, root, root_length) != 0)
+            return 0;
+        if (candidate[root_length] != '/')
+            return 0;
+    }
+    const char* relative = candidate + root_length;
+    while (*relative == '/')
+        ++relative;
+    if (!*relative)
+        return 0;
+    if (recursive)
+        return 1;
+    while (*relative) {
+        if (*relative == '/')
+            return 0;
+        ++relative;
+    }
+    return 1;
+}
+
+static void fs_sort_node_ids(int* nodes, int count) {
+    for (int i = 0; i < count; ++i) {
+        for (int j = i + 1; j < count; ++j) {
+            if (strcmp(g_vfs[nodes[j]].path, g_vfs[nodes[i]].path) < 0) {
+                int value = nodes[i];
+                nodes[i] = nodes[j];
+                nodes[j] = value;
+            }
+        }
+    }
+}
+
+static int fs_watcher_snapshot_find(
+    VfsWatcher* watcher, const char* path) {
+    for (int i = 0; i < watcher->snapshot_count; ++i) {
+        if (fs_streq(watcher->snapshot_paths[i], path))
+            return i;
+    }
+    return -1;
+}
+
+static void fs_watcher_capture(VfsWatcher* watcher) {
+    watcher->snapshot_count = 0;
+    for (int i = 0; i < ABSOLUTE_VFS_MAX_FILES; ++i) {
+        if (!g_vfs[i].used ||
+            !fs_path_is_child(g_vfs[i].path, watcher->root,
+                watcher->recursive))
+            continue;
+        int slot = watcher->snapshot_count++;
+        fs_copy_path(watcher->snapshot_paths[slot],
+            sizeof(watcher->snapshot_paths[slot]), g_vfs[i].path);
+        watcher->snapshot_versions[slot] = g_vfs[i].version;
+    }
+}
+
+static void fs_watcher_add_event(
+    VfsWatcher* watcher, int kind, const char* path) {
+    if (watcher->pending_count >= ABSOLUTE_VFS_MAX_FILES * 2)
+        return;
+    VfsWatchEvent* event = &watcher->pending[watcher->pending_count++];
+    event->kind = kind;
+    fs_copy_path(event->path, sizeof(event->path), path);
+}
+
+static void fs_watcher_sort_events(VfsWatcher* watcher) {
+    for (int i = 0; i < watcher->pending_count; ++i) {
+        for (int j = i + 1; j < watcher->pending_count; ++j) {
+            if (strcmp(watcher->pending[j].path,
+                    watcher->pending[i].path) < 0) {
+                VfsWatchEvent event = watcher->pending[i];
+                watcher->pending[i] = watcher->pending[j];
+                watcher->pending[j] = event;
+            }
+        }
+    }
+}
+
 static int fs_alloc_node(void) {
     for (int i = 0; i < ABSOLUTE_VFS_MAX_FILES; ++i) {
         if (!g_vfs[i].used) {
@@ -694,6 +803,7 @@ static int fs_alloc_node(void) {
             g_vfs[i].data = NULL;
             g_vfs[i].length = 0;
             g_vfs[i].capacity = 0;
+            g_vfs[i].version = g_fs_version++;
             g_vfs[i].path[0] = '\0';
             return i;
         }
@@ -757,6 +867,7 @@ int32_t absolute_fs_create_directories(const char* path) {
     }
     fs_copy_path(g_vfs[id].path, sizeof(g_vfs[id].path), fs_normalize(path));
     g_vfs[id].is_dir = 1;
+    g_vfs[id].version = g_fs_version++;
     fs_clear_error();
     return 1;
 }
@@ -769,6 +880,7 @@ int32_t absolute_fs_remove(const char* path) {
     }
     if (g_vfs[id].data)
         free(g_vfs[id].data);
+    g_vfs[id].version = g_fs_version++;
     g_vfs[id].used = 0;
     g_vfs[id].data = NULL;
     fs_clear_error();
@@ -785,6 +897,7 @@ int32_t absolute_fs_rename(const char* source, const char* destination) {
     if (dest >= 0)
         absolute_fs_remove(destination);
     fs_copy_path(g_vfs[id].path, sizeof(g_vfs[id].path), fs_normalize(destination));
+    g_vfs[id].version = g_fs_version++;
     fs_clear_error();
     return 1;
 }
@@ -823,6 +936,7 @@ int32_t absolute_fs_copy_file(const char* source, const char* destination, int32
     for (size_t i = 0; i < g_vfs[id].length; ++i)
         g_vfs[dest].data[i] = g_vfs[id].data[i];
     g_vfs[dest].data[g_vfs[id].length] = '\0';
+    g_vfs[dest].version = g_fs_version++;
     fs_clear_error();
     return 1;
 }
@@ -968,6 +1082,7 @@ int32_t absolute_fs_write_text(const char* path, const char* text, int32_t appen
     g_vfs[id].data = buffer;
     g_vfs[id].length = base + text_len;
     g_vfs[id].capacity = need;
+    g_vfs[id].version = g_fs_version++;
     fs_clear_error();
     return 1;
 }
@@ -1100,6 +1215,7 @@ int32_t absolute_fs_file_write(void* handle, const char* text) {
     node->data = buffer;
     node->length = base + text_len;
     node->capacity = need;
+    node->version = g_fs_version++;
     file->pos = node->length;
     fs_clear_error();
     return 1;
@@ -1116,6 +1232,204 @@ int32_t absolute_fs_file_eof(void* handle) {
     if (!file || !file->used)
         return 1;
     return file->eof ? 1 : 0;
+}
+
+int32_t absolute_fs_metadata_type(const char* path) {
+    int id = fs_find(path);
+    fs_clear_error();
+    if (id < 0)
+        return 0;
+    return g_vfs[id].is_dir ? 2 : 1;
+}
+
+int64_t absolute_fs_metadata_modified_millis(const char* path) {
+    int id = fs_find(path);
+    if (id < 0) {
+        fs_set_error("metadata path not found");
+        return -1;
+    }
+    fs_clear_error();
+    return (int64_t)g_vfs[id].version;
+}
+
+int32_t absolute_fs_metadata_read_only(const char* path) {
+    int id = fs_find(path);
+    if (id < 0) {
+        fs_set_error("metadata path not found");
+        return -1;
+    }
+    fs_clear_error();
+    return 0;
+}
+
+void* absolute_fs_directory_open(const char* path, int32_t recursive) {
+    char root[ABSOLUTE_VFS_MAX_PATH];
+    fs_copy_path(root, sizeof(root), fs_normalize(path));
+    if (!absolute_fs_is_directory(root)) {
+        fs_set_error("directory not found");
+        return NULL;
+    }
+    VfsDirectoryHandle* handle =
+        (VfsDirectoryHandle*)heap_alloc(sizeof(VfsDirectoryHandle));
+    if (!handle) {
+        fs_set_error("directory iterator allocation failed");
+        return NULL;
+    }
+    handle->count = 0;
+    handle->position = 0;
+    for (int i = 0; i < ABSOLUTE_VFS_MAX_FILES; ++i) {
+        if (g_vfs[i].used &&
+            fs_path_is_child(g_vfs[i].path, root, recursive != 0))
+            handle->nodes[handle->count++] = i;
+    }
+    fs_sort_node_ids(handle->nodes, handle->count);
+    fs_clear_error();
+    return handle;
+}
+
+const char* absolute_fs_directory_next(void* value) {
+    VfsDirectoryHandle* handle = (VfsDirectoryHandle*)value;
+    if (!handle) {
+        fs_set_error("directory iterator is closed");
+        return "";
+    }
+    if (handle->position >= handle->count) {
+        fs_clear_error();
+        return "";
+    }
+    int node = handle->nodes[handle->position++];
+    fs_clear_error();
+    return g_vfs[node].path;
+}
+
+void absolute_fs_directory_close(void* value) {
+    if (value)
+        free(value);
+}
+
+const char* absolute_fs_temp_directory(void) {
+    if (!absolute_fs_is_directory("/tmp"))
+        absolute_fs_create_directories("/tmp");
+    fs_clear_error();
+    return "/tmp";
+}
+
+static const char* fs_create_temp_path(const char* prefix, int directory) {
+    if (!prefix || !*prefix)
+        prefix = "absolute-";
+    absolute_fs_temp_directory();
+    for (int attempt = 0; attempt < 128; ++attempt) {
+        snprintf(g_fs_string_scratch, sizeof(g_fs_string_scratch),
+            "/tmp/%s%llu%s", prefix,
+            (unsigned long long)g_fs_temp_counter++,
+            directory ? "" : ".tmp");
+        if (fs_find(g_fs_string_scratch) >= 0)
+            continue;
+        int result = directory
+            ? absolute_fs_create_directories(g_fs_string_scratch)
+            : absolute_fs_write_text(g_fs_string_scratch, "", 0);
+        if (result) {
+            fs_clear_error();
+            return g_fs_string_scratch;
+        }
+        break;
+    }
+    fs_set_error("temporary path creation failed");
+    return "";
+}
+
+const char* absolute_fs_create_temp_file(const char* prefix) {
+    return fs_create_temp_path(prefix, 0);
+}
+
+const char* absolute_fs_create_temp_directory(const char* prefix) {
+    return fs_create_temp_path(prefix, 1);
+}
+
+void* absolute_fs_watcher_open(const char* path, int32_t recursive) {
+    char root[ABSOLUTE_VFS_MAX_PATH];
+    fs_copy_path(root, sizeof(root), fs_normalize(path));
+    if (!absolute_fs_is_directory(root)) {
+        fs_set_error("watch directory not found");
+        return NULL;
+    }
+    VfsWatcher* watcher = (VfsWatcher*)heap_alloc(sizeof(VfsWatcher));
+    if (!watcher) {
+        fs_set_error("watcher allocation failed");
+        return NULL;
+    }
+    memset(watcher, 0, sizeof(VfsWatcher));
+    fs_copy_path(watcher->root, sizeof(watcher->root), root);
+    watcher->recursive = recursive != 0;
+    fs_watcher_capture(watcher);
+    fs_clear_error();
+    return watcher;
+}
+
+int32_t absolute_fs_watcher_poll(void* value) {
+    VfsWatcher* watcher = (VfsWatcher*)value;
+    if (!watcher) {
+        fs_set_error("watcher is closed");
+        return -1;
+    }
+    if (watcher->pending_position >= watcher->pending_count) {
+        int old_count = watcher->snapshot_count;
+        char old_paths[ABSOLUTE_VFS_MAX_FILES][ABSOLUTE_VFS_MAX_PATH];
+        uint64_t old_versions[ABSOLUTE_VFS_MAX_FILES];
+        for (int i = 0; i < old_count; ++i) {
+            fs_copy_path(old_paths[i], sizeof(old_paths[i]),
+                watcher->snapshot_paths[i]);
+            old_versions[i] = watcher->snapshot_versions[i];
+        }
+        watcher->pending_count = 0;
+        watcher->pending_position = 0;
+        fs_watcher_capture(watcher);
+        for (int i = 0; i < old_count; ++i) {
+            int current = fs_watcher_snapshot_find(watcher, old_paths[i]);
+            if (current < 0)
+                fs_watcher_add_event(watcher, 3, old_paths[i]);
+            else if (watcher->snapshot_versions[current] != old_versions[i])
+                fs_watcher_add_event(watcher, 2, old_paths[i]);
+        }
+        for (int i = 0; i < watcher->snapshot_count; ++i) {
+            int found = 0;
+            for (int old = 0; old < old_count; ++old) {
+                if (fs_streq(watcher->snapshot_paths[i], old_paths[old])) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found)
+                fs_watcher_add_event(watcher, 1,
+                    watcher->snapshot_paths[i]);
+        }
+        fs_watcher_sort_events(watcher);
+    }
+    if (watcher->pending_position >= watcher->pending_count) {
+        fs_clear_error();
+        return 0;
+    }
+    VfsWatchEvent* event =
+        &watcher->pending[watcher->pending_position++];
+    fs_copy_path(watcher->current_path,
+        sizeof(watcher->current_path), event->path);
+    fs_clear_error();
+    return event->kind;
+}
+
+const char* absolute_fs_watcher_path(void* value) {
+    VfsWatcher* watcher = (VfsWatcher*)value;
+    if (!watcher) {
+        fs_set_error("watcher is closed");
+        return "";
+    }
+    fs_clear_error();
+    return watcher->current_path;
+}
+
+void absolute_fs_watcher_close(void* value) {
+    if (value)
+        free(value);
 }
 
 const char* absolute_fs_error(void) {

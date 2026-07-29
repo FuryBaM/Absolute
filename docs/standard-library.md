@@ -22,7 +22,7 @@ Dependents declare:
 ```json
 {
   "dependencies": {
-    "absolute.std": "^0.5.0"
+    "absolute.std": "^0.6.0"
   }
 }
 ```
@@ -269,6 +269,28 @@ Functional operations are also available: `join(left, right)`,
 `isAbsolute(path)`, and `separator()`. Both native and WebAssembly
 implementations collapse `.` and `..` segments without requiring the path to
 exist.
+
+Directory traversal is available as deterministic snapshots through
+`list(path)` and recursive `walk(path)`. For streaming traversal use
+`DirectoryIterator`; it owns its native/VFS cursor and closes automatically.
+`metadata(path)` returns an `EntryType`, byte size, modification timestamp, and
+read-only flag.
+
+```absolute
+string[] files = std.fs.walk("assets");
+std.fs.Metadata info = std.fs.metadata(files[0]);
+
+std.fs.Watcher* watcher = std.fs.watch("assets", true);
+if (watcher.poll()) {
+    std.fs.FileEvent event = watcher.event;
+    println(event.path);
+}
+```
+
+`tempDirectory()`, `createTempFile(prefix)`, and
+`createTempDirectory(prefix)` use the host temporary location on native
+targets and `/tmp` in the WebAssembly virtual filesystem. `Watcher.poll()` is
+non-blocking and reports deterministic created, modified, or removed events.
 
 Application projects may provide default arguments:
 

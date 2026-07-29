@@ -28,6 +28,59 @@ export "C" int32 wasm_fs_roundtrip() {
     if (path.size() != 10 || !path.absolute) {
         return 4;
     }
+
+    std.fs.Metadata metadata = std.fs.metadata(path.toString());
+    if (!metadata.isFile() || metadata.size != 10 ||
+        metadata.modifiedMillis <= 0) {
+        return 8;
+    }
+
+    string tree = "/tmp/tree";
+    string nested = "/tmp/tree/nested";
+    std.fs.createDirectories(tree);
+    std.fs.createDirectories(nested);
+    std.fs.writeText("/tmp/tree/a.txt", "a");
+    std.fs.writeText("/tmp/tree/nested/b.txt", "b");
+    string[] direct = std.fs.list(tree);
+    string[] recursive = std.fs.walk(tree);
+    if (direct.length != 2 || recursive.length != 3) {
+        return 9;
+    }
+
+    std.fs.Watcher* watcher = std.fs.watch(tree, true);
+    std.fs.writeText("/tmp/tree/new.txt", "new");
+    if (!watcher.poll()) {
+        return 10;
+    }
+    std.fs.FileEvent createdEvent = watcher.event;
+    if (createdEvent.kind != std.fs.EventKind.Created ||
+        createdEvent.path != "/tmp/tree/new.txt") {
+        return 10;
+    }
+    std.fs.remove("/tmp/tree/new.txt");
+    if (!watcher.poll()) {
+        return 11;
+    }
+    std.fs.FileEvent removedEvent = watcher.event;
+    if (removedEvent.kind != std.fs.EventKind.Removed) {
+        return 11;
+    }
+    delete watcher;
+
+    string temporaryFile = std.fs.createTempFile("wasm-");
+    string temporaryDirectory = std.fs.createTempDirectory("wasm-");
+    if (!std.fs.isFile(temporaryFile) ||
+        !std.fs.isDirectory(temporaryDirectory) ||
+        std.fs.tempDirectory() != "/tmp") {
+        return 12;
+    }
+    std.fs.remove(temporaryFile);
+    std.fs.remove(temporaryDirectory);
+
+    std.fs.remove("/tmp/tree/nested/b.txt");
+    std.fs.remove("/tmp/tree/a.txt");
+    std.fs.remove(nested);
+    std.fs.remove(tree);
     path.remove();
     if (path.exists()) {
         return 6;

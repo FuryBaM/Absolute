@@ -1,15 +1,28 @@
 import "../std/fs.abs";
 
+void removeTree(string path) {
+    if (!std.fs.exists(path)) { return; }
+    if (!std.fs.isDirectory(path)) {
+        std.fs.remove(path);
+        return;
+    }
+    string[] entries = std.fs.walk(path);
+    int32 index = entries.length - 1;
+    while (index >= 0) {
+        std.fs.remove(entries[index]);
+        index = index - 1;
+    }
+    std.fs.remove(path);
+}
+
 int32 main() {
     string directory = "absolute-std-fs-test";
     string source = std.fs.join(directory, "source.txt");
     string copied = std.fs.join(directory, "copied.txt");
     string renamed = std.fs.join(directory, "renamed.txt");
 
-    if (std.fs.exists(renamed)) { std.fs.remove(renamed); }
-    if (std.fs.exists(copied)) { std.fs.remove(copied); }
-    if (std.fs.exists(source)) { std.fs.remove(source); }
-    if (!std.fs.exists(directory)) { std.fs.createDirectories(directory); }
+    removeTree(directory);
+    std.fs.createDirectories(directory);
 
     assert(std.fs.isDirectory(directory), "created path must be a directory");
     std.fs.writeText(source, "alpha");
@@ -69,6 +82,62 @@ int32 main() {
     assert(std.fs.currentDirectory() != "", "current directory must be available");
     assert(std.fs.absolute(source) != "", "absolute path must be available");
 
+    string tree = std.fs.join(directory, "tree");
+    string nestedDirectory = std.fs.join(tree, "nested");
+    string firstEntry = std.fs.join(tree, "a.txt");
+    string secondEntry = std.fs.join(tree, "b.txt");
+    string deepEntry = std.fs.join(nestedDirectory, "deep.txt");
+    if (!std.fs.exists(nestedDirectory)) {
+        std.fs.createDirectories(nestedDirectory);
+    }
+    std.fs.writeText(firstEntry, "a");
+    std.fs.writeText(secondEntry, "bb");
+    std.fs.writeText(deepEntry, "deep");
+
+    string[] directEntries = std.fs.list(tree);
+    assert(directEntries.length == 3, "directory listing returns direct children");
+    assert(directEntries[0] == firstEntry && directEntries[1] == secondEntry &&
+        directEntries[2] == nestedDirectory, "directory listing is deterministic");
+    string[] recursiveEntries = std.fs.walk(tree);
+    assert(recursiveEntries.length == 4,
+        "recursive directory walk returns all descendants");
+
+    std.fs.Metadata fileMetadata = std.fs.metadata(secondEntry);
+    assert(fileMetadata.exists() && fileMetadata.isFile() &&
+        fileMetadata.size == 2 && fileMetadata.modifiedMillis > 0,
+        "file metadata exposes type, size, and modification time");
+    std.fs.Metadata directoryMetadata = std.fs.metadata(nestedDirectory);
+    assert(directoryMetadata.isDirectory() && directoryMetadata.size == 0,
+        "directory metadata exposes directory type");
+
+    std.fs.Watcher* watcher = std.fs.watch(tree, false);
+    string watched = std.fs.join(tree, "watched.txt");
+    std.fs.writeText(watched, "created");
+    assert(watcher.poll(), "watcher observes a created file");
+    std.fs.FileEvent createdEvent = watcher.event;
+    assert(createdEvent.kind == std.fs.EventKind.Created &&
+        createdEvent.path == watched, "watcher reports created path");
+    std.fs.remove(watched);
+    assert(watcher.poll(), "watcher observes a removed file");
+    std.fs.FileEvent removedEvent = watcher.event;
+    assert(removedEvent.kind == std.fs.EventKind.Removed &&
+        removedEvent.path == watched, "watcher reports removed path");
+    delete watcher;
+
+    string temporaryFile = std.fs.createTempFile("absolute-fs-test-");
+    string temporaryDirectory = std.fs.createTempDirectory("absolute-fs-test-");
+    assert(std.fs.isFile(temporaryFile) && std.fs.isDirectory(temporaryDirectory),
+        "temporary paths are created with the requested kind");
+    assert(std.fs.parent(temporaryFile) == std.fs.tempDirectory(),
+        "temporary file uses the platform temporary directory");
+    std.fs.remove(temporaryFile);
+    std.fs.remove(temporaryDirectory);
+
+    std.fs.remove(deepEntry);
+    std.fs.remove(firstEntry);
+    std.fs.remove(secondEntry);
+    std.fs.remove(nestedDirectory);
+    std.fs.remove(tree);
     std.fs.remove(renamed);
     std.fs.remove(source);
     std.fs.remove(directory);
