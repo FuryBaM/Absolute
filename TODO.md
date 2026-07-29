@@ -971,55 +971,55 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 
 ## P0 — обнаруженные пробелы в корректности владения памятью
 
-- [ ] Закрыть strong ownership cycle через `move(owner)` в owning-поле, включая
+- [x] Закрыть strong ownership cycle через `move(owner)` в owning-поле, включая
   `root.child = move(root)` и более глубокие back-edge пути. Analyzer должен
   сопоставлять источник перемещаемого owner с ownership-путём назначения и выдавать
   `E_MANAGED_OWNERSHIP_CYCLE`; добавить semantic/error/runtime regression-тесты.
-- [ ] Унифицировать cleanup при перезаписи локального managed-owner: перед
+- [x] Унифицировать cleanup при перезаписи локального managed-owner: перед
   `absolute_managed_destroy` обязательно вызвать generated pointee destructor,
   включая virtual slot 0 для class/interface, struct cleanup, пользовательский
   `destroy()` и рекурсивное освобождение strong-полей. Добавить тест перезаписи
   владельца с вложенным child и leak-check.
-- [ ] Исправить move-assignment resource-owning aggregate: старое значение destination
+- [x] Исправить move-assignment resource-owning aggregate: старое значение destination
   должно полностью очищаться перед записью нового, независимо от того, является
   destination локальной переменной, полем или временным storage. Отдельно определить
   и проверить self-move, исключение между cleanup и store и повторную инициализацию.
-- [ ] Добавить типизированное уничтожение непринятой transfer capsule. Capsule должна
+- [x] Добавить типизированное уничтожение непринятой transfer capsule. Capsule должна
   хранить destructor/rehome metadata либо достаточную runtime type information,
   чтобы cancel/reject/close/destroy освобождали весь object graph, а не только
   корневой allocation slot.
-- [ ] Сделать managed slot table потокобезопасной и со стабильными адресами:
+- [x] Сделать managed slot table потокобезопасной и со стабильными адресами:
   исключить гонки `slots`/`freeSlots`, reallocation `slots.data()`, неатомарные
   публикации pointer/generation/type и конфликт fast path с create/destroy/transfer.
   Добавить многопоточный stress под TSan.
-- [ ] До появления полноценной element-wise семантики запретить массивы элементов,
+- [x] До появления полноценной element-wise семантики запретить массивы элементов,
   для которых `TypeOwnsResources(element)` истинно. Затем реализовать корректные
   element destroy/move/clone, rollback при частичной инициализации, правила slices
   и запрет shallow `memcpy` владельцев.
-- [ ] Заменить недостаточно точный `pointerOwner: SymbolId` на ownership region/place
+- [x] Заменить недостаточно точный `pointerOwner: SymbolId` на ownership region/place
   identity, способный представлять `root`, `root.child`, `root.child.payload` и
   алиасы полей. Уничтожение корня должно статически помечать алиасы вложенных полей
   expired; перенос через move, ветвления, return и field reassignment должен
   сохранять или корректно объединять region state.
-- [ ] Для всех перечисленных случаев добавить минимальные semantic/error/LLVM/runtime
+- [x] Для всех перечисленных случаев добавить минимальные semantic/error/LLVM/runtime
   тесты и запускать их в ownership torture suite под ASan, LSan, UBSan и TSan,
   где соответствующий sanitizer применим.
 
 ## P1 — категории выражений, places и ownership flow
 
-- [ ] Заменить перегруженный `bool isLValue` на явную категорию выражения
+- [x] Заменить перегруженный `bool isLValue` на явную категорию выражения
   `ValueCategory { Value, Place }`. Категория описывает только форму выражения:
   вычисленное значение либо стабильное место хранения; pointer-role и владение
   не кодировать внутри неё.
-- [ ] Ввести `PlaceInfo { readable, writable, addressable }` для переменных,
+- [x] Ввести `PlaceInfo { readable, writable, addressable }` для переменных,
   параметров, полей, properties и indexers. Writable property является place
   даже без физического адреса; const-place readable/addressable, но не writable.
   Возможность `delete` выводить из pointer-role и ownership-state, а не из place.
-- [ ] Разнести pointer-role и ownership effect. Использовать роли наподобие
+- [x] Разнести pointer-role и ownership effect. Использовать роли наподобие
   `ManagedOwner`, `ManagedSub`, `Weak`, `RawOwner`, `RawView` и `Ref`, а для
   результата выражения отдельно хранить `createsOwner`, `consumesSource` и
   identity исходного place/ownership region, когда источник поглощается.
-- [ ] Зафиксировать основное правило managed-владения: использование owner без
+- [x] Зафиксировать основное правило managed-владения: использование owner без
   `move` даёт безопасный sub/view и не меняет владельца; `move(ownerPlace)`
   передаёт владение, инвалидирует source и создаёт owning value. Свежий `new`,
   owner-returning call или return уже создаёт owning value без поглощаемого place.
@@ -1027,24 +1027,24 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   parameters или скрытый входной ownership-mode. Обычная передача означает view,
   передача владения выражается только явным `move` либо свежим owning result;
   внутренний HIR helper не должен становиться отдельной source-семантикой.
-- [ ] Оставить `weak T*` простым generation-checked наблюдателем: weak ничего не
+- [x] Оставить `weak T*` простым generation-checked наблюдателем: weak ничего не
   удерживает, не освобождает и не участвует в ownership flow. Для weak запретить
   `move`, `delete`, owner-параметры и любые попытки повышения до strong owner;
   разрешить присваивание наблюдателя, null/expired check и checked dereference.
-- [ ] Разделить raw-указатели на `RawOwner` и `RawView`. Обычное использование
+- [x] Разделить raw-указатели на `RawOwner` и `RawView`. Обычное использование
   `RawOwner` передаёт только raw view и сохраняет обязанность `delete` у source;
   `move(rawOwner)` переносит именно обязанность вызвать `delete`, инвалидирует
   source и делает получателя новым raw-owner. Для `RawView` запретить `move` и
   `delete`, поскольку он не владеет allocation.
-- [ ] Считать `T&`/`const T&` и source-алиас `ref` чистым borrow на чужой place.
+- [x] Считать `T&`/`const T&` и source-алиас `ref` чистым borrow на чужой place.
   Reference не получает ownership даже при ссылке на owner, поэтому для него
   запрещены `move`, `delete` и передача в owner-контракт; владение передаётся
   только через исходный owner-place.
-- [ ] Перевести Analyzer `Result`/`ExpressionInfo`, `Save`, value-flow, argument,
+- [x] Перевести Analyzer `Result`/`ExpressionInfo`, `Save`, value-flow, argument,
   assignment и return checks, а также CodeGen address/value lowering на новую
   модель без `isMoveResult`/`forward`-эвристик. Source invalidation и cleanup
   obligation должны следовать за ownership region, а не за машинным адресом.
-- [ ] Добавить semantic/error/LLVM/runtime tests для managed owner/sub, weak,
+- [x] Добавить semantic/error/LLVM/runtime tests для managed owner/sub, weak,
   raw owner/view и `T&`/`const T&`: обычная передача, `move`, fresh owner-result,
   повторное использование moved-from source, потерянный owning result, double
   delete, попытка move/delete через weak/ref/raw-view и cleanup на всех путях.
