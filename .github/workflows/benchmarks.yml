@@ -1,118 +1,89 @@
-name: Multi-language benchmarks
+name: One-shot ownership TODO update
 
 on:
-  workflow_dispatch:
-  pull_request:
-    branches: [master]
+  push:
+    branches: [agent/stabilize-foundation]
     paths:
-      - "Absolute-*/**"
-      - "benchmarks/**"
-      - "scripts/**"
-      - "build-windows.bat"
-      - "CMakeLists.txt"
       - ".github/workflows/benchmarks.yml"
 
+permissions:
+  contents: write
+
 jobs:
-  windows-benchmarks:
-    runs-on: windows-latest
-    timeout-minutes: 180
-    env:
-      ABSOLUTE_BENCHMARK_NO_PAUSE: "1"
-
+  update-todo:
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout
+      - name: Check out branch
         uses: actions/checkout@v4
-
-      - name: Set up .NET 10
-        uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          ref: agent/stabilize-foundation
+          fetch-depth: 0
 
-      - name: Set up Java 25
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "25"
-
-      - name: Set up Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Cache portable LLVM SDK
-        uses: actions/cache@v4
-        with:
-          path: .absolute/toolchains/llvm-18.1.8
-          key: windows-llvm-18.1.8-sdk-v1
-
-      - name: Record runner environment
-        shell: pwsh
+      - name: Replace ownership roadmap section
+        shell: bash
         run: |
-          Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors | Format-List
-          dotnet --info
-          java -version
-          node --version
-          python --version
-          cmake --version
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
 
-      - name: Bootstrap and build Absolute Release
-        shell: cmd
-        run: build-windows.bat --bootstrap -NoTest
+          path = Path("TODO.md")
+          text = path.read_text(encoding="utf-8")
+          marker = "## P1 — категории выражений, places и forwarding"
+          if marker not in text:
+              raise SystemExit(f"missing marker: {marker}")
 
-      - name: Run array and memory benchmarks
-        id: array
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force benchmarks/array-suite/results | Out-Null
-          & cmd.exe /d /s /c "benchmarks\array-suite\run.bat 5 1 1" 2>&1 |
-            Tee-Object -FilePath benchmarks/array-suite/results/ci-array.log
-          $code = $LASTEXITCODE
-          if ($code -ne 0) { exit $code }
+          prefix = text.split(marker, 1)[0].rstrip()
+          section = r'''
+          ## P1 — категории выражений, places и ownership flow
 
-      - name: Run pointer and object benchmarks
-        id: pointer
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force benchmarks/pointer-object-suite/results | Out-Null
-          & cmd.exe /d /s /c "benchmarks\pointer-object-suite\run.bat 5 1 1" 2>&1 |
-            Tee-Object -FilePath benchmarks/pointer-object-suite/results/ci-pointer.log
-          $code = $LASTEXITCODE
-          if ($code -ne 0) { exit $code }
+          - [ ] Заменить перегруженный `bool isLValue` на явную категорию выражения
+            `ValueCategory { Value, Place }`. Категория описывает только форму выражения:
+            вычисленное значение либо стабильное место хранения; pointer-role и владение
+            не кодировать внутри неё.
+          - [ ] Ввести `PlaceInfo { readable, writable, addressable }` для переменных,
+            параметров, полей, properties и indexers. Writable property является place
+            даже без физического адреса; const-place readable/addressable, но не writable.
+            Возможность `delete` выводить из pointer-role и ownership-state, а не из place.
+          - [ ] Разнести pointer-role и ownership effect. Использовать роли наподобие
+            `ManagedOwner`, `ManagedSub`, `Weak`, `RawOwner`, `RawView` и `Ref`, а для
+            результата выражения отдельно хранить `createsOwner`, `consumesSource` и
+            identity исходного place/ownership region, когда источник поглощается.
+          - [ ] Зафиксировать основное правило managed-владения: использование owner без
+            `move` даёт безопасный sub/view и не меняет владельца; `move(ownerPlace)`
+            передаёт владение, инвалидирует source и создаёт owning value. Свежий `new`,
+            owner-returning call или return уже создаёт owning value без поглощаемого place.
+          - [ ] Удалить `forward` из пользовательской модели языка и не вводить forwarding
+            parameters или скрытый входной ownership-mode. Обычная передача означает view,
+            передача владения выражается только явным `move` либо свежим owning result;
+            внутренний HIR helper не должен становиться отдельной source-семантикой.
+          - [ ] Оставить `weak T*` простым generation-checked наблюдателем: weak ничего не
+            удерживает, не освобождает и не участвует в ownership flow. Для weak запретить
+            `move`, `delete`, owner-параметры и любые попытки повышения до strong owner;
+            разрешить присваивание наблюдателя, null/expired check и checked dereference.
+          - [ ] Разделить raw-указатели на `RawOwner` и `RawView`. Обычное использование
+            `RawOwner` передаёт только raw view и сохраняет обязанность `delete` у source;
+            `move(rawOwner)` переносит именно обязанность вызвать `delete`, инвалидирует
+            source и делает получателя новым raw-owner. Для `RawView` запретить `move` и
+            `delete`, поскольку он не владеет allocation.
+          - [ ] Считать `T&`/`const T&` и source-алиас `ref` чистым borrow на чужой place.
+            Reference не получает ownership даже при ссылке на owner, поэтому для него
+            запрещены `move`, `delete` и передача в owner-контракт; владение передаётся
+            только через исходный owner-place.
+          - [ ] Перевести Analyzer `Result`/`ExpressionInfo`, `Save`, value-flow, argument,
+            assignment и return checks, а также CodeGen address/value lowering на новую
+            модель без `isMoveResult`/`forward`-эвристик. Source invalidation и cleanup
+            obligation должны следовать за ownership region, а не за машинным адресом.
+          - [ ] Добавить semantic/error/LLVM/runtime tests для managed owner/sub, weak,
+            raw owner/view и `T&`/`const T&`: обычная передача, `move`, fresh owner-result,
+            повторное использование moved-from source, потерянный owning result, double
+            delete, попытка move/delete через weak/ref/raw-view и cleanup на всех путях.
+          '''.strip()
 
-      - name: Run compiler build benchmark
-        id: build
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force benchmarks/build-suite/results | Out-Null
-          & cmd.exe /d /s /c "benchmarks\build-suite\run.bat 4 linux windows" 2>&1 |
-            Tee-Object -FilePath benchmarks/build-suite/results/ci-build.log
-          $code = $LASTEXITCODE
-          if ($code -ne 0) { exit $code }
+          path.write_text(prefix + "\n\n" + section + "\n", encoding="utf-8")
+          PY
 
-      - name: Upload benchmark results and logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: absolute-benchmark-results
-          path: benchmarks/**/results/*
-          if-no-files-found: warn
-
-      - name: Fail when a benchmark suite failed
-        if: always()
-        shell: pwsh
-        run: |
-          $failed = @()
-          if ("${{ steps.array.outcome }}" -ne "success") { $failed += "array" }
-          if ("${{ steps.pointer.outcome }}" -ne "success") { $failed += "pointer-object" }
-          if ("${{ steps.build.outcome }}" -ne "success") { $failed += "build" }
-          if ($failed.Count -gt 0) {
-            throw "Benchmark suites failed: $($failed -join ', ')"
-          }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add TODO.md
+          git commit -m 'Clarify ownership flow for raw weak and ref'
+          git push origin HEAD:agent/stabilize-foundation
