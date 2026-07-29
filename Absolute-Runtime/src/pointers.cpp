@@ -11,18 +11,19 @@ namespace {
         void* pointer = nullptr;
         std::uint32_t generation = 1;
         std::uint64_t type = 0;
+        void (*deleter)(void*) = nullptr;
     };
-}
-
-extern "C" {
-    Slot* absolute_managed_slots_data = nullptr;
-    std::uint32_t absolute_managed_slots_size = 0;
 }
 
 namespace {
     std::mutex slotsMutex;
+    std::once_flag leakCheckRegistration;
     std::vector<Slot> slots;
     std::vector<std::uint32_t> freeSlots;
+
+    void DefaultDeleter(void* pointer) {
+        std::free(pointer);
+    }
 
     std::uint64_t MakeHandle(std::uint32_t id, std::uint32_t generation) {
         return (static_cast<std::uint64_t>(generation) << 32U) | id;
@@ -43,6 +44,29 @@ namespace {
         Slot& slot = slots[id];
         return slot.generation == HandleGeneration(handle) ? &slot : nullptr;
     }
+
+    std::uint64_t RegisterAllocation(
+        void* allocation, void (*deleter)(void*)) {
+        std::lock_guard<std::mutex> lock(slotsMutex);
+        std::uint32_t id;
+        if (!freeSlots.empty()) {
+            id = freeSlots.back();
+            freeSlots.pop_back();
+            slots[id].pointer = allocation;
+            slots[id].type = 0;
+            slots[id].deleter = deleter ? deleter : DefaultDeleter;
+        }
+        else {
+            if (slots.size() >= std::numeric_limits<std::uint32_t>::max()) {
+                std::cerr << "Absolute runtime error: managed pointer slot table is full\n";
+                std::abort();
+            }
+            id = static_cast<std::uint32_t>(slots.size());
+            slots.push_back({allocation, 1, 0,
+                deleter ? deleter : DefaultDeleter});
+        }
+        return MakeHandle(id, slots[id].generation);
+    }
 }
 
 extern "C" void absolute_managed_check_leaks() {
@@ -62,10 +86,9 @@ extern "C" void absolute_managed_check_leaks() {
 }
 
 extern "C" std::uint64_t absolute_managed_create(std::uint64_t size) {
-    static std::atomic<bool> initialized = false;
-    if (!initialized.exchange(true)) {
+    std::call_once(leakCheckRegistration, [] {
         std::atexit(absolute_managed_check_leaks);
-    }
+    });
 
     void* allocation = std::calloc(1, static_cast<std::size_t>(size == 0 ? 1 : size));
     if (!allocation) {
@@ -73,26 +96,7 @@ extern "C" std::uint64_t absolute_managed_create(std::uint64_t size) {
         std::abort();
     }
 
-    std::lock_guard<std::mutex> lock(slotsMutex);
-    std::uint32_t id;
-    if (!freeSlots.empty()) {
-        id = freeSlots.back();
-        freeSlots.pop_back();
-        slots[id].pointer = allocation;
-        slots[id].type = 0;
-    }
-    else {
-        if (slots.size() >= std::numeric_limits<std::uint32_t>::max()) {
-            std::free(allocation);
-            std::cerr << "Absolute runtime error: managed pointer slot table is full\n";
-            std::abort();
-        }
-        id = static_cast<std::uint32_t>(slots.size());
-        slots.push_back({allocation, 1});
-        absolute_managed_slots_data = slots.data();
-        absolute_managed_slots_size = static_cast<std::uint32_t>(slots.size());
-    }
-    return MakeHandle(id, slots[id].generation);
+    return RegisterAllocation(allocation, DefaultDeleter);
 }
 
 extern "C" void* absolute_managed_get(std::uint64_t handle) {
@@ -123,16 +127,23 @@ extern "C" void* absolute_managed_require(std::uint64_t handle) {
 }
 
 extern "C" void absolute_managed_destroy(std::uint64_t handle) {
-    std::lock_guard<std::mutex> lock(slotsMutex);
-    Slot* slot = Find(handle);
-    if (!slot || !slot->pointer) return;
-    const std::uint32_t id = HandleId(handle);
-    std::free(slot->pointer);
-    slot->pointer = nullptr;
-    slot->type = 0;
-    ++slot->generation;
-    if (slot->generation == 0) ++slot->generation;
-    freeSlots.push_back(id);
+    void* pointer = nullptr;
+    void (*deleter)(void*) = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(slotsMutex);
+        Slot* slot = Find(handle);
+        if (!slot || !slot->pointer) return;
+        const std::uint32_t id = HandleId(handle);
+        pointer = slot->pointer;
+        deleter = slot->deleter ? slot->deleter : DefaultDeleter;
+        slot->pointer = nullptr;
+        slot->type = 0;
+        slot->deleter = nullptr;
+        ++slot->generation;
+        if (slot->generation == 0) ++slot->generation;
+        freeSlots.push_back(id);
+    }
+    deleter(pointer);
 }
 
 extern "C" std::uint64_t absolute_managed_transfer(std::uint64_t handle) {
@@ -156,9 +167,18 @@ namespace {
     };
 }
 
+extern "C" void* absolute_capsule_create_typed(
+    std::uint64_t handle, void (*deleter)(void*));
+
 extern "C" void* absolute_capsule_create(std::uint64_t handle) {
+    return absolute_capsule_create_typed(handle, nullptr);
+}
+
+extern "C" void* absolute_capsule_create_typed(
+    std::uint64_t handle, void (*deleter)(void*)) {
     CapsuleImpl* capsule = new CapsuleImpl;
     capsule->handle = absolute_managed_transfer(handle);
+    capsule->deleter_fn = deleter;
     return capsule;
 }
 
@@ -190,58 +210,10 @@ extern "C" void absolute_capsule_destroy(void* capsulePtr) {
     delete capsule;
 }
 
-struct AbsoluteControlBlock {
-    std::atomic<std::int32_t> strong_count{1};
-    std::atomic<std::int32_t> weak_count{1};
-    void* object_ptr = nullptr;
-    void (*deleter_fn)(void*) = nullptr;
-};
-
-extern "C" AbsoluteControlBlock* absolute_control_block_create(void* ptr, void (*deleter)(void*)) {
-    AbsoluteControlBlock* cb = new AbsoluteControlBlock;
-    cb->strong_count.store(1, std::memory_order_release);
-    cb->weak_count.store(1, std::memory_order_release);
-    cb->object_ptr = ptr;
-    cb->deleter_fn = deleter ? deleter : [](void* p) { std::free(p); };
-    return cb;
-}
-
-extern "C" void absolute_control_block_retain(AbsoluteControlBlock* cb) {
-    if (cb) cb->strong_count.fetch_add(1, std::memory_order_relaxed);
-}
-
-extern "C" void absolute_control_block_release(AbsoluteControlBlock* cb) {
-    if (!cb) return;
-    if (cb->strong_count.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-        if (cb->deleter_fn && cb->object_ptr) {
-            cb->deleter_fn(cb->object_ptr);
-            cb->object_ptr = nullptr;
-        }
-        if (cb->weak_count.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            delete cb;
-        }
-    }
-}
-
 extern "C" std::uint64_t absolute_managed_adopt_raw(void* ptr, void (*deleter)(void*)) {
     if (!ptr) return 0;
-    std::uint64_t handle = absolute_managed_create(0);
-    Slot* slot = Find(handle);
-    if (slot) {
-        if (slot->pointer) std::free(slot->pointer);
-        slot->pointer = ptr;
-    }
-    return handle;
-}
-
-extern "C" void* absolute_control_block_weak_lock(AbsoluteControlBlock* cb) {
-    if (!cb) return nullptr;
-    std::int32_t count = cb->strong_count.load(std::memory_order_relaxed);
-    while (count > 0) {
-        if (cb->strong_count.compare_exchange_weak(count, count + 1,
-                std::memory_order_acquire, std::memory_order_relaxed)) {
-            return cb->object_ptr;
-        }
-    }
-    return nullptr;
+    std::call_once(leakCheckRegistration, [] {
+        std::atexit(absolute_managed_check_leaks);
+    });
+    return RegisterAllocation(ptr, deleter ? deleter : DefaultDeleter);
 }

@@ -32,7 +32,7 @@ namespace Absolute{
             base = ParsePrimitiveType();
         }
         if (!base) return nullptr;
-        base = ParsePointerSuffix(std::move(base), raw, weak);
+        base = ParsePointerSuffix(std::move(base), raw, weak, shared);
         while (CurrentToken() && CurrentToken()->type == TokenType::BRACKET &&
             CurrentToken()->value == "[" && PeekToken() &&
             PeekToken()->type == TokenType::BRACKET && PeekToken()->value == "]") {
@@ -44,19 +44,22 @@ namespace Absolute{
     }
 
     std::unique_ptr<TypeExpr> Parser::ParsePointerSuffix(
-        std::unique_ptr<TypeExpr> base, bool raw, bool weak)
+        std::unique_ptr<TypeExpr> base, bool raw, bool weak, bool shared)
     {
         bool foundPointer = false;
         while (CurrentToken() && CurrentToken()->type == TokenType::OPERATOR && CurrentToken()->value == "*") {
             Consume(TokenType::OPERATOR, "*");
-            base = std::make_unique<PointerTypeExpr>(std::move(base), raw, weak);
+            base = std::make_unique<PointerTypeExpr>(
+                std::move(base), raw, weak, shared);
             raw = false;
             weak = false;
+            shared = false;
             foundPointer = true;
         }
-        if ((raw || weak) && !foundPointer) {
+        if ((raw || weak || shared) && !foundPointer) {
             ReportSyntaxError(CurrentToken(), std::string("'") +
-                (raw ? "raw" : "weak") + "' must qualify a pointer type");
+                (raw ? "raw" : (weak ? "weak" : "shared")) +
+                "' must qualify a pointer type");
             throw std::runtime_error("Invalid pointer qualifier");
         }
         return base;

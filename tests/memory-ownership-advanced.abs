@@ -7,9 +7,9 @@ class Document {
 
 void main() {
     raw Document* rawPtr = new raw Document("test");
+    raw Document* borrowed = borrowRaw(rawPtr);
+    assert(borrowed.title == "test", "borrowed raw title check");
     Document* adopted = adoptRaw(rawPtr);
-    Document* retained = retainRaw(adopted);
-    shared Document* sharedDoc = share(move(retained));
     assert(adopted.title == "test", "adopted title check");
     print("memory-ownership-advanced=ok");
 }

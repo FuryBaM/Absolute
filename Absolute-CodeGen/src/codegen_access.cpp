@@ -12,7 +12,8 @@ namespace Absolute {
             llvm::FunctionType* methodType = MethodFunctionType(method);
             llvm::Value* result = EmitAbiCall(methodType, callee, method.returnType,
                 {object}, method.parameterTypes, explicitArguments, "property.result");
-            EmitExceptionCheck();
+            if (!method.statement || !HasModifier(*method.statement, "nothrow"))
+                EmitExceptionCheck();
             return result;
         };
 
@@ -153,6 +154,12 @@ namespace Absolute {
     void CodeGenerator::Visit(FunctionCallExpr* expr) {
         const ExpressionInfo* callInfo = impl->analyzer ? impl->analyzer->GetExpressionInfo(*expr) : nullptr;
         const Symbol* selected = callInfo ? impl->analyzer->GetSymbol(callInfo->symbol) : nullptr;
+        const auto symbolMayThrow = [&](const Symbol* symbol) {
+            if (!symbol || !impl->analyzer) return true;
+            FunctionDeclStmt* declaration =
+                impl->analyzer->FunctionDeclaration(symbol->id);
+            return !declaration || !HasModifier(*declaration, "nothrow");
+        };
         std::string functionValueReturn;
         std::vector<std::string> functionValueParameters;
         const std::string baseType = impl->SemanticType(expr->base.get());
@@ -215,7 +222,7 @@ namespace Absolute {
             impl->ReleaseClosureTemporaries(temporaryClosureOwners);
             if (temporaryClosure) impl->builder.CreateCall(
                 impl->ClosureRelease(), {closure});
-            impl->EmitExceptionCheck();
+            if (symbolMayThrow(selected)) impl->EmitExceptionCheck();
             impl->valueCreatesManagedOwner = IsStrongManagedPointerTypeName(functionValueReturn);
             impl->valueCreatesClosureOwner = IsCodegenFunctionType(functionValueReturn);
             return;
@@ -237,7 +244,7 @@ namespace Absolute {
                 selected->type, {}, selected->parameterTypes, arguments, "static.method.result");
             impl->ReleaseArrayTemporaries(temporaryArrayOwners);
             impl->ReleaseClosureTemporaries(temporaryClosureOwners);
-            impl->EmitExceptionCheck();
+            if (symbolMayThrow(selected)) impl->EmitExceptionCheck();
             impl->value = result;
             impl->valueCreatesManagedOwner = IsStrongManagedPointerTypeName(impl->SemanticType(expr));
             impl->valueCreatesClosureOwner = IsCodegenFunctionType(impl->SemanticType(expr));
@@ -298,7 +305,8 @@ namespace Absolute {
                 arguments, methodName + ".result");
             impl->ReleaseArrayTemporaries(temporaryArrayOwners);
             impl->ReleaseClosureTemporaries(temporaryClosureOwners);
-            impl->EmitExceptionCheck();
+            if (!method->statement || !HasModifier(*method->statement, "nothrow"))
+                impl->EmitExceptionCheck();
             impl->valueCreatesManagedOwner =
                 IsStrongManagedPointerTypeName(impl->SemanticType(expr));
             impl->valueCreatesClosureOwner =
@@ -325,7 +333,7 @@ namespace Absolute {
                     member->member + ".extension.result");
                 impl->ReleaseArrayTemporaries(temporaryArrayOwners);
                 impl->ReleaseClosureTemporaries(temporaryClosureOwners);
-                impl->EmitExceptionCheck();
+                if (symbolMayThrow(selected)) impl->EmitExceptionCheck();
                 impl->value = result;
                 impl->valueCreatesManagedOwner = IsStrongManagedPointerTypeName(impl->SemanticType(expr));
                 impl->valueCreatesClosureOwner = IsCodegenFunctionType(impl->SemanticType(expr));
@@ -378,7 +386,9 @@ namespace Absolute {
                     arguments, member->member + ".result");
                 impl->ReleaseArrayTemporaries(temporaryArrayOwners);
                 impl->ReleaseClosureTemporaries(temporaryClosureOwners);
-                impl->EmitExceptionCheck();
+                if (!method->second.statement ||
+                    !HasModifier(*method->second.statement, "nothrow"))
+                    impl->EmitExceptionCheck();
                 impl->value = result;
                 impl->valueCreatesManagedOwner = IsStrongManagedPointerTypeName(impl->SemanticType(expr));
                 impl->valueCreatesClosureOwner = IsCodegenFunctionType(impl->SemanticType(expr));
@@ -420,7 +430,9 @@ namespace Absolute {
                     arguments, member->member + ".interface.result");
                 impl->ReleaseArrayTemporaries(temporaryArrayOwners);
                 impl->ReleaseClosureTemporaries(temporaryClosureOwners);
-                impl->EmitExceptionCheck();
+                if (!method->second.statement ||
+                    !HasModifier(*method->second.statement, "nothrow"))
+                    impl->EmitExceptionCheck();
                 impl->value = result;
                 impl->valueCreatesManagedOwner = IsStrongManagedPointerTypeName(impl->SemanticType(expr));
                 impl->valueCreatesClosureOwner = IsCodegenFunctionType(impl->SemanticType(expr));
@@ -453,7 +465,9 @@ namespace Absolute {
                     arguments, member->member + ".result");
                 impl->ReleaseArrayTemporaries(temporaryArrayOwners);
                 impl->ReleaseClosureTemporaries(temporaryClosureOwners);
-                impl->EmitExceptionCheck();
+                if (!method->second.statement ||
+                    !HasModifier(*method->second.statement, "nothrow"))
+                    impl->EmitExceptionCheck();
                 impl->value = result;
                 impl->valueCreatesManagedOwner = IsStrongManagedPointerTypeName(impl->SemanticType(expr));
                 impl->valueCreatesClosureOwner = IsCodegenFunctionType(impl->SemanticType(expr));
@@ -495,7 +509,8 @@ namespace Absolute {
             returnType, {}, parameterTypes, arguments, name + ".result", external);
         impl->ReleaseArrayTemporaries(temporaryArrayOwners);
         impl->ReleaseClosureTemporaries(temporaryClosureOwners);
-        if (!selected || !selected->externalFunction) impl->EmitExceptionCheck();
+        if ((!selected || !selected->externalFunction) && symbolMayThrow(selected))
+            impl->EmitExceptionCheck();
         impl->value = result;
         impl->valueCreatesManagedOwner = IsStrongManagedPointerTypeName(impl->SemanticType(expr));
         impl->valueCreatesClosureOwner = IsCodegenFunctionType(returnType);

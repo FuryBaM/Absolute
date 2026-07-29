@@ -66,6 +66,24 @@ contiguous buffer, or pass `raw` only from unsafe code). See also
 Prefer length-aware APIs (`raw int8*`, `int32 length`) when embedded nulls or
 non-terminated buffers are possible.
 
+## Bridging raw and managed ownership
+
+The ownership bridge follows Absolute's deterministic unique-owner model:
+
+- `borrowRaw(rawPointer)` returns a non-owning `raw T*` view and never changes
+  the native pointer's lifetime;
+- `adoptRaw(rawPointer)` consumes a `raw T*` and creates the unique managed
+  `T*` owner;
+- `adoptRaw(rawPointer, deleter)` additionally records a C-compatible deleter,
+  which runs exactly once when the managed allocation is destroyed;
+- `retainRaw`, `share`, and `shared T*` are deliberately rejected because the
+  runtime does not implement reference-counted shared ownership.
+
+After a successful adoption the source raw binding is moved-from and must not
+be freed or reused as an owner. A null raw pointer adopts as a null managed
+handle. A custom deleter must be safe to call outside the runtime's slot-table
+lock.
+
 ## Aggregates and interfaces
 
 Absolute `struct` layout (including the 16-byte internal value ABI described in

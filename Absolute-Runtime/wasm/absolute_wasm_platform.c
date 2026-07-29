@@ -1698,15 +1698,22 @@ void absolute_channel_destroy(void* channelPtr) {
 typedef struct CapsuleImpl {
     uint64_t handle;
     uint8_t transferred;
+    void (*deleter_fn)(void*);
 } CapsuleImpl;
 
-void* absolute_capsule_create(uint64_t handle) {
+void* absolute_capsule_create_typed(
+    uint64_t handle, void (*deleter)(void*)) {
     CapsuleImpl* capsule = (CapsuleImpl*)heap_alloc(sizeof(CapsuleImpl));
     if (!capsule)
         abort();
     capsule->handle = absolute_managed_transfer(handle);
     capsule->transferred = 0;
+    capsule->deleter_fn = deleter;
     return capsule;
+}
+
+void* absolute_capsule_create(uint64_t handle) {
+    return absolute_capsule_create_typed(handle, NULL);
 }
 
 uint64_t absolute_capsule_unwrap(void* capsulePtr) {
@@ -1725,8 +1732,14 @@ void absolute_capsule_destroy(void* capsulePtr) {
     if (!capsulePtr)
         return;
     CapsuleImpl* capsule = (CapsuleImpl*)capsulePtr;
-    if (!capsule->transferred && capsule->handle)
+    if (!capsule->transferred && capsule->handle) {
+        if (capsule->deleter_fn) {
+            void* rawObj = absolute_managed_get(capsule->handle);
+            if (rawObj)
+                capsule->deleter_fn(rawObj);
+        }
         absolute_managed_destroy(capsule->handle);
+    }
     free(capsule);
 }
 

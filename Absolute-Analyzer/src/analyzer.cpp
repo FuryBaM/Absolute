@@ -1072,10 +1072,12 @@ namespace Absolute {
         }
         const std::string oldReturn = currentReturnType;
         const bool oldAsync = currentFunctionAsync;
+        const bool oldNoThrow = currentFunctionNoThrow;
         const bool oldConstMethod = currentMethodConst;
         const bool oldStaticMethod = currentMethodStatic;
         currentReturnType = returnType;
         currentFunctionAsync = asyncFunction;
+        currentFunctionNoThrow = HasModifier(statement, "nothrow");
         currentMethodConst = constMethod && kind == SymbolKind::Method;
         currentMethodStatic = staticMethod && kind == SymbolKind::Method;
         ++functionDepth;
@@ -1160,6 +1162,7 @@ namespace Absolute {
         --functionDepth;
         currentReturnType = oldReturn;
         currentFunctionAsync = oldAsync;
+        currentFunctionNoThrow = oldNoThrow;
         currentMethodConst = oldConstMethod;
         currentMethodStatic = oldStaticMethod;
         if (!genericScope.empty()) genericTypeScopes.pop_back();

@@ -14,7 +14,13 @@ namespace Absolute {
     void Analyzer::Visit(PointerTypeExpr* expr) {
         const std::string pointee = ResolveType(expr->pointee.get());
         if (pointee == "void" && !expr->raw) Report("managed pointers cannot point to void");
-        const std::string prefix = expr->raw ? "raw " : (expr->weak ? "weak " : "");
+        if (expr->shared) {
+            Report("shared pointers are not available in Absolute's deterministic "
+                "unique-ownership model; use T*, weak T*, and move(...)",
+                "E_SHARED_POINTER_UNSUPPORTED");
+        }
+        const std::string prefix = expr->raw ? "raw " : (expr->weak ? "weak " :
+            (expr->shared ? "shared " : ""));
         Save(expr, {InvalidSymbolId, prefix + pointee + "*", false});
     }
 
@@ -379,6 +385,33 @@ namespace Absolute {
                 return;
             }
 
+            if (callName == "unsafeArrayGet" || callName == "unsafeArraySet") {
+                const bool isSet = callName == "unsafeArraySet";
+                const size_t expectedCount = isSet ? 3 : 2;
+                if (arguments.size() != expectedCount) {
+                    Report(callName + " expects exactly " + std::to_string(expectedCount) +
+                        " arguments", "E_UNSAFE_ARRAY_ARGUMENT_COUNT");
+                    Save(expr, {table.Lookup(callName), isSet ? "void" : "error", false});
+                    return;
+                }
+                const std::string& arrayType = arguments[0].type;
+                if (ArrayRank(arrayType) != 1 && arrayType != "error")
+                    Report(callName + " requires a one-dimensional array",
+                        "E_UNSAFE_ARRAY_TYPE", arguments[0].symbol);
+                if (!IsInteger(arguments[1].type) && arguments[1].type != "error")
+                    Report(callName + " index must be an integer",
+                        "E_UNSAFE_ARRAY_INDEX_TYPE", arguments[1].symbol);
+                const std::string elementType = ArrayRank(arrayType) == 1
+                    ? ArrayElementType(arrayType) : std::string("error");
+                if (isSet && elementType != "error" &&
+                    !IsAssignable(elementType, arguments[2].type))
+                    Report("unsafeArraySet value has type '" + arguments[2].type +
+                        "', expected '" + elementType + "'",
+                        "E_UNSAFE_ARRAY_VALUE_TYPE", arguments[2].symbol);
+                Save(expr, {table.Lookup(callName), isSet ? "void" : elementType, false});
+                return;
+            }
+
             if (callName == "load") {
                 if (arguments.size() != 1) {
                     Report("load expects exactly one library path", "E_LOAD_ARGUMENT_COUNT");
@@ -503,24 +536,11 @@ namespace Absolute {
             }
 
             if (callName == "retainRaw") {
-                if (arguments.empty() || arguments.size() > 2) {
-                    Report("retainRaw expects 1 or 2 arguments", "E_RETAIN_RAW_ARGUMENTS");
-                    Save(expr, {table.Lookup(callName), "error", false});
-                    return;
-                }
-                const Result& argument = arguments.front();
-                if (!IsRawPointerType(argument.type) && !IsManagedPointerType(argument.type)) {
-                    Report("retainRaw requires a pointer target", "E_RETAIN_RAW_TYPE");
-                    Save(expr, {table.Lookup(callName), "error", false});
-                    return;
-                }
-                std::string targetType = IsRawPointerType(argument.type)
-                    ? PointerPointee(argument.type) + "*" : argument.type;
-                Result result = {table.Lookup(callName), targetType, false};
-                result.createsManagedOwner = true;
-                result.initialization = InitializationState::Initialized;
-                result.pointerValidity = PointerValidity::Live;
-                Save(expr, result);
+                Report("retainRaw is unavailable in the deterministic unique-ownership "
+                    "model; use adoptRaw(rawPointer) for ownership or borrowRaw(rawPointer) "
+                    "for a non-owning raw view",
+                    "E_RETAIN_RAW_UNSUPPORTED");
+                Save(expr, {table.Lookup(callName), "error", false});
                 return;
             }
 
@@ -536,32 +556,21 @@ namespace Absolute {
                     Save(expr, {table.Lookup(callName), "error", false});
                     return;
                 }
-                std::string targetType = "view " + PointerPointee(argument.type);
+                std::string targetType = argument.type;
                 Result result = {table.Lookup(callName), targetType, false};
                 result.initialization = InitializationState::Initialized;
                 result.pointerValidity = PointerValidity::Live;
+                result.pointerRole = PointerRole::RawView;
                 Save(expr, result);
                 return;
             }
 
             if (callName == "share") {
-                if (arguments.size() != 1) {
-                    Report("share expects exactly 1 argument", "E_SHARE_ARGUMENTS");
-                    Save(expr, {table.Lookup(callName), "error", false});
-                    return;
-                }
-                const Result& argument = arguments.front();
-                if (!IsStrongManagedPointerType(argument.type)) {
-                    Report("share requires a strong managed pointer 'T*'", "E_SHARE_TYPE");
-                    Save(expr, {table.Lookup(callName), "error", false});
-                    return;
-                }
-                std::string targetType = "shared " + argument.type;
-                Result result = {table.Lookup(callName), targetType, false};
-                result.createsManagedOwner = true;
-                result.initialization = InitializationState::Initialized;
-                result.pointerValidity = PointerValidity::Live;
-                Save(expr, result);
+                Report("share is unavailable in Absolute's deterministic "
+                    "unique-ownership model; transfer ownership with move(...) and "
+                    "observe it with weak T*",
+                    "E_SHARE_UNSUPPORTED");
+                Save(expr, {table.Lookup(callName), "error", false});
                 return;
             }
 

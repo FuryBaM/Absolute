@@ -328,6 +328,7 @@ namespace Absolute {
             return name == "print" || name == "println" || name == "format" ||
                 name == "toString" || name == "assert" || name == "copy" || name == "move" ||
                 name == "adoptRaw" || name == "retainRaw" || name == "borrowRaw" || name == "share" ||
+                name == "unsafeArrayGet" || name == "unsafeArraySet" ||
                 name == "seal" || name == "unseal" ||
                 name == "load" || name == "isLoaded" || name == "loadError" ||
                 name == "taskGroupAdd" || name == "tuple";

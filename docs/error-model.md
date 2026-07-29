@@ -123,6 +123,23 @@ under a native C symbol. The body must handle Absolute errors before returning;
 the C ABI does not carry the thread-local pending-error state or native unwind
 metadata to its caller.
 
+An Absolute function or accessor may declare the `nothrow` modifier when it
+guarantees that no Absolute exception can leave the callable:
+
+```absolute
+public nothrow int32 size() {
+    return count;
+}
+```
+
+CodeGen does not emit an `absolute_error_pending` poll after a call whose
+declaration is `nothrow`. A direct `throw` in such a body is rejected with
+`E_NOTHROW_THROWS`. The modifier is a trusted effect contract for calls made by
+the body as well: a `nothrow` implementation must call only non-throwing
+operations or handle every possible exception locally. It is intended for
+small, audited hot paths; omitting the modifier preserves the conservative
+exception check.
+
 ## Async behavior
 
 An async task captures an uncaught Absolute exception in its task record rather

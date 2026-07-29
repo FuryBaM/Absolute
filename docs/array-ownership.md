@@ -36,6 +36,19 @@ There is no separate `borrow` pointer kind or runtime marker. Managed pointer
 parameters and array parameters are non-owning by language rule, slices are
 zero-copy views, and `raw` remains the explicit unsafe escape hatch.
 
+## Audited unchecked access
+
+`unsafeArrayGet(array, index)` and `unsafeArraySet(array, index, value)` are
+one-dimensional, unchecked compiler intrinsics. They perform no length check
+and an invalid index is undefined behavior. Safe application code should use
+ordinary `array[index]`.
+
+The intrinsics exist for standard-library containers that already validate a
+logical index against their own element count. For example, `Vector` checks
+`0 <= index < count` and then uses the intrinsic to avoid repeating a second
+capacity-array bounds check. The public collection operation remains checked;
+only its already-proven internal access is unchecked.
+
 ## Aggregate fields
 
 An array-valued class or struct field is an owning resource slot. Store a fresh

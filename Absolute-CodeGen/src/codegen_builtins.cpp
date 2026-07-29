@@ -83,6 +83,46 @@ namespace Absolute {
             return;
         }
 
+        if (name == "unsafeArrayGet" || name == "unsafeArraySet") {
+            const bool isSet = name == "unsafeArraySet";
+            const size_t expectedCount = isSet ? 3 : 2;
+            if (expression.arguments.size() != expectedCount)
+                Fail(name + " received an invalid argument count");
+            ArrayView view = ViewOfArray(expression.arguments[0].get());
+            if (view.dimensions.size() != 1)
+                Fail(name + " requires a one-dimensional array");
+            llvm::Value* index = Evaluate(expression.arguments[1].get());
+            if (!index->getType()->isIntegerTy())
+                Fail(name + " index must be an integer");
+            const std::string indexTypeName = SemanticType(expression.arguments[1].get());
+            const bool unsignedIndex = indexTypeName.starts_with("uint") ||
+                indexTypeName == "char";
+            if (!index->getType()->isIntegerTy(64))
+                index = builder.CreateIntCast(
+                    index, builder.getInt64Ty(), !unsignedIndex, "unsafe.array.index");
+            llvm::Value* address = builder.CreateInBoundsGEP(
+                view.elementType, view.address, index, "unsafe.array.element.address");
+            if (!isSet) {
+                value = builder.CreateLoad(view.elementType, address, "unsafe.array.element");
+                valueCreatesManagedOwner = false;
+                valueCreatesArrayOwner = false;
+                valueCreatesClosureOwner = false;
+                return;
+            }
+            Expression* source = expression.arguments[2].get();
+            const std::string elementTypeName =
+                ArrayElementTypeName(SemanticType(expression.arguments[0].get()));
+            llvm::Value* assigned = Coerce(
+                Evaluate(source), view.elementType,
+                SemanticType(source), elementTypeName);
+            builder.CreateStore(assigned, address);
+            value = nullptr;
+            valueCreatesManagedOwner = false;
+            valueCreatesArrayOwner = false;
+            valueCreatesClosureOwner = false;
+            return;
+        }
+
         if (name == "load") {
             if (expression.arguments.size() != 1)
                 Fail("load expects exactly one library path");
@@ -153,10 +193,12 @@ namespace Absolute {
         if (name == "adoptRaw" || name == "retainRaw" || name == "borrowRaw" || name == "share") {
             if (expression.arguments.empty()) Fail(name + " expects at least 1 argument");
             llvm::Value* argValue = Evaluate(expression.arguments.front().get());
-            if (name == "borrowRaw" || name == "share") {
+            if (name == "borrowRaw") {
                 value = argValue;
                 return;
             }
+            if (name == "retainRaw" || name == "share")
+                Fail(name + " is unavailable in the deterministic unique-ownership model");
             llvm::Value* deleterVal = expression.arguments.size() > 1
                 ? Evaluate(expression.arguments[1].get())
                 : llvm::ConstantPointerNull::get(builder.getPtrTy());
@@ -169,9 +211,6 @@ namespace Absolute {
                 llvm::FunctionCallee fn = module->getOrInsertFunction("absolute_managed_adopt_raw", funcType);
                 value = builder.CreateCall(fn, {argValue, deleterVal}, "adopt.handle");
                 valueCreatesManagedOwner = true;
-            } else if (name == "retainRaw") {
-                value = argValue;
-                valueCreatesManagedOwner = true;
             }
             return;
         }
@@ -179,13 +218,24 @@ namespace Absolute {
         if (name == "seal") {
             if (expression.arguments.size() != 1)
                 Fail("seal expects exactly one moved managed owner");
+            Expression* argument = expression.arguments.front().get();
+            const std::string pointerType = SemanticType(argument);
             llvm::Value* handle = Coerce(
-                Evaluate(expression.arguments.front().get()), builder.getInt64Ty());
+                Evaluate(argument), builder.getInt64Ty());
+            llvm::Value* pointeeDestructor =
+                llvm::ConstantPointerNull::get(builder.getPtrTy());
+            const std::string pointee = PointerPointeeName(pointerType);
+            if (auto found = classes.find(pointee); found != classes.end())
+                pointeeDestructor = DeclareClassDestructor(found->second);
+            else if (auto found = structs.find(pointee); found != structs.end() &&
+                TypeNeedsCleanup(pointee))
+                pointeeDestructor = DeclareStructDestructor(found->second);
             llvm::FunctionType* capsuleCreateType = llvm::FunctionType::get(
-                builder.getPtrTy(), {builder.getInt64Ty()}, false);
+                builder.getPtrTy(), {builder.getInt64Ty(), builder.getPtrTy()}, false);
             value = builder.CreateCall(
-                module->getOrInsertFunction("absolute_capsule_create", capsuleCreateType),
-                {handle}, "capsule.sealed");
+                module->getOrInsertFunction(
+                    "absolute_capsule_create_typed", capsuleCreateType),
+                {handle, pointeeDestructor}, "capsule.sealed");
             valueCreatesManagedOwner = false;
             valueManagedPointee = nullptr;
             return;

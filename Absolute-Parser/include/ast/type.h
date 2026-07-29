@@ -42,13 +42,16 @@ namespace Absolute {
         std::unique_ptr<TypeExpr> pointee;
         bool raw = false;
         bool weak = false;
+        bool shared = false;
 
-        PointerTypeExpr(std::unique_ptr<TypeExpr> pointee, bool raw, bool weak = false)
-            : pointee(std::move(pointee)), raw(raw), weak(weak) {}
+        PointerTypeExpr(std::unique_ptr<TypeExpr> pointee, bool raw, bool weak = false,
+            bool shared = false)
+            : pointee(std::move(pointee)), raw(raw), weak(weak), shared(shared) {}
 
         std::string ToString(int indent = 0) const override {
             const std::string kind = raw ? "Raw pointer type:\n" :
-                (weak ? "Weak managed pointer type:\n" : "Managed pointer type:\n");
+                (weak ? "Weak managed pointer type:\n" :
+                    (shared ? "Shared managed pointer type:\n" : "Managed pointer type:\n"));
             return std::string(indent, ' ') + kind +
                 (pointee ? pointee->ToString(indent + 1) : std::string(indent + 1, ' ') + "<missing>");
         }

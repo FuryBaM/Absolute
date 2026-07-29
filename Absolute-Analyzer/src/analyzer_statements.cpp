@@ -406,6 +406,8 @@ namespace Absolute {
     void Analyzer::Visit(ThrowStmt* stmt) {
         usesExceptions = true;
         if (phase == Phase::CollectDeclarations) return;
+        if (currentFunctionNoThrow)
+            Report("nothrow callable cannot throw", "E_NOTHROW_THROWS");
         if (finallyDepth > 0)
             Report("throw is not allowed inside finally", "E_FINALLY_CONTROL_TRANSFER");
         if (deferDepth > 0)

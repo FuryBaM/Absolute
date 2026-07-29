@@ -123,7 +123,8 @@ namespace Absolute {
         std::unique_ptr<NamespaceDeclStmt> ParseNamespace();
         std::string ParseQualifiedName();
         std::unique_ptr<TypeExpr> ParsePointerSuffix(
-            std::unique_ptr<TypeExpr> base, bool raw, bool weak = false);
+            std::unique_ptr<TypeExpr> base, bool raw, bool weak = false,
+            bool shared = false);
         std::string ParseParentTypeName();
     };
 }

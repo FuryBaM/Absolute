@@ -89,6 +89,17 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "runtime-scheduler-v2=ok"
         TIMEOUT 30)
 
+    add_executable(absolute-runtime-managed-memory-test
+        tests/runtime-managed-memory.cpp)
+    target_link_libraries(absolute-runtime-managed-memory-test
+        PRIVATE Absolute-Runtime)
+    add_test(
+        NAME absolute.runtime-managed-memory
+        COMMAND absolute-runtime-managed-memory-test)
+    set_tests_properties(absolute.runtime-managed-memory PROPERTIES
+        PASS_REGULAR_EXPRESSION "runtime-managed-memory=ok"
+        TIMEOUT 30)
+
     add_executable(absolute-runtime-scheduler-work-stealing-test
         tests/runtime-scheduler-work-stealing.cpp)
     target_link_libraries(absolute-runtime-scheduler-work-stealing-test
@@ -646,6 +657,13 @@ if(BUILD_TESTING)
         NAME absolute.memory-ownership-advanced-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/memory-ownership-advanced.abs"
     )
+    add_test(
+        NAME absolute.memory-ownership-advanced-errors
+        COMMAND Absolute-Compiler
+            "${PROJECT_SOURCE_DIR}/tests/memory-ownership-advanced-errors.abs"
+    )
+    set_tests_properties(absolute.memory-ownership-advanced-errors PROPERTIES
+        WILL_FAIL TRUE)
     add_test(
         NAME absolute.ownership-model-execution-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-model-execution.abs"

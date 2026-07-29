@@ -327,6 +327,7 @@ namespace Absolute {
         bool flowTerminated = false;
         int spawnContextDepth = 0;
         bool currentFunctionAsync = false;
+        bool currentFunctionNoThrow = false;
         bool currentMethodConst = false;
         bool currentMethodStatic = false;
         bool currentConstructor = false;
