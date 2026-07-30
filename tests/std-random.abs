@@ -34,6 +34,18 @@ int32 main() {
     assert(invalidRangeRejected, "empty random ranges must be rejected");
 
     uint64 systemSeed = std.random.entropy();
+    uint8[] randomBytes = new uint8[32];
+    std.random.fill(randomBytes);
+    bool anyNonZero = false;
+    int32 byteIndex = 0;
+    while (byteIndex < randomBytes.length) {
+        if (randomBytes[byteIndex] != (0 as uint8)) { anyNonZero = true; }
+        byteIndex = byteIndex + 1;
+    }
+    assert(anyNonZero, "system byte entropy must fill the destination");
+    uint8[] emptyBytes = new uint8[0];
+    std.random.fill(emptyBytes);
+
     std.random.Rng* system = std.random.create();
     system.u64();
     println(format("std-random=ok seed={}", systemSeed));

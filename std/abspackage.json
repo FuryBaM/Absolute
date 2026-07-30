@@ -1,6 +1,6 @@
 {
   "name": "absolute.std",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "type": "lib",
   "description": "Absolute standard library (std.*). Layout and SemVer policy: docs/standard-library.md",
   "sources": [
@@ -26,6 +26,7 @@
       "collections/algorithms.abs"
     ],
     "std.datetime": "datetime.abs",
+    "std.encoding": "encoding.abs",
     "std.env": "env.abs",
     "std.fs": "fs.abs",
     "std.hash": "hash.abs",
@@ -39,7 +40,8 @@
     "std.testing": "testing.abs",
     "std.time": "time.abs",
     "std.text": "string.abs",
-    "std.uri": "uri.abs"
+    "std.uri": "uri.abs",
+    "std.uuid": "uuid.abs"
   },
   "stability": {
     "tier": "preview-stable",

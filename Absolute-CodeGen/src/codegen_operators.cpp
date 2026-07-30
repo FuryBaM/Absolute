@@ -6,6 +6,40 @@ namespace Absolute {
         const std::string rightType = impl->SemanticType(expr->right.get());
         llvm::Value* left = impl->Evaluate(expr->left.get());
         const bool leftCreatesManagedOwner = impl->valueCreatesManagedOwner;
+
+        if (expr->op == "&&" || expr->op == "||") {
+            llvm::Function* function = impl->CurrentFunction();
+            if (!function) impl->Fail("logical expression outside a function");
+
+            left = impl->AsCondition(left);
+            llvm::BasicBlock* leftBlock = impl->builder.GetInsertBlock();
+            llvm::BasicBlock* rightBlock =
+                llvm::BasicBlock::Create(impl->context, "logical.rhs", function);
+            llvm::BasicBlock* mergeBlock =
+                llvm::BasicBlock::Create(impl->context, "logical.end", function);
+            if (expr->op == "&&")
+                impl->builder.CreateCondBr(left, rightBlock, mergeBlock);
+            else
+                impl->builder.CreateCondBr(left, mergeBlock, rightBlock);
+
+            impl->builder.SetInsertPoint(rightBlock);
+            llvm::Value* right = impl->AsCondition(impl->Evaluate(expr->right.get()));
+            rightBlock = impl->builder.GetInsertBlock();
+            impl->BranchIfNeeded(mergeBlock);
+
+            impl->builder.SetInsertPoint(mergeBlock);
+            llvm::PHINode* result =
+                impl->builder.CreatePHI(impl->builder.getInt1Ty(), 2, "logical.result");
+            result->addIncoming(
+                expr->op == "&&" ? impl->builder.getFalse() : impl->builder.getTrue(),
+                leftBlock);
+            result->addIncoming(right, rightBlock);
+            impl->value = result;
+            impl->valueCreatesManagedOwner = false;
+            impl->valueManagedPointee = nullptr;
+            return;
+        }
+
         llvm::Value* right = impl->Evaluate(expr->right.get());
         const bool rightCreatesManagedOwner = impl->valueCreatesManagedOwner;
 

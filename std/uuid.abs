@@ -1,0 +1,102 @@
+// std.uuid - RFC 9562 UUID values, parsing, formatting, and version-4 generation.
+
+import "./encoding.abs";
+import "./random.abs";
+import "./string.abs";
+
+struct Uuid {
+    public uint64 high;
+    public uint64 low;
+}
+
+namespace std.uuid {
+    Uuid fromBytes(uint8[] bytes) {
+        if (bytes.length != 16) {
+            throw new Error("UUID requires exactly 16 bytes");
+        }
+
+        Uuid value;
+        value.high = 0;
+        value.low = 0;
+        int32 index = 0;
+        while (index < 8) {
+            value.high = (value.high << 8) | (bytes[index] as uint64);
+            value.low = (value.low << 8) | (bytes[index + 8] as uint64);
+            index = index + 1;
+        }
+        return value;
+    }
+
+    uint8[] toBytes(Uuid value) {
+        uint8[] bytes = new uint8[16];
+        int32 index = 0;
+        while (index < 8) {
+            int32 shift = 56 - index * 8;
+            bytes[index] = ((value.high >> shift) & (255 as uint64)) as uint8;
+            bytes[index + 8] = ((value.low >> shift) & (255 as uint64)) as uint8;
+            index = index + 1;
+        }
+        return copy(bytes);
+    }
+
+    Uuid nil() {
+        Uuid value;
+        value.high = 0;
+        value.low = 0;
+        return value;
+    }
+
+    bool isNil(Uuid value) {
+        return value.high == 0 && value.low == 0;
+    }
+
+    bool equals(Uuid left, Uuid right) {
+        return left.high == right.high && left.low == right.low;
+    }
+
+    string toString(Uuid value) {
+        string hex = std.encoding.hexEncode(toBytes(value));
+        return format("{}-{}-{}-{}-{}",
+            std.text.substring(hex, 0, 8),
+            std.text.substring(hex, 8, 4),
+            std.text.substring(hex, 12, 4),
+            std.text.substring(hex, 16, 4),
+            std.text.substring(hex, 20, 12));
+    }
+
+    Uuid parse(string text) {
+        if (std.text.codePointCount(text) != 36 ||
+            std.text.codePointAt(text, 8) != 45 ||
+            std.text.codePointAt(text, 13) != 45 ||
+            std.text.codePointAt(text, 18) != 45 ||
+            std.text.codePointAt(text, 23) != 45) {
+            throw new Error("UUID must use the canonical 8-4-4-4-12 form");
+        }
+
+        string compact = std.text.replace(text, "-", "");
+        uint8[] bytes = std.encoding.hexDecode(compact);
+        return fromBytes(bytes);
+    }
+
+    int32 version(Uuid value) {
+        return ((value.high >> 12) & (15 as uint64)) as int32;
+    }
+
+    // Returns the RFC bit-pattern identifier: 0 (NCS), 2 (RFC 4122/9562),
+    // 6 (Microsoft), or 7 (reserved for future use).
+    int32 variant(Uuid value) {
+        int32 first = ((value.low >> 56) & (255 as uint64)) as int32;
+        if ((first & 128) == 0) { return 0; }
+        if ((first & 192) == 128) { return 2; }
+        if ((first & 224) == 192) { return 6; }
+        return 7;
+    }
+
+    Uuid random() {
+        uint8[] bytes = new uint8[16];
+        std.random.fill(bytes);
+        bytes[6] = (((bytes[6] as int32) & 15) | 64) as uint8;
+        bytes[8] = (((bytes[8] as int32) & 63) | 128) as uint8;
+        return fromBytes(bytes);
+    }
+}

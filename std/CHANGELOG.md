@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.10.0
+
+- Added strict `std.encoding` hexadecimal, RFC 4648 Base64, and UTF-8 byte
+  conversions with rejection of malformed, overlong, surrogate, and
+  non-canonical input.
+- Added the `Uuid` value type with canonical parsing/formatting, byte
+  conversion, version/variant inspection, nil values, and RFC 9562 version-4
+  generation.
+- Added `std.random.fill()` for platform-entropy byte arrays on native,
+  WASI, Node-hosted WebAssembly, and browser-hosted WebAssembly.
+- Added native, malformed-input, entropy, and WebAssembly execution coverage.
+
 ## 0.9.0
 
 - Added verified HTTPS transport to `std.http` without certificate-bypass

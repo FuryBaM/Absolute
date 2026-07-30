@@ -4,7 +4,7 @@ Source tree for the Absolute `std.*` namespaces.
 
 | | |
 |--|--|
-| Package | `absolute.std` **0.9.0** (`abspackage.json`) |
+| Package | `absolute.std` **0.10.0** (`abspackage.json`) |
 | Policy | [`docs/standard-library.md`](../docs/standard-library.md) |
 
 ## Quick import
@@ -18,6 +18,8 @@ import std.collections.deque;
 import std.collections.priority_queue;
 import std.collections.hash_map;
 import std.hash;
+import std.encoding;
+import std.uuid;
 import "std/string.abs"; // defines namespace std.text
 ```
 
@@ -56,6 +58,15 @@ Redirects, cancellation, body callbacks, and multipart form-data work over
 HTTP and verified HTTPS. Windows uses WinHTTP and the Windows trust store;
 Unix uses the installed system libcurl with peer and hostname verification.
 WebAssembly HTTPS GET is delegated to its host.
+
+Binary/text conversion and UUIDs use portable value APIs:
+
+```absolute
+uint8[] payload = std.encoding.utf8Encode("Привет");
+string wire = std.encoding.base64Encode(payload);
+Uuid requestId = std.uuid.random();
+println(std.uuid.toString(requestId));
+```
 
 Priority queues accept a comparator. A negative result means that `left` is
 dequeued before `right`; equal priorities preserve insertion order:
@@ -129,4 +140,4 @@ See the namespace ↔ file map in `docs/standard-library.md`.
 ## Versioning
 
 - SemVer on the package: breaking Stable APIs bump **MINOR** while `0.x`, **MAJOR** from `1.0.0`.
-- Prefer `^0.9.0` only if you accept 0.x preview churn; pin tighter for production.
+- Prefer `^0.10.0` only if you accept 0.x preview churn; pin tighter for production.

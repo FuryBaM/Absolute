@@ -543,6 +543,14 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-random.abs"
     )
     add_test(
+        NAME absolute.std-encoding-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-encoding.abs"
+    )
+    add_test(
+        NAME absolute.std-uuid-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-uuid.abs"
+    )
+    add_test(
         NAME absolute.std-fs-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-fs.abs"
     )
@@ -3166,6 +3174,36 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-std-random PROPERTIES
             FIXTURES_REQUIRED absolute-std-random-executable
             PASS_REGULAR_EXPRESSION "std-random=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-encoding
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-encoding.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-encoding-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-encoding PROPERTIES
+            FIXTURES_SETUP absolute-std-encoding-executable
+        )
+        add_test(NAME absolute.run-std-encoding
+            COMMAND "${CMAKE_BINARY_DIR}/std-encoding-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-encoding PROPERTIES
+            FIXTURES_REQUIRED absolute-std-encoding-executable
+            PASS_REGULAR_EXPRESSION "std-encoding=ok"
+        )
+
+        add_test(
+            NAME absolute.build-std-uuid
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-uuid.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-uuid-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-uuid PROPERTIES
+            FIXTURES_SETUP absolute-std-uuid-executable
+        )
+        add_test(NAME absolute.run-std-uuid
+            COMMAND "${CMAKE_BINARY_DIR}/std-uuid-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-uuid PROPERTIES
+            FIXTURES_REQUIRED absolute-std-uuid-executable
+            PASS_REGULAR_EXPRESSION "std-uuid=ok"
         )
 
         add_test(

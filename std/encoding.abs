@@ -1,0 +1,241 @@
+// std.encoding - strict hexadecimal, Base64, and UTF-8 byte conversions.
+
+import "./string.abs";
+
+extern "C" int32 absolute_string_utf8_copy(
+    string text, raw uint8* output, int32 capacity);
+
+namespace std.encoding {
+    int32 hexDigit(int32 value) {
+        return value < 10 ? 48 + value : 87 + value;
+    }
+
+    int32 hexValue(int32 codePoint) {
+        if (codePoint >= 48 && codePoint <= 57) { return codePoint - 48; }
+        if (codePoint >= 65 && codePoint <= 70) { return codePoint - 65 + 10; }
+        if (codePoint >= 97 && codePoint <= 102) { return codePoint - 97 + 10; }
+        return -1;
+    }
+
+    string hexEncode(uint8[] bytes) {
+        std.text.StringBuilder* result = new std.text.StringBuilder();
+        int32 index = 0;
+        while (index < bytes.length) {
+            int32 value = bytes[index] as int32;
+            result.appendChar(hexDigit((value >> 4) & 15));
+            result.appendChar(hexDigit(value & 15));
+            index = index + 1;
+        }
+        return result.toString();
+    }
+
+    uint8[] hexDecode(string text) {
+        uint8[] input = utf8Encode(text);
+        int32 length = input.length;
+        if (length % 2 != 0) {
+            throw new Error("hex input must contain an even number of digits");
+        }
+
+        uint8[] result = new uint8[length / 2];
+        int32 source = 0;
+        int32 output = 0;
+        while (source < length) {
+            int32 high = hexValue(input[source] as int32);
+            int32 low = hexValue(input[source + 1] as int32);
+            if (high < 0 || low < 0) {
+                throw new Error(format("invalid hexadecimal digit at offset {}", source));
+            }
+            result[output] = ((high << 4) | low) as uint8;
+            source = source + 2;
+            output = output + 1;
+        }
+        return copy(result);
+    }
+
+    int32 base64Character(int32 value) {
+        if (value < 26) { return 65 + value; }
+        if (value < 52) { return 97 + value - 26; }
+        if (value < 62) { return 48 + value - 52; }
+        return value == 62 ? 43 : 47;
+    }
+
+    int32 base64Value(int32 codePoint) {
+        if (codePoint >= 65 && codePoint <= 90) { return codePoint - 65; }
+        if (codePoint >= 97 && codePoint <= 122) { return codePoint - 97 + 26; }
+        if (codePoint >= 48 && codePoint <= 57) { return codePoint - 48 + 52; }
+        if (codePoint == 43) { return 62; }
+        if (codePoint == 47) { return 63; }
+        return -1;
+    }
+
+    string base64Encode(uint8[] bytes) {
+        std.text.StringBuilder* result = new std.text.StringBuilder();
+        int32 index = 0;
+        while (index < bytes.length) {
+            int32 first = bytes[index] as int32;
+            int32 remaining = bytes.length - index;
+            int32 second = remaining > 1 ? bytes[index + 1] as int32 : 0;
+            int32 third = remaining > 2 ? bytes[index + 2] as int32 : 0;
+
+            result.appendChar(base64Character(first >> 2));
+            result.appendChar(base64Character(((first & 3) << 4) | (second >> 4)));
+            if (remaining > 1) {
+                result.appendChar(base64Character(((second & 15) << 2) | (third >> 6)));
+            } else {
+                result.append("=");
+            }
+            if (remaining > 2) {
+                result.appendChar(base64Character(third & 63));
+            } else {
+                result.append("=");
+            }
+            index = index + 3;
+        }
+        return result.toString();
+    }
+
+    uint8[] base64Decode(string text) {
+        uint8[] input = utf8Encode(text);
+        int32 length = input.length;
+        if (length % 4 != 0) {
+            throw new Error("Base64 input length must be divisible by four");
+        }
+
+        int32 padding = 0;
+        if (length > 0) {
+            if (input[length - 1] == (61 as uint8)) {
+                padding = padding + 1;
+            }
+        }
+        if (length > 1) {
+            if (input[length - 2] == (61 as uint8)) {
+                padding = padding + 1;
+            }
+        }
+
+        uint8[] result = new uint8[(length / 4) * 3 - padding];
+        int32 source = 0;
+        int32 output = 0;
+        while (source < length) {
+            int32 firstCode = input[source] as int32;
+            int32 secondCode = input[source + 1] as int32;
+            int32 thirdCode = input[source + 2] as int32;
+            int32 fourthCode = input[source + 3] as int32;
+            bool lastGroup = source + 4 == length;
+
+            int32 first = base64Value(firstCode);
+            int32 second = base64Value(secondCode);
+            int32 third = thirdCode == 61 ? 0 : base64Value(thirdCode);
+            int32 fourth = fourthCode == 61 ? 0 : base64Value(fourthCode);
+
+            if (first < 0 || second < 0 || third < 0 || fourth < 0) {
+                throw new Error(format("invalid Base64 character at group {}", source / 4));
+            }
+            if (firstCode == 61 || secondCode == 61 ||
+                (!lastGroup && (thirdCode == 61 || fourthCode == 61)) ||
+                (thirdCode == 61 && fourthCode != 61)) {
+                throw new Error("invalid Base64 padding");
+            }
+            if (thirdCode == 61 && (second & 15) != 0) {
+                throw new Error("non-canonical Base64 trailing bits");
+            }
+            if (fourthCode == 61 && thirdCode != 61 && (third & 3) != 0) {
+                throw new Error("non-canonical Base64 trailing bits");
+            }
+
+            if (output < result.length) {
+                result[output] = ((first << 2) | (second >> 4)) as uint8;
+                output = output + 1;
+            }
+            if (output < result.length) {
+                result[output] = (((second & 15) << 4) | (third >> 2)) as uint8;
+                output = output + 1;
+            }
+            if (output < result.length) {
+                result[output] = (((third & 3) << 6) | fourth) as uint8;
+                output = output + 1;
+            }
+            source = source + 4;
+        }
+        return copy(result);
+    }
+
+    uint8[] utf8Encode(string text) {
+        int32 length = std.text.byteCount(text);
+        uint8[] result = new uint8[length];
+        if (absolute_string_utf8_copy(
+                text, unsafeArrayData(result), length) != length) {
+            throw new Error("failed to copy UTF-8 string bytes");
+        }
+        return copy(result);
+    }
+
+    bool isContinuation(int32 value) {
+        return value >= 128 && value <= 191;
+    }
+
+    string utf8Decode(uint8[] bytes) {
+        std.text.StringBuilder* result = new std.text.StringBuilder();
+        int32 index = 0;
+        while (index < bytes.length) {
+            int32 first = bytes[index] as int32;
+            int32 codePoint = 0;
+            int32 width = 0;
+
+            if (first == 0) {
+                throw new Error("Absolute strings cannot contain U+0000");
+            } else if (first <= 127) {
+                codePoint = first;
+                width = 1;
+            } else if (first >= 194 && first <= 223) {
+                if (index + 1 >= bytes.length) {
+                    throw new Error("truncated two-byte UTF-8 sequence");
+                }
+                int32 second = bytes[index + 1] as int32;
+                if (!isContinuation(second)) {
+                    throw new Error("invalid UTF-8 continuation byte");
+                }
+                codePoint = ((first & 31) << 6) | (second & 63);
+                width = 2;
+            } else if (first >= 224 && first <= 239) {
+                if (index + 2 >= bytes.length) {
+                    throw new Error("truncated three-byte UTF-8 sequence");
+                }
+                int32 second = bytes[index + 1] as int32;
+                int32 third = bytes[index + 2] as int32;
+                bool validSecond = isContinuation(second);
+                if (first == 224) { validSecond = second >= 160 && second <= 191; }
+                if (first == 237) { validSecond = second >= 128 && second <= 159; }
+                if (!validSecond || !isContinuation(third)) {
+                    throw new Error("invalid three-byte UTF-8 sequence");
+                }
+                codePoint = ((first & 15) << 12) |
+                    ((second & 63) << 6) | (third & 63);
+                width = 3;
+            } else if (first >= 240 && first <= 244) {
+                if (index + 3 >= bytes.length) {
+                    throw new Error("truncated four-byte UTF-8 sequence");
+                }
+                int32 second = bytes[index + 1] as int32;
+                int32 third = bytes[index + 2] as int32;
+                int32 fourth = bytes[index + 3] as int32;
+                bool validSecond = isContinuation(second);
+                if (first == 240) { validSecond = second >= 144 && second <= 191; }
+                if (first == 244) { validSecond = second >= 128 && second <= 143; }
+                if (!validSecond || !isContinuation(third) || !isContinuation(fourth)) {
+                    throw new Error("invalid four-byte UTF-8 sequence");
+                }
+                codePoint = ((first & 7) << 18) |
+                    ((second & 63) << 12) |
+                    ((third & 63) << 6) | (fourth & 63);
+                width = 4;
+            } else {
+                throw new Error(format("invalid UTF-8 leading byte at offset {}", index));
+            }
+
+            result.appendChar(codePoint);
+            index = index + width;
+        }
+        return result.toString();
+    }
+}

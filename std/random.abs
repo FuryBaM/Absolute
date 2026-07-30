@@ -11,6 +11,7 @@ extern "C" int32 absolute_random_i32(raw uint64* state);
 extern "C" int32 absolute_random_range(raw uint64* state, int32 minimum, int32 maximum);
 extern "C" double absolute_random_real(raw uint64* state);
 extern "C" uint64 absolute_random_entropy();
+extern "C" int32 absolute_random_fill(raw uint8* output, int32 length);
 
 namespace std.random {
     class Rng {
@@ -62,6 +63,15 @@ namespace std.random {
     // deterministic code never starts depending on ambient entropy by accident.
     uint64 entropy() {
         return absolute_random_entropy();
+    }
+
+    // Fill a byte array from the platform entropy source. Unlike Rng, this API
+    // is non-deterministic. It is intended for identifiers and random seeds,
+    // but it does not promise a cryptographic random-number generator.
+    void fill(uint8[] output) {
+        if (absolute_random_fill(unsafeArrayData(output), output.length) == 0) {
+            throw new Error("system entropy is unavailable");
+        }
     }
 
     Rng* create() {

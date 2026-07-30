@@ -27,6 +27,15 @@ Count add(const Count left, Count right) {
     return left + right;
 }
 
+class ShortCircuitState {
+    public static int32 calls = 0;
+}
+
+bool shortCircuitProbe() {
+    ShortCircuitState.calls = ShortCircuitState.calls + 1;
+    return true;
+}
+
 int32 main() {
     const Count answer = add(40, 2);
     Counts values = {20, 22};
@@ -39,6 +48,20 @@ int32 main() {
     assert(values[0] + values[1] == 42, "array type alias");
     assert(score == 42, "namespace type alias");
     assert(box.read() == 42, "generic specialization through alias");
+
+    assert(!(false && shortCircuitProbe()), "false && must skip the right operand");
+    assert(true || shortCircuitProbe(), "true || must skip the right operand");
+    assert(ShortCircuitState.calls == 0, "skipped logical operands must have no side effects");
+    assert(true && shortCircuitProbe(), "true && must evaluate the right operand");
+    assert(false || shortCircuitProbe(), "false || must evaluate the right operand");
+    assert(ShortCircuitState.calls == 2, "required logical operands must run exactly once");
+
+    int32[] empty = new int32[0];
+    assert(!(empty.length > 0 && empty[0] == 1),
+        "short-circuit and must protect guarded array access");
+    assert(empty.length == 0 || empty[0] == 1,
+        "short-circuit or must protect guarded array access");
+
     println("base-language=ok");
     return 0;
 }

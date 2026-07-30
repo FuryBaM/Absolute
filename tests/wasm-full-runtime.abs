@@ -4,11 +4,13 @@ import "../std/binary.abs";
 import "../std/concurrent.abs";
 import "../std/datetime.abs";
 import "../std/env.abs";
+import "../std/encoding.abs";
 import "../std/fs.abs";
 import "../std/json.abs";
 import "../std/random.abs";
 import "../std/task.abs";
 import "../std/time.abs";
+import "../std/uuid.abs";
 
 class WasmOnceProbe {
     public static int32 calls = 0;
@@ -29,6 +31,10 @@ async void wasmDeadlineChild() {
 }
 
 async int32 main() {
+    int32[] empty = new int32[0];
+    assert(!(empty.length > 0 && empty[0] == 1), "wasm short-circuit and");
+    assert(empty.length == 0 || empty[0] == 1, "wasm short-circuit or");
+
     assert(!std.task.affinitySupported(), "wasm affinity unsupported");
     assert(!std.task.coreAvailable(0), "wasm core affinity unavailable");
     assert(!std.task.affinityApplied(), "wasm affinity not applied");
@@ -38,6 +44,20 @@ async int32 main() {
     assert(std.time.now(std.time.Unit.Milliseconds) > 0, "host wall clock");
     assert(std.time.mono(std.time.Unit.Nanoseconds) > 0, "host monotonic clock");
     assert(std.random.entropy() != 0, "host random entropy");
+    uint8[] entropyBytes = new uint8[24];
+    std.random.fill(entropyBytes);
+    assert(std.encoding.hexEncode(entropyBytes) !=
+        "000000000000000000000000000000000000000000000000",
+        "host random byte fill");
+    string encodedUnicode = std.encoding.base64Encode(
+        std.encoding.utf8Encode("Absolute Привет 😀"));
+    assert(std.encoding.utf8Decode(std.encoding.base64Decode(encodedUnicode)) ==
+        "Absolute Привет 😀", "wasm encoding round trip");
+    Uuid wasmUuid = std.uuid.random();
+    assert(std.uuid.version(wasmUuid) == 4 && std.uuid.variant(wasmUuid) == 2,
+        "wasm UUID v4");
+    assert(std.uuid.equals(wasmUuid, std.uuid.parse(std.uuid.toString(wasmUuid))),
+        "wasm UUID text round trip");
 
     assert(std.env.argsCount() == 3, "host launch argument count");
     assert(std.env.parameter("mode") == "full", "inline launch parameter");

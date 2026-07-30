@@ -525,8 +525,10 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   - [x] `std.task.TaskGroup` с consuming transfer дочерних `task<void>`,
     cooperative cancellation и автоматическим cancel/join на выходе из scope.
 - [ ] P1 utilities:
-  - [ ] `std.encoding` (Base64/hex/UTF-8 bytes), `std.uuid`, `std.regex`,
-    `std.crypto` (hash/HMAC), `std.compress`, `std.cli`, CSV/TOML и SemVer.
+  - [x] `std.encoding` (Base64/hex/UTF-8 bytes).
+  - [x] `std.uuid` (canonical parse/format and RFC 9562 version 4).
+  - [ ] `std.regex`, `std.crypto` (hash/HMAC), `std.compress`, `std.cli`,
+    CSV/TOML и SemVer.
 
 ### Desktop, игры и графика
 

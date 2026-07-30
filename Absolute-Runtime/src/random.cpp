@@ -80,3 +80,19 @@ extern "C" std::uint64_t absolute_random_entropy() {
         return 0;
     }
 }
+
+extern "C" std::int32_t absolute_random_fill(std::uint8_t* output, std::int32_t length) {
+    if (length < 0 || (!output && length != 0)) return 0;
+    try {
+        std::random_device source;
+        std::uniform_int_distribution<unsigned int> byte(0, 255);
+        for (std::int32_t index = 0; index < length; ++index) {
+            output[index] = static_cast<std::uint8_t>(byte(source));
+        }
+        return 1;
+    }
+    catch (...) {
+        // Native exceptions must never cross an Absolute extern "C" boundary.
+        return 0;
+    }
+}

@@ -1239,6 +1239,11 @@ constructor body, with either explicit `base(...)` arguments or an automatic
 zero-argument call. Raw object graphs that own child nodes must release them
 explicitly before `delete`.
 
+Logical `&&` and `||` are short-circuiting: the right operand runs only when it
+can affect the result. This makes guards such as
+`values.length > 0 && values[0] == expected` safe and preserves operand side
+effects exactly once.
+
 Both pointer modes preserve class methods and virtual dispatch:
 
 ```absolute

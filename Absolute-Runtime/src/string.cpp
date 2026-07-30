@@ -158,6 +158,17 @@ extern "C" int32_t absolute_string_utf8_byte_count(const char* text) {
     return text ? static_cast<int32_t>(std::strlen(text)) : 0;
 }
 
+extern "C" int32_t absolute_string_utf8_copy(
+    const char* text, std::uint8_t* output, std::int32_t capacity) {
+    const std::size_t length = text ? std::strlen(text) : 0;
+    if (capacity < 0 || length > static_cast<std::size_t>(capacity) ||
+        (!output && length != 0)) {
+        return -1;
+    }
+    if (length != 0) std::memcpy(output, text, length);
+    return static_cast<std::int32_t>(length);
+}
+
 extern "C" int32_t absolute_string_code_point_at(const char* text, int32_t index) {
     if (!text || index < 0) return -1;
     int32_t cur = 0;

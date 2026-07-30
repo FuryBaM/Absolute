@@ -22,7 +22,7 @@ Dependents declare:
 ```json
 {
   "dependencies": {
-    "absolute.std": "^0.9.0"
+    "absolute.std": "^0.10.0"
   }
 }
 ```
@@ -65,6 +65,7 @@ std/
     channel.abs            # codec-based std.collections.Channel<T>
     algorithms.abs         # std.collections algorithms
   datetime.abs             # std.datetime
+  encoding.abs             # std.encoding
   env.abs                  # std.env
   fs.abs                   # std.fs
   hash.abs                 # std.hash callback helpers
@@ -79,6 +80,7 @@ std/
   testing.abs              # std.testing
   time.abs                 # std.time (+ legacy Time.*)
   uri.abs                  # std.uri
+  uuid.abs                 # std.uuid
 ```
 
 ### Namespace ↔ file map
@@ -91,6 +93,7 @@ std/
 | `std.collections` | `std/collections/*.abs` | Split across files; import any file that defines the needed type |
 | `std.concurrent` | `std/concurrent.abs`, `std/concurrent/*.abs` | Atomics, mutex, isolate capsules and ownership-transfer channels |
 | `std.datetime` | `std/datetime.abs` | Calendar / timezone |
+| `std.encoding` | `std/encoding.abs` | Hex, Base64, and UTF-8 bytes |
 | `std.env` | `std/env.abs` | Environment variables and launch arguments |
 | `std.fs` | `std/fs.abs` | Paths and `File` |
 | `std.hash` | `std/hash.abs` | Portable hashing/equality callbacks for standard key types |
@@ -105,6 +108,7 @@ std/
 | `std.time` | `std/time.abs` | Wall / mono clocks; legacy `Time.*` wrappers |
 | `std.text` | `std/string.abs` | **Name exception:** file is `string.abs`, namespace is `std.text` |
 | `std.uri` | `std/uri.abs` | URI parse/encode |
+| `std.uuid` | `std/uuid.abs` | UUID values and version-4 generation |
 
 **Import styles** (all supported):
 
@@ -140,6 +144,7 @@ Current Stable modules (0.x: *preview-stable* — see versioning note):
 - `std.string` file → `std.text` (`StringBuilder` and string helpers)
 - `std.assert`, `std.log`, `std.testing`
 - `std.random`, `std.json`, `std.binary`
+- `std.encoding`, `std.uuid`
 - `std.net`, `std.uri`, `std.http`
 - `std.datetime`, `std.task`, `std.concurrent`
 
@@ -278,6 +283,21 @@ formats; for example HTTP `Content-Length` uses bytes rather than characters.
 `repeat`, and `split` cover common allocation-safe text operations. The same
 UTF-8 helpers and `StringBuilder` surface are available in native and WebAssembly
 builds.
+
+### Encoding and UUIDs
+
+`std.encoding.hexDecode()` and `base64Decode()` are strict: they reject invalid
+characters, misplaced padding, and non-canonical Base64 trailing bits.
+`utf8Decode()` rejects truncated, overlong, surrogate, and out-of-range UTF-8.
+The current C-string-backed Absolute `string` representation cannot contain an
+embedded U+0000, so decoding a zero byte fails explicitly instead of silently
+truncating the value.
+
+`Uuid` is a 128-bit value (`high` and `low` words), not a managed object.
+`std.uuid.parse()` requires the canonical 8-4-4-4-12 representation and
+`toString()` emits lowercase canonical text. `std.uuid.random()` obtains 16
+bytes through `std.random.fill()`, then sets the RFC 9562 version-4 and RFC
+variant bits. `toBytes()` and `fromBytes()` use network byte order.
 
 ### Portable filesystem paths
 
@@ -448,6 +468,7 @@ release is validated against a **minimum language/runtime** pair:
 | 0.3.x | Unicode-correct text offsets and automatic `destroy()` lifecycle |
 | 0.4.x | deque/queue/stack, priority queue, and open-addressed hash collections |
 | 0.5.x | structured concurrency and the `std.task.TaskGroup` runtime ABI |
+| 0.10.x | strict binary/text encoding, entropy byte fill, and UUID values |
 
 If a future std release requires new language features, document the floor in
 the package changelog and refuse to load on older compilers when that check is
@@ -469,6 +490,7 @@ implemented.
 | `std.task` | Task metadata / scheduling queries |
 | `std.text` | String building and Unicode helpers |
 | `std.json` / `std.binary` | Serialization |
+| `std.encoding` / `std.uuid` | Binary/text conversion and identifiers |
 | `std.random` | PRNG + entropy |
 | `std.log` / `std.assert` / `std.testing` | Diagnostics and tests |
 

@@ -233,6 +233,16 @@ int32_t absolute_string_utf8_byte_count(const char* text) {
     return text ? (int32_t)strlen(text) : 0;
 }
 
+int32_t absolute_string_utf8_copy(
+    const char* text, uint8_t* output, int32_t capacity) {
+    size_t length = text ? strlen(text) : 0;
+    if (capacity < 0 || length > (size_t)capacity || (!output && length != 0))
+        return -1;
+    if (length)
+        memcpy(output, text, length);
+    return (int32_t)length;
+}
+
 int32_t absolute_string_code_point_at(const char* text, int32_t index) {
     if (!text || index < 0)
         return -1;
@@ -2243,6 +2253,27 @@ uint64_t absolute_random_entropy(void) {
     }
 #endif
     return 0xA5A5F00D1234C0DEULL ^ (uint64_t)(uintptr_t)&absolute_random_entropy;
+}
+
+int32_t absolute_random_fill(uint8_t* output, int32_t length) {
+    int32_t index = 0;
+    if (length < 0 || (!output && length != 0))
+        return 0;
+#if defined(ABSOLUTE_WASM_USE_WASI)
+    if (length == 0 || absolute_wasi_random_get(output, (size_t)length) == 0)
+        return 1;
+    return 0;
+#else
+    while (index < length) {
+        uint64_t value = absolute_host_random_entropy();
+        int32_t byte = 0;
+        while (byte < 8 && index < length) {
+            output[index++] = (uint8_t)(value >> (byte * 8));
+            ++byte;
+        }
+    }
+    return 1;
+#endif
 }
 
 uint64_t* absolute_random_create(uint64_t seed) {
