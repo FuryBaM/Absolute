@@ -1341,6 +1341,11 @@ namespace Absolute {
                 }
             }
             else Report("parameter '" + name + "' is already declared");
+            // Record the declaration so code generation can map the parameter
+            // back to its symbol. A lambda capture names that symbol, and
+            // without this the capture cannot be resolved to its storage.
+            if (parameterId != InvalidSymbolId)
+                Save(parameter.get(), {parameterId, type, true});
         RegisterFlowSymbol(parameterId, {
                 InitializationState::Initialized,
                 IsPointerType(type) ? PointerValidity::Unknown : PointerValidity::NotPointer,

@@ -362,7 +362,18 @@ namespace Absolute{
             }
 
             if (candidate && (candidate->type == TokenType::IDENTIFIER || isDeclaratorPrefix(candidate))) {
-                if (hasArraySuffix || isDeclaratorPrefix(candidate) || (afterIdentifiers && afterIdentifiers->value == "<")) {
+                // A sized declarator on the name (`Point pts[3];`) declares an
+                // array, exactly as it does for a primitive element type. Only
+                // an empty `[]` suffix on the type was recognized here, so the
+                // sized form fell through to an inline value declaration and
+                // the variable ended up with the element type.
+                const Token* end = tokens.data() + tokens.size();
+                const Token* afterName = candidate->type == TokenType::IDENTIFIER &&
+                    candidate + 1 < end ? candidate + 1 : nullptr;
+                const bool sizedArrayDeclarator = afterName &&
+                    afterName->type == TokenType::BRACKET && afterName->value == "[";
+                if (hasArraySuffix || sizedArrayDeclarator || isDeclaratorPrefix(candidate) ||
+                    (afterIdentifiers && afterIdentifiers->value == "<")) {
                     return ParseVarDeclaration();
                 }
                 return ParseInstanceDeclStmt();

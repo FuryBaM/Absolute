@@ -1355,6 +1355,14 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-array-out-of-bounds-ir
         )
         add_test(
+            NAME absolute.emit-division-by-zero
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/division-by-zero.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/division-by-zero.ll"
+        )
+        set_tests_properties(absolute.emit-division-by-zero PROPERTIES
+            FIXTURES_SETUP absolute-division-by-zero-ir
+        )
+        add_test(
             NAME absolute.emit-array-advanced
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-advanced.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/array-advanced.ll"
@@ -1623,6 +1631,14 @@ if(BUILD_TESTING)
             )
             set_tests_properties(absolute.run-array-out-of-bounds PROPERTIES
                 FIXTURES_REQUIRED absolute-array-out-of-bounds-ir
+                WILL_FAIL TRUE
+            )
+            add_test(
+                NAME absolute.run-division-by-zero
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/division-by-zero.ll"
+            )
+            set_tests_properties(absolute.run-division-by-zero PROPERTIES
+                FIXTURES_REQUIRED absolute-division-by-zero-ir
                 WILL_FAIL TRUE
             )
             add_test(

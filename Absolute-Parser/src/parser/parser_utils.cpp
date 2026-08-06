@@ -133,10 +133,16 @@ namespace Absolute {
 
     void Parser::ConsumeTemplateClose()
     {
-        if (CurrentToken()->value == ">>") {
-            tokens[pos].value = ">";  // Первый '>'
-            Token twin(TokenType::OPERATOR, ">", CurrentToken()->line, CurrentToken()->column + 1);
-            tokens.insert(tokens.begin() + pos + 1, twin);  // Второй '>'
+        Token* token = RequireCurrent("'>'");
+        if (token->value == ">>") {
+            // The lexer reads the two closing brackets of a nested argument
+            // list as one shift operator. Split it in place: this call takes
+            // the first '>' and the token keeps the second one for the
+            // enclosing list. Inserting a token here instead would resize
+            // `tokens` and leave every Token* the parser still holds dangling.
+            token->value = ">";
+            ++token->column;
+            return;
         }
 
         Consume(TokenType::OPERATOR, ">");

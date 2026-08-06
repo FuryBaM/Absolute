@@ -18,6 +18,13 @@ int32 abort() {
     return 7;
 }
 
+// A sized declarator on the name declares an array for a user-defined element
+// type too, not only for a primitive one.
+struct GridCell {
+    public int32 row;
+    public int32 column;
+}
+
 int32 printf() {
     return 9;
 }
@@ -89,6 +96,24 @@ int32 main() {
     assert(*reservedNameHeap + 1 == 42,
         "managed allocation still works beside those definitions");
     delete reservedNameHeap;
+
+    GridCell cells[3];
+    int32 cellIndex = 0;
+    while (cellIndex < 3) {
+        cells[cellIndex].row = cellIndex;
+        cells[cellIndex].column = cellIndex * 2;
+        cellIndex += 1;
+    }
+    assert(cells[2].row == 2 && cells[2].column == 4,
+        "a sized declarator declares an array of a user-defined type");
+    GridCell single;
+    single.row = 5;
+    assert(single.row == 5, "an inline value declaration is still not an array");
+
+    int32 dividend = 84;
+    int32 divisor = 2;
+    assert(dividend / divisor == 42 && dividend % 5 == 4,
+        "checked division still computes the right answer");
 
     println("base-language=ok");
     return 0;

@@ -598,7 +598,9 @@ namespace Absolute {
                 ? "Array size must be greater than zero"
                 : name == "array.bounds"
                     ? "Array index out of bounds"
-                    : name.ends_with(".requires.owner")
+                    : name == "division.by.zero"
+                        ? "Division by zero"
+                        : name.ends_with(".requires.owner")
                         ? "Ownership operation requires an owner argument"
                         : "Runtime safety check failed";
         builder.CreateCall(Puts(), {builder.CreateGlobalStringPtr(message, name + ".message")});
@@ -758,8 +760,27 @@ namespace Absolute {
         if (op == "+") return floating ? builder.CreateFAdd(left, right, "add") : builder.CreateAdd(left, right, "add");
         if (op == "-") return floating ? builder.CreateFSub(left, right, "sub") : builder.CreateSub(left, right, "sub");
         if (op == "*") return floating ? builder.CreateFMul(left, right, "mul") : builder.CreateMul(left, right, "mul");
-        if (op == "/") return floating ? builder.CreateFDiv(left, right, "div") : builder.CreateSDiv(left, right, "div");
-        if (op == "%") return floating ? builder.CreateFRem(left, right, "rem") : builder.CreateSRem(left, right, "rem");
+        if (op == "/" || op == "%") {
+            // Integer division by zero is immediate undefined behavior in LLVM,
+            // so the optimizer may fold the result to anything and the program
+            // keeps running on a garbage value. Reject a divisor that is
+            // provably zero and check the rest at runtime, the way an array
+            // index is checked.
+            if (!floating) {
+                if (const auto* divisor = llvm::dyn_cast<llvm::ConstantInt>(right);
+                    divisor && divisor->isZero())
+                    Fail(op == "/" ? "division by zero" : "remainder by zero");
+                EmitOrExit(
+                    builder.CreateICmpNE(right, llvm::ConstantInt::get(type, 0),
+                        "divisor.not.zero"),
+                    "division.by.zero");
+            }
+            if (op == "/")
+                return floating ? builder.CreateFDiv(left, right, "div")
+                    : builder.CreateSDiv(left, right, "div");
+            return floating ? builder.CreateFRem(left, right, "rem")
+                : builder.CreateSRem(left, right, "rem");
+        }
 
         if (op == "==") return floating ? builder.CreateFCmpOEQ(left, right, "equal") : builder.CreateICmpEQ(left, right, "equal");
         if (op == "!=") return floating ? builder.CreateFCmpONE(left, right, "not.equal") : builder.CreateICmpNE(left, right, "not.equal");
