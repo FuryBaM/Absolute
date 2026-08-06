@@ -79,7 +79,7 @@ namespace {
         return reinterpret_cast<DesktopWindow*>(static_cast<intptr_t>(handle));
     }
 
-    int32_t KeyCode(KeySym key) {
+    int32_t MapKeyCode(KeySym key) {
         if (key >= XK_a && key <= XK_z) return static_cast<int32_t>('A' + (key - XK_a));
         if (key >= XK_A && key <= XK_Z) return static_cast<int32_t>(key);
         if (key >= XK_0 && key <= XK_9) return static_cast<int32_t>(key);
@@ -208,7 +208,7 @@ extern "C" int32_t absolute_desktop_poll(int64_t handle) {
         case ConfigureNotify: state->Resize(event.xconfigure.width, event.xconfigure.height); break;
         case Expose: Present(*state); break;
         case KeyPress: case KeyRelease: {
-            const int32_t key = KeyCode(XLookupKeysym(&event.xkey, 0));
+            const int32_t key = MapKeyCode(XLookupKeysym(&event.xkey, 0));
             if (key >= 0 && key < static_cast<int32_t>(state->keys.size()))
                 state->keys[key] = event.type == KeyPress;
             if (event.type == KeyPress) {

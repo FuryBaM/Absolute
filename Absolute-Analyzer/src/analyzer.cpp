@@ -1877,7 +1877,12 @@ namespace Absolute {
                 for (size_t index = 0; index < explicitTypeArguments.size(); ++index)
                     substitutions.emplace(candidate->genericParameters[index], explicitTypeArguments[index]);
                 bool unified = true;
-                for (size_t index = 0; index < arguments.size(); ++index) {
+                // Explicit type arguments already bind every generic parameter, so
+                // unifying them against the argument types would demand an exact
+                // match and reject the implicit conversions an ordinary call
+                // accepts. Leave that judgement to ConversionCost below.
+                for (size_t index = 0;
+                    explicitTypeArguments.empty() && index < arguments.size(); ++index) {
                     std::string pattern;
                     if (!variadic || index < fixedCount) {
                         pattern = ValueReferenceBaseType(candidate->parameterTypes[index]);

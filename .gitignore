@@ -377,6 +377,10 @@ examples/desktop/.desktop-build/
 examples/chess/.build/
 .absolute/
 benchmarks/pointer-object-suite/results/
+benchmarks/algorithm-suite/.benchmark-build/
+benchmarks/algorithm-suite/results/
+benchmarks/value-ref-suite/.benchmark-build/
+benchmarks/value-ref-suite/results/
 
 # Local Absolute outputs and packaged editor builds
 /*.exe
