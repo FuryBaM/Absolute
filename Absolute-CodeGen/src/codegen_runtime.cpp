@@ -804,9 +804,18 @@ namespace Absolute {
         if (symbol.genericOrigin != InvalidSymbolId)
             return CallableKey(symbol.name, symbol.parameterTypes);
         if (symbol.externalFunction || symbol.exportedFunction || symbol.name == "main" || !analyzer ||
-            analyzer->FunctionOverloadCount(symbol.name) <= 1)
-            return (symbol.externalFunction || symbol.exportedFunction)
-                ? symbol.name.substr(symbol.name.rfind('.') + 1) : symbol.name;
+            analyzer->FunctionOverloadCount(symbol.name) <= 1) {
+            if (symbol.externalFunction || symbol.exportedFunction)
+                return symbol.name.substr(symbol.name.rfind('.') + 1);
+            // `main` owns its C symbol; everything else that would shadow a
+            // runtime entry point is moved out of the C namespace. The leading
+            // dot cannot appear in a C identifier, so the result is private to
+            // this module and can never satisfy a call from libc or the
+            // Absolute runtime.
+            if (symbol.name != "main" && IsReservedRuntimeSymbol(symbol.name))
+                return ".absolute." + CallableKey(symbol.name, symbol.parameterTypes);
+            return symbol.name;
+        }
         return CallableKey(symbol.name, symbol.parameterTypes);
     }
 

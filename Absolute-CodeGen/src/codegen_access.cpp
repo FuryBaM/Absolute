@@ -308,6 +308,28 @@ namespace Absolute {
                 method = &found->second;
                 callee = impl->module->getFunction(method->linkName);
             }
+            else if (auto owner = impl->interfaces.find(impl->currentClassName);
+                owner != impl->interfaces.end()) {
+                // A default method body runs on the concrete implementation, so
+                // an unqualified call to another contract method has to dispatch
+                // through the vtable the object carries rather than bind to the
+                // interface declaration.
+                const auto found = owner->second.methods.find(methodKey);
+                if (found == owner->second.methods.end())
+                    impl->Fail("interface '" + impl->currentClassName +
+                        "' has no method '" + methodName + "'");
+                method = &found->second;
+                if (!method->virtualSlot)
+                    impl->Fail("interface method '" + impl->currentClassName + "." +
+                        methodName + "' has no dispatch slot");
+                llvm::Value* vtable = impl->builder.CreateLoad(
+                    impl->builder.getPtrTy(), impl->currentThis, "interface.vtable");
+                llvm::Value* slot = impl->builder.CreateGEP(
+                    impl->builder.getPtrTy(), vtable,
+                    impl->builder.getInt64(*method->virtualSlot), "interface.slot");
+                callee = impl->builder.CreateLoad(
+                    impl->builder.getPtrTy(), slot, "interface.method");
+            }
             if (!method || !callee)
                 impl->Fail("missing implicit instance method '" + methodName + "'");
             std::vector<llvm::Value*> arguments;

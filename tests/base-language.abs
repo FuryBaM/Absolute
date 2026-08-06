@@ -1,5 +1,26 @@
 using Count = int32;
 using Counts = int32[];
+
+// These share their names with C runtime entry points that the generated code
+// and the Absolute runtime both call. They must not take over those symbols,
+// or managed allocation starts running user code and the process corrupts
+// itself. Zero-argument cases matter too: parameter types alone would not
+// make the link name unique.
+int32 free(int32 value) {
+    return value + 1;
+}
+
+int32 malloc(int32 value) {
+    return value + 2;
+}
+
+int32 abort() {
+    return 7;
+}
+
+int32 printf() {
+    return 9;
+}
 using FutureRecord = Record;
 using IntegerBox = Box<int32>;
 
@@ -61,6 +82,13 @@ int32 main() {
         "short-circuit and must protect guarded array access");
     assert(empty.length == 0 || empty[0] == 1,
         "short-circuit or must protect guarded array access");
+
+    assert(free(1) == 2 && malloc(1) == 3 && abort() == 7 && printf() == 9,
+        "functions named after C runtime symbols keep their own behavior");
+    int32* reservedNameHeap = new int32(41);
+    assert(*reservedNameHeap + 1 == 42,
+        "managed allocation still works beside those definitions");
+    delete reservedNameHeap;
 
     println("base-language=ok");
     return 0;

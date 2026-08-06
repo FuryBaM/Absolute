@@ -115,6 +115,41 @@ namespace Absolute {
             return result;
         }
 
+        // Ordinary functions keep their source name as the link name, which
+        // makes an Absolute function named after a C runtime entry point
+        // replace that entry point at link time. The generated code and the
+        // Absolute runtime both call into these, so the program then corrupts
+        // itself instead of failing to link. Such a definition is given a
+        // private link name; `extern`, `export "C"`, and `main` are excluded by
+        // the caller because those deliberately own their C symbol.
+        inline bool IsReservedRuntimeSymbol(const std::string& name) {
+            static const std::unordered_set<std::string> reserved = {
+                // Allocation, which the managed runtime relies on directly.
+                "malloc", "calloc", "realloc", "free", "aligned_alloc",
+                "posix_memalign", "strdup", "strndup",
+                // Block operations LLVM emits for loops, copies, and literals.
+                "memcpy", "memmove", "memset", "memcmp", "bcmp",
+                "strlen", "strcmp", "strncmp", "strcpy", "strncpy", "strcat",
+                // Standard I/O, used by println and the runtime diagnostics.
+                "printf", "fprintf", "sprintf", "snprintf", "vprintf", "vfprintf",
+                "puts", "putchar", "fputs", "fputc", "fwrite", "fread",
+                "fopen", "fclose", "fflush",
+                // Process control, used by assert failures and unhandled errors.
+                "abort", "exit", "_exit", "atexit", "setjmp", "longjmp", "raise",
+                // Math helpers LLVM can materialize from arithmetic.
+                "pow", "powf", "sqrt", "sqrtf", "fmod", "fmodf",
+                "sin", "cos", "tan", "exp", "log", "log2", "log10",
+                // C++ runtime support pulled in by the native runtime library.
+                "__cxa_atexit", "__cxa_throw", "__cxa_begin_catch", "__cxa_end_catch",
+                "_Unwind_Resume",
+            };
+            if (reserved.contains(name)) return true;
+            // The Absolute runtime and the compiler-support libraries own these
+            // whole namespaces.
+            return name.starts_with("absolute_") || name.starts_with("pthread_") ||
+                name.starts_with("llvm.") || name.starts_with("__");
+        }
+
         inline bool IsTaskTypeName(const std::string& name) {
             return name.size() > 6 && name.starts_with("task<") && name.ends_with(">");
         }

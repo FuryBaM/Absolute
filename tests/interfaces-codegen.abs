@@ -20,6 +20,42 @@ interface IDefaultMath {
     }
 }
 
+interface ISelfDispatch {
+    int64 seed();
+
+    // A default body may call the rest of the contract. The call has to reach
+    // the concrete implementation through the vtable, not the declaration.
+    int64 doubled() {
+        return seed() * 2;
+    }
+
+    int64 quadrupled() {
+        return doubled() * 2;
+    }
+}
+
+class SelfDispatchLow : ISelfDispatch {
+    public virtual int64 seed() {
+        return 5;
+    }
+}
+
+class SelfDispatchHigh : ISelfDispatch {
+    public virtual int64 seed() {
+        return 11;
+    }
+}
+
+class SelfDispatchOverride : ISelfDispatch {
+    public virtual int64 seed() {
+        return 1;
+    }
+
+    public virtual int64 doubled() {
+        return 100;
+    }
+}
+
 interface IDefaultLeft : IDefaultMath {
 }
 
@@ -152,6 +188,17 @@ int32 main() {
     ContractSpace.Value* namespacedOwner = new ContractSpace.Value();
     ContractSpace.IValue* namespacedContract = namespacedOwner;
     assert(namespacedContract.value() == 42, "namespaced interface dispatch");
+
+    ISelfDispatch* selfLow = new SelfDispatchLow();
+    ISelfDispatch* selfHigh = new SelfDispatchHigh();
+    assert(selfLow.doubled() == 10 && selfHigh.doubled() == 22,
+        "interface default body dispatches to the concrete implementation");
+    assert(selfLow.quadrupled() == 20 && selfHigh.quadrupled() == 44,
+        "interface default body reaches another default body");
+
+    ISelfDispatch* selfOverride = new SelfDispatchOverride();
+    assert(selfOverride.quadrupled() == 200,
+        "a class override wins over the default a default body calls");
 
     println("interfaces=ok");
     return 0;
