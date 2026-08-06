@@ -157,13 +157,15 @@ namespace std.collections {
                 T[] newItems = new T[newCap];
                 int32 i = 0;
                 while (i < _count) {
-                    newItems[i] = items[i];
+                    unsafeArraySet(newItems, i, unsafeArrayGet(items, i));
                     i = i + 1;
                 }
                 items = move(newItems);
                 _capacity = newCap;
             }
-            items[_count] = move(element);
+            // _count is below _capacity here, so the store is in range and the
+            // element index does not need checking again.
+            unsafeArraySet(items, _count, move(element));
             _count = _count + 1;
         }
 
@@ -174,7 +176,7 @@ namespace std.collections {
             T[] newItems = new T[requestedCapacity];
             int32 i = 0;
             while (i < _count) {
-                newItems[i] = items[i];
+                unsafeArraySet(newItems, i, unsafeArrayGet(items, i));
                 i = i + 1;
             }
             items = move(newItems);
@@ -186,7 +188,7 @@ namespace std.collections {
                 throw new Error("Vector is empty");
             }
             _count = _count - 1;
-            return items[_count];
+            return unsafeArrayGet(items, _count);
         }
 
         public void clear() {
@@ -208,11 +210,13 @@ namespace std.collections {
         // Горячий путь: быстрый доступ по индексу
         public nothrow T this[int32 index] {
             get {
-                assert(index >= 0 && index < _count, "Index out of bounds");
+                // One unsigned compare covers both ends: a negative index
+                // becomes a very large unsigned value and fails the same test.
+                assert((index as uint32) < (_count as uint32), "Index out of bounds");
                 return unsafeArrayGet(items, index);
             }
             set {
-                assert(index >= 0 && index < _count, "Index out of bounds");
+                assert((index as uint32) < (_count as uint32), "Index out of bounds");
                 unsafeArraySet(items, index, move(value));
             }
         }

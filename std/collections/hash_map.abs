@@ -36,6 +36,10 @@ namespace std.collections {
         private int32 _count;
         private int32 tombstoneCount;
         private int32 _capacity;
+        // The capacity is always a power of two, so a bucket index is the hash
+        // masked with capacity - 1. Probing used a remainder for every step,
+        // which costs an integer division on the hottest path in the map.
+        private int32 _mask;
         private func<int64, K> hashFunction;
         private func<bool, K, K> equalityFunction;
 
@@ -45,15 +49,7 @@ namespace std.collections {
         ) {
             hashFunction = hash;
             equalityFunction = equals;
-            _capacity = 8;
-            keys = new K[_capacity];
-            values = new V[_capacity];
-            states = new int32[_capacity];
-            int32 index = 0;
-            while (index < _capacity) {
-                states[index] = 0;
-                index = index + 1;
-            }
+            allocateTable(8);
             _count = 0;
             tombstoneCount = 0;
         }
@@ -68,7 +64,22 @@ namespace std.collections {
             }
             hashFunction = hash;
             equalityFunction = equals;
-            _capacity = initialCapacity < 4 ? 4 : initialCapacity;
+            allocateTable(roundUpToPowerOfTwo(initialCapacity < 4 ? 4 : initialCapacity));
+            _count = 0;
+            tombstoneCount = 0;
+        }
+
+        private nothrow int32 roundUpToPowerOfTwo(int32 requested) {
+            int32 result = 4;
+            while (result < requested) {
+                result = result * 2;
+            }
+            return result;
+        }
+
+        private nothrow void allocateTable(int32 newCapacity) {
+            _capacity = newCapacity;
+            _mask = newCapacity - 1;
             keys = new K[_capacity];
             values = new V[_capacity];
             states = new int32[_capacity];
@@ -77,8 +88,6 @@ namespace std.collections {
                 states[index] = 0;
                 index = index + 1;
             }
-            _count = 0;
-            tombstoneCount = 0;
         }
 
         private void clearStates() {
@@ -91,10 +100,9 @@ namespace std.collections {
 
         private int32 bucket(K key) {
             func<int64, K> hash = hashFunction;
-            int64 rawHash = hash(key);
-            int64 slot = rawHash % (_capacity as int64);
-            if (slot < 0) { slot = -slot; }
-            return slot as int32;
+            // Masking keeps the low bits, exactly as a remainder by a power of
+            // two would, and stays non-negative for a negative hash.
+            return (hash(key) & (_mask as int64)) as int32;
         }
 
         private bool keysEqual(K left, K right) {
@@ -104,13 +112,19 @@ namespace std.collections {
 
         private int32 findIndex(K key) {
             int32 index = bucket(key);
+            // Binding the comparison once per lookup instead of once per probe
+            // step: every such binding costs a closure retain and release.
+            func<bool, K, K> equals = equalityFunction;
             int32 scanned = 0;
-            while (scanned < _capacity) {
-                if (states[index] == 0) { return -1; }
-                if (states[index] == 1 && keysEqual(keys[index], key)) {
+            // The mask keeps every index inside the table, so the probe reads
+            // do not need a second bounds check.
+            while (scanned <= _mask) {
+                int32 state = unsafeArrayGet(states, index);
+                if (state == 0) { return -1; }
+                if (state == 1 && equals(unsafeArrayGet(keys, index), key)) {
                     return index;
                 }
-                index = (index + 1) % _capacity;
+                index = (index + 1) & _mask;
                 scanned = scanned + 1;
             }
             return -1;
@@ -120,14 +134,15 @@ namespace std.collections {
             int32 index = bucket(key);
             int32 firstTombstone = -1;
             int32 scanned = 0;
-            while (scanned < _capacity) {
-                if (states[index] == 0) {
+            while (scanned <= _mask) {
+                int32 state = unsafeArrayGet(states, index);
+                if (state == 0) {
                     return firstTombstone >= 0 ? firstTombstone : index;
                 }
-                if (states[index] == 2 && firstTombstone < 0) {
+                if (state == 2 && firstTombstone < 0) {
                     firstTombstone = index;
                 }
-                index = (index + 1) % _capacity;
+                index = (index + 1) & _mask;
                 scanned = scanned + 1;
             }
             return firstTombstone;
@@ -147,11 +162,7 @@ namespace std.collections {
             int32[] previousStates = copy(states);
             int32 previousCapacity = _capacity;
 
-            _capacity = newCapacity;
-            keys = new K[_capacity];
-            values = new V[_capacity];
-            states = new int32[_capacity];
-            clearStates();
+            allocateTable(newCapacity);
             _count = 0;
             tombstoneCount = 0;
 
@@ -188,14 +199,34 @@ namespace std.collections {
         }
 
         public void put(K key, V value) {
-            int32 existing = findIndex(key);
-            if (existing >= 0) {
-                values[existing] = move(value);
-                return;
+            // One probe decides both questions. Looking the key up and then
+            // probing again for its insertion slot walked the same chain twice
+            // for every new key.
+            int32 index = bucket(key);
+            func<bool, K, K> equals = equalityFunction;
+            int32 firstTombstone = -1;
+            int32 scanned = 0;
+            while (scanned <= _mask) {
+                int32 state = unsafeArrayGet(states, index);
+                if (state == 0) { break; }
+                if (state == 1 && equals(unsafeArrayGet(keys, index), key)) {
+                    values[index] = move(value);
+                    return;
+                }
+                if (state == 2 && firstTombstone < 0) {
+                    firstTombstone = index;
+                }
+                index = (index + 1) & _mask;
+                scanned = scanned + 1;
             }
+            if (firstTombstone >= 0) { index = firstTombstone; }
 
-            ensureRoomForNewEntry();
-            int32 index = findInsertionIndex(key);
+            // Growing invalidates the slot found above, so probe again only in
+            // that case.
+            if ((_count + tombstoneCount + 1) * 10 >= _capacity * 7) {
+                rehash(_capacity * 2);
+                index = findInsertionIndex(key);
+            }
             if (states[index] == 2) {
                 tombstoneCount = tombstoneCount - 1;
             }
@@ -232,10 +263,7 @@ namespace std.collections {
         }
 
         public void clear() {
-            keys = new K[_capacity];
-            values = new V[_capacity];
-            states = new int32[_capacity];
-            clearStates();
+            allocateTable(_capacity);
             _count = 0;
             tombstoneCount = 0;
         }
@@ -297,6 +325,9 @@ namespace std.collections {
         private int32 _count;
         private int32 tombstoneCount;
         private int32 _capacity;
+        // Power-of-two capacity, so probing masks instead of taking a
+        // remainder. See HashMap for the same reasoning.
+        private int32 _mask;
         private func<int64, T> hashFunction;
         private func<bool, T, T> equalityFunction;
 
@@ -307,6 +338,7 @@ namespace std.collections {
             hashFunction = hash;
             equalityFunction = equals;
             _capacity = 8;
+            _mask = _capacity - 1;
             items = new T[_capacity];
             states = new int32[_capacity];
             int32 index = 0;
@@ -328,7 +360,11 @@ namespace std.collections {
             }
             hashFunction = hash;
             equalityFunction = equals;
-            _capacity = initialCapacity < 4 ? 4 : initialCapacity;
+            _capacity = 4;
+            while (_capacity < initialCapacity) {
+                _capacity = _capacity * 2;
+            }
+            _mask = _capacity - 1;
             items = new T[_capacity];
             states = new int32[_capacity];
             int32 index = 0;
@@ -350,10 +386,7 @@ namespace std.collections {
 
         private int32 bucket(T value) {
             func<int64, T> hash = hashFunction;
-            int64 rawHash = hash(value);
-            int64 slot = rawHash % (_capacity as int64);
-            if (slot < 0) { slot = -slot; }
-            return slot as int32;
+            return (hash(value) & (_mask as int64)) as int32;
         }
 
         private bool itemsEqual(T left, T right) {
@@ -363,13 +396,15 @@ namespace std.collections {
 
         private int32 findIndex(T value) {
             int32 index = bucket(value);
+            func<bool, T, T> equals = equalityFunction;
             int32 scanned = 0;
-            while (scanned < _capacity) {
-                if (states[index] == 0) { return -1; }
-                if (states[index] == 1 && itemsEqual(items[index], value)) {
+            while (scanned <= _mask) {
+                int32 state = unsafeArrayGet(states, index);
+                if (state == 0) { return -1; }
+                if (state == 1 && equals(unsafeArrayGet(items, index), value)) {
                     return index;
                 }
-                index = (index + 1) % _capacity;
+                index = (index + 1) & _mask;
                 scanned = scanned + 1;
             }
             return -1;
@@ -379,14 +414,15 @@ namespace std.collections {
             int32 index = bucket(value);
             int32 firstTombstone = -1;
             int32 scanned = 0;
-            while (scanned < _capacity) {
-                if (states[index] == 0) {
+            while (scanned <= _mask) {
+                int32 state = unsafeArrayGet(states, index);
+                if (state == 0) {
                     return firstTombstone >= 0 ? firstTombstone : index;
                 }
-                if (states[index] == 2 && firstTombstone < 0) {
+                if (state == 2 && firstTombstone < 0) {
                     firstTombstone = index;
                 }
-                index = (index + 1) % _capacity;
+                index = (index + 1) & _mask;
                 scanned = scanned + 1;
             }
             return firstTombstone;
@@ -405,6 +441,7 @@ namespace std.collections {
             int32 previousCapacity = _capacity;
 
             _capacity = newCapacity;
+            _mask = _capacity - 1;
             items = new T[_capacity];
             states = new int32[_capacity];
             clearStates();
