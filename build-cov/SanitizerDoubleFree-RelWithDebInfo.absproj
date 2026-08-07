@@ -1,7 +1,0 @@
-{
-  "name": "SanitizerDoubleFree",
-  "entry": "/home/user/Absolute/tests/projects/sanitizer-double-free/src/main.abs",
-  "sources": ["/home/user/Absolute/tests/projects/sanitizer-double-free/src"],
-  "nativeLibraries": ["/home/user/Absolute/build-cov/libabsolute-native-test.a"],
-  "nativeSearchPaths": []
-}

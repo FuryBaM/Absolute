@@ -1,7 +1,0 @@
-{
-  "name": "SanitizerLeak",
-  "entry": "/home/user/Absolute/tests/projects/sanitizer-leak/src/main.abs",
-  "sources": ["/home/user/Absolute/tests/projects/sanitizer-leak/src"],
-  "nativeLibraries": ["/home/user/Absolute/build-cov/libabsolute-native-test.a"],
-  "nativeSearchPaths": []
-}

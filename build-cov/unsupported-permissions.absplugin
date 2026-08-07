@@ -1,8 +1,0 @@
-{
-  "name": "absolute.test-permissions",
-  "version": "1.0.0",
-  "abi": 1,
-  "library": "$<TARGET_FILE:Absolute-Math-Plugin>",
-  "permissions": ["filesystem.unknown"],
-  "provides": ["test.permissions"]
-}

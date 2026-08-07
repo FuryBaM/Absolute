@@ -1,8 +1,0 @@
-{
-  "name": "absolute.test-native-permission",
-  "version": "1.0.0",
-  "abi": 1,
-  "library": "$<TARGET_FILE:Absolute-Math-Plugin>",
-  "nativeLibraries": ["native.dll"],
-  "provides": ["test.permissions"]
-}
