@@ -12,7 +12,7 @@ namespace Absolute{
                 return std::make_unique<AssignmentExpr>(std::move(leftValue), std::move(op->value), std::move(rightValue));
             }
             ReportSyntaxError(op, "Expected assignment operator");
-            std::exit(EXIT_FAILURE);
+            throw std::runtime_error("Expected assignment operator");
             return nullptr;
         }
         return nullptr;

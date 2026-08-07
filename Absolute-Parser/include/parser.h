@@ -17,6 +17,35 @@ namespace Absolute {
         std::string sourceFile;
         size_t pos = 0;
 
+        // Expressions and statements are parsed by recursive descent, so
+        // nesting in the source becomes nesting on the machine stack: input
+        // deep enough overflowed it and killed the process. No real program
+        // nests this far, and the limit leaves room on the smaller main-thread
+        // stack Windows gives.
+        static constexpr size_t MaximumRecursionDepth = 1000;
+        size_t recursionDepth = 0;
+
+        // Counts one level of descent and gives it back on every exit path,
+        // including the throw that reports the overrun.
+        class RecursionGuard {
+        public:
+            explicit RecursionGuard(Parser& parser) : owner(parser) {
+                if (++owner.recursionDepth > MaximumRecursionDepth) {
+                    --owner.recursionDepth;
+                    owner.ReportSyntaxError(owner.CurrentToken(),
+                        "Expression or statement nesting is too deep");
+                    throw std::runtime_error(
+                        "Expression or statement nesting is too deep");
+                }
+            }
+            ~RecursionGuard() { --owner.recursionDepth; }
+            RecursionGuard(const RecursionGuard&) = delete;
+            RecursionGuard& operator=(const RecursionGuard&) = delete;
+
+        private:
+            Parser& owner;
+        };
+
         Parser(std::vector<Token> tokens, std::string sourceFile = {})
             : tokens(std::move(tokens)), sourceFile(std::move(sourceFile)) {}
 

@@ -29,7 +29,7 @@ namespace Absolute {
                 }
                 else {
                     ReportSyntaxError(CurrentToken(), "Expected ',' or '{' after parent class");
-                    std::exit(EXIT_FAILURE);
+                    throw std::runtime_error("Expected ',' or '{' after parent class");
                 }
             }
         }

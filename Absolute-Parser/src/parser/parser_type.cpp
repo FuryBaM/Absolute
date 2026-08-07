@@ -73,7 +73,7 @@ namespace Absolute{
             return std::make_unique<PrimitiveTypeExpr>(type->value);
         }
         ReportSyntaxError(type, "Expected primitive type");
-        std::exit(EXIT_FAILURE);
+        throw std::runtime_error("Expected primitive type");
         return nullptr;
     }
 }

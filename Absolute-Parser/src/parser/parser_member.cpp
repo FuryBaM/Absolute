@@ -8,7 +8,7 @@ namespace Absolute {
         Token* memberToken = CurrentToken();
         if (!memberToken || memberToken->type != TokenType::IDENTIFIER) {
             ReportSyntaxError(memberToken, "Expected identifier after '.'");
-            std::exit(EXIT_FAILURE);
+            throw std::runtime_error("Expected identifier after '.'");
             return nullptr;
         }
 

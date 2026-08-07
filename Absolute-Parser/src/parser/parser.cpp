@@ -46,10 +46,11 @@ namespace Absolute{
     }
 
     std::unique_ptr<Expression> Parser::ParseExpressionImpl() {
+        RecursionGuard guard(*this);
         Token* token = CurrentToken();
         if (!token) {
             ReportSyntaxError(token, "Token is null");
-            std::exit(EXIT_FAILURE);
+            throw std::runtime_error("Token is null");
             return nullptr;
         }
         std::unique_ptr<Expression> left = nullptr;
@@ -73,10 +74,11 @@ namespace Absolute{
     }
 
     std::unique_ptr<Expression> Parser::ParseBaseExpr() {
+        RecursionGuard guard(*this);
         Token* token = CurrentToken();
         if (!token) {
             ReportSyntaxError(token, "Null token");
-            std::exit(EXIT_FAILURE);
+            throw std::runtime_error("Null token");
             return nullptr;
         }
 
@@ -152,7 +154,7 @@ namespace Absolute{
         }
 
         ReportSyntaxError(CurrentToken(), "Expected primary expression");
-        std::exit(EXIT_FAILURE);
+        throw std::runtime_error("Expected primary expression");
     }
 
     std::unique_ptr<Expression> Parser::ParseSuffixExpr(std::unique_ptr<Expression> base) {
@@ -202,6 +204,7 @@ namespace Absolute{
 
     std::unique_ptr<Statement> Parser::ParseStatementImpl()
     {
+        RecursionGuard guard(*this);
         ParseAttributes();
         ParseModifiers();
 

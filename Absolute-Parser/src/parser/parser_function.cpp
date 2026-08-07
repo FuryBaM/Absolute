@@ -85,7 +85,7 @@ namespace Absolute {
             return std::make_unique<FunctionCallExpr>(std::move(base), std::move(arguments));
         }
         ReportSyntaxError(bracket, "Expected bracket '('");
-        std::exit(EXIT_FAILURE);
+        throw std::runtime_error("Expected bracket '('");
         return nullptr;
     }
 

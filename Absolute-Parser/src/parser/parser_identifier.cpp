@@ -27,7 +27,7 @@ namespace Absolute {
             }
         }
         ReportSyntaxError(token, "Expected identifier token");
-        std::exit(EXIT_FAILURE);
+        throw std::runtime_error("Expected identifier token");
         return nullptr;
     }
 
@@ -35,7 +35,7 @@ namespace Absolute {
         Token* identifier = CurrentToken();
         if (!identifier || identifier->type != TokenType::IDENTIFIER) {
             ReportSyntaxError(identifier, "Expected identifier");
-            std::exit(EXIT_FAILURE);
+            throw std::runtime_error("Expected identifier");
             return nullptr;
         }
 

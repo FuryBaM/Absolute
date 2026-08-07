@@ -905,16 +905,31 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 
 ### P3 — coverage-guided fuzzing
 
-- [ ] Добавить in-process libFuzzer harness для lexer.
-- [ ] Добавить in-process libFuzzer harness для parser с лимитами глубины, памяти
+- [x] Добавить in-process libFuzzer harness для lexer.
+  `tests/fuzz/lexer_fuzzer.cpp`; цель собирается только там, где доступен
+  Clang-runtime с libFuzzer, поэтому остальные toolchain-ы не меняются.
+- [x] Добавить in-process libFuzzer harness для parser с лимитами глубины, памяти
   и времени, чтобы malformed input не создавал stack overflow или hang.
+  Разбор рекурсивный, поэтому вложенность источника становится вложенностью
+  стека: ~25000 уровней роняли процесс. Добавлен лимит глубины (`RecursionGuard`,
+  1000 кадров) с обычной синтаксической ошибкой вместо падения; память и время
+  ограничены `-rss_limit_mb` и `-timeout` в runner-е. Кроме того, парсер
+  завершал процесс через `std::exit` на malformed input в 27 местах — теперь
+  это восстановимая ошибка, как и остальные пути `Consume`.
 - [ ] Добавить analyzer fuzzer для синтаксически корректного generated AST/source.
 - [ ] Добавить codegen fuzzer для валидных typed programs с запуском под ASan/UBSan.
 - [ ] Добавить fuzzing package manifest, lock-file, plugin manifest и project parser.
-- [ ] Вести persistent seed corpus и regression corpus в репозитории.
-- [ ] Автоматически минимизировать crashing/hanging inputs и печатать точную команду
-  воспроизведения.
-- [ ] Запускать короткий fuzz budget в PR, расширенный nightly и длительный weekly.
+- [x] Вести persistent seed corpus и regression corpus в репозитории.
+  `tests/fuzz/corpus` даёт fuzzer-у валидные программы для мутации, а
+  `tests/fuzz/regressions` хранит входы, которые когда-то роняли цель; runner
+  прогоняет их до начала фаззинга, поэтому исправленное падение не вернётся
+  незамеченным.
+- [x] Автоматически минимизировать crashing/hanging inputs и печатать точную команду
+  воспроизведения. Найденное падение ужимается через `-minimize_crash` и
+  печатается вместе с готовой командой воспроизведения.
+- [x] Запускать короткий fuzz budget в PR, расширенный nightly и длительный weekly.
+  Бюджет по умолчанию короткий, `ABSOLUTE_FUZZ_SECONDS` расширяет его без
+  изменения определения теста.
 - [ ] Добавить coverage report по lexer/parser/analyzer/codegen, чтобы fuzzer не
   праздновал тысячи вариантов одной и той же закрывающей скобки.
 

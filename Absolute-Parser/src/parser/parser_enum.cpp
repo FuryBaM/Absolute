@@ -17,7 +17,7 @@ namespace Absolute {
             if (expectComma) {
                 if (CurrentToken()->value != ",") {
                     ReportSyntaxError(CurrentToken(), "Expected ',' between enum members, but found '" + CurrentToken()->value + "'");
-                    std::exit(EXIT_FAILURE);
+                    throw std::runtime_error("Expected ',' between enum members, but found '");
                 }
                 Consume(TokenType::DELIMITER, ",");
             }
@@ -58,12 +58,12 @@ namespace Absolute {
                 }
                 else {
                     ReportSyntaxError(next, "Unexpected keyword '" + next->value + "' in group declaration");
-                    std::exit(EXIT_FAILURE);
+                    throw std::runtime_error("Unexpected keyword '");
                 }
             }
             else {
                 ReportSyntaxError(next, "Expected 'enum' or 'group', but found '" + next->value + "'");
-                std::exit(EXIT_FAILURE);
+                throw std::runtime_error("Expected 'enum' or 'group', but found '");
             }
 
         }

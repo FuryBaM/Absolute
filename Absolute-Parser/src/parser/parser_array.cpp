@@ -25,7 +25,7 @@ namespace Absolute {
             }
             else {
                 ReportSyntaxError(CurrentToken(), "Expected '.' or '}'.");
-                std::exit(EXIT_FAILURE);
+                throw std::runtime_error("Expected '.' or '}'.");
                 break;
             }
         }

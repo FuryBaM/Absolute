@@ -200,6 +200,53 @@ if(BUILD_TESTING)
             TIMEOUT 240)
     endif()
 
+    # Coverage-guided fuzzing. libFuzzer ships with Clang's runtime, so the
+    # targets only exist where that runtime is present; every other toolchain
+    # keeps building as before.
+    if(NOT WIN32 AND NOT ABSOLUTE_TERMUX AND
+        CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        include(CheckCXXSourceCompiles)
+        set(CMAKE_REQUIRED_FLAGS "-fsanitize=fuzzer")
+        check_cxx_source_compiles(
+            "extern \"C\" int LLVMFuzzerTestOneInput(const unsigned char*, unsigned long) { return 0; }"
+            ABSOLUTE_HAS_LIBFUZZER)
+        unset(CMAKE_REQUIRED_FLAGS)
+    endif()
+    if(ABSOLUTE_HAS_LIBFUZZER)
+        # ASan and UBSan report the corruption a crash would otherwise only
+        # hint at, and the fuzzer needs the coverage instrumentation anyway.
+        set(ABSOLUTE_FUZZ_FLAGS
+            -fsanitize=fuzzer,address,undefined
+            -fno-omit-frame-pointer -g -O1)
+        foreach(fuzzer lexer parser)
+            add_executable(absolute-${fuzzer}-fuzzer
+                tests/fuzz/${fuzzer}_fuzzer.cpp)
+            target_link_libraries(absolute-${fuzzer}-fuzzer
+                PRIVATE Absolute-Parser)
+            target_compile_options(absolute-${fuzzer}-fuzzer
+                PRIVATE ${ABSOLUTE_FUZZ_FLAGS})
+            target_link_options(absolute-${fuzzer}-fuzzer
+                PRIVATE ${ABSOLUTE_FUZZ_FLAGS})
+            if(Python3_Interpreter_FOUND)
+                add_test(
+                    NAME absolute.fuzz-${fuzzer}
+                    COMMAND "${Python3_EXECUTABLE}"
+                        "${PROJECT_SOURCE_DIR}/tools/testing/run_fuzzer.py"
+                        --fuzzer "$<TARGET_FILE:absolute-${fuzzer}-fuzzer>"
+                        --name "${fuzzer}"
+                        --seed-corpus "${PROJECT_SOURCE_DIR}/tests/fuzz/corpus"
+                        --regression-corpus
+                            "${PROJECT_SOURCE_DIR}/tests/fuzz/regressions"
+                        --work-dir
+                            "${CMAKE_BINARY_DIR}/fuzz/${fuzzer}/$<CONFIG>"
+                        --budget-seconds "$ENV{ABSOLUTE_FUZZ_SECONDS}")
+                set_tests_properties(absolute.fuzz-${fuzzer} PROPERTIES
+                    PASS_REGULAR_EXPRESSION "fuzz-${fuzzer}=ok"
+                    TIMEOUT 900)
+            endif()
+        endforeach()
+    endif()
+
     if(TARGET Absolute-Unless-Plugin)
         add_test(
             NAME absolute.syntax-plugin

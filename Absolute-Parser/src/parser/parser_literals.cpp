@@ -17,7 +17,7 @@ namespace Absolute {
             return ParseCharLiteralExpr();
         }
         ReportSyntaxError(token, "Expected literal");
-        std::exit(EXIT_FAILURE);
+        throw std::runtime_error("Expected literal");
         return nullptr;
     }
 
@@ -28,7 +28,7 @@ namespace Absolute {
             return std::make_unique<BooleanLiteralExpr>(booleanToken->value == "true");
         }
         ReportSyntaxError(booleanToken, "Expected number literal");
-        std::exit(EXIT_FAILURE);
+        throw std::runtime_error("Expected number literal");
         return nullptr;
     }
 
@@ -39,7 +39,7 @@ namespace Absolute {
             return std::make_unique<NumberLiteralExpr>(numberToken->value);
         }
         ReportSyntaxError(numberToken, "Expected number literal");
-        std::exit(EXIT_FAILURE);
+        throw std::runtime_error("Expected number literal");
         return nullptr;
     }
 
@@ -135,7 +135,7 @@ namespace Absolute {
                     }
                     if (braceDepth != 0) {
                         ReportSyntaxError(token, "Unmatched '{' in string interpolation");
-                        std::exit(EXIT_FAILURE);
+                        throw std::runtime_error("Unmatched '{' in string interpolation");
                     }
                     std::string exprCode = rawContent.substr(startExpr, i - startExpr);
                     exprStrings.push_back(exprCode);
@@ -158,13 +158,13 @@ namespace Absolute {
                 std::vector<Token> exprTokens = lexer(exprCode);
                 if (exprTokens.empty()) {
                     ReportSyntaxError(token, "Empty expression in string interpolation");
-                    std::exit(EXIT_FAILURE);
+                    throw std::runtime_error("Empty expression in string interpolation");
                 }
                 Parser exprParser(std::move(exprTokens));
                 std::unique_ptr<Expression> parsedExpr = exprParser.ParseExpression();
                 if (!parsedExpr) {
                     ReportSyntaxError(token, "Failed to parse expression in string interpolation");
-                    std::exit(EXIT_FAILURE);
+                    throw std::runtime_error("Failed to parse expression in string interpolation");
                 }
                 formatCallArgs.push_back(std::move(parsedExpr));
             }
@@ -173,7 +173,7 @@ namespace Absolute {
             return std::make_unique<FunctionCallExpr>(std::move(formatCallee), std::move(formatCallArgs));
         }
         ReportSyntaxError(token, "Expected string literal");
-        std::exit(EXIT_FAILURE);
+        throw std::runtime_error("Expected string literal");
         return nullptr;
     }
 
@@ -190,7 +190,7 @@ namespace Absolute {
             return std::make_unique<CharLiteralExpr>(value.front());
         }
         ReportSyntaxError(token, "Expected char literal");
-        std::exit(EXIT_FAILURE);
+        throw std::runtime_error("Expected char literal");
         return nullptr;
     }
 }

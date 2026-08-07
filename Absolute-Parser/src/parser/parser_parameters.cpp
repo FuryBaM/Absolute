@@ -6,7 +6,7 @@ namespace Absolute{
     {
         if (!CurrentToken() || CurrentToken()->value != "(") {
             ReportSyntaxError(CurrentToken(), "Expected '(' in parameters");
-            std::exit(EXIT_FAILURE);
+            throw std::runtime_error("Expected '(' in parameters");
         }
         Consume(TokenType::BRACKET, "("); // "("
 
