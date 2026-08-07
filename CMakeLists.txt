@@ -43,6 +43,14 @@ if(ABSOLUTE_ENABLE_LLVM)
     absolute_find_llvm()
 endif()
 
+# The lli-based tests need the runtime as a shared library. Those tests only
+# exist off Windows and Termux, so build it only where they can run.
+if(BUILD_TESTING AND NOT WIN32 AND NOT ABSOLUTE_TERMUX)
+    set(ABSOLUTE_BUILD_RUNTIME_SHARED ON CACHE BOOL
+        "Also build the Absolute runtime as a shared library for lli-based tests"
+        FORCE)
+endif()
+
 # Добавляем подпроекты
 add_subdirectory(Absolute-Runtime)
 add_subdirectory(Absolute-Parser)
@@ -1599,11 +1607,19 @@ if(BUILD_TESTING)
             unset(ABSOLUTE_LLI_EXECUTABLE CACHE)
             set(ABSOLUTE_LLI_EXECUTABLE "")
         endif()
+        # Hand the JIT the runtime it cannot link for itself. Without this every
+        # lli test that touches a managed pointer fails to resolve
+        # `absolute_managed_*`.
+        set(ABSOLUTE_LLI_RUNTIME_ARGS "")
+        if(ABSOLUTE_LLI_EXECUTABLE AND TARGET Absolute-Runtime-Shared)
+            set(ABSOLUTE_LLI_RUNTIME_ARGS
+                "--dlopen=$<TARGET_FILE:Absolute-Runtime-Shared>")
+        endif()
         if(ABSOLUTE_LLI_EXECUTABLE)
             if(TARGET Absolute-Unless-Plugin)
                 add_test(
                     NAME absolute.run-syntax-plugin
-                    COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/syntax-plugin.ll"
+                    COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/syntax-plugin.ll"
                 )
                 set_tests_properties(absolute.run-syntax-plugin PROPERTIES
                     FIXTURES_REQUIRED absolute-syntax-plugin-ir
@@ -1611,7 +1627,7 @@ if(BUILD_TESTING)
             endif()
             add_test(
                 NAME absolute.run-builtins
-                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/runtime-builtins.ll"
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/runtime-builtins.ll"
             )
             set_tests_properties(absolute.run-builtins PROPERTIES
                 FIXTURES_REQUIRED absolute-builtins-ir
@@ -1619,7 +1635,7 @@ if(BUILD_TESTING)
             )
             add_test(
                 NAME absolute.run-arrays
-                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/arrays.ll"
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/arrays.ll"
             )
             set_tests_properties(absolute.run-arrays PROPERTIES
                 FIXTURES_REQUIRED absolute-arrays-ir
@@ -1627,7 +1643,7 @@ if(BUILD_TESTING)
             )
             add_test(
                 NAME absolute.run-array-out-of-bounds
-                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/array-out-of-bounds.ll"
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/array-out-of-bounds.ll"
             )
             set_tests_properties(absolute.run-array-out-of-bounds PROPERTIES
                 FIXTURES_REQUIRED absolute-array-out-of-bounds-ir
@@ -1635,7 +1651,7 @@ if(BUILD_TESTING)
             )
             add_test(
                 NAME absolute.run-division-by-zero
-                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/division-by-zero.ll"
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/division-by-zero.ll"
             )
             set_tests_properties(absolute.run-division-by-zero PROPERTIES
                 FIXTURES_REQUIRED absolute-division-by-zero-ir
@@ -1643,7 +1659,7 @@ if(BUILD_TESTING)
             )
             add_test(
                 NAME absolute.run-array-advanced
-                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/array-advanced.ll"
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/array-advanced.ll"
             )
             set_tests_properties(absolute.run-array-advanced PROPERTIES
                 FIXTURES_REQUIRED absolute-array-advanced-ir
@@ -1651,7 +1667,7 @@ if(BUILD_TESTING)
             )
             add_test(
                 NAME absolute.run-array-copy
-                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/array-copy.ll"
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/array-copy.ll"
             )
             set_tests_properties(absolute.run-array-copy PROPERTIES
                 FIXTURES_REQUIRED absolute-array-copy-ir
@@ -1659,7 +1675,7 @@ if(BUILD_TESTING)
             )
             add_test(
                 NAME absolute.run-out-parameters
-                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/out-parameters.ll"
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/out-parameters.ll"
             )
             set_tests_properties(absolute.run-out-parameters PROPERTIES
                 FIXTURES_REQUIRED absolute-out-parameters-ir
@@ -1668,7 +1684,7 @@ if(BUILD_TESTING)
 
             add_test(
                 NAME absolute.run-ownership-model-execution
-                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/ownership-model-execution.ll"
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/ownership-model-execution.ll"
             )
             set_tests_properties(absolute.run-ownership-model-execution PROPERTIES
                 FIXTURES_REQUIRED absolute-ownership-model-execution-ir
@@ -1676,7 +1692,7 @@ if(BUILD_TESTING)
             )
             add_test(
                 NAME absolute.run-bytes-bytebuffer-test
-                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/bytes-bytebuffer-test.ll"
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/bytes-bytebuffer-test.ll"
             )
             set_tests_properties(absolute.run-bytes-bytebuffer-test PROPERTIES
                 FIXTURES_REQUIRED absolute-bytes-bytebuffer-test-ir
@@ -1684,7 +1700,7 @@ if(BUILD_TESTING)
             )
             add_test(
                 NAME absolute.run-io-streams-test
-                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/io-streams-test.ll"
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/io-streams-test.ll"
             )
             set_tests_properties(absolute.run-io-streams-test PROPERTIES
                 FIXTURES_REQUIRED absolute-io-streams-test-ir
@@ -1693,7 +1709,7 @@ if(BUILD_TESTING)
 
             add_test(
                 NAME absolute.run-memory-ownership-advanced
-                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/memory-ownership-advanced.ll"
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/memory-ownership-advanced.ll"
             )
             set_tests_properties(absolute.run-memory-ownership-advanced PROPERTIES
                 FIXTURES_REQUIRED absolute-memory-ownership-advanced-ir
@@ -1701,7 +1717,7 @@ if(BUILD_TESTING)
             )
             add_test(
                 NAME absolute.run-multidimensional-slices
-                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/multidimensional-slices.ll"
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/multidimensional-slices.ll"
             )
             set_tests_properties(absolute.run-multidimensional-slices PROPERTIES
                 FIXTURES_REQUIRED absolute-multidimensional-slices-ir
@@ -1709,7 +1725,7 @@ if(BUILD_TESTING)
             )
             add_test(
                 NAME absolute.run-chess-rules
-                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/chess-rules.ll"
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/chess-rules.ll"
             )
             set_tests_properties(absolute.run-chess-rules PROPERTIES
                 FIXTURES_REQUIRED absolute-chess-rules-ir
@@ -1728,7 +1744,7 @@ if(BUILD_TESTING)
             )
             add_test(
                 NAME absolute.run-slice-out-of-bounds
-                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/slice-out-of-bounds.ll"
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/slice-out-of-bounds.ll"
             )
             set_tests_properties(absolute.run-slice-out-of-bounds PROPERTIES
                 FIXTURES_REQUIRED absolute-slice-out-of-bounds-ir
@@ -1784,7 +1800,7 @@ if(BUILD_TESTING)
         if(ABSOLUTE_LLI_EXECUTABLE)
             add_test(
                 NAME absolute.run-project
-                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/multi-file-project.ll"
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/multi-file-project.ll"
             )
             set_tests_properties(absolute.run-project PROPERTIES
                 FIXTURES_REQUIRED absolute-project-ir
@@ -2418,7 +2434,7 @@ if(BUILD_TESTING)
         if(ABSOLUTE_LLI_EXECUTABLE)
             add_test(
                 NAME absolute.run-native-ffi
-                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" "${CMAKE_BINARY_DIR}/native-ffi.ll"
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/native-ffi.ll"
             )
             set_tests_properties(absolute.run-native-ffi PROPERTIES
                 FIXTURES_REQUIRED absolute-native-ffi-ir

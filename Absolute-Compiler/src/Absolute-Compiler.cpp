@@ -822,6 +822,13 @@ namespace {
         linkArgs.push_back("-o");
         linkArgs.push_back(modulePath.string());
 
+        // Distributions ship wasm-ld as a symlink to the single lld binary,
+        // which picks its flavor from argv[0]. Reaching it through a path that
+        // resolves to plain `lld` makes it refuse to link as a generic driver,
+        // so name the flavor explicitly in that case.
+        if (wasmLd.stem() == "lld")
+            linkArgs.insert(linkArgs.begin(), {"-flavor", "wasm"});
+
         // Console/assert lower to puts/printf/abort (shim). Host Absolute-Runtime
         // (managed heap, tasks, load, FS) is still not wasm-compatible.
         const int status = RunProcess(wasmLd, linkArgs);

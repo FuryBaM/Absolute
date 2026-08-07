@@ -366,6 +366,7 @@ FodyWeavers.xsd
 ~AutoRecover.Absolute.vcxproj*
 
 build/
+build-debug/
 
 # Local array benchmark artifacts
 benchmarks/array-suite/.benchmark-build/

@@ -9,7 +9,11 @@ int32 main() {
     mem.writeByte(67 as uint8);
 
     ByteBuffer* buf = mem.getBuffer();
-    buf.flip();
+    assert(buf.limit() == 3, "getBuffer exposes what was written");
+    assert(buf.getByteAt(0) == 65 && buf.getByteAt(2) == 67,
+        "getBuffer content matches the written bytes");
+
+    mem.flip();
 
     assert(mem.readByte() == 65, "readByte 65");
     assert(mem.readByte() == 66, "readByte 66");

@@ -3,7 +3,7 @@ project(Absolute-Runtime LANGUAGES CXX)
 
 find_package(Threads REQUIRED)
 
-add_library(Absolute-Runtime STATIC
+set(ABSOLUTE_RUNTIME_SOURCES
     src/android_pthread_affinity_compat.h
     src/binary.cpp
     src/bytes.cpp
@@ -27,8 +27,26 @@ add_library(Absolute-Runtime STATIC
     src/tasks.cpp
     src/time.cpp
 )
+
+add_library(Absolute-Runtime STATIC ${ABSOLUTE_RUNTIME_SOURCES})
 target_compile_features(Absolute-Runtime PUBLIC cxx_std_20)
 target_link_libraries(Absolute-Runtime PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
+# lli JITs a module by itself, so a test that touches a managed pointer only
+# resolves `absolute_managed_*` if the runtime is handed to it. The static
+# archive cannot serve that purpose: its thread-local accesses carry
+# R_X86_64_GOTTPOFF relocations the JIT linker rejects. A shared build loaded
+# through the real dynamic loader resolves them normally.
+option(ABSOLUTE_BUILD_RUNTIME_SHARED
+    "Also build the Absolute runtime as a shared library for lli-based tests" OFF)
+if(ABSOLUTE_BUILD_RUNTIME_SHARED)
+    add_library(Absolute-Runtime-Shared SHARED ${ABSOLUTE_RUNTIME_SOURCES})
+    target_compile_features(Absolute-Runtime-Shared PUBLIC cxx_std_20)
+    target_link_libraries(Absolute-Runtime-Shared PUBLIC
+        Threads::Threads ${CMAKE_DL_LIBS})
+    set_target_properties(Absolute-Runtime-Shared PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+endif()
+
 if(ANDROID OR DEFINED ENV{TERMUX_VERSION})
     find_package(PkgConfig QUIET)
     if(PkgConfig_FOUND)
