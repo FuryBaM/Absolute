@@ -218,11 +218,27 @@ if(BUILD_TESTING)
         set(ABSOLUTE_FUZZ_FLAGS
             -fsanitize=fuzzer,address,undefined
             -fno-omit-frame-pointer -g -O1)
-        foreach(fuzzer lexer parser)
+        set(ABSOLUTE_FUZZ_TARGETS lexer parser)
+        # The analyzer harness generates syntactically valid programs, so it
+        # needs the analyzer as well as the parser.
+        if(TARGET Absolute-Analyzer)
+            list(APPEND ABSOLUTE_FUZZ_TARGETS analyzer)
+        endif()
+        # The lexer and parser consume source text; the analyzer harness
+        # consumes decisions for its generator, so its seeds are binary.
+        set(ABSOLUTE_FUZZ_SEEDS_lexer "${PROJECT_SOURCE_DIR}/tests/fuzz/corpus")
+        set(ABSOLUTE_FUZZ_SEEDS_parser "${PROJECT_SOURCE_DIR}/tests/fuzz/corpus")
+        set(ABSOLUTE_FUZZ_SEEDS_analyzer
+            "${PROJECT_SOURCE_DIR}/tests/fuzz/corpus-decisions")
+        foreach(fuzzer ${ABSOLUTE_FUZZ_TARGETS})
             add_executable(absolute-${fuzzer}-fuzzer
                 tests/fuzz/${fuzzer}_fuzzer.cpp)
             target_link_libraries(absolute-${fuzzer}-fuzzer
                 PRIVATE Absolute-Parser)
+            if(fuzzer STREQUAL "analyzer")
+                target_link_libraries(absolute-analyzer-fuzzer
+                    PRIVATE Absolute-Analyzer)
+            endif()
             target_compile_options(absolute-${fuzzer}-fuzzer
                 PRIVATE ${ABSOLUTE_FUZZ_FLAGS})
             target_link_options(absolute-${fuzzer}-fuzzer
@@ -234,7 +250,7 @@ if(BUILD_TESTING)
                         "${PROJECT_SOURCE_DIR}/tools/testing/run_fuzzer.py"
                         --fuzzer "$<TARGET_FILE:absolute-${fuzzer}-fuzzer>"
                         --name "${fuzzer}"
-                        --seed-corpus "${PROJECT_SOURCE_DIR}/tests/fuzz/corpus"
+                        --seed-corpus "${ABSOLUTE_FUZZ_SEEDS_${fuzzer}}"
                         --regression-corpus
                             "${PROJECT_SOURCE_DIR}/tests/fuzz/regressions"
                         --work-dir

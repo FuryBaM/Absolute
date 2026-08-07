@@ -916,7 +916,14 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   ограничены `-rss_limit_mb` и `-timeout` в runner-е. Кроме того, парсер
   завершал процесс через `std::exit` на malformed input в 27 местах — теперь
   это восстановимая ошибка, как и остальные пути `Consume`.
-- [ ] Добавить analyzer fuzzer для синтаксически корректного generated AST/source.
+- [x] Добавить analyzer fuzzer для синтаксически корректного generated AST/source.
+  Сырые байты проверяли бы error-путь парсера, а не анализатор, поэтому вход
+  fuzzer-а тратится как решения генератора, который выдаёт только синтаксически
+  корректные программы. Семантическая корректность намеренно не требуется:
+  несовпадения типов и плохие вызовы анализатор обязан диагностировать, а не
+  падать. Coverage 1978 рёбер против 82 у парсерной цели на том же бюджете;
+  `ABSOLUTE_FUZZ_DUMP_SOURCE=1` печатает программу, которой соответствует
+  буфер, потому что сам буфер нечитаем.
 - [ ] Добавить codegen fuzzer для валидных typed programs с запуском под ASan/UBSan.
 - [ ] Добавить fuzzing package manifest, lock-file, plugin manifest и project parser.
 - [x] Вести persistent seed corpus и regression corpus в репозитории.
