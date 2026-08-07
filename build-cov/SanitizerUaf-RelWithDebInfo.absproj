@@ -1,0 +1,7 @@
+{
+  "name": "SanitizerUaf",
+  "entry": "/home/user/Absolute/tests/projects/sanitizer-uaf/src/main.abs",
+  "sources": ["/home/user/Absolute/tests/projects/sanitizer-uaf/src"],
+  "nativeLibraries": ["/home/user/Absolute/build-cov/libabsolute-native-test.a"],
+  "nativeSearchPaths": []
+}

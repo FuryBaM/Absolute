@@ -1,0 +1,7 @@
+{
+  "name": "NativeHandle",
+  "entry": "/home/user/Absolute/tests/projects/native-handle/src/main.abs",
+  "sources": ["/home/user/Absolute/tests/projects/native-handle/src"],
+  "nativeLibraries": ["/home/user/Absolute/build-cov/libabsolute-native-test.a"],
+  "nativeSearchPaths": []
+}

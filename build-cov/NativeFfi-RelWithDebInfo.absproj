@@ -1,0 +1,7 @@
+{
+  "name": "NativeFfi",
+  "entry": "/home/user/Absolute/tests/projects/native-ffi/src/main.abs",
+  "sources": ["/home/user/Absolute/tests/projects/native-ffi/src"],
+  "nativeLibraries": ["/home/user/Absolute/build-cov/libabsolute-native-test.a"],
+  "nativeSearchPaths": []
+}

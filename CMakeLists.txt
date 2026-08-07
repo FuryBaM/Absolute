@@ -43,6 +43,18 @@ if(ABSOLUTE_ENABLE_LLVM)
     absolute_find_llvm()
 endif()
 
+# Source-level counters answer a different question than the edge count
+# libFuzzer prints: which parts of the front end a corpus never reaches. The
+# flags have to apply to the libraries the harness links, not only to the
+# harness itself, or the report covers one translation unit. Off by default
+# because it slows everything down.
+option(ABSOLUTE_FUZZ_COVERAGE
+    "Instrument the build for source-level fuzzing coverage reports" OFF)
+if(ABSOLUTE_FUZZ_COVERAGE)
+    add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
+    add_link_options(-fprofile-instr-generate -fcoverage-mapping)
+endif()
+
 # The lli-based tests need the runtime as a shared library. Those tests only
 # exist off Windows and Termux, so build it only where they can run.
 if(BUILD_TESTING AND NOT WIN32 AND NOT ABSOLUTE_TERMUX)
@@ -218,6 +230,7 @@ if(BUILD_TESTING)
         set(ABSOLUTE_FUZZ_FLAGS
             -fsanitize=fuzzer,address,undefined
             -fno-omit-frame-pointer -g -O1)
+
         set(ABSOLUTE_FUZZ_TARGETS lexer parser)
         # The analyzer harness generates syntactically valid programs, so it
         # needs the analyzer as well as the parser.

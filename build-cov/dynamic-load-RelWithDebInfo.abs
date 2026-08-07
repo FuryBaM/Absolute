@@ -1,0 +1,11 @@
+int32 main() {
+    string path = "./libabsolute-load-test.so";
+    assert(!isLoaded(path), "library must not start in the loader cache");
+    assert(load(path), "existing dynamic library must load");
+    assert(isLoaded(path), "loaded library must be visible in the cache");
+    assert(load(path), "loading the same library must be idempotent");
+    assert(!load("./absolute-load-test-missing"), "missing library must return false");
+    println(format("load-error={}", loadError()));
+    println("dynamic-load=ok");
+    return 0;
+}

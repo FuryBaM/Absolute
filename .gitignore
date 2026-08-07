@@ -399,3 +399,4 @@ benchmarks/*/results/*-linux-*.csv
 /scratch/*.exe
 /absolute-extension/*.vsix
 /Testing/
+build-cov/
