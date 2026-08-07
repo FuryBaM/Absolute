@@ -889,10 +889,19 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   managed/weak/raw pointers, arrays, slices и snapshot collections: versioned
   linker manifest содержит 17 фиксированных cases с общим stdout oracle для
   PE/ELF/WebAssembly.
-- [ ] Сохранять минимальный source и все расходящиеся outputs при mismatch.
-- [ ] Добавить metamorphic properties: dead-code insertion, alpha-renaming,
+- [x] Сохранять минимальный source и все расходящиеся outputs при mismatch.
+  `failure.json` содержит полный текст source и результат каждого уже
+  выполненного варианта, а не только упавшего: расхождение опознаётся именно по
+  тем outputs, с которыми вариант не сошёлся. Metamorphic runner дополнительно
+  ужимает случай, пока расхождение сохраняется.
+- [x] Добавить metamorphic properties: dead-code insertion, alpha-renaming,
   эквивалентная перестановка независимых declarations и constant/runtime variants
   не должны менять наблюдаемый результат.
+  `tools/testing/metamorphic_differential.py` порождает шесть форм одной
+  программы (baseline, alpha-renaming, dead code, перестановка объявлений,
+  runtime-операнды и комбинация) из общего шаблона, а не текстовой мутацией,
+  поэтому преобразование не может случайно изменить смысл. Все формы обязаны
+  дать одинаковый stdout и exit code; CTest `absolute.metamorphic-differential`.
 
 ### P3 — coverage-guided fuzzing
 

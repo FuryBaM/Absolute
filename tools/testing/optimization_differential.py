@@ -103,7 +103,14 @@ def write_failure(
     level: int,
     command: list[str],
     result: subprocess.CompletedProcess[str] | None,
+    source: Path | None = None,
+    observations: list[dict[str, object]] | None = None,
 ) -> None:
+    """Record the failing level plus the source and every level already run.
+
+    Reporting only the level that tripped leaves out the outputs it disagreed
+    with, which are exactly what identifies the divergence.
+    """
     details: dict[str, object] = {
         "reason": reason,
         "case": case_id,
@@ -118,6 +125,14 @@ def write_failure(
                 "stderr": result.stderr,
             }
         )
+    if source is not None:
+        details["source"] = str(source)
+        try:
+            details["sourceText"] = source.read_text(encoding="utf-8")
+        except OSError:
+            pass
+    if observations:
+        details["observations"] = observations
     (root / "failure.json").write_text(
         json.dumps(details, indent=2, ensure_ascii=False),
         encoding="utf-8",
@@ -165,6 +180,9 @@ def main() -> int:
         )
 
         baseline: str | None = None
+        # Every level already run, so a mismatch report names what the failing
+        # level disagreed with rather than only itself.
+        observations: list[dict[str, object]] = []
         for level in range(4):
             executable = root / (
                 f"case-{case_id:03d}-O{level}{executable_suffix}")
@@ -181,12 +199,12 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 write_failure(
                     root, "compiler timed out", case_id,
-                    level, build_command, None)
+                    level, build_command, None, source, observations)
                 return 1
             if build_result.returncode != 0:
                 write_failure(
                     root, "compiler failed", case_id,
-                    level, build_command, build_result)
+                    level, build_command, build_result, source, observations)
                 return 1
 
             run_command = [str(executable)]
@@ -195,26 +213,35 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 write_failure(
                     root, "program timed out", case_id,
-                    level, run_command, None)
+                    level, run_command, None, source, observations)
                 return 1
             if run_result.returncode != 0:
                 write_failure(
                     root, "program failed", case_id,
-                    level, run_command, run_result)
+                    level, run_command, run_result, source, observations)
                 return 1
 
             output = normalized_output(run_result.stdout)
+            observations.append({
+                "optimization": f"O{level}",
+                "runCommand": run_command,
+                "returncode": run_result.returncode,
+                "stdout": run_result.stdout,
+                "stderr": run_result.stderr,
+            })
             if output != str(expected):
                 write_failure(
                     root, "output differs from generated oracle",
-                    case_id, level, run_command, run_result)
+                    case_id, level, run_command, run_result, source,
+                    observations)
                 return 1
             if baseline is None:
                 baseline = output
             elif output != baseline:
                 write_failure(
                     root, "optimization levels disagree",
-                    case_id, level, run_command, run_result)
+                    case_id, level, run_command, run_result, source,
+                    observations)
                 return 1
 
     print(

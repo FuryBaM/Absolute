@@ -176,6 +176,17 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "optimization-differential=ok"
             TIMEOUT 180)
         add_test(
+            NAME absolute.metamorphic-differential
+            COMMAND "${Python3_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tools/testing/metamorphic_differential.py"
+                --compiler "$<TARGET_FILE:Absolute-Compiler>"
+                --work-dir
+                    "${CMAKE_BINARY_DIR}/differential/metamorphic/$<CONFIG>"
+                --configuration "$<CONFIG>")
+        set_tests_properties(absolute.metamorphic-differential PROPERTIES
+            PASS_REGULAR_EXPRESSION "metamorphic-differential=ok"
+            TIMEOUT 300)
+        add_test(
             NAME absolute.ownership-stability-differential
             COMMAND "${Python3_EXECUTABLE}"
                 "${PROJECT_SOURCE_DIR}/tools/testing/ownership_stability.py"
