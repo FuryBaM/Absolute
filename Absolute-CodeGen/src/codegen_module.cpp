@@ -37,26 +37,13 @@ namespace Absolute {
             llvm::ModuleAnalysisManager moduleAnalyses;
             llvm::PassBuilder passBuilder(targetMachine);
             if (sanitizeAddress) {
-                const auto addSanitizer = [](llvm::ModulePassManager& passes) {
-                    llvm::AddressSanitizerOptions options;
-                    passes.addPass(
-                        llvm::AddressSanitizerPass(options));
-                };
-                // LLVM 20 added a ThinOrFullLTOPhase argument to the
-                // optimizer-last extension point callback.
-#if LLVM_VERSION_MAJOR >= 20
                 passBuilder.registerOptimizerLastEPCallback(
-                    [addSanitizer](llvm::ModulePassManager& passes,
-                        llvm::OptimizationLevel, llvm::ThinOrFullLTOPhase) {
-                        addSanitizer(passes);
-                    });
-#else
-                passBuilder.registerOptimizerLastEPCallback(
-                    [addSanitizer](llvm::ModulePassManager& passes,
+                    [](llvm::ModulePassManager& passes,
                         llvm::OptimizationLevel) {
-                        addSanitizer(passes);
+                        llvm::AddressSanitizerOptions options;
+                        passes.addPass(
+                            llvm::AddressSanitizerPass(options));
                     });
-#endif
             }
             passBuilder.registerModuleAnalyses(moduleAnalyses);
             passBuilder.registerCGSCCAnalyses(cgsccAnalyses);
