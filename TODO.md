@@ -784,7 +784,23 @@ Task-isolate, закрытый message envelope и transfer capsule описан
     присоединяется; детерминированная семантика отмены проверяется в
     `runCancelVsComplete`. После правок 160/160 параллельных прогонов и 5
     подряд полных прогонов CTest — 500/500.
+  - [x] Устранить `ILLEGAL` (SIGILL) в сгенерированном коде на hosted Linux.
+    Backend выбирал целевой CPU через `getHostCPUName()`, но передавал пустую
+    строку фич, поэтому LLVM включал весь набор инструкций, подразумеваемый
+    моделью из CPUID, не проверяя, что машина их действительно предоставляет.
+    На виртуализированном раннере, где часть фич маскирует гипервизор, это даёт
+    инструкции, которые CPU отвергает. Строка фич теперь берётся из
+    `getHostCPUFeatures()` с guard на смену сигнатуры между LLVM 18 и 19+.
+    Симптом выглядел перемежающимся, но был детерминированным: один и тот же
+    commit давал одинаковые 9 падений на обоих параллельных раннерах, а часом
+    ранее проходил полностью — менялось окружение, не код. После правки Ubuntu
+    Debug зелёный на обоих раннерах, `language-stress-and-fuzz` — тоже.
+    Триггер внешний, поэтому смену парка раннеров как причину зелёного цвета
+    исключить нельзя; в `ci-logs/toolchain.txt` добавлен `lscpu`, чтобы
+    следующий случай читался по артефакту, а не по косвенным признакам.
   - [ ] Подтвердить новый commit полным hosted run обоих required gates без rerun.
+    `Hardening required gate` зелёный в обоих параллельных прогонах без rerun;
+    `CI required gate` держит только `macos-smoke` (см. P4 ниже).
   - [ ] Подключить настоящий ARM64 Android/Termux self-hosted runner; Linux
     `ABSOLUTE_TERMUX=ON` contract не выдавать за Bionic/on-device выполнение.
 - [x] Разделить platform-specific failures и реальные regression failures, чтобы
@@ -1019,7 +1035,10 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Scheduler не блокирует worker thread на channel/I/O/task wait.
 - [ ] Differential corpus не расходится между native/WASM и optimization levels.
 - [ ] Coverage-guided fuzzing работает в PR/nightly/weekly режимах и сохраняет corpus.
-- [ ] Ownership torture suite проходит под sanitizers.
+- [ ] Ownership torture suite проходит под sanitizers. Единственное известное
+  падение — `absolute.run-sanitizer-ownership-stability` на `macos-smoke`; на
+  Linux тест проходит, полный набор там 501/501. Ровно этот тест держит
+  `CI required gate` красным, и для разбора нужен доступ к arm64 macOS.
 - [ ] Plugin ABI V1 проверяется старым SDK против нового host.
 - [ ] Несколько реальных integration projects собираются и выполняются в CI.
 - [ ] Incremental edit и LSP используют compiler semantic cache, а не полный re-run.
@@ -1069,6 +1088,13 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Для всех перечисленных случаев добавить минимальные semantic/error/LLVM/runtime
   тесты и запускать их в ownership torture suite под ASan, LSan, UBSan и TSan,
   где соответствующий sanitizer применим.
+- [x] Исправить утечку в `std.collections` при росте буфера: контейнеры клали в
+  поле копию выросшего буфера вместо передачи владения, поэтому исходный
+  allocation оставался живым. Найдено ASan на Linux, закрыто через `move()` в
+  `map`, `set`, `deque` и `priority_queue`. Правка увела `macos-smoke` с 17
+  падений до 1 в обоих параллельных прогонах. Пункты этого раздела были
+  отмечены выполненными, но дефект в покрытой ими области оставался живым —
+  повод не считать галочки здесь доказательством отсутствия утечек.
 
 ## P1 — категории выражений, places и ownership flow
 
