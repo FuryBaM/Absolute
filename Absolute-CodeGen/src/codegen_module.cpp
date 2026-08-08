@@ -772,11 +772,13 @@ namespace Absolute {
                                    : static_cast<ASTNode*>(info.statement),
             info.name + "." + info.name);
         const std::string oldClass = currentClassName;
+        const std::string oldConstructorClass = currentConstructorClass;
         llvm::Value* oldThis = currentThis;
         const std::string oldReturn = currentReturnTypeName;
         const auto oldSubstitutions = currentGenericSubstitutions;
         currentGenericSubstitutions = info.substitutions;
         currentClassName = info.name;
+        currentConstructorClass = info.name;
         currentThis = function->getArg(0);
         currentReturnTypeName = "void";
         if (constructor) {
@@ -874,6 +876,7 @@ namespace Absolute {
         if (constructor && constructor->body) constructor->body->Accept(visitor);
         FinishClassCallable(*function);
         PopScope();
+        currentConstructorClass = oldConstructorClass;
         currentClassName = oldClass;
         currentThis = oldThis;
         currentReturnTypeName = oldReturn;

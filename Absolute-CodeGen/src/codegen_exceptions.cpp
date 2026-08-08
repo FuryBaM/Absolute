@@ -82,6 +82,21 @@ namespace Absolute {
 
         llvm::Function* function = CurrentFunction();
         if (!function) Fail("exception propagation outside a function");
+
+        // Leaving a constructor through an exception. Scope unwinding above has
+        // released the locals, but the fields already stored into `this` are not
+        // a scope and no caller has a name for them, so they would leak. Object
+        // storage is zero-initialized before the constructor runs, so releasing
+        // the whole object here is exactly the initialized prefix: uninitialized
+        // fields are null or zero and their cleanup is a no-op. Cleanup zeroes
+        // each field as it goes, so a later destructor pass stays idempotent.
+        if (!currentConstructorClass.empty() && currentThis) {
+            if (const auto found = classes.find(currentConstructorClass);
+                found != classes.end() && TypeNeedsCleanup(currentConstructorClass)) {
+                builder.CreateCall(DeclareClassDestructor(found->second), {currentThis});
+            }
+        }
+
         if (function->getName() == "main") {
             builder.CreateCall(ErrorReport());
             builder.CreateRet(builder.getInt32(1));

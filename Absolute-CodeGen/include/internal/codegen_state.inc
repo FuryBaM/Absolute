@@ -200,6 +200,10 @@
         std::string currentReturnTypeName;
         llvm::Value* currentReturnStorage = nullptr;
         std::string currentClassName;
+        // Set while a constructor body is being emitted. A constructor that
+        // leaves through an exception has already initialized some fields, and
+        // nothing outside holds a name for them, so it releases them itself.
+        std::string currentConstructorClass;
         std::unordered_map<std::string, std::string> currentGenericSubstitutions;
         llvm::Value* currentThis = nullptr;
         std::uint64_t taskThunkCounter = 0;
