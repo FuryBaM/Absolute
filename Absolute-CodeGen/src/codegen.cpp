@@ -26,7 +26,7 @@ namespace Absolute {
             llvm::Value* right = comparison.getOperand(1);
 
             if (llvm::isa<llvm::Constant>(left) || llvm::isa<llvm::Constant>(right)) {
-#if LLVM_VERSION_MAJOR >= 21
+#if LLVM_VERSION_MAJOR >= 19
                 llvm::Constant* result = lazyValues.getPredicateAt(
                     predicate, left, right, context, true);
                 if (const auto* known = llvm::dyn_cast_or_null<llvm::ConstantInt>(result))
@@ -58,7 +58,7 @@ namespace Absolute {
             if (const auto* constant = llvm::dyn_cast<llvm::ConstantInt>(value))
                 return constant->isOne() == expected;
 
-#if LLVM_VERSION_MAJOR >= 21
+#if LLVM_VERSION_MAJOR >= 19
             llvm::Constant* known = lazyValues.getPredicateAt(
                 llvm::CmpInst::ICMP_EQ,
                 value,

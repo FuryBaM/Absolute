@@ -20,7 +20,10 @@ endif()
 file(READ "${OUTPUT}" ir)
 foreach(pattern IN ITEMS
         "!DICompileUnit"
-        "llvm[.]dbg[.]declare"
+        # LLVM 19 prints debug info as records (#dbg_declare) rather than as
+        # llvm.dbg.declare intrinsic calls. Accept either spelling so the
+        # assertion holds across the supported LLVM range.
+        "(llvm[.]dbg[.]declare|#dbg_declare)"
         "llvm[.]debugtrap"
         "filename: \"debug-info[.]abs\""
         "name: \"main\""

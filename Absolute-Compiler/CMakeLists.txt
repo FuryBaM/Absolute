@@ -45,6 +45,9 @@ target_include_directories(Absolute-Compiler PRIVATE
     include
     ../Absolute-Parser/include
     ../Absolute-Analyzer/include
+    # optimization_level.h is needed even when Absolute-CodeGen is not built;
+    # linking the target below adds this path only for LLVM-enabled builds.
+    ../Absolute-CodeGen/include
 )
 
 # Линкуем библиотеки

@@ -25,6 +25,10 @@
 #include "variable.h"
 #include "analyzer.h"
 
+// Available in every configuration: the driver parses -O0..-O3 even when the
+// LLVM backend is not compiled in.
+#include "optimization_level.h"
+
 #ifdef ABSOLUTE_HAS_LLVM
 #include "codegen.h"
 #endif
