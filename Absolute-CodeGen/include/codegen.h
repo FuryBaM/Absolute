@@ -1,6 +1,7 @@
 #pragma once
 
 #include "expression_visitor.h"
+#include "optimization_level.h"
 #include "statement_visitor.h"
 
 #include <cstdint>
@@ -10,13 +11,6 @@
 
 namespace Absolute {
     class Analyzer;
-
-    enum class OptimizationLevel : std::uint8_t {
-        O0,
-        O1,
-        O2,
-        O3
-    };
 
     class CodeGenerator final : public ExpressionVisitor, public StatementVisitor {
     public:

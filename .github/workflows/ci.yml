@@ -240,7 +240,7 @@ jobs:
           retry apt-get update
           retry apt-get install -y --no-install-recommends \
             ca-certificates git build-essential cmake ninja-build python3 \
-            libzstd-dev \
+            libzstd-dev zlib1g-dev \
             llvm-${{ matrix.llvm }}-dev \
             llvm-${{ matrix.llvm }}-tools \
             clang-${{ matrix.llvm }} \
@@ -312,7 +312,8 @@ jobs:
 
   windows-llvm-release:
     runs-on: windows-2022
-    timeout-minutes: 60
+    # Headroom for a cold LLVM SDK cache on top of the build and test steps.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
 
@@ -337,7 +338,9 @@ jobs:
       - name: Bootstrap portable LLVM SDK
         id: bootstrap_llvm
         shell: pwsh
-        timeout-minutes: 15
+        # On a cache miss this downloads and extracts an ~1 GB SDK; 15 minutes
+        # was not enough and the step was killed mid-download.
+        timeout-minutes: 25
         run: |
           New-Item -ItemType Directory -Force ci-logs | Out-Null
           $output = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
@@ -413,12 +416,21 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Force ci-logs | Out-Null
           $llvmConfig = ".absolute/toolchains/llvm-$env:ABSOLUTE_LLVM_RELEASE/bin/llvm-config.exe"
+          # This step runs with if: always(), so the SDK may be absent when an
+          # earlier step failed. Report that instead of throwing, which would
+          # fail the job here and hide the real failure.
+          $llvmVersion = if (Test-Path -LiteralPath $llvmConfig) {
+            (& $llvmConfig --version 2>&1)
+          } else {
+            "llvm-config not present: $llvmConfig"
+          }
           @(
             "OS=$([System.Environment]::OSVersion.VersionString)"
             (& cmake --version 2>&1)
             (& node --version 2>&1)
-            (& $llvmConfig --version 2>&1)
+            $llvmVersion
           ) | Set-Content ci-logs/toolchain.txt
 
       - name: Upload failure diagnostics

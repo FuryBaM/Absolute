@@ -18,6 +18,13 @@
 #include <libucontext/libucontext.h>
 #undef sigcontext
 #else
+#if defined(__APPLE__) && !defined(_XOPEN_SOURCE)
+// Darwin's <ucontext.h> refuses to declare getcontext/makecontext/swapcontext
+// unless _XOPEN_SOURCE is defined. tasks.cpp is the only translation unit that
+// includes this header and it pulls in no Darwin headers that the stricter
+// feature set would narrow, so scope the macro here instead of the build files.
+#define _XOPEN_SOURCE 700
+#endif
 #include <ucontext.h>
 #endif
 
