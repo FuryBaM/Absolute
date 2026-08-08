@@ -1,0 +1,172 @@
+// P4 ownership torture: partially constructed objects.
+//
+// A constructor that throws leaves an object whose earlier fields were already
+// initialized. Those fields still hold resources, and nothing else in the
+// program has a name for them, so releasing them is the constructor's job.
+// The same applies when a base constructor throws after the derived class has
+// begun, and when a throw interrupts a scope that already owns resources.
+//
+// Live resources are counted through a raw int32 the caller owns, so a leak is
+// an assertion failure rather than something only a sanitizer would notice.
+
+struct Counted {
+    raw int32* live;
+
+    void destroy() {
+        if (live != null) {
+            *live = *live - 1;
+            live = null;
+        }
+    }
+}
+
+Counted acquire(raw int32* live) {
+    Counted held;
+    held.live = live;
+    *live = *live + 1;
+    return move(held);
+}
+
+class ThrowsAfterFirstField {
+    public Counted first;
+    public Counted second;
+
+    public ThrowsAfterFirstField(raw int32* live) {
+        first = acquire(live);
+        throw new Error("constructor fails after one field");
+    }
+}
+
+class ThrowsAfterBothFields {
+    public Counted first;
+    public Counted second;
+
+    public ThrowsAfterBothFields(raw int32* live) {
+        first = acquire(live);
+        second = acquire(live);
+        throw new Error("constructor fails after both fields");
+    }
+}
+
+class HoldingBase {
+    public Counted held;
+
+    public HoldingBase(raw int32* live) {
+        held = acquire(live);
+    }
+}
+
+class ThrowsAfterBase : HoldingBase {
+    public Counted own;
+
+    public ThrowsAfterBase(raw int32* live) {
+        base(live);
+        own = acquire(live);
+        throw new Error("derived constructor fails after base completed");
+    }
+}
+
+class ThrowingBase {
+    public Counted held;
+
+    public ThrowingBase(raw int32* live) {
+        held = acquire(live);
+        throw new Error("base constructor fails");
+    }
+}
+
+class DerivedOfThrowingBase : ThrowingBase {
+    public Counted own;
+
+    public DerivedOfThrowingBase(raw int32* live) {
+        base(live);
+        own = acquire(live);
+    }
+}
+
+int32 releasesFieldsInitializedBeforeThrow() {
+    int32 live = 0;
+    raw int32* place = &live;
+    try {
+        ThrowsAfterFirstField* built = new ThrowsAfterFirstField(place);
+        assert(false, "constructor must not complete");
+    }
+    catch (Error* failure) {
+        assert(failure, "constructor failure is observable");
+    }
+    return live;
+}
+
+int32 releasesEveryFieldInitializedBeforeThrow() {
+    int32 live = 0;
+    raw int32* place = &live;
+    try {
+        ThrowsAfterBothFields* built = new ThrowsAfterBothFields(place);
+        assert(false, "constructor must not complete");
+    }
+    catch (Error* failure) {
+        assert(failure, "constructor failure is observable");
+    }
+    return live;
+}
+
+int32 releasesBaseWhenDerivedThrows() {
+    int32 live = 0;
+    raw int32* place = &live;
+    try {
+        ThrowsAfterBase* built = new ThrowsAfterBase(place);
+        assert(false, "derived constructor must not complete");
+    }
+    catch (Error* failure) {
+        assert(failure, "derived failure is observable");
+    }
+    return live;
+}
+
+int32 releasesWhenBaseItselfThrows() {
+    int32 live = 0;
+    raw int32* place = &live;
+    try {
+        DerivedOfThrowingBase* built = new DerivedOfThrowingBase(place);
+        assert(false, "construction must not complete when the base throws");
+    }
+    catch (Error* failure) {
+        assert(failure, "base failure is observable");
+    }
+    return live;
+}
+
+// A throw crossing a scope that already owns resources must still unwind it.
+int32 releasesScopeOwnersOnThrow() {
+    int32 live = 0;
+    raw int32* place = &live;
+    try {
+        Counted outer = acquire(place);
+        assert(live == 1, "scope owns one resource");
+        {
+            Counted inner = acquire(place);
+            assert(live == 2, "nested scope owns a second resource");
+            throw new Error("throw crossing two live scopes");
+        }
+    }
+    catch (Error* failure) {
+        assert(failure, "scope failure is observable");
+    }
+    return live;
+}
+
+int32 main() {
+    assert(releasesFieldsInitializedBeforeThrow() == 0,
+        "a field initialized before the throw is released");
+    assert(releasesEveryFieldInitializedBeforeThrow() == 0,
+        "every field initialized before the throw is released");
+    assert(releasesBaseWhenDerivedThrows() == 0,
+        "a completed base is released when the derived constructor throws");
+    assert(releasesWhenBaseItselfThrows() == 0,
+        "a throwing base releases what it had already acquired");
+    assert(releasesScopeOwnersOnThrow() == 0,
+        "unwinding releases owners of every scope it crosses");
+
+    println("ownership-torture-construction=ok");
+    return 0;
+}
