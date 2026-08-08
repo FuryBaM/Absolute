@@ -343,24 +343,25 @@ jobs:
         timeout-minutes: 25
         run: |
           New-Item -ItemType Directory -Force ci-logs | Out-Null
-          $output = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+          # Stream through Tee-Object rather than buffering into a variable:
+          # this step downloads about 1 GB and can hit its timeout, and a
+          # buffered variable is discarded on timeout, leaving no diagnostics.
+          & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
             -File scripts/windows/bootstrap-llvm.ps1 `
-            -Version $env:ABSOLUTE_LLVM_RELEASE 2>&1
-          $code = $LASTEXITCODE
-          $output | Tee-Object -FilePath ci-logs/bootstrap.log
-          exit $code
+            -Version $env:ABSOLUTE_LLVM_RELEASE 2>&1 |
+            Tee-Object -FilePath ci-logs/bootstrap.log
+          exit $LASTEXITCODE
 
       - name: Bootstrap pinned WASI SDK components
         id: bootstrap_wasi
         shell: pwsh
         timeout-minutes: 10
         run: |
-          $output = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+          & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
             -File scripts/windows/bootstrap-wasi-sysroot.ps1 `
-            -Version $env:ABSOLUTE_WASI_SDK_VERSION 2>&1
-          $code = $LASTEXITCODE
-          $output | Tee-Object -FilePath ci-logs/bootstrap.log -Append
-          exit $code
+            -Version $env:ABSOLUTE_WASI_SDK_VERSION 2>&1 |
+            Tee-Object -FilePath ci-logs/bootstrap.log -Append
+          exit $LASTEXITCODE
 
       - name: Build native LLVM backend
         id: build
