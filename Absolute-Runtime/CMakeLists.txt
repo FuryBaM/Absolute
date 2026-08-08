@@ -90,6 +90,17 @@ else()
         COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/src/android_pthread_affinity_compat.h")
 endif()
 
+if(APPLE)
+    # Darwin gates the ucontext fiber routines, and the layout of ucontext_t
+    # itself, behind _XOPEN_SOURCE. Feature macros only apply to headers included
+    # after them, so this has to reach the compiler before any header rather than
+    # from inside scheduler_fiber.h, which is included after the standard library.
+    # _DARWIN_C_SOURCE restores the BSD extensions _XOPEN_SOURCE would otherwise
+    # hide from the rest of the translation unit.
+    set_source_files_properties(src/tasks.cpp PROPERTIES
+        COMPILE_DEFINITIONS "_XOPEN_SOURCE=700;_DARWIN_C_SOURCE")
+endif()
+
 set_target_properties(Absolute-Runtime PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )

@@ -19,11 +19,13 @@
 #undef sigcontext
 #else
 #if defined(__APPLE__) && !defined(_XOPEN_SOURCE)
-// Darwin's <ucontext.h> refuses to declare getcontext/makecontext/swapcontext
-// unless _XOPEN_SOURCE is defined. tasks.cpp is the only translation unit that
-// includes this header and it pulls in no Darwin headers that the stricter
-// feature set would narrow, so scope the macro here instead of the build files.
-#define _XOPEN_SOURCE 700
+// Darwin's <ucontext.h> needs _XOPEN_SOURCE both to declare getcontext,
+// makecontext and swapcontext and to expose the matching ucontext layout. It has
+// to be set before any system header in the translation unit, so the build
+// system defines it for tasks.cpp (see Absolute-Runtime/CMakeLists.txt).
+// Defining it here would land after libc++ already pulled in the Darwin
+// headers, leaving the declarations and the struct layout inconsistent.
+#error "Compile tasks.cpp with _XOPEN_SOURCE on Apple targets"
 #endif
 #include <ucontext.h>
 #endif
