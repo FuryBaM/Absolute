@@ -51,9 +51,23 @@ Assert-Under $extractRoot $toolchainsRoot
 if (Test-Path -LiteralPath $extractRoot) { Remove-Item -LiteralPath $extractRoot -Recurse -Force }
 New-Item -ItemType Directory -Path $extractRoot | Out-Null
 
+# Real-time antivirus scanning inspects every file as it is written, which
+# dominates the cost of unpacking a toolchain of this size: on CI runners the
+# download finishes in seconds while extraction runs for tens of minutes.
+# Excluding the toolchains tree is best effort: a machine without Defender, or
+# without the privileges to configure it, should still extract, just slowly.
+try {
+    Add-MpPreference -ExclusionPath $toolchainsRoot -ErrorAction Stop
+    Write-Host "Defender exclusion added for $toolchainsRoot"
+} catch {
+    Write-Host "Defender exclusion unavailable, continuing without it: $($_.Exception.Message)"
+}
+
 Write-Host 'Extracting LLVM SDK...'
+$extractStarted = Get-Date
 & tar.exe -xf $archive -C $extractRoot
 if ($LASTEXITCODE -ne 0) { throw "LLVM extraction failed with exit code $LASTEXITCODE" }
+Write-Host ("Extracted in {0:n0}s" -f ((Get-Date) - $extractStarted).TotalSeconds)
 
 $discoveredConfig = Get-ChildItem -LiteralPath $extractRoot -Recurse -Filter LLVMConfig.cmake |
     Where-Object FullName -like '*\lib\cmake\llvm\LLVMConfig.cmake' |
