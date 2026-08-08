@@ -42,7 +42,7 @@ namespace std.collections {
                 next[index] = items[(head + index) % _capacity];
                 index = index + 1;
             }
-            items = copy(next);
+            items = move(next);
             _capacity = newCapacity;
             head = 0;
         }

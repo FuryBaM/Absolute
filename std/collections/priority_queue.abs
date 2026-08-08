@@ -56,8 +56,8 @@ namespace std.collections {
                 nextOrders[index] = insertionOrders[index];
                 index = index + 1;
             }
-            items = copy(nextItems);
-            insertionOrders = copy(nextOrders);
+            items = move(nextItems);
+            insertionOrders = move(nextOrders);
             _capacity = newCapacity;
         }
 

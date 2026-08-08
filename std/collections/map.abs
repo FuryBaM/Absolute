@@ -73,7 +73,7 @@ namespace std.collections {
                     newBuf[j] = buffer[j];
                     j = j + 1;
                 }
-                buffer = copy(newBuf);
+                buffer = move(newBuf);
                 _capacity = newCap;
             }
 
@@ -182,7 +182,7 @@ namespace std.collections {
                     newEntries[j] = entries[j];
                     j = j + 1;
                 }
-                entries = copy(newEntries);
+                entries = move(newEntries);
                 _capacity = newCap;
             }
 
