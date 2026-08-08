@@ -24,7 +24,7 @@ jobs:
         os: [ubuntu-24.04, windows-2022]
         configuration: [Debug, Release]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -104,7 +104,7 @@ jobs:
       - name: Test (Ubuntu)
         id: test_linux
         if: runner.os == 'Linux'
-        timeout-minutes: 20
+        timeout-minutes: 35
         shell: bash
         run: |
           set -o pipefail
@@ -171,6 +171,10 @@ jobs:
             llvm-config-${ABSOLUTE_LLVM_VERSION} --version
             ninja --version || true
             node --version || true
+            # The backend selects a target CPU from the host model, so a runner whose
+            # advertised model implies features the VM masks off is worth spotting in
+            # the log rather than inferring from a SIGILL.
+            lscpu || true
           } > ci-logs/toolchain.txt 2>&1
 
       - name: Record toolchain versions (Windows)

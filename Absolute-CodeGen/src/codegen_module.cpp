@@ -1263,6 +1263,7 @@ namespace Absolute {
 
         llvm::TargetOptions options;
         std::string cpu = "generic";
+        std::string features;
         llvm::Reloc::Model reloc = llvm::Reloc::PIC_;
         if (IsWebAssemblyTriple(triple)) {
             // Wasm objects use a generic CPU; PIC is the usual reloc model.
@@ -1270,12 +1271,32 @@ namespace Absolute {
             reloc = llvm::Reloc::PIC_;
         }
         else {
+            // The host CPU name only identifies a microarchitecture, it does not say
+            // which of that microarchitecture's features the machine actually exposes.
+            // A virtualised host can report a model whose default feature set includes
+            // instructions the hypervisor masks off, and selecting by name alone then
+            // emits code the CPU refuses to execute. Pin the feature string to what the
+            // host really advertises so generated objects stay runnable on that host.
             const std::string hostCpu = llvm::sys::getHostCPUName().str();
             if (!hostCpu.empty()) cpu = hostCpu;
+
+#if LLVM_VERSION_MAJOR >= 19
+            const llvm::StringMap<bool> hostFeatures = llvm::sys::getHostCPUFeatures();
+            const bool detectedFeatures = !hostFeatures.empty();
+#else
+            llvm::StringMap<bool> hostFeatures;
+            const bool detectedFeatures = llvm::sys::getHostCPUFeatures(hostFeatures);
+#endif
+            if (detectedFeatures) {
+                llvm::SubtargetFeatures hostSubtarget;
+                for (const llvm::StringMapEntry<bool>& feature : hostFeatures)
+                    hostSubtarget.AddFeature(feature.getKey(), feature.getValue());
+                features = hostSubtarget.getString();
+            }
         }
 
         std::unique_ptr<llvm::TargetMachine> targetMachine(target->createTargetMachine(
-            tripleName, cpu, "", options, reloc,
+            tripleName, cpu, features, options, reloc,
             std::nullopt,
             LlvmCodeGenOptimizationLevel(optimizationLevel)));
         if (!targetMachine) Fail("cannot create target machine for '" + tripleName + "'");
