@@ -155,6 +155,132 @@ int32 releasesScopeOwnersOnThrow() {
     return live;
 }
 
+// A class whose own destroy() hook counts its calls. A constructor that throws
+// must not run it: the object never reached the state the hook assumes. The
+// hook is deliberately not idempotent, so a second call is visible.
+class HookCounted {
+    public raw int32* hookRuns;
+    public Counted held;
+
+    public HookCounted(raw int32* live, raw int32* runs) {
+        hookRuns = runs;
+        held = acquire(live);
+        throw new Error("constructor fails after acquiring a field");
+    }
+
+    public void destroy() {
+        if (hookRuns != null) {
+            *hookRuns = *hookRuns + 1;
+        }
+    }
+}
+
+class HookedBase {
+    public raw int32* hookRuns;
+    public Counted held;
+
+    public HookedBase(raw int32* live, raw int32* runs) {
+        hookRuns = runs;
+        held = acquire(live);
+    }
+
+    public void destroy() {
+        if (hookRuns != null) {
+            *hookRuns = *hookRuns + 1;
+        }
+    }
+}
+
+// The base completes, then the derived constructor throws. The base's field must
+// be released exactly once, and the inherited hook must not run at all.
+class ThrowsOverHookedBase : HookedBase {
+    public Counted own;
+
+    public ThrowsOverHookedBase(raw int32* live, raw int32* runs) {
+        base(live, runs);
+        own = acquire(live);
+        throw new Error("derived fails over a hooked base");
+    }
+}
+
+// A hooked base that throws while a derived constructor is running. The base
+// releases its own field on its own path; the derived frame must not repeat it.
+class ThrowingHookedBase {
+    public raw int32* hookRuns;
+    public Counted held;
+
+    public ThrowingHookedBase(raw int32* live, raw int32* runs) {
+        hookRuns = runs;
+        held = acquire(live);
+        throw new Error("hooked base fails");
+    }
+
+    public void destroy() {
+        if (hookRuns != null) {
+            *hookRuns = *hookRuns + 1;
+        }
+    }
+}
+
+class DerivedOverThrowingHookedBase : ThrowingHookedBase {
+    public Counted own;
+
+    public DerivedOverThrowingHookedBase(raw int32* live, raw int32* runs) {
+        base(live, runs);
+        own = acquire(live);
+    }
+}
+
+int32 hookRunsWhenConstructorThrows() {
+    int32 live = 0;
+    int32 runs = 0;
+    raw int32* livePlace = &live;
+    raw int32* runsPlace = &runs;
+    try {
+        HookCounted* built = new HookCounted(livePlace, runsPlace);
+        assert(false, "constructor must not complete");
+    }
+    catch (Error* failure) {
+        assert(failure, "failure is observable");
+    }
+    assert(live == 0, "the acquired field is released");
+    return runs;
+}
+
+int32 hookRunsWhenDerivedThrowsOverBase() {
+    int32 live = 0;
+    int32 runs = 0;
+    raw int32* livePlace = &live;
+    raw int32* runsPlace = &runs;
+    try {
+        ThrowsOverHookedBase* built = new ThrowsOverHookedBase(livePlace, runsPlace);
+        assert(false, "derived constructor must not complete");
+    }
+    catch (Error* failure) {
+        assert(failure, "failure is observable");
+    }
+    assert(live == 0, "base and derived fields are both released");
+    return runs;
+}
+
+int32 hookRunsWhenHookedBaseThrows() {
+    int32 live = 0;
+    int32 runs = 0;
+    raw int32* livePlace = &live;
+    raw int32* runsPlace = &runs;
+    try {
+        DerivedOverThrowingHookedBase* built =
+            new DerivedOverThrowingHookedBase(livePlace, runsPlace);
+        assert(false, "construction must not complete");
+    }
+    catch (Error* failure) {
+        assert(failure, "failure is observable");
+    }
+    // Released exactly once: a second release would drive the count below zero.
+    assert(live == 0, "the base field is released exactly once");
+    return runs;
+}
+
 int32 main() {
     assert(releasesFieldsInitializedBeforeThrow() == 0,
         "a field initialized before the throw is released");
@@ -166,6 +292,13 @@ int32 main() {
         "a throwing base releases what it had already acquired");
     assert(releasesScopeOwnersOnThrow() == 0,
         "unwinding releases owners of every scope it crosses");
+
+    assert(hookRunsWhenConstructorThrows() == 0,
+        "a failed constructor does not run the type's own destroy() hook");
+    assert(hookRunsWhenDerivedThrowsOverBase() == 0,
+        "a failed derived constructor does not run the inherited destroy() hook");
+    assert(hookRunsWhenHookedBaseThrows() == 0,
+        "a failing base does not have its destroy() hook run, once or twice");
 
     println("ownership-torture-construction=ok");
     return 0;

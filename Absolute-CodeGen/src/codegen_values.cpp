@@ -1010,6 +1010,11 @@ namespace Absolute {
         llvm::Value* savedReturnStorage = impl->currentReturnStorage;
         const std::string savedClass = impl->currentClassName;
         llvm::Value* savedThis = impl->currentThis;
+        // A lambda body emitted inside a constructor is a separate function that
+        // may run long after construction finished, so it must not inherit the
+        // constructor's partial-object cleanup.
+        const std::string savedConstructorClass = impl->currentConstructorClass;
+        impl->currentConstructorClass.clear();
         const auto savedSubstitutions = impl->currentGenericSubstitutions;
         llvm::DIScope* savedDebugScope = impl->currentDebugScope;
         const auto savedDebugScopeStack = impl->debugScopeStack;
@@ -1109,6 +1114,7 @@ namespace Absolute {
         impl->currentReturnStorage = savedReturnStorage;
         impl->currentClassName = savedClass;
         impl->currentThis = savedThis;
+        impl->currentConstructorClass = savedConstructorClass;
         impl->currentGenericSubstitutions = savedSubstitutions;
         impl->builder.restoreIP(savedInsertPoint);
         impl->currentDebugScope = savedDebugScope;
