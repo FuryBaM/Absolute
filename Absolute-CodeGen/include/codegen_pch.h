@@ -34,8 +34,10 @@
 #include <llvm/TargetParser/Triple.h>
 #if LLVM_VERSION_MAJOR >= 18
 #include <llvm/TargetParser/Host.h>
+#include <llvm/TargetParser/SubtargetFeature.h>
 #else
 #include <llvm/Support/Host.h>
+#include <llvm/MC/SubtargetFeature.h>
 #endif
 
 #include <algorithm>

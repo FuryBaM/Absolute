@@ -171,6 +171,10 @@ jobs:
             llvm-config-${ABSOLUTE_LLVM_VERSION} --version
             ninja --version || true
             node --version || true
+            # The backend selects a target CPU from the host model, so a runner whose
+            # advertised model implies features the VM masks off is worth spotting in
+            # the log rather than inferring from a SIGILL.
+            lscpu || true
           } > ci-logs/toolchain.txt 2>&1
 
       - name: Record toolchain versions (Windows)
