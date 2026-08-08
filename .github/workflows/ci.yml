@@ -338,8 +338,10 @@ jobs:
       - name: Bootstrap portable LLVM SDK
         id: bootstrap_llvm
         shell: pwsh
-        # On a cache miss this downloads and extracts an ~1 GB SDK; 15 minutes
-        # was not enough and the step was killed mid-download.
+        # On a cache miss this fetches and extracts an ~1 GB SDK. The download
+        # itself takes seconds; unpacking the .tar.xz on windows-2022 is the slow
+        # phase and currently overruns even this budget, so raising the number
+        # further is not the fix.
         timeout-minutes: 25
         run: |
           New-Item -ItemType Directory -Force ci-logs | Out-Null
