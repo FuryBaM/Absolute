@@ -1198,7 +1198,11 @@ namespace Absolute {
             
             const auto release = [&] { visiting.erase(candidate); };
             if (const auto found = classes.find(candidate); found != classes.end()) {
-                if (found->second.methods.contains("destroy()")) {
+                // `methods` is keyed by CallableKey, which appends "$"-joined
+                // parameter types to the bare name. A literal "destroy()" is not
+                // a key this map can hold, so matching it here silently skipped
+                // cleanup for every type whose only resource is its own destroy().
+                if (found->second.methods.contains(CallableKey("destroy", {}))) {
                     release();
                     return true;
                 }
@@ -1210,7 +1214,7 @@ namespace Absolute {
                 }
             }
             else if (const auto found = structs.find(candidate); found != structs.end()) {
-                if (found->second.methods.contains("destroy()")) {
+                if (found->second.methods.contains(CallableKey("destroy", {}))) {
                     release();
                     return true;
                 }
