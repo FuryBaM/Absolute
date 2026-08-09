@@ -1,0 +1,12 @@
+class Leaf {}
+
+struct ResourceBase {
+    Leaf* child;
+}
+
+int32 main() {
+    ResourceBase r1;
+    r1.child = new Leaf();
+    ResourceBase r2 = r1; // Implicit copy! Should be an error according to TODO!
+    return 0;
+}

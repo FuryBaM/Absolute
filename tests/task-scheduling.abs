@@ -1,0 +1,49 @@
+import "../std/task.abs";
+
+@task(core = 0, priority = 1, role = "worker")
+async int32 inheritedOptions(int32 value) {
+    if (std.task.core() != 0) { return -1; }
+    if (std.task.priority() != 1) { return -2; }
+    if (!std.task.hasRole("worker")) { return -3; }
+    if (std.task.affinityApplied() && !std.task.coreAvailable(0)) {
+        return -7;
+    }
+    return value + 1;
+}
+
+@task(core = -1, priority = -2, role = "background")
+async int32 overriddenOptions(int32 value) {
+    if (std.task.core() != 0) { return -4; }
+    if (std.task.priority() != 3) { return -5; }
+    if (!std.task.hasRole("urgent")) { return -6; }
+    return value * 2;
+}
+
+async int32 main() {
+    assert(std.task.workerCount() >= 1, "scheduler worker count");
+    assert(!std.task.coreAvailable(-1), "negative core is unavailable");
+    std.task.SchedulerMetrics* initialMetrics = std.task.metrics();
+    assert(initialMetrics.runnable >= 0, "metrics runnable gauge");
+    assert(initialMetrics.suspended >= 0, "metrics suspended gauge");
+    task<int32> inherited = spawn inheritedOptions(41);
+
+    @spawn(core = 0, priority = 3, role = "urgent")
+    task<int32> overridden = spawn overriddenOptions(21);
+
+    int32 inheritedResult = await inherited;
+    int32 overriddenResult = await overridden;
+    assert(inheritedResult == 42, "task attributes result");
+    assert(overriddenResult == 42, "spawn attributes result");
+    std.task.SchedulerMetrics* finalMetrics = std.task.metrics();
+    assert(
+        finalMetrics.completed >= initialMetrics.completed + 2,
+        "metrics completed tasks");
+    assert(
+        finalMetrics.queueSamples >= initialMetrics.queueSamples + 2,
+        "metrics queue samples");
+    assert(
+        finalMetrics.averageQueueLatencyNanoseconds() >= 0,
+        "metrics average queue latency");
+    println("task-scheduling=ok");
+    return 0;
+}

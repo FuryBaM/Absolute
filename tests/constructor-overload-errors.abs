@@ -1,0 +1,27 @@
+// Semantic errors for constructor overload resolution.
+
+class Box {
+    public int32 value;
+
+    public Box() {
+        value = 0;
+    }
+
+    public Box(int32 v) {
+        value = v;
+    }
+
+    public Box(int32 a, int32 b) {
+        value = a + b;
+    }
+}
+
+class Dup {
+    public Dup(int32 x) {}
+    public Dup(int32 y) {} // same signature
+}
+
+int32 main() {
+    Box* bad = new Box(1, 2, 3);
+    return 0;
+}

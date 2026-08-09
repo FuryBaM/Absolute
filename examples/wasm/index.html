@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Absolute WebAssembly demo</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #e8eef7; background: #0f1419; }
+    body { max-width: 40rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+    h1 { font-size: 1.35rem; font-weight: 600; }
+    code, pre { font-family: ui-monospace, Consolas, monospace; font-size: 0.9rem; }
+    pre { background: #1a222c; padding: 0.75rem 1rem; border-radius: 8px; overflow: auto; }
+    button { background: #3d7eff; color: #fff; border: 0; border-radius: 6px; padding: 0.5rem 0.9rem; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    #log { white-space: pre-wrap; min-height: 4rem; }
+    .ok { color: #6dffa8; }
+    .err { color: #ff8e8e; }
+  </style>
+</head>
+<body>
+  <h1>Absolute → WebAssembly</h1>
+  <p>
+    Loads Absolute wasm built with
+    <code>absolutec --target wasm32-unknown-unknown --build-exe</code>.
+  </p>
+  <p>
+    <strong>main</strong> — UI thread, HTTP/TCP mocks only (no <code>Atomics.wait</code>).<br />
+    <strong>worker</strong> — session Worker; can use nested WebSocket TCP when the page is
+    cross-origin isolated (COOP/COEP). Prefer
+    <code>node scripts/serve-wasm-demo.mjs</code>.
+  </p>
+  <p>
+    Optional globals: <code>__ABSOLUTE_HTTP_MOCKS</code>,
+    <code>__ABSOLUTE_TCP_MOCKS</code>, <code>__ABSOLUTE_WS_MAP</code>
+    (<code>{"host:port":"ws://…"}</code>).
+  </p>
+  <p>
+    <label>Mode
+      <select id="mode">
+        <option value="main">main thread</option>
+        <option value="worker">worker session</option>
+      </select>
+    </label>
+    <input type="file" id="file" accept=".wasm,application/wasm" />
+    <button id="run" disabled>Run exports / main</button>
+  </p>
+  <p id="status" style="opacity:0.85;font-size:0.9rem"></p>
+  <pre id="log">Drop or choose a <code>.wasm</code> file (smoke, managed, http, net, …).</pre>
+  <script type="module" src="./loader.js"></script>
+</body>
+</html>

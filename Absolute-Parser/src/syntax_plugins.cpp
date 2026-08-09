@@ -38,6 +38,9 @@ namespace Absolute {
 
         std::unordered_map<std::string, size_t> binaryOperatorsBySignature;
 
+        std::unordered_map<std::string, PluginResourceDescriptor> resourcesByTypeName;
+        std::unordered_map<std::string, std::string> virtualModulesByName;
+
         bool IsIdentifier(const std::string& value) {
             if (value.empty()) return false;
             const auto first = static_cast<unsigned char>(value.front());
@@ -76,6 +79,7 @@ namespace Absolute {
         struct ParserCursorContext {
             std::vector<AbsoluteSyntaxTokenV1> views;
             size_t index = 0;
+            std::string sliceBuffer;
         };
 
         size_t CursorRemaining(void* context) {
@@ -97,6 +101,58 @@ namespace Absolute {
             if (expectedText && std::string_view(token.text, token.text_length) != expectedText) return 0;
             ++cursor.index;
             return 1;
+        }
+
+        size_t CursorCheckpoint(void* context) {
+            auto& cursor = *static_cast<ParserCursorContext*>(context);
+            return cursor.index;
+        }
+
+        int32_t CursorRestore(void* context, size_t checkpointId) {
+            auto& cursor = *static_cast<ParserCursorContext*>(context);
+            if (checkpointId > cursor.views.size()) return 0;
+            cursor.index = checkpointId;
+            return 1;
+        }
+
+        int32_t CursorCommit(void* context, size_t checkpointId) {
+            (void)context;
+            (void)checkpointId;
+            return 1;
+        }
+
+        const char* CursorSourceSlice(void* context, size_t startToken, size_t endToken) {
+            auto& cursor = *static_cast<ParserCursorContext*>(context);
+            if (startToken >= cursor.views.size() || endToken > cursor.views.size() || startToken > endToken)
+                return "";
+            cursor.sliceBuffer.clear();
+            for (size_t i = startToken; i < endToken; ++i) {
+                cursor.sliceBuffer.append(cursor.views[i].text, cursor.views[i].text_length);
+                if (i + 1 < endToken) cursor.sliceBuffer.push_back(' ');
+            }
+            return cursor.sliceBuffer.c_str();
+        }
+
+        const char* CursorCaptureUntil(void* context, const char* endDelimiter, size_t* outConsumed) {
+            auto& cursor = *static_cast<ParserCursorContext*>(context);
+            if (!endDelimiter || cursor.index >= cursor.views.size()) {
+                if (outConsumed) *outConsumed = 0;
+                return "";
+            }
+            const std::string delimiter(endDelimiter);
+            size_t count = 0;
+            cursor.sliceBuffer.clear();
+            while (cursor.index < cursor.views.size()) {
+                const auto& tok = cursor.views[cursor.index];
+                std::string_view tokText(tok.text, tok.text_length);
+                if (tokText == delimiter) break;
+                cursor.sliceBuffer.append(tok.text, tok.text_length);
+                cursor.sliceBuffer.push_back(' ');
+                ++cursor.index;
+                ++count;
+            }
+            if (outConsumed) *outConsumed = count;
+            return cursor.sliceBuffer.c_str();
         }
 
         void DestroyOpaqueNode(AbsoluteOpaqueAstNodeV1& node) {
@@ -149,6 +205,8 @@ namespace Absolute {
         preludes.clear();
         binaryOperatorsBySignature.clear();
         binaryOperators.clear();
+        resourcesByTypeName.clear();
+        virtualModulesByName.clear();
     }
 
     void RegisterSyntaxPluginPrelude(const std::string& pluginName, const char* source) {
@@ -191,8 +249,11 @@ namespace Absolute {
         std::unordered_set<std::string> newKeywords;
         for (size_t index = 0; index < table->rule_count; ++index) {
             const AbsoluteOpaqueSyntaxRuleV1& rule = table->rules[index];
-            const std::string keyword = rule.keyword ? rule.keyword : "";
-            if (!IsIdentifier(keyword))
+            std::string keyword = rule.keyword ? rule.keyword : "";
+            if (rule.rule_namespace && rule.rule_namespace[0] != '\0') {
+                keyword = std::string(rule.rule_namespace) + "." + keyword;
+            }
+            if (!IsIdentifier(rule.keyword ? rule.keyword : ""))
                 throw std::runtime_error("Syntax plugin '" + pluginName +
                     "' registered invalid opaque keyword '" + keyword + "'");
             if (!rule.parse)
@@ -201,14 +262,69 @@ namespace Absolute {
                 throw std::runtime_error("Syntax plugin cannot replace core keyword '" + keyword + "'");
             if (rulesByKeyword.contains(keyword) || opaqueRulesByKeyword.contains(keyword) ||
                 !newKeywords.insert(keyword).second)
-                throw std::runtime_error("Syntax keyword '" + keyword + "' is already registered");
+                throw std::runtime_error("Syntax keyword '" + keyword + "' is already registered by plugin");
         }
         for (size_t index = 0; index < table->rule_count; ++index) {
             const AbsoluteOpaqueSyntaxRuleV1& rule = table->rules[index];
+            std::string keyword = rule.keyword ? rule.keyword : "";
+            if (rule.rule_namespace && rule.rule_namespace[0] != '\0') {
+                keyword = std::string(rule.rule_namespace) + "." + keyword;
+            }
             const size_t ruleIndex = opaqueRules.size();
-            opaqueRules.push_back({pluginName, rule.keyword, rule.parse, rule.user_data});
-            opaqueRulesByKeyword.emplace(rule.keyword, ruleIndex);
+            opaqueRules.push_back({pluginName, keyword, rule.parse, rule.user_data});
+            opaqueRulesByKeyword.emplace(keyword, ruleIndex);
         }
+    }
+
+    void RegisterPluginResources(const std::string& pluginName, const AbsoluteResourceTableV1* resources) {
+        if (!resources) return;
+        if (resources->descriptor_count != 0 && !resources->descriptors)
+            throw std::runtime_error("Plugin '" + pluginName + "' has invalid resources table");
+        
+        for (size_t index = 0; index < resources->descriptor_count; ++index) {
+            const AbsoluteResourceDescriptorV1& descriptor = resources->descriptors[index];
+            if (descriptor.struct_size < offsetof(AbsoluteResourceDescriptorV1, copy_message_function))
+                throw std::runtime_error("Plugin '" + pluginName + "' uses incompatible AbsoluteResourceDescriptorV1");
+            const std::string typeName = descriptor.type_name ? descriptor.type_name : "";
+            if (!IsIdentifier(typeName))
+                throw std::runtime_error("Plugin '" + pluginName + "' registered invalid resource type '" + typeName + "'");
+            if (resourcesByTypeName.contains(typeName))
+                throw std::runtime_error("Plugin resource type '" + typeName + "' is already registered");
+                
+            const std::string copyMsg = (descriptor.struct_size >= offsetof(AbsoluteResourceDescriptorV1, copy_message_function) + sizeof(descriptor.copy_message_function) && descriptor.copy_message_function)
+                ? descriptor.copy_message_function : "";
+            const std::string makeImm = (descriptor.struct_size >= offsetof(AbsoluteResourceDescriptorV1, make_immutable_function) + sizeof(descriptor.make_immutable_function) && descriptor.make_immutable_function)
+                ? descriptor.make_immutable_function : "";
+            const std::string rehome = (descriptor.struct_size >= offsetof(AbsoluteResourceDescriptorV1, rehome_function) + sizeof(descriptor.rehome_function) && descriptor.rehome_function)
+                ? descriptor.rehome_function : "";
+
+            resourcesByTypeName[typeName] = {
+                pluginName,
+                typeName,
+                descriptor.is_resource,
+                descriptor.destroy_function ? descriptor.destroy_function : "",
+                descriptor.move_into_function ? descriptor.move_into_function : "",
+                copyMsg,
+                makeImm,
+                rehome
+            };
+        }
+    }
+
+    void RegisterPluginVirtualModules(const std::string& pluginName, const AbsoluteVirtualModuleTableV1* modules) {
+        (void)pluginName;
+        if (!modules) return;
+        for (size_t i = 0; i < modules->module_count; ++i) {
+            const auto& mod = modules->modules[i];
+            if (mod.module_name && mod.module_source) {
+                virtualModulesByName[mod.module_name] = mod.module_source;
+            }
+        }
+    }
+
+    const std::string* FindPluginVirtualModule(const std::string& moduleName) {
+        const auto found = virtualModulesByName.find(moduleName);
+        return found == virtualModulesByName.end() ? nullptr : &found->second;
     }
 
     bool IsSyntaxPluginKeyword(const std::string& value) {
@@ -225,6 +341,12 @@ namespace Absolute {
         return found == binaryOperatorsBySignature.end() ? nullptr : &binaryOperators[found->second];
     }
 
+    const PluginResourceDescriptor* GetPluginResourceDescriptor(const std::string& typeName) {
+        const auto found = resourcesByTypeName.find(typeName);
+        if (found == resourcesByTypeName.end()) return nullptr;
+        return &found->second;
+    }
+
     std::unique_ptr<Statement> TryParseOpaquePluginStatement(
         const std::vector<Token>& tokens, size_t& position) {
         if (position >= tokens.size()) return nullptr;
@@ -235,7 +357,9 @@ namespace Absolute {
         ParserCursorContext context{MakeTokenViews(tokens, position), 0};
         AbsoluteParserCursorV1 cursor{
             ABSOLUTE_SYNTAX_PLUGIN_ABI_VERSION, &context,
-            &CursorRemaining, &CursorPeek, &CursorConsume
+            &CursorRemaining, &CursorPeek, &CursorConsume,
+            &CursorCheckpoint, &CursorRestore, &CursorCommit,
+            &CursorSourceSlice, &CursorCaptureUntil
         };
         AbsoluteOpaqueParseResultV1 result{};
         int32_t succeeded = 0;

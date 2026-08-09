@@ -71,6 +71,8 @@
 - [x] Проверить генерацию `.obj`/`.exe`, native runtime и C ABI через MSVC linker.
 - [x] Запускать все доступные semantic, emit и runtime tests непосредственно на Windows.
   На Windows проходят 98/98 тестов; десять Linux-only `lli`-тестов заменены покрытием через скомпилированные `.exe`.
+- [x] Добавить `absolutec --version`, чтобы установленный compiler можно было
+  однозначно обнаружить и проверить из терминала и install-скриптов.
 - [x] Добавить Windows Release build benchmark: clean, no-op, Analyzer unit, CodeGen unit и PCH.
   Первый native MSVC запуск: clean — 44,82 с; no-op — 1,17 с; Analyzer unit — 6,38 с;
   CodeGen unit — 5,43 с; CodeGen PCH — 17,11 с.
@@ -100,8 +102,19 @@
 - [x] Переменные, функции, возвращаемые значения и области видимости.
 - [x] `if`, `for`, `while`, `do-while`, `foreach`, `break` и `continue`.
 - [x] Перегрузка функций и методов.
+- [x] Структурные tuple-значения и безопасные variadic-параметры:
+  `tuple<T...>`, литералы `(a, b, ...)`, `itemN`/`length`, передача и возврат
+  через value ABI, а также финальный `params T[] args` со стековой упаковкой
+  хвоста вызова и прямой передачей готового массива.
 - [x] Методы расширения.
-- [x] Пространства имён, файловые и namespace-импорты.
+- [x] Script-style top-level code без явного `main`: executable statements и
+  локальные script-переменные заворачиваются в скрытый `int32 main()` с
+  автоматическим `return 0`; смешение top-level кода с explicit `main` запрещено.
+- [x] Функциональные значения и лямбды.
+  Поддерживаются captureless-функции, expression/block-body, вывод и явное
+  указание возвращаемого типа, immutable capture-by-value, копирование closure,
+  переназначение и вложенные escaping-замыкания.
+- [x] Пространства имён, файловые и namespace-импорты (включая точечный `std.collections`, относительный `./std/collections` и FQN `std.collections.Vector`).
 - [x] Строковые шаблоны, форматирование, `print` и `println`.
 - [x] Добавить `switch`/`match` и проверку полноты вариантов.
   `match` проверяет полноту `bool` и enum-вариантов; для integer/char требуется `default`.
@@ -115,7 +128,7 @@
   `return`, `break`, `continue` и распространении исключения.
 - [x] Добавить атрибуты/аннотации для compiler и plugin metadata.
 - [x] Спроектировать и реализовать мономорфизируемые generics для функций,
-  структур и классов; constraints/traits остаются следующим слоем.
+  структур, классов и интерфейсов; constraints/traits остаются следующим слоем.
 - [x] Добавить type aliases в ядро, не зависящие от plugin prelude.
   `using Alias = Type;` прозрачно разрешает primitive, aggregate, concrete generic,
   array, task и pointer-типы, поддерживает namespaces и выявляет циклы.
@@ -139,6 +152,9 @@
   `base(...)` разрешён только первой инструкцией конструктора; если он опущен,
   компилятор вызывает нулевой конструктор базового класса и при необходимости
   синтезирует конструкторы для всей цепочки наследования.
+- [x] Перегрузка конструкторов class/struct: несколько ctor с разными
+  списками параметров, разрешение как у методов, `base(...)` выбирает
+  overload базы; LLVM `Type.__ctor` + mangling по `CallableKey`.
 - [x] Добавить default-реализации методов интерфейсов.
   Default-методы проходят полный parser/analyzer/LLVM pipeline, поддерживают
   namespace и diamond-наследование; метод класса имеет приоритет, а конфликт
@@ -186,22 +202,63 @@
   поля владеют принятым свежим ресурсом, перезапись очищает старое значение,
   синтетический деструктор агрегата освобождает поля в обратном порядке, а
   динамическое удаление class/interface вызывает деструктор через slot 0 vtable.
-- [ ] Добавить явную операцию `move` для передачи resource-owning структур между
+- [x] Добавить явную операцию `move` для передачи resource-owning структур между
   переменными, параметрами и return; до этого их неявное копирование запрещено.
-- [ ] Открыть versioned ownership-адаптер для плагиновых типов: регистрация
-  `destroy`/`move`, признак ресурса, анализ escape и участие в cleanup агрегатов.
+- [x] Добавить явный протокол глубокого копирования без C++ rule-of-five:
+  `copy(value)` вызывает public zero-argument `clone() const`, struct возвращает
+  тот же value-тип, class/interface — новый managed pointer того же статического
+  типа; virtual clone использует обычный vtable dispatch, а исходное значение
+  остаётся живым. Массивы и slices сохраняют отдельную семантику `copy(...)`.
+- [x] Открыть ownership-адаптер для структур и плагиновых типов: поддержка пользовательского метода `destroy()`, проверка ресурсоёмкости (`TypeOwnsResources`), автоматический вызов деструктора при завершении области видимости/return/delete и передача владения через `move(...)`.
 - [x] Не вводить отдельный тип/ключевое слово `borrow`: managed-параметры уже являются
   безопасными non-owning заимствованиями, slices всегда остаются zero-copy views, а
   `raw` используется только для явно небезопасного доступа.
-- [ ] Усилить compile-time lifetime-проверки для slices, временных managed-ссылок и
-  async-captures без добавления нового runtime-вида указателя; для больших value-типов
-  отдельно рассмотреть `ref`/`const ref`.
-- [ ] Определить weak/non-owning managed references.
-- [ ] Проверить циклические графы объектов и выбрать стратегию их очистки.
-- [ ] Добавить sanitizer-набор тестов на use-after-free, double-free и утечки.
-- [ ] Оптимизировать managed dereference и доказать корректность удаления bounds/lifetime checks в Release.
+- [x] Усилить compile-time escape-проверки без нового runtime-вида указателя:
+  локальные массивы и borrowed slices нельзя вернуть или сохранить в поле без
+  `copy(...)`, а managed subscriber и managed-поле агрегата нельзя вернуть как
+  передаваемого владельца — в том числе через метод временного объекта.
+- [x] Закрыть lifetime/ABI-границу async-captures и результатов: текущий task-context
+  принимает только независимые от lifetime скаляры и enum; managed/raw pointers,
+  arrays/slices, string, func/task и aggregate value-типы отклоняются Analyzer до
+  CodeGen. Новый runtime-вид указателя не добавлялся.
+- [x] Исследовать `T&`/`const T&` для больших resource-free value-типов отдельно
+  от lifetime correctness: parameter-only borrow по ABI является `nonnull nocapture`
+  pointer без нового runtime pointer kind; escape/alias/async-границы зафиксированы,
+  benchmark 128-байтного struct показал 1.19x на 20 млн opaque-вызовов.
+- [x] Реализовать parameter-only `const T&`/`T&` по `docs/value-references.md`:
+  `ref T`/`const ref T` остаются source-алиасами и сразу нормализуются к единой
+  ampersand-signature; parser contracts, conservative mutable-alias checking, temporary
+  lifetime для `const T&`, virtual/interface/constructor ABI и LLVM
+  `nonnull`/`nocapture`/`readonly`; async/C ABI/closures/resources отсекаются.
+- [x] Определить и реализовать `weak T*` для явных non-owning managed references:
+  используется существующий generation-checked handle без нового runtime-вида;
+  strong-to-weak разрешён, обратное преобразование/`new`/`move`/`delete` запрещены,
+  weak-поля не очищают pointee и позволяют безопасные graph back-edges.
+- [x] Доделать `move(owner)` для managed `T*`: destination получает owner-роль,
+  source зануляется и становится compile-time moved-from до новой инициализации,
+  lifetime существующих subscriber/weak алиасов переносится на нового владельца.
+  Move subscriber/weak/const/invalid, потерянный результат и передача ownership в
+  обычный borrowed-параметр отклоняются Analyzer; runtime handle не менялся.
+- [x] Проверить циклические графы объектов и выбрать стратегию их очистки:
+  strong managed-поля образуют лес уникального владения и рекурсивно очищаются;
+  parent/peer/cross-link рёбра используют `weak T*` и не участвуют в cleanup.
+  Явные strong back-edges отклоняются как `E_MANAGED_OWNERSHIP_CYCLE`; новый GC,
+  refcount, cycle collector или runtime-вид указателя не добавлялся.
+- [x] Добавить sanitizer-набор тестов на use-after-free, double-free и утечки:
+  compile-time flow diagnostics дополнены настоящими `--sanitize=address`
+  executables; ASan подтверждает heap-use-after-free/double-free, а managed runtime
+  аварийно завершает процесс при оставшемся generation-slot. Флаг sanitizer
+  передаётся в LLVM object pipeline и native linker на Windows/Linux.
+- [x] Оптимизировать managed dereference и доказать корректность удаления
+  bounds/lifetime checks в Release: локальный неизменённый managed owner хранит
+  cached pointee после единственной проверки allocation; в hot loop отсутствуют
+  slot bounds/generation calls. Borrowed/subscriber/weak доступ сохраняет checked
+  fast path, `delete` зануляет cache, а dereference после delete отклоняется Analyzer.
 
 ### Массивы, slices и коллекции
+
+Архитектурная модель snapshot/COW и transient builder/cursor описана в
+`docs/isolation-model.md`; generation-check не является её гарантией safety.
 
 - [x] Одномерные и многомерные прямоугольные массивы.
 - [x] Локальные и глобальные массивы, литералы и runtime-размеры.
@@ -210,35 +267,87 @@
 - [x] Явное независимое копирование массивов и slices через `copy(...)`; скрытое копирование при `return` удалено.
 - [x] `foreach` по массивам и slices.
 - [x] Проверка выхода за границы.
-- [ ] Добавить многомерные slices.
-- [ ] Добавить безопасные iterators и пользовательский протокол iteration.
-- [ ] Добавить динамические коллекции: `Vector`, `Map`, `Set` и queue/deque.
-- [ ] Добавить стандартные алгоритмы: sort, search, transform, reduce и filter.
-- [ ] Реализовать Release-elimination доказуемо лишних bounds checks.
-- [ ] Добавить SIMD/vectorization-тесты для числовых массивов.
+- [x] Добавить многомерные slices.
+- [x] Добавить пользовательский протокол iteration и lowering `foreach`.
+- [x] Сделать iterators `Vector`/`Map`/`Set` безопасными через immutable snapshot:
+  `iterate()` создаёт независимую копию видимой части backing storage, поэтому
+  push/remove/clear и замена элементов исходной коллекции физически не могут
+  инвалидировать iterator. Lowering `foreach` владеет managed iterator и очищает
+  его snapshot на normal exit, `break` и `return`; generation panic не нужен.
+- [x] Заменить eager copy при `iterate()` на разделяемую immutable-версию backing
+  storage с copy-on-write. Это оптимизация времени и памяти без изменения уже
+  реализованной snapshot-семантики: iterator продолжает видеть версию на момент
+  `iterate()` и не требует lexical borrow checker.
+- [x] Скрыть mutable backing стандартных коллекций за private runtime capability:
+  safe API не возвращает адрес элемента или storage. Для изменяющего обхода дать
+  transient builder/cursor, который форкается от immutable snapshot и публикует
+  новую collection только через `finish()`; старые aliases остаются корректными и
+  видят старую версию. `move` может разрешить reuse уникального storage только как
+  оптимизация, но не как условие safety. Unsafe raw/FFI export всегда создаёт
+  отдельную копию или явно выходит из safe-модели.
+- [x] Добавить динамические коллекции: `Vector`, `Map`, `Set` (queue/deque остаются следующим шагом).
+- [x] Добавить стандартные алгоритмы: sort, search, transform, reduce и filter.
+- [x] Реализовать Release-elimination доказуемо лишних bounds checks.
+- [x] Добавить SIMD/vectorization-тесты для числовых массивов.
 
 ### Async и параллельность
 
+Task-isolate, закрытый message envelope и transfer capsule описаны в
+`docs/isolation-model.md`; общий mutable object graph между tasks не допускается.
+
 - [x] `async`-функции, `spawn`, `await` и runtime worker pool.
 - [x] Проверка незавершённых локальных tasks анализатором.
-- [ ] Добавить async-методы классов и структур.
-- [ ] Добавить cancellation tokens и timeout.
-- [ ] Добавить channels и безопасные concurrent queues.
-- [ ] Добавить async file/network I/O.
-- [ ] Добавить `select`/`whenAny` для ожидания нескольких tasks.
-- [ ] Добавить mutex, semaphore и atomic API в стандартную библиотеку.
-- [ ] Формализовать thread-safety managed pointers и объектов.
+- [x] Compile-time проверка task payload/result: только scalar/enum ABI без
+  заимствованных pointers, slices, строк и агрегатов.
+- [x] Добавить scheduling-атрибуты для tasks: `@task(core, priority, role)` задаёт
+  defaults async-функции, `@spawn(...)` переопределяет отдельный запуск; runtime
+  использует priority-очередь, временную CPU affinity и доступную через `std.task` роль.
+- [x] Добавить async-методы классов и структур: static-методы используют обычный
+  task ABI; instance-методы требуют `const` и стабильный именованный receiver без
+  собственных ресурсов; virtual class dispatch выполняется внутри task thunk,
+  а mutable/raw/subscriber/temporary receivers отсекаются анализатором. Это
+  закрывает текущую lifetime-границу, но ещё не является полной гарантией
+  отсутствия data races для будущих pointer/aggregate payloads.
+- [x] До расширения task payload ABI ввести task-isolates: у каждой task свой
+  object/handle domain, а `spawn` не захватывает произвольное окружение и принимает
+  только закрытый message envelope. Обычный managed/raw/weak pointer не имеет
+  представления в envelope и потому архитектурно не может сослаться на mutable
+  объект другой task; это ограничение ABI/runtime capability, а не соглашение и
+  не borrow checker.
+- [x] Разрешить ровно два способа пересечь isolate boundary: immutable value/blob
+  копируется или разделяет read-only backing; уникальный object graph передаётся
+  только внутри sealed transfer capsule. Capsule не создаётся из произвольного
+  `move(pointer)`: его storage изначально создаётся opaque, не выдаёт обычных
+  pointer aliases и при отправке атомарно rehome-ится в domain получателя. Старый
+  capability после отправки непригоден независимо от Analyzer; одноразовый `await`
+  возвращает результат тем же envelope ABI.
+- [x] Добавить cancellation tokens и timeout.
+- [x] Добавить channels и concurrent queues поверх того же message envelope:
+  channel не принимает произвольные адреса/объекты, а только immutable message или
+  consuming transfer capsule, поэтому не создаёт shared mutable alias.
+- [x] Добавить async file/network I/O.
+- [x] Добавить `select`/`whenAny` для ожидания нескольких tasks.
+- [x] Общий mutable state предоставлять только как opaque concurrent capability
+  (`Atomic`, `MutexCell`, semaphore или actor/service): внутреннее `T` нельзя
+  извлечь как pointer/reference, все операции capability синхронизированы, а lock
+  guard task-local и runtime не позволяет пронести его через `await`/channel.
+- [x] Сделать managed runtime domain-aware для transfer capsule (atomic detach,
+  publication, rehome и destroy). Обычный managed handle остаётся task-local и не
+  становится способом совместного доступа между domains.
+- [x] Расширить plugin resource descriptor операциями `copy_message`,
+  `make_immutable` или `detach/rehome`; без них plugin resource является task-local
+  и message ABI его не принимает.
 
 ### Модули, проекты и пакеты
 
 - [x] `.absproj`, несколько source-файлов и рекурсивные импорты.
 - [x] Namespace imports.
 - [x] Подключение native libraries через проект.
-- [ ] Добавить package manifest и lock-файл зависимостей.
-- [ ] Добавить локальный/удалённый package registry.
-- [ ] Добавить версионирование модулей и проверку конфликтов зависимостей.
-- [ ] Добавить отдельные library/application targets в одном workspace.
-- [ ] Добавить incremental module cache вместо повторного анализа всех файлов.
+- [x] Добавить package manifest и lock-файл зависимостей.
+- [x] Добавить локальный/удалённый package registry.
+- [x] Добавить версионирование модулей и проверку конфликтов зависимостей.
+- [x] Добавить отдельные library/application targets в одном workspace.
+- [x] Добавить incremental module cache вместо повторного анализа всех файлов.
 
 ### Plugin API
 
@@ -256,99 +365,99 @@
 
 #### P0 — стабильный ABI и безопасное расширение парсера
 
-- [ ] Разделить capability-интерфейсы на `AbsoluteCompilerPluginV1`,
+- [x] Разделить capability-интерфейсы на `AbsoluteCompilerPluginV1`,
   `AbsoluteLanguagePluginV1`, `AbsoluteEditorPluginV1` и
   `AbsoluteRuntimePluginV1`; один package может предоставлять несколько
   независимых интерфейсов.
-- [ ] Добавить `struct_size`, capability bitset/table, reserved fields и
+- [x] Добавить `struct_size`, capability bitset/table, reserved fields и
   `required_host_version` во все расширяемые C ABI descriptors; использовать
   только ABI-safe типы, opaque handles и пары `pointer + length`.
-- [ ] Реализовать capability/version negotiation между host и plugin с
+- [x] Реализовать capability/version negotiation между host и plugin с
   диагностикой недостающих `parser.*`, `semantic.*`, `ir.*`, `backend.*`,
   `ide.*` возможностей до вызова plugin-кода.
-- [ ] Зафиксировать lifecycle `load -> initialize -> begin_compilation ->
+- [x] Зафиксировать lifecycle `load -> initialize -> begin_compilation ->
   begin_module -> end_module -> end_compilation -> shutdown -> unload`,
   правила thread safety, параллельных вызовов, владения памятью и времени жизни
   строк/AST handles.
-- [ ] Добавить ABI compatibility matrix и тесты старого/нового host и plugin на
+- [x] Добавить ABI compatibility matrix и тесты старого/нового host и plugin на
   Windows и Linux, включая неизвестные поля, урезанный `struct_size` и
   отсутствующие optional capabilities.
-- [ ] Дать parser plugin доступ к сырому исходнику и точным span через
+- [x] Дать parser plugin доступ к сырому исходнику и точным span через
   `source_slice`, `source_location`, `capture_raw_block` и `capture_until`,
   чтобы embedded HLSL/GLSL/SQL не проходили через lexer Absolute.
-- [ ] Расширить parser cursor транзакциями `checkpoint`, `restore`, `commit`,
+- [x] Расширить parser cursor транзакциями `checkpoint`, `restore`, `commit`,
   атомарным rollback при отказе plugin rule и гарантией progress.
-- [ ] Открыть безопасную базовую грамматику host через `parse_expression`,
+- [x] Открыть безопасную базовую грамматику host через `parse_expression`,
   `parse_statement`, `parse_type`, `parse_declaration`, `parse_block`,
   `parse_parameter_list` и `parse_function_body`.
-- [ ] Ввести структурированные plugin diagnostics: severity, code, primary и
+- [x] Ввести структурированные plugin diagnostics: severity, code, primary и
   secondary spans, notes, fixits и mapping ошибок внешнего компилятора обратно
   в embedded-блок `.abs`.
-- [ ] Расширить opaque AST vtable операциями `clone`, `visit_children`,
+- [x] Расширить opaque AST vtable операциями `clone`, `visit_children`,
   `serialize`, `deserialize`, `compute_hash`, `validate` и `lower`; сохранить
   прямой `emit` только как optional backend capability.
-- [ ] Добавить source mapping для expansion/foreign/generated code и IR:
+- [x] Добавить source mapping для expansion/foreign/generated code и IR:
   `map_generated_span`, `map_foreign_span`, `map_ir_instruction`.
-- [ ] Расширить manifest полями `optional_dependencies`, `conflicts`, `targets`,
+- [x] Расширить manifest полями `optional_dependencies`, `conflicts`, `targets`,
   `permissions` и namespace для syntax rules; конфликты правил разрешать явно,
   а не порядком загрузки DLL/SO.
 
 #### P1 — semantic, типы и ownership
 
-- [ ] Добавить semantic context: module, namespace, scope, current function,
+- [x] Добавить semantic context: module, namespace, scope, current function,
   generic parameters, attributes, target platform и ownership context.
-- [ ] Открыть versioned semantic API: `resolve_symbol`, `resolve_type`,
+- [x] Открыть versioned semantic API: `resolve_symbol`, `resolve_type`,
   `declare_symbol`, `declare_type`, `declare_function`, `check_conversion`,
   `check_trait`, `infer_expression_type` и `report_diagnostic`.
-- [ ] Разрешить регистрацию opaque, primitive, generic, address-space,
+- [x] Разрешить регистрацию opaque, primitive, generic, address-space,
   resource и compiler-known типов через descriptor с size/alignment,
   copy/move/destroy, validation и lowering hooks.
-- [ ] Добавить host-controlled регистрацию operators, conversions, literals,
+- [x] Добавить host-controlled регистрацию operators, conversions, literals,
   attributes и intrinsics с детерминированным разрешением приоритетов и
   конфликтов между плагинами.
-- [ ] Открыть ownership/lifetime-запросы `query_pointer_mode`, `require_raw`,
+- [x] Открыть ownership/lifetime-запросы `query_pointer_mode`, `require_raw`,
   `require_managed`, `transfer_ownership`, `register_resource`, `mark_escape`,
   чтобы `GpuTexture`, `NativeWindow`, `Socket` и другие resource-типы
   участвовали в анализе владения Absolute.
-- [ ] Добавить безопасную генерацию символов: `register_generated_function`,
+- [x] Добавить безопасную генерацию символов: `register_generated_function`,
   `register_generated_type`, `register_generated_constant` и
   `register_runtime_symbol`.
-- [ ] Заменить глобальную строку prelude на virtual/prelude modules и import
+- [x] Заменить глобальную строку prelude на virtual/prelude modules и import
   resolver, чтобы плагины предоставляли `import Desktop`, `import Shader` и
   другие модули без загрязнения глобального namespace.
-- [ ] Ввести общий lowering API в Absolute HIR/MIR или host IR; плагин должен
+- [x] Ввести общий lowering API в Absolute HIR/MIR или host IR; плагин должен
   уметь понижать узел без доступа к внутренним C++ AST/Analyzer/LLVM-классам.
 
 #### P2 — artifacts, backends, build graph и runtime
 
-- [ ] Отвязать codegen ABI от одного `emit_llvm`: добавить artifact kinds для
+- [x] Отвязать codegen ABI от одного `emit_llvm`: добавить artifact kinds для
   LLVM IR/bitcode, object/static/shared library, SPIR-V, DXIL, PTX, CUBIN,
   AMDGPU code object, source text и custom binary.
-- [ ] Добавить `supports_target`, `emit_artifact` и `link_artifact`, а затем
+- [x] Добавить `supports_target`, `emit_artifact` и `link_artifact`, а затем
   versioned backend registration: `register_target`, `query_target_features`,
   `compile_module`, `link_module`, `run_toolchain`.
-- [ ] Добавить build graph API для source/binary/tool/environment dependencies,
+- [x] Добавить build graph API для source/binary/tool/environment dependencies,
   generated files, include paths и link libraries.
-- [ ] Добавить plugin cache keys, artifact hashes и incremental state; opaque
+- [x] Добавить plugin cache keys, artifact hashes и incremental state; opaque
   AST сериализовать с версией plugin/schema, не инвалидируя весь module cache.
-- [ ] Формализовать runtime-интеграцию: initialize/shutdown runtime,
+- [x] Формализовать runtime-интеграцию: initialize/shutdown runtime,
   native libraries/functions, allocate/release resource и упаковку compiler,
   runtime, prelude, IDE и debugger частей в один plugin package.
 
 #### P3 — IDE, debugger и надёжность
 
-- [ ] Добавить отдельный IDE API для completion, hover, definition, references,
+- [x] Добавить отдельный IDE API для completion, hover, definition, references,
   semantic tokens, formatting, code actions, rename, inlay hints, outline и
   folding ranges.
-- [ ] Добавить `embedded_language` и virtual-document/source-map contract для
+- [x] Добавить `embedded_language` и virtual-document/source-map contract для
   передачи HLSL/GLSL/SQL блоков специализированному language server.
-- [ ] Добавить debugger/profiler hooks: debug info, debug adapter, отображение
+- [x] Добавить debugger/profiler hooks: debug info, debug adapter, отображение
   runtime value, просмотр plugin-defined типов и profiler events.
-- [ ] Добавить unload/reload плагинов для IDE без перезапуска с проверкой живых
+- [x] Добавить unload/reload плагинов для IDE без перезапуска с проверкой живых
   AST/type/runtime handles перед выгрузкой.
-- [ ] Изолировать падение и исключение плагина от процесса компилятора; ввести
+- [x] Изолировать падение и исключение плагина от процесса компилятора; ввести
   режимы trusted in-process, isolated process, sandbox и WASM plugin.
-- [ ] Реализовать permission enforcement из manifest для filesystem, network,
+- [x] Реализовать permission enforcement из manifest для filesystem, network,
   environment, toolchain и native-library доступа перед plugin marketplace.
 
 ### Стандартная библиотека
@@ -356,63 +465,677 @@
 - [x] Базовый console I/O и форматирование.
 - [x] Async task runtime.
 - [x] Math-типы и функции как пример плагина.
-- [ ] Определить стабильную структуру standard library и правила версионирования.
-- [ ] Добавить полноценные String/StringBuilder и Unicode API.
-- [ ] Добавить filesystem, paths и streams.
-- [ ] Добавить date/time, timers и random.
-- [ ] Добавить JSON и binary serialization.
-- [ ] Добавить networking: sockets, HTTP client/server и URI.
-- [ ] Добавить collections и algorithms.
-- [ ] Добавить logging, assertions и test framework.
+- [x] Добавить `std.time` для Unix wall clock, монотонных измерений, sleep и
+  benchmark. Единица выбирается через `Unit` (`Nanoseconds`, `Microseconds`,
+  `Milliseconds`, `Seconds`); основной API — `now`, `mono`, `elapsed`, `sleep`,
+  `measure`, `bench`, старый `Time.*` сохранён совместимыми обёртками.
+- [x] Добавить базовые collections: `Vector`, `Map` и `Set`.
+- [x] Определить стабильную структуру standard library и правила
+  версионирования: package `absolute.std` (`std/abspackage.json` 0.1.0),
+  namespace↔file map, SemVer + tiers Stable/Experimental/Internal,
+  pre-1.0 policy; normative doc `docs/standard-library.md`.
+- [x] Добавить интерполяцию строк `"${var}"`: каноничное обессахаривание (desugaring) строк с выражениями `${...}` на этапе парсера в вызовы встроенной функции `format(...)` с экранированием `\$`.
+- [x] Добавить `std.string`: `StringBuilder` для эффективного накопления строк, UTF-8 и декодирование/кодирование Unicode кодовых точек, изменение регистра (ASCII + Unicode basic plane), `trim`/`trimStart`/`trimEnd`, `startsWith`/`endsWith`/`contains`, `indexOf`/`lastIndexOf`, `replace`, `substring` и `join`.
+- [x] Добавить `std.env`: чтение, запись, удаление и проверка переменных окружения UTF-8 с диагностикой ошибок.
+- [x] Добавить `std.process`: PID процесса, аргументы командной строки, путь к исполняемому файлу, имя хоста, `exit`/`abort`, смену рабочей директории и запуск команд (`run`, `runCapture`).
+- [x] Добавить `std.fs`: UTF-8 paths, exists/type/size, create/remove/rename/copy,
+  whole-file read/write/append и ресурсный streaming `File`; Win32/Linux runtime
+  использует native Unicode paths и автоматически закрывает opaque handle.
+- [x] Добавить календарные `Date`/`Time`/`DateTime`/`TimeZone`: высокосные года, дни в месяце, день недели, конвертации между временными зонами, Unix epoch timestamps, добавлении дней/секунд и форматирование/парсинг ISO-8601 (`std.datetime`).
+- [x] Добавить `std.random`: `Rng` использует воспроизводимый xoshiro256** с
+  явным seed и коротким API `u64`/`i32`/`range`/`real`/`boolean`; `entropy()` и
+  `create()` отделяют системный источник seed от детерминированного PRNG.
+- [x] Добавить JSON (`std.json`) и binary serialization (`std.binary`: `BinaryReader` / `BinaryWriter`).
+- [x] Добавить `std.net` blocking TCP: connect/listen/accept, ephemeral/local port,
+  send/receive, timeout, shutdown и автоматическое закрытие opaque socket handle;
+  Windows использует Winsock 2, Linux — POSIX sockets.
+- [x] Добавить UDP (`UdpSocket`), DNS API верхнего уровня (`std.net.resolve`), `std.uri` (`Uri` parser, `encode`, `decode`) и `std.http` (HTTP Client `get`/`post` и HTTP Server `HttpServer`) поверх транспортного слоя `std.net` с использованием операторов `defer`.
+- [x] Довести стандартные algorithms: существующие sort/search/reverse дополнить
+  transform, reduce и filter и подключить весь набор к CTest.
+- [x] Добавить logging, assertions и test framework.
+
+#### Roadmap std после 0.3
+
+- [x] P0 collections:
+  - [x] `Deque<T>` на кольцевом буфере с O(1) вставкой и удалением с обоих концов.
+  - [x] `Queue<T>` и `Stack<T>` как компактные типизированные фасады без отдельных storage engines.
+  - [x] `PriorityQueue<T>` на стабильной бинарной куче с пользовательским comparator.
+  - [x] Стандартный контракт hashing/equality и настоящие `HashMap<K, V>` / `HashSet<T>`;
+    текущие `Map` / `Set` оставить совместимыми ordered-linear контейнерами.
+    - [x] Закрыть CodeGen ABI для callback-полей в generic-классах с несколькими
+      параметрами и virtual override value-type параметров в generic-наследниках;
+      добавить отдельные semantic/native/WASM regression-тесты.
+  - [x] Типизированный `Channel<T>` с явной моделью передачи ownership между tasks:
+    codec-based value messages, checked close/receive semantics, `seal(move(owner))`
+    and one-shot `std.concurrent.TransferChannel<T>` with native/WASM regressions.
+- [x] P0 data / I/O:
+  - [x] `std.bytes.ByteBuffer`: position/limit/capacity, slices и endian-aware primitives.
+  - [x] `std.io`: `Reader`, `Writer`, buffered streams и memory streams.
+- [x] P1 platform:
+  - [x] Расширить `std.fs`: directory listing/walk, metadata, temporary files и watcher.
+  - [x] Расширить `std.http`:
+    - [x] Типизированная case-insensitive headers collection для client/server.
+    - [x] Redirects, body streaming callback, timeout/cancellation и multipart.
+    - [x] HTTPS/TLS transport: WinHTTP/Windows trust store, системный libcurl
+      на Unix и host-backed HTTPS GET для WebAssembly.
+  - [x] `Semaphore`, writer-preferring `RwLock`, `ConditionVariable` и
+    retry-on-error `Once` для native scheduler/threads и WebAssembly runtime.
+  - [x] `std.mime` модуль для авто-определения MIME типов по расширению файла.
+  - [x] `std.form` модуль для парсинга `application/x-www-form-urlencoded` и `multipart/form-data`.
+  - [x] `std.task.TaskGroup` с consuming transfer дочерних `task<void>`,
+    cooperative cancellation и автоматическим cancel/join на выходе из scope.
+- [ ] P1 utilities:
+  - [x] `std.encoding` (Base64/hex/UTF-8 bytes).
+  - [x] `std.uuid` (canonical parse/format and RFC 9562 version 4).
+  - [ ] `std.regex`, `std.crypto` (hash/HMAC), `std.compress`, `std.cli`,
+    CSV/TOML и SemVer.
 
 ### Desktop, игры и графика
 
 - [x] Native Win32/X11 окно, event loop и headless backend через desktop plugin.
 - [x] Shader-блоки как opaque plugin syntax.
 - [x] Векторные и матричные math-типы, projection и lookAt.
-- [ ] Добавить keyboard, mouse, gamepad и text-input API.
-- [ ] Добавить OpenGL/Vulkan/Direct3D backend либо общий RHI.
-- [ ] Добавить GPU buffers, textures, samplers, pipelines и shader reflection.
-- [ ] Добавить загрузку изображений, шрифтов, моделей и аудио.
-- [ ] Добавить 2D renderer, sprites и batching.
-- [ ] Добавить базовый UI toolkit для desktop-приложений.
-- [ ] Добавить audio output/mixer.
-- [ ] Добавить game loop, frame timing и fixed update.
-- [ ] Добавить примеры: triangle, sprite scene, UI window и небольшая игра.
+- [x] Keyboard/mouse held + edge input (`keyDown`/`keyPressed`/`keyReleased`,
+  mouse equivalents).
+- [x] Text-input queue (`textPop` / `textCount`) + Windows XInput gamepad API
+  (Linux stub); example `examples/desktop/input.abs`.
+- [x] Software 2D: rect, line, circle, blit; `deltaTime` + sleep для game loop.
+- [x] `Desktop.FixedStep` (fixed timestep accumulator + render alpha).
+- [x] Soft `Desktop.Sprite` (offscreen buffer + drawSprite).
+- [x] Примеры: `window.abs`, `pong.abs`, `sprites.abs` (fixed step + sprites).
+- [x] Soft BMP load (`sprite.loadBmp`), `colorKey`, atlas `drawSpriteRect`;
+  example `examples/desktop/image.abs` + `assets/*.bmp`.
+- [x] Soft bitmap font (встроенный 8×8 ASCII): `window.drawText` /
+  `sprite.drawText`, `Desktop.measureText` / `measureTextHeight`, glyph metrics;
+  example `examples/desktop/text.abs`; scores in `pong.abs`.
+- [x] Soft 2D sprite batch / atlas batch: `Desktop.SpriteBatch` (`begin` /
+  `draw` / `drawRect` / `drawSprite` / `setAtlas` / `flush` / `end`),
+  zero-copy `drawSpriteRect` via strided blit; example `examples/desktop/batch.abs`.
+- [x] OpenGL RHI (`Desktop.Gpu`): Windows WGL + Linux GLX (when OpenGL found);
+  frame model `beginFrame` / `clear` / `bind` / `draw` / `endFrame` / `present`;
+  `backend()` → `opengl-wgl` / `opengl-glx`.
+- [x] GPU resources: `GpuShader`, `GpuBuffer`, `GpuIndexBuffer`, `GpuSampler`,
+  `GpuTexture`, `VertexLayout` + `createPipeline`.
+- [x] GPU triangle example uses full pipeline path: `examples/desktop/triangle.abs`.
+- [x] GPU sprite scene: textured indexed quads + sampler; example
+  `examples/desktop/gpu-sprites.abs` (ship + atlas stars, WASD).
+- [x] Index buffers (`createIndexBuffer` / `drawIndexed`) и sampler objects
+  (`createSampler` / `bind(sampler)`).
+- [x] PNG load for soft sprites: `sprite.loadPng` / `loadImage` (Windows WIC;
+  portable zlib decoder for 8-bit RGB/RGBA elsewhere), assets `*.png`,
+  example `image-png.abs`.
+- [x] Soft TTF / system fonts: `Desktop.Font` (Windows GDI), `loadFile` for
+  private `.ttf`/`.otf`, `drawFontText` / `measure` / `lineHeight`;
+  example `examples/desktop/font.abs`.
+- [x] Audio output/mixer: `Desktop.Audio` + `Sound` (WAV PCM load, waveOut
+  software mixer, 32 voices, master volume, play/loop/stop);
+  assets `beep.wav`/`blip.wav`/`thud.wav`, example `audio.abs`.
+- [x] 3D mesh load: Wavefront OBJ → `Desktop.Mesh` (pos/normal/uv, indices),
+  GPU upload helpers + `createLayoutPos3Normal3Uv2`; example `mesh.abs` + `cube.obj`.
+- [x] Базовый soft UI toolkit: `Desktop.Ui` + `UiTheme` (immediate-mode
+  panel/label/button/checkbox/slider/progress); example `examples/desktop/ui.abs`.
+- [x] `absolute.shader` reflection + RHI bind (OpenGL): typed input/output/uniform,
+  generated GLSL 330, optional `code { ... }` raw GLSL body, LLVM reflection +
+  `absolute_shader_glsl_*` accessors, `Desktop.Gpu.createLayout3Attr`;
+  examples `shader-rhi.abs`, `shader-code.abs`.
+- [x] Dual OpenGL backends: WGL (Windows) + GLX (Linux/X11); `native_display` hook.
+- [x] Multi-backend `Desktop.Gpu`: magic-header dispatch; `BackendAuto` /
+  `BackendOpenGL` / `BackendD3D11`; D3D11 clear/present (Windows) + OpenGL
+  full RHI; example `examples/desktop/d3d-clear.abs`.
+- [x] D3D11 mesh RHI (Windows): HLSL `createShader`, VB/IB, pipeline + input
+  layout (POSITION / TEXCOORDn), bind/draw/drawIndexed, uniforms via cbuffer b0
+  + D3DReflect; examples `d3d-triangle.abs`, `d3d-triangle-smoke.abs`.
+- [x] D3D11 textures/samplers: `createTextureFromSprite` (RGBA8 + color-key),
+  `createSampler` (nearest/linear, clamp/repeat/mirror), bind t0/s0; HLSL
+  `Texture2D` + `SamplerState`; examples `d3d-sprites.abs`, `d3d-sprites-smoke.abs`.
+- [x] D3D12 multi-backend (Windows): `BackendD3D12` clear/present (command queue,
+  FLIP_DISCARD swap chain, RTV heap, fence); examples `d3d12-clear.abs`,
+  `d3d12-clear-smoke.abs`.
+- [x] D3D12 mesh RHI: HLSL shaders, root CBV b0, upload-heap VB/IB, PSO + input
+  layout (POSITION/TEXCOORDn), draw/drawIndexed, uniforms; textures still
+  GL/D3D11; examples `d3d12-triangle.abs`, `d3d12-triangle-smoke.abs`.
+- [x] D3D12 textures/samplers: root SRV t0 + Sampler s0, DEFAULT+upload
+  `createTextureFromSprite` (RGBA8 color-key), `createSampler`
+  (nearest/linear, clamp/repeat/mirror), bind on draw; examples
+  `d3d12-sprites.abs`, `d3d12-sprites-smoke.abs`.
+- [x] Vulkan backend (`BackendVulkan` = 4): Win32 surface + swapchain,
+  dynamic `vulkan-1.dll`, HLSL→SPIR-V via portable DXC
+  (`.absolute/toolchains/dxc-spirv` or `ABSOLUTE_DXC`), mesh RHI
+  (VB/IB/pipeline/draw/drawIndexed), UBO b0 + sampled image t0 +
+  sampler s0, textures from soft sprites; examples
+  `vulkan-triangle.abs`, `vulkan-triangle-smoke.abs`,
+  `vulkan-sprites.abs`, `vulkan-sprites-smoke.abs`.
+- [x] SPIR-V·DXIL·Metal IR as first-class artifact kinds beyond host GPU paths:
+  `ABSOLUTE_ARTIFACT_METAL_IR` + target triples in `plugin_api.h`;
+  `absolute.shader` emits GLSL/HLSL/MSL source and optional SPIR-V/DXIL
+  binaries (DXC) with module accessors; Metal AIR reserved (`has=0`);
+  example `shader-multi-ir-smoke.abs`.
 
 ### Native interop и платформы
 
 - [x] C ABI imports и native FFI.
+- [x] Runtime-загрузка внешних `.dll`/`.so` через `bool load(string path)`:
+  UTF-8 пути на Windows, `RTLD_NOW | RTLD_GLOBAL` на POSIX, идемпотентная загрузка
+  и `false` вместо аварии для отсутствующей или несовместимой библиотеки;
+  `isLoaded(path)` проверяет кэш, `loadError()` возвращает thread-local ошибку ОС.
 - [x] C ABI exports через `export "C"` с неманглированным символом, Windows
   `dllexport`, проверкой ABI-safe сигнатур и запретом overload/generics/default
   parameters; PE export table и вызов из Absolute покрыты native/LLVM тестами.
 - [x] Генерация LLVM IR и native object/executable.
-- [ ] Добавить генератор Absolute declarations из C headers.
-- [ ] Добавить безопасные wrappers для native handles и callbacks.
-- [ ] Определить ограниченную поддержку C++ ABI либо официально оставить только C ABI.
-- [ ] Проверить targets x64, ARM64, Windows, Linux и macOS в CI.
-- [ ] Добавить WebAssembly target и browser runtime.
-- [ ] Формализовать ABI массивов, strings, structs, interfaces и callbacks.
+- [x] Формализовать ABI массивов, strings, structs, interfaces и callbacks:
+  нормативный `docs/native-c-abi.md`; analyzer `ValidateCAbiType` отклоняет
+  managed/`T[]`/func/task/by-value struct|class|interface; C ABI `bool` → `i8`
+  (`_Bool`); callbacks как first-class C fnptr остаются следующим шагом.
+- [x] Официально оставить только C ABI: `extern "C++"`/`export "C++"` отклоняются
+  парсером; C++ библиотеки требуют thin `extern "C"` shim (см. native-c-abi.md).
+- [x] Добавить безопасные wrappers для native handles и callbacks:
+  `cfunc<Return, Params...>` — raw C function pointer (export/extern only,
+  nullable, C CC call); handle-pattern: `struct` + `destroy()` + `move` with
+  tests `cfunc-callbacks`, `native-handle-wrapper` (см. `docs/native-c-abi.md`).
+- [x] Добавить генератор Absolute declarations из C headers:
+  `tools/absolute-bindgen.js` / `absolute-dev bindgen` (clang AST JSON);
+  maps scalars, `raw` pointers, `const char*`→`string`, typedef handles,
+  `cfunc` for function pointers; skips variadic/unsupported with comments;
+  fixtures in `tests/bindgen/`.
+- [x] Проверить targets в CI (host-native matrix):
+  Windows x64 (frontend + full LLVM), Linux x64 (full LLVM), macOS smoke
+  (`macos-15`, arm64 host) — см. `docs/platforms.md` и
+  `.github/workflows/ci.yml`. Windows ARM64 и Linux ARM64 runners отложены.
+- [x] WebAssembly stack: `--target`, wasm-ld, runtime (heap/managed/errors/sync
+  tasks/virtual FS/env/process), host imports (`absolute_log`, `absolute_http_get`,
+  TCP connect/send/recv mocks), WASI console object, `absolute-wasm-run.js`,
+  tests export/smoke/managed/task/fs/http/net, browser demo, Windows+Linux CI
+  wasm jobs (wasmtime installed on Linux for WASI smoke when linked).
+- [x] Real OS TCP for wasm under Node: worker_threads + SharedArrayBuffer/Atomics
+  bridge (`tools/absolute-wasm-tcp-worker.js`), test `wasm-net-real` with local
+  echo server in a dedicated worker (same-thread peers deadlock under
+  `Atomics.wait`); mock TCP remains for deterministic unit tests.
+- [x] wasm multi-thread task workers (Node): isolated-instance pool via
+  `taskWorkers` + SAB job queue (`absolute-wasm-task-worker.js`),
+  test `wasm-task-mt`; sync path remains default. Shared-memory pthread model
+  and full wasi-sdk libc sysroot still open.
+- [x] Richer WASI preview1 runtime (no full wasi-sdk yet): `fd_write`,
+  `clock_time_get`, `random_get`, `args_*`, `environ_*`, `proc_exit`,
+  `_initialize` for Node reactors; `tools/absolute-wasm-wasi-run.js`;
+  tests `wasm-wasi-services` + smoke under Node WASI; absolutec can select
+  WASI object via `*wasi*` target / `ABSOLUTE_WASM_RUNTIME=wasi` when built
+  with `ABSOLUTE_WASM_WASI_OBJECT`.
+- [x] Browser wasm host parity (mocks): `absolute-wasm-browser-host.js` / demo
+  loader HTTP+TCP mocks + task stubs; test `run-wasm-browser-host`.
+- [x] Optional wasi-sysroot bootstrap (`scripts/windows/bootstrap-wasi-sysroot.ps1`)
+  + CMake `AbsoluteWasi.cmake` discovery (`WASI_SYSROOT` / `WASI_SDK_PATH`).
+  Full wasi-libc link into Absolute modules still open (symbol clashes).
+- [x] Worker-hosted browser session + WebSocket TCP bridge (COOP/COEP serve):
+  `absolute-wasm-browser-session-{client,worker}.js`, `absolute-wasm-ws-tcp-worker.js`,
+  `scripts/serve-wasm-demo.mjs`, demo mode switch, test `run-wasm-browser-session`.
+- [x] Browser task worker pool in session Worker (`taskWorkers`,
+  `absolute-wasm-browser-task-worker.js`); demo default N=2 under COOP/COEP;
+  test `run-wasm-browser-task-pool`.
+- [x] Shared-memory wasm foundation: `absolute_wasm_runtime_shared.o` (atomics heap
+  lock), link `--shared-memory --import-memory`, host imports `env.memory` as
+  SharedArrayBuffer, test `run-wasm-shared-memory`.
+- [x] Shared-instance multi-thread tasks: heap ctrl in linear memory; Node
+  `absolute-wasm-shared-task-worker.js` runs `entry(contextPtr)` in-place on the
+  shared heap; `taskPoolMode: 'shared'`; test `run-wasm-shared-tasks`.
+- [x] wasi-libc coexistence (selective kits): bootstrap sysroot + builtins,
+  `AbsoluteWasiLibcExtras` STRTOL kit, probe `wasi_libc_strtol`, test
+  `run-wasm-wasi-libc` (no full `-lc` — duplicate malloc/exit).
+- [x] Browser shared-instance task pool: session worker detects shared
+  `env.memory`, nested `absolute-wasm-browser-shared-task-worker.js`,
+  `taskPoolMode: 'shared'|'isolated'`; wiring checked in
+  `run-wasm-browser-task-pool`.
+- [x] Complete wasm/std ABI parity: JSON, binary serialization, datetime,
+  atomics/mutexes, cancellation and task delay implementations; Node/browser
+  host clocks, entropy and `std.env` launch arguments; ABI audit reports zero
+  missing `absolute_*` symbols; end-to-end `run-wasm-full-runtime` regression.
+- [x] Remove the `std.time` / `std.datetime` import collision by renaming the
+  legacy global compatibility namespace to `LegacyTime`.
+- [x] Larger wasi-libc kits: `STRTOL` + `STRTOD` (default), dual probe, kit
+  registry in `AbsoluteWasiLibcExtras.cmake`, `WASI_LIBC_KIT` switch.
+- [ ] Guest-on-libc mode (drop Absolute malloc; size_t ABI); wasi-threads/TLS;
+  more kits (qsort/locale) as needed.
 
 ### IDE, debugger и developer tools
 
 - [x] VS Code extension с project/plugin discovery, completion и hover.
 - [x] Запуск проекта и подключение native debugger.
-- [ ] Перевести language intelligence в отдельный LSP server.
-- [ ] Добавить go-to-definition, references, rename и document symbols.
-- [ ] Добавить semantic highlighting и code actions.
-- [ ] Добавить formatter и конфигурируемый linter.
-- [ ] Добавить debugger visualization для arrays, slices, tasks и managed pointers.
-- [ ] Добавить breakpoints/source mapping для opaque plugin nodes.
-- [ ] Добавить REPL и expression evaluator.
-- [ ] Добавить генератор документации из исходного кода.
-- [ ] Добавить `absolute test`, `absolute fmt`, `absolute doc` и `absolute package`.
+- [x] Перевести language intelligence в отдельный LSP server.
+  Реализован zero-dep `absolute-extension/server/lsp-server.js` (stdio LSP) и
+  `client/lsp-client.js`; extension v0.3.0 только build/debug + LSP client.
+- [x] Добавить go-to-definition, references, rename и document symbols.
+  Workspace/document symbols, definition, references и rename через LSP;
+  индекс строится эвристическим разбором `.abs` + plugin editor metadata.
+- [x] Добавить semantic highlighting и code actions.
+  Semantic tokens (`keyword`/`type`/`function`/`namespace`) и code actions
+  Format document / Refresh diagnostics.
+- [x] Добавить formatter и конфигурируемый linter.
+  Document formatting provider + `tools/absolute-dev.js fmt`; diagnostics
+  linter через `absolutec` (path/args из `absolute.compilerPath` /
+  `absolute.compilerArguments`).
+- [x] Добавить debugger visualization для arrays, slices, tasks и managed pointers.
+  `debugging/Absolute.natvis` (cppvsdbg), `debugging/absolute_gdb.py`,
+  helper types `absolute_debug_types.h`; extension injects visualizerFile /
+  GDB setupCommands. Layouts documented in `docs/debugging.md`.
+- [x] Добавить breakpoints/source mapping для opaque plugin nodes.
+  Virtual scheme `absolute-opaque:`, extract `shader` blocks, Open Opaque Block,
+  DAP tracker maps breakpoints back to host `.abs` line; LSP
+  `absolute/opaqueSourceMaps`.
+- [x] Добавить REPL и expression evaluator.
+  `tools/absolute-repl.js`, `absolute-dev eval|repl`, VS Code commands
+  Evaluate Expression / Open REPL (compile-run via absolutec).
+- [x] Добавить генератор документации из исходного кода.
+  `tools/absolute-dev.js doc` пишет Markdown outline по symbols workspace.
+- [x] Добавить `absolute test`, `absolute fmt`, `absolute doc` и `absolute package`.
+  CLI: `tools/absolute-dev.bat` (`fmt`, `test`, `doc`, `package list|resolve`).
+
+## Следующий этап: стабильность, параллельность и production-ready toolchain
+
+Этот этап идёт после первого hardening-слоя. Цель — не добавлять ещё десятки
+синтаксических возможностей, а довести существующий язык, runtime и инструменты
+до состояния, где ими можно пользоваться в больших проектах без надежды на удачу.
+
+### Уже заложенная база
+
+- [x] Добавить real-concurrency stress для `@task` / `@spawn`: mutex contention,
+  atomic counter, bounded MPMC channel, cancellation races, priority и role metadata.
+- [x] Добавить snapshot iterator stress для `Vector` / `Map` / `Set`: `clear`,
+  alias mutation, многократные reallocations, вложенные iterators и replacement.
+- [x] Добавить generated property-based тесты коллекций и deterministic
+  grammar/mutation fuzzer с сохранением reproducer-ов.
+- [x] Добавить ThreadSanitizer job для native runtime и scheduler harness.
+- [x] Исправить найденную TSan-гонку между завершением task, `notify_all()` и
+  уничтожением `Task` через `await`.
+- [x] Устранить обычный bounded-channel deadlock на малых runner-ах минимальным
+  запасом worker threads; окончательное решение остаётся частью Scheduler v2.
+
+### P0 — полностью зелёная CI-матрица
+
+- [ ] Добиться стабильного прохождения Windows Debug/Release, Windows LLVM,
+  Linux Debug/Release, Linux WASM, macOS smoke, Termux smoke и hardening/TSan.
+  - [x] Зафиксировать hosted runners: `ubuntu-24.04`, `windows-2022`, `macos-15`;
+    Windows native Release локально проходит 410/410, Termux host contract —
+    143/143, scheduler harness — 100/100 повторов. Ручной on-device прогон на
+    ARM64 Android/Bionic с Termux Clang/LLVM 21.1.8 проходит 411/411 доступных
+    тестов; усиленный Scheduler v2 с `epoll` дополнительно стабилен в 50/50
+    повторах.
+  - [x] Исправить ложное падение TSan cancellation race: writer запускается до
+    readers, а общий release/acquire start gate исключает завершение readers до
+    начала гонки.
+  - [x] Ограничить дочерний процесс sanitizer negative-тестов: macOS timeout
+    допустим только после появления ожидаемой ASan-сигнатуры, поэтому зависание
+    runtime не маскирует отсутствие диагностики.
+  - [x] Починить Linux Debug и Release: обе конфигурации 500/500 локально.
+    `lli` не линкует runtime сам,
+    поэтому каждый тест с managed-указателем падал на `absolute_managed_*`;
+    статический архив там не подходит (TLS-релокации `R_X86_64_GOTTPOFF`
+    отвергаются JIT-линкером), добавлена shared-сборка runtime и `--dlopen`.
+    Это открыло настоящую ошибку `std.io.MemoryStream`, которую маскировал
+    отказ линковки. Отдельно `wasm-ld` как symlink на общий `lld` требовал
+    явного `-flavor wasm`.
+  - [x] Убрать гонку выборки в `runtime-scheduler-metrics`: окно suspension и
+    публикация счётчика `completed` наблюдались одним сэмплом, что под нагрузкой
+    давало ложное падение. Теперь состояние ожидается с таймаутом, а `require`
+    печатает файл, строку и текст проверки вместо немого `abort()`.
+  - [x] Убрать в `runtime-scheduler-stress` требование, что каждый leaf вложенной
+    группы наблюдает отмену. Отмена кооперативная и достаётся только тем детям,
+    которые группа держит в момент вызова, а родитель добавляет детей до
+    проверки собственной отмены, поэтому уже отработавший leaf флаг увидеть не
+    может. Осталось структурное требование: каждый task запускается и
+    присоединяется; детерминированная семантика отмены проверяется в
+    `runCancelVsComplete`. После правок 160/160 параллельных прогонов и 5
+    подряд полных прогонов CTest — 500/500.
+  - [x] Устранить `ILLEGAL` (SIGILL) в сгенерированном коде на hosted Linux.
+    Backend выбирал целевой CPU через `getHostCPUName()`, но передавал пустую
+    строку фич, поэтому LLVM включал весь набор инструкций, подразумеваемый
+    моделью из CPUID, не проверяя, что машина их действительно предоставляет.
+    На виртуализированном раннере, где часть фич маскирует гипервизор, это даёт
+    инструкции, которые CPU отвергает. Строка фич теперь берётся из
+    `getHostCPUFeatures()` с guard на смену сигнатуры между LLVM 18 и 19+.
+    Симптом выглядел перемежающимся, но был детерминированным: один и тот же
+    commit давал одинаковые 9 падений на обоих параллельных раннерах, а часом
+    ранее проходил полностью — менялось окружение, не код. После правки Ubuntu
+    Debug зелёный на обоих раннерах, `language-stress-and-fuzz` — тоже.
+    Триггер внешний, поэтому смену парка раннеров как причину зелёного цвета
+    исключить нельзя; в `ci-logs/toolchain.txt` добавлен `lscpu`, чтобы
+    следующий случай читался по артефакту, а не по косвенным признакам.
+  - [ ] Подтвердить новый commit полным hosted run обоих required gates без rerun.
+    `Hardening required gate` зелёный в обоих параллельных прогонах без rerun;
+    `CI required gate` держит только `macos-smoke` (см. P4 ниже).
+  - [ ] Подключить настоящий ARM64 Android/Termux self-hosted runner; Linux
+    `ABSOLUTE_TERMUX=ON` contract не выдавать за Bionic/on-device выполнение.
+- [x] Разделить platform-specific failures и реальные regression failures, чтобы
+  нестабильная установка toolchain не маскировала поломку языка.
+- [x] Зафиксировать поддерживаемые версии LLVM, Clang, MSVC, CMake, Ninja, Node,
+  WASI SDK и Android/Termux toolchain в `docs/ci-policy.md`.
+- [ ] Включить в ruleset ветки `master` обязательные уникальные checks
+  `CI required gate` и `Hardening required gate`; сами aggregate jobs готовы,
+  остаётся repository-admin настройка GitHub.
+- [x] Сохранять логи, generated reproducers, sanitizer reports и failed binaries
+  как CI artifacts для каждого падения.
+- [x] Установить отдельные timeout и retry-policy для build, runtime, fuzz и
+  platform bootstrap, не скрывая детерминированные падения повторным запуском.
+
+### P1 — Scheduler v2 без блокировки worker threads
+
+- [x] Ввести suspension/resume task при ожидании channel, timeout, I/O и sync
+  primitive вместо блокировки настоящего OS thread.
+  - [x] Реализовать stackful fiber backend: Win32 Fibers, POSIX `ucontext`,
+    Termux `libucontext`; после первого запуска fiber закреплён за worker и не
+    мигрирует вместе с TLS.
+  - [x] Перевести `await`, bounded `Channel`, `TransferChannel`, runtime mutex и
+    task delay на suspension с возвратом OS worker в scheduler.
+  - [x] Подключить filesystem/network к portable blocking-offload executor:
+    scheduler fiber приостанавливается, host-вызов выполняется в отдельном I/O
+    pool, completion возвращает task через scheduler queue.
+  - [ ] Добавить масштабируемые OS-native readiness/completion backend-ы:
+    - [x] Linux/Termux `epoll`: one-shot reactor для TCP/UDP
+      accept/send/receive, несколько read/write waiters на одном descriptor и
+      возврат completion напрямую в scheduler queue.
+    - [x] Windows IOCP: один process-wide completion port, overlapped
+      `AcceptEx`/`WSASend`/`WSARecv`/`WSASendTo`/`WSARecvFrom`, независимые
+      operation buffers и возврат completion напрямую в scheduler queue.
+    - [ ] macOS `kqueue`:
+      - [x] Реализовать отдельный one-shot reactor на
+        `EVFILT_READ`/`EVFILT_WRITE`, wake-up через `EVFILT_USER`, несколько
+        waiters на descriptor и общий TCP/UDP suspension path.
+      - [ ] Подтвердить backend настоящим `macos-15` hosted run; локально
+        выполнены platform-guard regression и syntax-check контракта `kevent`.
+    - [x] Перевести nonblocking connect и timed socket waits в native reactors:
+      Linux/Termux/macOS регистрируют deadline прямо в `epoll`/`kqueue`, Windows
+      отменяет просроченный overlapped I/O через `CancelIoEx` и ждёт финальный
+      IOCP completion packet перед resume; DNS остаётся на blocking-offload.
+    - [x] Сохранить blocking-offload fallback для DNS и файловых операций без
+      portable async API.
+- [x] Сделать wake-up через scheduler queue: `send`/completion возвращает
+  приостановленную task в runnable state без polling.
+- [x] Добавить structured concurrency и `TaskGroup`: дочерние tasks принадлежат
+  lexical scope и автоматически join/cancel при выходе.
+- [x] Реализовать propagation cancellation и deadline через всю иерархию tasks:
+  reference-counted parent control chain без циклов, наследуемый monotonic
+  deadline для scheduler delay и native socket waits, cooperative
+  `std.task.cancelled()` для всего поддерева.
+- [x] Добавить work stealing между worker queues: внешние submissions
+  распределяются round-robin, вложенный spawn попадает в локальную очередь,
+  свободные workers обходят victim queues по вращающемуся cursor и крадут только
+  ещё не запущенные fibers; возобновляемые fibers остаются pinned к владельцу.
+  - [x] Ограничить OS worker pool диапазоном `1..32` и добавить
+    `ABSOLUTE_SCHEDULER_WORKERS`/`std.task.workerCount()`.
+- [x] Формализовать fairness между `role`, starvation protection и статистическое
+  преимущество priority: smooth weighted scheduling с весами
+  `1/2/3/4/6/8/12` для priority `-3..3`, round-robin между активными role lanes
+  и чередование pinned/новых задач одного уровня без требования хрупкого
+  точного порядка исполнения.
+- [x] Проверять CPU affinity как best-effort capability с понятным fallback:
+  `std.task.affinitySupported()`, `coreAvailable(core)` и per-task
+  `affinityApplied()`; Linux/Termux учитывают исходную allowed CPU mask,
+  Windows поддерживает logical cores через processor groups, macOS/WASM явно
+  сообщают unsupported, а отказ ОС не мешает выполнению task.
+- [x] Добавить scheduler metrics: `std.task.metrics()` возвращает gauges
+  runnable/suspended и cumulative completed, queue samples/total/max latency,
+  worker busy time/utilization, steals, wake-ups, blocked time и starvation
+  events для queue episodes от 100 ms.
+- [x] Добавить отдельный native/TSan stress harness на spawn/await storm,
+  cancel-vs-complete, destroy-vs-wait, channel close races, timeout races и
+  nested task groups. Один task handle по-прежнему имеет ровно одного
+  consuming-владельца (`await`, `destroy` или `TaskGroup`).
+- [x] Удалить временную зависимость корректности bounded channels от минимального
+  количества worker threads после внедрения suspension.
+
+### P2 — differential testing компилятора и backend-ов
+
+- [x] Генерировать одинаковые программы и сравнивать checksum/вывод для `-O0`,
+  `-O1`, `-O2`, `-O3`, Debug и Release: `absolutec` принимает явный optimization
+  level, deterministic runner проверяет oracle и полный stdout, а один CTest
+  запускается обеими конфигурациями compiler-а в Linux CI.
+- [x] Сравнивать native и WASM execution для одинакового deterministic corpus:
+  фиксированный seed и checksum-oracle общие с optimization differential,
+  полный stdout/exit code native executable сравнивается с
+  `wasm32-unknown-unknown` через официальный Absolute WASM host.
+- [x] Добавить матрицу LLVM 18/19/20/21 там, где host toolchain доступен:
+  отдельный обязательный Release-контракт собирает `absolutec`, сверяет точную
+  major-версию SDK, прогоняет differential O0–O3 и валидирует representative
+  LLVM IR через соответствующий `llvm-as`.
+- [x] Сравнивать Windows MSVC linker, Linux ELF linker и WASM linker на одном
+  ABI corpus: общий versioned manifest проверяет arrays, value/reference ABI,
+  structs, interfaces, generic callbacks, managed/raw pointers и C exports;
+  каждый runner сверяет формат артефакта, exit code и полный stdout с одним
+  oracle.
+- [x] Включить в corpus arithmetic overflow, signed/unsigned conversions, floats,
+  constant folding, generics, lambdas, interfaces, exceptions, `defer`, async,
+  managed/weak/raw pointers, arrays, slices и snapshot collections: versioned
+  linker manifest содержит 17 фиксированных cases с общим stdout oracle для
+  PE/ELF/WebAssembly.
+- [x] Сохранять минимальный source и все расходящиеся outputs при mismatch.
+  `failure.json` содержит полный текст source и результат каждого уже
+  выполненного варианта, а не только упавшего: расхождение опознаётся именно по
+  тем outputs, с которыми вариант не сошёлся. Metamorphic runner дополнительно
+  ужимает случай, пока расхождение сохраняется.
+- [x] Добавить metamorphic properties: dead-code insertion, alpha-renaming,
+  эквивалентная перестановка независимых declarations и constant/runtime variants
+  не должны менять наблюдаемый результат.
+  `tools/testing/metamorphic_differential.py` порождает шесть форм одной
+  программы (baseline, alpha-renaming, dead code, перестановка объявлений,
+  runtime-операнды и комбинация) из общего шаблона, а не текстовой мутацией,
+  поэтому преобразование не может случайно изменить смысл. Все формы обязаны
+  дать одинаковый stdout и exit code; CTest `absolute.metamorphic-differential`.
+
+### P3 — coverage-guided fuzzing
+
+- [x] Добавить in-process libFuzzer harness для lexer.
+  `tests/fuzz/lexer_fuzzer.cpp`; цель собирается только там, где доступен
+  Clang-runtime с libFuzzer, поэтому остальные toolchain-ы не меняются.
+- [x] Добавить in-process libFuzzer harness для parser с лимитами глубины, памяти
+  и времени, чтобы malformed input не создавал stack overflow или hang.
+  Разбор рекурсивный, поэтому вложенность источника становится вложенностью
+  стека: ~25000 уровней роняли процесс. Добавлен лимит глубины (`RecursionGuard`,
+  1000 кадров) с обычной синтаксической ошибкой вместо падения; память и время
+  ограничены `-rss_limit_mb` и `-timeout` в runner-е. Кроме того, парсер
+  завершал процесс через `std::exit` на malformed input в 27 местах — теперь
+  это восстановимая ошибка, как и остальные пути `Consume`.
+- [x] Добавить analyzer fuzzer для синтаксически корректного generated AST/source.
+  Сырые байты проверяли бы error-путь парсера, а не анализатор, поэтому вход
+  fuzzer-а тратится как решения генератора, который выдаёт только синтаксически
+  корректные программы. Семантическая корректность намеренно не требуется:
+  несовпадения типов и плохие вызовы анализатор обязан диагностировать, а не
+  падать. Coverage 1978 рёбер против 82 у парсерной цели на том же бюджете;
+  `ABSOLUTE_FUZZ_DUMP_SOURCE=1` печатает программу, которой соответствует
+  буфер, потому что сам буфер нечитаем.
+- [ ] Добавить codegen fuzzer для валидных typed programs с запуском под ASan/UBSan.
+- [ ] Добавить fuzzing package manifest, lock-file, plugin manifest и project parser.
+- [x] Вести persistent seed corpus и regression corpus в репозитории.
+  `tests/fuzz/corpus` даёт fuzzer-у валидные программы для мутации, а
+  `tests/fuzz/regressions` хранит входы, которые когда-то роняли цель; runner
+  прогоняет их до начала фаззинга, поэтому исправленное падение не вернётся
+  незамеченным.
+- [x] Автоматически минимизировать crashing/hanging inputs и печатать точную команду
+  воспроизведения. Найденное падение ужимается через `-minimize_crash` и
+  печатается вместе с готовой командой воспроизведения.
+- [x] Запускать короткий fuzz budget в PR, расширенный nightly и длительный weekly.
+  Бюджет по умолчанию короткий, `ABSOLUTE_FUZZ_SECONDS` расширяет его без
+  изменения определения теста.
+- [x] Добавить coverage report по lexer/parser/analyzer/codegen, чтобы fuzzer не
+  праздновал тысячи вариантов одной и той же закрывающей скобки.
+  `tools/testing/fuzz_coverage.py` прогоняет корпус через инструментированную
+  цель (`-DABSOLUTE_FUZZ_COVERAGE=ON`) и раскладывает покрытие по компонентам,
+  потому что edge count libFuzzer-а говорит «сколько», но не «где дыра».
+  Первый прогон сразу дал две задачи: генератор analyzer-цели покрывает лишь
+  20.7% анализатора и 32.4% парсера против 57.5% у парсерной цели, то есть
+  грамматика генератора узкая (нет классов, интерфейсов, generics, указателей,
+  массивов, исключений); отдельная lexer-цель покрывает лексер на 30.0% против
+  65.6% у парсерной цели на том же корпусе.
+
+### P4 — ownership torture suite
+
+- [ ] Покрыть уничтожение `managed(owner, sub)` при живых subscriber и `weak` aliases.
+- [ ] Проверить глубокие цепочки owner → sub → sub и cleanup в обратном порядке.
+- [ ] Проверить weak после destroy, generation reuse и большое количество reuse cycles.
+- [ ] Проверить compile-time запрет strong cycles и корректность графов с weak back-edge.
+- [ ] Проверить `move(owner)` через return, parameters, fields, generic wrappers,
+  interface dispatch и исключения между move и завершением операции.
+- [ ] Проверить частично построенные объекты и исключения в constructor/base constructor.
+- [ ] Проверить closure capture, escaping lambda, async boundary и task result ownership.
+- [ ] Проверить transfer capsule: seal/send/rehome/destroy, double-send, use-after-send,
+  receiver cancellation и закрытие channel с непринятыми capsules.
+- [ ] Проверить ownership plugin resources и native handles при unload/reload plugin.
+- [ ] Запускать ownership corpus под ASan, UBSan, LSan и TSan, где применимо.
+- [ ] Добавить model-based generator операций `new`/alias/weak/move/delete/throw/return
+  с эталонной моделью состояния lifetime.
+
+### P5 — freeze Plugin ABI 1.0 и production validation
+
+- [ ] Зафиксировать набор `AbsoluteCompilerPluginV1`, `AbsoluteLanguagePluginV1`,
+  `AbsoluteEditorPluginV1` и `AbsoluteRuntimePluginV1` как первый публичный ABI tier.
+- [ ] Выпустить отдельный plugin SDK с headers, schema, examples и compatibility rules.
+- [ ] Проверить plugin, собранный старым SDK, на новом host без пересборки.
+- [ ] Добавить allocator-boundary tests: память освобождается той стороной, которая
+  её выделила, либо только через явно переданный allocator API.
+- [ ] Проверить concurrent callbacks и thread-safety contract всех capability tables.
+- [ ] Добавить crash/timeout containment для isolated plugin process и WASM plugin.
+- [ ] Проверить serialization/version migration opaque AST и incremental cache между
+  несколькими версиями plugin schema.
+- [ ] Добавить ABI dump и автоматическое сравнение layout/exported symbols в CI.
+- [ ] Подготовить deprecation policy до ABI v2 без молчаливого изменения V1 structs.
+
+### P6 — реальные программы как обязательные integration tests
+
+- [ ] Добавить CLI file indexer с `std.fs`, collections, JSON и parallel workers.
+- [ ] Добавить HTTP server с routing, JSON, cancellation, timeout и graceful shutdown.
+- [ ] Добавить multithreaded crawler с DNS/HTTP, bounded concurrency и deduplication.
+- [ ] Добавить reusable parsing/serialization library как отдельный package target.
+- [ ] Добавить desktop calculator/editor с persistent settings и file dialogs.
+- [ ] Добавить полноценную OpenGL/Vulkan/D3D scene вместо одного triangle smoke.
+- [ ] Добавить WASM web app с browser host, async task pool и persistent state.
+- [ ] Добавить end-to-end shader plugin demo с embedded source, diagnostics, reflection
+  и несколькими target artifacts.
+- [ ] Добавить workspace с несколькими packages, diamond dependencies и lock-file.
+- [ ] Держать каждый integration project примерно в диапазоне 500–3000 строк,
+  собирать и запускать его в CI, а не хранить как мёртвый showcase.
+- [ ] Ввести performance budgets для compile time, peak memory, binary size и runtime.
+
+### P7 — incremental compiler и LSP следующего уровня
+
+- [ ] Перейти от module-level cache к dependency graph на уровне declarations/symbols.
+- [ ] Кешировать parsed AST, semantic model, instantiated generics и backend artifacts
+  с точными invalidation keys.
+- [ ] Делать selective re-analysis и selective LLVM regeneration только затронутых
+  declarations и их dependents.
+- [ ] Добавить correctness tests invalidation: изменение overload, generic constraint,
+  interface method, public ABI и private implementation.
+- [ ] Добавить background diagnostics с cancellation устаревшего анализа.
+- [ ] Перевести definition/references/rename с эвристического индекса на compiler semantic model.
+- [ ] Добавить semantic completion, signature help, inlay hints и безопасные code actions.
+- [ ] Добавить incremental workspace benchmark на 10k/50k/100k строк: cold load,
+  single-file edit, public API edit, rename и full rebuild.
+- [ ] Добавить memory budget и eviction policy для daemon/LSP cache.
+- [ ] Проверить несколько одновременных editor clients и корректный shutdown/restart.
+
+### Критерии завершения этапа
+
+- [ ] Вся поддерживаемая CI-матрица зелёная без manual rerun.
+- [x] Scheduler не блокирует worker thread на channel/I/O/task wait.
+- [ ] Differential corpus не расходится между native/WASM и optimization levels.
+- [ ] Coverage-guided fuzzing работает в PR/nightly/weekly режимах и сохраняет corpus.
+- [ ] Ownership torture suite проходит под sanitizers. Единственное известное
+  падение — `absolute.run-sanitizer-ownership-stability` на `macos-smoke`; на
+  Linux тест проходит, полный набор там 501/501. Ровно этот тест держит
+  `CI required gate` красным, и для разбора нужен доступ к arm64 macOS.
+- [ ] Plugin ABI V1 проверяется старым SDK против нового host.
+- [ ] Несколько реальных integration projects собираются и выполняются в CI.
+- [ ] Incremental edit и LSP используют compiler semantic cache, а не полный re-run.
 
 ## Критерии готовности языка
 
 - [ ] Для каждой заявленной возможности есть semantic, error, LLVM emit и runtime test.
 - [ ] Документация не называет экспериментальную возможность стабильной.
 - [ ] Примеры собираются на Windows и Linux одной командой.
-- [ ] Публичные ABI и plugin ABI имеют версию и compatibility policy.
+- [x] Публичные ABI и plugin ABI имеют версию и compatibility policy
+  (plugins: `.absplugin` + SemVer; std: `absolute.std` + `docs/standard-library.md`).
 - [ ] Ошибки компилятора всегда содержат файл, строку, колонку и понятный diagnostic code.
 - [ ] Есть минимум один реальный desktop/game example и одна reusable library на Absolute.
+
+## P0 — обнаруженные пробелы в корректности владения памятью
+
+- [x] Закрыть strong ownership cycle через `move(owner)` в owning-поле, включая
+  `root.child = move(root)` и более глубокие back-edge пути. Analyzer должен
+  сопоставлять источник перемещаемого owner с ownership-путём назначения и выдавать
+  `E_MANAGED_OWNERSHIP_CYCLE`; добавить semantic/error/runtime regression-тесты.
+- [x] Унифицировать cleanup при перезаписи локального managed-owner: перед
+  `absolute_managed_destroy` обязательно вызвать generated pointee destructor,
+  включая virtual slot 0 для class/interface, struct cleanup, пользовательский
+  `destroy()` и рекурсивное освобождение strong-полей. Добавить тест перезаписи
+  владельца с вложенным child и leak-check.
+- [x] Исправить move-assignment resource-owning aggregate: старое значение destination
+  должно полностью очищаться перед записью нового, независимо от того, является
+  destination локальной переменной, полем или временным storage. Отдельно определить
+  и проверить self-move, исключение между cleanup и store и повторную инициализацию.
+- [x] Добавить типизированное уничтожение непринятой transfer capsule. Capsule должна
+  хранить destructor/rehome metadata либо достаточную runtime type information,
+  чтобы cancel/reject/close/destroy освобождали весь object graph, а не только
+  корневой allocation slot.
+- [x] Сделать managed slot table потокобезопасной и со стабильными адресами:
+  исключить гонки `slots`/`freeSlots`, reallocation `slots.data()`, неатомарные
+  публикации pointer/generation/type и конфликт fast path с create/destroy/transfer.
+  Добавить многопоточный stress под TSan.
+- [x] До появления полноценной element-wise семантики запретить массивы элементов,
+  для которых `TypeOwnsResources(element)` истинно. Затем реализовать корректные
+  element destroy/move/clone, rollback при частичной инициализации, правила slices
+  и запрет shallow `memcpy` владельцев.
+- [x] Заменить недостаточно точный `pointerOwner: SymbolId` на ownership region/place
+  identity, способный представлять `root`, `root.child`, `root.child.payload` и
+  алиасы полей. Уничтожение корня должно статически помечать алиасы вложенных полей
+  expired; перенос через move, ветвления, return и field reassignment должен
+  сохранять или корректно объединять region state.
+- [x] Для всех перечисленных случаев добавить минимальные semantic/error/LLVM/runtime
+  тесты и запускать их в ownership torture suite под ASan, LSan, UBSan и TSan,
+  где соответствующий sanitizer применим.
+- [x] Исправить утечку в `std.collections` при росте буфера: контейнеры клали в
+  поле копию выросшего буфера вместо передачи владения, поэтому исходный
+  allocation оставался живым. Найдено ASan на Linux, закрыто через `move()` в
+  `map`, `set`, `deque` и `priority_queue`. Правка увела `macos-smoke` с 17
+  падений до 1 в обоих параллельных прогонах. Пункты этого раздела были
+  отмечены выполненными, но дефект в покрытой ими области оставался живым —
+  повод не считать галочки здесь доказательством отсутствия утечек.
+
+## P1 — категории выражений, places и ownership flow
+
+- [x] Заменить перегруженный `bool isLValue` на явную категорию выражения
+  `ValueCategory { Value, Place }`. Категория описывает только форму выражения:
+  вычисленное значение либо стабильное место хранения; pointer-role и владение
+  не кодировать внутри неё.
+- [x] Ввести `PlaceInfo { readable, writable, addressable }` для переменных,
+  параметров, полей, properties и indexers. Writable property является place
+  даже без физического адреса; const-place readable/addressable, но не writable.
+  Возможность `delete` выводить из pointer-role и ownership-state, а не из place.
+- [x] Разнести pointer-role и ownership effect. Использовать роли наподобие
+  `ManagedOwner`, `ManagedSub`, `Weak`, `RawOwner`, `RawView` и `Ref`, а для
+  результата выражения отдельно хранить `createsOwner`, `consumesSource` и
+  identity исходного place/ownership region, когда источник поглощается.
+- [x] Зафиксировать основное правило managed-владения: использование owner без
+  `move` даёт безопасный sub/view и не меняет владельца; `move(ownerPlace)`
+  передаёт владение, инвалидирует source и создаёт owning value. Свежий `new`,
+  owner-returning call или return уже создаёт owning value без поглощаемого place.
+- [x] Удалить `forward` из пользовательской модели языка и не вводить forwarding
+  parameters или скрытый входной ownership-mode. Обычная передача означает view,
+  передача владения выражается только явным `move` либо свежим owning result;
+  внутренний HIR helper не должен становиться отдельной source-семантикой.
+- [x] Оставить `weak T*` простым generation-checked наблюдателем: weak ничего не
+  удерживает, не освобождает и не участвует в ownership flow. Для weak запретить
+  `move`, `delete`, owner-параметры и любые попытки повышения до strong owner;
+  разрешить присваивание наблюдателя, null/expired check и checked dereference.
+- [x] Разделить raw-указатели на `RawOwner` и `RawView`. Обычное использование
+  `RawOwner` передаёт только raw view и сохраняет обязанность `delete` у source;
+  `move(rawOwner)` переносит именно обязанность вызвать `delete`, инвалидирует
+  source и делает получателя новым raw-owner. Для `RawView` запретить `move` и
+  `delete`, поскольку он не владеет allocation.
+- [x] Считать `T&`/`const T&` и source-алиас `ref` чистым borrow на чужой place.
+  Reference не получает ownership даже при ссылке на owner, поэтому для него
+  запрещены `move`, `delete` и передача в owner-контракт; владение передаётся
+  только через исходный owner-place.
+- [x] Перевести Analyzer `Result`/`ExpressionInfo`, `Save`, value-flow, argument,
+  assignment и return checks, а также CodeGen address/value lowering на новую
+  модель без `isMoveResult`/`forward`-эвристик. Source invalidation и cleanup
+  obligation должны следовать за ownership region, а не за машинным адресом.
+- [x] Добавить semantic/error/LLVM/runtime tests для managed owner/sub, weak,
+  raw owner/view и `T&`/`const T&`: обычная передача, `move`, fresh owner-result,
+  повторное использование moved-from source, потерянный owning result, double
+  delete, попытка move/delete через weak/ref/raw-view и cleanup на всех путях.

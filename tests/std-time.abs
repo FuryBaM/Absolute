@@ -1,0 +1,49 @@
+import "../std/time.abs";
+
+void noOp() {
+}
+
+int32 main() {
+    int64 secondsBefore = std.time.now(std.time.Unit.Seconds);
+    int64 microseconds = std.time.now(std.time.Unit.Microseconds);
+    int64 milliseconds = std.time.now(std.time.Unit.Milliseconds);
+    int64 nanoseconds = std.time.now(std.time.Unit.Nanoseconds);
+    int64 secondsAfter = std.time.now(std.time.Unit.Seconds);
+
+    assert(microseconds / 1000000 >= secondsBefore &&
+        microseconds / 1000000 <= secondsAfter,
+        "Unix microsecond clock must agree with Unix seconds");
+    assert(milliseconds / 1000 >= secondsBefore &&
+        milliseconds / 1000 <= secondsAfter,
+        "Unix millisecond clock must agree with Unix seconds");
+    assert(nanoseconds / 1000000000 >= secondsBefore &&
+        nanoseconds / 1000000000 <= secondsAfter,
+        "Unix nanosecond clock must agree with Unix seconds");
+
+    int64 startedAt = std.time.mono(std.time.Unit.Nanoseconds);
+    std.time.sleep(2, std.time.Unit.Milliseconds);
+    int64 elapsed = std.time.elapsed(startedAt, std.time.Unit.Nanoseconds);
+    assert(elapsed > 0, "monotonic elapsed time must advance after sleep");
+
+    int64 measured = std.time.measure(std.time.Unit.Nanoseconds, noOp);
+    assert(measured >= 0, "measure must execute its action");
+
+    int64 benchmarked = std.time.bench(3, std.time.Unit.Nanoseconds, noOp);
+    assert(benchmarked >= 0,
+        "bench must execute the requested iterations");
+    assert(std.time.bench(0, std.time.Unit.Microseconds, noOp) == 0,
+        "a non-positive benchmark iteration count must do no work");
+
+    std.time.sleep(0, std.time.Unit.Nanoseconds);
+    std.time.sleep(0, std.time.Unit.Microseconds);
+    std.time.sleep(0, std.time.Unit.Seconds);
+    assert(std.time.unixMilliseconds() > 0 &&
+        std.time.monotonicNanoseconds() > 0,
+        "long compatibility helpers must remain usable");
+    LegacyTime.sleep(0);
+    assert(LegacyTime.unixSeconds() > 0 && LegacyTime.monotonic() > 0,
+        "legacy Time wrappers must remain usable");
+
+    println("std-time=ok");
+    return 0;
+}

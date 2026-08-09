@@ -1,4 +1,5 @@
 #include "analyzer_internal.h"
+#include "syntax_plugins.h"
 
 namespace Absolute {
     bool Analyzer::Analyze() {
@@ -18,6 +19,7 @@ namespace Absolute {
         importedNamespaces.clear();
         expressionInfo.clear();
         diagnostics.clear();
+        diagnosticNodeStack.clear();
         currentType.clear();
         currentReturnType.clear();
         expectedType.clear();
@@ -32,6 +34,12 @@ namespace Absolute {
         deferredTaskScopes.clear();
         loopBreakValueStates.clear();
         exceptionTransferredOwners.clear();
+        lambdaContexts.clear();
+        lambdaFunctionBoundaries.clear();
+        lambdaCaptures.clear();
+        deferredOwnershipCalls.clear();
+        ownerGuardedParameters.clear();
+        currentCallable = InvalidSymbolId;
         accessMode = AccessMode::Read;
         flowTerminated = false;
         spawnContextDepth = 0;
@@ -50,15 +58,56 @@ namespace Absolute {
         table.Declare(SymbolKind::Function, "format", "string", {"string", "..."});
         table.Declare(SymbolKind::Function, "toString", "string", {"dynamic"});
         table.Declare(SymbolKind::Function, "assert", "void", {"bool", "string?"});
+        table.Declare(SymbolKind::Function, "debugBreak", "void", {});
+        table.Declare(SymbolKind::Function, "load", "bool", {"string"});
+        table.Declare(SymbolKind::Function, "isLoaded", "bool", {"string"});
+        table.Declare(SymbolKind::Function, "loadError", "string", {});
+        table.Declare(SymbolKind::Function, "taskGroupAdd", "bool",
+            {"raw void*", "task<void>"});
+        table.Declare(SymbolKind::Function, "copy", "dynamic", {"dynamic"});
+        table.Declare(SymbolKind::Function, "isOwner", "bool", {"dynamic"});
         for (Program* program : programs) if (program) CollectProgramTypeNames(*program);
         phase = Phase::CollectDeclarations;
         for (Program* program : programs) if (program) AnalyzeProgram(*program);
         phase = Phase::ResolveBodies;
         for (Program* program : programs) if (program) AnalyzeProgram(*program);
+        ValidateDeferredOwnershipCalls();
+        const size_t startCount = instantiatedGenericTypes.size();
+        bool addedNew = true;
+        while (addedNew) {
+            const size_t beforeCount = instantiatedGenericTypes.size();
+            std::vector<std::string> currentTypes(instantiatedGenericTypes.begin(), instantiatedGenericTypes.end());
+            for (const std::string& genericType : currentTypes) {
+                std::string genericBase;
+                std::vector<std::string> genericArguments;
+                if (!ParseGenericTypeName(genericType, genericBase, genericArguments)) continue;
+                const auto definition = types.find(genericBase);
+                if (definition == types.end() || definition->second.genericParameters.size() != genericArguments.size()) continue;
+                std::unordered_map<std::string, std::string> substitutions;
+                for (size_t index = 0; index < genericArguments.size(); ++index)
+                    substitutions.emplace(definition->second.genericParameters[index], genericArguments[index]);
+                for (const auto& [memberName, overloads] : definition->second.members) {
+                    (void)memberName;
+                    for (const MemberSignature& member : overloads) {
+                        ResolveTypeReference(SubstituteGenericType(member.type, substitutions));
+                        for (const std::string& parameter : member.parameterTypes)
+                            ResolveTypeReference(SubstituteGenericType(parameter, substitutions));
+                    }
+                }
+            }
+            addedNew = instantiatedGenericTypes.size() > beforeCount;
+        }
         return !HasErrors();
     }
 
     bool Analyzer::HasErrors() const { return !diagnostics.empty(); }
+
+    const std::vector<LambdaCapture>& Analyzer::LambdaCaptures(
+        const LambdaExpr& expression) const {
+        static const std::vector<LambdaCapture> empty;
+        const auto found = lambdaCaptures.find(&expression);
+        return found == lambdaCaptures.end() ? empty : found->second;
+    }
 
     void Analyzer::PrintVariables(std::ostream& output) const {
         for (const Symbol& symbol : table.All()) {
@@ -70,8 +119,13 @@ namespace Absolute {
     }
 
     void Analyzer::PrintDiagnostics(std::ostream& output) const {
-        for (const Diagnostic& diagnostic : diagnostics)
+        for (const Diagnostic& diagnostic : diagnostics) {
+            if (!diagnostic.sourceFile.empty() && diagnostic.line > 0) {
+                output << diagnostic.sourceFile << ':' << diagnostic.line
+                    << ':' << std::max(diagnostic.column, 1) << ": ";
+            }
             output << "Semantic error: " << diagnostic.message << '\n';
+        }
     }
 
     const SymbolTable& Analyzer::Symbols() const { return table; }
@@ -100,6 +154,14 @@ namespace Absolute {
 
     const std::vector<Diagnostic>& Analyzer::Diagnostics() const { return diagnostics; }
 
+    void Analyzer::PushDiagnosticNode(const ASTNode* node) {
+        diagnosticNodeStack.push_back(node);
+    }
+
+    void Analyzer::PopDiagnosticNode() {
+        if (!diagnosticNodeStack.empty()) diagnosticNodeStack.pop_back();
+    }
+
     FunctionDeclStmt* Analyzer::FunctionDeclaration(SymbolId symbol) const {
         const auto found = functionDeclarations.find(symbol);
         return found == functionDeclarations.end() ? nullptr : found->second;
@@ -123,7 +185,38 @@ namespace Absolute {
     void Analyzer::AnalyzeProgram(Program& program) { AcceptAll(program.statements, *this); }
 
     void Analyzer::Report(std::string message, std::string code, SymbolId symbol) {
-        diagnostics.push_back({std::move(message), std::move(code), symbol});
+        const ASTNode* node = diagnosticNodeStack.empty()
+            ? nullptr : diagnosticNodeStack.back();
+        ReportAt(node, std::move(message), std::move(code), symbol);
+    }
+
+    void Analyzer::ReportAt(
+        const ASTNode* node, std::string message, std::string code, SymbolId symbol) {
+        Diagnostic diagnostic;
+        diagnostic.message = std::move(message);
+        diagnostic.code = std::move(code);
+        diagnostic.symbol = symbol;
+        if (node) {
+            diagnostic.sourceFile = node->sourceFile;
+            diagnostic.line = node->line;
+            diagnostic.column = node->column;
+        }
+        diagnostics.push_back(std::move(diagnostic));
+    }
+
+    void Analyzer::ReportAt(
+        const Token* token, std::string message, std::string code, SymbolId symbol) {
+        Diagnostic diagnostic;
+        diagnostic.message = std::move(message);
+        diagnostic.code = std::move(code);
+        diagnostic.symbol = symbol;
+        if (!diagnosticNodeStack.empty() && diagnosticNodeStack.back())
+            diagnostic.sourceFile = diagnosticNodeStack.back()->sourceFile;
+        if (token) {
+            diagnostic.line = token->line;
+            diagnostic.column = token->column;
+        }
+        diagnostics.push_back(std::move(diagnostic));
     }
 
     void Analyzer::ValidateAttributes(
@@ -175,6 +268,65 @@ namespace Absolute {
                             attribute.arguments.front().value.kind != AttributeValueKind::String))) {
                     Report("attribute '@deprecated' accepts at most one positional string argument",
                         "E_ATTRIBUTE_ARGUMENTS");
+                }
+                continue;
+            }
+            if (attribute.name == "task" || attribute.name == "spawn") {
+                const bool taskAttribute = attribute.name == "task";
+                const auto* function = dynamic_cast<const FunctionDeclStmt*>(&statement);
+                const auto* variable = dynamic_cast<const VarDeclStmt*>(&statement);
+                const auto* spawn = variable && variable->expr
+                    ? dynamic_cast<const PrefixUnaryExpr*>(variable->expr->value.get()) : nullptr;
+                if (taskAttribute) {
+                    if (!function || !HasModifier(*function, "async"))
+                        Report("attribute '@task' is only valid on async functions and methods",
+                            "E_ATTRIBUTE_TARGET");
+                }
+                else if (target != "local declaration" || !spawn || spawn->op != "spawn" ||
+                    !dynamic_cast<const FunctionCallExpr*>(spawn->operand.get())) {
+                    Report("attribute '@spawn' requires a variable initialized by a direct spawn call",
+                        "E_ATTRIBUTE_TARGET");
+                }
+
+                for (const AttributeArgument& argument : attribute.arguments) {
+                    if (argument.name.empty()) {
+                        Report("attribute '@" + attribute.name +
+                            "' only accepts named arguments", "E_ATTRIBUTE_ARGUMENTS");
+                        continue;
+                    }
+                    if (argument.name != "core" && argument.name != "priority" &&
+                        argument.name != "role") {
+                        Report("unknown scheduling argument '" + argument.name + "' in '@" +
+                            attribute.name + "'", "E_ATTRIBUTE_ARGUMENTS");
+                        continue;
+                    }
+                    if (argument.name == "role") {
+                        if (argument.value.kind != AttributeValueKind::String)
+                            Report("scheduling argument 'role' must be a string literal",
+                                "E_ATTRIBUTE_ARGUMENTS");
+                        continue;
+                    }
+                    if (argument.value.kind != AttributeValueKind::Number) {
+                        Report("scheduling argument '" + argument.name +
+                            "' must be an integer literal", "E_ATTRIBUTE_ARGUMENTS");
+                        continue;
+                    }
+                    try {
+                        size_t consumed = 0;
+                        const long long value = std::stoll(argument.value.text, &consumed, 10);
+                        if (consumed != argument.value.text.size()) throw std::invalid_argument("integer");
+                        if (argument.name == "core" &&
+                            (value < -1 || value > std::numeric_limits<std::int32_t>::max()))
+                            Report("scheduling core must be -1 or a non-negative 32-bit processor index",
+                                "E_TASK_CORE_RANGE");
+                        if (argument.name == "priority" && (value < -3 || value > 3))
+                            Report("task priority must be in the portable range -3..3",
+                                "E_TASK_PRIORITY_RANGE");
+                    }
+                    catch (const std::exception&) {
+                        Report("scheduling argument '" + argument.name +
+                            "' is outside the supported integer range", "E_ATTRIBUTE_ARGUMENTS");
+                    }
                 }
                 continue;
             }
@@ -250,7 +402,14 @@ namespace Absolute {
             if (auto found = valueFlow.find(id); found != valueFlow.end())
                 found->second.taskState = TaskState::Awaited;
         }
-        for (SymbolId id : valueFlowScopes.back()) valueFlow.erase(id);
+        for (SymbolId id : valueFlowScopes.back()) {
+            for (auto& [aliasId, alias] : valueFlow) {
+                if (aliasId != id && alias.pointerOwner == id &&
+                    alias.pointerValidity != PointerValidity::Null)
+                    alias.pointerValidity = PointerValidity::Expired;
+            }
+            valueFlow.erase(id);
+        }
         valueFlowScopes.pop_back();
         deferredTaskScopes.pop_back();
     }
@@ -284,6 +443,96 @@ namespace Absolute {
         if (valueFlowScopes.empty()) PushValueFlowScope();
         valueFlow[id] = state;
         valueFlowScopes.back().push_back(id);
+    }
+
+    void Analyzer::TransferManagedAliases(SymbolId previousOwner, SymbolId nextOwner) {
+        if (previousOwner == InvalidSymbolId || nextOwner == InvalidSymbolId ||
+            previousOwner == nextOwner)
+            return;
+        for (auto& [id, state] : valueFlow) {
+            if (id != previousOwner && state.pointerOwner == previousOwner)
+                state.pointerOwner = nextOwner;
+        }
+    }
+
+    void Analyzer::CheckManagedMoveArgument(
+        const Result& argument, const std::string& parameterType,
+        size_t index, const std::string& context) {
+        (void)argument;
+        (void)parameterType;
+        (void)index;
+        (void)context;
+    }
+
+    bool Analyzer::ParameterSupportsOwnership(const std::string& declaredType) const {
+        if (IsValueReferenceType(declaredType)) return false;
+        const std::string type = ValueReferenceBaseType(declaredType);
+        return IsStrongManagedPointerType(type) || ArrayRank(type) > 0 ||
+            (!IsPointerType(type) && TypeOwnsResources(type));
+    }
+
+    bool Analyzer::TransfersOwnership(
+        const Result& argument, const std::string& parameterType) const {
+        if (!ParameterSupportsOwnership(parameterType)) return false;
+        const std::string valueType = ValueReferenceBaseType(parameterType);
+        if (IsStrongManagedPointerType(valueType))
+            return argument.createsManagedOwner;
+        if (ArrayRank(valueType) > 0)
+            return argument.createsArrayOwner;
+        const Symbol* source = table.Get(argument.symbol);
+        return argument.isMoveResult || !argument.isLValue ||
+            (source && (source->kind == SymbolKind::Function ||
+                source->kind == SymbolKind::Method));
+    }
+
+    void Analyzer::RecordOwnershipCall(
+        SymbolId callable, const std::vector<Result>& arguments,
+        const std::vector<std::string>& parameterTypes,
+        const std::string& context) {
+        if (callable == InvalidSymbolId) return;
+        DeferredOwnershipCall call;
+        call.callable = callable;
+        call.context = context;
+        call.ownerArguments.reserve(arguments.size());
+        call.argumentSymbols.reserve(arguments.size());
+        for (size_t index = 0; index < arguments.size(); ++index) {
+            const std::string parameterType = index < parameterTypes.size()
+                ? parameterTypes[index] : std::string{};
+            call.ownerArguments.push_back(
+                TransfersOwnership(arguments[index], parameterType));
+            call.argumentSymbols.push_back(arguments[index].symbol);
+        }
+        deferredOwnershipCalls.push_back(std::move(call));
+    }
+
+    void Analyzer::ValidateDeferredOwnershipCalls() {
+        for (const DeferredOwnershipCall& call : deferredOwnershipCalls) {
+            const Symbol* callable = table.Get(call.callable);
+            if (!callable) continue;
+            for (size_t index = 0;
+                index < callable->parameterRequiresOwner.size() &&
+                index < call.ownerArguments.size(); ++index) {
+                if (!callable->parameterRequiresOwner[index] ||
+                    call.ownerArguments[index]) continue;
+                Report(call.context + " argument " + std::to_string(index + 1) +
+                    " is borrowed, but the function moves or stores this parameter; "
+                    "pass move(owner)",
+                    "E_PARAMETER_REQUIRES_OWNER",
+                    index < call.argumentSymbols.size()
+                        ? call.argumentSymbols[index] : InvalidSymbolId);
+            }
+        }
+    }
+
+    SymbolId Analyzer::OwnerGuardParameter(Expression* condition) const {
+        const auto* call = dynamic_cast<FunctionCallExpr*>(condition);
+        if (!call || call->arguments.size() != 1) return InvalidSymbolId;
+        const auto* identifier = dynamic_cast<IdentifierExpr*>(call->base.get());
+        if (!identifier || identifier->name != "isOwner") return InvalidSymbolId;
+        const ExpressionInfo* info = GetExpressionInfo(*call->arguments.front());
+        const Symbol* symbol = info ? table.Get(info->symbol) : nullptr;
+        return symbol && symbol->kind == SymbolKind::Parameter &&
+            symbol->rolePolymorphic ? symbol->id : InvalidSymbolId;
     }
 
     void Analyzer::MergeValueFlowPaths(const ValueFlowMap& base, const std::vector<ValueFlowMap>& paths) {
@@ -353,8 +602,14 @@ namespace Absolute {
         callable = false;
         callableParameters.clear();
         result = {};
-        if (expression) expression->Accept(*this);
-        else result.type = "void";
+        if (expression) {
+            PushDiagnosticNode(expression);
+            expression->Accept(*this);
+            PopDiagnosticNode();
+        }
+        else {
+            result.type = "void";
+        }
         return result;
     }
 
@@ -375,24 +630,73 @@ namespace Absolute {
 
     std::string Analyzer::ResolveDeclaredType(VarDeclExpr& expression) {
         std::string type = ResolveType(expression.type.get());
-        if (const auto* declarator = dynamic_cast<const ArrayAccessExpr*>(expression.name.get());
-            declarator && !declarator->indexes.empty()) {
-            type = ArrayType(std::move(type), declarator->indexes.size());
+        size_t rank = 0;
+        const Expression* current = expression.name.get();
+        while (const auto* declarator = dynamic_cast<const ArrayAccessExpr*>(current)) {
+            rank += declarator->indexes.size();
+            current = declarator->base.get();
         }
+        if (rank != 0) type = ArrayType(std::move(type), rank);
         return type;
     }
 
     void Analyzer::Save(Expression* expression, Result value) {
+        value.category = value.isLValue ? ValueCategory::Place : ValueCategory::Value;
+        if (value.isLValue) {
+            if (const Symbol* symbol = table.Get(value.symbol)) {
+                value.placeInfo.readable = symbol->canRead;
+                value.placeInfo.writable = !symbol->isConst && symbol->canWrite;
+                value.placeInfo.addressable =
+                    symbol->kind != SymbolKind::Property &&
+                    symbol->kind != SymbolKind::Indexer;
+            }
+        }
+        else {
+            value.placeInfo = {false, false, false};
+        }
+        const Symbol* symbol = table.Get(value.symbol);
+        if (IsValueReferenceType(value.type) || (symbol && symbol->valueReference))
+            value.pointerRole = PointerRole::Ref;
+        else if (IsWeakPointerType(value.type))
+            value.pointerRole = PointerRole::Weak;
+        else if (IsRawPointerType(value.type)) {
+            const auto rawLifetime = keepLifetimes.find(value.symbol);
+            const bool liveRawOwner = rawLifetime != keepLifetimes.end() &&
+                rawLifetime->second.state == KeepState::Live;
+            value.pointerRole = (value.createsRawOwner || liveRawOwner)
+                ? PointerRole::RawOwner : PointerRole::RawView;
+        }
+        else if (IsStrongManagedPointerType(value.type))
+            value.pointerRole = (value.createsManagedOwner ||
+                (symbol && symbol->managedOwner))
+                ? PointerRole::ManagedOwner : PointerRole::ManagedSub;
         result = std::move(value);
-        if (expression) expressionInfo[expression] = {
-            result.symbol, result.type, result.isLValue,
-            result.createsManagedOwner, result.referencesManagedOwner,
-            result.initialization, result.pointerValidity, result.pointerOwner,
-            result.taskState, result.createsTask, result.asyncCall,
-            result.createsRawOwner};
+        if (expression) {
+            ExpressionInfo info;
+            info.symbol = result.symbol;
+            info.type = result.type;
+            info.isLValue = result.isLValue;
+            info.category = result.category;
+            info.placeInfo = result.placeInfo;
+            info.pointerRole = result.pointerRole;
+            info.createsManagedOwner = result.createsManagedOwner;
+            info.referencesManagedOwner = result.referencesManagedOwner;
+            info.initialization = result.initialization;
+            info.pointerValidity = result.pointerValidity;
+            info.pointerOwner = result.pointerOwner;
+            info.taskState = result.taskState;
+            info.createsTask = result.createsTask;
+            info.asyncCall = result.asyncCall;
+            info.createsRawOwner = result.createsRawOwner;
+            info.isMoveResult = result.isMoveResult;
+            info.createsArrayOwner = result.createsArrayOwner;
+            expressionInfo[expression] = std::move(info);
+        }
     }
 
     bool Analyzer::IsKnownType(const std::string& name) const {
+        if (IsValueReferenceType(name))
+            return IsKnownType(ValueReferenceBaseType(name));
         if (IsPointerType(name)) return IsKnownType(PointerPointee(name));
         if (IsTaskType(name)) return IsKnownType(TaskValueType(name));
         for (auto scope = genericTypeScopes.rbegin(); scope != genericTypeScopes.rend(); ++scope)
@@ -400,6 +704,25 @@ namespace Absolute {
         std::string genericBase;
         std::vector<std::string> genericArguments;
         if (ParseGenericTypeName(name, genericBase, genericArguments)) {
+            if (genericBase == "tuple") {
+                return genericArguments.size() >= 2 &&
+                    std::all_of(genericArguments.begin(), genericArguments.end(),
+                        [&](const std::string& argument) {
+                            return argument != "void" && argument != "auto" &&
+                                argument != "dynamic" && IsKnownType(argument);
+                        });
+            }
+            if (genericBase == "func" || genericBase == "cfunc") {
+                if (genericArguments.empty() || genericArguments.front() == "auto" ||
+                    genericArguments.front() == "dynamic") return false;
+                if (genericArguments.front() != "void" && !IsKnownType(genericArguments.front()))
+                    return false;
+                return std::all_of(genericArguments.begin() + 1, genericArguments.end(),
+                    [&](const std::string& argument) {
+                        return argument != "void" && argument != "auto" &&
+                            argument != "dynamic" && IsKnownType(argument);
+                    });
+            }
             const auto definition = types.find(genericBase);
             return definition != types.end() &&
                 definition->second.genericParameters.size() == genericArguments.size() &&
@@ -420,29 +743,61 @@ namespace Absolute {
     }
 
     bool Analyzer::IsAssignable(const std::string& target, const std::string& source) const {
+        if (IsValueReferenceType(target))
+            return IsAssignable(ValueReferenceBaseType(target), source);
         if (target == "error" || source == "error" || target == "dynamic" || source == "dynamic") return true;
         if (target == source) return true;
+        {
+            std::string targetReturn;
+            std::string sourceReturn;
+            std::vector<std::string> targetParameters;
+            std::vector<std::string> sourceParameters;
+            if (ParseCFunctionType(target, targetReturn, targetParameters) &&
+                ParseCFunctionType(source, sourceReturn, sourceParameters))
+                return targetReturn == sourceReturn && targetParameters == sourceParameters;
+            if (ParseCFunctionType(target, targetReturn, targetParameters) && source == "null")
+                return true;
+        }
         if (target.ends_with("[]") && source.ends_with("[]"))
             return IsAssignable(ArrayElementType(target), ArrayElementType(source));
         if (IsPointerType(target) && source == "null") return true;
-        if (IsPointerType(target) && IsPointerType(source) &&
-            IsRawPointerType(target) == IsRawPointerType(source))
-            return IsDerivedFrom(PointerPointee(source), PointerPointee(target));
+        if (IsPointerType(target) && IsPointerType(source)) {
+            const bool compatibleMode =
+                (IsRawPointerType(target) && IsRawPointerType(source)) ||
+                (IsWeakPointerType(target) && IsManagedPointerType(source)) ||
+                (IsStrongManagedPointerType(target) && IsStrongManagedPointerType(source));
+            if (compatibleMode)
+                return IsDerivedFrom(PointerPointee(source), PointerPointee(target));
+        }
         if (IsNumeric(target) && IsNumeric(source)) return true;
         return source == "null" && !PrimitiveStringToEnum(target).has_value();
     }
 
     bool Analyzer::TypeOwnsResources(const std::string& name) const {
+        if (IsValueReferenceType(name))
+            return TypeOwnsResources(ValueReferenceBaseType(name));
         std::unordered_set<std::string> visiting;
         const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
-            if (IsManagedPointerType(candidate) || ArrayRank(candidate) > 0) return true;
+            if (IsStrongManagedPointerType(candidate) || ArrayRank(candidate) > 0) return true;
             if (IsPointerType(candidate)) return false;
+
+            if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(candidate)) {
+                return descriptor->isResource;
+            }
 
             std::string definitionName = candidate;
             std::string genericBase;
             std::vector<std::string> genericArguments;
-            if (ParseGenericTypeName(candidate, genericBase, genericArguments))
+            if (ParseGenericTypeName(candidate, genericBase, genericArguments)) {
+                if (genericBase == "tuple") {
+                    const bool owns = std::any_of(genericArguments.begin(),
+                        genericArguments.end(), [&](const std::string& argument) {
+                            return self(self, argument);
+                        });
+                    return owns;
+                }
                 definitionName = genericBase;
+            }
             if (!visiting.insert(definitionName).second) return false;
             const auto release = [&] { visiting.erase(definitionName); };
             const auto found = types.find(definitionName);
@@ -452,7 +807,10 @@ namespace Absolute {
                 return false;
             }
             for (const auto& [memberName, overloads] : found->second.members) {
-                (void)memberName;
+                if (memberName == "destroy()") {
+                    release();
+                    return true;
+                }
                 for (const MemberSignature& member : overloads) {
                     if (member.isStatic || (member.kind != SymbolKind::Field &&
                         member.kind != SymbolKind::Property)) continue;
@@ -474,12 +832,42 @@ namespace Absolute {
         return inspect(inspect, name);
     }
 
+    bool Analyzer::IsAsyncTaskValueType(const std::string& name) const {
+        if (name == "error" || name == "void") return true;
+        if (name == "int8" || name == "uint8" || name == "char" ||
+            name == "int16" || name == "uint16" ||
+            name == "int32" || name == "uint32" ||
+            name == "int64" || name == "uint64" ||
+            name == "bool" || name == "float" || name == "double")
+            return true;
+        if (const auto* descriptor = GetPluginResourceDescriptor(name))
+            return descriptor->canCrossIsolateBoundary();
+        const auto found = types.find(name);
+        return found != types.end() && found->second.kind == TypeKind::Enum;
+    }
+
     bool Analyzer::IsDerivedFrom(const std::string& type, const std::string& base) const {
         if (type == base) return true;
-        const auto found = types.find(type);
+        std::string definitionName = type;
+        std::unordered_map<std::string, std::string> substitutions;
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseGenericTypeName(type, genericBase, genericArguments)) {
+            definitionName = genericBase;
+            const auto definition = types.find(definitionName);
+            if (definition != types.end() &&
+                definition->second.genericParameters.size() == genericArguments.size()) {
+                for (size_t index = 0; index < genericArguments.size(); ++index)
+                    substitutions.emplace(definition->second.genericParameters[index],
+                        genericArguments[index]);
+            }
+        }
+        const auto found = types.find(definitionName);
         if (found == types.end()) return false;
-        for (const std::string& parent : found->second.parents)
+        for (const std::string& declaredParent : found->second.parents) {
+            const std::string parent = SubstituteGenericType(declaredParent, substitutions);
             if (parent == base || IsDerivedFrom(parent, base)) return true;
+        }
         return false;
     }
 
@@ -555,8 +943,114 @@ namespace Absolute {
         std::vector<std::string> resolved;
         resolved.reserve(parameters.size());
         for (const auto& parameter : parameters)
-            resolved.push_back(parameter ? ResolveDeclaredType(*parameter) : "error");
+            resolved.push_back(parameter
+                ? ValueReferenceType(ResolveDeclaredType(*parameter),
+                    parameter->isConst, parameter->isReference)
+                : "error");
         return resolved;
+    }
+
+    void Analyzer::ValidateValueReferenceParameter(
+        VarDeclExpr& parameter, const std::string& type,
+        const std::string& callable, bool asyncCallable, bool cAbi) {
+        if (!parameter.isReference) return;
+        if (parameter.isOut) return;
+        const std::string name = ExtractIdentifier(parameter.name.get());
+        std::string definitionName = type;
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseGenericTypeName(type, genericBase, genericArguments))
+            definitionName = genericBase;
+        const auto definition = types.find(definitionName);
+        if (definition == types.end() || definition->second.kind != TypeKind::Struct ||
+            !genericArguments.empty()) {
+            Report("value-reference parameter '" + name + "' of '" + callable +
+                "' requires a concrete struct type", "E_VALUE_REF_TYPE");
+        }
+        else if (TypeOwnsResources(type)) {
+            Report("value-reference parameter '" + name + "' cannot borrow resource-owning type '" +
+                type + "'", "E_VALUE_REF_RESOURCES");
+        }
+        if (parameter.value)
+            Report("value-reference parameter '" + name + "' cannot have a default value",
+                "E_VALUE_REF_DEFAULT");
+        if (asyncCallable)
+            Report("async callable '" + callable + "' cannot declare value-reference parameters",
+                "E_VALUE_REF_ASYNC");
+        if (cAbi)
+            Report("C ABI callable '" + callable + "' cannot declare Absolute value references",
+                "E_VALUE_REF_C_ABI");
+    }
+
+    void Analyzer::ValidateCAbiType(const std::string& type, const std::string& where,
+        bool isReturn) {
+        if (isReturn && type == "void") return;
+        if (!isReturn && type == "void") {
+            Report(where + " requires a concrete C-compatible type", "E_C_ABI_TYPE");
+            return;
+        }
+        if (type == "auto" || type == "dynamic" || type == "error" || type == "null") {
+            Report(where + " requires a concrete C-compatible type", "E_C_ABI_TYPE");
+            return;
+        }
+        if (IsValueReferenceType(type)) return;
+        if (IsManagedPointerType(type)) {
+            Report(where + " must use raw T* instead of a managed pointer", "E_C_ABI_MANAGED");
+            return;
+        }
+        if (ArrayRank(type) > 0) {
+            Report(where + " cannot use an Absolute array descriptor", "E_C_ABI_ARRAY");
+            return;
+        }
+        if (IsTaskType(type)) {
+            Report(where + " cannot use a task type at the C ABI boundary", "E_C_ABI_TASK");
+            return;
+        }
+        std::string functionReturn;
+        std::vector<std::string> functionParameters;
+        if (ParseFunctionType(type, functionReturn, functionParameters)) {
+            Report(where + " cannot use an Absolute func type; use cfunc<...> for C callbacks",
+                "E_C_ABI_FUNC_TYPE");
+            return;
+        }
+        if (ParseCFunctionType(type, functionReturn, functionParameters)) {
+            // C function pointers are themselves C-compatible values (raw code pointers).
+            ValidateCAbiType(functionReturn, where + " cfunc return", true);
+            for (size_t index = 0; index < functionParameters.size(); ++index)
+                ValidateCAbiType(functionParameters[index],
+                    where + " cfunc parameter " + std::to_string(index + 1), false);
+            return;
+        }
+        if (IsRawPointerType(type)) return;
+        if (type == "bool" || type == "string" || type == "char" ||
+            type == "float" || type == "double")
+            return;
+        if (type.starts_with("int") || type.starts_with("uint")) return;
+
+        const auto found = types.find(type);
+        if (found != types.end()) {
+            if (found->second.kind == TypeKind::Enum) return;
+            if (found->second.kind == TypeKind::Struct ||
+                found->second.kind == TypeKind::Class ||
+                found->second.kind == TypeKind::Interface) {
+                Report(where + " cannot pass Absolute " +
+                    (found->second.kind == TypeKind::Struct ? "struct" :
+                        found->second.kind == TypeKind::Class ? "class" : "interface") +
+                    " '" + type + "' by value; use raw T*", "E_C_ABI_AGGREGATE");
+                return;
+            }
+        }
+
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseGenericTypeName(type, genericBase, genericArguments) && genericBase != "func") {
+            Report(where + " cannot use generic type '" + type + "' at the C ABI boundary",
+                "E_C_ABI_TYPE");
+            return;
+        }
+
+        if (!IsKnownType(type)) return;
+        Report(where + " type '" + type + "' is not C-compatible", "E_C_ABI_TYPE");
     }
 
     void Analyzer::DeclareGlobalFunction(FunctionDeclStmt& statement) {
@@ -601,6 +1095,8 @@ namespace Absolute {
             symbol->externalFunction = statement.IsExternal();
             symbol->exportedFunction = statement.IsExported();
             symbol->isConst = HasModifier(statement, "const");
+            symbol->variadicParameter = !statement.parameters.empty() &&
+                statement.parameters.back()->isParams;
             for (const Token& parameter : statement.templateParams)
                 symbol->genericParameters.push_back(parameter.value);
             functionOverloads[name].push_back(*declared);
@@ -618,8 +1114,31 @@ namespace Absolute {
             genericScope.emplace(parameter.value, parameter.value);
         if (!genericScope.empty()) genericTypeScopes.push_back(genericScope);
         const std::string returnType = ResolveType(statement.returnType.get());
+        const bool asyncFunction = HasModifier(statement, "async");
         const bool constMethod = HasModifier(statement, "const");
         const bool staticMethod = HasModifier(statement, "static");
+        const std::vector<std::string> declaredParameterTypes =
+            ResolveParameterTypes(statement.parameters);
+        const SymbolId oldCallable = currentCallable;
+        currentCallable = InvalidSymbolId;
+        if (kind == SymbolKind::Function) {
+            if (const Symbol* callable = FindFunctionSymbol(
+                Qualify(statement.name->value), declaredParameterTypes))
+                currentCallable = callable->id;
+        }
+        else if (kind == SymbolKind::Method) {
+            for (const MemberSignature& member :
+                FindMembers(currentType, statement.name->value)) {
+                if (member.kind == SymbolKind::Method &&
+                    member.parameterTypes == declaredParameterTypes) {
+                    currentCallable = member.symbol;
+                    break;
+                }
+            }
+        }
+        if (Symbol* callable = table.Get(currentCallable))
+            callable->parameterRequiresOwner.assign(
+                statement.parameters.size(), false);
         if (kind == SymbolKind::Method && !staticMethod) {
             const std::vector<std::string> parameters = ResolveParameterTypes(statement.parameters);
             for (const MemberSignature& inherited :
@@ -631,6 +1150,11 @@ namespace Absolute {
                     (HasModifier(*inheritedDeclaration, "virtual") ||
                         HasModifier(*inheritedDeclaration, "override"));
                 if (!virtualDispatch) continue;
+                const Symbol* inheritedSymbol = table.Get(inherited.symbol);
+                if (inheritedSymbol && inheritedSymbol->asyncFunction != asyncFunction)
+                    Report("override '" + currentType + "." + statement.name->value +
+                        "' must match the async contract of the inherited method",
+                        "E_OVERRIDE_ASYNC_MISMATCH", inherited.symbol);
                 if (inherited.access == AccessLevel::Private) {
                     Report("method '" + currentType + "." + statement.name->value +
                         "' cannot replace a private virtual method", "E_PRIVATE_VIRTUAL_OVERRIDE",
@@ -667,6 +1191,11 @@ namespace Absolute {
                 "E_STATIC_GENERIC_UNSUPPORTED");
         if (!IsKnownType(returnType))
             Report("unknown return type '" + returnType + "' of function '" + statement.name->value + "'");
+        if (asyncFunction && !IsAsyncTaskValueType(returnType))
+            ReportAt(statement.name.get(),
+                "async function '" + statement.name->value + "' cannot return '" +
+                returnType + "': the task ABI only owns lifetime-independent scalar and enum values",
+                "E_ASYNC_RESULT_LIFETIME");
 
         if (statement.IsExternal() && kind == SymbolKind::Method)
             Report("extern functions cannot be class or struct members");
@@ -679,7 +1208,7 @@ namespace Absolute {
                 "E_EXTENSION_RECEIVER");
         if (HasModifier(statement, "extension") && statement.UsesCAbi())
             Report("C ABI functions cannot be extension methods", "E_EXTENSION_C_ABI");
-        if (HasModifier(statement, "extension") && HasModifier(statement, "async"))
+        if (HasModifier(statement, "extension") && asyncFunction)
             Report("async extension methods are not implemented", "E_EXTENSION_ASYNC");
         if (HasModifier(statement, "extension") && !statement.parameters.empty()) {
             const std::string receiverType = ResolveDeclaredType(*statement.parameters.front());
@@ -687,27 +1216,56 @@ namespace Absolute {
                 receiverType == "error")
                 Report("extension method receiver requires a concrete type", "E_EXTENSION_RECEIVER_TYPE");
         }
-        if (statement.IsExternal() && HasModifier(statement, "async"))
+        if (statement.IsExternal() && asyncFunction)
             Report("extern functions cannot be async", "E_ASYNC_EXTERN");
-        if (statement.IsExported() && HasModifier(statement, "async"))
+        if (statement.IsExported() && asyncFunction)
             Report("export functions cannot be async", "E_ASYNC_EXPORT");
-        if (kind == SymbolKind::Method && HasModifier(statement, "async"))
-            Report("async methods are not implemented yet; use a namespace function",
-                "E_ASYNC_METHOD_UNSUPPORTED");
-        if (statement.UsesCAbi() && (returnType == "auto" || returnType == "dynamic" ||
-            IsManagedPointerType(returnType)))
-            Report("C ABI function '" + statement.name->value +
-                "' requires a concrete C-compatible return type; use raw T* for pointers");
-        if (statement.UsesCAbi() && returnType.ends_with("[]"))
-            Report("C ABI function '" + statement.name->value +
-                "' cannot return an Absolute array descriptor");
+        if (kind == SymbolKind::Method && asyncFunction && !staticMethod && !constMethod)
+            Report("async instance method '" + currentType + "." + statement.name->value +
+                "' must be const so its receiver cannot be mutated by the task",
+                "E_ASYNC_METHOD_REQUIRES_CONST");
+        if (statement.UsesCAbi())
+            ValidateCAbiType(returnType,
+                "C ABI function '" + statement.name->value + "' return", true);
 
+        for (size_t index = 0; index < statement.parameters.size(); ++index) {
+            const VarDeclExpr& parameter = *statement.parameters[index];
+            if (!parameter.isParams) continue;
+            PushDiagnosticNode(&parameter);
+            const std::string parameterType = ResolveDeclaredType(
+                *statement.parameters[index]);
+            if (index + 1 != statement.parameters.size())
+                Report("params parameter must be the last parameter",
+                    "E_PARAMS_NOT_LAST");
+            if (ArrayRank(parameterType) != 1)
+                Report("params parameter must be a one-dimensional array",
+                    "E_PARAMS_ARRAY_TYPE");
+            if (parameter.isReference || parameter.isConst)
+                Report("params parameter cannot be ref or const",
+                    "E_PARAMS_MODIFIER");
+            if (parameter.value)
+                Report("params parameter cannot have a default value",
+                    "E_PARAMS_DEFAULT");
+            if (statement.UsesCAbi())
+                Report("params is not supported on extern/export C ABI functions",
+                    "E_PARAMS_C_ABI");
+            if (asyncFunction)
+                Report("params is not supported on async functions",
+                    "E_PARAMS_ASYNC");
+            if (ArrayRank(parameterType) == 1 &&
+                TypeOwnsResources(ArrayElementType(parameterType)))
+                Report("params element type cannot own resources",
+                    "E_PARAMS_RESOURCE_ELEMENT");
+            PopDiagnosticNode();
+        }
         const std::string oldReturn = currentReturnType;
         const bool oldAsync = currentFunctionAsync;
+        const bool oldNoThrow = currentFunctionNoThrow;
         const bool oldConstMethod = currentMethodConst;
         const bool oldStaticMethod = currentMethodStatic;
         currentReturnType = returnType;
-        currentFunctionAsync = HasModifier(statement, "async");
+        currentFunctionAsync = asyncFunction;
+        currentFunctionNoThrow = HasModifier(statement, "nothrow");
         currentMethodConst = constMethod && kind == SymbolKind::Method;
         currentMethodStatic = staticMethod && kind == SymbolKind::Method;
         ++functionDepth;
@@ -723,36 +1281,83 @@ namespace Absolute {
         flowTerminated = false;
         PushKeepScope();
         PushValueFlowScope();
-        for (const auto& parameter : statement.parameters) {
+        if (kind == SymbolKind::Method && !currentMethodStatic && !currentType.empty()) {
+            std::string fullType = currentType;
+            if (types.contains(currentType) && !types.at(currentType).genericParameters.empty()) {
+                fullType += "<";
+                const auto& gparams = types.at(currentType).genericParameters;
+                for (size_t i = 0; i < gparams.size(); ++i) {
+                    if (i > 0) fullType += ",";
+                    fullType += gparams[i];
+                }
+                fullType += ">";
+            }
+            const std::string thisType = "raw " + fullType + "*";
+            if (const auto declared = table.Declare(SymbolKind::Parameter, "this", thisType)) {
+                if (Symbol* symbol = table.Get(*declared)) symbol->isConst = currentMethodConst;
+                RegisterFlowSymbol(*declared, {
+                    InitializationState::Initialized,
+                    PointerValidity::Live,
+                    InvalidSymbolId
+                });
+            }
+        }
+        for (size_t parameterIndex = 0;
+            parameterIndex < statement.parameters.size(); ++parameterIndex) {
+            const auto& parameter = statement.parameters[parameterIndex];
             if (!parameter) continue;
+            PushDiagnosticNode(parameter.get());
             const std::string name = ExtractIdentifier(parameter->name.get());
             std::string type = ResolveDeclaredType(*parameter);
-            if (statement.UsesCAbi() && (type == "auto" || type == "dynamic" || type == "void"))
-                Report("C ABI parameter '" + name + "' requires a concrete C-compatible type");
-            if (statement.UsesCAbi() && IsManagedPointerType(type))
-                Report("C ABI parameter '" + name + "' must use raw T* instead of a managed pointer");
-            if (statement.UsesCAbi() && type.ends_with("[]"))
-                Report("C ABI parameter '" + name + "' cannot use an Absolute array descriptor");
+            ValidateValueReferenceParameter(*parameter, type,
+                statement.name->value, asyncFunction, statement.UsesCAbi());
+            if (asyncFunction && !IsAsyncTaskValueType(type))
+                ReportAt(parameter->name.get(),
+                    "async parameter '" + name + "' cannot capture '" + type +
+                    "': the task context cannot own its lifetime safely",
+                    "E_ASYNC_CAPTURE_LIFETIME");
+            if (statement.UsesCAbi())
+                ValidateCAbiType(type, "C ABI parameter '" + name + "'", false);
             SymbolId parameterId = InvalidSymbolId;
             if (name.empty()) Report("function parameter requires an identifier");
             else if (const auto declared = table.Declare(SymbolKind::Parameter, name, type)) {
                 parameterId = *declared;
                 if (Symbol* symbol = table.Get(parameterId)) {
                     symbol->isConst = parameter->isConst;
-                    if (IsManagedPointerType(type)) symbol->managedBorrower = true;
+                    symbol->valueReference = parameter->isReference;
+                    symbol->constValueReference = parameter->isReference && parameter->isConst;
+                    symbol->rolePolymorphic =
+                        !asyncFunction && !statement.UsesCAbi() &&
+                        ParameterSupportsOwnership(type);
+                    symbol->parameterIndex = parameterIndex;
+                    symbol->callableOwner = currentCallable;
+                    if (IsStrongManagedPointerType(type)) {
+                        symbol->managedOwner = symbol->rolePolymorphic;
+                        symbol->managedBorrower = true;
+                    }
+                    else if (IsWeakPointerType(type)) symbol->managedBorrower = true;
+                    if (ArrayRank(type) > 0)
+                        symbol->ownsArrayStorage = symbol->rolePolymorphic;
                 }
             }
             else Report("parameter '" + name + "' is already declared");
+            // Record the declaration so code generation can map the parameter
+            // back to its symbol. A lambda capture names that symbol, and
+            // without this the capture cannot be resolved to its storage.
+            if (parameterId != InvalidSymbolId)
+                Save(parameter.get(), {parameterId, type, true});
         RegisterFlowSymbol(parameterId, {
                 InitializationState::Initialized,
                 IsPointerType(type) ? PointerValidity::Unknown : PointerValidity::NotPointer,
-                InvalidSymbolId,
+                ParameterSupportsOwnership(type) && IsStrongManagedPointerType(type)
+                    ? parameterId : InvalidSymbolId,
                 IsTaskType(type) ? TaskState::Unknown : TaskState::NotTask});
             if (parameter->value) {
                 const Result value = Evaluate(parameter->value.get());
                 if (!IsAssignable(type, value.type))
                     Report("default value of parameter '" + name + "' has type '" + value.type + "', expected '" + type + "'");
             }
+            PopDiagnosticNode();
         }
         if (!statement.IsExternal()) AcceptIfPresent(statement.body, *this);
         if (!statement.IsExternal() && returnType != "void" && !flowTerminated &&
@@ -767,8 +1372,11 @@ namespace Absolute {
         --functionDepth;
         currentReturnType = oldReturn;
         currentFunctionAsync = oldAsync;
+        currentFunctionNoThrow = oldNoThrow;
         currentMethodConst = oldConstMethod;
         currentMethodStatic = oldStaticMethod;
+        currentCallable = oldCallable;
+        ownerGuardedParameters.clear();
         if (!genericScope.empty()) genericTypeScopes.pop_back();
         (void)kind;
     }
@@ -822,6 +1430,24 @@ namespace Absolute {
 
     std::vector<Analyzer::MemberSignature> Analyzer::FindMembers(
         const std::string& owner, const std::string& name) {
+        const auto trackConcreteGenericTypes = [&](const auto& self,
+            std::string candidate) -> void {
+            while (ArrayRank(candidate) > 0) candidate = ArrayElementType(candidate);
+            if (IsPointerType(candidate)) candidate = PointerPointee(candidate);
+            std::string base;
+            std::vector<std::string> arguments;
+            if (!ParseGenericTypeName(candidate, base, arguments)) return;
+            const auto definition = types.find(base);
+            if (definition == types.end() || definition->second.genericParameters.size() != arguments.size())
+                return;
+            const bool open = std::any_of(arguments.begin(), arguments.end(), [&](const std::string& argument) {
+                return std::find(definition->second.genericParameters.begin(),
+                    definition->second.genericParameters.end(), argument) !=
+                    definition->second.genericParameters.end();
+            });
+            if (!open) instantiatedGenericTypes.insert(candidate);
+            for (const std::string& argument : arguments) self(self, argument);
+        };
         const std::string objectType = IsPointerType(owner) ? PointerPointee(owner) : owner;
         std::string definitionName = objectType;
         std::unordered_map<std::string, std::string> substitutions;
@@ -849,6 +1475,9 @@ namespace Absolute {
                 declared.type = SubstituteGenericType(declared.type, substitutions);
                 for (std::string& parameter : declared.parameterTypes)
                     parameter = SubstituteGenericType(parameter, substitutions);
+                trackConcreteGenericTypes(trackConcreteGenericTypes, declared.type);
+                for (const std::string& parameter : declared.parameterTypes)
+                    trackConcreteGenericTypes(trackConcreteGenericTypes, parameter);
                 if (declared.kind == SymbolKind::Method && !substitutions.empty()) {
                     const Symbol* method = table.Get(declared.symbol);
                     if (method && method->genericParameters.size() == substitutions.size()) {
@@ -902,15 +1531,34 @@ namespace Absolute {
     std::unordered_map<std::string, std::vector<Analyzer::MemberSignature>> Analyzer::VisibleMembers(
         const std::string& owner) const {
         std::unordered_map<std::string, std::vector<MemberSignature>> result;
-        const auto found = types.find(owner);
+        std::string definitionName = owner;
+        std::unordered_map<std::string, std::string> substitutions;
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseGenericTypeName(owner, genericBase, genericArguments)) {
+            definitionName = genericBase;
+            const auto definition = types.find(definitionName);
+            if (definition != types.end() &&
+                definition->second.genericParameters.size() == genericArguments.size()) {
+                for (size_t index = 0; index < genericArguments.size(); ++index)
+                    substitutions.emplace(definition->second.genericParameters[index],
+                        genericArguments[index]);
+            }
+        }
+        const auto found = types.find(definitionName);
         if (found == types.end()) return result;
-        for (const std::string& parent : found->second.parents) {
+        for (const std::string& declaredParent : found->second.parents) {
+            const std::string parent = SubstituteGenericType(declaredParent, substitutions);
             auto inherited = VisibleMembers(parent);
             for (auto& [name, signatures] : inherited)
                 result[name].insert(result[name].end(), signatures.begin(), signatures.end());
         }
         for (const auto& [name, signatures] : found->second.members) {
-            for (const MemberSignature& declared : signatures) {
+            for (const MemberSignature& original : signatures) {
+                MemberSignature declared = original;
+                declared.type = SubstituteGenericType(declared.type, substitutions);
+                for (std::string& parameter : declared.parameterTypes)
+                    parameter = SubstituteGenericType(parameter, substitutions);
                 if (declared.kind == SymbolKind::Method) {
                     auto& visible = result[name];
                     visible.erase(std::remove_if(visible.begin(), visible.end(), [&](const MemberSignature& inherited) {
@@ -958,7 +1606,7 @@ namespace Absolute {
         return {};
     }
 
-    std::optional<std::vector<std::string>> Analyzer::ConstructorParameterTypes(
+    std::vector<Analyzer::MemberSignature> Analyzer::ConstructorsOf(
         const std::string& typeName) const {
         std::string definitionName = typeName;
         std::unordered_map<std::string, std::string> substitutions;
@@ -970,14 +1618,83 @@ namespace Absolute {
             if (definition != types.end() &&
                 definition->second.genericParameters.size() == genericArguments.size())
                 for (size_t index = 0; index < genericArguments.size(); ++index)
-                    substitutions.emplace(definition->second.genericParameters[index], genericArguments[index]);
+                    substitutions.emplace(definition->second.genericParameters[index],
+                        genericArguments[index]);
         }
         const auto found = types.find(definitionName);
-        if (found == types.end() || !found->second.constructor) return std::nullopt;
-        std::vector<std::string> parameters = found->second.constructor->parameterTypes;
-        for (std::string& parameter : parameters)
-            parameter = SubstituteGenericType(parameter, substitutions);
-        return parameters;
+        if (found == types.end()) return {};
+        std::vector<MemberSignature> constructors = found->second.constructors;
+        for (MemberSignature& constructor : constructors)
+            for (std::string& parameter : constructor.parameterTypes)
+                parameter = SubstituteGenericType(parameter, substitutions);
+        return constructors;
+    }
+
+    std::optional<std::vector<std::string>> Analyzer::ConstructorParameterTypes(
+        const std::string& typeName) const {
+        // Used for implicit base()/default construction: prefer a zero-argument constructor.
+        const std::vector<MemberSignature> constructors = ConstructorsOf(typeName);
+        if (constructors.empty()) return std::vector<std::string>{}; // synthetic default
+        for (const MemberSignature& constructor : constructors)
+            if (constructor.parameterTypes.empty()) return constructor.parameterTypes;
+        // No zero-arg overload — return first constructor's params so callers can diagnose.
+        return constructors.front().parameterTypes;
+    }
+
+    const Analyzer::MemberSignature* Analyzer::SelectConstructor(
+        const std::vector<MemberSignature>& constructors,
+        const std::vector<Result>& arguments,
+        const std::string& displayName,
+        const std::unordered_map<std::string, std::string>& substitutions) {
+        if (constructors.empty()) {
+            if (!arguments.empty())
+                Report("constructor of '" + displayName + "' expects 0 argument(s), got " +
+                    std::to_string(arguments.size()), "E_CONSTRUCTOR_ARGUMENT_COUNT");
+            return nullptr;
+        }
+        const MemberSignature* best = nullptr;
+        int bestCost = std::numeric_limits<int>::max();
+        bool ambiguous = false;
+        for (const MemberSignature& candidate : constructors) {
+            std::vector<std::string> parameters = candidate.parameterTypes;
+            for (std::string& parameter : parameters)
+                parameter = SubstituteGenericType(parameter, substitutions);
+            if (parameters.size() != arguments.size()) continue;
+            int cost = 0;
+            bool applicable = true;
+            for (size_t index = 0; index < arguments.size(); ++index) {
+                const std::string expected = ValueReferenceBaseType(parameters[index]);
+                const int conversion = ConversionCost(expected, arguments[index].type);
+                if (conversion < 0) {
+                    applicable = false;
+                    break;
+                }
+                cost += conversion;
+            }
+            if (!applicable) continue;
+            if (cost < bestCost) {
+                best = &candidate;
+                bestCost = cost;
+                ambiguous = false;
+            }
+            else if (cost == bestCost) ambiguous = true;
+        }
+        if (!best) {
+            std::string typesText;
+            for (size_t index = 0; index < arguments.size(); ++index) {
+                if (index) typesText += ", ";
+                typesText += arguments[index].type;
+            }
+            Report("no overload of constructor '" + displayName + "' accepts (" + typesText + ")",
+                "E_NO_MATCHING_CONSTRUCTOR");
+            return nullptr;
+        }
+        if (ambiguous) {
+            Report("call to overloaded constructor '" + displayName + "' is ambiguous",
+                "E_AMBIGUOUS_CONSTRUCTOR");
+            return nullptr;
+        }
+        return best;
     }
 
     std::string Analyzer::ExtractIdentifier(Expression* expression) const {
@@ -1065,14 +1782,26 @@ namespace Absolute {
             }
             const std::string ownerNamespace = symbol->name.substr(0, separator);
             if (currentNamespace == ownerNamespace ||
-                currentNamespace.starts_with(ownerNamespace + ".") ||
-                importedNamespaces.contains(ownerNamespace))
+                currentNamespace.starts_with(ownerNamespace + ".")) {
+                result.push_back(id);
+                continue;
+            }
+            bool matchesImport = false;
+            for (const std::string& imported : importedNamespaces) {
+                if (imported == ownerNamespace || imported.ends_with("." + ownerNamespace) || imported.ends_with(ownerNamespace)) {
+                    matchesImport = true;
+                    break;
+                }
+            }
+            if (matchesImport)
                 result.push_back(id);
         }
         return result;
     }
 
     int Analyzer::ConversionCost(const std::string& target, const std::string& source) const {
+        if (IsValueReferenceType(target))
+            return ConversionCost(ValueReferenceBaseType(target), source);
         if (target == source) return 0;
         if (!IsAssignable(target, source)) return -1;
         if (target == "dynamic") return 4;
@@ -1104,17 +1833,31 @@ namespace Absolute {
             parameter = SubstituteGenericType(parameter, substitutions);
         specialized.genericArguments = arguments;
         specialized.genericOrigin = origin;
-        specialized.genericParameters.clear();
+        const bool openFunctionSpecialization = std::any_of(arguments.begin(), arguments.end(),
+            [&](const std::string& argument) {
+                return std::any_of(genericTypeScopes.begin(), genericTypeScopes.end(),
+                    [&](const auto& scope) {
+                        const auto found = scope.find(argument);
+                        return found != scope.end() && found->second == argument;
+                    });
+            });
         const SymbolId id = table.AppendSpecialization(std::move(specialized));
         genericFunctionSpecializations.emplace(std::move(key), id);
-        genericFunctionSpecializationOrder.push_back(id);
+        if (!openFunctionSpecialization)
+            genericFunctionSpecializationOrder.push_back(id);
         functionDeclarations[id] = FunctionDeclaration(origin);
         return id;
     }
 
-    SymbolId Analyzer::SelectOverload(const std::vector<SymbolId>& candidates,
+    SymbolId Analyzer::SelectOverload(const std::vector<SymbolId>& inputCandidates,
         const std::vector<Result>& arguments, const std::string& displayName,
         const std::vector<std::string>& explicitTypeArguments) {
+        std::vector<SymbolId> candidates;
+        candidates.reserve(inputCandidates.size());
+        for (SymbolId id : inputCandidates) {
+            if (std::find(candidates.begin(), candidates.end(), id) == candidates.end())
+                candidates.push_back(id);
+        }
         SymbolId best = InvalidSymbolId;
         std::vector<std::string> bestGenericArguments;
         int bestCost = std::numeric_limits<int>::max();
@@ -1122,7 +1865,12 @@ namespace Absolute {
         bool ambiguous = false;
         for (const SymbolId id : candidates) {
             const Symbol* candidate = table.Get(id);
-            if (!candidate || candidate->parameterTypes.size() != arguments.size()) continue;
+            if (!candidate) continue;
+            const bool variadic = candidate->variadicParameter;
+            const size_t fixedCount = variadic && !candidate->parameterTypes.empty()
+                ? candidate->parameterTypes.size() - 1 : candidate->parameterTypes.size();
+            if ((!variadic && candidate->parameterTypes.size() != arguments.size()) ||
+                (variadic && arguments.size() < fixedCount)) continue;
             std::vector<std::string> concreteParameters = candidate->parameterTypes;
             std::vector<std::string> inferredArguments;
             if (!candidate->genericParameters.empty()) {
@@ -1134,15 +1882,51 @@ namespace Absolute {
                 for (size_t index = 0; index < explicitTypeArguments.size(); ++index)
                     substitutions.emplace(candidate->genericParameters[index], explicitTypeArguments[index]);
                 bool unified = true;
-                for (size_t index = 0; index < arguments.size(); ++index)
-                    if (!UnifyGenericType(candidate->parameterTypes[index], arguments[index].type,
+                // Explicit type arguments already bind every generic parameter, so
+                // unifying them against the argument types would demand an exact
+                // match and reject the implicit conversions an ordinary call
+                // accepts. Leave that judgement to ConversionCost below.
+                for (size_t index = 0;
+                    explicitTypeArguments.empty() && index < arguments.size(); ++index) {
+                    std::string pattern;
+                    if (!variadic || index < fixedCount) {
+                        pattern = ValueReferenceBaseType(candidate->parameterTypes[index]);
+                    }
+                    else {
+                        const std::string arrayPattern =
+                            ValueReferenceBaseType(candidate->parameterTypes.back());
+                        const bool directArray = index == fixedCount &&
+                            arguments.size() == candidate->parameterTypes.size() &&
+                            ArrayRank(arguments[index].type) == 1;
+                        pattern = directArray ? arrayPattern : ArrayElementType(arrayPattern);
+                    }
+                    if (!UnifyGenericType(pattern,
+                        arguments[index].type,
                         parameterNames, substitutions)) {
                         unified = false;
                         break;
                     }
+                }
                 if (!unified) continue;
                 for (const std::string& parameter : candidate->genericParameters) {
-                    const auto found = substitutions.find(parameter);
+                    auto found = substitutions.find(parameter);
+                    if (found == substitutions.end()) {
+                        const std::string owner = !candidate->memberOwner.empty() ? candidate->memberOwner : currentType;
+                        std::string baseOwner = owner;
+                        std::vector<std::string> ownerArgs;
+                        ParseGenericTypeName(owner, baseOwner, ownerArgs);
+                        const auto typeIt = types.find(baseOwner);
+                        if (typeIt != types.end()) {
+                            const auto& classGenParams = typeIt->second.genericParameters;
+                            auto classParamIt = std::find(classGenParams.begin(), classGenParams.end(), parameter);
+                            if (classParamIt != classGenParams.end()) {
+                                size_t idx = static_cast<size_t>(std::distance(classGenParams.begin(), classParamIt));
+                                std::string substType = (idx < ownerArgs.size()) ? ownerArgs[idx] : parameter;
+                                substitutions.emplace(parameter, substType);
+                                found = substitutions.find(parameter);
+                            }
+                        }
+                    }
                     if (found == substitutions.end()) {
                         unified = false;
                         break;
@@ -1154,10 +1938,35 @@ namespace Absolute {
                     parameter = SubstituteGenericType(parameter, substitutions);
             }
             else if (!explicitTypeArguments.empty()) continue;
-            int cost = 0;
+            if (variadic && TypeOwnsResources(ArrayElementType(
+                ValueReferenceBaseType(concreteParameters.back()))))
+                continue;
+            int cost = variadic ? 1 : 0;
             bool applicable = true;
+            const bool directVariadicArray = variadic &&
+                arguments.size() == concreteParameters.size() &&
+                !arguments.empty() &&
+                ConversionCost(ValueReferenceBaseType(concreteParameters.back()),
+                    arguments.back().type) >= 0;
             for (size_t index = 0; index < arguments.size(); ++index) {
-                const int conversion = ConversionCost(concreteParameters[index], arguments[index].type);
+                std::string declaredParameter;
+                std::string parameterType;
+                if (!variadic || index < fixedCount) {
+                    declaredParameter = concreteParameters[index];
+                    parameterType = ValueReferenceBaseType(concreteParameters[index]);
+                }
+                else if (directVariadicArray) {
+                    declaredParameter = concreteParameters.back();
+                    parameterType = ValueReferenceBaseType(concreteParameters.back());
+                }
+                else {
+                    declaredParameter = ArrayElementType(concreteParameters.back());
+                    parameterType = ArrayElementType(
+                        ValueReferenceBaseType(concreteParameters.back()));
+                }
+                const Result& argument = arguments[index];
+                const int conversion = ConversionCost(
+                    parameterType, argument.type);
                 if (conversion < 0) {
                     applicable = false;
                     break;
@@ -1174,6 +1983,14 @@ namespace Absolute {
                 ambiguous = false;
             }
             else if (cost == bestCost) {
+                if (best != InvalidSymbolId) {
+                    const Symbol* bestSymbol = table.Get(best);
+                    if (bestSymbol && candidate &&
+                        bestSymbol->name == candidate->name &&
+                        bestSymbol->memberOwner == candidate->memberOwner) {
+                        continue;
+                    }
+                }
                 if (bestWasGeneric && !candidateIsGeneric) {
                     best = id;
                     bestGenericArguments.clear();
@@ -1207,7 +2024,8 @@ namespace Absolute {
         if (name.ends_with("[]"))
             return ResolveTypeReference(name.substr(0, name.size() - 2)) + "[]";
         if (IsPointerType(name)) {
-            const std::string prefix = IsRawPointerType(name) ? "raw " : "";
+            const std::string prefix = IsRawPointerType(name) ? "raw " :
+                (IsWeakPointerType(name) ? "weak " : "");
             return prefix + ResolveTypeReference(PointerPointee(name)) + "*";
         }
         for (auto scope = genericTypeScopes.rbegin(); scope != genericTypeScopes.rend(); ++scope)
@@ -1220,6 +2038,15 @@ namespace Absolute {
             const std::string resolvedBase = ResolveTypeReference(genericBase);
             for (std::string& argument : genericArguments)
                 argument = ResolveTypeReference(argument);
+            if (resolvedBase == "tuple") {
+                std::string result = "tuple<";
+                for (size_t index = 0; index < genericArguments.size(); ++index) {
+                    if (index) result += ",";
+                    result += genericArguments[index];
+                }
+                result += ">";
+                return result;
+            }
             const auto definition = types.find(resolvedBase);
             if (definition == types.end() || definition->second.genericParameters.empty())
                 return name;
@@ -1236,12 +2063,45 @@ namespace Absolute {
                 result += genericArguments[index];
             }
             result += ">";
-            instantiatedGenericTypes.insert(result);
+            const bool open = std::any_of(genericArguments.begin(), genericArguments.end(),
+                [&](const std::string& argument) {
+                    return std::any_of(genericTypeScopes.begin(), genericTypeScopes.end(),
+                        [&](const auto& scope) {
+                            const auto parameter = scope.find(argument);
+                            return parameter != scope.end() && parameter->second == argument;
+                        });
+                });
+            const bool inserted = instantiatedGenericTypes.insert(result).second;
+            if (inserted && !open) {
+                std::unordered_map<std::string, std::string> substitutions;
+                for (size_t index = 0; index < genericArguments.size(); ++index)
+                    substitutions.emplace(
+                        definition->second.genericParameters[index], genericArguments[index]);
+                for (const std::string& parent : definition->second.parents)
+                    ResolveTypeReference(SubstituteGenericType(parent, substitutions));
+                for (const auto& [memberName, overloads] : definition->second.members) {
+                    (void)memberName;
+                    for (const MemberSignature& member : overloads) {
+                        ResolveTypeReference(SubstituteGenericType(member.type, substitutions));
+                        for (const std::string& parameter : member.parameterTypes)
+                            ResolveTypeReference(SubstituteGenericType(parameter, substitutions));
+                    }
+                }
+            }
             return result;
         }
         if (PrimitiveStringToEnum(name).has_value() || name == "null" || name == "error") return name;
         const Symbol* symbol = table.Get(LookupSymbol(name));
-        return symbol && symbol->kind == SymbolKind::Type ? symbol->name : name;
+        if (symbol && symbol->kind == SymbolKind::Type) return symbol->name;
+        if (!currentNamespace.empty()) {
+            const std::string qualified = currentNamespace + "." + name;
+            if (types.contains(qualified)) return qualified;
+        }
+        for (const auto& [typeName, def] : types) {
+            if (typeName.size() > name.size() && typeName.ends_with("." + name))
+                return typeName;
+        }
+        return name;
     }
 
     std::string Analyzer::LookupTypeAliasName(const std::string& name) const {
@@ -1288,8 +2148,25 @@ namespace Absolute {
                 return true;
             if (currentMethodConst &&
                 (symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Property ||
-                    symbol->kind == SymbolKind::Indexer))
-                return true;
+                    symbol->kind == SymbolKind::Indexer)) {
+                Expression* receiverRoot = expression;
+                bool hasExplicitReceiver = false;
+                while (receiverRoot) {
+                    if (auto* member = dynamic_cast<MemberAccessExpr*>(receiverRoot)) {
+                        hasExplicitReceiver = true;
+                        receiverRoot = member->base.get();
+                    }
+                    else if (auto* array = dynamic_cast<ArrayAccessExpr*>(receiverRoot)) {
+                        receiverRoot = array->base.get();
+                    }
+                    else break;
+                }
+                const auto* receiverIdentifier =
+                    dynamic_cast<IdentifierExpr*>(receiverRoot);
+                if (!hasExplicitReceiver ||
+                    (receiverIdentifier && receiverIdentifier->name == "this"))
+                    return true;
+            }
         }
 
         Expression* current = expression;

@@ -1,0 +1,90 @@
+// Text input + gamepad probe.
+// Type to append characters. Backspace deletes. Esc quits.
+// If an XInput pad is connected, left stick moves a cursor; A flashes.
+
+int32 main() {
+    auto window = new Desktop.Window("Absolute Input", 720, 240, true);
+    if (!window.isOpen()) {
+        println("Could not create desktop window");
+        return 1;
+    }
+
+    // Soft "text" as a row of blocks (no font rasterizer yet).
+    int32 cells = 40;
+    int32 length = 0;
+    int32 codes[64];
+    int32 i = 0;
+    while (i < 64) {
+        codes[i] = 0;
+        i = i + 1;
+    }
+
+    double cursorX = 360.0;
+    double cursorY = 120.0;
+    bool flash = false;
+
+    while (window.poll()) {
+        if (window.keyPressed(Desktop.KeyEscape())) {
+            break;
+        } else {
+            while (window.textCount() > 0) {
+                int32 ch = window.textPop();
+                if (ch == 8) {
+                    if (length > 0) {
+                        length = length - 1;
+                        codes[length] = 0;
+                    }
+                } else if (ch >= 32 && length < cells) {
+                    codes[length] = ch;
+                    length = length + 1;
+                }
+            }
+
+            if (Desktop.gamepadConnected(0)) {
+                cursorX = cursorX + Desktop.gamepadAxis(0, Desktop.AxisLX()) * 280.0 * window.deltaTime();
+                cursorY = cursorY + Desktop.gamepadAxis(0, Desktop.AxisLY()) * 280.0 * window.deltaTime();
+                if (Desktop.gamepadButton(0, Desktop.PadA())) {
+                    flash = true;
+                } else {
+                    flash = false;
+                }
+            } else {
+                cursorX = (window.mouseX()) as double;
+                cursorY = (window.mouseY()) as double;
+                flash = window.mouseDown(Desktop.MouseLeft());
+            }
+
+            if (cursorX < 0.0) {
+                cursorX = 0.0;
+            }
+            if (cursorY < 0.0) {
+                cursorY = 0.0;
+            }
+            if (cursorX > (window.width() - 1) as double) {
+                cursorX = (window.width() - 1) as double;
+            }
+            if (cursorY > (window.height() - 1) as double) {
+                cursorY = (window.height() - 1) as double;
+            }
+
+            window.clear(Desktop.rgb(16, 18, 28));
+            // Draw typed codes as small bars (height encodes char value).
+            i = 0;
+            while (i < length) {
+                int32 h = 8 + (codes[i] % 40);
+                window.fillRect(20 + i * 16, 180 - h, 12, h, Desktop.rgb(120, 200, 255));
+                i = i + 1;
+            }
+            int32 cr = flash ? 255 : 90;
+            window.fillCircle((cursorX) as int32, (cursorY) as int32, 10, Desktop.rgb(cr, 200, 120));
+            if (Desktop.gamepadConnected(0)) {
+                window.fillRect(10, 10, 20, 20, Desktop.rgb(80, 220, 120));
+            } else {
+                window.fillRect(10, 10, 20, 20, Desktop.rgb(80, 80, 90));
+            }
+            window.present();
+        }
+    }
+
+    return 0;
+}

@@ -1,5 +1,6 @@
 int32 globalValues[5] = {2, 4, 6, 8, 10};
 int32[] inferredGlobal = {3, 7};
+int32[] groupedGlobal = {{1, 2}, {3, 4}};
 
 int32 sum(int32[] values) {
     int32 total = 0;
@@ -63,8 +64,25 @@ int32 main() {
     int32[] literalReturn = makeLiteral();
     assert(sum(literalReturn) == 42, "array literal as a return expression");
 
+    // Nested braces can group records while the declared storage stays flat.
+    int32[] groupedFlat = {
+        {1, 2, 3},
+        {4, 5, 6}
+    };
+    assert(groupedFlat.length == 6, "grouped flat literal length");
+    assert(groupedFlat[0] == 1 && groupedFlat[3] == 4 && groupedFlat[5] == 6,
+        "grouped flat literal row-major values");
+    assert(sum(groupedFlat) == 21, "grouped flat literal parameter");
+    assert(sum({{2, 3, 5}, {7, 11, 13}}) == 41,
+        "grouped flat literal as function argument");
+
+    int32 groupedFixed[6] = {{6, 5, 4}, {3, 2, 1}};
+    assert(sum(groupedFixed[]) == 21, "grouped fixed array initializer");
+    assert(sum(groupedGlobal[]) == 10, "grouped global array initializer");
+
     int32 checksum = sum(globalValues[]) + sum(inferredGlobal[]) +
-        sum(middle) + filtered + sum(returned) + sum(squares);
+        sum(middle) + filtered + sum(returned) + sum(squares) + sum(groupedFlat);
+    assert(checksum == 248, "advanced array checksum");
     println(format("advanced-arrays={}", checksum));
     return 0;
 }

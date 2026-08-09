@@ -4,7 +4,9 @@
 namespace Absolute {
     extern "C++" {
         PARSER_API std::vector<Token> Tokenize(const std::string& code);
-        PARSER_API std::unique_ptr<Program> ParseCode(const std::vector<Token>& tokens);
+        PARSER_API std::unique_ptr<Program> ParseCode(
+            const std::vector<Token>& tokens,
+            const std::string& sourceFile = {});
     }
 
     class PARSER_API Parser {
@@ -12,9 +14,40 @@ namespace Absolute {
         std::vector<Token> tokens;
         std::vector<Token> modifiers;
         std::vector<Attribute> attributes;
+        std::string sourceFile;
         size_t pos = 0;
 
-        Parser(std::vector<Token> tokens) : tokens(std::move(tokens)) {}
+        // Expressions and statements are parsed by recursive descent, so
+        // nesting in the source becomes nesting on the machine stack: input
+        // deep enough overflowed it and killed the process. No real program
+        // nests this far, and the limit leaves room on the smaller main-thread
+        // stack Windows gives.
+        static constexpr size_t MaximumRecursionDepth = 1000;
+        size_t recursionDepth = 0;
+
+        // Counts one level of descent and gives it back on every exit path,
+        // including the throw that reports the overrun.
+        class RecursionGuard {
+        public:
+            explicit RecursionGuard(Parser& parser) : owner(parser) {
+                if (++owner.recursionDepth > MaximumRecursionDepth) {
+                    --owner.recursionDepth;
+                    owner.ReportSyntaxError(owner.CurrentToken(),
+                        "Expression or statement nesting is too deep");
+                    throw std::runtime_error(
+                        "Expression or statement nesting is too deep");
+                }
+            }
+            ~RecursionGuard() { --owner.recursionDepth; }
+            RecursionGuard(const RecursionGuard&) = delete;
+            RecursionGuard& operator=(const RecursionGuard&) = delete;
+
+        private:
+            Parser& owner;
+        };
+
+        Parser(std::vector<Token> tokens, std::string sourceFile = {})
+            : tokens(std::move(tokens)), sourceFile(std::move(sourceFile)) {}
 
         ~Parser() = default;
 
@@ -61,6 +94,7 @@ namespace Absolute {
         bool IsTemplateArgumentList(size_t start, size_t* close = nullptr) const;
 
         std::unique_ptr<Expression> ParseExpression();
+        std::unique_ptr<Expression> ParseExpressionImpl();
         std::vector<std::unique_ptr<VarDeclExpr>> ParseParameters();
         std::vector<std::unique_ptr<Expression>> ParseArguments();
         std::unique_ptr<AssignmentExpr> ParseAssignmentExpr(std::unique_ptr<Expression> leftValue);
@@ -72,7 +106,7 @@ namespace Absolute {
         std::unique_ptr<Expression> ParseLiteralExpr();
         std::unique_ptr<BooleanLiteralExpr> ParseBooleanLiteralExpr();
         std::unique_ptr<NumberLiteralExpr> ParseNumberLiteralExpr();
-        std::unique_ptr<StringLiteralExpr> ParseStringLiteralExpr();
+        std::unique_ptr<Expression> ParseStringLiteralExpr();
         std::unique_ptr<CharLiteralExpr> ParseCharLiteralExpr();
         std::unique_ptr<Expression> ParseBinaryExpr(int minPrecedence, std::unique_ptr<Expression> left);
         std::unique_ptr<Expression> ParsePrimaryExpr();
@@ -80,6 +114,7 @@ namespace Absolute {
         std::unique_ptr<Expression> ParseSuffixExpr(std::unique_ptr<Expression> base);
         std::unique_ptr<Expression> ParseTernaryExpr(std::unique_ptr<Expression> condition);
         std::unique_ptr<FunctionCallExpr> ParseFunctionCallExpr(std::unique_ptr<Expression> base);
+        std::unique_ptr<LambdaExpr> ParseLambdaExpr();
         std::unique_ptr<VarDeclExpr> ParseVarDeclExpr();
         std::unique_ptr<ArrayExpr> ParseArrayValues();
         std::unique_ptr<Expression> ParseArrayAccess(std::unique_ptr<Expression> base);
@@ -92,6 +127,7 @@ namespace Absolute {
 
         std::unique_ptr<Program> Parse();
         std::unique_ptr<Statement> ParseStatement();
+        std::unique_ptr<Statement> ParseStatementImpl();
         std::unique_ptr<Statement> ParseIdentifier();
         std::unique_ptr<CompoundStmt> ParseCompoundStatement();
         std::unique_ptr<VarDeclStmt> ParseVarDeclaration();
@@ -121,6 +157,9 @@ namespace Absolute {
         std::unique_ptr<ImportStmt> ParseImport();
         std::unique_ptr<NamespaceDeclStmt> ParseNamespace();
         std::string ParseQualifiedName();
-        std::unique_ptr<TypeExpr> ParsePointerSuffix(std::unique_ptr<TypeExpr> base, bool raw);
+        std::unique_ptr<TypeExpr> ParsePointerSuffix(
+            std::unique_ptr<TypeExpr> base, bool raw, bool weak = false,
+            bool shared = false);
+        std::string ParseParentTypeName();
     };
 }

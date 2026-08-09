@@ -1,0 +1,118 @@
+// std.log - leveled logging with a process-wide minimum level.
+
+namespace std.log {
+    enum Level {
+        Trace,
+        Debug,
+        Info,
+        Warn,
+        Error,
+        Off
+    }
+
+    class Config {
+        // Rank of the minimum level that will be emitted (default: Info).
+        public static int32 minLevel = 2;
+        public static int32 enabled = 1;
+    }
+
+    int32 rank(Level level) {
+        match (level) {
+        case Level.Trace:
+            return 0;
+        case Level.Debug:
+            return 1;
+        case Level.Info:
+            return 2;
+        case Level.Warn:
+            return 3;
+        case Level.Error:
+            return 4;
+        case Level.Off:
+            return 5;
+        }
+    }
+
+    string levelName(Level level) {
+        match (level) {
+        case Level.Trace:
+            return "TRACE";
+        case Level.Debug:
+            return "DEBUG";
+        case Level.Info:
+            return "INFO";
+        case Level.Warn:
+            return "WARN";
+        case Level.Error:
+            return "ERROR";
+        case Level.Off:
+            return "OFF";
+        }
+    }
+
+    void setEnabled(bool value) {
+        Config.enabled = value ? 1 : 0;
+    }
+
+    bool isEnabled() {
+        return Config.enabled != 0;
+    }
+
+    void setMinLevel(Level level) {
+        Config.minLevel = rank(level);
+    }
+
+    Level minLevel() {
+        int32 value = Config.minLevel;
+        if (value <= 0) {
+            return Level.Trace;
+        }
+        if (value == 1) {
+            return Level.Debug;
+        }
+        if (value == 2) {
+            return Level.Info;
+        }
+        if (value == 3) {
+            return Level.Warn;
+        }
+        if (value == 4) {
+            return Level.Error;
+        }
+        return Level.Off;
+    }
+
+    bool isEnabled(Level level) {
+        if (Config.enabled == 0) {
+            return false;
+        }
+        return rank(level) >= Config.minLevel && rank(level) < rank(Level.Off);
+    }
+
+    void log(Level level, string message) {
+        if (!isEnabled(level)) {
+            return;
+        }
+        println(format("[{}] {}", levelName(level), message));
+    }
+
+    void trace(string message) {
+        log(Level.Trace, message);
+    }
+
+    void debug(string message) {
+        log(Level.Debug, message);
+    }
+
+    void info(string message) {
+        log(Level.Info, message);
+    }
+
+    void warn(string message) {
+        log(Level.Warn, message);
+    }
+
+    void error(string message) {
+        log(Level.Error, message);
+    }
+}

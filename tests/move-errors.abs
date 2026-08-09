@@ -1,0 +1,15 @@
+class Leaf {
+}
+
+int32 main() {
+    move();
+    move(1, 2);
+    move(42);
+
+    Leaf obj = new Leaf();
+    Leaf copied = obj;
+    Leaf other;
+    other = obj;
+
+    return 0;
+}

@@ -1,0 +1,57 @@
+// Non-interactive: Vulkan HLSL triangle resources, draw one frame, exit.
+
+int32 main() {
+    auto window = new Desktop.Window("Absolute Vulkan triangle smoke", 320, 200, false);
+    if (!window.isOpen()) {
+        println("window failed");
+        return 1;
+    }
+    window.poll();
+
+    auto gpu = new Desktop.Gpu(window, Desktop.Gpu.BackendVulkan);
+    if (!gpu.isValid()) {
+        println("gpu failed");
+        println(gpu.lastError());
+        return 1;
+    }
+    println(gpu.backend());
+
+    string vs = "cbuffer Frame : register(b0) { float uTime; float3 _pad; };\nstruct VSIn { float3 aPos : POSITION; float3 aColor : TEXCOORD0; };\nstruct VSOut { float4 pos : SV_POSITION; float3 vColor : TEXCOORD0; };\nVSOut main(VSIn i) {\n  VSOut o; o.pos = float4(i.aPos.xy * 0.5, 0.0, 1.0); o.vColor = i.aColor; return o;\n}\n";
+    string ps = "struct PSIn { float4 pos : SV_POSITION; float3 vColor : TEXCOORD0; };\nfloat4 main(PSIn i) : SV_TARGET { return float4(i.vColor, 1.0); }\n";
+
+    auto program = gpu.createShader(vs, ps);
+    if (program == null) {
+        println("shader failed");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    float[] vertices = new float[18];
+    vertices[0] = 0.0; vertices[1] = 0.5; vertices[2] = 0.0;
+    vertices[3] = 1.0; vertices[4] = 0.2; vertices[5] = 0.2;
+    vertices[6] = -0.5; vertices[7] = -0.5; vertices[8] = 0.0;
+    vertices[9] = 0.2; vertices[10] = 1.0; vertices[11] = 0.2;
+    vertices[12] = 0.5; vertices[13] = -0.5; vertices[14] = 0.0;
+    vertices[15] = 0.2; vertices[16] = 0.2; vertices[17] = 1.0;
+
+    auto buffer = gpu.createVertexBuffer(vertices);
+    auto layout = gpu.createLayoutPos3Color3();
+    auto pipeline = gpu.createPipeline(program, layout);
+    if (buffer == null || layout == null || pipeline == null) {
+        println("resources failed");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    gpu.beginFrame();
+    gpu.clear(0.1, 0.15, 0.25, 1.0);
+    gpu.bind(pipeline);
+    gpu.bind(buffer);
+    gpu.setUniformF("uTime", 0.0);
+    gpu.draw(3);
+    gpu.endFrame();
+    gpu.present();
+
+    println("vulkan-triangle-smoke OK");
+    return 0;
+}

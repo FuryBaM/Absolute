@@ -3,6 +3,9 @@
 Absolute can be built, tested, and used on Windows without WSL. The supported
 toolchain is x64 MSVC plus the portable LLVM 18.1.8 development SDK.
 
+For the multi-OS host matrix (Linux, macOS, ARM64 status, CI jobs), see
+[`platforms.md`](platforms.md).
+
 ## Requirements
 
 - Windows 10 or newer;
@@ -15,29 +18,33 @@ toolchain is x64 MSVC plus the portable LLVM 18.1.8 development SDK.
 Run from Command Prompt or PowerShell in the repository root:
 
 ```bat
-build-windows.bat --bootstrap
+absolute build-compiler --bootstrap
 ```
 
 `--bootstrap` downloads the official
 `clang+llvm-18.1.8-x86_64-pc-windows-msvc.tar.xz` archive into
 `.absolute\downloads` and extracts it into `.absolute\toolchains`. Both paths
 are ignored by Git and no administrator access is required. The script finds
-Visual Studio with `vswhere`, initializes `vcvars64.bat`, builds Release, and
-runs the native test set.
+Visual Studio with `vswhere`, initializes `vcvars64.bat`, and builds Release.
+
+`build-windows.bat --bootstrap` is the equivalent low-level command.
+The `absolute build-compiler` shortcut only builds by default; add `--test` to
+run the complete CTest suite as well.
 
 Subsequent builds do not download anything:
 
 ```bat
-build-windows.bat
+absolute build-compiler
 ```
 
 Useful options:
 
 ```bat
-build-windows.bat -NoTest
-build-windows.bat -Clean
-build-windows.bat --frontend
-build-windows.bat --sccache
+absolute build-compiler -NoTest
+absolute build-compiler -Clean
+absolute build-compiler --frontend
+absolute build-compiler --sccache
+absolute build-compiler --test
 ```
 
 The frontend mode builds the parser, analyzer, CLI, and DLL plugins without
@@ -49,12 +56,23 @@ MSVC build to the locally bootstrapped Ninja generator so CMake can use the
 compiler launcher. Cached builds are kept separately under
 `.absolute\build\windows-release-sccache`.
 
-The default and recommended Windows toolchain is MSVC with the Visual Studio
-generator and `/MP`. An experimental `--clang-cl` switch exists for comparing
-toolchains, but the compiler version must be accepted by the installed Visual
-Studio STL. In particular, Visual Studio 2026 requires Clang 19 or newer while
-the validated Absolute backend SDK is LLVM 18.1.8; the build script detects
-this combination before configuration and prints a direct diagnostic.
+The default and recommended Windows toolchain is MSVC with the **Ninja**
+generator and `cl.exe` (what `build-windows.bat` and the
+`windows-msvc-release` / `windows-msvc-frontend` CMake presets use). Ninja is
+bootstrapped under `.absolute\toolchains\ninja` when you run
+`build-windows.bat` (or `scripts\windows\bootstrap-ninja.ps1`). The CMake
+presets point `CMAKE_MAKE_PROGRAM` at that binary and prepend it to `PATH`.
+
+Presets still need an initialized MSVC environment (`cl.exe` on `PATH`): use
+an **x64 Native Tools** shell, or prefer `build-windows.bat`, which runs
+`vcvars64.bat` via `vswhere`. Configuring the NMake generator from a plain
+shell fails with `nmake: no such file or directory` and is no longer used.
+
+An experimental `--clang-cl` switch exists for comparing toolchains, but the
+compiler version must be accepted by the installed Visual Studio STL. In
+particular, Visual Studio 2026 requires Clang 19 or newer while the validated
+Absolute backend SDK is LLVM 18.1.8; the build script detects this combination
+before configuration and prints a direct diagnostic.
 
 ## Using another LLVM SDK
 

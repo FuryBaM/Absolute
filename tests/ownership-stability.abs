@@ -1,0 +1,160 @@
+class StableNode {
+    public int32 value;
+    public StableNode* child;
+    public weak StableNode* parent;
+
+    public StableNode(int32 initial) {
+        value = initial;
+        child = null;
+        parent = null;
+    }
+
+    public void attach(int32 initial) {
+        child = new StableNode(initial);
+    }
+}
+
+struct StableAccumulator {
+    int64 value;
+}
+
+struct StablePacket {
+    int32[] values;
+    StableNode* node;
+
+    void initialize(int32 seed) {
+        values = copy({seed, seed + 1, seed + 2});
+        node = new StableNode(seed * 2);
+    }
+
+    int64 checksum() {
+        return values[0] + values[1] + values[2] + node.value;
+    }
+}
+
+void addTo(ref StableAccumulator destination, int64 value) {
+    destination.value += value;
+}
+
+int64 inspectNode(StableNode* node) {
+    assert(!isOwner(node), "ordinary managed argument must be a view");
+    return node.value + node.child.value;
+}
+
+int64 inspectArray(int32[] values) {
+    assert(!isOwner(values), "ordinary array argument must be a view");
+    return values[0] + values[3];
+}
+
+int64 inspectPacket(StablePacket packet) {
+    assert(!isOwner(packet), "ordinary aggregate argument must be a view");
+    return packet.checksum();
+}
+
+StableNode* routeNode(StableNode* node, bool forward) {
+    assert(isOwner(node), "move must deliver the node owner role");
+    if (isOwner(node)) {
+        if (forward) {
+            return move(node);
+        }
+    }
+    return null;
+}
+
+T* genericRoute<T>(T* value) {
+    return move(value);
+}
+
+int32[] routeArray(int32[] values) {
+    assert(isOwner(values), "move must deliver the array owner role");
+    return move(values);
+}
+
+void dropArray(int32[] values) {
+    assert(isOwner(values), "array drop must receive ownership");
+}
+
+StablePacket routePacket(StablePacket packet) {
+    assert(isOwner(packet), "move must deliver the aggregate owner role");
+    return move(packet);
+}
+
+void dropPacket(StablePacket packet) {
+    assert(isOwner(packet), "aggregate drop must receive ownership");
+    assert(packet.checksum() >= 0, "owned aggregate remains usable");
+}
+
+int32 main() {
+    StableAccumulator checksum;
+    checksum.value = 0;
+    raw int64* checksumPlace = &checksum.value;
+    weak StableNode* stale = null;
+    int32 round = 0;
+
+    while (round < 500) {
+        assert(!stale, "expired weak handle must stay expired before slot reuse");
+
+        StableNode* root = new StableNode(round);
+        assert(!stale, "slot reuse must not revive an old weak handle");
+        root.attach(round + 1);
+        root.child.parent = root;
+
+        StableNode* subscriber = root;
+        weak StableNode* rootObserver = root;
+        weak StableNode* childObserver = root.child;
+        stale = root;
+
+        assert(isOwner(root) && !isOwner(subscriber),
+            "owner place and subscriber place keep distinct static roles");
+        addTo(checksum, inspectNode(root));
+        assert(inspectNode(subscriber) == round + round + 1,
+            "subscriber can enter the same view parameter");
+
+        if ((round & 1) == 0) {
+            StableNode* forwarded =
+                genericRoute<StableNode>(routeNode(move(root), true));
+            assert(forwarded.value == round,
+                "guarded and generic forwarding preserve the pointee");
+            delete forwarded;
+        }
+        else {
+            StableNode* dropped = routeNode(move(root), false);
+            assert(!dropped, "owner-role RAII path returns null");
+        }
+
+        assert(!subscriber && !rootObserver && !childObserver && !stale,
+            "destroying either owner path expires every alias");
+
+        int32[] values = copy({round, round + 1, round + 2, round + 3});
+        addTo(checksum, inspectArray(values));
+        if ((round & 1) == 0) {
+            int32[] forwardedValues = routeArray(move(values));
+            assert(forwardedValues[1] == round + 1,
+                "array owner survives forwarding");
+        }
+        else {
+            dropArray(move(values));
+        }
+
+        StablePacket packet;
+        packet.initialize(round + 10);
+        addTo(checksum, inspectPacket(packet));
+        if ((round & 1) == 0) {
+            StablePacket forwardedPacket = routePacket(move(packet));
+            assert(forwardedPacket.node.value == (round + 10) * 2,
+                "aggregate owner survives forwarding");
+        }
+        else {
+            dropPacket(move(packet));
+        }
+
+        assert(*checksumPlace == checksum.value,
+            "raw address keeps the identity of a ref-mutated place");
+        round += 1;
+    }
+
+    assert(checksum.value == 1151250, "ownership stability checksum");
+    println("ownership-stability=ok");
+    println(checksum.value);
+    return 0;
+}

@@ -1,0 +1,103 @@
+import "string.abs";
+
+namespace std.uri {
+    class Uri {
+        public string scheme;
+        public string host;
+        public int32 port;
+        public string path;
+        public string query;
+        public string fragment;
+
+        public Uri() {
+            scheme = "http";
+            host = "";
+            port = 80;
+            path = "/";
+            query = "";
+            fragment = "";
+        }
+
+        public void destroy() {}
+        public void dispose() { destroy(); }
+
+        public string toString() {
+            string result = format("{}://{}", scheme, host);
+            if (port != 80) {
+                if (port != 443) {
+                    result = format("{}:{}", result, port);
+                }
+            }
+            result = format("{}{}", result, path);
+            if (query != "") {
+                result = format("{}?{}", result, query);
+            }
+            if (fragment != "") {
+                result = format("{}#{}", result, fragment);
+            }
+            return result;
+        }
+    }
+
+    Uri* parse(string rawUrl) {
+        Uri* uri = new Uri();
+        string remaining = rawUrl;
+
+        int32 schemeEnd = std.text.indexOf(remaining, "://");
+        if (schemeEnd >= 0) {
+            uri.scheme = std.text.substring(remaining, 0, schemeEnd);
+            remaining = std.text.substring(remaining, schemeEnd + 3, std.text.codePointCount(remaining) - (schemeEnd + 3));
+            if (uri.scheme == "https") {
+                uri.port = 443;
+            }
+        }
+
+        int32 fragStart = std.text.indexOf(remaining, "#");
+        if (fragStart >= 0) {
+            uri.fragment = std.text.substring(remaining, fragStart + 1, std.text.codePointCount(remaining) - (fragStart + 1));
+            remaining = std.text.substring(remaining, 0, fragStart);
+        }
+
+        int32 queryStart = std.text.indexOf(remaining, "?");
+        if (queryStart >= 0) {
+            uri.query = std.text.substring(remaining, queryStart + 1, std.text.codePointCount(remaining) - (queryStart + 1));
+            remaining = std.text.substring(remaining, 0, queryStart);
+        }
+
+        int32 pathStart = std.text.indexOf(remaining, "/");
+        string authority = remaining;
+        if (pathStart >= 0) {
+            uri.path = std.text.substring(remaining, pathStart, std.text.codePointCount(remaining) - pathStart);
+            authority = std.text.substring(remaining, 0, pathStart);
+        } else {
+            uri.path = "/";
+        }
+
+        int32 portSep = std.text.indexOf(authority, ":");
+        if (portSep >= 0) {
+            uri.host = std.text.substring(authority, 0, portSep);
+            string portStr = std.text.substring(authority, portSep + 1, std.text.codePointCount(authority) - (portSep + 1));
+            uri.port = std.text.parseInt(portStr);
+        } else {
+            uri.host = authority;
+        }
+
+        return uri;
+    }
+
+    string encode(string text) {
+        string res = std.text.replace(text, " ", "%20");
+        res = std.text.replace(res, "\"", "%22");
+        res = std.text.replace(res, "<", "%3C");
+        res = std.text.replace(res, ">", "%3E");
+        return res;
+    }
+
+    string decode(string text) {
+        string res = std.text.replace(text, "%20", " ");
+        res = std.text.replace(res, "%22", "\"");
+        res = std.text.replace(res, "%3C", "<");
+        res = std.text.replace(res, "%3E", ">");
+        return res;
+    }
+}

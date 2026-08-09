@@ -1,0 +1,3 @@
+tools/absolute-wasm-host.js
+debugging/
+*.vsix

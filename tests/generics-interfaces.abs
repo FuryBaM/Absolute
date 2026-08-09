@@ -1,0 +1,19 @@
+interface ITransformer<TInput, TOutput> {
+    public TOutput transform(TInput value);
+}
+
+interface IIntTransformer : ITransformer<int32, int32> {
+}
+
+class Doubler : IIntTransformer {
+    public int32 transform(int32 value) {
+        return value * 2;
+    }
+}
+
+int32 main() {
+    ITransformer<int32, int32>* transformer = new Doubler();
+    assert(transformer.transform(21) == 42, "generic interface dispatch");
+    println("generic-interfaces=ok");
+    return 0;
+}

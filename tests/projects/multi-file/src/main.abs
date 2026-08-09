@@ -7,6 +7,7 @@ int32 main() {
     int32 result = add(Demo.Values.base(), 2);
     println(format("project={}", result));
     assert(result == 42, "cross-file namespace resolution failed");
-    Demo.Chess.play();
+    int32 chessProbe = Demo.Chess.A1() - Demo.Chess.A8();
+    assert(chessProbe == 56, "cross-file imported chess namespace failed");
     return 0;
 }

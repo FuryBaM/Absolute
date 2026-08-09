@@ -1,0 +1,96 @@
+// In-memory virtual filesystem and portable std.fs paths on wasm.
+import "../std/fs.abs";
+
+export "C" int32 wasm_fs_roundtrip() {
+    string joined = std.fs.join("/tmp/assets", "../hello.txt");
+    if (joined != "/tmp/hello.txt") {
+        return 1;
+    }
+    if (std.fs.normalize("tmp\\assets\\..\\hello.txt") != "tmp/hello.txt" ||
+        std.fs.join("/ignored", "/tmp/hello.txt") != "/tmp/hello.txt") {
+        return 7;
+    }
+    if (std.fs.parent(joined) != "/tmp" ||
+        std.fs.fileName(joined) != "hello.txt" ||
+        std.fs.stem(joined) != "hello" ||
+        std.fs.extensionOf(joined) != ".txt") {
+        return 2;
+    }
+
+    std.fs.Path* path = std.fs.path("/tmp");
+    path.push("nested");
+    path.push("..");
+    path.push("hello.txt");
+    path.writeText("hello-wasm");
+    if (!path.exists() || path.readText() != "hello-wasm") {
+        return 3;
+    }
+    if (path.size() != 10 || !path.absolute) {
+        return 4;
+    }
+
+    std.fs.Metadata metadata = std.fs.metadata(path.toString());
+    if (!metadata.isFile() || metadata.size != 10 ||
+        metadata.modifiedMillis <= 0) {
+        return 8;
+    }
+
+    string tree = "/tmp/tree";
+    string nested = "/tmp/tree/nested";
+    std.fs.createDirectories(tree);
+    std.fs.createDirectories(nested);
+    std.fs.writeText("/tmp/tree/a.txt", "a");
+    std.fs.writeText("/tmp/tree/nested/b.txt", "b");
+    string[] direct = std.fs.list(tree);
+    string[] recursive = std.fs.walk(tree);
+    if (direct.length != 2 || recursive.length != 3) {
+        return 9;
+    }
+
+    std.fs.Watcher* watcher = std.fs.watch(tree, true);
+    std.fs.writeText("/tmp/tree/new.txt", "new");
+    if (!watcher.poll()) {
+        return 10;
+    }
+    std.fs.FileEvent createdEvent = watcher.event;
+    if (createdEvent.kind != std.fs.EventKind.Created ||
+        createdEvent.path != "/tmp/tree/new.txt") {
+        return 10;
+    }
+    std.fs.remove("/tmp/tree/new.txt");
+    if (!watcher.poll()) {
+        return 11;
+    }
+    std.fs.FileEvent removedEvent = watcher.event;
+    if (removedEvent.kind != std.fs.EventKind.Removed) {
+        return 11;
+    }
+    delete watcher;
+
+    string temporaryFile = std.fs.createTempFile("wasm-");
+    string temporaryDirectory = std.fs.createTempDirectory("wasm-");
+    if (!std.fs.isFile(temporaryFile) ||
+        !std.fs.isDirectory(temporaryDirectory) ||
+        std.fs.tempDirectory() != "/tmp") {
+        return 12;
+    }
+    std.fs.remove(temporaryFile);
+    std.fs.remove(temporaryDirectory);
+
+    std.fs.remove("/tmp/tree/nested/b.txt");
+    std.fs.remove("/tmp/tree/a.txt");
+    std.fs.remove(nested);
+    std.fs.remove(tree);
+    path.remove();
+    if (path.exists()) {
+        return 6;
+    }
+    return 0;
+}
+
+int32 main() {
+    int32 code = wasm_fs_roundtrip();
+    assert(code == 0, "wasm fs roundtrip");
+    println("wasm-fs=ok");
+    return 0;
+}

@@ -1,0 +1,40 @@
+struct MissingClone {
+    int32 value;
+}
+
+struct MutableClone {
+    MutableClone clone() {
+        MutableClone result;
+        return result;
+    }
+}
+
+struct PrivateClone {
+    private PrivateClone clone() const {
+        PrivateClone result;
+        return result;
+    }
+}
+
+struct WrongCloneResult {
+    int32 clone() const {
+        return 42;
+    }
+}
+
+int32 main() {
+    MissingClone missing;
+    copy(missing);
+
+    MutableClone mutableValue;
+    copy(mutableValue);
+
+    PrivateClone privateValue;
+    copy(privateValue);
+
+    WrongCloneResult wrongResult;
+    copy(wrongResult);
+
+    copy(42);
+    return 0;
+}

@@ -1,0 +1,65 @@
+// Host-backed HTTP GET via env.absolute_http_get (see tools/absolute-wasm-host.js).
+import "../std/http.abs";
+
+extern "C" int32 absolute_http_get(string url, raw uint8* buffer, int32 capacity);
+
+export "C" int32 wasm_http_probe() {
+    std.http.Headers* headers = new std.http.Headers();
+    headers.add("X-Test", "one");
+    headers.put("x-test", "two");
+    if (headers.count != 1 || headers.value("X-TEST") != "two") {
+        delete headers;
+        return 10;
+    }
+    delete headers;
+
+    std.http.HttpResponse* parsed = std.http.parseResponse(
+        "HTTP/1.1 201 Created\r\nContent-Type: text/plain\r\nX-Wasm: yes\r\n\r\ncreated");
+    if (parsed.statusCode != 201 || parsed.statusText != "Created" ||
+        parsed.headers.value("x-wasm") != "yes" ||
+        parsed.body != "created") {
+        delete parsed;
+        return 11;
+    }
+    delete parsed;
+
+    std.form.FormData* form = new std.form.FormData();
+    form.addEntry(std.form.createEntry("name", "wasm"));
+    string multipart =
+        std.http.multipartBody(form, "wasm-boundary");
+    delete form;
+    std.form.FormData* decoded =
+        std.form.parseMultipart(multipart, "wasm-boundary");
+    if (decoded.getValue("name") != "wasm") {
+        delete decoded;
+        return 12;
+    }
+    delete decoded;
+
+    std.http.HttpResponse* secure =
+        std.http.fetch("https://example.test/hello");
+    if (secure.statusCode != 200 || secure.body != "hello") {
+        delete secure;
+        return 13;
+    }
+    delete secure;
+
+    uint8 buffer[64];
+    int32 n = absolute_http_get("https://example.test/hello", &buffer[0], 64);
+    if (n < 5) {
+        return 1;
+    }
+    // Expect mock body "hello"
+    if (buffer[0] != 104) { // 'h'
+        return 2;
+    }
+    if (buffer[1] != 101) { // 'e'
+        return 3;
+    }
+    return 0;
+}
+
+int32 main() {
+    println("wasm-http=ok");
+    return 0;
+}

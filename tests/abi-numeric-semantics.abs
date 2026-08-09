@@ -1,0 +1,46 @@
+int32 main() {
+    int8 signedMaximum = 127;
+    int8 signedOne = 1;
+    int8 signedWrapped = signedMaximum + signedOne;
+    assert(signedWrapped == -128, "signed int8 overflow wraps");
+
+    uint8 unsignedMaximum = 255;
+    uint8 unsignedOne = 1;
+    uint8 unsignedWrapped = unsignedMaximum + unsignedOne;
+    assert(unsignedWrapped == 0, "unsigned int8 overflow wraps");
+
+    int16 productLeft = 30000;
+    int16 productRight = 2;
+    int16 productWrapped = productLeft * productRight;
+    assert(productWrapped == -5536, "signed multiplication overflow wraps");
+
+    int8 negative = -1;
+    uint8 allBits = negative as uint8;
+    int8 signedAgain = allBits as int8;
+    int64 widenedSigned = negative;
+    uint64 widenedUnsigned = allBits;
+    assert(allBits == 255, "signed to unsigned conversion preserves bits");
+    assert(signedAgain == -1, "unsigned to signed conversion preserves bits");
+    assert(widenedSigned == -1, "signed widening sign extends");
+    assert(widenedUnsigned == 255, "unsigned widening zero extends");
+
+    float single = 1.5;
+    double widenedReal = single;
+    double realResult = widenedReal * 4.0 + 0.5;
+    int32 truncated = realResult as int32;
+    assert(realResult == 6.5, "floating point arithmetic");
+    assert(truncated == 6, "floating point to integer truncation");
+
+    int32 folded = ((6 * 7) + (100 / 4)) - (3 << 2);
+    int32 runtimeSix = 6;
+    int32 runtimeSeven = 7;
+    int32 runtimeValue =
+        ((runtimeSix * runtimeSeven) + (100 / 4)) - (3 << 2);
+    bool foldedPredicate =
+        (folded == 55) && ((8 | 2) == 10) && ((15 & 6) == 6);
+    assert(foldedPredicate, "constant arithmetic and bitwise folding");
+    assert(runtimeValue == folded, "constant and runtime arithmetic agree");
+
+    println("numeric-semantics=ok");
+    return 0;
+}

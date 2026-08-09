@@ -1,0 +1,28 @@
+// WASI-backed services: clock, random entropy, args, env seed.
+extern "C" int64 absolute_time_unix_millis();
+extern "C" uint64 absolute_random_entropy();
+extern "C" int32 absolute_process_args_count();
+extern "C" string absolute_process_arg_at(int32 index);
+extern "C" int32 absolute_env_has(string name);
+extern "C" string absolute_env_get(string name);
+
+int32 main() {
+    int64 millis = absolute_time_unix_millis();
+    assert(millis > 0, "wasi clock");
+
+    uint64 entropy = absolute_random_entropy();
+    assert(entropy != 0, "wasi random");
+
+    int32 argc = absolute_process_args_count();
+    assert(argc >= 1, "wasi args count");
+    string arg0 = absolute_process_arg_at(0);
+    assert(arg0 != "", "wasi arg0");
+
+    // Runner passes ABSOLUTE_WASI_TEST=1
+    assert(absolute_env_has("ABSOLUTE_WASI_TEST") == 1, "wasi env has");
+    string marker = absolute_env_get("ABSOLUTE_WASI_TEST");
+    assert(marker == "1", "wasi env get");
+
+    println("wasm-wasi-services=ok");
+    return 0;
+}

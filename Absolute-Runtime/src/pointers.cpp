@@ -3,16 +3,27 @@
 #include <iostream>
 #include <limits>
 #include <vector>
+#include <atomic>
+#include <mutex>
 
 namespace {
     struct Slot {
         void* pointer = nullptr;
         std::uint32_t generation = 1;
         std::uint64_t type = 0;
+        void (*deleter)(void*) = nullptr;
     };
+}
 
+namespace {
+    std::mutex slotsMutex;
+    std::once_flag leakCheckRegistration;
     std::vector<Slot> slots;
     std::vector<std::uint32_t> freeSlots;
+
+    void DefaultDeleter(void* pointer) {
+        std::free(pointer);
+    }
 
     std::uint64_t MakeHandle(std::uint32_t id, std::uint32_t generation) {
         return (static_cast<std::uint64_t>(generation) << 32U) | id;
@@ -33,35 +44,63 @@ namespace {
         Slot& slot = slots[id];
         return slot.generation == HandleGeneration(handle) ? &slot : nullptr;
     }
+
+    std::uint64_t RegisterAllocation(
+        void* allocation, void (*deleter)(void*)) {
+        std::lock_guard<std::mutex> lock(slotsMutex);
+        std::uint32_t id;
+        if (!freeSlots.empty()) {
+            id = freeSlots.back();
+            freeSlots.pop_back();
+            slots[id].pointer = allocation;
+            slots[id].type = 0;
+            slots[id].deleter = deleter ? deleter : DefaultDeleter;
+        }
+        else {
+            if (slots.size() >= std::numeric_limits<std::uint32_t>::max()) {
+                std::cerr << "Absolute runtime error: managed pointer slot table is full\n";
+                std::abort();
+            }
+            id = static_cast<std::uint32_t>(slots.size());
+            slots.push_back({allocation, 1, 0,
+                deleter ? deleter : DefaultDeleter});
+        }
+        return MakeHandle(id, slots[id].generation);
+    }
+}
+
+extern "C" void absolute_managed_check_leaks() {
+    std::lock_guard<std::mutex> lock(slotsMutex);
+    std::uint32_t leakCount = 0;
+    for (size_t i = 0; i < slots.size(); ++i) {
+        if (slots[i].pointer != nullptr) {
+            std::cerr << "Absolute runtime error: memory leak detected for handle " 
+                      << MakeHandle(static_cast<std::uint32_t>(i), slots[i].generation) << "\n";
+            leakCount++;
+        }
+    }
+    if (leakCount > 0) {
+        std::cerr << "Absolute runtime error: " << leakCount << " managed pointer(s) leaked!\n";
+        std::abort();
+    }
 }
 
 extern "C" std::uint64_t absolute_managed_create(std::uint64_t size) {
+    std::call_once(leakCheckRegistration, [] {
+        std::atexit(absolute_managed_check_leaks);
+    });
+
     void* allocation = std::calloc(1, static_cast<std::size_t>(size == 0 ? 1 : size));
     if (!allocation) {
         std::cerr << "Absolute runtime error: managed allocation failed\n";
         std::abort();
     }
 
-    std::uint32_t id;
-    if (!freeSlots.empty()) {
-        id = freeSlots.back();
-        freeSlots.pop_back();
-        slots[id].pointer = allocation;
-        slots[id].type = 0;
-    }
-    else {
-        if (slots.size() >= std::numeric_limits<std::uint32_t>::max()) {
-            std::free(allocation);
-            std::cerr << "Absolute runtime error: managed pointer slot table is full\n";
-            std::abort();
-        }
-        id = static_cast<std::uint32_t>(slots.size());
-        slots.push_back({allocation, 1});
-    }
-    return MakeHandle(id, slots[id].generation);
+    return RegisterAllocation(allocation, DefaultDeleter);
 }
 
 extern "C" void* absolute_managed_get(std::uint64_t handle) {
+    std::lock_guard<std::mutex> lock(slotsMutex);
     Slot* slot = Find(handle);
     return slot ? slot->pointer : nullptr;
 }
@@ -71,10 +110,12 @@ extern "C" bool absolute_managed_valid(std::uint64_t handle) {
 }
 
 extern "C" void absolute_managed_set_type(std::uint64_t handle, std::uint64_t type) {
+    std::lock_guard<std::mutex> lock(slotsMutex);
     if (Slot* slot = Find(handle)) slot->type = type;
 }
 
 extern "C" std::uint64_t absolute_managed_type(std::uint64_t handle) {
+    std::lock_guard<std::mutex> lock(slotsMutex);
     if (Slot* slot = Find(handle)) return slot->type;
     return 0;
 }
@@ -86,13 +127,93 @@ extern "C" void* absolute_managed_require(std::uint64_t handle) {
 }
 
 extern "C" void absolute_managed_destroy(std::uint64_t handle) {
+    void* pointer = nullptr;
+    void (*deleter)(void*) = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(slotsMutex);
+        Slot* slot = Find(handle);
+        if (!slot || !slot->pointer) return;
+        const std::uint32_t id = HandleId(handle);
+        pointer = slot->pointer;
+        deleter = slot->deleter ? slot->deleter : DefaultDeleter;
+        slot->pointer = nullptr;
+        slot->type = 0;
+        slot->deleter = nullptr;
+        ++slot->generation;
+        if (slot->generation == 0) ++slot->generation;
+        freeSlots.push_back(id);
+    }
+    deleter(pointer);
+}
+
+extern "C" std::uint64_t absolute_managed_transfer(std::uint64_t handle) {
+    std::lock_guard<std::mutex> lock(slotsMutex);
     Slot* slot = Find(handle);
-    if (!slot || !slot->pointer) return;
+    if (!slot || !slot->pointer) {
+        std::cerr << "Absolute runtime error: cannot transfer a null or expired managed owner\n";
+        std::abort();
+    }
     const std::uint32_t id = HandleId(handle);
-    std::free(slot->pointer);
-    slot->pointer = nullptr;
-    slot->type = 0;
     ++slot->generation;
     if (slot->generation == 0) ++slot->generation;
-    freeSlots.push_back(id);
+    return MakeHandle(id, slot->generation);
+}
+
+namespace {
+    struct CapsuleImpl {
+        std::uint64_t handle = 0;
+        std::atomic<bool> transferred{false};
+        void (*deleter_fn)(void*) = nullptr;
+    };
+}
+
+extern "C" void* absolute_capsule_create_typed(
+    std::uint64_t handle, void (*deleter)(void*));
+
+extern "C" void* absolute_capsule_create(std::uint64_t handle) {
+    return absolute_capsule_create_typed(handle, nullptr);
+}
+
+extern "C" void* absolute_capsule_create_typed(
+    std::uint64_t handle, void (*deleter)(void*)) {
+    CapsuleImpl* capsule = new CapsuleImpl;
+    capsule->handle = absolute_managed_transfer(handle);
+    capsule->deleter_fn = deleter;
+    return capsule;
+}
+
+extern "C" std::uint64_t absolute_capsule_unwrap(void* capsulePtr) {
+    if (!capsulePtr) {
+        std::cerr << "Absolute runtime error: cannot unwrap a null transfer capsule\n";
+        std::abort();
+    }
+    CapsuleImpl* capsule = static_cast<CapsuleImpl*>(capsulePtr);
+    if (capsule->transferred.exchange(true)) {
+        std::cerr << "Absolute runtime error: transfer capsule already unwrapped or transferred\n";
+        std::abort();
+    }
+    std::uint64_t handle = capsule->handle;
+    delete capsule;
+    return handle;
+}
+
+extern "C" void absolute_capsule_destroy(void* capsulePtr) {
+    if (!capsulePtr) return;
+    CapsuleImpl* capsule = static_cast<CapsuleImpl*>(capsulePtr);
+    if (!capsule->transferred.load() && capsule->handle != 0) {
+        if (capsule->deleter_fn) {
+            void* rawObj = absolute_managed_get(capsule->handle);
+            if (rawObj) capsule->deleter_fn(rawObj);
+        }
+        absolute_managed_destroy(capsule->handle);
+    }
+    delete capsule;
+}
+
+extern "C" std::uint64_t absolute_managed_adopt_raw(void* ptr, void (*deleter)(void*)) {
+    if (!ptr) return 0;
+    std::call_once(leakCheckRegistration, [] {
+        std::atexit(absolute_managed_check_leaks);
+    });
+    return RegisterAllocation(ptr, deleter ? deleter : DefaultDeleter);
 }

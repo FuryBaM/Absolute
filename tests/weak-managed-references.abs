@@ -1,0 +1,53 @@
+class WeakNode {
+    public int32 value;
+    public weak WeakNode* peer;
+
+    public WeakNode(int32 initial) {
+        value = initial;
+        peer = null;
+    }
+
+    public void connect(WeakNode* other) {
+        peer = other;
+    }
+
+    public int32 read() {
+        return value;
+    }
+
+    public weak WeakNode* observedPeer() {
+        return peer;
+    }
+}
+
+weak WeakNode* observe(WeakNode* node) {
+    return node;
+}
+
+int32 main() {
+    WeakNode* left = new WeakNode(20);
+    WeakNode* right = new WeakNode(22);
+
+    left.connect(right);
+    right.connect(left);
+
+    weak WeakNode* leftObserver = left;
+    weak WeakNode* rightObserver = observe(right);
+    assert(leftObserver.read() == 20, "weak local dereference");
+    assert(left.observedPeer().read() == 22, "weak field and return");
+
+    delete left;
+    assert(!leftObserver, "weak local expires with owner");
+    assert(!right.observedPeer(), "weak back-reference expires with owner");
+    assert(rightObserver.read() == 22, "independent weak handle remains live");
+
+    WeakNode* replacement = new WeakNode(30);
+    assert(!leftObserver, "slot reuse cannot revive an old weak generation");
+    assert(!right.observedPeer(), "reused slot cannot revive a weak field");
+    delete replacement;
+
+    delete right;
+    assert(!rightObserver, "returned weak handle expires with owner");
+    println("weak-managed=ok");
+    return 0;
+}

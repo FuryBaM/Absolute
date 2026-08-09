@@ -41,6 +41,12 @@ namespace Absolute {
         if (memberDeclaration) pendingMemberAccess = DeclaredAccess(*stmt);
         AcceptIfPresent(stmt->expr, *this);
         pendingMemberAccess = oldAccess;
+        if (phase == Phase::ResolveBodies && stmt->expr) {
+            const ExpressionInfo* info = GetExpressionInfo(*stmt->expr);
+            if (info && info->isMoveResult)
+                Report("move result must be consumed by an assignment, field store, "
+                    "argument, or return", "E_MOVE_RESULT_UNUSED", info->symbol);
+        }
     }
 
     void Analyzer::Visit(CompoundStmt* stmt) {
@@ -82,6 +88,9 @@ namespace Absolute {
                 if (!overloads.empty()) {
                     Symbol* symbol = table.Get(overloads.back().symbol);
                     if (symbol) {
+                        symbol->asyncFunction = HasModifier(*stmt, "async");
+                        symbol->variadicParameter = !stmt->parameters.empty() &&
+                            stmt->parameters.back()->isParams;
                         symbol->genericParameters = types[currentType].genericParameters;
                         for (const Token& parameter : stmt->templateParams)
                             symbol->genericParameters.push_back(parameter.value);
@@ -102,6 +111,8 @@ namespace Absolute {
                     currentType + "." + stmt->name->value + "'");
             for (const auto& parameter : stmt->parameters) {
                 const std::string parameterType = ResolveDeclaredType(*parameter);
+                ValidateValueReferenceParameter(*parameter, parameterType,
+                    currentType + "." + stmt->name->value);
                 if (!IsKnownType(parameterType))
                     Report("unknown parameter type '" + parameterType + "' of interface method '" +
                         currentType + "." + stmt->name->value + "'");
@@ -142,16 +153,36 @@ namespace Absolute {
             Report("return is not allowed inside defer", "E_DEFER_CONTROL_TRANSFER");
         if (functionDepth == 0) Report("return statement is outside a function");
         const Result value = EvaluateExpected(stmt->expr.get(), currentReturnType);
+        if (Symbol* source = table.Get(value.symbol);
+            source && source->rolePolymorphic &&
+            !ownerGuardedParameters.contains(source->id) &&
+            ParameterSupportsOwnership(currentReturnType)) {
+            if (Symbol* callable = table.Get(source->callableOwner)) {
+                if (callable->parameterRequiresOwner.size() <=
+                    source->parameterIndex)
+                    callable->parameterRequiresOwner.resize(
+                        source->parameterIndex + 1, false);
+                callable->parameterRequiresOwner[
+                    source->parameterIndex] = true;
+                source->requiresOwner = true;
+            }
+        }
         if (!IsAssignable(currentReturnType, value.type))
             Report("return type '" + value.type + "' does not match '" + currentReturnType + "'");
+        bool transfersAggregateOwner = value.isMoveResult;
+        if (const Symbol* source = table.Get(value.symbol)) {
+            transfersAggregateOwner = transfersAggregateOwner ||
+                source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;
+        }
         if (ArrayRank(currentReturnType) == 0 && !IsPointerType(currentReturnType) &&
-            TypeOwnsResources(currentReturnType)) {
+            TypeOwnsResources(currentReturnType) && !transfersAggregateOwner) {
             Report("resource-owning aggregate '" + currentReturnType +
-                "' cannot be returned by value; explicit move semantics are not implemented yet",
+                "' cannot be returned by value; use move(...) for lvalues",
                 "E_RESOURCE_AGGREGATE_RETURN", value.symbol);
         }
         if (ArrayRank(currentReturnType) > 0 && value.type != "error") {
-            bool storageEscapes = IsExplicitArrayCopy(stmt->expr.get());
+            bool storageEscapes = IsExplicitArrayCopy(stmt->expr.get()) ||
+                value.createsArrayOwner || value.isMoveResult;
             if (const Symbol* symbol = table.Get(value.symbol)) {
                 storageEscapes = storageEscapes || symbol->arrayStorageEscapes ||
                     symbol->scopeDepth == 0 || symbol->kind == SymbolKind::Function ||
@@ -165,12 +196,32 @@ namespace Absolute {
             Report("return expression contains an invalid pointer", "E_RETURN_INVALID_POINTER", value.symbol);
         else if (value.pointerValidity == PointerValidity::MaybeInvalid)
             Report("return expression may contain an invalid pointer", "E_RETURN_MAYBE_INVALID_POINTER", value.symbol);
-        if (IsManagedPointerType(currentReturnType) && value.type != "error" &&
+        if (IsStrongManagedPointerType(currentReturnType) && value.type != "error" &&
             value.type != "null" &&
             !value.createsManagedOwner && !value.referencesManagedOwner)
-            Report("a managed pointer return must transfer an owner; subscribers cannot escape their owner");
-        CheckKeepScopesFrom(0, "return");
-        CheckTaskScopesFrom(0, "return");
+            Report("a managed pointer return must transfer an owner; subscribers and aggregate fields cannot escape their owner",
+                "E_MANAGED_RETURN_REQUIRES_OWNER", value.symbol);
+        if (IsWeakPointerType(currentReturnType) && value.type != "error" &&
+            value.type != "null") {
+            const Symbol* owner = table.Get(value.pointerOwner);
+            if (value.createsManagedOwner ||
+                (owner && owner->managedOwner && !owner->rolePolymorphic &&
+                    owner->scopeDepth > 0))
+                Report("returning a weak reference to a local owner would produce an immediately expired handle",
+                    "E_WEAK_RETURN_LOCAL_OWNER", value.symbol);
+        }
+        if (IsRawPointerType(currentReturnType) && value.type != "error" && value.type != "null") {
+            if (const Symbol* owner = table.Get(value.pointerOwner)) {
+                if (owner->scopeDepth > 0)
+                    Report("cannot return a raw pointer to a local variable", "E_RAW_RETURN_LOCAL", value.symbol);
+            }
+        }
+        const size_t keepBoundary = lambdaFunctionBoundaries.empty()
+            ? 0 : lambdaFunctionBoundaries.back().keepScopeDepth;
+        const size_t valueBoundary = lambdaFunctionBoundaries.empty()
+            ? 0 : lambdaFunctionBoundaries.back().valueFlowScopeDepth;
+        CheckKeepScopesFrom(keepBoundary, "return");
+        CheckTaskScopesFrom(valueBoundary, "return");
         flowTerminated = true;
     }
 
@@ -199,6 +250,7 @@ namespace Absolute {
         pendingMemberAccess = oldAccess;
         if (phase != Phase::ResolveBodies || functionDepth == 0 || !stmt->expr) return;
         const ExpressionInfo* declaration = GetExpressionInfo(*stmt->expr);
+        if (declaration) ResolveTypeReference(declaration->type);
         const ExpressionInfo* initializer = stmt->expr->value
             ? GetExpressionInfo(*stmt->expr->value) : nullptr;
         const SymbolId id = declaration ? declaration->symbol : InvalidSymbolId;
@@ -223,7 +275,13 @@ namespace Absolute {
             flowTerminated = false;
             const Result condition = Evaluate(branch.condition.get());
             if (!IsConditionType(condition.type)) Report("if condition must be boolean-compatible");
+            const SymbolId guardedOwner =
+                OwnerGuardParameter(branch.condition.get());
+            if (guardedOwner != InvalidSymbolId)
+                ownerGuardedParameters.insert(guardedOwner);
             AcceptIfPresent(branch.body, *this);
+            if (guardedOwner != InvalidSymbolId)
+                ownerGuardedParameters.erase(guardedOwner);
             if (!flowTerminated) {
                 continuingPaths.push_back(keepLifetimes);
                 continuingValuePaths.push_back(valueFlow);
@@ -370,6 +428,8 @@ namespace Absolute {
     void Analyzer::Visit(ThrowStmt* stmt) {
         usesExceptions = true;
         if (phase == Phase::CollectDeclarations) return;
+        if (currentFunctionNoThrow)
+            Report("nothrow callable cannot throw", "E_NOTHROW_THROWS");
         if (finallyDepth > 0)
             Report("throw is not allowed inside finally", "E_FINALLY_CONTROL_TRANSFER");
         if (deferDepth > 0)
@@ -396,8 +456,12 @@ namespace Absolute {
                     transferred.insert(exception.pointerOwner);
             }
         }
-        CheckKeepScopesFrom(0, "throw");
-        CheckTaskScopesFrom(0, "throw");
+        const size_t keepBoundary = lambdaFunctionBoundaries.empty()
+            ? 0 : lambdaFunctionBoundaries.back().keepScopeDepth;
+        const size_t valueBoundary = lambdaFunctionBoundaries.empty()
+            ? 0 : lambdaFunctionBoundaries.back().valueFlowScopeDepth;
+        CheckKeepScopesFrom(keepBoundary, "throw");
+        CheckTaskScopesFrom(valueBoundary, "throw");
         flowTerminated = true;
     }
 
@@ -658,14 +722,56 @@ namespace Absolute {
         PushKeepScope();
         PushValueFlowScope();
         const Result iterable = Evaluate(stmt->iterable.get());
-        if (!iterable.type.ends_with("[]") && iterable.type != "error") Report("for-each source must be an array");
-        else if (ArrayRank(iterable.type) != 1 && iterable.type != "error")
-            Report("for-each currently requires a one-dimensional array or slice");
+        bool isArray = iterable.type.ends_with("[]");
+        std::string elementType = "error";
+        
+        if (isArray) {
+            if (ArrayRank(iterable.type) != 1 && iterable.type != "error")
+                Report("for-each currently requires a one-dimensional array or slice");
+            else if (iterable.type != "error") elementType = ArrayElementType(iterable.type);
+        } else if (iterable.type != "error") {
+            const auto iterateMembers = FindMembers(iterable.type, "iterate");
+            const auto iterateMethod = std::find_if(iterateMembers.begin(), iterateMembers.end(),
+                [](const MemberSignature& m) { return m.kind == SymbolKind::Method; });
+            
+            if (iterateMethod == iterateMembers.end()) {
+                Report("for-each source '" + iterable.type + "' requires an 'iterate()' method or must be an array");
+            } else {
+                if (iterateMethod->parameterTypes.size() > 0)
+                    Report("'iterate' method on '" + iterable.type + "' must take 0 arguments");
+                std::string iteratorType = iterateMethod->type;
+                
+                const auto nextMembers = FindMembers(iteratorType, "next");
+                const auto nextMethod = std::find_if(nextMembers.begin(), nextMembers.end(),
+                    [](const MemberSignature& m) { return m.kind == SymbolKind::Method; });
+                if (nextMethod == nextMembers.end())
+                    Report("iterator '" + iteratorType + "' requires a 'next()' method");
+                else if (nextMethod->type != "bool")
+                    Report("'next()' method on '" + iteratorType + "' must return bool");
+                else if (nextMethod->parameterTypes.size() > 0)
+                    Report("'next()' method on '" + iteratorType + "' must take 0 arguments");
+                
+                const auto valueMembers = FindMembers(iteratorType, "value");
+                const auto valueProperty = std::find_if(valueMembers.begin(), valueMembers.end(),
+                    [](const MemberSignature& m) { return m.kind == SymbolKind::Property; });
+                const auto valueMethod = std::find_if(valueMembers.begin(), valueMembers.end(),
+                    [](const MemberSignature& m) { return m.kind == SymbolKind::Method; });
+                
+                if (valueProperty != valueMembers.end()) {
+                    elementType = valueProperty->type;
+                } else if (valueMethod != valueMembers.end()) {
+                    if (valueMethod->parameterTypes.size() > 0)
+                        Report("'value()' method on '" + iteratorType + "' must take 0 arguments");
+                    elementType = valueMethod->type;
+                } else {
+                    Report("iterator '" + iteratorType + "' requires a 'value' property or 'value()' method");
+                }
+            }
+        }
+        
         AcceptIfPresent(stmt->var, *this);
         if (stmt->var) {
             if (const ExpressionInfo* variable = GetExpressionInfo(*stmt->var)) {
-                const std::string elementType = ArrayRank(iterable.type) == 1
-                    ? ArrayElementType(iterable.type) : "error";
                 if (!IsAssignable(variable->type, elementType))
                     Report("for-each variable has type '" + variable->type +
                         "', expected '" + elementType + "'");
@@ -762,10 +868,44 @@ namespace Absolute {
     void Analyzer::Visit(ImportStmt* stmt) {
         if (phase == Phase::ResolveBodies && !stmt->attributes.empty())
             ValidateAttributes(*stmt, "import declaration", false);
-        if (stmt->isFile) return;
-        importedNamespaces.insert(stmt->target);
-        if (phase == Phase::ResolveBodies && !namespaces.contains(stmt->target))
-            Report("unknown imported namespace '" + stmt->target + "'");
+
+        std::string clean = stmt->target;
+        if (stmt->isFile) {
+            if (clean.starts_with("./")) clean = clean.substr(2);
+            while (clean.starts_with("../")) clean = clean.substr(3);
+            if (clean.ends_with(".abs")) clean = clean.substr(0, clean.size() - 4);
+            std::replace(clean.begin(), clean.end(), '/', '.');
+            std::replace(clean.begin(), clean.end(), '\\', '.');
+        }
+
+        std::vector<std::string> candidates;
+        candidates.push_back(clean);
+        std::string curr = clean;
+        while (true) {
+            size_t dotPos = curr.rfind('.');
+            if (dotPos == std::string::npos) break;
+            curr = curr.substr(0, dotPos);
+            if (!curr.empty()) candidates.push_back(curr);
+        }
+
+        for (const std::string& ns : candidates) {
+            importedNamespaces.insert(ns);
+        }
+
+        if (phase == Phase::ResolveBodies) {
+            bool foundAny = stmt->isFile;
+            if (!foundAny) {
+                for (const std::string& ns : candidates) {
+                    if (namespaces.contains(ns)) {
+                        foundAny = true;
+                        break;
+                    }
+                }
+            }
+            if (!foundAny) {
+                Report("unknown imported namespace '" + stmt->target + "'");
+            }
+        }
     }
 
     void Analyzer::Visit(NamespaceDeclStmt* stmt) {

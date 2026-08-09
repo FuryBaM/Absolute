@@ -133,6 +133,10 @@ namespace Absolute {
         visitor.Visit(this);
     }
 
+    void LambdaExpr::Accept(ExpressionVisitor& visitor) {
+        visitor.Visit(this);
+    }
+
     void SingleStatement::Accept(StatementVisitor& visitor) {
         visitor.Visit(this);
     }

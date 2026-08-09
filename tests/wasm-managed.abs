@@ -1,0 +1,24 @@
+// Managed pointers on wasm via Absolute-Runtime wasm subset.
+class Box {
+    public int32 value;
+
+    public Box(int32 initial) {
+        value = initial;
+    }
+}
+
+export "C" int32 wasm_box_sum(int32 left, int32 right) {
+    Box* a = new Box(left);
+    Box* b = new Box(right);
+    int32 total = a.value + b.value;
+    delete a;
+    delete b;
+    return total;
+}
+
+int32 main() {
+    int32 total = wasm_box_sum(20, 22);
+    assert(total == 42, "managed box sum");
+    println("wasm-managed=ok");
+    return 0;
+}

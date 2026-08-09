@@ -31,29 +31,80 @@ namespace Absolute {
         const bool owningField = targetSymbol &&
             (targetSymbol->kind == SymbolKind::Field ||
              targetSymbol->kind == SymbolKind::Property);
-        if (owningField && IsManagedPointerType(target.type) &&
-            value.type != "null" && !value.createsManagedOwner) {
-            Report("managed resource fields require a fresh owner or null; "
-                "store a copy/owner instead of a subscriber",
-                "E_RESOURCE_FIELD_REQUIRES_OWNER", target.symbol);
+        if (owningField && IsStrongManagedPointerType(target.type) && value.type != "null") {
+            bool createsOwnershipCycle = false;
+            if (auto* member = dynamic_cast<MemberAccessExpr*>(expr->target.get())) {
+                Expression* rootExpr = member->base.get();
+                while (auto* parentMember = dynamic_cast<MemberAccessExpr*>(rootExpr)) {
+                    rootExpr = parentMember->base.get();
+                }
+                const SymbolId root = LookupSymbol(ExtractIdentifier(rootExpr));
+                SymbolId targetOwner = root;
+                if (const auto flow = valueFlow.find(root);
+                    flow != valueFlow.end() && flow->second.pointerOwner != InvalidSymbolId)
+                    targetOwner = flow->second.pointerOwner;
+                createsOwnershipCycle = targetOwner != InvalidSymbolId &&
+                    (value.pointerOwner == targetOwner || value.symbol == targetOwner);
+            }
+            if (createsOwnershipCycle) {
+                Report("owning field assignment would create a strong managed ownership cycle; "
+                    "use weak T* for the back-edge",
+                    "E_MANAGED_OWNERSHIP_CYCLE", target.symbol);
+            }
+            else if (!value.createsManagedOwner) {
+                Report("managed resource fields require a fresh owner or null; "
+                    "store a copy/owner instead of a subscriber",
+                    "E_RESOURCE_FIELD_REQUIRES_OWNER", target.symbol);
+            }
+        }
+        if (IsWeakPointerType(target.type) && value.createsManagedOwner) {
+            Report("weak pointer cannot take ownership of a fresh managed allocation; "
+                "bind the allocation to a managed owner first",
+                "E_WEAK_REQUIRES_EXISTING_OWNER", target.symbol);
         }
         if (owningField && ArrayRank(target.type) > 0) {
-            bool transfersOwner = IsExplicitArrayCopy(expr->value.get());
+            bool transfersOwner = value.createsArrayOwner ||
+                IsExplicitArrayCopy(expr->value.get());
             if (const Symbol* source = table.Get(value.symbol)) {
                 transfersOwner = transfersOwner || source->scopeDepth == 0 ||
                     source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;
             }
             if (!transfersOwner)
-                Report("array resource fields require copy(...), a returned array, or a global view",
+                Report("array resource fields require copy(...), move(...), a returned array, or a global view",
                     "E_ARRAY_FIELD_REQUIRES_OWNER", target.symbol);
         }
+        if (ArrayRank(target.type) > 0) {
+            if (Symbol* symbol = table.Get(target.symbol))
+                symbol->ownsArrayStorage = symbol->ownsArrayStorage ||
+                    value.createsArrayOwner;
+        }
+        bool transfersAggregateOwner = value.isMoveResult;
+        if (const Symbol* source = table.Get(value.symbol)) {
+            transfersAggregateOwner = transfersAggregateOwner ||
+                source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;
+        }
         if (ArrayRank(target.type) == 0 && !IsPointerType(target.type) &&
-            TypeOwnsResources(target.type)) {
+            TypeOwnsResources(target.type) && !transfersAggregateOwner) {
             Report("resource-owning aggregate '" + target.type +
-                "' cannot be copied; explicit move semantics are not implemented yet",
+                "' cannot be copied; use move(...) for lvalues",
                 "E_RESOURCE_AGGREGATE_COPY", target.symbol);
         }
-        if (IsManagedPointerType(target.type)) {
+        if (IsRawPointerType(target.type) && value.type != "error" && value.type != "null") {
+            const Symbol* owner = table.Get(value.pointerOwner);
+            if (owner && owner->scopeDepth > 0) {
+                bool escapes = false;
+                if (!targetSymbol) escapes = true;
+                else if (targetSymbol->scopeDepth == 0) escapes = true;
+                else if (owningField) escapes = true;
+                else if (targetSymbol->scopeDepth < owner->scopeDepth) escapes = true;
+
+                if (escapes) {
+                    Report("cannot assign a raw pointer to a local variable to a longer-lived location",
+                           "E_RAW_ESCAPE_LOCAL", value.symbol);
+                }
+            }
+        }
+        if (IsStrongManagedPointerType(target.type)) {
             if (Symbol* symbol = table.Get(target.symbol)) {
                 const bool assignsOwner = value.createsManagedOwner;
                 const bool assignsBorrower = value.type != "null" && !assignsOwner &&
@@ -69,6 +120,19 @@ namespace Absolute {
                 symbol->managedOwner = symbol->managedOwner || assignsOwner;
                 symbol->managedBorrower = symbol->managedBorrower || assignsBorrower;
             }
+        }
+        if (value.isMoveResult && value.createsManagedOwner) {
+            SymbolId nextOwner = owningField ? InvalidSymbolId : target.symbol;
+            if (owningField) {
+                if (auto* member = dynamic_cast<MemberAccessExpr*>(expr->target.get())) {
+                    const SymbolId root = LookupSymbol(ExtractIdentifier(member->base.get()));
+                    nextOwner = root;
+                    if (const auto flow = valueFlow.find(root);
+                        flow != valueFlow.end() && flow->second.pointerOwner != InvalidSymbolId)
+                        nextOwner = flow->second.pointerOwner;
+                }
+            }
+            TransferManagedAliases(value.pointerOwner, nextOwner);
         }
         if (const auto keep = keepLifetimes.find(target.symbol); keep != keepLifetimes.end()) {
             if (keep->second.state != KeepState::Deleted)
@@ -96,11 +160,20 @@ namespace Absolute {
     }
 
     void Analyzer::Visit(VarDeclExpr* expr) {
-        const std::string name = ExtractIdentifier(expr->name.get());
+        Expression* baseDeclarator = expr->name.get();
+        std::vector<Expression*> declaratorIndexes;
+        while (auto* access = dynamic_cast<ArrayAccessExpr*>(baseDeclarator)) {
+            for (const auto& index : access->indexes) {
+                declaratorIndexes.push_back(index.get());
+            }
+            baseDeclarator = access->base.get();
+        }
+        std::reverse(declaratorIndexes.begin(), declaratorIndexes.end());
+
+        const std::string name = ExtractIdentifier(baseDeclarator);
         const std::string declarationName = currentType.empty() && functionDepth == 0 ? Qualify(name) : name;
         std::string type = ResolveType(expr->type.get());
-        auto* arrayDeclarator = dynamic_cast<ArrayAccessExpr*>(expr->name.get());
-        const size_t arrayRank = arrayDeclarator ? arrayDeclarator->indexes.size() : 0;
+        const size_t arrayRank = declaratorIndexes.size();
         if (arrayRank > 0) type = ArrayType(std::move(type), arrayRank);
         const bool fieldDeclaration = !currentType.empty() && functionDepth == 0;
         if (phase == Phase::CollectDeclarations) {
@@ -125,17 +198,16 @@ namespace Absolute {
                 "E_STATIC_GENERIC_UNSUPPORTED");
         if (!IsKnownType(type)) Report("unknown type '" + type + "' of variable '" + name + "'");
         std::optional<std::vector<size_t>> initializerShape;
-        if (arrayDeclarator) {
-            if (arrayDeclarator->indexes.empty()) Report("array variable '" + name + "' requires a dimension");
-            for (const auto& size : arrayDeclarator->indexes) {
+        if (arrayRank > 0) {
+            for (Expression* size : declaratorIndexes) {
                 if (!size) continue;
-                const Result resolved = Evaluate(size.get());
+                const Result resolved = Evaluate(size);
                 if (!IsInteger(resolved.type) && resolved.type != "error")
                     Report("array size must be an integer, got '" + resolved.type + "'");
                 if (currentType.empty() && functionDepth == 0 &&
-                    !dynamic_cast<const NumberLiteralExpr*>(size.get()))
+                    !dynamic_cast<const NumberLiteralExpr*>(size))
                     Report("global array dimensions must be constant integer literals");
-                if (const auto* literal = dynamic_cast<const NumberLiteralExpr*>(size.get())) {
+                if (const auto* literal = dynamic_cast<const NumberLiteralExpr*>(size)) {
                     try {
                         if (std::stoll(literal->value) <= 0) Report("array size must be greater than zero");
                     }
@@ -145,14 +217,14 @@ namespace Absolute {
                 }
             }
             if (const auto* literal = dynamic_cast<const ArrayExpr*>(expr->value.get())) {
-                initializerShape = InferArrayShape(*literal);
+                initializerShape = InferArrayStorageShape(*literal, arrayRank);
                 if (!initializerShape) Report("array initializer must be rectangular");
                 else if (initializerShape->size() != arrayRank)
                     Report("array initializer has " + std::to_string(initializerShape->size()) +
                         " dimension(s), expected " + std::to_string(arrayRank));
             }
-            for (size_t dimension = 0; dimension < arrayDeclarator->indexes.size(); ++dimension) {
-                const auto& size = arrayDeclarator->indexes[dimension];
+            for (size_t dimension = 0; dimension < declaratorIndexes.size(); ++dimension) {
+                Expression* size = declaratorIndexes[dimension];
                 if (!size) {
                     if (!initializerShape || dimension >= initializerShape->size())
                         Report("array dimension " + std::to_string(dimension + 1) +
@@ -160,7 +232,7 @@ namespace Absolute {
                     continue;
                 }
                 if (initializerShape && dimension < initializerShape->size()) {
-                    if (const auto* literal = dynamic_cast<const NumberLiteralExpr*>(size.get())) {
+                    if (const auto* literal = dynamic_cast<const NumberLiteralExpr*>(size)) {
                         try {
                             if (static_cast<size_t>(std::stoull(literal->value)) != (*initializerShape)[dimension])
                                 Report("array initializer size does not match dimension " +
@@ -237,18 +309,33 @@ namespace Absolute {
                         source->kind == SymbolKind::Method;
                 }
                 symbol->arrayStorageEscapes = storageEscapes;
+                symbol->ownsArrayStorage = value.createsArrayOwner ||
+                    IsExplicitArrayCopy(expr->value.get());
             }
+        }
+        if (IsWeakPointerType(type) && value.createsManagedOwner) {
+            Report("weak pointer '" + name +
+                "' cannot own a fresh managed allocation; declare a managed owner first",
+                "E_WEAK_REQUIRES_EXISTING_OWNER", id);
         }
         if (IsManagedPointerType(type)) {
             if (Symbol* symbol = table.Get(id)) {
-                symbol->managedOwner = value.createsManagedOwner;
-                symbol->managedBorrower = expr->value && value.type != "null" &&
-                    !value.createsManagedOwner && value.pointerOwner != InvalidSymbolId;
+                symbol->managedOwner = IsStrongManagedPointerType(type) && value.createsManagedOwner;
+                symbol->managedBorrower = IsWeakPointerType(type) ||
+                    (expr->value && value.type != "null" &&
+                        !value.createsManagedOwner && value.pointerOwner != InvalidSymbolId);
             }
         }
         else if (Symbol* symbol = table.Get(id)) symbol->type = type;
+        if (value.isMoveResult && value.createsManagedOwner)
+            TransferManagedAliases(value.pointerOwner, id);
         ValueFlowState flow;
-        flow.initialization = (expr->value || arrayRank > 0)
+        std::string defName = type;
+        std::string genBase;
+        std::vector<std::string> genArgs;
+        if (ParseGenericTypeName(type, genBase, genArgs)) defName = genBase;
+        const bool isStructType = types.contains(defName) && types.at(defName).kind == TypeKind::Struct;
+        flow.initialization = (expr->value || arrayRank > 0 || isStructType)
             ? InitializationState::Initialized : InitializationState::Uninitialized;
         flow.pointerValidity = IsPointerType(type)
             ? (expr->value ? value.pointerValidity : PointerValidity::Unknown)
@@ -341,8 +428,55 @@ namespace Absolute {
         }
 
         const Result base = Evaluate(expr->base.get());
+        if (ArrayRank(base.type) > 0) {
+            if (expr->member == "length" || expr->member == "count") {
+                if (accessMode == AccessMode::Write || accessMode == AccessMode::Address || accessMode == AccessMode::Delete) {
+                    Report("array property '" + expr->member + "' is read-only", "E_PROPERTY_READ_ONLY");
+                }
+                callable = false;
+                callableParameters.clear();
+                Save(expr, {InvalidSymbolId, "int32", false});
+                return;
+            }
+        }
+        std::string tupleBase;
+        std::vector<std::string> tupleElements;
+        if (ParseGenericTypeName(base.type, tupleBase, tupleElements) &&
+            tupleBase == "tuple") {
+            if (expr->member == "length" || expr->member == "count") {
+                if (accessMode != AccessMode::Read)
+                    Report("tuple property '" + expr->member + "' is read-only",
+                        "E_PROPERTY_READ_ONLY");
+                callable = false;
+                callableParameters.clear();
+                Save(expr, {InvalidSymbolId, "int32", false});
+                return;
+            }
+            if (expr->member.starts_with("item")) {
+                const std::string suffix = expr->member.substr(4);
+                const bool digits = !suffix.empty() &&
+                    std::all_of(suffix.begin(), suffix.end(),
+                        [](unsigned char value) { return std::isdigit(value); });
+                size_t index = tupleElements.size();
+                if (digits) {
+                    try { index = static_cast<size_t>(std::stoull(suffix)); }
+                    catch (...) { index = tupleElements.size(); }
+                }
+                if (index < tupleElements.size()) {
+                    callable = false;
+                    callableParameters.clear();
+                    Save(expr, {base.symbol, tupleElements[index], base.isLValue});
+                    return;
+                }
+            }
+            Report("tuple type '" + base.type + "' has no member '" +
+                expr->member + "'", "E_TUPLE_MEMBER");
+            Save(expr, {InvalidSymbolId, "error", false});
+            return;
+        }
         if (base.pointerValidity == PointerValidity::Deleted ||
             base.pointerValidity == PointerValidity::Expired) {
+
             Report("member access uses an invalid pointer", "E_INVALID_POINTER_ACCESS", base.symbol);
         }
         else if (base.pointerValidity == PointerValidity::MaybeInvalid) {
@@ -427,8 +561,12 @@ namespace Absolute {
             }
             std::string resultType = target;
             if (!IsPointerType(resultType))
-                resultType = (IsRawPointerType(base.type) ? "raw " : "") + target + "*";
-            else if (IsRawPointerType(resultType) != IsRawPointerType(base.type))
+                resultType = (IsRawPointerType(base.type) ? "raw " :
+                    (IsWeakPointerType(base.type) ? "weak " : "")) + target + "*";
+            else if (!((IsRawPointerType(resultType) && IsRawPointerType(base.type)) ||
+                (IsWeakPointerType(resultType) && IsManagedPointerType(base.type)) ||
+                (IsStrongManagedPointerType(resultType) &&
+                    IsStrongManagedPointerType(base.type))))
                 Report("safe cast cannot change pointer ownership mode from '" + base.type +
                     "' to '" + resultType + "'", "E_SAFE_CAST_OWNERSHIP");
             Result cast{InvalidSymbolId, resultType, false,
@@ -442,13 +580,26 @@ namespace Absolute {
             return;
         }
 
-        if (!IsAssignable(target, base.type) && !(IsNumeric(target) && IsNumeric(base.type)))
+        const bool pointerToInt = IsInteger(target) && IsRawPointerType(base.type);
+        const bool intToPointer = IsRawPointerType(target) && IsInteger(base.type);
+        if (!IsAssignable(target, base.type) && !(IsNumeric(target) && IsNumeric(base.type)) && !pointerToInt && !intToPointer)
             Report("cannot cast '" + base.type + "' to '" + target + "'");
         Save(expr, {InvalidSymbolId, target, false});
     }
 
     void Analyzer::Visit(ConstructorCallExpr* expr) {
         const std::string constructedType = ResolveType(expr->constructName.get());
+        if (ArrayRank(constructedType) > 0) {
+            if (!expr->arguments.empty()) {
+                EvaluateExpected(expr->arguments[0].get(), "int64");
+            }
+            Result allocation{InvalidSymbolId, constructedType, false,
+                true, false, InitializationState::Initialized,
+                PointerValidity::Live, InvalidSymbolId};
+            allocation.createsArrayOwner = true;
+            Save(expr, std::move(allocation));
+            return;
+        }
         const bool rawAllocation = expr->raw ||
             (IsRawPointerType(expectedType) && PointerPointee(expectedType) == constructedType);
         if (!IsKnownType(constructedType) || constructedType == "void" || constructedType == "auto" ||
@@ -475,26 +626,51 @@ namespace Absolute {
             Report("primitive allocation accepts at most one initializer");
         std::vector<std::string> parameters;
         if (!primitive) {
-            const auto found = types.find(definitionName);
-            if (found != types.end() && found->second.constructor) {
-                RequireAccess(found->second.constructor->access, definitionName,
-                    definitionName, found->second.constructor->symbol);
-                parameters = found->second.constructor->parameterTypes;
+            std::vector<Result> evaluated;
+            evaluated.reserve(expr->arguments.size());
+            for (const auto& argument : expr->arguments)
+                evaluated.push_back(Evaluate(argument.get()));
+            std::vector<MemberSignature> constructors = ConstructorsOf(constructedType);
+            const MemberSignature* selected = SelectConstructor(
+                constructors, evaluated, constructedType, substitutions);
+            if (selected) {
+                RequireAccess(selected->access, definitionName,
+                    definitionName, selected->symbol);
+                parameters = selected->parameterTypes;
                 for (std::string& parameter : parameters)
                     parameter = SubstituteGenericType(parameter, substitutions);
             }
-            if (expr->arguments.size() != parameters.size())
-                Report("constructor of '" + constructedType + "' expects " +
-                    std::to_string(parameters.size()) + " argument(s), got " +
-                    std::to_string(expr->arguments.size()));
+            for (size_t index = 0; index < expr->arguments.size(); ++index) {
+                const std::string declaredExpected = index < parameters.size()
+                    ? parameters[index] : std::string{};
+                const std::string expected =
+                    ValueReferenceBaseType(declaredExpected);
+                const Result& value = evaluated[index];
+                if (!expected.empty() && !IsAssignable(expected, value.type))
+                    Report("constructor argument " + std::to_string(index + 1) + " has type '" +
+                        value.type + "', expected '" + expected + "'");
+                CheckManagedMoveArgument(value, declaredExpected, index, "constructor");
+            }
+            if (selected)
+                RecordOwnershipCall(selected->symbol, evaluated, parameters,
+                    "constructor '" + constructedType + "'");
+            Result allocation{InvalidSymbolId,
+                (rawAllocation ? "raw " : "") + constructedType + "*", false,
+                !rawAllocation, false, InitializationState::Initialized,
+                PointerValidity::Live, InvalidSymbolId};
+            allocation.createsRawOwner = rawAllocation;
+            Save(expr, std::move(allocation));
+            if (!parameters.empty() || selected)
+                expressionInfo[expr].parameterTypes = parameters;
+            return;
         }
         for (size_t index = 0; index < expr->arguments.size(); ++index) {
-            const std::string expected = primitive ? constructedType :
-                (index < parameters.size() ? parameters[index] : std::string{});
+            const std::string expected = constructedType;
             const Result value = EvaluateExpected(expr->arguments[index].get(), expected);
             if (!expected.empty() && !IsAssignable(expected, value.type))
                 Report("constructor argument " + std::to_string(index + 1) + " has type '" +
                     value.type + "', expected '" + expected + "'");
+            CheckManagedMoveArgument(value, expected, index, "constructor");
         }
         Result allocation{InvalidSymbolId,
             (rawAllocation ? "raw " : "") + constructedType + "*", false,
@@ -521,6 +697,19 @@ namespace Absolute {
             }
         }
         const auto keep = keepLifetimes.find(target.symbol);
+        Symbol* targetSymbol = table.Get(target.symbol);
+        if (targetSymbol && targetSymbol->rolePolymorphic &&
+            !ownerGuardedParameters.contains(targetSymbol->id)) {
+            if (Symbol* callable = table.Get(targetSymbol->callableOwner)) {
+                if (callable->parameterRequiresOwner.size() <=
+                    targetSymbol->parameterIndex)
+                    callable->parameterRequiresOwner.resize(
+                        targetSymbol->parameterIndex + 1, false);
+                callable->parameterRequiresOwner[
+                    targetSymbol->parameterIndex] = true;
+                targetSymbol->requiresOwner = true;
+            }
+        }
         if (target.initialization == InitializationState::Uninitialized)
             Report("pointer is deleted before initialization", "E_DELETE_UNINITIALIZED", target.symbol);
         else if (target.initialization == InitializationState::MaybeUninitialized)
@@ -532,6 +721,12 @@ namespace Absolute {
         else if (target.pointerValidity == PointerValidity::MaybeInvalid)
             Report("pointer may already be invalid when deleted", "E_DELETE_MAYBE_INVALID", target.symbol);
 
+        if (IsWeakPointerType(target.type))
+            Report("weak managed pointer cannot be deleted; delete its owner instead",
+                "E_WEAK_DELETE", target.symbol);
+        if (IsValueReferenceType(target.type) || (targetSymbol && (targetSymbol->valueReference || targetSymbol->constValueReference)))
+            Report("reference parameter or alias cannot be deleted",
+                "E_REF_DELETE", target.symbol);
         if (IsManagedPointerType(target.type) && target.pointerValidity != PointerValidity::Null &&
             target.pointerOwner != target.symbol)
             Report("managed subscriber cannot be deleted; delete its owner instead",
@@ -596,20 +791,31 @@ namespace Absolute {
             definition != types.end() && definition->second.kind == TypeKind::Interface)
             Report("interface '" + type + "' must be used through raw or managed pointer");
         else if (!expr->value) {
+            // Default stack construction uses the zero-argument constructor.
             if (const auto definition = types.find(definitionName);
-                definition != types.end() && definition->second.constructor)
-                RequireAccess(definition->second.constructor->access, definitionName,
-                    definitionName, definition->second.constructor->symbol);
+                definition != types.end()) {
+                for (const MemberSignature& constructor : definition->second.constructors) {
+                    if (!constructor.parameterTypes.empty()) continue;
+                    RequireAccess(constructor.access, definitionName,
+                        definitionName, constructor.symbol);
+                    break;
+                }
+            }
         }
         Result value;
         if (expr->value) value = Evaluate(expr->value.get());
         if (expr->value && !IsAssignable(type, value.type))
             Report("initializer of '" + name + "' has type '" + value.type + "', expected '" + type + "'");
+        bool transfersAggregateOwner = value.isMoveResult;
+        if (const Symbol* source = table.Get(value.symbol)) {
+            transfersAggregateOwner = transfersAggregateOwner ||
+                source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;
+        }
         if (expr->value && ArrayRank(type) == 0 && !IsPointerType(type) &&
-            TypeOwnsResources(type))
+            TypeOwnsResources(type) && !transfersAggregateOwner)
             Report("resource-owning aggregate '" + type +
                 "' cannot be copied into '" + name +
-                "'; explicit move semantics are not implemented yet",
+                "'; use move(...) for lvalues",
                 "E_RESOURCE_AGGREGATE_COPY", value.symbol);
         if (expr->isConst && currentType.empty() && !expr->value)
             Report("const variable '" + name + "' requires an initializer",
@@ -678,9 +884,26 @@ namespace Absolute {
         accessMode = previousAccess;
         if (expr->op == "&") {
             if (!operand.isLValue) Report("operator '&' requires an assignable value");
+            Expression* root = expr->operand.get();
+            while (root) {
+                if (auto* member = dynamic_cast<MemberAccessExpr*>(root)) {
+                    root = member->base.get();
+                    continue;
+                }
+                if (auto* array = dynamic_cast<ArrayAccessExpr*>(root)) {
+                    root = array->base.get();
+                    continue;
+                }
+                break;
+            }
+            const ExpressionInfo* rootInfo = root ? GetExpressionInfo(*root) : nullptr;
+            const Symbol* rootSymbol = rootInfo ? table.Get(rootInfo->symbol) : nullptr;
+            if (rootSymbol && rootSymbol->valueReference)
+                Report("a value-reference parameter cannot be converted to a raw pointer",
+                    "E_VALUE_REF_ADDRESS_ESCAPE", rootSymbol->id);
             CheckMutableTarget(expr->operand.get(), operand, "taking a mutable address");
             Save(expr, {InvalidSymbolId, "raw " + operand.type + "*", false, false, false,
-                InitializationState::Initialized, PointerValidity::Live, InvalidSymbolId});
+                InitializationState::Initialized, PointerValidity::Live, operand.symbol});
             return;
         }
         if (expr->op == "*") {
@@ -748,6 +971,82 @@ namespace Absolute {
             Save(expr, {InvalidSymbolId, "task<" + valueType + ">", false});
             return;
         }
+        if (typeContext && templateName == "tuple") {
+            if (expr->types.size() < 2) {
+                Report("tuple requires at least two element types",
+                    "E_TUPLE_TYPE_ARITY");
+                Save(expr, {InvalidSymbolId, "error", false});
+                return;
+            }
+            std::vector<std::string> elements;
+            elements.reserve(expr->types.size());
+            for (const auto& type : expr->types) {
+                const std::string element = ResolveType(type.get());
+                if (element == "void" || element == "auto" ||
+                    element == "dynamic")
+                    Report("tuple elements require concrete non-void types",
+                        "E_TUPLE_ELEMENT_TYPE");
+                if (TypeOwnsResources(element))
+                    Report("tuple element type '" + element +
+                        "' owns resources and is not supported yet",
+                        "E_TUPLE_RESOURCE_ELEMENT");
+                elements.push_back(element);
+            }
+            std::string tupleType = "tuple<";
+            for (size_t index = 0; index < elements.size(); ++index) {
+                if (index) tupleType += ",";
+                tupleType += elements[index];
+            }
+            tupleType += ">";
+            Save(expr, {InvalidSymbolId, std::move(tupleType), false});
+            return;
+        }
+        if (typeContext && templateName == "func") {
+            if (expr->types.empty()) {
+                Report("func requires a return type", "E_FUNCTION_TYPE_ARITY");
+                Save(expr, {InvalidSymbolId, "error", false});
+                return;
+            }
+            std::vector<std::string> types;
+            types.reserve(expr->types.size());
+            for (const auto& type : expr->types) types.push_back(ResolveType(type.get()));
+            if (types.front() == "auto" || types.front() == "dynamic")
+                Report("func return type must be concrete", "E_FUNCTION_TYPE_RETURN");
+            for (size_t index = 1; index < types.size(); ++index)
+                if (types[index] == "void" || types[index] == "auto" || types[index] == "dynamic")
+                    Report("func parameter types must be concrete non-void types",
+                        "E_FUNCTION_TYPE_PARAMETER");
+            Save(expr, {InvalidSymbolId,
+                FunctionTypeName(types.front(), std::vector<std::string>(types.begin() + 1, types.end())),
+                false});
+            return;
+        }
+        if (typeContext && templateName == "cfunc") {
+            if (expr->types.empty()) {
+                Report("cfunc requires a return type", "E_CFUNC_TYPE_ARITY");
+                Save(expr, {InvalidSymbolId, "error", false});
+                return;
+            }
+            std::vector<std::string> types;
+            types.reserve(expr->types.size());
+            for (const auto& type : expr->types) types.push_back(ResolveType(type.get()));
+            if (types.front() == "auto" || types.front() == "dynamic")
+                Report("cfunc return type must be concrete", "E_CFUNC_TYPE_RETURN");
+            for (size_t index = 1; index < types.size(); ++index)
+                if (types[index] == "void" || types[index] == "auto" || types[index] == "dynamic")
+                    Report("cfunc parameter types must be concrete non-void types",
+                        "E_CFUNC_TYPE_PARAMETER");
+            // Each component must itself be C-ABI safe (no Absolute aggregates/func/managed).
+            ValidateCAbiType(types.front(), "cfunc return", true);
+            for (size_t index = 1; index < types.size(); ++index)
+                ValidateCAbiType(types[index],
+                    "cfunc parameter " + std::to_string(index), false);
+            Save(expr, {InvalidSymbolId,
+                CFunctionTypeName(types.front(),
+                    std::vector<std::string>(types.begin() + 1, types.end())),
+                false});
+            return;
+        }
         if (typeContext) {
             const std::string base = ResolveTypeReference(ExtractQualifiedName(expr->base.get()));
             std::vector<std::string> arguments;
@@ -773,7 +1072,7 @@ namespace Absolute {
                 specialized += arguments[index];
             }
             specialized += ">";
-            instantiatedGenericTypes.insert(specialized);
+            specialized = ResolveTypeReference(specialized);
             Save(expr, {InvalidSymbolId, specialized, false});
             return;
         }
@@ -782,6 +1081,106 @@ namespace Absolute {
             for (const auto& type : expr->types) ResolveType(type.get());
             Save(expr, {baseResult.symbol, baseResult.type, false});
         }
+    }
+
+    void Analyzer::Visit(LambdaExpr* expr) {
+        std::string expectedReturn;
+        std::vector<std::string> expectedParameters;
+        const bool hasExpectedSignature = ParseFunctionType(
+            expectedType, expectedReturn, expectedParameters);
+        const std::string savedExpectedType = expectedType;
+        expectedType.clear();
+
+        std::vector<std::string> parameterTypes;
+        parameterTypes.reserve(expr->parameters.size());
+        table.EnterScope();
+        lambdaContexts.push_back({expr, table.ScopeDepth()});
+        ++functionDepth;
+        const int savedLoopDepth = loopDepth;
+        const int savedCatchDepth = catchDepth;
+        const int savedFinallyDepth = finallyDepth;
+        const int savedDeferDepth = deferDepth;
+        const bool savedAsync = currentFunctionAsync;
+        const bool savedFlowTerminated = flowTerminated;
+        const std::string savedReturnType = currentReturnType;
+        loopDepth = catchDepth = finallyDepth = deferDepth = 0;
+        currentFunctionAsync = false;
+        flowTerminated = false;
+        for (const auto& parameter : expr->parameters) {
+            if (!parameter) continue;
+            const std::string name = ExtractIdentifier(parameter->name.get());
+            const std::string type = ResolveDeclaredType(*parameter);
+            if (parameter->isReference)
+                Report("lambda parameters cannot be value references",
+                    "E_VALUE_REF_LAMBDA");
+            parameterTypes.push_back(type);
+            if (name.empty()) Report("lambda parameter requires a name", "E_LAMBDA_PARAMETER");
+            else if (const auto declared = table.Declare(SymbolKind::Parameter, name, type))
+                expressionInfo[parameter.get()] = {*declared, type, true};
+            else Report("duplicate lambda parameter '" + name + "'", "E_LAMBDA_PARAMETER");
+            if (parameter->value)
+                Report("lambda parameters cannot have default values", "E_LAMBDA_DEFAULT_PARAMETER");
+        }
+
+        std::string lambdaReturnType;
+        Result body;
+        bool returnsEverywhere = true;
+        if (expr->expressionBody) {
+            body = hasExpectedSignature
+                ? EvaluateExpected(expr->expressionBody.get(), expectedReturn)
+                : Evaluate(expr->expressionBody.get());
+            lambdaReturnType = hasExpectedSignature ? expectedReturn : body.type;
+            if (body.type == "void")
+                Report("an expression lambda cannot return void", "E_LAMBDA_VOID_EXPRESSION");
+        }
+        else {
+            const std::string explicitReturn = expr->returnType
+                ? ResolveType(expr->returnType.get()) : std::string{};
+            if (!explicitReturn.empty() && hasExpectedSignature &&
+                explicitReturn != expectedReturn)
+                Report("lambda declares return type '" + explicitReturn +
+                    "', expected '" + expectedReturn + "'", "E_LAMBDA_RETURN");
+            lambdaReturnType = !explicitReturn.empty() ? explicitReturn : expectedReturn;
+            if (lambdaReturnType.empty()) {
+                Report("a statement lambda needs '-> ReturnType' when its func type is not known",
+                    "E_LAMBDA_RETURN_TYPE");
+                lambdaReturnType = "error";
+            }
+            currentReturnType = lambdaReturnType;
+            lambdaFunctionBoundaries.push_back(
+                {keepScopes.size(), valueFlowScopes.size()});
+            AcceptIfPresent(expr->statementBody, *this);
+            returnsEverywhere = flowTerminated;
+            lambdaFunctionBoundaries.pop_back();
+            if (lambdaReturnType != "void" && lambdaReturnType != "error" &&
+                !returnsEverywhere)
+                Report("lambda does not return a value on every control-flow path",
+                    "E_LAMBDA_MISSING_RETURN");
+        }
+
+        lambdaCaptures[expr] = std::move(lambdaContexts.back().captures);
+        lambdaContexts.pop_back();
+        --functionDepth;
+        table.ExitScope();
+        loopDepth = savedLoopDepth;
+        catchDepth = savedCatchDepth;
+        finallyDepth = savedFinallyDepth;
+        deferDepth = savedDeferDepth;
+        currentFunctionAsync = savedAsync;
+        flowTerminated = savedFlowTerminated;
+        currentReturnType = savedReturnType;
+        expectedType = savedExpectedType;
+
+        const std::string type = FunctionTypeName(lambdaReturnType, parameterTypes);
+        if (hasExpectedSignature) {
+            if (expectedParameters != parameterTypes)
+                Report("lambda parameter types do not match expected type '" + savedExpectedType + "'",
+                    "E_LAMBDA_SIGNATURE");
+            if (expr->expressionBody && !IsAssignable(expectedReturn, body.type))
+                Report("lambda returns '" + body.type + "', expected '" + expectedReturn + "'",
+                    "E_LAMBDA_RETURN");
+        }
+        Save(expr, {InvalidSymbolId, type, false});
     }
 
 }

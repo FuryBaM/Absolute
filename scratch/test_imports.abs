@@ -1,0 +1,27 @@
+import std.collections.vector;
+import "std/collections/map";
+import "./std/collections/set";
+
+int32 main() {
+    // Unqualified usage
+    Vector<int32>* vec = new Vector<int32>();
+    vec.push(42);
+
+    // Fully Qualified Name (FQN) usage
+    std.collections.Vector<int32>* vecFqn = new std.collections.Vector<int32>();
+    vecFqn.push(100);
+
+    Map<string, int32>* map = new Map<string, int32>();
+    map.put("hello", 1);
+
+    std.collections.Set<int32>* mySet = new std.collections.Set<int32>();
+    mySet.add(7);
+
+    assert(vec.count == 1, "vec count");
+    assert(vecFqn.count == 1, "vecFqn count");
+    assert(map.containsKey("hello"), "map contains key");
+    assert(mySet.contains(7), "set contains item");
+
+    println("All import and FQN tests passed successfully!");
+    return 0;
+}

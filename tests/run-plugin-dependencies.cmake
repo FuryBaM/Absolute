@@ -8,6 +8,20 @@ file(MAKE_DIRECTORY "${WORK_DIR}")
 file(TO_CMAKE_PATH "${MATH_PLUGIN}" MATH_LIBRARY)
 file(TO_CMAKE_PATH "${SHADER_PLUGIN}" SHADER_LIBRARY)
 
+file(WRITE "${WORK_DIR}/absolute-math-prelude.abs" [=[
+namespace ManifestPrelude {
+    int32 answer() {
+        return 42;
+    }
+}
+]=])
+file(WRITE "${WORK_DIR}/absolute-shader-prelude.abs" [=[
+namespace Shader {
+    extern "C" string generatedComputeHlsl();
+    extern "C" string generatedComputeGlsl();
+}
+]=])
+
 file(WRITE "${WORK_DIR}/absolute.math.absplugin" [=[
 {
   "dependencies": {},
@@ -15,6 +29,7 @@ file(WRITE "${WORK_DIR}/absolute.math.absplugin" [=[
   "version": "1.2.0",
   "abi": 1,
   "library": "]=] "${MATH_LIBRARY}" [=[",
+  "prelude": "absolute-math-prelude.abs",
   "provides": ["absolute.math.types"]
 }
 ]=])
@@ -29,6 +44,7 @@ file(WRITE "${WORK_DIR}/absolute.shader.absplugin" [=[
   "version": "2.0.0",
   "abi": 1,
   "library": "]=] "${SHADER_LIBRARY}" [=[",
+  "preludes": ["absolute-shader-prelude.abs"],
   "requires": ["absolute.math.types"]
 }
 ]=])
@@ -48,6 +64,66 @@ string(FIND "${OUTPUT}" "Loaded syntax plugin absolute.math v1.2.0" MATH_POSITIO
 string(FIND "${OUTPUT}" "Loaded syntax plugin absolute.shader v2.0.0" SHADER_POSITION)
 if(MATH_POSITION LESS 0 OR SHADER_POSITION LESS 0 OR NOT MATH_POSITION LESS SHADER_POSITION)
     message(FATAL_ERROR "Dependencies were not loaded before the root plugin\n${OUTPUT}")
+endif()
+
+# A manifest prelude is ordinary Absolute source parsed before the user module.
+file(WRITE "${WORK_DIR}/manifest-prelude-user.abs" [=[
+int32 main() {
+    assert(ManifestPrelude.answer() == 42, "manifest .abs prelude");
+    println("manifest-prelude=ok");
+    return 0;
+}
+]=])
+execute_process(
+    COMMAND "${COMPILER}" "${WORK_DIR}/manifest-prelude-user.abs"
+        --plugin "${WORK_DIR}/absolute.math.absplugin"
+    RESULT_VARIABLE PRELUDE_STATUS
+    OUTPUT_VARIABLE PRELUDE_OUTPUT
+    ERROR_VARIABLE PRELUDE_ERROR
+)
+if(NOT PRELUDE_STATUS EQUAL 0 OR NOT PRELUDE_OUTPUT MATCHES "manifest-prelude=ok")
+    message(FATAL_ERROR "Manifest .abs prelude failed (${PRELUDE_STATUS})\n${PRELUDE_OUTPUT}\n${PRELUDE_ERROR}")
+endif()
+
+# Invalid/missing prelude files fail before the native library is loaded.
+file(WRITE "${WORK_DIR}/bad-prelude-extension.absplugin" [=[
+{
+  "name": "absolute.math",
+  "version": "1.2.0",
+  "abi": 1,
+  "library": "]=] "${MATH_LIBRARY}" [=[",
+  "prelude": "prelude.txt"
+}
+]=])
+execute_process(
+    COMMAND "${COMPILER}" "${WORK_DIR}/manifest-prelude-user.abs"
+        --plugin "${WORK_DIR}/bad-prelude-extension.absplugin"
+    RESULT_VARIABLE PRELUDE_EXTENSION_STATUS
+    OUTPUT_VARIABLE PRELUDE_EXTENSION_OUTPUT
+    ERROR_VARIABLE PRELUDE_EXTENSION_ERROR
+)
+if(PRELUDE_EXTENSION_STATUS EQUAL 0 OR NOT PRELUDE_EXTENSION_ERROR MATCHES "must use the [. ]?abs extension")
+    message(FATAL_ERROR "Invalid prelude extension was not diagnosed\n${PRELUDE_EXTENSION_OUTPUT}\n${PRELUDE_EXTENSION_ERROR}")
+endif()
+
+file(WRITE "${WORK_DIR}/missing-prelude.absplugin" [=[
+{
+  "name": "absolute.math",
+  "version": "1.2.0",
+  "abi": 1,
+  "library": "]=] "${MATH_LIBRARY}" [=[",
+  "prelude": "missing-prelude.abs"
+}
+]=])
+execute_process(
+    COMMAND "${COMPILER}" "${WORK_DIR}/manifest-prelude-user.abs"
+        --plugin "${WORK_DIR}/missing-prelude.absplugin"
+    RESULT_VARIABLE PRELUDE_MISSING_STATUS
+    OUTPUT_VARIABLE PRELUDE_MISSING_OUTPUT
+    ERROR_VARIABLE PRELUDE_MISSING_ERROR
+)
+if(PRELUDE_MISSING_STATUS EQUAL 0 OR NOT PRELUDE_MISSING_ERROR MATCHES "prelude does not exist")
+    message(FATAL_ERROR "Missing prelude was not diagnosed\n${PRELUDE_MISSING_OUTPUT}\n${PRELUDE_MISSING_ERROR}")
 endif()
 
 # The same graph can be declared relative to an .absproj file.

@@ -1,0 +1,88 @@
+struct CounterIterator {
+    private int32 current;
+    private int32 limit;
+
+    public void initialize(int32 start, int32 end) {
+        current = start - 1;
+        limit = end;
+    }
+
+    public bool next() {
+        current = current + 1;
+        return current < limit;
+    }
+
+    public int32 value {
+        get { return current; }
+    }
+}
+
+struct Counter {
+    private int32 start;
+    private int32 end;
+
+    public void initialize(int32 s, int32 e) {
+        start = s;
+        end = e;
+    }
+
+    public CounterIterator iterate() {
+        CounterIterator it;
+        it.initialize(start, end);
+        return it;
+    }
+}
+
+class ListIterator {
+    private int32[] items;
+    private int32 index;
+
+    public ListIterator(int32[] source) {
+        items = copy(source);
+        index = -1;
+    }
+
+    public bool next() {
+        index = index + 1;
+        return index < 3; // Hardcoded length for test
+    }
+
+    public int32 value() {
+        return items[index];
+    }
+}
+
+class List {
+    private int32[] data;
+
+    public List() {
+        int32 init[3] = {10, 20, 30};
+        data = copy(init);
+    }
+
+    public ListIterator* iterate() {
+        return new ListIterator(data);
+    }
+}
+
+int32 main() {
+    Counter counter;
+    counter.initialize(1, 5);
+
+    int32 sum = 0;
+    foreach (int32 element in counter) {
+        sum = sum + element;
+    }
+    assert(sum == 10, "foreach struct duck-typing");
+
+    List* list = new List();
+    int32 listSum = 0;
+    foreach (int32 element in list) {
+        listSum = listSum + element;
+    }
+    assert(listSum == 60, "foreach class duck-typing");
+    delete list;
+
+    println("iterators=ok");
+    return 0;
+}

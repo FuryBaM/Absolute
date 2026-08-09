@@ -1,0 +1,77 @@
+// Portable absolute.shader compute DSL executed by absolute.desktop.
+// Requires the absolute.shader and absolute.desktop plugins.
+
+import "../../std/process.abs";
+
+@shader.stage(Compute)
+shader Compute {
+    storage float values;
+    workgroup 1, 1, 1;
+
+    kernel {
+        values[id.x] = values[id.x] * 2.0;
+    }
+}
+
+int32 main() {
+    int32 backend = Desktop.Gpu.BackendAuto;
+    if (std.process.argsCount() > 1) {
+        string selected = std.process.argAt(1);
+        if (selected == "opengl") {
+            backend = Desktop.Gpu.BackendOpenGL;
+        } else if (selected == "d3d11") {
+            backend = Desktop.Gpu.BackendD3D11;
+        } else if (selected == "d3d12") {
+            backend = Desktop.Gpu.BackendD3D12;
+        } else if (selected == "vulkan") {
+            backend = Desktop.Gpu.BackendVulkan;
+        } else {
+            println("backend must be: auto, opengl, d3d11, d3d12, or vulkan");
+            return 2;
+        }
+    }
+
+    auto window = new Desktop.Window("Absolute Shader Compute", 320, 180, false);
+    auto gpu = new Desktop.Gpu(window, backend);
+    if (!gpu.isValid()) {
+        println("GPU backend creation failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+    if (!gpu.supportsCompute()) {
+        println("compute is unavailable:");
+        println(gpu.backend());
+        println(gpu.lastError());
+        return 1;
+    }
+
+    // Backend selects HLSL for D3D/Vulkan and GLSL for OpenGL.
+    auto compute = gpu.createComputeShader(
+        Shader.generatedComputeHlsl(),
+        Shader.generatedComputeGlsl());
+    if (compute == null) {
+        println("generated compute shader failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    float[] values = {
+        {1.0, 2.0, 3.0, 4.0},
+        {5.0, 6.0, 7.0, 8.0}
+    };
+    auto storage = gpu.createStorageBuffer(values);
+    if (storage == null) {
+        println("createStorageBuffer failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    gpu.bind(compute);
+    gpu.bindStorage(storage, 0);
+    assert(gpu.dispatch(values.length, 1, 1), "shader compute dispatch");
+    assert(storage.download(values), "shader compute download");
+    assert(values[0] == 2.0 && values[3] == 8.0 && values[7] == 16.0,
+        "shader compute output");
+    println("shader-compute=ok");
+    return 0;
+}

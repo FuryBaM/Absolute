@@ -1,0 +1,294 @@
+name: Test hardening
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 2 * * *"
+
+concurrency:
+  group: test-hardening-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  ABSOLUTE_LLVM_VERSION: "18"
+
+jobs:
+  language-stress-and-fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM and build tools
+        id: bootstrap
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              if [[ "$attempt" -lt 3 ]]; then sleep $((attempt * 10)); fi
+            done
+            return 1
+          }
+          retry sudo apt-get update
+          retry sudo apt-get install -y \
+            llvm-${ABSOLUTE_LLVM_VERSION}-dev \
+            clang-${ABSOLUTE_LLVM_VERSION} \
+            lld-${ABSOLUTE_LLVM_VERSION} \
+            cmake ninja-build
+
+      - name: Build Release compiler
+        id: build
+        timeout-minutes: 20
+        run: |
+          cmake -S . -B build-hardening -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=clang++-${ABSOLUTE_LLVM_VERSION} \
+            -DABSOLUTE_ENABLE_LLVM=ON \
+            -DABSOLUTE_BUILD_EXAMPLE_PLUGINS=OFF \
+            -DBUILD_TESTING=OFF \
+            -DLLVM_DIR="$(llvm-config-${ABSOLUTE_LLVM_VERSION} --cmakedir)"
+          cmake --build build-hardening --parallel 2
+          compiler="$(find build-hardening -type f -name absolutec -perm -u+x | head -n 1)"
+          test -n "$compiler"
+          echo "ABSOLUTEC=$compiler" >> "$GITHUB_ENV"
+
+      - name: Build hardening programs
+        id: build_programs
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p hardening-logs
+          status=0
+          "$ABSOLUTEC" tests/concurrency-stress.abs \
+            --build-exe -o "$GITHUB_WORKSPACE/build-hardening/concurrency-stress" \
+            2>&1 | tee hardening-logs/concurrency-build.log || status=$?
+          "$ABSOLUTEC" tests/collection-snapshot-stress.abs \
+            --build-exe -o "$GITHUB_WORKSPACE/build-hardening/collection-snapshot-stress" \
+            2>&1 | tee hardening-logs/collection-snapshot-build.log || status=$?
+          exit "$status"
+
+      - name: Run iterator snapshot stress
+        id: iterator_stress
+        timeout-minutes: 5
+        run: "$GITHUB_WORKSPACE/build-hardening/collection-snapshot-stress"
+
+      - name: Repeat real scheduler stress
+        id: scheduler_stress
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          repeats=25
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            repeats=150
+          fi
+          for iteration in $(seq 1 "$repeats"); do
+            echo "concurrency stress iteration $iteration/$repeats"
+            timeout 30s "$GITHUB_WORKSPACE/build-hardening/concurrency-stress"
+          done
+
+      - name: Generate and run collection properties
+        id: collection_properties
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          cases=40
+          operations=120
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            cases=160
+            operations=300
+          fi
+          python3 tools/testing/generate_collection_properties.py \
+            --output tools/testing/generated-collection-properties.abs \
+            --seed 12648430 \
+            --cases "$cases" \
+            --operations "$operations"
+          "$ABSOLUTEC" tools/testing/generated-collection-properties.abs \
+            --build-exe -o "$GITHUB_WORKSPACE/build-hardening/collection-properties"
+          "$GITHUB_WORKSPACE/build-hardening/collection-properties"
+
+      - name: Grammar and mutation fuzz compiler
+        id: compiler_fuzz
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p hardening-logs
+          valid=75
+          mutated=225
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            valid=300
+            mutated=1200
+          fi
+          python3 tools/testing/compiler_fuzz.py \
+            --compiler "$ABSOLUTEC" \
+            --seed 689409 \
+            --valid-cases "$valid" \
+            --mutated-cases "$mutated" \
+            --timeout 5 \
+            --repro-dir fuzz-reproducers \
+            2>&1 | tee hardening-logs/compiler-fuzz.log
+
+      - name: Classify failure phase
+        if: failure()
+        shell: bash
+        env:
+          BOOTSTRAP: ${{ steps.bootstrap.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          BUILD_PROGRAMS: ${{ steps.build_programs.outcome }}
+          ITERATOR_STRESS: ${{ steps.iterator_stress.outcome }}
+          SCHEDULER_STRESS: ${{ steps.scheduler_stress.outcome }}
+          COLLECTION_PROPERTIES: ${{ steps.collection_properties.outcome }}
+          COMPILER_FUZZ: ${{ steps.compiler_fuzz.outcome }}
+        run: |
+          mkdir -p hardening-logs
+          if [[ "$BOOTSTRAP" == failure ]]; then category=platform-bootstrap
+          elif [[ "$BUILD" == failure || "$BUILD_PROGRAMS" == failure ]]; then category=build-regression
+          elif [[ "$COMPILER_FUZZ" == failure ]]; then category=fuzz-regression
+          elif [[ "$ITERATOR_STRESS" == failure ||
+                  "$SCHEDULER_STRESS" == failure ||
+                  "$COLLECTION_PROPERTIES" == failure ]]; then category=runtime-regression
+          else category=unknown
+          fi
+          echo "category=$category" > hardening-logs/failure-classification.txt
+
+      - name: Upload language hardening diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: language-hardening-diagnostics
+          path: |
+            hardening-logs
+            fuzz-reproducers
+            build-hardening/concurrency-stress
+            build-hardening/collection-snapshot-stress
+            build-hardening/collection-properties
+          if-no-files-found: ignore
+          retention-days: 14
+
+  runtime-thread-sanitizer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clang and Ninja
+        id: bootstrap
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              if [[ "$attempt" -lt 3 ]]; then sleep $((attempt * 10)); fi
+            done
+            return 1
+          }
+          retry sudo apt-get update
+          retry sudo apt-get install -y \
+            clang-${ABSOLUTE_LLVM_VERSION} cmake ninja-build
+
+      - name: Build instrumented runtime
+        id: build
+        timeout-minutes: 15
+        run: |
+          cmake -S . -B build-tsan -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=clang-${ABSOLUTE_LLVM_VERSION} \
+            -DCMAKE_CXX_COMPILER=clang++-${ABSOLUTE_LLVM_VERSION} \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1 -g" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" \
+            -DABSOLUTE_ENABLE_LLVM=OFF \
+            -DABSOLUTE_BUILD_EXAMPLE_PLUGINS=OFF \
+            -DBUILD_TESTING=OFF
+          cmake --build build-tsan --target Absolute-Runtime --parallel 2
+
+      - name: Build scheduler TSan harness
+        id: build_harness
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          runtime="$(find build-tsan -maxdepth 2 -type f -name 'libAbsolute-Runtime.a' | head -n 1)"
+          test -n "$runtime"
+          clang++-${ABSOLUTE_LLVM_VERSION} -std=c++20 -O1 -g \
+            -fsanitize=thread -fno-omit-frame-pointer \
+            tests/runtime-scheduler-tsan.cpp "$runtime" \
+            -pthread -ldl -o build-tsan/runtime-scheduler-tsan
+          clang++-${ABSOLUTE_LLVM_VERSION} -std=c++20 -O1 -g \
+            -fsanitize=thread -fno-omit-frame-pointer \
+            tests/runtime-scheduler-stress.cpp "$runtime" \
+            -pthread -ldl -o build-tsan/runtime-scheduler-stress
+
+      - name: Run scheduler under ThreadSanitizer
+        id: test
+        timeout-minutes: 15
+        shell: bash
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1:history_size=7:log_path=hardening-logs/tsan-report
+        run: |
+          set -o pipefail
+          mkdir -p hardening-logs
+          repeats=3
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            repeats=10
+          fi
+          for iteration in $(seq 1 "$repeats"); do
+            echo "TSan iteration $iteration/$repeats" | tee -a hardening-logs/tsan.log
+            timeout 90s build-tsan/runtime-scheduler-tsan \
+              2>&1 | tee -a hardening-logs/tsan.log
+            timeout 90s build-tsan/runtime-scheduler-stress \
+              2>&1 | tee -a hardening-logs/tsan.log
+          done
+
+      - name: Classify failure phase
+        if: failure()
+        shell: bash
+        env:
+          BOOTSTRAP: ${{ steps.bootstrap.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          BUILD_HARNESS: ${{ steps.build_harness.outcome }}
+          TEST: ${{ steps.test.outcome }}
+        run: |
+          mkdir -p hardening-logs
+          if [[ "$BOOTSTRAP" == failure ]]; then category=platform-bootstrap
+          elif [[ "$BUILD" == failure || "$BUILD_HARNESS" == failure ]]; then category=build-regression
+          elif [[ "$TEST" == failure ]]; then category=sanitizer-regression
+          else category=unknown
+          fi
+          echo "category=$category" > hardening-logs/failure-classification.txt
+
+      - name: Upload TSan diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-tsan-diagnostics
+          path: |
+            hardening-logs
+            build-tsan/runtime-scheduler-tsan
+            build-tsan/runtime-scheduler-stress
+            core
+            core.*
+          if-no-files-found: ignore
+          retention-days: 14
+
+  hardening-required:
+    name: Hardening required gate
+    if: always()
+    needs:
+      - language-stress-and-fuzz
+      - runtime-thread-sanitizer
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require stress, fuzz, and TSan
+        shell: bash
+        run: |
+          test "${{ needs.language-stress-and-fuzz.result }}" = "success"
+          test "${{ needs.runtime-thread-sanitizer.result }}" = "success"

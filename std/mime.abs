@@ -1,0 +1,32 @@
+import "string.abs";
+
+namespace std.mime {
+    string getMimeType(string filenameOrExt) {
+        string ext = filenameOrExt;
+        int32 dotIndex = std.text.lastIndexOf(filenameOrExt, ".");
+        if (dotIndex >= 0) {
+            ext = std.text.substring(filenameOrExt, dotIndex, std.text.codePointCount(filenameOrExt) - dotIndex);
+        }
+        ext = std.text.toLower(ext);
+
+        if (ext == ".html" || ext == ".htm") { return "text/html"; }
+        if (ext == ".css") { return "text/css"; }
+        if (ext == ".js" || ext == ".mjs") { return "text/javascript"; }
+        if (ext == ".json") { return "application/json"; }
+        if (ext == ".xml") { return "application/xml"; }
+        if (ext == ".png") { return "image/png"; }
+        if (ext == ".jpg" || ext == ".jpeg") { return "image/jpeg"; }
+        if (ext == ".gif") { return "image/gif"; }
+        if (ext == ".svg") { return "image/svg+xml"; }
+        if (ext == ".webp") { return "image/webp"; }
+        if (ext == ".ico") { return "image/x-icon"; }
+        if (ext == ".pdf") { return "application/pdf"; }
+        if (ext == ".zip") { return "application/zip"; }
+        if (ext == ".wasm") { return "application/wasm"; }
+        if (ext == ".txt") { return "text/plain"; }
+        if (ext == ".mp3") { return "audio/mpeg"; }
+        if (ext == ".mp4") { return "video/mp4"; }
+
+        return "application/octet-stream";
+    }
+}

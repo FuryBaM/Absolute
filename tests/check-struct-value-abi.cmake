@@ -10,7 +10,7 @@ set(REQUIRED_FRAGMENTS
     "define void @makeLarge(ptr %__result, i64 %seed)"
     "define i64 @mutateLargeCopy(ptr %value)"
     "define void @LargeBox.read(ptr %__result, ptr %this)"
-    "define void @LargeBox.__ctor(ptr %this, ptr %initial)"
+    "define void @\"LargeBox.__ctor$LargeValue\"(ptr %this, ptr %initial)"
     "define void @\"LargeMapper.map$LargeValue\"(ptr %__result, ptr %this, ptr %value)"
     "call void @makeLarge(ptr %makeLarge.result, i64 10)"
     "call i64 @mutateLargeCopy(ptr %value.argument.copy)"

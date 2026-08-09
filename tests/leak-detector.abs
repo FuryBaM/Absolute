@@ -1,0 +1,9 @@
+struct Node {
+    managed Node* next;
+}
+
+int32 main() {
+    managed Node* root = new Node();
+    root.next = move(root);
+    return 0; // Leak!
+}

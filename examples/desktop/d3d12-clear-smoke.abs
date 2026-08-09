@@ -1,0 +1,26 @@
+// Non-interactive: create D3D12 Gpu, clear one frame, exit.
+
+int32 main() {
+    auto window = new Desktop.Window("Absolute D3D12 smoke", 320, 200, false);
+    if (!window.isOpen()) {
+        println("window failed");
+        return 1;
+    }
+    window.poll();
+
+    auto gpu = new Desktop.Gpu(window, Desktop.Gpu.BackendD3D12);
+    if (!gpu.isValid()) {
+        println("D3D12 failed");
+        println(gpu.lastError());
+        return 1;
+    }
+    println(gpu.backend());
+
+    gpu.beginFrame();
+    gpu.clear(0.12, 0.18, 0.35, 1.0);
+    gpu.endFrame();
+    gpu.present();
+
+    println("d3d12-clear-smoke OK");
+    return 0;
+}

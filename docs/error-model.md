@@ -25,7 +25,7 @@ class ParseError : Error {
     }
 }
 
-string load(string source) {
+string parseSource(string source) {
     if (source == "") {
         throw new ParseError("source is empty");
     }
@@ -33,7 +33,7 @@ string load(string source) {
 }
 
 try {
-    println(load(""));
+    println(parseSource(""));
 }
 catch (ParseError* error) {
     println(error.message);
@@ -112,6 +112,9 @@ The runtime exports `absolute_error_set`, `absolute_error_pending`,
 This produces the same LLVM control flow on Windows and Linux and does not
 require target-specific landing pads.
 
+C ABI type and ownership rules for the language boundary are documented in
+[`native-c-abi.md`](native-c-abi.md).
+
 Calls declared with `extern "C"` are non-throwing from the language's point of
 view. Throwing a C++ exception through them is an ABI violation. Syntax and
 opaque plugins must also catch native exceptions before returning to the host.
@@ -119,6 +122,23 @@ An `export "C"` definition is the reverse boundary: it exposes an Absolute body
 under a native C symbol. The body must handle Absolute errors before returning;
 the C ABI does not carry the thread-local pending-error state or native unwind
 metadata to its caller.
+
+An Absolute function or accessor may declare the `nothrow` modifier when it
+guarantees that no Absolute exception can leave the callable:
+
+```absolute
+public nothrow int32 size() {
+    return count;
+}
+```
+
+CodeGen does not emit an `absolute_error_pending` poll after a call whose
+declaration is `nothrow`. A direct `throw` in such a body is rejected with
+`E_NOTHROW_THROWS`. The modifier is a trusted effect contract for calls made by
+the body as well: a `nothrow` implementation must call only non-throwing
+operations or handle every possible exception locally. It is intended for
+small, audited hot paths; omitting the modifier preserves the conservative
+exception check.
 
 ## Async behavior
 

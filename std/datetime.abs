@@ -1,0 +1,256 @@
+// std.datetime - Calendar Date, Time, DateTime, TimeZone, formatting, and time calculations
+
+extern "C" string absolute_datetime_error();
+extern "C" int32 absolute_datetime_local_offset_minutes();
+extern "C" string absolute_datetime_local_zone_name();
+extern "C" void absolute_datetime_civil_from_unix_millis(
+    int64 unixMillis, int32 offsetMinutes,
+    raw int32* outYear, raw int32* outMonth, raw int32* outDay,
+    raw int32* outHour, raw int32* outMinute, raw int32* outSecond, raw int32* outMillis);
+extern "C" int64 absolute_datetime_civil_to_unix_millis(
+    int32 year, int32 month, int32 day,
+    int32 hour, int32 minute, int32 second, int32 millis,
+    int32 offsetMinutes);
+extern "C" string absolute_datetime_format_iso(
+    int32 year, int32 month, int32 day,
+    int32 hour, int32 minute, int32 second, int32 millis,
+    int32 offsetMinutes);
+extern "C" int32 absolute_datetime_parse_iso(
+    string text,
+    raw int32* outYear, raw int32* outMonth, raw int32* outDay,
+    raw int32* outHour, raw int32* outMinute, raw int32* outSecond, raw int32* outMillis,
+    raw int32* outOffsetMinutes);
+extern "C" int64 absolute_time_unix_millis();
+
+struct Date {
+    public int32 year;
+    public int32 month;
+    public int32 day;
+}
+
+struct Time {
+    public int32 hour;
+    public int32 minute;
+    public int32 second;
+    public int32 millisecond;
+}
+
+struct TimeZone {
+    public int32 offsetMinutes;
+    public string name;
+}
+
+struct DateTime {
+    public Date date;
+    public Time time;
+    public TimeZone timeZone;
+}
+
+namespace std.datetime {
+    bool isLeapYear(int32 year) {
+        if (year % 400 == 0) { return true; }
+        if (year % 100 == 0) { return false; }
+        return year % 4 == 0;
+    }
+
+    int32 daysInMonth(int32 year, int32 month) {
+        if (month == 2) {
+            return isLeapYear(year) ? 29 : 28;
+        }
+        if (month == 4 || month == 6 || month == 9 || month == 11) {
+            return 30;
+        }
+        return 31;
+    }
+
+    Date createDate(int32 year, int32 month, int32 day) {
+        if (month < 1 || month > 12) {
+            throw new Error(format("invalid month: {}", month));
+        }
+        int32 maxDays = daysInMonth(year, month);
+        if (day < 1 || day > maxDays) {
+            throw new Error(format("invalid day {} for month {}", day, month));
+        }
+        Date d;
+        d.year = year;
+        d.month = month;
+        d.day = day;
+        return d;
+    }
+
+    Time createTime(int32 hour, int32 minute, int32 second, int32 millisecond) {
+        if (hour < 0 || hour > 23) { throw new Error(format("invalid hour: {}", hour)); }
+        if (minute < 0 || minute > 59) { throw new Error(format("invalid minute: {}", minute)); }
+        if (second < 0 || second > 59) { throw new Error(format("invalid second: {}", second)); }
+        if (millisecond < 0 || millisecond > 999) { throw new Error(format("invalid millisecond: {}", millisecond)); }
+        Time t;
+        t.hour = hour;
+        t.minute = minute;
+        t.second = second;
+        t.millisecond = millisecond;
+        return t;
+    }
+
+    TimeZone utcZone() {
+        TimeZone tz;
+        tz.offsetMinutes = 0;
+        tz.name = "UTC";
+        return tz;
+    }
+
+    TimeZone localZone() {
+        TimeZone tz;
+        tz.offsetMinutes = absolute_datetime_local_offset_minutes();
+        tz.name = absolute_datetime_local_zone_name();
+        return tz;
+    }
+
+    TimeZone createZone(int32 offsetMinutes, string name) {
+        TimeZone tz;
+        tz.offsetMinutes = offsetMinutes;
+        tz.name = name;
+        return tz;
+    }
+
+    DateTime createDateTime(Date d, Time t, TimeZone tz) {
+        DateTime dt;
+        dt.date = d;
+        dt.time = t;
+        dt.timeZone = tz;
+        return dt;
+    }
+
+    DateTime fromUnixMillis(int64 unixMillis, TimeZone tz) {
+        int32 y = 0; int32 m = 0; int32 d = 0;
+        int32 hh = 0; int32 mm = 0; int32 ss = 0; int32 ms = 0;
+        absolute_datetime_civil_from_unix_millis(
+            unixMillis, tz.offsetMinutes,
+            &y, &m, &d, &hh, &mm, &ss, &ms);
+        return createDateTime(
+            createDate(y, m, d),
+            createTime(hh, mm, ss, ms),
+            tz
+        );
+    }
+
+    DateTime fromUnixSeconds(int64 unixSeconds, TimeZone tz) {
+        return fromUnixMillis(unixSeconds * (1000 as int64), tz);
+    }
+
+    int64 toUnixMillis(DateTime dt) {
+        return absolute_datetime_civil_to_unix_millis(
+            dt.date.year, dt.date.month, dt.date.day,
+            dt.time.hour, dt.time.minute, dt.time.second, dt.time.millisecond,
+            dt.timeZone.offsetMinutes);
+    }
+
+    int64 toUnixSeconds(DateTime dt) {
+        return toUnixMillis(dt) / (1000 as int64);
+    }
+
+    DateTime nowUtc() {
+        return fromUnixMillis(absolute_time_unix_millis(), utcZone());
+    }
+
+    DateTime nowLocal() {
+        return fromUnixMillis(absolute_time_unix_millis(), localZone());
+    }
+
+    DateTime toZone(DateTime dt, TimeZone targetZone) {
+        int64 millis = toUnixMillis(dt);
+        return fromUnixMillis(millis, targetZone);
+    }
+
+    DateTime toUtc(DateTime dt) {
+        return toZone(dt, utcZone());
+    }
+
+    DateTime toLocal(DateTime dt) {
+        return toZone(dt, localZone());
+    }
+
+    string formatIso(DateTime dt) {
+        return absolute_datetime_format_iso(
+            dt.date.year, dt.date.month, dt.date.day,
+            dt.time.hour, dt.time.minute, dt.time.second, dt.time.millisecond,
+            dt.timeZone.offsetMinutes);
+    }
+
+    DateTime parseIso(string text) {
+        int32 y = 0; int32 m = 0; int32 d = 0;
+        int32 hh = 0; int32 mm = 0; int32 ss = 0; int32 ms = 0;
+        int32 offsetMin = 0;
+        if (absolute_datetime_parse_iso(text, &y, &m, &d, &hh, &mm, &ss, &ms, &offsetMin) == 0) {
+            throw new Error(format("failed to parse ISO-8601 datetime: {}", absolute_datetime_error()));
+        }
+        string zoneName = "UTC";
+        if (offsetMin != 0) {
+            zoneName = format("{}m", offsetMin);
+        }
+        return createDateTime(
+            createDate(y, m, d),
+            createTime(hh, mm, ss, ms),
+            createZone(offsetMin, zoneName)
+        );
+    }
+
+    int32 dayOfWeek(Date d) {
+        int32 y = d.year;
+        int32 m = d.month;
+        if (m < 3) { y = y - 1; }
+        int32 t = 0;
+        match (m) {
+        case 1: t = 0;
+        case 2: t = 3;
+        case 3: t = 2;
+        case 4: t = 5;
+        case 5: t = 0;
+        case 6: t = 3;
+        case 7: t = 5;
+        case 8: t = 1;
+        case 9: t = 4;
+        case 10: t = 6;
+        case 11: t = 2;
+        case 12: t = 4;
+        default: t = 0;
+        }
+        int32 res = (y + y / 4 - y / 100 + y / 400 + t + d.day) % 7;
+        return res == 0 ? 7 : res;
+    }
+
+    int32 dayOfYear(Date d) {
+        int32 daysBeforeMonth = 0;
+        match (d.month) {
+        case 1: daysBeforeMonth = 0;
+        case 2: daysBeforeMonth = 31;
+        case 3: daysBeforeMonth = 59;
+        case 4: daysBeforeMonth = 90;
+        case 5: daysBeforeMonth = 120;
+        case 6: daysBeforeMonth = 151;
+        case 7: daysBeforeMonth = 181;
+        case 8: daysBeforeMonth = 212;
+        case 9: daysBeforeMonth = 243;
+        case 10: daysBeforeMonth = 273;
+        case 11: daysBeforeMonth = 304;
+        case 12: daysBeforeMonth = 334;
+        default: daysBeforeMonth = 0;
+        }
+        int32 doy = daysBeforeMonth + d.day;
+        if (d.month > 2 && isLeapYear(d.year)) {
+            doy = doy + 1;
+        }
+        return doy;
+    }
+
+    Date addDays(Date d, int32 days) {
+        int64 millis = absolute_datetime_civil_to_unix_millis(d.year, d.month, d.day, 0, 0, 0, 0, 0);
+        int64 newMillis = millis + (days as int64) * (86400000 as int64);
+        DateTime dt = fromUnixMillis(newMillis, utcZone());
+        return dt.date;
+    }
+
+    DateTime addSeconds(DateTime dt, int64 seconds) {
+        int64 millis = toUnixMillis(dt) + seconds * (1000 as int64);
+        return fromUnixMillis(millis, dt.timeZone);
+    }
+}

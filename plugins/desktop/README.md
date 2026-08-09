@@ -1,53 +1,281 @@
 # `absolute.desktop`
 
 Windows/Win32 and Linux/X11 desktop runtime for Absolute. It provides a native resizable window,
-event polling, keyboard and mouse state, a 32-bit software framebuffer, simple
-pixel/rectangle drawing, high-resolution time, and sleeping for game loops.
+event polling, keyboard and mouse state (held + edge), a 32-bit software framebuffer, 2D
+primitives (rect, line, circle, blit), soft sprites/batch/text, a minimal OpenGL RHI
+(`Desktop.Gpu` on Windows WGL), high-resolution time, frame delta, and sleeping for game loops.
 
 Build the compiler and plugin in Release:
 
 ```powershell
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release --target Absolute-Compiler Absolute-Desktop-Plugin
+cmake -S . -B .absolute/build/windows-release --preset windows-msvc-release
+cmake --build .absolute/build/windows-release --config Release --target Absolute-Desktop-Plugin
 ```
 
 The build creates `absolute-desktop.absplugin` beside the plugin DLL. The
 manifest automatically adds the static runtime and Win32 system libraries when
-`--build-exe` is used:
+`--build-exe` is used.
+
+Loading that manifest also injects
+[`absolute-desktop.prelude.abs`](absolute-desktop.prelude.abs), an ordinary
+Absolute source file containing the complete binding API. It can be edited and
+checked like any other `.abs` file. Application code never declares `extern
+"C"` functions: the native ABI remains an internal detail and the public API
+lives under `Desktop`.
+
+All native-owning wrappers are managed RAII classes. `new Desktop.Window(...)`,
+`new Desktop.Gpu(...)`, and GPU/sprite/audio factory results are owning managed
+pointers; `.` performs the checked dereference. Their `destroy()` methods run
+automatically in reverse declaration order on scope exit, early `return`, or
+`break`. Call `destroy()`/`close()` only when early release is actually needed.
 
 ```powershell
-build\Release\absolutec.exe examples\desktop\window.abs `
-  --plugin build\plugins\desktop\Release\absolute-desktop.absplugin `
+.absolute\build\windows-release\Release\absolutec.exe examples\desktop\window.abs `
+  --plugin .absolute\build\windows-release\plugins\desktop\Release\absolute-desktop.absplugin `
   --build-exe -o build\desktop-demo.exe
 build\desktop-demo.exe
 ```
 
-On this repository's Windows + WSL toolchain the shortest command is:
+Shortest path on a full Windows+WSL toolchain:
 
 ```powershell
 examples\desktop\run.bat
+examples\desktop\run.bat pong.abs
 ```
 
-It builds the LLVM compiler in WSL, cross-compiles the generated IR for Windows,
-links the Win32 runtime with Visual Studio, and starts the example.
+## API
 
-Main API:
-
+### Window lifecycle
 - `new Desktop.Window(title, width, height, resizable)`
-- `poll()`, `isOpen()`, `close()`, `setTitle()`
-- `clear()`, `pixel()`, `fillRect()`, `present()`
-- `keyDown()`, `mouseX()`, `mouseY()`, `mouseDown()`
-- `Desktop.rgb()`, `Desktop.time()`, `Desktop.sleep()`
+- `poll()`, `isOpen()`, `setTitle()`, `width()`, `height()`
+- `close()` is optional and only needed to close before scope exit
 
-Key codes use Win32 virtual-key values: Escape is `27`, arrows are `37`-`40`,
-space is `32`, and letters use their uppercase ASCII values. Mouse buttons are
-`0` (left), `1` (right), and `2` (middle). Colors are `0x00RRGGBB`; use
-`Desktop.rgb(red, green, blue)` to construct them.
+### Drawing (software framebuffer, colors `0x00RRGGBB`)
+- `clear(color)`, `pixel(x, y, color)`, `fillRect(...)`, `drawLine(...)`, `fillCircle(...)`
+- `blit(x, y, w, h, raw uint32* pixels)` — `0` pixels are transparent
+- `present()`
 
-The Linux backend is enabled when X11 development files are available (for
-example, the `libx11-dev` package). Without them the plugin builds a headless
-backend so CI and servers can still compile/link programs and use timing/color
-helpers; `Desktop.Window` then reports that it could not open.
+### Input
+- Held: `keyDown(key)`, `mouseDown(button)`, `mouseX()`, `mouseY()`
+- Edges (updated on each `poll`): `keyPressed` / `keyReleased`, `mousePressed` / `mouseReleased`
+- Text: `textCount()`, `textPop()` (code point / ASCII; `-1` empty), `textClear()`
+- Gamepad (Windows XInput 0..3; Linux stub): `Desktop.gamepadConnected(i)`,
+  `gamepadButton(i, btn)`, `gamepadAxis(i, axis)` in `[-1,1]` (triggers `[0,1]`)
+- Codes (functions or `Desktop.Codes.*` statics): `Desktop.KeyEscape()`, arrows,
+  `KeyW/A/S/D()`, `KeySpace()`, mouse `MouseLeft()`, pad `PadA()`…, axes `AxisLX()`…
 
-Call `window.close()` before leaving `main`. Native window handles are explicit
-resources; the current Absolute class model does not yet run RAII destructors.
+### Timing
+- `Desktop.time()` — monotonic seconds
+- `window.deltaTime()` — seconds since previous `poll` (0 on first frame)
+- `Desktop.sleep(ms)`
+- `Desktop.FixedStep(updatesPerSecond)` — accumulator (`add` / `shouldUpdate` / `consume` / `alpha`)
+
+### Soft sprites & images
+- `new Desktop.Sprite(w, h)` — procedural offscreen buffer (`0` = transparent)
+- `sprite.loadBmp(path)` — 24/32-bit uncompressed BMP (`false` on failure)
+- `sprite.loadPng(path)` — PNG (Windows WIC; elsewhere zlib portable 8-bit RGB/RGBA)
+- `sprite.loadImage(path)` — try PNG then BMP
+- `sprite.colorKey(rgb)` — exact RGB → transparent `0` (e.g. magenta `Desktop.rgb(255, 0, 255)`)
+- `clear`, `pixel`, `fillRect`, `fillCircle`, `destroy`, `isValid`
+- `window.drawSprite(sprite, x, y)`
+- `window.drawSpriteRect(sprite, dx, dy, sx, sy, sw, sh)` — atlas / sub-rect blit (zero-copy pitch)
+- `sprite.drawText(x, y, text, color, scale)` — bake soft font into the sprite
+
+### Soft sprite batch / atlas
+- `new Desktop.SpriteBatch()` — queue many draws, flush in one pass
+- `batch.begin(window, atlas)` — bind window + default atlas
+- `batch.draw(x, y)` / `batch.drawRect(dx, dy, sx, sy, sw, sh)` — default atlas
+- `batch.drawSprite(sprite, x, y)` / `batch.drawSpriteRect(...)` — other sprites without rebinding
+- `batch.setAtlas(sprite)` — switch default atlas (flushes first)
+- `batch.flush()` / `batch.end()` — submit queue (`end` also clears binding)
+- `batch.count()` — pending entries (0 after flush/end); auto-flush at 8192
+- Example: `examples/desktop/batch.abs`
+
+### Soft text (built-in 8×8 font)
+- Monospace ASCII 32–126; newline starts a new line; non-ASCII draws `?`
+- `window.drawText(x, y, text, color, scale)` — scale clamped to 1..16; transparent background
+- `Desktop.measureText(text, scale)` / `Desktop.measureTextHeight(text, scale)`
+- `Desktop.fontGlyphWidth()` / `Desktop.fontGlyphHeight()` — unscaled glyph size (8×8)
+
+### Mesh (Wavefront OBJ)
+Portable CPU loader → GPU buffers:
+
+- `new Desktop.Mesh()` + `mesh.loadObj(path)` — triangulates faces, `pos3+normal3+uv2`
+- Face normals generated when `vn` missing
+- `gpu.createVertexBufferFromMesh(mesh)` / `createIndexBufferFromMesh(mesh)`
+- `gpu.createLayoutPos3Normal3Uv2()` — stride 32
+- Asset: `examples/desktop/assets/cube.obj`
+- Example: `examples/desktop/mesh.abs`
+
+### Soft UI toolkit (`Desktop.Ui`)
+Immediate-mode widgets over the software framebuffer + mouse:
+
+- `new Desktop.Ui(window, font)` — font may be invalid; falls back to 8×8
+- `ui.begin()` / `ui.end()` each frame after `poll`
+- `ui.panel`, `label`, `labelDim`, `button` (returns click), `checkbox` (returns state),
+  `slider` (returns value), `progress`
+- `ui.theme` — colors (`UiTheme`)
+- Example: `examples/desktop/ui.abs`
+
+```absolute
+auto ui = new Desktop.Ui(window, font);
+ui.begin();
+if (ui.button(40, 40, 120, 32, "OK")) { /* clicked */ }
+checked = ui.checkbox(40, 90, "Option", checked);
+value = ui.slider(40, 140, 200, 18, value, 0.0, 1.0);
+ui.end();
+```
+
+### Audio (WAV mixer)
+Windows waveOut software mixer @ 44.1 kHz stereo, up to 32 voices. Non-Windows: stub.
+
+- `new Desktop.Audio()` / `isValid` / `destroy` / `setMasterVolume(0..1)` / `stopAll` / `activeVoices`
+- `audio.loadWav(path)` → `Sound*` (8/16-bit PCM mono/stereo; resampled)
+- `sound.play(volume)` / `playLoop(volume)` / `stop` / `isPlaying` / `duration`
+- Assets: `examples/desktop/assets/beep.wav`, `blip.wav`, `thud.wav`
+- Example: `examples/desktop/audio.abs`
+
+### Soft TrueType / system fonts (`Desktop.Font`)
+Windows GDI (ClearType raster → soft buffer). Non-Windows: create returns invalid.
+
+- `new Desktop.Font(faceName, pixelHeight, style)`
+- Styles: `Font.StyleNormal`, `StyleBold`, `StyleItalic`, `StyleBoldItalic`
+- `font.loadFile(path, pixelHeight, style)` — private `.ttf`/`.otf` via `AddFontResourceEx`
+- `font.measure` / `measureHeight` / `lineHeight` / `destroy`
+- `window.drawFontText(font, x, y, text, color)` — UTF-8, supports `\n`
+- `sprite.drawFontText(font, x, y, text, color)`
+- Example: `examples/desktop/font.abs`
+
+### GPU RHI (`Desktop.Gpu`)
+- **Constructor:** `new Desktop.Gpu(window, backend)` where backend is
+  `BackendAuto` (0), `BackendOpenGL` (1), `BackendD3D11` (2), `BackendD3D12` (3),
+  `BackendVulkan` (4)
+- **BackendAuto:** OpenGL first; on Windows falls back to D3D11 if GL fails
+- **OpenGL (full RHI):** Windows WGL (`opengl-wgl`), Linux GLX (`opengl-glx`);
+  compute uses an OpenGL 4.3 context and SSBOs
+- **D3D11 (Windows):** full sprite-capable path (`backend()` → `d3d11`):
+  HLSL, VB/IB, pipeline, draw, textures + samplers, compute shaders
+- **D3D12 (Windows):** full sprite-capable path (`backend()` → `d3d12`):
+  HLSL, root CBV b0 + SRV t0 + Sampler s0, VB/IB, PSO, draw/drawIndexed,
+  textures (`createTextureFromSprite`) + samplers, compute PSO + UAV readback
+- **Vulkan:** full sprite-capable path (`backend()` → `vulkan`): HLSL via
+  portable DXC→SPIR-V (`.absolute/toolchains/dxc-spirv` or `ABSOLUTE_DXC`),
+  UBO b0 + sampled image t0 + sampler s0, compute storage buffers; requires
+  `vulkan-1` runtime and
+  headers under `.absolute/toolchains/vulkan-headers`
+- **Vertex semantics (D3D/Vulkan HLSL):** location 0 → `POSITION`; location n → `TEXCOORDn-1`
+- Soft `window.present()` and `gpu.present()` are separate paths
+- Per-device: `gpu.backend()` → `opengl-wgl` / `opengl-glx` / `d3d11` / `d3d12` /
+  `vulkan` / `none`
+
+Resources:
+- `createShader(vs, fs)` → `GpuShader*`
+- `createVertexBuffer(float[] vertices)` → `GpuBuffer*` (VBO; layout is separate)
+- `createIndexBuffer(int32[] indices)` → `GpuIndexBuffer*` (EBO, `drawIndexed`)
+- `createSampler(filter, wrap)` → `GpuSampler*` (`FilterNearest`/`FilterLinear`,
+  `WrapClamp`/`WrapRepeat`/`WrapMirror` on `Desktop.Gpu`)
+- `new VertexLayout(strideBytes)` + `layout.add(location, components, offsetBytes)`
+- `createLayoutPos3Color3()` / `createLayoutPos3Uv2()`
+- `createPipeline(shader, layout)` → `GpuPipeline*`
+- `createTextureFromSprite(sprite)` → `GpuTexture*` (RGBA8 + color-key alpha)
+
+Portable compute (`absolute.shader` selects HLSL/GLSL for the backend):
+```absolute
+float[] values = {{1.0, 2.0}, {3.0, 4.0}};
+
+auto compute = gpu.createComputeShader(
+    Shader.generatedComputeHlsl(),
+    Shader.generatedComputeGlsl());
+auto storage = gpu.createStorageBuffer(values);
+gpu.bind(compute);
+gpu.bindStorage(storage, 0);
+gpu.dispatch(values.length, 1, 1);
+storage.download(values);
+```
+
+- `gpu.supportsCompute()` reports whether the selected backend supports compute.
+- `createComputeShader(hlsl, glsl)` selects GLSL on OpenGL and HLSL on
+  D3D11/D3D12/Vulkan. The single-source overload remains available.
+- `GpuStorageBuffer` maps to `RWStructuredBuffer<float>`/UAV or a GLSL SSBO at
+  binding slots `0..7`.
+- `upload` and `download` require an array with the same length as the buffer.
+- Dispatch group counts must be within `1..65535` on every axis.
+- Compute is implemented by OpenGL 4.3, D3D11, D3D12 and Vulkan. D3D12/Vulkan
+  compute commands currently run outside an open `beginFrame`/`endFrame`.
+- With `absolute.shader`, use `shader Compute { kernel { ... } }` and pass both
+  generated source variants to `gpu.createComputeShader(...)`; see
+  `examples/desktop/shader-compute.abs`.
+
+Frame:
+```absolute
+auto shader = gpu.createShader(vertexSource, fragmentSource);
+auto vb = gpu.createVertexBuffer(vertices);
+auto ib = gpu.createIndexBuffer(indices);
+auto layout = gpu.createLayoutPos3Uv2();
+auto pipeline = gpu.createPipeline(shader, layout);
+auto sampler = gpu.createSampler(Desktop.Gpu.FilterNearest, Desktop.Gpu.WrapClamp);
+
+gpu.beginFrame();
+gpu.clear(0.06, 0.07, 0.12, 1.0);
+gpu.bind(pipeline);
+gpu.bind(vb);
+gpu.bind(ib);
+gpu.bind(texture);
+gpu.bind(sampler);
+gpu.setUniformI("uTex", 0);
+gpu.drawIndexed(6);
+gpu.endFrame();
+gpu.present();
+```
+
+- `bind` overloads: pipeline, vertex buffer, index buffer, texture, sampler
+- Alpha blending on in `beginFrame`
+- Examples: `triangle.abs` / `gpu-sprites.abs` (OpenGL GLSL),
+  `d3d-clear.abs` / `d3d-triangle.abs` / `d3d-sprites.abs` / `compute.abs` (D3D11),
+  `d3d12-clear.abs` / `d3d12-triangle.abs` / `d3d12-sprites.abs` (D3D12),
+  `vulkan-triangle.abs` / `vulkan-sprites.abs` (Vulkan), and
+  `shader-compute.abs` (portable compute; pass a backend argument)
+
+### Game loop patterns
+
+Variable step:
+
+```absolute
+while (window.poll()) {
+    if (window.keyPressed(Desktop.KeyEscape())) { break; }
+    double dt = window.deltaTime();
+    if (dt <= 0.0) { dt = 0.016; }
+    if (dt > 0.05) { dt = 0.05; }
+    // update with dt, draw, present
+}
+```
+
+Fixed step (e.g. 60 Hz sim):
+
+```absolute
+auto fixed = new Desktop.FixedStep(60.0);
+while (window.poll()) {
+    fixed.add(window.deltaTime());
+    while (fixed.shouldUpdate()) {
+        // simulate(fixed.step)
+        fixed.consume();
+    }
+    // render(fixed.alpha())
+    window.present();
+}
+```
+
+The Linux backend is enabled when X11 development files are available
+(`libx11-dev`). Without them the plugin builds a headless backend so CI can
+still compile/link; `Desktop.Window` then reports that it could not open.
+
+No cleanup tail is required after the loop. `Window`, `Gpu`, sprites, fonts,
+audio, meshes, and child GPU resources are destroyed automatically; explicit
+cleanup remains available for intentionally shortened lifetimes.
+
+Examples: `examples/desktop/window.abs`, `pong.abs`, `sprites.abs`, `input.abs`,
+`image.abs` (BMP + atlas), `text.abs` (soft font HUD / typing),
+`batch.abs` (`SpriteBatch` + atlas tiles), `triangle.abs` (OpenGL pipeline),
+`gpu-sprites.abs` (textured ship + atlas), `d3d-clear.abs` (D3D11 clear),
+`image-png.abs` (PNG `loadImage`), `font.abs`, `audio.abs`, `ui.abs`,
+`mesh.abs`, `shader-rhi.abs`, `shader-code.abs` (custom GLSL `code{}` → Gpu).

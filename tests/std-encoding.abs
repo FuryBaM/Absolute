@@ -1,0 +1,113 @@
+import "../std/encoding.abs";
+
+int32 main() {
+    uint8[] binary = new uint8[5];
+    binary[0] = 0 as uint8;
+    binary[1] = 1 as uint8;
+    binary[2] = 127 as uint8;
+    binary[3] = 128 as uint8;
+    binary[4] = 255 as uint8;
+
+    assert(std.encoding.hexEncode(binary) == "00017f80ff", "hex encoding");
+    uint8[] decodedHex = std.encoding.hexDecode("00017F80fF");
+    assert(decodedHex.length == 5 && decodedHex[0] == (0 as uint8) &&
+        decodedHex[3] == (128 as uint8) && decodedHex[4] == (255 as uint8),
+        "case-insensitive hex decoding");
+    assert(std.encoding.hexEncode(std.encoding.hexDecode("")) == "", "empty hex");
+
+    string[] plain = {"", "f", "fo", "foo", "foob", "fooba", "foobar"};
+    string[] encoded = {"", "Zg==", "Zm8=", "Zm9v", "Zm9vYg==", "Zm9vYmE=", "Zm9vYmFy"};
+    int32 vector = 0;
+    while (vector < plain.length) {
+        uint8[] bytes = std.encoding.utf8Encode(plain[vector]);
+        assert(std.encoding.base64Encode(bytes) == encoded[vector], "RFC 4648 Base64 encode");
+        assert(std.encoding.utf8Decode(std.encoding.base64Decode(encoded[vector])) == plain[vector],
+            "RFC 4648 Base64 decode");
+        vector = vector + 1;
+    }
+
+    string unicode = "Hello, Привет 😀";
+    uint8[] utf8 = std.encoding.utf8Encode(unicode);
+    assert(utf8.length == std.text.byteCount(unicode), "UTF-8 byte count");
+    assert(std.encoding.utf8Decode(utf8) == unicode, "UTF-8 round trip");
+    assert(std.encoding.base64Decode(std.encoding.base64Encode(binary))[4] == (255 as uint8),
+        "binary Base64 round trip");
+    uint8[] fullRange = new uint8[256];
+    int32 rangeIndex = 0;
+    while (rangeIndex < fullRange.length) {
+        fullRange[rangeIndex] = rangeIndex as uint8;
+        rangeIndex = rangeIndex + 1;
+    }
+    uint8[] fullRangeRoundTrip =
+        std.encoding.base64Decode(std.encoding.base64Encode(fullRange));
+    assert(fullRangeRoundTrip.length == 256 &&
+        std.encoding.hexEncode(fullRangeRoundTrip) == std.encoding.hexEncode(fullRange),
+        "all byte values Base64 round trip");
+
+    bool rejected = false;
+    try { std.encoding.hexDecode("abc"); }
+    catch (Error* error) { rejected = true; }
+    assert(rejected, "odd hex must fail");
+
+    rejected = false;
+    try { std.encoding.hexDecode("0g"); }
+    catch (Error* error) { rejected = true; }
+    assert(rejected, "non-hex digit must fail");
+
+    rejected = false;
+    try { std.encoding.base64Decode("Zg="); }
+    catch (Error* error) { rejected = true; }
+    assert(rejected, "short Base64 must fail");
+
+    rejected = false;
+    try { std.encoding.base64Decode("Zh=="); }
+    catch (Error* error) { rejected = true; }
+    assert(rejected, "non-canonical Base64 trailing bits must fail");
+
+    rejected = false;
+    try { std.encoding.base64Decode("Zm=v"); }
+    catch (Error* error) { rejected = true; }
+    assert(rejected, "interior Base64 padding must fail");
+
+    rejected = false;
+    try { std.encoding.base64Decode("Zm9v\n"); }
+    catch (Error* error) { rejected = true; }
+    assert(rejected, "strict Base64 must reject whitespace");
+
+    uint8[] overlong = new uint8[2];
+    overlong[0] = 192 as uint8;
+    overlong[1] = 128 as uint8;
+    rejected = false;
+    try { std.encoding.utf8Decode(overlong); }
+    catch (Error* error) { rejected = true; }
+    assert(rejected, "overlong UTF-8 must fail");
+
+    uint8[] surrogate = new uint8[3];
+    surrogate[0] = 237 as uint8;
+    surrogate[1] = 160 as uint8;
+    surrogate[2] = 128 as uint8;
+    rejected = false;
+    try { std.encoding.utf8Decode(surrogate); }
+    catch (Error* error) { rejected = true; }
+    assert(rejected, "UTF-8 surrogate must fail");
+
+    uint8[] tooLarge = new uint8[4];
+    tooLarge[0] = 244 as uint8;
+    tooLarge[1] = 144 as uint8;
+    tooLarge[2] = 128 as uint8;
+    tooLarge[3] = 128 as uint8;
+    rejected = false;
+    try { std.encoding.utf8Decode(tooLarge); }
+    catch (Error* error) { rejected = true; }
+    assert(rejected, "UTF-8 beyond U+10FFFF must fail");
+
+    uint8[] nul = new uint8[1];
+    nul[0] = 0 as uint8;
+    rejected = false;
+    try { std.encoding.utf8Decode(nul); }
+    catch (Error* error) { rejected = true; }
+    assert(rejected, "embedded NUL must fail explicitly");
+
+    println("std-encoding=ok");
+    return 0;
+}

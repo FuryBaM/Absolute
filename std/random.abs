@@ -1,0 +1,80 @@
+// std.random - deterministic pseudo-random generators and system entropy.
+//
+// Rng uses xoshiro256**. Equal seeds produce equal sequences on every target.
+// Use entropy() only when reproducibility is not required; this is not a
+// cryptographic random-number API.
+
+extern "C" raw uint64* absolute_random_create(uint64 seed);
+extern "C" void absolute_random_destroy(raw uint64* state);
+extern "C" uint64 absolute_random_u64(raw uint64* state);
+extern "C" int32 absolute_random_i32(raw uint64* state);
+extern "C" int32 absolute_random_range(raw uint64* state, int32 minimum, int32 maximum);
+extern "C" double absolute_random_real(raw uint64* state);
+extern "C" uint64 absolute_random_entropy();
+extern "C" int32 absolute_random_fill(raw uint8* output, int32 length);
+
+namespace std.random {
+    class Rng {
+        private raw uint64* state;
+
+        public Rng(uint64 seed) {
+            state = absolute_random_create(seed);
+            if (state == null) {
+                throw new Error("random generator allocation failed");
+            }
+        }
+
+        public void destroy() {
+            if (state != null) {
+                absolute_random_destroy(state);
+                state = null;
+            }
+        }
+
+        public void dispose() { destroy(); }
+
+        public uint64 u64() {
+            return absolute_random_u64(state);
+        }
+
+        public int32 i32() {
+            return absolute_random_i32(state);
+        }
+
+        // Uniform integer in the half-open interval [minimum, maximum).
+        public int32 range(int32 minimum, int32 maximum) {
+            if (minimum >= maximum) {
+                throw new Error("random range requires minimum < maximum");
+            }
+            return absolute_random_range(state, minimum, maximum);
+        }
+
+        // Uniform floating-point value in [0, 1).
+        public double real() {
+            return absolute_random_real(state);
+        }
+
+        public bool boolean() {
+            return absolute_random_range(state, 0, 2) == 1;
+        }
+    }
+
+    // System-provided seed material. It is intentionally separate from Rng so
+    // deterministic code never starts depending on ambient entropy by accident.
+    uint64 entropy() {
+        return absolute_random_entropy();
+    }
+
+    // Fill a byte array from the platform entropy source. Unlike Rng, this API
+    // is non-deterministic. It is intended for identifiers and random seeds,
+    // but it does not promise a cryptographic random-number generator.
+    void fill(uint8[] output) {
+        if (absolute_random_fill(unsafeArrayData(output), output.length) == 0) {
+            throw new Error("system entropy is unavailable");
+        }
+    }
+
+    Rng* create() {
+        return new Rng(entropy());
+    }
+}

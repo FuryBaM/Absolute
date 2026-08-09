@@ -1,0 +1,83 @@
+struct WideValue {
+    int64 first;
+    int64 second;
+    int64 third;
+    int64 fourth;
+}
+
+struct ResourceValue {
+    int64* owner;
+}
+
+class ReferenceClass {
+    int64 value;
+}
+
+void primitiveRef(int64& value) {
+    value += 1;
+}
+
+void classRef(const ReferenceClass& value) {
+}
+
+void resourceRef(const ResourceValue& value) {
+}
+
+void defaultRef(const WideValue& value = makeWide()) {
+}
+
+async int64 asyncRef(const WideValue& value) {
+    return value.first;
+}
+
+void mutate(ref WideValue value) {
+    value.first += 1;
+}
+
+void alias(WideValue& left, WideValue& right) {
+    left.first += right.first;
+}
+
+int64 duplicateMode(WideValue value) {
+    return value.first;
+}
+
+int64 duplicateMode(const WideValue& value) {
+    return value.first;
+}
+
+void duplicateSpelling(WideValue& value) {
+}
+
+void duplicateSpelling(ref WideValue value) {
+}
+
+extern "C" void externalRef(const WideValue& value);
+
+raw WideValue* escape(WideValue& value) {
+    return &value;
+}
+
+func<int64> captureRef(const WideValue& value) {
+    return fn() => value.first;
+}
+
+WideValue makeWide() {
+    WideValue value;
+    return value;
+}
+
+int32 main() {
+    const WideValue immutable = makeWide();
+    mutate(immutable);
+    mutate(makeWide());
+
+    WideValue value = makeWide();
+    alias(value, value);
+
+    func<void, WideValue> closure = fn(WideValue& captured) -> void {
+        captured.first += 1;
+    };
+    auto storedFunction = mutate;
+    return 0;
+}

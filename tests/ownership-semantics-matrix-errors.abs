@@ -1,0 +1,31 @@
+class Node {
+    public int32 value;
+
+    public Node(int32 initial) {
+        value = initial;
+    }
+}
+
+Node* takeOwner(Node* node) {
+    return move(node);
+}
+
+void destroyOwner(Node* node) {
+    delete node;
+}
+
+void main() {
+    Node* owner = new Node(1);
+    Node* subscriber = owner;
+    weak Node* observer = owner;
+
+    // Both call sites are borrows. The callee body requires ownership because
+    // it moves or destroys the parameter.
+    Node* invalidReturn = takeOwner(owner);
+    destroyOwner(subscriber);
+
+    // A subscriber and a weak observer never become owners merely by spelling
+    // move(...).
+    Node* invalidSubscriberMove = move(subscriber);
+    weak Node* invalidWeakMove = move(observer);
+}

@@ -1,0 +1,89 @@
+// std.testing - lightweight suite runner built on soft assertions.
+
+import "assert.abs";
+import "log.abs";
+
+namespace std.testing {
+    class Suite {
+        private string name;
+        private int32 passed;
+        private int32 failed;
+        private bool quiet;
+
+        public Suite(string suiteName) {
+            name = suiteName;
+            passed = 0;
+            failed = 0;
+            quiet = false;
+        }
+
+        public void setQuiet(bool value) {
+            quiet = value;
+        }
+
+        public string suiteName() {
+            return name;
+        }
+
+        public int32 passedCount() {
+            return passed;
+        }
+
+        public int32 failedCount() {
+            return failed;
+        }
+
+        public int32 totalCount() {
+            return passed + failed;
+        }
+
+        // Runs one case immediately. Failures are recorded; later cases still run.
+        public void test(string testName, func<void> body) {
+            try {
+                body();
+                passed = passed + 1;
+                if (!quiet) {
+                    std.log.info(format("PASS  {}::{}", name, testName));
+                }
+            }
+            catch (std.assert.AssertionError* error) {
+                failed = failed + 1;
+                if (!quiet) {
+                    std.log.error(
+                        format("FAIL  {}::{}: {}", name, testName, error.message));
+                }
+            }
+            catch (Error* error) {
+                failed = failed + 1;
+                if (!quiet) {
+                    std.log.error(
+                        format("ERROR {}::{}: {}", name, testName, error.message));
+                }
+            }
+        }
+
+        // Prints a summary and returns a process-style exit code (0 = all passed).
+        public int32 finish() {
+            if (!quiet) {
+                if (failed == 0) {
+                    std.log.info(
+                        format("suite {}: {} passed", name, passed));
+                } else {
+                    std.log.error(
+                        format("suite {}: {} passed, {} failed", name, passed, failed));
+                }
+            }
+            if (failed == 0) {
+                return 0;
+            }
+            return 1;
+        }
+    }
+
+    // Convenience: one named case, return exit code.
+    int32 run(string testName, func<void> body) {
+        Suite* suite = new Suite(testName);
+        suite.test(testName, body);
+        return suite.finish();
+    }
+}

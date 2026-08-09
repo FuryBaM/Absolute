@@ -1,0 +1,526 @@
+namespace std.collections {
+    struct HashKeyValuePair<K, V> {
+        public K key;
+        public V value;
+
+        public void initialize(K entryKey, V entryValue) {
+            key = entryKey;
+            value = entryValue;
+        }
+    }
+
+    class HashMapIterator<K, V> {
+        private HashKeyValuePair<K, V>[] snapshot;
+        private int32 index;
+
+        public HashMapIterator(HashKeyValuePair<K, V>[] entries) {
+            snapshot = copy(entries);
+            index = -1;
+        }
+
+        public bool next() {
+            index = index + 1;
+            return index < snapshot.length;
+        }
+
+        public HashKeyValuePair<K, V> value {
+            get { return snapshot[index]; }
+        }
+    }
+
+    class HashMap<K, V> {
+        private K[] keys;
+        private V[] values;
+        // 0 = empty, 1 = occupied, 2 = removed (tombstone).
+        private int32[] states;
+        private int32 _count;
+        private int32 tombstoneCount;
+        private int32 _capacity;
+        // The capacity is always a power of two, so a bucket index is the hash
+        // masked with capacity - 1. Probing used a remainder for every step,
+        // which costs an integer division on the hottest path in the map.
+        private int32 _mask;
+        private func<int64, K> hashFunction;
+        private func<bool, K, K> equalityFunction;
+
+        public HashMap(
+            func<int64, K> hash,
+            func<bool, K, K> equals
+        ) {
+            hashFunction = hash;
+            equalityFunction = equals;
+            allocateTable(8);
+            _count = 0;
+            tombstoneCount = 0;
+        }
+
+        public HashMap(
+            func<int64, K> hash,
+            func<bool, K, K> equals,
+            int32 initialCapacity
+        ) {
+            if (initialCapacity < 1) {
+                throw new Error("HashMap capacity must be positive");
+            }
+            hashFunction = hash;
+            equalityFunction = equals;
+            allocateTable(roundUpToPowerOfTwo(initialCapacity < 4 ? 4 : initialCapacity));
+            _count = 0;
+            tombstoneCount = 0;
+        }
+
+        private nothrow int32 roundUpToPowerOfTwo(int32 requested) {
+            int32 result = 4;
+            while (result < requested) {
+                result = result * 2;
+            }
+            return result;
+        }
+
+        private nothrow void allocateTable(int32 newCapacity) {
+            _capacity = newCapacity;
+            _mask = newCapacity - 1;
+            keys = new K[_capacity];
+            values = new V[_capacity];
+            states = new int32[_capacity];
+            int32 index = 0;
+            while (index < _capacity) {
+                states[index] = 0;
+                index = index + 1;
+            }
+        }
+
+        private void clearStates() {
+            int32 index = 0;
+            while (index < _capacity) {
+                states[index] = 0;
+                index = index + 1;
+            }
+        }
+
+        private int32 bucket(K key) {
+            func<int64, K> hash = hashFunction;
+            // Masking keeps the low bits, exactly as a remainder by a power of
+            // two would, and stays non-negative for a negative hash.
+            return (hash(key) & (_mask as int64)) as int32;
+        }
+
+        private bool keysEqual(K left, K right) {
+            func<bool, K, K> equals = equalityFunction;
+            return equals(left, right);
+        }
+
+        private int32 findIndex(K key) {
+            int32 index = bucket(key);
+            // Binding the comparison once per lookup instead of once per probe
+            // step: every such binding costs a closure retain and release.
+            func<bool, K, K> equals = equalityFunction;
+            int32 scanned = 0;
+            // The mask keeps every index inside the table, so the probe reads
+            // do not need a second bounds check.
+            while (scanned <= _mask) {
+                int32 state = unsafeArrayGet(states, index);
+                if (state == 0) { return -1; }
+                if (state == 1 && equals(unsafeArrayGet(keys, index), key)) {
+                    return index;
+                }
+                index = (index + 1) & _mask;
+                scanned = scanned + 1;
+            }
+            return -1;
+        }
+
+        private int32 findInsertionIndex(K key) {
+            int32 index = bucket(key);
+            int32 firstTombstone = -1;
+            int32 scanned = 0;
+            while (scanned <= _mask) {
+                int32 state = unsafeArrayGet(states, index);
+                if (state == 0) {
+                    return firstTombstone >= 0 ? firstTombstone : index;
+                }
+                if (state == 2 && firstTombstone < 0) {
+                    firstTombstone = index;
+                }
+                index = (index + 1) & _mask;
+                scanned = scanned + 1;
+            }
+            return firstTombstone;
+        }
+
+        private void insertRehashed(K key, V value) {
+            int32 index = findInsertionIndex(key);
+            keys[index] = key;
+            values[index] = value;
+            states[index] = 1;
+            _count = _count + 1;
+        }
+
+        private void rehash(int32 newCapacity) {
+            K[] previousKeys = copy(keys);
+            V[] previousValues = copy(values);
+            int32[] previousStates = copy(states);
+            int32 previousCapacity = _capacity;
+
+            allocateTable(newCapacity);
+            _count = 0;
+            tombstoneCount = 0;
+
+            int32 index = 0;
+            while (index < previousCapacity) {
+                if (previousStates[index] == 1) {
+                    insertRehashed(previousKeys[index], previousValues[index]);
+                }
+                index = index + 1;
+            }
+        }
+
+        private void ensureRoomForNewEntry() {
+            // Keep at least 30% empty slots so linear probing remains bounded.
+            if ((_count + tombstoneCount + 1) * 10 >= _capacity * 7) {
+                rehash(_capacity * 2);
+            }
+        }
+
+        public int32 count {
+            get { return _count; }
+        }
+
+        public int32 capacity {
+            get { return _capacity; }
+        }
+
+        public bool isEmpty {
+            get { return _count == 0; }
+        }
+
+        public bool containsKey(K key) {
+            return findIndex(key) >= 0;
+        }
+
+        public void put(K key, V value) {
+            // One probe decides both questions. Looking the key up and then
+            // probing again for its insertion slot walked the same chain twice
+            // for every new key.
+            int32 index = bucket(key);
+            func<bool, K, K> equals = equalityFunction;
+            int32 firstTombstone = -1;
+            int32 scanned = 0;
+            while (scanned <= _mask) {
+                int32 state = unsafeArrayGet(states, index);
+                if (state == 0) { break; }
+                if (state == 1 && equals(unsafeArrayGet(keys, index), key)) {
+                    values[index] = move(value);
+                    return;
+                }
+                if (state == 2 && firstTombstone < 0) {
+                    firstTombstone = index;
+                }
+                index = (index + 1) & _mask;
+                scanned = scanned + 1;
+            }
+            if (firstTombstone >= 0) { index = firstTombstone; }
+
+            // Growing invalidates the slot found above, so probe again only in
+            // that case.
+            if ((_count + tombstoneCount + 1) * 10 >= _capacity * 7) {
+                rehash(_capacity * 2);
+                index = findInsertionIndex(key);
+            }
+            if (states[index] == 2) {
+                tombstoneCount = tombstoneCount - 1;
+            }
+            keys[index] = move(key);
+            values[index] = move(value);
+            states[index] = 1;
+            _count = _count + 1;
+        }
+
+        public bool tryAdd(K key, V value) {
+            if (containsKey(key)) { return false; }
+            put(key, value);
+            return true;
+        }
+
+        public bool remove(K key) {
+            int32 index = findIndex(key);
+            if (index < 0) { return false; }
+            states[index] = 2;
+            _count = _count - 1;
+            tombstoneCount = tombstoneCount + 1;
+            return true;
+        }
+
+        public V this[K key] {
+            get {
+                int32 index = findIndex(key);
+                if (index < 0) { throw new Error("Key not found"); }
+                return values[index];
+            }
+            set {
+                put(key, value);
+            }
+        }
+
+        public void clear() {
+            allocateTable(_capacity);
+            _count = 0;
+            tombstoneCount = 0;
+        }
+
+        public HashKeyValuePair<K, V>[] toArray() {
+            HashKeyValuePair<K, V>[] result =
+                new HashKeyValuePair<K, V>[_count];
+            int32 sourceIndex = 0;
+            int32 resultIndex = 0;
+            while (sourceIndex < _capacity) {
+                if (states[sourceIndex] == 1) {
+                    result[resultIndex].initialize(
+                        keys[sourceIndex],
+                        values[sourceIndex]
+                    );
+                    resultIndex = resultIndex + 1;
+                }
+                sourceIndex = sourceIndex + 1;
+            }
+            return result;
+        }
+
+        public K[] keysToArray() {
+            K[] result = new K[_count];
+            int32 sourceIndex = 0;
+            int32 resultIndex = 0;
+            while (sourceIndex < _capacity) {
+                if (states[sourceIndex] == 1) {
+                    result[resultIndex] = keys[sourceIndex];
+                    resultIndex = resultIndex + 1;
+                }
+                sourceIndex = sourceIndex + 1;
+            }
+            return result;
+        }
+
+        public V[] valuesToArray() {
+            V[] result = new V[_count];
+            int32 sourceIndex = 0;
+            int32 resultIndex = 0;
+            while (sourceIndex < _capacity) {
+                if (states[sourceIndex] == 1) {
+                    result[resultIndex] = values[sourceIndex];
+                    resultIndex = resultIndex + 1;
+                }
+                sourceIndex = sourceIndex + 1;
+            }
+            return result;
+        }
+
+        public HashMapIterator<K, V>* iterate() {
+            return new HashMapIterator<K, V>(toArray());
+        }
+    }
+
+    class HashSet<T> {
+        private T[] items;
+        private int32[] states;
+        private int32 _count;
+        private int32 tombstoneCount;
+        private int32 _capacity;
+        // Power-of-two capacity, so probing masks instead of taking a
+        // remainder. See HashMap for the same reasoning.
+        private int32 _mask;
+        private func<int64, T> hashFunction;
+        private func<bool, T, T> equalityFunction;
+
+        public HashSet(
+            func<int64, T> hash,
+            func<bool, T, T> equals
+        ) {
+            hashFunction = hash;
+            equalityFunction = equals;
+            _capacity = 8;
+            _mask = _capacity - 1;
+            items = new T[_capacity];
+            states = new int32[_capacity];
+            int32 index = 0;
+            while (index < _capacity) {
+                states[index] = 0;
+                index = index + 1;
+            }
+            _count = 0;
+            tombstoneCount = 0;
+        }
+
+        public HashSet(
+            func<int64, T> hash,
+            func<bool, T, T> equals,
+            int32 initialCapacity
+        ) {
+            if (initialCapacity < 1) {
+                throw new Error("HashSet capacity must be positive");
+            }
+            hashFunction = hash;
+            equalityFunction = equals;
+            _capacity = 4;
+            while (_capacity < initialCapacity) {
+                _capacity = _capacity * 2;
+            }
+            _mask = _capacity - 1;
+            items = new T[_capacity];
+            states = new int32[_capacity];
+            int32 index = 0;
+            while (index < _capacity) {
+                states[index] = 0;
+                index = index + 1;
+            }
+            _count = 0;
+            tombstoneCount = 0;
+        }
+
+        private void clearStates() {
+            int32 index = 0;
+            while (index < _capacity) {
+                states[index] = 0;
+                index = index + 1;
+            }
+        }
+
+        private int32 bucket(T value) {
+            func<int64, T> hash = hashFunction;
+            return (hash(value) & (_mask as int64)) as int32;
+        }
+
+        private bool itemsEqual(T left, T right) {
+            func<bool, T, T> equals = equalityFunction;
+            return equals(left, right);
+        }
+
+        private int32 findIndex(T value) {
+            int32 index = bucket(value);
+            func<bool, T, T> equals = equalityFunction;
+            int32 scanned = 0;
+            while (scanned <= _mask) {
+                int32 state = unsafeArrayGet(states, index);
+                if (state == 0) { return -1; }
+                if (state == 1 && equals(unsafeArrayGet(items, index), value)) {
+                    return index;
+                }
+                index = (index + 1) & _mask;
+                scanned = scanned + 1;
+            }
+            return -1;
+        }
+
+        private int32 findInsertionIndex(T value) {
+            int32 index = bucket(value);
+            int32 firstTombstone = -1;
+            int32 scanned = 0;
+            while (scanned <= _mask) {
+                int32 state = unsafeArrayGet(states, index);
+                if (state == 0) {
+                    return firstTombstone >= 0 ? firstTombstone : index;
+                }
+                if (state == 2 && firstTombstone < 0) {
+                    firstTombstone = index;
+                }
+                index = (index + 1) & _mask;
+                scanned = scanned + 1;
+            }
+            return firstTombstone;
+        }
+
+        private void insertRehashed(T value) {
+            int32 index = findInsertionIndex(value);
+            items[index] = value;
+            states[index] = 1;
+            _count = _count + 1;
+        }
+
+        private void rehash(int32 newCapacity) {
+            T[] previousItems = copy(items);
+            int32[] previousStates = copy(states);
+            int32 previousCapacity = _capacity;
+
+            _capacity = newCapacity;
+            _mask = _capacity - 1;
+            items = new T[_capacity];
+            states = new int32[_capacity];
+            clearStates();
+            _count = 0;
+            tombstoneCount = 0;
+
+            int32 index = 0;
+            while (index < previousCapacity) {
+                if (previousStates[index] == 1) {
+                    insertRehashed(previousItems[index]);
+                }
+                index = index + 1;
+            }
+        }
+
+        private void ensureRoomForNewEntry() {
+            if ((_count + tombstoneCount + 1) * 10 >= _capacity * 7) {
+                rehash(_capacity * 2);
+            }
+        }
+
+        public int32 count {
+            get { return _count; }
+        }
+
+        public int32 capacity {
+            get { return _capacity; }
+        }
+
+        public bool isEmpty {
+            get { return _count == 0; }
+        }
+
+        public bool contains(T value) {
+            return findIndex(value) >= 0;
+        }
+
+        public bool add(T value) {
+            if (contains(value)) { return false; }
+            ensureRoomForNewEntry();
+            int32 index = findInsertionIndex(value);
+            if (states[index] == 2) {
+                tombstoneCount = tombstoneCount - 1;
+            }
+            items[index] = value;
+            states[index] = 1;
+            _count = _count + 1;
+            return true;
+        }
+
+        public bool remove(T value) {
+            int32 index = findIndex(value);
+            if (index < 0) { return false; }
+            states[index] = 2;
+            _count = _count - 1;
+            tombstoneCount = tombstoneCount + 1;
+            return true;
+        }
+
+        public void clear() {
+            items = new T[_capacity];
+            states = new int32[_capacity];
+            clearStates();
+            _count = 0;
+            tombstoneCount = 0;
+        }
+
+        public T[] toArray() {
+            T[] result = new T[_count];
+            int32 sourceIndex = 0;
+            int32 resultIndex = 0;
+            while (sourceIndex < _capacity) {
+                if (states[sourceIndex] == 1) {
+                    result[resultIndex] = items[sourceIndex];
+                    resultIndex = resultIndex + 1;
+                }
+                sourceIndex = sourceIndex + 1;
+            }
+            return result;
+        }
+    }
+}

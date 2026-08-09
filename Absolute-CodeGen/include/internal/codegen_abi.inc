@@ -6,6 +6,9 @@
 
         llvm::Type* AbiParameterType(const std::string& name, bool external = false);
 
+        bool ParameterSupportsOwnershipName(
+            const std::string& name, bool external = false);
+
         unsigned AbiReturnOffset(const std::string& name, bool external = false);
 
         llvm::Value* EmitAbiCall(llvm::FunctionType* functionType, llvm::Value* callee,
@@ -14,4 +17,5 @@
             const std::vector<std::string>& parameterTypeNames,
             const std::vector<llvm::Value*>& argumentValues,
             const std::string& resultName,
-            bool external = false);
+            bool external = false,
+            const std::vector<llvm::Value*>& ownershipFlags = {});

@@ -1,0 +1,17 @@
+int32 main() {
+    string name = "Absolute";
+    int32 version = 2;
+    string msg = "Hello ${name} v${version}!";
+    assert(msg == "Hello Absolute v2!", "simple string interpolation failed");
+
+    int32 x = 10;
+    int32 y = 20;
+    string math = "${x} + ${y} = ${x + y}";
+    assert(math == "10 + 20 = 30", "expression string interpolation failed");
+
+    string price = "Price is \$100 for ${name}";
+    assert(price == "Price is $100 for Absolute", "escaped dollar sign failed");
+
+    println("string-interpolation=ok");
+    return 0;
+}

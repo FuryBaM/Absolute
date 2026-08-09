@@ -5,7 +5,7 @@ endif()
 file(READ "${IR_FILE}" ir)
 
 foreach(type_name IN ITEMS ResourceBase ResourceDerived)
-    if(NOT ir MATCHES "@absolute[.]vtable[.]${type_name} = private constant \\[[^]]+\\] \\[ptr @${type_name}[.]__destroy")
+    if(NOT ir MATCHES "@${type_name}[.]__vtable = internal constant \\[[^]]+\\] \\[ptr @${type_name}[.]__destroy")
         message(FATAL_ERROR "${type_name} vtable does not reserve destructor slot zero")
     endif()
     if(NOT ir MATCHES "define internal void @${type_name}[.]__destroy\\(ptr %this\\)")

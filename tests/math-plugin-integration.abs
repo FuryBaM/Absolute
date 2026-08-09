@@ -1,0 +1,32 @@
+@shader.stage(Vertex)
+shader Vertex {
+    input vec3 position;
+    input vec2 uv;
+    uniform mat4 model;
+    uniform vec4 tint;
+    output vec4 clipPosition;
+    output vec2 vUv;
+}
+
+int32 main() {
+    auto position = new vec3(1.0, 2.0, 3.0);
+    auto color = new vec4(0.2, 0.4, 0.6, 1.0);
+
+    // These arrays can be passed directly to Desktop.Gpu vertex/storage buffers.
+    float[] vertex = position.toFloatArray();
+    float[] rgba = color.toFloatArray();
+    assert(vertex.length == 3, "vec3 GPU packing length");
+    assert(rgba.length == 4, "vec4 GPU packing length");
+    assert(Math.abs(vertex[2] - 3.0) < 0.0001, "vec3 GPU packing values");
+
+    auto model = Math.translation(2.0, 0.0, 0.0) * Math.rotationY(Math.radians(90.0));
+    auto transformed = model * new vec4(0.0, 0.0, 0.0, 1.0);
+    assert(Math.abs(transformed.x - 2.0) < 0.0001, "mat4 * vec4");
+
+    // A real desktop type reference proves all three preludes coexist.
+    Desktop.Gpu* optionalGpu = null;
+    assert(optionalGpu == null, "desktop type available with math and shader");
+
+    println("math-integration=ok");
+    return 0;
+}

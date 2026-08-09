@@ -1,0 +1,28 @@
+import "../std/binary.abs";
+
+int32 main() {
+    std.binary.BinaryWriter* writer = new std.binary.BinaryWriter();
+    writer.writeByte(255 as uint8);
+    writer.writeInt16(1000 as int16);
+    writer.writeInt32(100000 as int32);
+    writer.writeInt64(9876543210 as int64);
+    writer.writeDouble(3.14159);
+    writer.writeString("Absolute Language");
+
+    assert(writer.size() > 0, "writer size match");
+
+    std.binary.BinaryReader* reader = new std.binary.BinaryReader(writer.getData(), writer.size());
+    assert(reader.readByte() == (255 as uint8), "readByte match");
+    assert(reader.readInt16() == (1000 as int16), "readInt16 match");
+    assert(reader.readInt32() == (100000 as int32), "readInt32 match");
+    assert(reader.readInt64() == (9876543210 as int64), "readInt64 match");
+    assert(reader.readDouble() == 3.14159, "readDouble match");
+    assert(reader.readString() == "Absolute Language", "readString match");
+    assert(reader.isEof() == true, "reader eof match");
+
+    reader.dispose();
+    writer.dispose();
+
+    println("std-binary=ok");
+    return 0;
+}

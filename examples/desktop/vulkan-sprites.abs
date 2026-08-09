@@ -1,0 +1,110 @@
+// Vulkan textured ship (HLSL + texture + sampler + indexed quad). Esc quit. WASD move.
+
+void writeQuad4(float[] v, int32 base, float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1) {
+    v[base + 0] = x0; v[base + 1] = y1; v[base + 2] = 0.0; v[base + 3] = u0; v[base + 4] = v1;
+    v[base + 5] = x0; v[base + 6] = y0; v[base + 7] = 0.0; v[base + 8] = u0; v[base + 9] = v0;
+    v[base + 10] = x1; v[base + 11] = y0; v[base + 12] = 0.0; v[base + 13] = u1; v[base + 14] = v0;
+    v[base + 15] = x1; v[base + 16] = y1; v[base + 17] = 0.0; v[base + 18] = u1; v[base + 19] = v1;
+}
+
+int32 main() {
+    auto window = new Desktop.Window("Absolute Vulkan Sprites", 800, 450, true);
+    if (!window.isOpen()) {
+        println("Could not create desktop window");
+        return 1;
+    }
+
+    auto gpu = new Desktop.Gpu(window, Desktop.Gpu.BackendVulkan);
+    if (!gpu.isValid()) {
+        println("Vulkan GPU failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+    println(gpu.backend());
+
+    auto shipSprite = new Desktop.Sprite(1, 1);
+    bool ok = shipSprite.loadBmp("examples/desktop/assets/ship.bmp");
+    if (!ok) {
+        ok = shipSprite.loadBmp("assets/ship.bmp");
+    }
+    if (!ok) {
+        println("Failed to load ship.bmp");
+        return 1;
+    }
+    shipSprite.colorKey(Desktop.rgb(255, 0, 255));
+
+    auto shipTex = gpu.createTextureFromSprite(shipSprite);
+    auto sampler = gpu.createSampler(Desktop.Gpu.FilterNearest, Desktop.Gpu.WrapClamp);
+    if (shipTex == null || sampler == null) {
+        println("texture/sampler failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    string vs = "cbuffer Frame : register(b0) { float2 uOffset; float2 _pad; };\nstruct VSIn { float3 aPos : POSITION; float2 aUv : TEXCOORD0; };\nstruct VSOut { float4 pos : SV_POSITION; float2 vUv : TEXCOORD0; };\nVSOut main(VSIn i) {\n  VSOut o;\n  o.pos = float4(i.aPos.xy + uOffset, 0.0, 1.0);\n  o.vUv = i.aUv;\n  return o;\n}\n";
+    string ps = "Texture2D uTex : register(t0);\nSamplerState uSamp : register(s0);\nstruct PSIn { float4 pos : SV_POSITION; float2 vUv : TEXCOORD0; };\nfloat4 main(PSIn i) : SV_TARGET {\n  float4 c = uTex.Sample(uSamp, i.vUv);\n  if (c.a < 0.01) discard;\n  return c;\n}\n";
+
+    auto program = gpu.createShader(vs, ps);
+    auto layout = gpu.createLayoutPos3Uv2();
+    auto pipeline = gpu.createPipeline(program, layout);
+    if (program == null || layout == null || pipeline == null) {
+        println("shader/pipeline failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    float halfW = 0.1;
+    float halfH = 0.075;
+    float[] verts = new float[20];
+    writeQuad4(verts, 0, -halfW, -halfH, halfW, halfH, 0.0, 0.0, 1.0, 1.0);
+    int32[] indices = new int32[6];
+    indices[0] = 0; indices[1] = 1; indices[2] = 2;
+    indices[3] = 0; indices[4] = 2; indices[5] = 3;
+    auto vb = gpu.createVertexBuffer(verts);
+    auto ib = gpu.createIndexBuffer(indices);
+    if (vb == null || ib == null) {
+        println("buffers failed");
+        return 1;
+    }
+
+    float ox = 0.0;
+    float oy = 0.0;
+    float speed = 0.8;
+
+    while (window.poll()) {
+        if (window.keyPressed(Desktop.KeyEscape())) {
+            break;
+        } else {
+            double dt = window.deltaTime();
+            if (dt <= 0.0) { dt = 0.016; }
+            if (dt > 0.05) { dt = 0.05; }
+            float step = (dt as float) * speed;
+            if (window.keyDown(Desktop.KeyA()) || window.keyDown(Desktop.KeyLeft())) {
+                ox = ox - step;
+            }
+            if (window.keyDown(Desktop.KeyD()) || window.keyDown(Desktop.KeyRight())) {
+                ox = ox + step;
+            }
+            if (window.keyDown(Desktop.KeyW()) || window.keyDown(Desktop.KeyUp())) {
+                oy = oy + step;
+            }
+            if (window.keyDown(Desktop.KeyS()) || window.keyDown(Desktop.KeyDown())) {
+                oy = oy - step;
+            }
+
+            gpu.beginFrame();
+            gpu.clear(0.06, 0.07, 0.12, 1.0);
+            gpu.bind(pipeline);
+            gpu.bind(vb);
+            gpu.bind(ib);
+            gpu.bind(shipTex);
+            gpu.bind(sampler);
+            gpu.setUniform2F("uOffset", ox, oy);
+            gpu.drawIndexed(6);
+            gpu.endFrame();
+            gpu.present();
+        }
+    }
+
+    return 0;
+}

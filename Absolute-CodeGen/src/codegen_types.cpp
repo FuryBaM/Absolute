@@ -1,9 +1,74 @@
 #include "codegen_internal.h"
 
 namespace Absolute {
-    llvm::Type* CodeGenerator::Impl::TypeFromName(const std::string& name) {
+    std::string g_last_context = "none";
+
+    namespace {
+        bool ContainsOpenGenericParameter(const std::string& typeName,
+            const std::vector<Token>& parameters, const Analyzer* analyzer = nullptr) {
+            for (const Token& parameter : parameters) {
+                size_t position = typeName.find(parameter.value);
+                while (position != std::string::npos) {
+                    const auto identifier = [](char value) {
+                        return std::isalnum(static_cast<unsigned char>(value)) || value == '_';
+                    };
+                    const bool leftBoundary = position == 0 || !identifier(typeName[position - 1]);
+                    const size_t end = position + parameter.value.size();
+                    const bool rightBoundary = end == typeName.size() || !identifier(typeName[end]);
+                    if (leftBoundary && rightBoundary) return true;
+                    position = typeName.find(parameter.value, position + 1);
+                }
+            }
+            std::string base;
+            std::vector<std::string> arguments;
+            if (ParseCodegenGenericType(typeName, base, arguments)) {
+                for (const std::string& arg : arguments) {
+                    if (ContainsOpenGenericParameter(arg, parameters, analyzer)) return true;
+                }
+            } else {
+                std::string baseName = ValueReferenceBaseTypeName(typeName);
+                if (baseName.ends_with("[]")) baseName = baseName.substr(0, baseName.size() - 2);
+                if (IsManagedPointerTypeName(baseName)) baseName = PointerPointeeName(baseName);
+                if (IsRawPointerTypeName(baseName)) baseName = PointerPointeeName(baseName);
+                if (baseName != "int8" && baseName != "uint8" && baseName != "int16" && baseName != "uint16" &&
+                    baseName != "int32" && baseName != "uint32" && baseName != "int64" && baseName != "uint64" &&
+                    baseName != "float" && baseName != "double" && baseName != "bool" && baseName != "char" &&
+                    baseName != "string" && baseName != "void") {
+                    if (analyzer) {
+                        const SymbolId symId = analyzer->Symbols().Lookup(baseName);
+                        const Symbol* sym = analyzer->Symbols().Get(symId);
+                        if (!sym || sym->kind != SymbolKind::Type) return true;
+                    }
+                }
+            }
+            return false;
+        }
+    }
+
+    llvm::Type* CodeGenerator::Impl::TypeFromName(const std::string& rawName) {
+        const std::string name = ValueReferenceBaseTypeName(
+            SubstituteCodegenType(rawName, currentGenericSubstitutions));
         if (ArrayRankName(name) > 0) return ArrayDescriptorType(name);
+
         if (IsTaskTypeName(name)) return builder.getPtrTy();
+        std::string functionReturn;
+        std::vector<std::string> functionParameters;
+        if (ParseCodegenFunctionType(name, functionReturn, functionParameters))
+            return builder.getPtrTy();
+        if (ParseCodegenCFunctionType(name, functionReturn, functionParameters))
+            return builder.getPtrTy();
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseCodegenGenericType(name, genericBase, genericArguments) &&
+            genericBase == "tuple") {
+            if (genericArguments.size() < 2)
+                Fail("tuple requires at least two element types");
+            std::vector<llvm::Type*> elements;
+            elements.reserve(genericArguments.size());
+            for (const std::string& argument : genericArguments)
+                elements.push_back(TypeFromName(argument));
+            return llvm::StructType::get(context, elements, false);
+        }
         if (IsManagedPointerTypeName(name)) return builder.getInt64Ty();
         if (IsRawPointerTypeName(name)) return builder.getPtrTy();
         if (name == "int8" || name == "uint8" || name == "char") return builder.getInt8Ty();
@@ -24,8 +89,45 @@ namespace Absolute {
             FinalizeStruct(name);
             return structs.at(name).llvmType;
         }
-        Fail("unsupported type '" + name + "'");
+        if (!currentNamespace.empty()) {
+            const std::string qualified = currentNamespace + "." + name;
+            if (classes.contains(qualified)) {
+                FinalizeClass(qualified);
+                return classes.at(qualified).llvmType;
+            }
+            if (structs.contains(qualified)) {
+                FinalizeStruct(qualified);
+                return structs.at(qualified).llvmType;
+            }
+        }
+        for (const auto& [clsName, info] : classes) {
+            if (clsName == name ||
+                (clsName.size() > name.size() && clsName.ends_with("." + name)) ||
+                (name.size() > clsName.size() && name.ends_with("." + clsName))) {
+                FinalizeClass(clsName);
+                return classes.at(clsName).llvmType;
+            }
+        }
+        for (const auto& [strName, info] : structs) {
+            if (strName == name ||
+                (strName.size() > name.size() && strName.ends_with("." + name)) ||
+                (name.size() > strName.size() && name.ends_with("." + strName))) {
+                FinalizeStruct(strName);
+                return structs.at(strName).llvmType;
+            }
+        }
+        llvm::Function* curFn = builder.GetInsertBlock() ? builder.GetInsertBlock()->getParent() : nullptr;
+        std::string subsStr = "{";
+        for (const auto& [k, v] : currentGenericSubstitutions) subsStr += k + ":" + v + " ";
+        subsStr += "}";
+        Fail("unsupported type '" + name + "' (ctx='" + g_last_context + "', rawName='" + rawName + "', func='" + (curFn ? curFn->getName().str() : "none") + "', subs=" + subsStr + ")");
     }
+
+
+
+
+
+
 
     llvm::StructType* CodeGenerator::Impl::ArrayDescriptorType(const std::string& name) {
         if (const auto found = arrayDescriptorTypes.find(name); found != arrayDescriptorTypes.end())
@@ -65,11 +167,18 @@ namespace Absolute {
                 info && !info->type.empty() && info->type != "error")
                 return SubstituteCodegenType(info->type, currentGenericSubstitutions);
         }
-        std::string type = ResolveTypeName(expression.type.get());
-        if (const auto* declarator = dynamic_cast<const ArrayAccessExpr*>(expression.name.get()))
-            for (size_t index = 0; index < declarator->indexes.size(); ++index) type += "[]";
+        std::string type = SubstituteCodegenType(
+            ResolveTypeName(expression.type.get()), currentGenericSubstitutions);
+        const size_t rank = ArrayDeclaratorRank(expression.name.get());
+        for (size_t index = 0; index < rank; ++index) type += "[]";
         return type;
     }
+
+    std::string CodeGenerator::Impl::CallableParameterTypeName(VarDeclExpr& expression) {
+        return ValueReferenceTypeName(
+            DeclaredTypeName(expression), expression.isConst, expression.isReference);
+    }
+
 
     std::string CodeGenerator::Impl::QualifiedClassName(const std::string& name, const std::string& nameSpace) const {
         if (name.empty() || name.find('.') != std::string::npos || nameSpace.empty()) return name;
@@ -120,8 +229,7 @@ namespace Absolute {
             else if (auto* method = dynamic_cast<FunctionDeclStmt*>(member.get()))
                 info.ownMethods.push_back(method);
             else if (auto* constructor = dynamic_cast<ConstructorDeclStmt*>(member.get())) {
-                if (info.constructor) Fail("class '" + name + "' has multiple constructors");
-                info.constructor = constructor;
+                info.constructors.push_back(constructor);
             }
         }
         classes.emplace(name, std::move(info));
@@ -166,29 +274,34 @@ namespace Absolute {
             else if (auto* method = dynamic_cast<FunctionDeclStmt*>(member.get()))
                 info.ownMethods.push_back(method);
             else if (auto* constructor = dynamic_cast<ConstructorDeclStmt*>(member.get())) {
-                if (info.constructor) Fail("struct '" + name + "' has multiple constructors");
-                info.constructor = constructor;
+                info.constructors.push_back(constructor);
             }
         }
         structs.emplace(name, std::move(info));
         structOrder.push_back(name);
     }
 
-    void CodeGenerator::Impl::CollectInterface(InterfaceDeclStmt& statement, const std::string& nameSpace) {
-        const std::string name = QualifiedClassName(statement.name, nameSpace);
+    void CodeGenerator::Impl::CollectInterface(InterfaceDeclStmt& statement,
+        const std::string& nameSpace, const std::string& specializedName,
+        std::unordered_map<std::string, std::string> substitutions) {
+        const std::string name = specializedName.empty()
+            ? QualifiedClassName(statement.name, nameSpace) : specializedName;
         if (interfaces.contains(name) || classes.contains(name) || structs.contains(name) || enumTypes.contains(name))
             Fail("duplicate type '" + name + "'");
         InterfaceInfo info;
         info.name = name;
         info.nameSpace = nameSpace;
         info.statement = &statement;
+        info.substitutions = std::move(substitutions);
         for (const std::string& parent : statement.parents)
-            info.parents.push_back(QualifiedClassName(parent, nameSpace));
+            info.parents.push_back(SubstituteCodegenType(
+                QualifiedClassName(parent, nameSpace), info.substitutions));
         for (const auto& declaration : statement.staticFields) {
             if (!declaration || !declaration->expr) continue;
             VarDeclExpr* field = declaration->expr.get();
             info.staticFields.push_back({IdentifierName(field->name.get()),
-                DeclaredTypeName(*field), field->value.get(), field->isConst});
+                SubstituteCodegenType(DeclaredTypeName(*field), info.substitutions),
+                field->value.get(), field->isConst});
         }
         interfaces.emplace(name, std::move(info));
         interfaceOrder.push_back(name);
@@ -209,11 +322,17 @@ namespace Absolute {
                         std::string base;
                         std::vector<std::string> arguments;
                         if (!ParseCodegenGenericType(specialization, base, arguments) ||
-                            base != baseName || arguments.size() != classDeclaration->templateParams.size()) continue;
+                            arguments.size() != classDeclaration->templateParams.size()) continue;
+                        if (base != baseName && base != classDeclaration->name &&
+                            baseName != QualifiedClassName(base, nameSpace)) continue;
+                        if (std::any_of(arguments.begin(), arguments.end(), [&](const std::string& argument) {
+                            return ContainsOpenGenericParameter(argument, classDeclaration->templateParams, analyzer);
+                        })) continue;
                         std::unordered_map<std::string, std::string> substitutions;
                         for (size_t index = 0; index < arguments.size(); ++index)
                             substitutions.emplace(classDeclaration->templateParams[index].value, arguments[index]);
-                        CollectClass(*classDeclaration, nameSpace, specialization, std::move(substitutions));
+                        const std::string fullName = baseName + "<" + specialization.substr(specialization.find('<') + 1);
+                        CollectClass(*classDeclaration, nameSpace, fullName, std::move(substitutions));
                     }
                 }
             }
@@ -229,16 +348,48 @@ namespace Absolute {
                         std::string base;
                         std::vector<std::string> arguments;
                         if (!ParseCodegenGenericType(specialization, base, arguments) ||
-                            base != baseName || arguments.size() != structDeclaration->templateParams.size()) continue;
+                            arguments.size() != structDeclaration->templateParams.size()) continue;
+                        if (base != baseName && base != structDeclaration->name &&
+                            baseName != QualifiedClassName(base, nameSpace)) continue;
+                        if (std::any_of(arguments.begin(), arguments.end(), [&](const std::string& argument) {
+                            return ContainsOpenGenericParameter(argument, structDeclaration->templateParams, analyzer);
+                        })) continue;
                         std::unordered_map<std::string, std::string> substitutions;
                         for (size_t index = 0; index < arguments.size(); ++index)
                             substitutions.emplace(structDeclaration->templateParams[index].value, arguments[index]);
-                        CollectStruct(*structDeclaration, nameSpace, specialization, std::move(substitutions));
+                        const std::string fullName = baseName + "<" + specialization.substr(specialization.find('<') + 1);
+                        CollectStruct(*structDeclaration, nameSpace, fullName, std::move(substitutions));
                     }
                 }
             }
-            else if (auto* interfaceDeclaration = dynamic_cast<InterfaceDeclStmt*>(statement.get()))
-                CollectInterface(*interfaceDeclaration, nameSpace);
+            else if (auto* interfaceDeclaration = dynamic_cast<InterfaceDeclStmt*>(statement.get())) {
+                if (interfaceDeclaration->templateParams.empty())
+                    CollectInterface(*interfaceDeclaration, nameSpace);
+                else if (analyzer) {
+                    const std::string baseName = QualifiedClassName(
+                        interfaceDeclaration->name, nameSpace);
+                    std::vector<std::string> specializations(
+                        analyzer->InstantiatedGenericTypes().begin(),
+                        analyzer->InstantiatedGenericTypes().end());
+                    std::sort(specializations.begin(), specializations.end());
+                    for (const std::string& specialization : specializations) {
+                        std::string base;
+                        std::vector<std::string> arguments;
+                        if (!ParseCodegenGenericType(specialization, base, arguments) ||
+                            base != baseName ||
+                            arguments.size() != interfaceDeclaration->templateParams.size()) continue;
+                        if (std::any_of(arguments.begin(), arguments.end(), [&](const std::string& argument) {
+                            return ContainsOpenGenericParameter(argument, interfaceDeclaration->templateParams, analyzer);
+                        })) continue;
+                        std::unordered_map<std::string, std::string> substitutions;
+                        for (size_t index = 0; index < arguments.size(); ++index)
+                            substitutions.emplace(
+                                interfaceDeclaration->templateParams[index].value, arguments[index]);
+                        CollectInterface(*interfaceDeclaration, nameSpace, specialization,
+                            std::move(substitutions));
+                    }
+                }
+            }
             else if (auto* enumDeclaration = dynamic_cast<EnumDeclStmt*>(statement.get())) {
                 const std::string name = QualifiedClassName(enumDeclaration->name, nameSpace);
                 if (classes.contains(name) || structs.contains(name) || interfaces.contains(name) ||
@@ -264,8 +415,11 @@ namespace Absolute {
         if (found == interfaces.end()) Fail("unknown interface '" + name + "'");
         InterfaceInfo& info = found->second;
         if (info.finalized) return;
+        if (!info.statement->templateParams.empty() && info.substitutions.empty()) return;
         if (info.finalizing) Fail("cyclic interface inheritance involving '" + name + "'");
         info.finalizing = true;
+        const auto oldSubstitutions = currentGenericSubstitutions;
+        currentGenericSubstitutions = info.substitutions;
 
         for (std::string& parent : info.parents) {
             if (!interfaces.contains(parent)) {
@@ -291,7 +445,8 @@ namespace Absolute {
                     info.methods.emplace(methodKey, method);
                     continue;
                 }
-                if (!SameMethodSignature(*inherited->second.statement, *method.statement))
+                if (inherited->second.returnType != method.returnType ||
+                    inherited->second.parameterTypes != method.parameterTypes)
                     Fail("inherited interface method signature mismatch for '" + name + "." +
                         method.statement->name->value + "'");
                 const bool existingDefault = inherited->second.statement->body != nullptr;
@@ -320,7 +475,8 @@ namespace Absolute {
             if (!statement || !statement->name) continue;
             std::vector<std::string> parameterTypes;
             for (const auto& parameter : statement->parameters)
-                parameterTypes.push_back(DeclaredTypeName(*parameter));
+                parameterTypes.push_back(SubstituteCodegenType(
+                    CallableParameterTypeName(*parameter), info.substitutions));
             const std::string methodKey = CallableKey(statement->name->value, parameterTypes);
             const bool staticMethod = HasModifier(*statement, "static");
             if (staticMethod) {
@@ -328,7 +484,8 @@ namespace Absolute {
                     statement, name,
                     CallableKey(name + "." + statement->name->value, parameterTypes),
                     std::nullopt, parameterTypes,
-                    ResolveTypeName(statement->returnType.get()), {}};
+                    SubstituteCodegenType(ResolveTypeName(statement->returnType.get()),
+                        info.substitutions), info.substitutions};
                 method.isStatic = true;
                 info.staticMethods[methodKey] = method;
                 if (statement->body) info.declaredMethods[methodKey] = std::move(method);
@@ -336,7 +493,10 @@ namespace Absolute {
             }
             std::optional<unsigned> slot;
             if (const auto inherited = info.methods.find(methodKey); inherited != info.methods.end()) {
-                if (!SameMethodSignature(*inherited->second.statement, *statement))
+                const std::string declaredReturn = SubstituteCodegenType(
+                    ResolveTypeName(statement->returnType.get()), info.substitutions);
+                if (inherited->second.returnType != declaredReturn ||
+                    inherited->second.parameterTypes != parameterTypes)
                     Fail("interface method signature mismatch for '" + name + "." +
                         statement->name->value + "'");
                 slot = inherited->second.virtualSlot;
@@ -345,7 +505,8 @@ namespace Absolute {
             ClassMethod method{
                 statement, name, CallableKey(name + "." + statement->name->value, parameterTypes),
                 slot, parameterTypes,
-                ResolveTypeName(statement->returnType.get()), {}};
+                SubstituteCodegenType(ResolveTypeName(statement->returnType.get()),
+                    info.substitutions), info.substitutions};
             auto& contracts = info.methodContracts[methodKey];
             if (contracts.empty()) {
                 contracts.push_back(method);
@@ -364,6 +525,7 @@ namespace Absolute {
         }
         info.finalizing = false;
         info.finalized = true;
+        currentGenericSubstitutions = oldSubstitutions;
     }
 
     void CodeGenerator::Impl::FinalizeInterfaces() {
@@ -379,11 +541,15 @@ namespace Absolute {
     }
 
     void CodeGenerator::Impl::FinalizeStruct(const std::string& name) {
+        g_last_context = "FinalizeStruct:" + name;
         auto found = structs.find(name);
         if (found == structs.end()) Fail("unknown struct '" + name + "'");
+
         StructInfo& info = found->second;
         if (info.finalized) return;
+        if (!info.statement->templateParams.empty() && info.substitutions.empty()) return;
         if (info.finalizing)
+
             Fail("struct '" + name + "' contains itself by value; use a pointer field");
         info.finalizing = true;
         const auto oldSubstitutions = currentGenericSubstitutions;
@@ -392,10 +558,12 @@ namespace Absolute {
         const auto addField = [&](const std::string& fieldName, const std::string& typeName) {
             if (info.fieldByName.contains(fieldName))
                 Fail("duplicate field '" + name + "." + fieldName + "'");
-            ClassField field{fieldName, typeName, static_cast<unsigned>(info.fields.size())};
+            const std::string substitutedType = SubstituteCodegenType(typeName, info.substitutions);
+            ClassField field{fieldName, substitutedType, static_cast<unsigned>(info.fields.size())};
             info.fields.push_back(field);
             info.fieldByName.emplace(fieldName, std::move(field));
         };
+
         for (PropertyDeclStmt* property : info.ownProperties)
             if (property && property->HasAutoAccessor())
                 addField(PropertyBackingFieldName(property->name),
@@ -416,16 +584,18 @@ namespace Absolute {
             std::vector<std::string> parameterTypes;
             parameterTypes.reserve(statement->parameters.size());
             for (const auto& parameter : statement->parameters)
-                parameterTypes.push_back(DeclaredTypeName(*parameter));
+                parameterTypes.push_back(SubstituteCodegenType(
+                    CallableParameterTypeName(*parameter), info.substitutions));
             const std::string methodName = statement->name->value;
             const std::string methodKey = CallableKey(methodName, parameterTypes);
             if (info.methods.contains(methodKey))
                 Fail("duplicate method '" + name + "." + methodName + "'");
             info.methods.emplace(methodKey, ClassMethod{
                 statement, name, CallableKey(name + "." + methodName, parameterTypes), std::nullopt,
-                parameterTypes, ResolveTypeName(statement->returnType.get()), info.substitutions,
+                parameterTypes, SubstituteCodegenType(ResolveTypeName(statement->returnType.get()), info.substitutions), info.substitutions,
                 HasModifier(*statement, "static")});
         }
+
 
         std::vector<llvm::Type*> layout;
         layout.reserve(info.fields.size());
@@ -436,21 +606,14 @@ namespace Absolute {
         currentGenericSubstitutions = oldSubstitutions;
     }
 
-    bool CodeGenerator::Impl::SameMethodSignature(FunctionDeclStmt& left, FunctionDeclStmt& right) {
-        if (ResolveTypeName(left.returnType.get()) != ResolveTypeName(right.returnType.get()) ||
-            left.parameters.size() != right.parameters.size()) return false;
-        for (size_t index = 0; index < left.parameters.size(); ++index)
-            if (DeclaredTypeName(*left.parameters[index]) != DeclaredTypeName(*right.parameters[index]))
-                return false;
-        return true;
-    }
-
     void CodeGenerator::Impl::FinalizeClass(const std::string& name) {
         auto found = classes.find(name);
         if (found == classes.end()) Fail("unknown class '" + name + "'");
         ClassInfo& info = found->second;
         if (info.finalized) return;
+        if (!info.statement->templateParams.empty() && info.substitutions.empty()) return;
         if (info.finalizing) Fail("cyclic class inheritance involving '" + name + "'");
+
         info.finalizing = true;
         const auto oldSubstitutions = currentGenericSubstitutions;
         currentGenericSubstitutions = info.substitutions;
@@ -526,13 +689,16 @@ namespace Absolute {
             std::vector<std::string> parameterTypes;
             parameterTypes.reserve(statement->parameters.size());
             for (const auto& parameter : statement->parameters)
-                parameterTypes.push_back(DeclaredTypeName(*parameter));
+                parameterTypes.push_back(CallableParameterTypeName(*parameter));
             const std::string methodKey = CallableKey(methodName, parameterTypes);
             const auto inherited = info.methods.find(methodKey);
             std::optional<unsigned> slot;
             const bool staticMethod = HasModifier(*statement, "static");
             if (!staticMethod && inherited != info.methods.end() && inherited->second.virtualSlot) {
-                if (!SameMethodSignature(*inherited->second.statement, *statement))
+                const std::string declaredReturn =
+                    ResolveTypeName(statement->returnType.get());
+                if (inherited->second.returnType != declaredReturn ||
+                    inherited->second.parameterTypes != parameterTypes)
                     Fail("override signature mismatch for '" + name + "." + methodName + "'");
                 slot = inherited->second.virtualSlot;
             }
@@ -569,7 +735,8 @@ namespace Absolute {
                 implementation = info.methods.find(methodKey);
             }
             for (const ClassMethod& requirement : requirements) {
-                if (!SameMethodSignature(*requirement.statement, *implementation->second.statement))
+                if (requirement.returnType != implementation->second.returnType ||
+                    requirement.parameterTypes != implementation->second.parameterTypes)
                     Fail("class method '" + name + "." + methodKey +
                         "' does not match its interface contract");
                 if (!requirement.virtualSlot) Fail("interface method is missing a dispatch slot");
@@ -591,12 +758,19 @@ namespace Absolute {
 
     llvm::FunctionType* CodeGenerator::Impl::MethodFunctionType(const ClassMethod& method) {
         std::vector<llvm::Type*> parameters;
-        if (AbiReturnOffset(method.returnType) != 0) parameters.push_back(builder.getPtrTy());
+        const std::string returnType = SubstituteCodegenType(method.returnType, method.substitutions);
+        if (AbiReturnOffset(returnType) != 0) parameters.push_back(builder.getPtrTy());
         if (!method.isStatic) parameters.push_back(builder.getPtrTy());
-        for (const std::string& parameter : method.parameterTypes)
-            parameters.push_back(AbiParameterType(parameter));
-        return llvm::FunctionType::get(AbiReturnType(method.returnType), parameters, false);
+        for (const std::string& parameter : method.parameterTypes) {
+            const std::string type =
+                SubstituteCodegenType(parameter, method.substitutions);
+            parameters.push_back(AbiParameterType(type));
+            if (ParameterSupportsOwnershipName(type))
+                parameters.push_back(builder.getInt1Ty());
+        }
+        return llvm::FunctionType::get(AbiReturnType(returnType), parameters, false);
     }
+
 
     llvm::Function* CodeGenerator::Impl::DeclareMethodFunction(const ClassMethod& method) {
         llvm::FunctionType* type = MethodFunctionType(method);
@@ -610,13 +784,25 @@ namespace Absolute {
         unsigned offset = AbiReturnOffset(method.returnType);
         if (offset != 0) function->getArg(0)->setName("__result");
         if (!method.isStatic) function->getArg(offset++)->setName("this");
-        for (size_t index = 0; index < method.statement->parameters.size(); ++index)
-            function->getArg(static_cast<unsigned>(index) + offset)->setName(
+        ApplyValueReferenceParameterAttributes(*function, offset, method.parameterTypes);
+        unsigned argumentIndex = offset;
+        for (size_t index = 0;
+            index < method.statement->parameters.size(); ++index) {
+            function->getArg(argumentIndex++)->setName(
                 IdentifierName(method.statement->parameters[index]->name.get()));
+            const std::string type = SubstituteCodegenType(
+                method.parameterTypes[index], method.substitutions);
+            if (ParameterSupportsOwnershipName(type))
+                function->getArg(argumentIndex++)->setName(
+                    IdentifierName(method.statement->parameters[index]->name.get()) +
+                    ".is_owner");
+        }
         return function;
     }
 
     void CodeGenerator::Impl::DeclareStaticFields(ClassInfo& info) {
+        const auto oldSubstitutions = currentGenericSubstitutions;
+        currentGenericSubstitutions = info.substitutions;
         for (const StaticField& field : info.staticFields) {
             const std::string globalName = info.name + "." + field.name;
             if (globals.contains(globalName)) Fail("duplicate static field '" + globalName + "'");
@@ -627,9 +813,12 @@ namespace Absolute {
             globals.emplace(globalName, Variable{storage, type, field.typeName, false,
                 false, nullptr, {}, nullptr, InvalidSymbolId});
         }
+        currentGenericSubstitutions = oldSubstitutions;
     }
 
     void CodeGenerator::Impl::DeclareStaticFields(StructInfo& info) {
+        const auto oldSubstitutions = currentGenericSubstitutions;
+        currentGenericSubstitutions = info.substitutions;
         for (const StaticField& field : info.staticFields) {
             const std::string globalName = info.name + "." + field.name;
             if (globals.contains(globalName)) Fail("duplicate static field '" + globalName + "'");
@@ -640,9 +829,12 @@ namespace Absolute {
             globals.emplace(globalName, Variable{storage, type, field.typeName, false,
                 false, nullptr, {}, nullptr, InvalidSymbolId});
         }
+        currentGenericSubstitutions = oldSubstitutions;
     }
 
     void CodeGenerator::Impl::DeclareStaticFields(InterfaceInfo& info) {
+        const auto oldSubstitutions = currentGenericSubstitutions;
+        currentGenericSubstitutions = info.substitutions;
         for (const StaticField& field : info.staticFields) {
             const std::string globalName = info.name + "." + field.name;
             if (globals.contains(globalName)) Fail("duplicate static field '" + globalName + "'");
@@ -653,13 +845,66 @@ namespace Absolute {
             globals.emplace(globalName, Variable{storage, type, field.typeName, false,
                 false, nullptr, {}, nullptr, InvalidSymbolId});
         }
+        currentGenericSubstitutions = oldSubstitutions;
     }
 
+
+
     bool CodeGenerator::Impl::ClassNeedsConstructor(const ClassInfo& info) const {
-        if (info.constructor) return true;
+        if (!info.constructors.empty()) return true;
         if (info.baseClass.empty()) return false;
         const auto base = classes.find(info.baseClass);
         return base != classes.end() && ClassNeedsConstructor(base->second);
+    }
+
+    std::vector<std::string> CodeGenerator::Impl::ConstructorParameterTypeNames(
+        ConstructorDeclStmt* constructor,
+        const std::unordered_map<std::string, std::string>& substitutions) {
+        std::vector<std::string> parameterTypes;
+        if (!constructor) return parameterTypes;
+        parameterTypes.reserve(constructor->parameters.size());
+        for (const auto& parameter : constructor->parameters)
+            parameterTypes.push_back(SubstituteCodegenType(
+                CallableParameterTypeName(*parameter), substitutions));
+        return parameterTypes;
+    }
+
+    std::string CodeGenerator::Impl::ConstructorLinkName(
+        const std::string& typeName,
+        const std::vector<std::string>& parameterTypes) const {
+        return CallableKey(typeName + ".__ctor", parameterTypes);
+    }
+
+    llvm::Function* CodeGenerator::Impl::LookupConstructorFunction(
+        const std::string& typeName, Expression* call) {
+        std::vector<std::string> parameterTypes;
+        if (analyzer && call) {
+            if (const ExpressionInfo* info = analyzer->GetExpressionInfo(*call))
+                parameterTypes = info->parameterTypes;
+        }
+        if (llvm::Function* function =
+            module->getFunction(ConstructorLinkName(typeName, parameterTypes)))
+            return function;
+        // Fallback: unique constructor on the type.
+        if (const auto found = classes.find(typeName); found != classes.end()) {
+            if (found->second.constructors.size() == 1) {
+                const auto params = ConstructorParameterTypeNames(
+                    found->second.constructors.front(), found->second.substitutions);
+                return module->getFunction(ConstructorLinkName(typeName, params));
+            }
+            if (found->second.constructors.empty())
+                return module->getFunction(ConstructorLinkName(typeName, {}));
+        }
+        if (const auto found = structs.find(typeName); found != structs.end()) {
+            if (found->second.constructors.size() == 1) {
+                const auto params = ConstructorParameterTypeNames(
+                    found->second.constructors.front(), found->second.substitutions);
+                return module->getFunction(ConstructorLinkName(typeName, params));
+            }
+            if (found->second.constructors.empty())
+                return module->getFunction(ConstructorLinkName(typeName, {}));
+        }
+        return nullptr;
     }
 
     bool CodeGenerator::Impl::RuntimeTypeDerivesFrom(
@@ -681,7 +926,7 @@ namespace Absolute {
         llvm::Function* function = CurrentFunction();
         if (!function) Fail("runtime type test outside a function");
         llvm::Value* object = IsManagedPointerTypeName(sourceType)
-            ? builder.CreateCall(ManagedGet(false), {reference}, "type.test.object")
+            ? EmitManagedGet(reference, false)
             : reference;
         llvm::BasicBlock* origin = builder.GetInsertBlock();
         llvm::BasicBlock* inspect = llvm::BasicBlock::Create(context, "type.test.inspect", function);
@@ -711,48 +956,82 @@ namespace Absolute {
         return result;
     }
 
-    llvm::Function* CodeGenerator::Impl::DeclareConstructorFunction(ClassInfo& info) {
-        if (!ClassNeedsConstructor(info)) return nullptr;
+    llvm::Function* CodeGenerator::Impl::DeclareConstructorFunction(
+        ClassInfo& info, ConstructorDeclStmt* constructor) {
+        if (!constructor && !ClassNeedsConstructor(info)) return nullptr;
+        std::vector<std::string> parameterTypes =
+            ConstructorParameterTypeNames(constructor, info.substitutions);
         std::vector<llvm::Type*> parameters{builder.getPtrTy()};
-        if (info.constructor)
-            for (const auto& parameter : info.constructor->parameters)
-                parameters.push_back(AbiParameterType(SubstituteCodegenType(
-                    DeclaredTypeName(*parameter), info.substitutions)));
+        for (const std::string& parameterType : parameterTypes)
+        {
+            parameters.push_back(AbiParameterType(parameterType));
+            if (ParameterSupportsOwnershipName(parameterType))
+                parameters.push_back(builder.getInt1Ty());
+        }
         llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
-        const std::string name = info.name + ".__ctor";
-        llvm::Function* function = module->getFunction(name);
-        if (!function)
-            function = llvm::Function::Create(type, llvm::Function::ExternalLinkage, name, *module);
-        function->setCallingConv(llvm::CallingConv::C);
-        if (info.constructor) ApplyCallableAttributes(*function, *info.constructor);
-        function->getArg(0)->setName("this");
-        if (info.constructor)
-            for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
-                function->getArg(static_cast<unsigned>(index + 1))->setName(
-                    IdentifierName(info.constructor->parameters[index]->name.get()));
-        return function;
-    }
-
-    llvm::Function* CodeGenerator::Impl::DeclareConstructorFunction(StructInfo& info) {
-        if (!info.constructor) return nullptr;
-        std::vector<llvm::Type*> parameters{builder.getPtrTy()};
-        for (const auto& parameter : info.constructor->parameters)
-            parameters.push_back(AbiParameterType(SubstituteCodegenType(
-                DeclaredTypeName(*parameter), info.substitutions)));
-        llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
-        const std::string name = info.name + ".__ctor";
+        const std::string name = ConstructorLinkName(info.name, parameterTypes);
         llvm::Function* function = module->getFunction(name);
         if (!function)
             function = llvm::Function::Create(type, llvm::Function::ExternalLinkage, name, *module);
         if (function->getFunctionType() != type)
             Fail("conflicting constructor declaration '" + name + "'");
         function->setCallingConv(llvm::CallingConv::C);
-        ApplyCallableAttributes(*function, *info.constructor);
+        if (constructor) ApplyCallableAttributes(*function, *constructor);
+        ApplyValueReferenceParameterAttributes(*function, 1, parameterTypes);
         function->getArg(0)->setName("this");
-        for (size_t index = 0; index < info.constructor->parameters.size(); ++index)
-            function->getArg(static_cast<unsigned>(index + 1))->setName(
-                IdentifierName(info.constructor->parameters[index]->name.get()));
+        if (constructor)
+            for (size_t index = 0, argumentIndex = 1;
+                index < constructor->parameters.size(); ++index) {
+                function->getArg(static_cast<unsigned>(argumentIndex++))->setName(
+                    IdentifierName(constructor->parameters[index]->name.get()));
+                if (ParameterSupportsOwnershipName(parameterTypes[index]))
+                    function->getArg(static_cast<unsigned>(argumentIndex++))->setName(
+                        IdentifierName(constructor->parameters[index]->name.get()) +
+                        ".is_owner");
+            }
         return function;
+    }
+
+    llvm::Function* CodeGenerator::Impl::DeclareConstructorFunction(ClassInfo& info) {
+        if (!info.constructors.empty()) {
+            llvm::Function* last = nullptr;
+            for (ConstructorDeclStmt* constructor : info.constructors)
+                last = DeclareConstructorFunction(info, constructor);
+            return last;
+        }
+        return DeclareConstructorFunction(info, nullptr);
+    }
+
+    llvm::Function* CodeGenerator::Impl::DeclareConstructorFunction(StructInfo& info) {
+        if (info.constructors.empty()) return nullptr;
+        llvm::Function* last = nullptr;
+        for (ConstructorDeclStmt* constructor : info.constructors) {
+            std::vector<std::string> parameterTypes =
+                ConstructorParameterTypeNames(constructor, info.substitutions);
+            std::vector<llvm::Type*> parameters{builder.getPtrTy()};
+            for (const std::string& parameterType : parameterTypes)
+            {
+                parameters.push_back(AbiParameterType(parameterType));
+                if (ParameterSupportsOwnershipName(parameterType))
+                    parameters.push_back(builder.getInt1Ty());
+            }
+            llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), parameters, false);
+            const std::string name = ConstructorLinkName(info.name, parameterTypes);
+            llvm::Function* function = module->getFunction(name);
+            if (!function)
+                function = llvm::Function::Create(type, llvm::Function::ExternalLinkage, name, *module);
+            if (function->getFunctionType() != type)
+                Fail("conflicting constructor declaration '" + name + "'");
+            function->setCallingConv(llvm::CallingConv::C);
+            ApplyCallableAttributes(*function, *constructor);
+            ApplyValueReferenceParameterAttributes(*function, 1, parameterTypes);
+            function->getArg(0)->setName("this");
+            for (size_t index = 0; index < constructor->parameters.size(); ++index)
+                function->getArg(static_cast<unsigned>(index + 1))->setName(
+                    IdentifierName(constructor->parameters[index]->name.get()));
+            last = function;
+        }
+        return last;
     }
 
     llvm::Function* CodeGenerator::Impl::DeclareClassDestructor(ClassInfo& info) {
@@ -785,6 +1064,7 @@ namespace Absolute {
         for (const std::string& name : classOrder) FinalizeClass(name);
         for (const std::string& name : classOrder) {
             ClassInfo& info = classes.at(name);
+            if (!info.statement->templateParams.empty() && info.substitutions.empty()) continue;
             DeclareStaticFields(info);
             for (const auto& [methodName, method] : info.declaredMethods) {
                 (void)methodName;
@@ -795,6 +1075,7 @@ namespace Absolute {
         }
         for (const std::string& name : classOrder) {
             ClassInfo& info = classes.at(name);
+            if (!info.statement->templateParams.empty() && info.substitutions.empty()) continue;
             std::vector<llvm::Constant*> entries;
             for (size_t slot = 0; slot < info.virtualNames.size(); ++slot) {
                 if (slot == 0) {
@@ -806,15 +1087,18 @@ namespace Absolute {
                     entries.push_back(llvm::ConstantPointerNull::get(builder.getPtrTy()));
                     continue;
                 }
-                const auto method = info.methods.find(methodName);
-                if (method == info.methods.end()) Fail("missing virtual method '" + methodName + "'");
-                entries.push_back(DeclareMethodFunction(method->second));
+                const auto found = info.methods.find(methodName);
+                if (found == info.methods.end()) Fail("missing virtual slot for '" + methodName + "'");
+                entries.push_back(DeclareMethodFunction(found->second));
             }
-            if (entries.empty()) entries.push_back(llvm::ConstantPointerNull::get(builder.getPtrTy()));
-            llvm::ArrayType* tableType = llvm::ArrayType::get(builder.getPtrTy(), entries.size());
-            info.vtable = new llvm::GlobalVariable(*module, tableType, true,
-                llvm::GlobalValue::PrivateLinkage, llvm::ConstantArray::get(tableType, entries),
-                "absolute.vtable." + name);
+            llvm::ArrayType* vtableType = llvm::ArrayType::get(
+                builder.getPtrTy(), entries.size());
+            llvm::Constant* initializer = llvm::ConstantArray::get(vtableType, entries);
+            const std::string vtableName = info.name + ".__vtable";
+            auto* vtable = new llvm::GlobalVariable(*module, vtableType, true,
+                llvm::GlobalValue::InternalLinkage, initializer, vtableName);
+            vtable->setAlignment(llvm::Align(8));
+            info.vtable = vtable;
         }
     }
 
@@ -822,6 +1106,7 @@ namespace Absolute {
         for (const std::string& name : structOrder) FinalizeStruct(name);
         for (const std::string& name : structOrder) {
             StructInfo& info = structs.at(name);
+            if (!info.statement->templateParams.empty() && info.substitutions.empty()) continue;
             DeclareStaticFields(info);
             for (const auto& [methodName, method] : info.methods) {
                 (void)methodName;
@@ -831,6 +1116,7 @@ namespace Absolute {
             if (TypeNeedsCleanup(info.name)) DeclareStructDestructor(info);
         }
     }
+
 
     std::string CodeGenerator::Impl::ClassNameFromType(std::string typeName) const {
         if (IsPointerTypeName(typeName)) typeName = PointerPointeeName(typeName);
@@ -898,12 +1184,28 @@ namespace Absolute {
     }
 
     bool CodeGenerator::Impl::TypeNeedsCleanup(const std::string& typeName) {
+        std::string closureReturn;
+        std::vector<std::string> closureParameters;
+        if (ParseCodegenFunctionType(typeName, closureReturn, closureParameters)) return true;
         std::unordered_set<std::string> visiting;
         const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
-            if (IsManagedPointerTypeName(candidate) || ArrayRankName(candidate) > 0) return true;
+            if (IsStrongManagedPointerTypeName(candidate) || ArrayRankName(candidate) > 0) return true;
             if (IsRawPointerTypeName(candidate) || !visiting.insert(candidate).second) return false;
+            
+            if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(candidate)) {
+                if (descriptor->isResource) return true;
+            }
+            
             const auto release = [&] { visiting.erase(candidate); };
             if (const auto found = classes.find(candidate); found != classes.end()) {
+                // `methods` is keyed by CallableKey, which appends "$"-joined
+                // parameter types to the bare name. A literal "destroy()" is not
+                // a key this map can hold, so matching it here silently skipped
+                // cleanup for every type whose only resource is its own destroy().
+                if (found->second.methods.contains(CallableKey("destroy", {}))) {
+                    release();
+                    return true;
+                }
                 for (const ClassField& field : found->second.fields) {
                     if (self(self, field.typeName)) {
                         release();
@@ -912,6 +1214,10 @@ namespace Absolute {
                 }
             }
             else if (const auto found = structs.find(candidate); found != structs.end()) {
+                if (found->second.methods.contains(CallableKey("destroy", {}))) {
+                    release();
+                    return true;
+                }
                 for (const ClassField& field : found->second.fields) {
                     if (self(self, field.typeName)) {
                         release();
@@ -959,12 +1265,21 @@ namespace Absolute {
 
     void CodeGenerator::Impl::EmitValueCleanup(
         llvm::Value* address, const std::string& typeName) {
-        if (IsManagedPointerTypeName(typeName)) {
+        std::string closureReturn;
+        std::vector<std::string> closureParameters;
+        if (ParseCodegenFunctionType(typeName, closureReturn, closureParameters)) {
+            llvm::Value* closure = builder.CreateLoad(
+                builder.getPtrTy(), address, "closure.cleanup.value");
+            builder.CreateCall(ClosureRelease(), {closure});
+            builder.CreateStore(
+                llvm::ConstantPointerNull::get(builder.getPtrTy()), address);
+            return;
+        }
+        if (IsStrongManagedPointerTypeName(typeName)) {
             llvm::Value* handle = builder.CreateLoad(
                 builder.getInt64Ty(), address, "field.cleanup.handle");
-            llvm::Value* pointer = builder.CreateCall(
-                ManagedGet(false), {handle}, "field.cleanup.pointee");
-            EmitPointeeCleanup(pointer, typeName);
+            llvm::Value* pointee = EmitManagedGet(handle, false);
+            EmitPointeeCleanup(pointee, typeName);
             builder.CreateCall(ManagedDestroy(), {handle});
             builder.CreateStore(builder.getInt64(0), address);
             return;
@@ -987,6 +1302,14 @@ namespace Absolute {
         if (const auto found = structs.find(typeName); found != structs.end()) {
             if (TypeNeedsCleanup(typeName))
                 builder.CreateCall(DeclareStructDestructor(found->second), {address});
+            return;
+        }
+        if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(typeName)) {
+            if (!descriptor->destroyFunction.empty()) {
+                llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), {builder.getPtrTy()}, false);
+                llvm::FunctionCallee callee = module->getOrInsertFunction(descriptor->destroyFunction, type);
+                builder.CreateCall(callee, {address});
+            }
         }
     }
 
@@ -996,9 +1319,25 @@ namespace Absolute {
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
         builder.SetInsertPoint(entry);
         llvm::Value* object = function->getArg(0);
+
+        auto destroyMethod = info.methods.find(CallableKey("destroy", {}));
+        if (destroyMethod != info.methods.end()) {
+            llvm::FunctionCallee callee = module->getOrInsertFunction(
+                destroyMethod->second.linkName, MethodFunctionType(destroyMethod->second));
+            EmitAbiCall(MethodFunctionType(destroyMethod->second), callee.getCallee(),
+                destroyMethod->second.returnType, {object}, destroyMethod->second.parameterTypes, {}, "class.destroy.user");
+        }
+
         for (auto field = info.fields.rbegin(); field != info.fields.rend(); ++field) {
             if (!TypeNeedsCleanup(field->typeName)) continue;
             EmitValueCleanup(FieldAddress(object, info, *field), field->typeName);
+        }
+        if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(info.name)) {
+            if (!descriptor->destroyFunction.empty()) {
+                llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), {builder.getPtrTy()}, false);
+                llvm::FunctionCallee callee = module->getOrInsertFunction(descriptor->destroyFunction, type);
+                builder.CreateCall(callee, {object});
+            }
         }
         builder.CreateRetVoid();
         builder.ClearInsertionPoint();
@@ -1011,11 +1350,29 @@ namespace Absolute {
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
         builder.SetInsertPoint(entry);
         llvm::Value* object = function->getArg(0);
+
+        auto destroyMethod = info.methods.find(CallableKey("destroy", {}));
+        if (destroyMethod != info.methods.end()) {
+            llvm::FunctionCallee callee = module->getOrInsertFunction(
+                destroyMethod->second.linkName, MethodFunctionType(destroyMethod->second));
+            EmitAbiCall(MethodFunctionType(destroyMethod->second), callee.getCallee(),
+                destroyMethod->second.returnType, {object}, destroyMethod->second.parameterTypes, {}, "struct.destroy.user");
+        }
+
         for (auto field = info.fields.rbegin(); field != info.fields.rend(); ++field) {
             if (!TypeNeedsCleanup(field->typeName)) continue;
             EmitValueCleanup(FieldAddress(object, info, *field), field->typeName);
         }
+        if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(info.name)) {
+            if (!descriptor->destroyFunction.empty()) {
+                llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), {builder.getPtrTy()}, false);
+                llvm::FunctionCallee callee = module->getOrInsertFunction(descriptor->destroyFunction, type);
+                builder.CreateCall(callee, {object});
+            }
+        }
         builder.CreateRetVoid();
         builder.ClearInsertionPoint();
     }
+
+
 }

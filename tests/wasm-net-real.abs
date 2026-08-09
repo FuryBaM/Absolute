@@ -1,0 +1,28 @@
+// Real OS TCP against a host-provided echo server (Node worker bridge).
+extern "C" raw void* absolute_net_tcp_connect(string host, int32 port);
+extern "C" int32 absolute_net_tcp_send(raw void* handle, string text);
+extern "C" string absolute_net_tcp_receive(raw void* handle, int32 maximumBytes);
+extern "C" void absolute_net_tcp_close(raw void* handle);
+
+export "C" int32 wasm_tcp_echo_port(int32 port) {
+    raw void* socket = absolute_net_tcp_connect("127.0.0.1", port);
+    if (socket == null) {
+        return 1;
+    }
+    if (absolute_net_tcp_send(socket, "ping-real") == 0) {
+        absolute_net_tcp_close(socket);
+        return 2;
+    }
+    string reply = absolute_net_tcp_receive(socket, 64);
+    absolute_net_tcp_close(socket);
+    if (reply != "ping-real") {
+        return 3;
+    }
+    return 0;
+}
+
+int32 main() {
+    // Port is supplied by the host runner via wasm_tcp_echo_port(port).
+    println("wasm-net-real=ready");
+    return 0;
+}

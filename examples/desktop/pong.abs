@@ -1,0 +1,152 @@
+// Software-rendered Pong using the Absolute desktop plugin.
+// Controls: W/S left paddle, Up/Down right paddle, Esc quit, Space restart after score.
+
+int32 main() {
+    auto window = new Desktop.Window("Absolute Pong", 800, 450, false);
+    if (!window.isOpen()) {
+        println("Could not create desktop window");
+        return 1;
+    }
+
+    int32 paddleW = 14;
+    int32 paddleH = 90;
+    double leftY = 180.0;
+    double rightY = 180.0;
+    double ballX = 400.0;
+    double ballY = 225.0;
+    double ballVX = 280.0;
+    double ballVY = 180.0;
+    int32 ballR = 10;
+    int32 scoreL = 0;
+    int32 scoreR = 0;
+    bool serving = true;
+    double serveTimer = 0.8;
+
+    while (window.poll()) {
+        double dt = window.deltaTime();
+        if (dt <= 0.0) {
+            dt = 0.016;
+        }
+        if (dt > 0.05) {
+            dt = 0.05;
+        }
+
+        if (window.keyPressed(Desktop.KeyEscape())) {
+            break;
+        } else {
+            double speed = 360.0;
+            if (window.keyDown(Desktop.KeyW())) {
+                leftY = leftY - speed * dt;
+            }
+            if (window.keyDown(Desktop.KeyS())) {
+                leftY = leftY + speed * dt;
+            }
+            if (window.keyDown(Desktop.KeyUp())) {
+                rightY = rightY - speed * dt;
+            }
+            if (window.keyDown(Desktop.KeyDown())) {
+                rightY = rightY + speed * dt;
+            }
+
+            if (leftY < 0.0) {
+                leftY = 0.0;
+            }
+            if (leftY > (window.height() - paddleH) as double) {
+                leftY = (window.height() - paddleH) as double;
+            }
+            if (rightY < 0.0) {
+                rightY = 0.0;
+            }
+            if (rightY > (window.height() - paddleH) as double) {
+                rightY = (window.height() - paddleH) as double;
+            }
+
+            if (serving) {
+                serveTimer = serveTimer - dt;
+                if (serveTimer <= 0.0 || window.keyPressed(Desktop.KeySpace())) {
+                    serving = false;
+                    serveTimer = 0.0;
+                }
+            } else {
+                ballX = ballX + ballVX * dt;
+                ballY = ballY + ballVY * dt;
+
+                if (ballY < (ballR) as double) {
+                    ballY = (ballR) as double;
+                    ballVY = 0.0 - ballVY;
+                }
+                if (ballY > (window.height() - ballR) as double) {
+                    ballY = (window.height() - ballR) as double;
+                    ballVY = 0.0 - ballVY;
+                }
+
+                // Left paddle collision.
+                if (ballVX < 0.0 && ballX - (ballR) as double <= 30.0 + (paddleW) as double) {
+                    if (ballY >= leftY && ballY <= leftY + (paddleH) as double) {
+                        ballX = 30.0 + (paddleW) as double + (ballR) as double;
+                        ballVX = 0.0 - ballVX;
+                        double hit = (ballY - leftY) / (paddleH) as double - 0.5;
+                        ballVY = ballVY + hit * 220.0;
+                    }
+                }
+                // Right paddle collision.
+                if (ballVX > 0.0 && ballX + (ballR) as double >= (window.width() - 30 - paddleW) as double) {
+                    if (ballY >= rightY && ballY <= rightY + (paddleH) as double) {
+                        ballX = (window.width() - 30 - paddleW) as double - (ballR) as double;
+                        ballVX = 0.0 - ballVX;
+                        double hit = (ballY - rightY) / (paddleH) as double - 0.5;
+                        ballVY = ballVY + hit * 220.0;
+                    }
+                }
+
+                if (ballX < 0.0) {
+                    scoreR = scoreR + 1;
+                    ballX = 400.0;
+                    ballY = 225.0;
+                    ballVX = 280.0;
+                    ballVY = 160.0;
+                    serving = true;
+                    serveTimer = 0.8;
+                }
+                if (ballX > (window.width()) as double) {
+                    scoreL = scoreL + 1;
+                    ballX = 400.0;
+                    ballY = 225.0;
+                    ballVX = 0.0 - 280.0;
+                    ballVY = 160.0;
+                    serving = true;
+                    serveTimer = 0.8;
+                }
+            }
+
+            window.clear(Desktop.rgb(12, 16, 28));
+            // Center line.
+            int32 y = 0;
+            while (y < window.height()) {
+                window.fillRect(window.width() / 2 - 2, y, 4, 16, Desktop.rgb(40, 50, 70));
+                y = y + 28;
+            }
+            window.fillRect(30, (leftY) as int32, paddleW, paddleH, Desktop.rgb(90, 200, 255));
+            window.fillRect(window.width() - 30 - paddleW, rightY as int32, paddleW, paddleH,
+                Desktop.rgb(255, 160, 90));
+            window.fillCircle((ballX) as int32, (ballY) as int32, ballR, Desktop.rgb(240, 240, 245));
+
+            string leftScore = format("{}", scoreL);
+            string rightScore = format("{}", scoreR);
+            window.drawText(48, 18, leftScore, Desktop.rgb(90, 200, 255), 3);
+            int32 rightW = Desktop.measureText(rightScore, 3);
+            window.drawText(window.width() - 48 - rightW, 18, rightScore, Desktop.rgb(255, 160, 90), 3);
+            if (serving) {
+                window.drawText(window.width() / 2 - 70, 40, "SPACE", Desktop.rgb(180, 190, 210), 2);
+            }
+            window.present();
+
+            // Cap roughly 120 FPS when the machine is fast.
+            if (dt < 0.008) {
+                Desktop.sleep(1);
+            }
+        }
+    }
+
+    return 0;
+}

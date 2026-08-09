@@ -8,6 +8,9 @@ no `keep` or `borrow` marker is stored in the object at runtime.
 
 - A managed `T*` field owns the fresh handle assigned by `new` or an owning
   function result. Assigning an arbitrary subscriber is rejected.
+- Reading a managed field borrows it from the containing aggregate. Returning
+  that field as if it were a transferable owner is rejected, including from a
+  method invoked on a temporary aggregate.
 - An array field owns a non-null descriptor owner produced by `copy(...)` or an
   owning function result. A global array descriptor is safe because its owner is
   null. A local array or slice cannot escape into a field.
@@ -32,13 +35,46 @@ releasing a class through a base-class or interface managed/raw pointer loads
 that slot from the dynamic object, so the most-derived fields are destroyed.
 Struct cleanup is a direct call because structs have no dynamic dispatch.
 
+## Object graphs and cycles
+
+Strong managed fields form a unique-ownership forest: every field accepts only
+a fresh owner or `null`, so an allocation cannot acquire a second strong parent.
+The analyzer rejects explicit strong back-edges with
+`E_MANAGED_OWNERSHIP_CYCLE`. Parent, peer, observer, and other cross-links use
+`weak T*`; generated destructors skip those fields, and their generation-checked
+handles expire when the strong owner recursively destroys the graph.
+
+This strategy needs no reference counting, tracing GC, or runtime cycle
+collector. See [managed-object-graphs.md](managed-object-graphs.md) for the graph
+model, diagnostics, and cleanup contract.
+
+## Managed pointer moves
+
+`move(owner)` transfers a strong managed handle to a variable, owning field, or
+return value. The destination becomes the unique owner, the source storage is
+zeroed and becomes compile-time moved-from, and existing subscriber/weak
+lifetime tracking follows the destination. A moved-from binding cannot be read
+or deleted until it is initialized with a fresh owner.
+
+Moving subscribers, weak or const references, invalid pointers, and discarded
+move results are rejected. An ordinary resource parameter receives a view when
+called with an lvalue and ownership when called with `move(owner)` or a fresh
+owner. The callee cleans up an owner-role parameter unless it is moved onward.
+An unguarded move/delete/owning return makes the parameter owner-required;
+`isOwner(parameter)` allows one body to handle both roles.
+See
+[managed-pointer-move.md](managed-pointer-move.md) for the exact contract.
+
 ## Value semantics boundary
 
 A struct or class value that recursively contains an owning resource cannot be
-bitwise copied safely. For now the analyzer rejects aggregate assignment,
-by-value arguments, and by-value returns for those types. A future explicit
-`move` operation will transfer the resource and clear the source. Resource-free
-structs keep the existing value ABI and copy semantics.
+bitwise copied safely. The analyzer rejects ordinary aggregate assignment and
+unsafe ownership escapes. A resource parameter is a non-owning view by default;
+explicit `move(...)` transfers the resource and clears the source. An explicit `copy(value)` is
+available only when the type supplies a public zero-argument `clone() const`
+method that creates an independent owner. Resource-free structs keep the
+existing value ABI and copy semantics. See
+[`copy-clone.md`](copy-clone.md).
 
 Static managed, array, and aggregate fields remain unsupported. Plugin-defined
 resources also remain pending until the versioned plugin API can register their

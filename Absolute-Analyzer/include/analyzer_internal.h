@@ -1,13 +1,44 @@
 #pragma once
 #include "analyzer_build_pch.h"
 #include "analyzer_pch.h"
+#include "expression_visitor.h"
 #include "syntax_plugins.h"
+#include "type_names.h"
 
 namespace Absolute {
+    inline bool IsValueReferenceType(const std::string& type) {
+        return IsCanonicalValueReferenceType(type);
+    }
+
+    inline bool IsConstValueReferenceType(const std::string& type) {
+        return IsCanonicalConstValueReferenceType(type);
+    }
+
+    inline std::string ValueReferenceBaseType(const std::string& type) {
+        return CanonicalValueReferenceBaseType(type);
+    }
+
+    inline std::string ValueReferenceType(
+        const std::string& type, bool isConst, bool isReference) {
+        return CanonicalValueReferenceType(type, isConst, isReference);
+    }
+
     namespace {
         template <typename T, typename Visitor>
         void AcceptIfPresent(const std::unique_ptr<T>& node, Visitor& visitor) {
-            if (node) node->Accept(visitor);
+            if (!node) return;
+            if constexpr (requires {
+                visitor.PushDiagnosticNode(
+                    static_cast<const ASTNode*>(node.get()));
+                visitor.PopDiagnosticNode();
+            }) {
+                visitor.PushDiagnosticNode(node.get());
+                node->Accept(visitor);
+                visitor.PopDiagnosticNode();
+            }
+            else {
+                node->Accept(visitor);
+            }
         }
 
         template <typename T, typename Visitor>
@@ -24,16 +55,30 @@ namespace Absolute {
             return type.starts_with("raw ") && type.ends_with("*");
         }
 
+        inline bool IsWeakPointerType(const std::string& type) {
+            return type.starts_with("weak ") && type.ends_with("*");
+        }
+
+        inline bool IsSharedPointerType(const std::string& type) {
+            return type.starts_with("shared ") && type.ends_with("*");
+        }
+
         inline bool IsManagedPointerType(const std::string& type) {
             return !IsRawPointerType(type) && type.ends_with("*");
         }
 
+        inline bool IsStrongManagedPointerType(const std::string& type) {
+            return IsManagedPointerType(type) && !IsWeakPointerType(type);
+        }
+
         inline bool IsPointerType(const std::string& type) {
-            return IsRawPointerType(type) || IsManagedPointerType(type);
+            return IsRawPointerType(type) || IsManagedPointerType(type) || IsSharedPointerType(type);
         }
 
         inline std::string PointerPointee(std::string type) {
             if (IsRawPointerType(type)) type.erase(0, 4);
+            else if (IsWeakPointerType(type)) type.erase(0, 5);
+            else if (IsSharedPointerType(type)) type.erase(0, 7);
             if (!type.empty() && type.back() == '*') type.pop_back();
             return type;
         }
@@ -81,6 +126,19 @@ namespace Absolute {
             return childShape;
         }
 
+        inline std::optional<std::vector<size_t>> InferArrayStorageShape(
+            const ArrayExpr& array, size_t declaredRank) {
+            auto shape = InferArrayShape(array);
+            if (!shape || declaredRank != 1 || shape->size() <= 1) return shape;
+            size_t count = 1;
+            for (size_t dimension : *shape) {
+                if (dimension != 0 && count > std::numeric_limits<size_t>::max() / dimension)
+                    return std::nullopt;
+                count *= dimension;
+            }
+            return std::vector<size_t>{count};
+        }
+
         inline std::string TaskValueType(const std::string& type) {
             return IsTaskType(type) ? type.substr(5, type.size() - 6) : "error";
         }
@@ -111,12 +169,17 @@ namespace Absolute {
 
         inline std::string SubstituteGenericType(const std::string& type,
             const std::unordered_map<std::string, std::string>& substitutions) {
+            if (IsValueReferenceType(type))
+                return ValueReferenceType(
+                    SubstituteGenericType(ValueReferenceBaseType(type), substitutions),
+                    IsConstValueReferenceType(type), true);
             if (const auto found = substitutions.find(type); found != substitutions.end())
                 return found->second;
             if (type.ends_with("[]"))
                 return SubstituteGenericType(type.substr(0, type.size() - 2), substitutions) + "[]";
             if (IsPointerType(type)) {
-                const std::string prefix = IsRawPointerType(type) ? "raw " : "";
+                const std::string prefix = IsRawPointerType(type) ? "raw " :
+                    (IsWeakPointerType(type) ? "weak " : "");
                 return prefix + SubstituteGenericType(PointerPointee(type), substitutions) + "*";
             }
             std::string base;
@@ -127,6 +190,43 @@ namespace Absolute {
                 if (index) result += ",";
                 result += SubstituteGenericType(arguments[index], substitutions);
             }
+            return result + ">";
+        }
+
+        inline bool ParseFunctionType(const std::string& type,
+            std::string& returnType, std::vector<std::string>& parameterTypes) {
+            std::string base;
+            std::vector<std::string> arguments;
+            if (!ParseGenericTypeName(type, base, arguments) || base != "func" ||
+                arguments.empty()) return false;
+            returnType = arguments.front();
+            parameterTypes.assign(arguments.begin() + 1, arguments.end());
+            return true;
+        }
+
+        inline std::string FunctionTypeName(const std::string& returnType,
+            const std::vector<std::string>& parameterTypes) {
+            std::string result = "func<" + returnType;
+            for (const std::string& parameter : parameterTypes) result += "," + parameter;
+            return result + ">";
+        }
+
+        // C ABI function pointer: cfunc<Return, Param0, Param1, ...> (raw ptr, no captures).
+        inline bool ParseCFunctionType(const std::string& type,
+            std::string& returnType, std::vector<std::string>& parameterTypes) {
+            std::string base;
+            std::vector<std::string> arguments;
+            if (!ParseGenericTypeName(type, base, arguments) || base != "cfunc" ||
+                arguments.empty()) return false;
+            returnType = arguments.front();
+            parameterTypes.assign(arguments.begin() + 1, arguments.end());
+            return true;
+        }
+
+        inline std::string CFunctionTypeName(const std::string& returnType,
+            const std::vector<std::string>& parameterTypes) {
+            std::string result = "cfunc<" + returnType;
+            for (const std::string& parameter : parameterTypes) result += "," + parameter;
             return result + ">";
         }
 
@@ -145,7 +245,8 @@ namespace Absolute {
                 return UnifyGenericType(pattern.substr(0, pattern.size() - 2),
                     actual.substr(0, actual.size() - 2), parameters, substitutions);
             if (IsPointerType(pattern) && IsPointerType(actual) &&
-                IsRawPointerType(pattern) == IsRawPointerType(actual))
+                IsRawPointerType(pattern) == IsRawPointerType(actual) &&
+                IsWeakPointerType(pattern) == IsWeakPointerType(actual))
                 return UnifyGenericType(PointerPointee(pattern), PointerPointee(actual),
                     parameters, substitutions);
             std::string patternBase;
@@ -192,11 +293,20 @@ namespace Absolute {
                 }
                 break;
             }
+            if (dynamic_cast<ConstructorCallExpr*>(expression)) return true;
             auto* call = dynamic_cast<FunctionCallExpr*>(expression);
             if (!call || !call->base) return false;
             CallTargetProbe probe;
             call->base->Accept(probe);
             return !probe.isMember && probe.identifierExpr && probe.identifierExpr->name == "copy";
+        }
+
+        inline bool IsExplicitMove(Expression* expression) {
+            auto* call = dynamic_cast<FunctionCallExpr*>(expression);
+            if (!call || !call->base) return false;
+            CallTargetProbe probe;
+            call->base->Accept(probe);
+            return !probe.isMember && probe.identifierExpr && probe.identifierExpr->name == "move";
         }
 
         class StringLiteralProbe final : public BaseIdentifierVisitor {
@@ -229,7 +339,14 @@ namespace Absolute {
 
         inline bool IsBuiltinFunction(const std::string& name) {
             return name == "print" || name == "println" || name == "format" ||
-                name == "toString" || name == "assert" || name == "copy";
+                name == "toString" || name == "assert" || name == "copy" ||
+                name == "move" || name == "isOwner" || name == "debugBreak" ||
+                name == "adoptRaw" || name == "retainRaw" || name == "borrowRaw" || name == "share" ||
+                name == "unsafeArrayGet" || name == "unsafeArraySet" ||
+                name == "unsafeArrayData" ||
+                name == "seal" || name == "unseal" ||
+                name == "load" || name == "isLoaded" || name == "loadError" ||
+                name == "taskGroupAdd" || name == "tuple";
         }
 
         inline bool IsPrintableType(const std::string& type) {

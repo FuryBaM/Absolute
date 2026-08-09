@@ -1,0 +1,7 @@
+extern "C" int64 absolute_managed_create(int64 size);
+
+int32 main() {
+    int64 leakedHandle = absolute_managed_create(8);
+    assert(leakedHandle != 0, "managed allocation must return a handle");
+    return 0;
+}

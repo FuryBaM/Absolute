@@ -1,0 +1,86 @@
+// Soft sprites + fixed timestep demo.
+// Esc quit. Arrow keys move the ship.
+
+int32 main() {
+    auto window = new Desktop.Window("Absolute Sprites", 640, 360, false);
+    if (!window.isOpen()) {
+        println("Could not create desktop window");
+        return 1;
+    }
+
+    auto ship = new Desktop.Sprite(32, 24);
+    ship.clear(0);
+    ship.fillRect(4, 8, 24, 12, Desktop.rgb(70, 170, 255));
+    ship.fillRect(12, 2, 8, 8, Desktop.rgb(255, 220, 90));
+    ship.fillCircle(8, 14, 4, Desktop.rgb(40, 90, 160));
+    ship.fillCircle(24, 14, 4, Desktop.rgb(40, 90, 160));
+
+    auto star = new Desktop.Sprite(6, 6);
+    star.clear(0);
+    star.fillCircle(3, 3, 2, Desktop.rgb(255, 255, 220));
+
+    auto fixed = new Desktop.FixedStep(60.0);
+    double shipX = 300.0;
+    double shipY = 160.0;
+    double velX = 0.0;
+    double velY = 0.0;
+    double starPhase = 0.0;
+
+    while (window.poll()) {
+        fixed.add(window.deltaTime());
+
+        while (fixed.shouldUpdate()) {
+            double step = fixed.step;
+            velX = 0.0;
+            velY = 0.0;
+            if (window.keyDown(Desktop.KeyLeft()) || window.keyDown(Desktop.KeyA())) {
+                velX = velX - 220.0;
+            }
+            if (window.keyDown(Desktop.KeyRight()) || window.keyDown(Desktop.KeyD())) {
+                velX = velX + 220.0;
+            }
+            if (window.keyDown(Desktop.KeyUp()) || window.keyDown(Desktop.KeyW())) {
+                velY = velY - 220.0;
+            }
+            if (window.keyDown(Desktop.KeyDown()) || window.keyDown(Desktop.KeyS())) {
+                velY = velY + 220.0;
+            }
+            shipX = shipX + velX * step;
+            shipY = shipY + velY * step;
+            if (shipX < 0.0) {
+                shipX = 0.0;
+            }
+            if (shipY < 0.0) {
+                shipY = 0.0;
+            }
+            if (shipX > (window.width() - ship.width()) as double) {
+                shipX = (window.width() - ship.width()) as double;
+            }
+            if (shipY > (window.height() - ship.height()) as double) {
+                shipY = (window.height() - ship.height()) as double;
+            }
+            starPhase = starPhase + step * 2.0;
+            fixed.consume();
+        }
+
+        if (window.keyPressed(Desktop.KeyEscape())) {
+            break;
+        } else {
+            window.clear(Desktop.rgb(8, 10, 22));
+            // Parallax stars via procedural offsets.
+            int32 i = 0;
+            while (i < 18) {
+                int32 sx = (i * 73 + (starPhase * 40.0) as int32) % window.width();
+                int32 sy = (i * 41 + 20) % window.height();
+                window.drawSprite(star, sx, sy);
+                i = i + 1;
+            }
+            window.drawSprite(ship, (shipX) as int32, (shipY) as int32);
+            window.drawLine(0, window.height() - 1, window.width(), window.height() - 1,
+                Desktop.rgb(30, 40, 60));
+            window.present();
+        }
+    }
+
+    return 0;
+}

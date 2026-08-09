@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "arrays",
+      "source": "tests/arrays.abs",
+      "stdout": "arrays=90"
+    },
+    {
+      "name": "struct-values",
+      "source": "tests/structs-codegen.abs",
+      "stdout": "structs=ok"
+    },
+    {
+      "name": "interfaces",
+      "source": "tests/interfaces-codegen.abs",
+      "stdout": "interfaces=ok"
+    },
+    {
+      "name": "generic-callbacks",
+      "source": "tests/generic-callback-abi.abs",
+      "stdout": "generic-callback-abi=ok"
+    },
+    {
+      "name": "managed-raw-pointers",
+      "source": "tests/pointer-functions.abs",
+      "stdout": "pointer-functions=ok"
+    },
+    {
+      "name": "value-references",
+      "source": "tests/value-references.abs",
+      "stdout": "value-references=ok"
+    },
+    {
+      "name": "c-exports",
+      "source": "tests/export-c-abi.abs",
+      "stdout": "export=42"
+    },
+    {
+      "name": "numeric-semantics",
+      "source": "tests/abi-numeric-semantics.abs",
+      "stdout": "numeric-semantics=ok"
+    },
+    {
+      "name": "implicit-conversions",
+      "source": "tests/implicit-conversions.abs",
+      "stdout": "implicit-conversions=ok"
+    },
+    {
+      "name": "generic-functions",
+      "source": "tests/generics-functions.abs",
+      "stdout": "generic\ngeneric-functions=ok"
+    },
+    {
+      "name": "lambda-closures",
+      "source": "tests/lambda-closures.abs",
+      "stdout": "lambda-closures=ok"
+    },
+    {
+      "name": "exceptions",
+      "source": "tests/exceptions.abs",
+      "stdout": "exceptions=ok"
+    },
+    {
+      "name": "defer",
+      "source": "tests/defer.abs",
+      "stdout": "defer=ok"
+    },
+    {
+      "name": "async",
+      "source": "tests/async-basic.abs",
+      "stdout": "async=42"
+    },
+    {
+      "name": "weak-managed-pointers",
+      "source": "tests/weak-managed-references.abs",
+      "stdout": "weak-managed=ok"
+    },
+    {
+      "name": "multidimensional-slices",
+      "source": "tests/multidimensional-slices.abs",
+      "stdout": "multidimensional-slices=ok"
+    },
+    {
+      "name": "snapshot-collections",
+      "source": "tests/collection-snapshot-iteration.abs",
+      "stdout": "collection-snapshot=ok"
+    }
+  ]
+}

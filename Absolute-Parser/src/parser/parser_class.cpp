@@ -18,8 +18,7 @@ namespace Absolute {
             Consume(TokenType::OPERATOR, ":"); // :
 
             while (true) {
-                Token* parent = Consume(TokenType::IDENTIFIER);
-                parents.push_back(parent->value);
+                parents.push_back(ParseParentTypeName());
 
                 Token* nextToken = CurrentToken();
                 if (nextToken && nextToken->value == ",") {
@@ -30,7 +29,7 @@ namespace Absolute {
                 }
                 else {
                     ReportSyntaxError(CurrentToken(), "Expected ',' or '{' after parent class");
-                    std::exit(EXIT_FAILURE);
+                    throw std::runtime_error("Expected ',' or '{' after parent class");
                 }
             }
         }

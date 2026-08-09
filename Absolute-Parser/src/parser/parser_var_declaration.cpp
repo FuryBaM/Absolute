@@ -4,22 +4,45 @@
 namespace Absolute {
     std::unique_ptr<VarDeclExpr> Parser::ParseVarDeclExpr()
     {
+        const Token* start = CurrentToken();
         std::unique_ptr<TypeExpr> type = ParseType();
+        if (CurrentToken() && CurrentToken()->type == TokenType::OPERATOR &&
+            CurrentToken()->value == "&") {
+            ReportSyntaxError(CurrentToken(), "'&' references are only supported for parameters");
+            throw std::runtime_error("Value reference outside parameter list");
+        }
 
         // Обрабатываем `*` и `&` перед именем переменной
         std::unique_ptr<Expression> nameExpr = ParsePrimaryExpr();
 
-        // Объявление переменной без инициализации
-        if (IsEndOfStatement(*CurrentToken()) || CurrentToken()->type == TokenType::KEYWORD) {
-            return std::make_unique<VarDeclExpr>(std::move(type), std::move(nameExpr), nullptr);
+        // Объявление переменной без инициализации.
+        // Источник может закончиться прямо здесь, поэтому токена может не быть;
+        // тогда объявление не завершено и ошибку выдаёт разбор инициализатора.
+        if (CurrentToken() && (IsEndOfStatement(*CurrentToken()) ||
+            CurrentToken()->type == TokenType::KEYWORD)) {
+            auto declaration = std::make_unique<VarDeclExpr>(
+                std::move(type), std::move(nameExpr), nullptr);
+            if (start) {
+                declaration->sourceFile = sourceFile;
+                declaration->line = start->line;
+                declaration->column = start->column;
+            }
+            return declaration;
         }
         // Объявление переменной с инициализацией
         else if (CurrentToken()->type == TokenType::OPERATOR) {
             Consume(TokenType::OPERATOR);
             std::unique_ptr<Expression> value = ParseExpression();
-            return std::make_unique<VarDeclExpr>(std::move(type), std::move(nameExpr), std::move(value));
+            auto declaration = std::make_unique<VarDeclExpr>(
+                std::move(type), std::move(nameExpr), std::move(value));
+            if (start) {
+                declaration->sourceFile = sourceFile;
+                declaration->line = start->line;
+                declaration->column = start->column;
+            }
+            return declaration;
         }
-        std::exit(EXIT_FAILURE);
+        throw std::runtime_error("parse failed");
         return nullptr;
     }
 

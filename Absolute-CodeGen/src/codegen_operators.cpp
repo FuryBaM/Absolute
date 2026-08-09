@@ -5,18 +5,66 @@ namespace Absolute {
         const std::string leftType = impl->SemanticType(expr->left.get());
         const std::string rightType = impl->SemanticType(expr->right.get());
         llvm::Value* left = impl->Evaluate(expr->left.get());
+        const bool leftCreatesManagedOwner = impl->valueCreatesManagedOwner;
+
+        if (expr->op == "&&" || expr->op == "||") {
+            llvm::Function* function = impl->CurrentFunction();
+            if (!function) impl->Fail("logical expression outside a function");
+
+            left = impl->AsCondition(left);
+            llvm::BasicBlock* leftBlock = impl->builder.GetInsertBlock();
+            llvm::BasicBlock* rightBlock =
+                llvm::BasicBlock::Create(impl->context, "logical.rhs", function);
+            llvm::BasicBlock* mergeBlock =
+                llvm::BasicBlock::Create(impl->context, "logical.end", function);
+            if (expr->op == "&&")
+                impl->builder.CreateCondBr(left, rightBlock, mergeBlock);
+            else
+                impl->builder.CreateCondBr(left, mergeBlock, rightBlock);
+
+            impl->builder.SetInsertPoint(rightBlock);
+            llvm::Value* right = impl->AsCondition(impl->Evaluate(expr->right.get()));
+            rightBlock = impl->builder.GetInsertBlock();
+            impl->BranchIfNeeded(mergeBlock);
+
+            impl->builder.SetInsertPoint(mergeBlock);
+            llvm::PHINode* result =
+                impl->builder.CreatePHI(impl->builder.getInt1Ty(), 2, "logical.result");
+            result->addIncoming(
+                expr->op == "&&" ? impl->builder.getFalse() : impl->builder.getTrue(),
+                leftBlock);
+            result->addIncoming(right, rightBlock);
+            impl->value = result;
+            impl->valueCreatesManagedOwner = false;
+            impl->valueManagedPointee = nullptr;
+            return;
+        }
+
         llvm::Value* right = impl->Evaluate(expr->right.get());
+        const bool rightCreatesManagedOwner = impl->valueCreatesManagedOwner;
 
         if (const PluginBinaryOperator* pluginOperator =
                 FindPluginBinaryOperator(leftType, expr->op, rightType)) {
             llvm::Function* function = impl->module->getFunction(impl->ResolvedName(expr));
-            if (!function || function->arg_size() != 2)
+            if (!function)
                 impl->Fail("missing plugin operator function '" + pluginOperator->functionName + "'");
-            left = impl->Coerce(left, function->getFunctionType()->getParamType(0));
-            right = impl->Coerce(right, function->getFunctionType()->getParamType(1));
-            impl->value = impl->builder.CreateCall(function, {left, right}, "plugin.operator");
+            const std::vector<std::string> parameterTypes{leftType, rightType};
+            impl->value = impl->EmitAbiCall(
+                function->getFunctionType(), function,
+                pluginOperator->resultType, {}, parameterTypes,
+                {left, right}, "plugin.operator");
             impl->EmitExceptionCheck();
-            impl->valueCreatesManagedOwner = IsManagedPointerTypeName(pluginOperator->resultType);
+            // Plugin operators borrow their operands. Destroy temporary managed
+            // owners after the call, while named variables remain owned by their
+            // enclosing scope. This makes chained expressions such as
+            // translation(...) * rotation(...) leak-free.
+            llvm::Value* result = impl->value;
+            if (leftCreatesManagedOwner)
+                impl->builder.CreateCall(impl->ManagedDestroy(), {left});
+            if (rightCreatesManagedOwner)
+                impl->builder.CreateCall(impl->ManagedDestroy(), {right});
+            impl->value = result;
+            impl->valueCreatesManagedOwner = IsStrongManagedPointerTypeName(pluginOperator->resultType);
             impl->valueManagedPointee = nullptr;
             return;
         }
@@ -25,7 +73,38 @@ namespace Absolute {
         const bool rightRaw = IsRawPointerTypeName(rightType);
         const bool leftManaged = IsManagedPointerTypeName(leftType);
         const bool rightManaged = IsManagedPointerTypeName(rightType);
+        std::string cfuncReturn;
+        std::vector<std::string> cfuncParameters;
+        const bool leftCFunction = ParseCodegenCFunctionType(leftType, cfuncReturn, cfuncParameters);
+        const bool rightCFunction = ParseCodegenCFunctionType(rightType, cfuncReturn, cfuncParameters);
         const bool equality = expr->op == "==" || expr->op == "!=";
+
+        if (equality && (leftCFunction || rightCFunction) &&
+            (leftCFunction || leftType == "null") &&
+            (rightCFunction || rightType == "null")) {
+            llvm::Value* leftPtr = impl->Coerce(left, impl->builder.getPtrTy());
+            llvm::Value* rightPtr = impl->Coerce(right, impl->builder.getPtrTy());
+            impl->value = expr->op == "=="
+                ? impl->builder.CreateICmpEQ(leftPtr, rightPtr, "cfunc.equal")
+                : impl->builder.CreateICmpNE(leftPtr, rightPtr, "cfunc.not.equal");
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
+
+        if (equality && leftType == "string" && rightType == "string") {
+            llvm::FunctionType* compareType = llvm::FunctionType::get(
+                impl->builder.getInt32Ty(),
+                {impl->builder.getPtrTy(), impl->builder.getPtrTy()}, false);
+            llvm::Value* comparison = impl->builder.CreateCall(
+                impl->module->getOrInsertFunction("strcmp", compareType),
+                {left, right}, "string.compare");
+            llvm::Value* equal = impl->builder.CreateICmpEQ(
+                comparison, impl->builder.getInt32(0), "string.equal");
+            impl->value = expr->op == "=="
+                ? equal : impl->builder.CreateNot(equal, "string.not.equal");
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
 
         if ((leftRaw || rightRaw) && (expr->op == "+" || expr->op == "-")) {
             if (leftRaw && rightRaw && expr->op == "-") {
@@ -78,7 +157,7 @@ namespace Absolute {
             impl->valueCreatesManagedOwner = false;
             return;
         }
-        impl->value = impl->ApplyBinary(expr->op, left, right);
+        impl->value = impl->ApplyBinary(expr->op, left, right, leftType, rightType);
     }
 
     void CodeGenerator::Visit(TernaryExpr* expr) {
@@ -101,11 +180,14 @@ namespace Absolute {
         falseBlock = impl->builder.GetInsertBlock();
         impl->BranchIfNeeded(mergeBlock);
 
+        const std::string trueType = impl->SemanticType(expr->trueExpr.get());
+        const std::string falseType = impl->SemanticType(expr->falseExpr.get());
+        const std::string resultTypeName = impl->SemanticType(expr);
         llvm::Type* resultType = impl->CommonNumericType(trueValue->getType(), falseValue->getType());
         impl->builder.SetInsertPoint(trueBlock->getTerminator());
-        trueValue = impl->Coerce(trueValue, resultType);
+        trueValue = impl->Coerce(trueValue, resultType, trueType, resultTypeName);
         impl->builder.SetInsertPoint(falseBlock->getTerminator());
-        falseValue = impl->Coerce(falseValue, resultType);
+        falseValue = impl->Coerce(falseValue, resultType, falseType, resultTypeName);
         impl->builder.SetInsertPoint(mergeBlock);
         llvm::PHINode* result = impl->builder.CreatePHI(resultType, 2, "ternary.result");
         result->addIncoming(trueValue, trueBlock);
@@ -146,7 +228,7 @@ namespace Absolute {
         const std::string typeName = impl->SemanticType(expr);
         const size_t rank = ArrayRankName(typeName);
         if (rank == 0) impl->Fail("array literal does not have an array type");
-        const auto shape = InferArrayShape(*expr);
+        const auto shape = InferArrayStorageShape(*expr, rank);
         if (!shape) impl->Fail("array literal must be rectangular");
         if (shape->size() != rank)
             impl->Fail("array literal rank does not match its semantic type");
@@ -166,7 +248,9 @@ namespace Absolute {
             byteCount, llvm::MaybeAlign(16));
 
         for (size_t index = 0; index < values.size(); ++index) {
-            llvm::Value* initial = impl->Coerce(impl->Evaluate(values[index]), elementType);
+            llvm::Value* initial = impl->Coerce(
+                impl->Evaluate(values[index]), elementType,
+                impl->SemanticType(values[index]), elementTypeName);
             llvm::Value* destination = impl->builder.CreateInBoundsGEP(
                 elementType, address, impl->builder.getInt64(index), "array.literal.element");
             impl->builder.CreateStore(initial, destination);

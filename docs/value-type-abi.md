@@ -29,7 +29,7 @@ For example, source signatures equivalent to:
 ```absolute
 Large makeLarge(int64 seed);
 Large Box.read();
-void consume(Large value);
+void acceptLarge(Large value);
 ```
 
 are lowered conceptually as:
@@ -37,20 +37,36 @@ are lowered conceptually as:
 ```llvm
 define void @makeLarge(ptr %__result, i64 %seed)
 define void @Box.read(ptr %__result, ptr %this)
-define void @consume(ptr %value)
+define void @acceptLarge(ptr %value)
 ```
 
 ## Copy and move rules
 
-The language currently exposes no destructive `move` expression. A compiler
-may forward return storage, remove aggregate load/store pairs, or reuse a
-temporary only under the normal as-if rule: the optimization must not introduce
-aliasing and must not change observable pointer, cleanup, or mutation behavior.
-Consequently, returning a local value is eligible for copy elision but does not
-invalidate that local at the language level.
+The explicit `move(...)` operation transfers a resource-owning aggregate and
+invalidates its source binding. Resource-free values retain normal copy
+semantics. A compiler may forward return storage, remove aggregate load/store
+pairs, or reuse a temporary only under the normal as-if rule: the optimization
+must not introduce aliasing and must not change observable pointer, cleanup, or
+mutation behavior.
+
+User-defined deep copying is explicit: `copy(value)` calls a public
+zero-argument `clone() const` lifecycle method. It never changes the implicit
+field-wise copy ABI described above. See
+[`copy-clone.md`](copy-clone.md).
+
+Parameter-only `T&`/`const T&` borrows are implemented separately from
+ownership. Their lowering, escape rules, and benchmark evidence are documented in
+[`value-references.md`](value-references.md).
+
+A resource-owning `T` parameter carries a hidden ownership-role bit. Calling it
+with an lvalue produces a non-owning view; calling it with
+`move(ownerPlace)` or a fresh owner value transfers ownership. The callee runs
+normal aggregate cleanup only for the owner role and only if it does not move
+the parameter onward.
 
 All objects linked through this internal ABI must be rebuilt with the same
 compiler ABI revision. `extern "C"` declarations and `export "C"` definitions
-are intentionally excluded: their aggregate layout and passing rules are
-defined by the selected platform C ABI, so a native wrapper is required when
-its struct convention differs.
+are intentionally excluded from the 16-byte Absolute value ABI: the language
+rejects by-value Absolute aggregates at the C boundary and requires `raw T*`
+(or scalar) interop instead. Full rules for strings, arrays, `bool`, and
+dynamic load are in [`native-c-abi.md`](native-c-abi.md).

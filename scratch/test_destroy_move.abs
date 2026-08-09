@@ -1,0 +1,33 @@
+struct ResourceHandle {
+    private raw int32* buffer;
+
+    public void initialize(int32 initialValue) {
+        buffer = new raw int32;
+        *buffer = initialValue;
+    }
+
+    public void destroy() {
+        if (buffer != null) {
+            println("Destroying ResourceHandle buffer!");
+            delete buffer;
+            buffer = null;
+        }
+    }
+
+    public int32 value {
+        get { return *buffer; }
+    }
+}
+
+int32 main() {
+    ResourceHandle res1;
+    res1.initialize(42);
+    assert(res1.value == 42, "res1 initial value");
+
+    // Move ownership from res1 to res2
+    ResourceHandle res2 = move(res1);
+    assert(res2.value == 42, "res2 moved value");
+
+    println("Success testing move & custom destroy destructor!");
+    return 0;
+}

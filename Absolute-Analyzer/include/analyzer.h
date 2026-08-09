@@ -54,9 +54,18 @@ namespace Absolute {
         bool exportedFunction = false;
         bool isConst = false;
         bool isStatic = false;
+        bool valueReference = false;
+        bool constValueReference = false;
+        bool variadicParameter = false;
         bool canRead = true;
         bool canWrite = true;
         bool arrayStorageEscapes = false;
+        bool ownsArrayStorage = false;
+        bool rolePolymorphic = false;
+        bool requiresOwner = false;
+        size_t parameterIndex = static_cast<size_t>(-1);
+        SymbolId callableOwner = InvalidSymbolId;
+        std::vector<bool> parameterRequiresOwner;
         AccessLevel access = AccessLevel::Public;
         AccessLevel readAccess = AccessLevel::Public;
         AccessLevel writeAccess = AccessLevel::Public;
@@ -91,6 +100,27 @@ namespace Absolute {
         Unknown
     };
 
+    enum class ValueCategory {
+        Value,
+        Place
+    };
+
+    struct PlaceInfo {
+        bool readable = true;
+        bool writable = true;
+        bool addressable = true;
+    };
+
+    enum class PointerRole {
+        None,
+        ManagedOwner,
+        ManagedSub,
+        Weak,
+        RawOwner,
+        RawView,
+        Ref
+    };
+
     struct ANALYZER_API ExpressionInfo {
         SymbolId symbol = InvalidSymbolId;
         std::string type;
@@ -104,13 +134,27 @@ namespace Absolute {
         bool createsTask = false;
         bool asyncCall = false;
         bool createsRawOwner = false;
+        bool isMoveResult = false;
+        ValueCategory category = ValueCategory::Value;
+        PlaceInfo placeInfo;
+        PointerRole pointerRole = PointerRole::None;
         std::vector<std::string> parameterTypes;
+        bool createsArrayOwner = false;
     };
 
     struct ANALYZER_API Diagnostic {
         std::string message;
         std::string code;
         SymbolId symbol = InvalidSymbolId;
+        std::string sourceFile;
+        int line = 0;
+        int column = 0;
+    };
+
+    struct ANALYZER_API LambdaCapture {
+        SymbolId symbol = InvalidSymbolId;
+        std::string name;
+        std::string type;
     };
 
     class ANALYZER_API SymbolTable {
@@ -178,7 +222,8 @@ namespace Absolute {
 
         struct TypeDefinition {
             std::unordered_map<std::string, std::vector<MemberSignature>> members;
-            std::optional<MemberSignature> constructor;
+            // Overloaded constructors (unique parameter-type signatures).
+            std::vector<MemberSignature> constructors;
             std::vector<std::string> parents;
             std::vector<std::string> enumMembers;
             TypeKind kind = TypeKind::Other;
@@ -210,6 +255,11 @@ namespace Absolute {
             bool createsTask = false;
             bool asyncCall = false;
             bool createsRawOwner = false;
+            bool isMoveResult = false;
+            ValueCategory category = ValueCategory::Value;
+            PlaceInfo placeInfo;
+            PointerRole pointerRole = PointerRole::None;
+            bool createsArrayOwner = false;
         };
 
         enum class KeepState {
@@ -258,6 +308,7 @@ namespace Absolute {
         std::unordered_set<std::string> importedNamespaces;
         std::unordered_map<const Expression*, ExpressionInfo> expressionInfo;
         std::vector<Diagnostic> diagnostics;
+        std::vector<const ASTNode*> diagnosticNodeStack;
         Phase phase = Phase::CollectDeclarations;
         Result result;
         int typeContextDepth = 0;
@@ -288,10 +339,34 @@ namespace Absolute {
         bool flowTerminated = false;
         int spawnContextDepth = 0;
         bool currentFunctionAsync = false;
+        bool currentFunctionNoThrow = false;
         bool currentMethodConst = false;
         bool currentMethodStatic = false;
         bool currentConstructor = false;
+        struct LambdaContext {
+            LambdaExpr* expression = nullptr;
+            size_t scopeDepth = 0;
+            std::vector<LambdaCapture> captures;
+            std::unordered_set<SymbolId> capturedSymbols;
+        };
+        struct LambdaFunctionBoundary {
+            size_t keepScopeDepth = 0;
+            size_t valueFlowScopeDepth = 0;
+        };
+        std::vector<LambdaContext> lambdaContexts;
+        std::vector<LambdaFunctionBoundary> lambdaFunctionBoundaries;
+        std::unordered_map<const LambdaExpr*, std::vector<LambdaCapture>> lambdaCaptures;
         AccessLevel pendingMemberAccess = AccessLevel::Public;
+        SymbolId currentCallable = InvalidSymbolId;
+        std::unordered_set<SymbolId> ownerGuardedParameters;
+
+        struct DeferredOwnershipCall {
+            SymbolId callable = InvalidSymbolId;
+            std::vector<bool> ownerArguments;
+            std::vector<SymbolId> argumentSymbols;
+            std::string context;
+        };
+        std::vector<DeferredOwnershipCall> deferredOwnershipCalls;
 
     public:
         explicit Analyzer(std::vector<Program*> programs)
@@ -318,6 +393,11 @@ namespace Absolute {
         const std::unordered_set<std::string>& InstantiatedGenericTypes() const {
             return instantiatedGenericTypes;
         }
+        SymbolId InstantiateGenericFunction(
+            SymbolId origin, const std::vector<std::string>& arguments);
+        const std::vector<LambdaCapture>& LambdaCaptures(const LambdaExpr& expression) const;
+        void PushDiagnosticNode(const ASTNode* node);
+        void PopDiagnosticNode();
 
         void Visit(PrimitiveTypeExpr* expr) override;
         void Visit(UserTypeExpr* expr) override;
@@ -345,6 +425,7 @@ namespace Absolute {
         void Visit(PrefixUnaryExpr* expr) override;
         void Visit(PostfixUnaryExpr* expr) override;
         void Visit(TemplateExpr* expr) override;
+        void Visit(LambdaExpr* expr) override;
 
         void Visit(SingleStatement* stmt) override;
         void Visit(CompoundStmt* stmt) override;
@@ -382,6 +463,10 @@ namespace Absolute {
         void CollectTypeName(Statement& statement);
         void AnalyzeProgram(Program& program);
         void Report(std::string message, std::string code = {}, SymbolId symbol = InvalidSymbolId);
+        void ReportAt(const ASTNode* node, std::string message,
+            std::string code = {}, SymbolId symbol = InvalidSymbolId);
+        void ReportAt(const Token* token, std::string message,
+            std::string code = {}, SymbolId symbol = InvalidSymbolId);
         void ValidateAttributes(const Statement& statement, const std::string& target, bool callableTarget);
         Result Evaluate(Expression* expression);
         Result EvaluateExpected(Expression* expression, const std::string& type);
@@ -390,6 +475,7 @@ namespace Absolute {
         void Save(Expression* expression, Result value);
         bool IsKnownType(const std::string& name) const;
         bool TypeOwnsResources(const std::string& name) const;
+        bool IsAsyncTaskValueType(const std::string& name) const;
         bool IsNumeric(const std::string& name) const;
         bool IsInteger(const std::string& name) const;
         bool IsAssignable(const std::string& target, const std::string& source) const;
@@ -402,6 +488,11 @@ namespace Absolute {
             const std::string& member, SymbolId symbol = InvalidSymbolId);
         void RequireAccess(const MemberSignature& member, const std::string& name);
         std::string CommonType(const std::string& left, const std::string& right) const;
+        void ValidateValueReferenceParameter(VarDeclExpr& parameter,
+            const std::string& type, const std::string& callable,
+            bool asyncCallable = false, bool cAbi = false);
+        void ValidateCAbiType(const std::string& type, const std::string& where,
+            bool isReturn);
         std::vector<std::string> ResolveParameterTypes(const std::vector<std::unique_ptr<VarDeclExpr>>& parameters);
         void DeclareGlobalFunction(FunctionDeclStmt& statement);
         void ResolveFunction(FunctionDeclStmt& statement, SymbolKind kind);
@@ -417,15 +508,20 @@ namespace Absolute {
             const std::vector<std::string>& parameterTypes) const;
         void ValidateInterfaceImplementation(const std::string& className);
         std::string DirectBaseClass(const std::string& className) const;
+        // Zero-argument constructor parameters when one exists (nullopt = no zero-arg ctor).
         std::optional<std::vector<std::string>> ConstructorParameterTypes(
             const std::string& typeName) const;
+        std::vector<MemberSignature> ConstructorsOf(const std::string& typeName) const;
+        const MemberSignature* SelectConstructor(
+            const std::vector<MemberSignature>& constructors,
+            const std::vector<Result>& arguments,
+            const std::string& displayName,
+            const std::unordered_map<std::string, std::string>& substitutions = {});
         std::vector<SymbolId> FindFunctionCandidates(const std::string& name) const;
         std::vector<SymbolId> FindExtensionCandidates(const std::string& name) const;
         SymbolId SelectOverload(const std::vector<SymbolId>& candidates,
             const std::vector<Result>& arguments, const std::string& displayName,
             const std::vector<std::string>& explicitTypeArguments = {});
-        SymbolId InstantiateGenericFunction(
-            SymbolId origin, const std::vector<std::string>& arguments);
         int ConversionCost(const std::string& target, const std::string& source) const;
         std::string ExtractIdentifier(Expression* expression) const;
         std::string ExtractQualifiedName(Expression* expression) const;
@@ -445,6 +541,19 @@ namespace Absolute {
         void PopValueFlowScope();
         void MergeValueFlowPaths(const ValueFlowMap& base, const std::vector<ValueFlowMap>& paths);
         void RegisterFlowSymbol(SymbolId id, ValueFlowState state);
+        void TransferManagedAliases(SymbolId previousOwner, SymbolId nextOwner);
+        void CheckManagedMoveArgument(const Result& argument,
+            const std::string& parameterType, size_t index,
+            const std::string& context);
+        bool ParameterSupportsOwnership(const std::string& type) const;
+        bool TransfersOwnership(const Result& argument,
+            const std::string& parameterType) const;
+        void RecordOwnershipCall(SymbolId callable,
+            const std::vector<Result>& arguments,
+            const std::vector<std::string>& parameterTypes,
+            const std::string& context);
+        void ValidateDeferredOwnershipCalls();
+        SymbolId OwnerGuardParameter(Expression* condition) const;
         void CheckTaskScopesFrom(size_t firstScope, const std::string& exitKind);
     };
 }

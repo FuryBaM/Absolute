@@ -10,8 +10,10 @@ namespace Absolute{
         return ExpandSyntaxPlugins(lexer(code));
     }
 
-    std::unique_ptr<Program> ParseCode(const std::vector<Token>& tokens) {
-        Parser parser(tokens);
+    std::unique_ptr<Program> ParseCode(
+        const std::vector<Token>& tokens,
+        const std::string& sourceFile) {
+        Parser parser(tokens, sourceFile);
         return parser.Parse();
     }
 
@@ -33,10 +35,22 @@ namespace Absolute{
     }
 
     std::unique_ptr<Expression> Parser::ParseExpression() {
+        const Token* start = CurrentToken();
+        std::unique_ptr<Expression> expression = ParseExpressionImpl();
+        if (expression && start) {
+            expression->sourceFile = sourceFile;
+            expression->line = start->line;
+            expression->column = start->column;
+        }
+        return expression;
+    }
+
+    std::unique_ptr<Expression> Parser::ParseExpressionImpl() {
+        RecursionGuard guard(*this);
         Token* token = CurrentToken();
         if (!token) {
             ReportSyntaxError(token, "Token is null");
-            std::exit(EXIT_FAILURE);
+            throw std::runtime_error("Token is null");
             return nullptr;
         }
         std::unique_ptr<Expression> left = nullptr;
@@ -60,10 +74,11 @@ namespace Absolute{
     }
 
     std::unique_ptr<Expression> Parser::ParseBaseExpr() {
+        RecursionGuard guard(*this);
         Token* token = CurrentToken();
         if (!token) {
             ReportSyntaxError(token, "Null token");
-            std::exit(EXIT_FAILURE);
+            throw std::runtime_error("Null token");
             return nullptr;
         }
 
@@ -72,6 +87,9 @@ namespace Absolute{
         }
 
         if (token->type == TokenType::KEYWORD) {
+            if (token->value == "fn") {
+                return ParseLambdaExpr();
+            }
             if ((token->value == "true" || token->value == "false")) {
                 return ParseBooleanLiteralExpr();
             }
@@ -92,6 +110,11 @@ namespace Absolute{
             return ParseIdentifierExpr();
         }
 
+        if (token->value == "this") {
+            Consume(TokenType::KEYWORD, "this");
+            return std::make_unique<IdentifierExpr>("this");
+        }
+
         if (token->value == "new") {
             return ParseConstructorCall();
         }
@@ -108,8 +131,21 @@ namespace Absolute{
                 return nullptr;
 
             // Проверяем закрывающую скобку
-            Consume(TokenType::BRACKET, ")");
+            if (CurrentToken() && CurrentToken()->type == TokenType::DELIMITER &&
+                CurrentToken()->value == ",") {
+                std::vector<std::unique_ptr<Expression>> values;
+                values.push_back(std::move(expr));
+                while (CurrentToken() && CurrentToken()->type == TokenType::DELIMITER &&
+                    CurrentToken()->value == ",") {
+                    Consume(TokenType::DELIMITER, ",");
+                    values.push_back(ParseExpression());
+                }
+                Consume(TokenType::BRACKET, ")");
+                return std::make_unique<FunctionCallExpr>(
+                    std::make_unique<IdentifierExpr>("tuple"), std::move(values));
+            }
 
+            Consume(TokenType::BRACKET, ")");
             return expr;
         }
 
@@ -118,7 +154,7 @@ namespace Absolute{
         }
 
         ReportSyntaxError(CurrentToken(), "Expected primary expression");
-        std::exit(EXIT_FAILURE);
+        throw std::runtime_error("Expected primary expression");
     }
 
     std::unique_ptr<Expression> Parser::ParseSuffixExpr(std::unique_ptr<Expression> base) {
@@ -127,7 +163,16 @@ namespace Absolute{
 
             if (!token) break;
 
-            if (IsPostfixUnary(*token)) {
+            if (token->value == "(") {
+                base = ParseFunctionCallExpr(std::move(base));
+            }
+            else if (token->value == "[") {
+                base = ParseArrayAccess(std::move(base));
+            }
+            else if (token->value == ".") {
+                base = ParseMemberAccess(std::move(base));
+            }
+            else if (IsPostfixUnary(*token)) {
                 base = ParsePostfixUnaryExpr(std::move(base));
             }
             else if (token->value == "as" || token->value == "is") {
@@ -147,6 +192,19 @@ namespace Absolute{
 
     std::unique_ptr<Statement> Parser::ParseStatement()
     {
+        const Token* start = CurrentToken();
+        std::unique_ptr<Statement> statement = ParseStatementImpl();
+        if (statement && start) {
+            statement->sourceFile = sourceFile;
+            statement->line = start->line;
+            statement->column = start->column;
+        }
+        return statement;
+    }
+
+    std::unique_ptr<Statement> Parser::ParseStatementImpl()
+    {
+        RecursionGuard guard(*this);
         ParseAttributes();
         ParseModifiers();
 
@@ -162,6 +220,7 @@ namespace Absolute{
         if (!attributes.empty() && token->type != TokenType::IDENTIFIER &&
             !(token->type == TokenType::KEYWORD &&
                 (IsPrimitiveType(token->value) || token->value == "raw" ||
+                    token->value == "weak" ||
                     token->value == "class" || token->value == "struct" ||
                     token->value == "interface" || token->value == "enum" ||
                     token->value == "group" || token->value == "extern" ||
@@ -271,6 +330,8 @@ namespace Absolute{
             case Hash("export"):
                 return ParseExportFunctionDeclaration();
             case Hash("raw"):
+            case Hash("weak"):
+            case Hash("shared"):
                 return ParseVarDeclaration();
             default:
                 break;
@@ -281,34 +342,43 @@ namespace Absolute{
         {
             if (token->value == "task" && PeekToken() && PeekToken()->value == "<")
                 return ParseVarDeclaration();
-            Token* next = PeekToken(1);
             Token* afterIdentifiers = PeekTokenAfterIdentifiers();
             const auto isDeclaratorPrefix = [](const Token* candidate) {
                 return candidate && candidate->type == TokenType::OPERATOR &&
                     (candidate->value == "*" || candidate->value == "&");
             };
-            bool templateType = false;
-            bool templatePointer = false;
+            const Token* afterTypeToken = afterIdentifiers;
             if (afterIdentifiers && afterIdentifiers->value == "<") {
                 const size_t templateStart = static_cast<size_t>(afterIdentifiers - tokens.data());
                 size_t templateClose = 0;
                 if (IsTemplateArgumentList(templateStart, &templateClose)) {
-                    Token* afterTemplate = templateClose + 1 < tokens.size() ? &tokens[templateClose + 1] : nullptr;
-                    templateType = afterTemplate &&
-                        (afterTemplate->type == TokenType::IDENTIFIER || isDeclaratorPrefix(afterTemplate));
-                    templatePointer = isDeclaratorPrefix(afterTemplate);
+                    afterTypeToken = templateClose + 1 < tokens.size() ? &tokens[templateClose + 1] : nullptr;
                 }
             }
 
-            if ((next && next->type == TokenType::OPERATOR && next->value == "*") ||
-                (afterIdentifiers && afterIdentifiers->type == TokenType::OPERATOR &&
-                    afterIdentifiers->value == "*") || templatePointer) {
-                return ParseVarDeclaration();
+            const Token* candidate = afterTypeToken;
+            bool hasArraySuffix = false;
+            while (candidate && candidate->type == TokenType::BRACKET && candidate->value == "[" &&
+                (candidate + 1 < tokens.data() + tokens.size()) && (candidate + 1)->type == TokenType::BRACKET && (candidate + 1)->value == "]") {
+                candidate += 2;
+                hasArraySuffix = true;
             }
 
-            if ((next && (next->type == TokenType::IDENTIFIER || isDeclaratorPrefix(next))) ||
-                (afterIdentifiers && (afterIdentifiers->type == TokenType::IDENTIFIER || isDeclaratorPrefix(afterIdentifiers))) ||
-                templateType) {
+            if (candidate && (candidate->type == TokenType::IDENTIFIER || isDeclaratorPrefix(candidate))) {
+                // A sized declarator on the name (`Point pts[3];`) declares an
+                // array, exactly as it does for a primitive element type. Only
+                // an empty `[]` suffix on the type was recognized here, so the
+                // sized form fell through to an inline value declaration and
+                // the variable ended up with the element type.
+                const Token* end = tokens.data() + tokens.size();
+                const Token* afterName = candidate->type == TokenType::IDENTIFIER &&
+                    candidate + 1 < end ? candidate + 1 : nullptr;
+                const bool sizedArrayDeclarator = afterName &&
+                    afterName->type == TokenType::BRACKET && afterName->value == "[";
+                if (hasArraySuffix || sizedArrayDeclarator || isDeclaratorPrefix(candidate) ||
+                    (afterIdentifiers && afterIdentifiers->value == "<")) {
+                    return ParseVarDeclaration();
+                }
                 return ParseInstanceDeclStmt();
             }
             return ParseIdentifier(); // Обрабатываем идентификатор

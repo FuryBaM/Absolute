@@ -1,5 +1,6 @@
 #include "parser_pch.h"
 #include "parser.h"
+#include "ast/array.h"
 
 namespace Absolute {
     std::unique_ptr<ArrayExpr> Parser::ParseArrayValues() {
@@ -24,7 +25,7 @@ namespace Absolute {
             }
             else {
                 ReportSyntaxError(CurrentToken(), "Expected '.' or '}'.");
-                std::exit(EXIT_FAILURE);
+                throw std::runtime_error("Expected '.' or '}'.");
                 break;
             }
         }
@@ -35,43 +36,56 @@ namespace Absolute {
 
     std::unique_ptr<Expression> Parser::ParseArrayAccess(std::unique_ptr<Expression> base) {
         if (!CurrentToken() || CurrentToken()->value != "[") {
-            return base; // Нет скобок — возвращаем обычное выражение
+            return base;
         }
-
-        std::vector<std::unique_ptr<Expression>> indexes;
 
         while (CurrentToken() && CurrentToken()->value == "[") {
             Consume(TokenType::BRACKET, "[");
-            std::unique_ptr<Expression> index;
-            if (RequireCurrent("an array index, ':' or ']'")->value != "]" &&
-                CurrentToken()->value != ":") {
-                index = ParseExpression();
-            }
-            if (CurrentToken() && CurrentToken()->type == TokenType::OPERATOR &&
-                CurrentToken()->value == ":") {
-                if (!indexes.empty()) {
-                    ReportSyntaxError(CurrentToken(), "Slices are supported only for one-dimensional arrays");
-                    throw std::runtime_error("Invalid multidimensional slice");
+            std::vector<SliceRange> sliceRanges;
+            bool containsSlice = false;
+
+            while (true) {
+                std::unique_ptr<Expression> firstExpr;
+                if (RequireCurrent("an array index, ':' or ']'")->value != "]" &&
+                    CurrentToken()->value != "," && CurrentToken()->value != ":") {
+                    firstExpr = ParseExpression();
                 }
-                Consume(TokenType::OPERATOR, ":");
-                std::unique_ptr<Expression> end;
-                if (RequireCurrent("a slice end or ']'")->value != "]") end = ParseExpression();
-                Consume(TokenType::BRACKET, "]");
-                auto slice = std::make_unique<SliceExpr>(
-                    std::move(base), std::move(index), std::move(end));
-                if (CurrentToken() && CurrentToken()->value == "[")
-                    return ParseArrayAccess(std::move(slice));
-                return slice;
+
+                if (CurrentToken() && CurrentToken()->type == TokenType::OPERATOR &&
+                    CurrentToken()->value == ":") {
+                    containsSlice = true;
+                    Consume(TokenType::OPERATOR, ":");
+                    std::unique_ptr<Expression> endExpr;
+                    if (RequireCurrent("a slice end, ',' or ']'")->value != "]" &&
+                        CurrentToken()->value != ",") {
+                        endExpr = ParseExpression();
+                    }
+                    sliceRanges.emplace_back(std::move(firstExpr), std::move(endExpr), true);
+                } else {
+                    sliceRanges.emplace_back(std::move(firstExpr), nullptr, false);
+                }
+
+                if (CurrentToken() && CurrentToken()->value == ",") {
+                    Consume(TokenType::DELIMITER, ",");
+                } else {
+                    break;
+                }
             }
-            if (index) {
-                indexes.push_back(std::move(index));
-            }
-            else {
-                indexes.push_back(nullptr);
-            }
+
             Consume(TokenType::BRACKET, "]");
+
+            if (containsSlice) {
+                base = std::make_unique<SliceExpr>(std::move(base), std::move(sliceRanges));
+            } else {
+                std::vector<std::unique_ptr<Expression>> indexes;
+                indexes.reserve(sliceRanges.size());
+                for (auto& range : sliceRanges) {
+                    indexes.push_back(std::move(range.begin));
+                }
+                base = std::make_unique<ArrayAccessExpr>(std::move(base), std::move(indexes));
+            }
         }
 
-        return std::make_unique<ArrayAccessExpr>(std::move(base), std::move(indexes));
+        return base;
     }
 }

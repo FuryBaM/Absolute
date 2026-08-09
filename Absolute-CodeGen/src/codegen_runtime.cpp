@@ -9,8 +9,14 @@ namespace Absolute {
         valueManagedPointee = nullptr;
         valueCreatesArrayOwner = false;
         valueArrayOwner = nullptr;
+        valueCreatesClosureOwner = false;
         expression->Accept(visitor);
-        if (!value) Fail("expression does not produce a value");
+        if (!value) {
+            llvm::Function* function = CurrentFunction();
+            Fail("expression does not produce a value in '" +
+                (function ? function->getName().str() : std::string("<module>")) +
+                "': " + expression->ToString());
+        }
         currentValueType = SemanticType(expression);
         if (ArrayRankName(currentValueType) > 0 && !valueCreatesArrayOwner) {
             bool transfersOwner = dynamic_cast<FunctionCallExpr*>(expression) != nullptr;
@@ -46,8 +52,9 @@ namespace Absolute {
         llvm::FunctionType* entryType = llvm::FunctionType::get(
             builder.getVoidTy(), {builder.getPtrTy()}, false);
         llvm::FunctionType* type = llvm::FunctionType::get(
-            builder.getPtrTy(), {entryType->getPointerTo(), builder.getPtrTy()}, false);
-        return module->getOrInsertFunction("absolute_task_spawn", type);
+            builder.getPtrTy(), {entryType->getPointerTo(), builder.getPtrTy(),
+                builder.getInt32Ty(), builder.getInt32Ty(), builder.getPtrTy()}, false);
+        return module->getOrInsertFunction("absolute_task_spawn_config", type);
     }
 
     llvm::FunctionCallee CodeGenerator::Impl::TaskAwait() {
@@ -82,29 +89,63 @@ namespace Absolute {
         }
         for (auto& [name, variable] : scopes[index]) {
             (void)name;
+            const auto emitWhenOwner = [&](auto&& emitCleanup) {
+                if (!variable.ownershipFlagStorage) {
+                    emitCleanup();
+                    return;
+                }
+                llvm::Function* function = CurrentFunction();
+                llvm::BasicBlock* cleanup = llvm::BasicBlock::Create(
+                    context, "role.owner.cleanup", function);
+                llvm::BasicBlock* complete = llvm::BasicBlock::Create(
+                    context, "role.cleanup.end", function);
+                llvm::Value* owns = builder.CreateLoad(
+                    builder.getInt1Ty(), variable.ownershipFlagStorage,
+                    "role.is.owner");
+                builder.CreateCondBr(owns, cleanup, complete);
+                builder.SetInsertPoint(cleanup);
+                emitCleanup();
+                BranchIfNeeded(complete);
+                builder.SetInsertPoint(complete);
+            };
             if (IsTaskTypeName(variable.typeName)) {
                 llvm::Value* handle = builder.CreateLoad(variable.type, variable.address, "cleanup.task");
                 builder.CreateCall(TaskDestroy(), {handle});
                 builder.CreateStore(llvm::ConstantPointerNull::get(builder.getPtrTy()), variable.address);
                 continue;
             }
-            if (variable.ownsArrayStorage && variable.symbol != transferredOwner) {
-                builder.CreateCall(Free(), {variable.arrayOwner});
+            const bool transfersThisOwner = transferredOwner != InvalidSymbolId &&
+                variable.symbol == transferredOwner;
+            if (variable.ownsArrayStorage && !transfersThisOwner) {
+                emitWhenOwner([&] {
+                    llvm::Value* owner = variable.arrayOwnerStorage
+                        ? builder.CreateLoad(
+                            builder.getPtrTy(), variable.arrayOwnerStorage,
+                            "cleanup.array.owner")
+                        : variable.arrayOwner;
+                    builder.CreateCall(Free(), {owner});
+                });
                 continue;
             }
             if (variable.ownsAggregateResources) {
-                EmitValueCleanup(variable.address, variable.typeName);
+                emitWhenOwner([&] {
+                    EmitValueCleanup(variable.address, variable.typeName);
+                });
                 continue;
             }
-            if (!variable.managedOwner || variable.symbol == transferredOwner) continue;
-            llvm::Value* handle = builder.CreateLoad(variable.type, variable.address, "cleanup.handle");
-            llvm::Value* pointee = builder.CreateCall(
-                ManagedGet(false), {handle}, "cleanup.pointee");
-            EmitPointeeCleanup(pointee, variable.typeName);
-            builder.CreateCall(ManagedDestroy(), {handle});
-            builder.CreateStore(builder.getInt64(0), variable.address);
-            if (variable.managedPointee)
-                builder.CreateStore(llvm::ConstantPointerNull::get(builder.getPtrTy()), variable.managedPointee);
+            if (!variable.managedOwner || transfersThisOwner) continue;
+            emitWhenOwner([&] {
+                llvm::Value* handle = builder.CreateLoad(
+                    variable.type, variable.address, "cleanup.handle");
+                llvm::Value* pointee = EmitManagedGet(handle, false);
+                EmitPointeeCleanup(pointee, variable.typeName);
+                builder.CreateCall(ManagedDestroy(), {handle});
+                builder.CreateStore(builder.getInt64(0), variable.address);
+                if (variable.managedPointee)
+                    builder.CreateStore(
+                        llvm::ConstantPointerNull::get(builder.getPtrTy()),
+                        variable.managedPointee);
+            });
         }
     }
 
@@ -181,19 +222,309 @@ namespace Absolute {
                     identifier->name + ".cached.pointee");
             }
         }
-        return builder.CreateCall(ManagedGet(true), {handle}, "managed.pointee");
+        return EmitManagedGet(handle, true);
+    }
+
+    llvm::Value* CodeGenerator::Impl::ArgumentOwnershipFlag(
+        Expression* expression, const std::string& parameterType) {
+        if (!ParameterSupportsOwnershipName(parameterType) ||
+            !analyzer || !expression)
+            return builder.getFalse();
+        const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
+        if (!info) return builder.getFalse();
+        const std::string valueType =
+            ValueReferenceBaseTypeName(parameterType);
+        bool transfers = false;
+        if (IsStrongManagedPointerTypeName(valueType))
+            transfers = info->createsManagedOwner;
+        else if (ArrayRankName(valueType) > 0)
+            transfers = info->createsArrayOwner;
+        else
+            transfers = info->isMoveResult || !info->isLValue;
+        return builder.getInt1(transfers);
     }
 
     llvm::Value* CodeGenerator::Impl::EvaluateCallArgument(
-        Expression* expression, std::vector<llvm::Value*>& temporaryArrayOwners) {
+        Expression* expression, std::vector<llvm::Value*>& temporaryArrayOwners,
+        std::vector<llvm::Value*>& temporaryClosureOwners,
+        const std::string& parameterType) {
+        if (IsValueReferenceTypeName(parameterType)) {
+            const ExpressionInfo* info = analyzer && expression
+                ? analyzer->GetExpressionInfo(*expression) : nullptr;
+            if (info && info->isLValue) return EvaluateAddress(expression);
+            if (!IsConstValueReferenceTypeName(parameterType))
+                Fail("mutable reference argument requires an addressable lvalue");
+            llvm::Value* value = Evaluate(expression);
+            llvm::Type* valueType = TypeFromName(ValueReferenceBaseTypeName(parameterType));
+            llvm::AllocaInst* temporary = CreateEntryAlloca(
+                *CurrentFunction(), valueType, "const.ref.temporary");
+            builder.CreateStore(Coerce(value, valueType), temporary);
+            return temporary;
+        }
         llvm::Value* argument = Evaluate(expression);
-        if (valueCreatesArrayOwner) temporaryArrayOwners.push_back(valueArrayOwner);
+        const bool transfersArrayOwner =
+            valueCreatesArrayOwner && llvm::cast<llvm::ConstantInt>(
+                ArgumentOwnershipFlag(expression, parameterType))->isOne();
+        if (valueCreatesArrayOwner && !transfersArrayOwner)
+            temporaryArrayOwners.push_back(valueArrayOwner);
+        if (valueCreatesClosureOwner) temporaryClosureOwners.push_back(argument);
+        if (!parameterType.empty()) {
+            const std::string targetType = ValueReferenceBaseTypeName(parameterType);
+            argument = Coerce(argument, TypeFromName(targetType),
+                SemanticType(expression), targetType);
+        }
+        ConsumeTaskArgument(expression, parameterType);
         return argument;
+    }
+
+    std::vector<llvm::Value*> CodeGenerator::Impl::EvaluateCallArguments(
+        const std::vector<Expression*>& expressions,
+        std::vector<llvm::Value*>& temporaryArrayOwners,
+        std::vector<llvm::Value*>& temporaryClosureOwners,
+        const std::vector<std::string>& rawParameterTypes,
+        bool variadicParameter,
+        std::vector<llvm::Value*>* ownershipFlags) {
+        std::vector<std::string> parameterTypes = rawParameterTypes;
+        for (std::string& parameter : parameterTypes)
+            parameter = SubstituteCodegenType(parameter, currentGenericSubstitutions);
+
+        std::vector<llvm::Value*> arguments;
+        if (!variadicParameter) {
+            arguments.reserve(expressions.size());
+            if (ownershipFlags) ownershipFlags->reserve(expressions.size());
+            for (size_t index = 0; index < expressions.size(); ++index) {
+                const std::string parameterType = index < parameterTypes.size()
+                    ? parameterTypes[index] : std::string{};
+                if (ownershipFlags)
+                    ownershipFlags->push_back(
+                        ArgumentOwnershipFlag(expressions[index], parameterType));
+                arguments.push_back(EvaluateCallArgument(
+                    expressions[index], temporaryArrayOwners, temporaryClosureOwners,
+                    parameterType));
+            }
+            valueCreatesArrayOwner = false;
+            valueArrayOwner = nullptr;
+            return arguments;
+        }
+        if (parameterTypes.empty()) Fail("params callable has no array parameter");
+        const size_t fixedCount = parameterTypes.size() - 1;
+        if (expressions.size() < fixedCount)
+            Fail("params call has too few fixed arguments");
+
+        arguments.reserve(parameterTypes.size());
+        for (size_t index = 0; index < fixedCount; ++index)
+        {
+            if (ownershipFlags)
+                ownershipFlags->push_back(
+                    ArgumentOwnershipFlag(expressions[index], parameterTypes[index]));
+            arguments.push_back(EvaluateCallArgument(
+                expressions[index], temporaryArrayOwners, temporaryClosureOwners,
+                parameterTypes[index]));
+        }
+
+        const std::string& arrayType = parameterTypes.back();
+        const bool directArray = expressions.size() == parameterTypes.size() &&
+            SemanticType(expressions.back()) == ValueReferenceBaseTypeName(arrayType);
+        if (directArray) {
+            if (ownershipFlags)
+                ownershipFlags->push_back(
+                    ArgumentOwnershipFlag(expressions.back(), arrayType));
+            arguments.push_back(EvaluateCallArgument(
+                expressions.back(), temporaryArrayOwners, temporaryClosureOwners,
+                arrayType));
+            valueCreatesArrayOwner = false;
+            valueArrayOwner = nullptr;
+            return arguments;
+        }
+
+        const std::string elementTypeName = ArrayElementTypeName(
+            ValueReferenceBaseTypeName(arrayType), 1);
+        llvm::Type* elementType = TypeFromName(elementTypeName);
+        const size_t count = expressions.size() - fixedCount;
+        llvm::AllocaInst* storage = builder.CreateAlloca(
+            elementType, builder.getInt64(count), "params.storage");
+        storage->setAlignment(llvm::Align(16));
+        for (size_t index = 0; index < count; ++index) {
+            llvm::Value* item = EvaluateCallArgument(
+                expressions[fixedCount + index], temporaryArrayOwners,
+                temporaryClosureOwners, elementTypeName);
+            llvm::Value* destination = builder.CreateInBoundsGEP(
+                elementType, storage, builder.getInt64(index), "params.element");
+            builder.CreateStore(item, destination);
+        }
+        arguments.push_back(BuildArrayDescriptor(
+            {storage, elementType, ValueReferenceBaseTypeName(arrayType),
+                {builder.getInt64(count)}, nullptr}));
+        if (ownershipFlags) ownershipFlags->push_back(builder.getFalse());
+        valueCreatesArrayOwner = false;
+        valueArrayOwner = nullptr;
+        return arguments;
+    }
+
+    void CodeGenerator::Impl::ConsumeTaskArgument(
+        Expression* expression, const std::string& parameterType) {
+        if (!expression || !IsTaskTypeName(parameterType)) return;
+        const ExpressionInfo* info = analyzer
+            ? analyzer->GetExpressionInfo(*expression) : nullptr;
+        if (!info || !info->isLValue) return;
+        llvm::Value* address = EvaluateAddress(expression);
+        builder.CreateStore(
+            llvm::ConstantPointerNull::get(builder.getPtrTy()), address);
     }
 
     void CodeGenerator::Impl::ReleaseArrayTemporaries(
         const std::vector<llvm::Value*>& owners) {
         for (llvm::Value* owner : owners) builder.CreateCall(Free(), {owner});
+    }
+
+    void CodeGenerator::Impl::ReleaseClosureTemporaries(
+        const std::vector<llvm::Value*>& owners) {
+        for (llvm::Value* owner : owners) builder.CreateCall(ClosureRelease(), {owner});
+    }
+
+    llvm::StructType* CodeGenerator::Impl::ClosureObjectType() {
+        if (closureObjectType) return closureObjectType;
+        closureObjectType = llvm::StructType::create(context, "absolute.closure");
+        closureObjectType->setBody({builder.getInt64Ty(), builder.getPtrTy(),
+            builder.getPtrTy(), builder.getPtrTy()});
+        return closureObjectType;
+    }
+
+    llvm::FunctionType* CodeGenerator::Impl::ClosureInvokeType(
+        const std::string& returnType,
+        const std::vector<std::string>& parameterTypes) {
+        std::vector<llvm::Type*> parameters;
+        if (AbiReturnOffset(returnType) != 0) parameters.push_back(builder.getPtrTy());
+        parameters.push_back(builder.getPtrTy());
+        for (const std::string& parameter : parameterTypes) {
+            parameters.push_back(AbiParameterType(parameter));
+            if (ParameterSupportsOwnershipName(parameter))
+                parameters.push_back(builder.getInt1Ty());
+        }
+        return llvm::FunctionType::get(AbiReturnType(returnType), parameters, false);
+    }
+
+    llvm::Function* CodeGenerator::Impl::ClosureRetain() {
+        if (llvm::Function* existing = module->getFunction("__absolute.closure.retain"))
+            return existing;
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getVoidTy(), {builder.getPtrTy()}, false);
+        llvm::Function* function = llvm::Function::Create(type,
+            llvm::Function::InternalLinkage, "__absolute.closure.retain", *module);
+        const auto saved = builder.saveIP();
+        llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+        llvm::BasicBlock* update = llvm::BasicBlock::Create(context, "update", function);
+        llvm::BasicBlock* complete = llvm::BasicBlock::Create(context, "complete", function);
+        builder.SetInsertPoint(entry);
+        llvm::Value* closure = function->getArg(0);
+        builder.CreateCondBr(builder.CreateICmpNE(closure,
+            llvm::ConstantPointerNull::get(builder.getPtrTy())), update, complete);
+        builder.SetInsertPoint(update);
+        llvm::Value* countAddress = builder.CreateStructGEP(
+            ClosureObjectType(), closure, 0, "closure.count.address");
+        llvm::Value* count = builder.CreateLoad(
+            builder.getInt64Ty(), countAddress, "closure.count");
+        llvm::BasicBlock* increment = llvm::BasicBlock::Create(
+            context, "increment", function);
+        builder.CreateCondBr(builder.CreateICmpSGE(count, builder.getInt64(0)),
+            increment, complete);
+        builder.SetInsertPoint(increment);
+        builder.CreateStore(builder.CreateAdd(count, builder.getInt64(1)), countAddress);
+        builder.CreateBr(complete);
+        builder.SetInsertPoint(complete);
+        builder.CreateRetVoid();
+        builder.restoreIP(saved);
+        return function;
+    }
+
+    llvm::Function* CodeGenerator::Impl::ClosureRelease() {
+        if (llvm::Function* existing = module->getFunction("__absolute.closure.release"))
+            return existing;
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getVoidTy(), {builder.getPtrTy()}, false);
+        llvm::Function* function = llvm::Function::Create(type,
+            llvm::Function::InternalLinkage, "__absolute.closure.release", *module);
+        const auto saved = builder.saveIP();
+        llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+        llvm::BasicBlock* update = llvm::BasicBlock::Create(context, "update", function);
+        llvm::BasicBlock* decrement = llvm::BasicBlock::Create(context, "decrement", function);
+        llvm::BasicBlock* destroy = llvm::BasicBlock::Create(context, "destroy", function);
+        llvm::BasicBlock* callDestroy = llvm::BasicBlock::Create(context, "destroy.env", function);
+        llvm::BasicBlock* freeClosure = llvm::BasicBlock::Create(context, "free", function);
+        llvm::BasicBlock* complete = llvm::BasicBlock::Create(context, "complete", function);
+        builder.SetInsertPoint(entry);
+        llvm::Value* closure = function->getArg(0);
+        builder.CreateCondBr(builder.CreateICmpNE(closure,
+            llvm::ConstantPointerNull::get(builder.getPtrTy())), update, complete);
+        builder.SetInsertPoint(update);
+        llvm::Value* countAddress = builder.CreateStructGEP(
+            ClosureObjectType(), closure, 0, "closure.count.address");
+        llvm::Value* count = builder.CreateLoad(
+            builder.getInt64Ty(), countAddress, "closure.count");
+        builder.CreateCondBr(builder.CreateICmpSGE(count, builder.getInt64(0)),
+            decrement, complete);
+        builder.SetInsertPoint(decrement);
+        llvm::Value* next = builder.CreateSub(count, builder.getInt64(1), "closure.count.next");
+        builder.CreateStore(next, countAddress);
+        builder.CreateCondBr(builder.CreateICmpEQ(next, builder.getInt64(0)), destroy, complete);
+        builder.SetInsertPoint(destroy);
+        llvm::Value* destroyAddress = builder.CreateStructGEP(
+            ClosureObjectType(), closure, 3, "closure.destroy.address");
+        llvm::Value* destroyFunction = builder.CreateLoad(
+            builder.getPtrTy(), destroyAddress, "closure.destroy");
+        builder.CreateCondBr(builder.CreateICmpNE(destroyFunction,
+            llvm::ConstantPointerNull::get(builder.getPtrTy())), callDestroy, freeClosure);
+        builder.SetInsertPoint(callDestroy);
+        llvm::Value* environmentAddress = builder.CreateStructGEP(
+            ClosureObjectType(), closure, 2, "closure.environment.address");
+        llvm::Value* environment = builder.CreateLoad(
+            builder.getPtrTy(), environmentAddress, "closure.environment");
+        llvm::FunctionType* destroyType = llvm::FunctionType::get(
+            builder.getVoidTy(), {builder.getPtrTy()}, false);
+        builder.CreateCall(destroyType, destroyFunction, {environment});
+        builder.CreateBr(freeClosure);
+        builder.SetInsertPoint(freeClosure);
+        builder.CreateCall(Free(), {closure});
+        builder.CreateBr(complete);
+        builder.SetInsertPoint(complete);
+        builder.CreateRetVoid();
+        builder.restoreIP(saved);
+        return function;
+    }
+
+    llvm::Value* CodeGenerator::Impl::FunctionClosure(const Symbol& symbol) {
+        if (const auto found = functionClosures.find(symbol.id);
+            found != functionClosures.end()) return found->second;
+        llvm::Function* target = module->getFunction(FunctionLinkName(symbol));
+        if (!target) Fail("missing function value '" + symbol.name + "'");
+        llvm::FunctionType* wrapperType = ClosureInvokeType(symbol.type, symbol.parameterTypes);
+        const std::string wrapperName = "__absolute.closure.invoke." +
+            EncodeLinkComponent(FunctionLinkName(symbol));
+        llvm::Function* wrapper = llvm::Function::Create(wrapperType,
+            llvm::Function::InternalLinkage, wrapperName, *module);
+        wrapper->setCallingConv(llvm::CallingConv::C);
+        const auto saved = builder.saveIP();
+        llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", wrapper);
+        builder.SetInsertPoint(entry);
+        const unsigned returnOffset = AbiReturnOffset(symbol.type);
+        std::vector<llvm::Value*> arguments;
+        if (returnOffset != 0) arguments.push_back(wrapper->getArg(0));
+        for (unsigned index = returnOffset + 1; index < wrapper->arg_size(); ++index)
+            arguments.push_back(wrapper->getArg(index));
+        llvm::CallInst* call = builder.CreateCall(target->getFunctionType(), target, arguments);
+        if (target->getReturnType()->isVoidTy()) builder.CreateRetVoid();
+        else builder.CreateRet(call);
+        builder.restoreIP(saved);
+
+        llvm::Constant* initializer = llvm::ConstantStruct::get(ClosureObjectType(), {
+            llvm::ConstantInt::getSigned(builder.getInt64Ty(), -1), wrapper,
+            llvm::ConstantPointerNull::get(builder.getPtrTy()),
+            llvm::ConstantPointerNull::get(builder.getPtrTy())});
+        auto* closure = new llvm::GlobalVariable(*module, ClosureObjectType(), true,
+            llvm::GlobalValue::InternalLinkage, initializer,
+            "__absolute.closure.value." + EncodeLinkComponent(FunctionLinkName(symbol)));
+        functionClosures.emplace(symbol.id, closure);
+        return closure;
     }
 
     llvm::Value* CodeGenerator::Impl::BuildArrayDescriptor(const ArrayView& view) {
@@ -211,7 +542,14 @@ namespace Absolute {
 
     CodeGenerator::Impl::ArrayView CodeGenerator::Impl::ArrayViewFromValue(llvm::Value* descriptor, const std::string& typeName) {
         const size_t rank = ArrayRankName(typeName);
-        if (rank == 0 || !descriptor->getType()->isStructTy())
+        if (rank == 0)
+            Fail("array expression does not produce a descriptor");
+        if (descriptor->getType()->isPointerTy()) {
+            llvm::LoadInst* load = builder.CreateLoad(ArrayDescriptorType(typeName), descriptor, "array.descriptor.loaded");
+            load->setMetadata(llvm::LLVMContext::MD_invariant_load, llvm::MDNode::get(context, {}));
+            descriptor = load;
+        }
+        if (!descriptor->getType()->isStructTy())
             Fail("array expression does not produce a descriptor");
         ArrayView view;
         view.address = builder.CreateExtractValue(descriptor, {0}, "array.data");
@@ -228,12 +566,21 @@ namespace Absolute {
         if (auto* identifier = dynamic_cast<IdentifierExpr*>(expression)) {
             if (Variable* variable = FindVariable(identifier->name)) {
                 if (!variable->isArray) Fail("object is not an array");
+                llvm::Value* owner = variable->arrayOwnerStorage
+                    ? builder.CreateLoad(
+                        builder.getPtrTy(), variable->arrayOwnerStorage,
+                        identifier->name + ".array.owner")
+                    : variable->arrayOwner;
                 return {variable->address, variable->arrayElementType,
-                    variable->typeName, variable->arrayDimensions, variable->arrayOwner};
+                    variable->typeName, variable->arrayDimensions, owner};
             }
         }
         const std::string typeName = SemanticType(expression);
-        return ArrayViewFromValue(Evaluate(expression), typeName);
+        const bool outerAddressMode = addressMode;
+        addressMode = false;
+        llvm::Value* descriptor = Evaluate(expression);
+        addressMode = outerAddressMode;
+        return ArrayViewFromValue(descriptor, typeName);
     }
 
     void CodeGenerator::Impl::EmitOrExit(llvm::Value* condition, const std::string& name) {
@@ -246,9 +593,16 @@ namespace Absolute {
         builder.CreateCondBr(condition, success, failure,
             llvm::MDBuilder(context).createBranchWeights(2000, 1));
         builder.SetInsertPoint(failure);
-        const std::string message = name == "array.size"
-            ? "Array size must be greater than zero"
-            : "Array index out of bounds";
+        const std::string message =
+            name == "array.size"
+                ? "Array size must be greater than zero"
+                : name == "array.bounds"
+                    ? "Array index out of bounds"
+                    : name == "division.by.zero"
+                        ? "Division by zero"
+                        : name.ends_with(".requires.owner")
+                        ? "Ownership operation requires an owner argument"
+                        : "Runtime safety check failed";
         builder.CreateCall(Puts(), {builder.CreateGlobalStringPtr(message, name + ".message")});
         builder.CreateCall(ExitFailure(), {builder.getInt32(1)});
         builder.CreateUnreachable();
@@ -257,8 +611,8 @@ namespace Absolute {
 
     llvm::Value* CodeGenerator::Impl::ArrayElementAddress(ArrayAccessExpr& expression) {
         ArrayView view = ViewOfArray(expression.base.get());
-        if (expression.indexes.size() != view.dimensions.size())
-            Fail("array access must provide all dimensions");
+        if (expression.indexes.size() > view.dimensions.size())
+            Fail("array access provides too many dimensions");
 
         llvm::Value* offset = builder.getInt64(0);
         llvm::Value* oneDimensionalIndex = nullptr;
@@ -272,23 +626,20 @@ namespace Absolute {
 
             const std::string indexTypeName = SemanticType(expression.indexes[dimension].get());
             const bool unsignedIndex = indexTypeName.starts_with("uint") || indexTypeName == "char";
-            llvm::Value* nonNegative = unsignedIndex
-                ? builder.getTrue()
-                : builder.CreateICmpSGE(
-                    index, llvm::ConstantInt::get(index->getType(), 0), "array.index.nonnegative");
             llvm::Value* wideIndex = index->getType()->isIntegerTy(64)
                 ? index
                 : builder.CreateIntCast(index, builder.getInt64Ty(), !unsignedIndex, "array.index.wide");
-            llvm::Value* belowSize = unsignedIndex
-                ? builder.CreateICmpULT(wideIndex, view.dimensions[dimension], "array.index.below.size")
-                : builder.CreateICmpSLT(wideIndex, view.dimensions[dimension], "array.index.below.size");
-            EmitOrExit(builder.CreateAnd(nonNegative, belowSize, "array.index.valid"), "array.bounds");
-            if (expression.indexes.size() == 1) oneDimensionalIndex = index;
+            llvm::Value* valid = builder.CreateICmpULT(wideIndex, view.dimensions[dimension], "array.index.valid");
+            EmitOrExit(valid, "array.bounds");
+            if (expression.indexes.size() == 1 && view.dimensions.size() == 1) oneDimensionalIndex = index;
             if (dimension == 0) offset = wideIndex;
             else {
                 offset = builder.CreateMul(offset, view.dimensions[dimension], "array.row.offset");
                 offset = builder.CreateAdd(offset, wideIndex, "array.linear.offset");
             }
+        }
+        for (size_t dimension = expression.indexes.size(); dimension < view.dimensions.size(); ++dimension) {
+            offset = builder.CreateMul(offset, view.dimensions[dimension], "array.sub.stride");
         }
         return builder.CreateInBoundsGEP(
             view.elementType, view.address,
@@ -301,21 +652,38 @@ namespace Absolute {
     }
 
     llvm::Value* CodeGenerator::Impl::Coerce(llvm::Value* source, llvm::Type* target) {
+        return Coerce(source, target, {}, {});
+    }
+
+    llvm::Value* CodeGenerator::Impl::Coerce(llvm::Value* source, llvm::Type* target,
+        const std::string& sourceTypeName, const std::string& targetTypeName) {
         if (!source) Fail("cannot convert an empty value");
         llvm::Type* sourceType = source->getType();
         if (sourceType == target) return source;
+        const std::string& semanticSource =
+            sourceTypeName.empty() ? currentValueType : sourceTypeName;
+        const std::string sourceValueType = ValueReferenceBaseTypeName(semanticSource);
+        const std::string targetValueType = ValueReferenceBaseTypeName(targetTypeName);
+        const bool sourceUnsigned = sourceValueType.starts_with("uint") ||
+            sourceValueType == "char" || sourceValueType == "bool";
+        const bool targetUnsigned = targetValueType.starts_with("uint") ||
+            targetValueType == "char" || targetValueType == "bool";
 
         if (target->isIntegerTy(64) && llvm::isa<llvm::ConstantPointerNull>(source))
             return builder.getInt64(0);
 
         if (sourceType->isIntegerTy() && target->isIntegerTy()) {
-            return builder.CreateIntCast(source, target, true, "int.cast");
+            return builder.CreateIntCast(source, target, !sourceUnsigned, "int.cast");
         }
         if (sourceType->isIntegerTy() && target->isFloatingPointTy()) {
-            return builder.CreateSIToFP(source, target, "int.to.fp");
+            return sourceUnsigned
+                ? builder.CreateUIToFP(source, target, "uint.to.fp")
+                : builder.CreateSIToFP(source, target, "int.to.fp");
         }
         if (sourceType->isFloatingPointTy() && target->isIntegerTy()) {
-            return builder.CreateFPToSI(source, target, "fp.to.int");
+            return targetUnsigned
+                ? builder.CreateFPToUI(source, target, "fp.to.uint")
+                : builder.CreateFPToSI(source, target, "fp.to.int");
         }
         if (sourceType->isFloatingPointTy() && target->isFloatingPointTy()) {
             return builder.CreateFPCast(source, target, "fp.cast");
@@ -323,7 +691,18 @@ namespace Absolute {
         if (sourceType->isPointerTy() && target->isPointerTy()) {
             return builder.CreatePointerCast(source, target, "ptr.cast");
         }
-        Fail("incompatible value conversion");
+        if (sourceType->isPointerTy() && target->isIntegerTy()) {
+            return builder.CreatePtrToInt(source, target, "ptr.to.int");
+        }
+        if (sourceType->isIntegerTy() && target->isPointerTy()) {
+            return builder.CreateIntToPtr(source, target, "int.to.ptr");
+        }
+        std::string sourceText;
+        std::string targetText;
+        llvm::raw_string_ostream(sourceText) << *sourceType;
+        llvm::raw_string_ostream(targetText) << *target;
+        Fail("incompatible value conversion from '" + semanticSource + "' (" +
+            sourceText + ") to '" + targetValueType + "' (" + targetText + ")");
     }
 
     llvm::Type* CodeGenerator::Impl::CommonNumericType(llvm::Type* left, llvm::Type* right) {
@@ -354,6 +733,12 @@ namespace Absolute {
     }
 
     llvm::Value* CodeGenerator::Impl::ApplyBinary(const std::string& op, llvm::Value* left, llvm::Value* right) {
+        return ApplyBinary(op, left, right, {}, {});
+    }
+
+    llvm::Value* CodeGenerator::Impl::ApplyBinary(
+        const std::string& op, llvm::Value* left, llvm::Value* right,
+        const std::string& leftTypeName, const std::string& rightTypeName) {
         if (op == "&&" || op == "||") {
             left = AsCondition(left);
             right = AsCondition(right);
@@ -362,15 +747,40 @@ namespace Absolute {
         }
 
         llvm::Type* type = CommonNumericType(left->getType(), right->getType());
-        left = Coerce(left, type);
-        right = Coerce(right, type);
+        std::string commonTypeName;
+        if (leftTypeName == "double" || rightTypeName == "double") commonTypeName = "double";
+        else if (leftTypeName == "float" || rightTypeName == "float") commonTypeName = "float";
+        else if (leftTypeName == "int64" || rightTypeName == "int64" ||
+            leftTypeName == "uint64" || rightTypeName == "uint64") commonTypeName = "int64";
+        else if (!leftTypeName.empty() || !rightTypeName.empty()) commonTypeName = "int32";
+        left = Coerce(left, type, leftTypeName, commonTypeName);
+        right = Coerce(right, type, rightTypeName, commonTypeName);
         const bool floating = type->isFloatingPointTy();
 
         if (op == "+") return floating ? builder.CreateFAdd(left, right, "add") : builder.CreateAdd(left, right, "add");
         if (op == "-") return floating ? builder.CreateFSub(left, right, "sub") : builder.CreateSub(left, right, "sub");
         if (op == "*") return floating ? builder.CreateFMul(left, right, "mul") : builder.CreateMul(left, right, "mul");
-        if (op == "/") return floating ? builder.CreateFDiv(left, right, "div") : builder.CreateSDiv(left, right, "div");
-        if (op == "%") return floating ? builder.CreateFRem(left, right, "rem") : builder.CreateSRem(left, right, "rem");
+        if (op == "/" || op == "%") {
+            // Integer division by zero is immediate undefined behavior in LLVM,
+            // so the optimizer may fold the result to anything and the program
+            // keeps running on a garbage value. Reject a divisor that is
+            // provably zero and check the rest at runtime, the way an array
+            // index is checked.
+            if (!floating) {
+                if (const auto* divisor = llvm::dyn_cast<llvm::ConstantInt>(right);
+                    divisor && divisor->isZero())
+                    Fail(op == "/" ? "division by zero" : "remainder by zero");
+                EmitOrExit(
+                    builder.CreateICmpNE(right, llvm::ConstantInt::get(type, 0),
+                        "divisor.not.zero"),
+                    "division.by.zero");
+            }
+            if (op == "/")
+                return floating ? builder.CreateFDiv(left, right, "div")
+                    : builder.CreateSDiv(left, right, "div");
+            return floating ? builder.CreateFRem(left, right, "rem")
+                : builder.CreateSRem(left, right, "rem");
+        }
 
         if (op == "==") return floating ? builder.CreateFCmpOEQ(left, right, "equal") : builder.CreateICmpEQ(left, right, "equal");
         if (op == "!=") return floating ? builder.CreateFCmpONE(left, right, "not.equal") : builder.CreateICmpNE(left, right, "not.equal");
@@ -415,29 +825,56 @@ namespace Absolute {
         if (symbol.genericOrigin != InvalidSymbolId)
             return CallableKey(symbol.name, symbol.parameterTypes);
         if (symbol.externalFunction || symbol.exportedFunction || symbol.name == "main" || !analyzer ||
-            analyzer->FunctionOverloadCount(symbol.name) <= 1)
-            return (symbol.externalFunction || symbol.exportedFunction)
-                ? symbol.name.substr(symbol.name.rfind('.') + 1) : symbol.name;
+            analyzer->FunctionOverloadCount(symbol.name) <= 1) {
+            if (symbol.externalFunction || symbol.exportedFunction)
+                return symbol.name.substr(symbol.name.rfind('.') + 1);
+            // `main` owns its C symbol; everything else that would shadow a
+            // runtime entry point is moved out of the C namespace. The leading
+            // dot cannot appear in a C identifier, so the result is private to
+            // this module and can never satisfy a call from libc or the
+            // Absolute runtime.
+            if (symbol.name != "main" && IsReservedRuntimeSymbol(symbol.name))
+                return ".absolute." + CallableKey(symbol.name, symbol.parameterTypes);
+            return symbol.name;
+        }
         return CallableKey(symbol.name, symbol.parameterTypes);
     }
 
     std::string CodeGenerator::Impl::ResolvedName(Expression* expression) const {
-        std::string name;
         if (analyzer && expression) {
             if (const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression)) {
-                if (const Symbol* symbol = analyzer->GetSymbol(info->symbol))
+                if (const Symbol* symbol = analyzer->GetSymbol(info->symbol)) {
+                    if (symbol->kind == SymbolKind::Function && symbol->genericOrigin != InvalidSymbolId &&
+                        !currentGenericSubstitutions.empty()) {
+                        std::vector<std::string> substitutedArgs = symbol->genericArguments;
+                        for (std::string& arg : substitutedArgs)
+                            arg = SubstituteCodegenType(arg, currentGenericSubstitutions);
+                        const SymbolId specId = const_cast<Analyzer*>(analyzer)->InstantiateGenericFunction(
+                            symbol->genericOrigin, substitutedArgs);
+                        if (const Symbol* specSymbol = analyzer->GetSymbol(specId))
+                            return FunctionLinkName(*specSymbol);
+                    }
                     return FunctionLinkName(*symbol);
+                }
             }
         }
-        if (name.empty()) name = IdentifierName(expression);
+        std::string name = IdentifierName(expression);
         const auto linked = functionLinkNames.find(name);
         return linked == functionLinkNames.end() ? name : linked->second;
     }
 
     bool CodeGenerator::Impl::IsBuiltinFunction(const std::string& name) const {
         return name == "print" || name == "println" || name == "format" ||
-            name == "toString" || name == "assert" || name == "copy";
+            name == "toString" || name == "assert" || name == "copy" ||
+            name == "move" || name == "isOwner" || name == "debugBreak" ||
+            name == "adoptRaw" || name == "retainRaw" || name == "borrowRaw" || name == "share" ||
+            name == "unsafeArrayGet" || name == "unsafeArraySet" ||
+            name == "unsafeArrayData" ||
+            name == "seal" || name == "unseal" ||
+            name == "load" || name == "isLoaded" || name == "loadError" ||
+            name == "taskGroupAdd" || name == "tuple";
     }
+
 
     llvm::FunctionCallee CodeGenerator::Impl::Printf() {
         llvm::FunctionType* type = llvm::FunctionType::get(
@@ -461,6 +898,24 @@ namespace Absolute {
         llvm::FunctionType* type = llvm::FunctionType::get(
             builder.getVoidTy(), {builder.getPtrTy()}, false);
         return module->getOrInsertFunction("free", type);
+    }
+
+    llvm::FunctionCallee CodeGenerator::Impl::LoadDynamicLibrary() {
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getInt32Ty(), {builder.getPtrTy()}, false);
+        return module->getOrInsertFunction("absolute_load_library", type);
+    }
+
+    llvm::FunctionCallee CodeGenerator::Impl::IsDynamicLibraryLoaded() {
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getInt32Ty(), {builder.getPtrTy()}, false);
+        return module->getOrInsertFunction("absolute_library_is_loaded", type);
+    }
+
+    llvm::FunctionCallee CodeGenerator::Impl::DynamicLibraryError() {
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getPtrTy(), {}, false);
+        return module->getOrInsertFunction("absolute_load_error", type);
     }
 
     llvm::Value* CodeGenerator::Impl::EncodeTaskSlot(llvm::IRBuilder<>& targetBuilder, llvm::Value* source) {
@@ -495,20 +950,69 @@ namespace Absolute {
 
     llvm::Value* CodeGenerator::Impl::EmitSpawn(FunctionCallExpr& call) {
         const std::string name = ResolvedName(&call);
-        llvm::Function* target = module->getFunction(name);
-        if (!target) Fail("unknown async function '" + name + "'");
-        if (target->arg_size() != call.arguments.size())
+        const ExpressionInfo* callInfo = analyzer ? analyzer->GetExpressionInfo(call) : nullptr;
+        const Symbol* selected = callInfo ? analyzer->GetSymbol(callInfo->symbol) : nullptr;
+        const bool instanceMethod = selected && selected->kind == SymbolKind::Method &&
+            !selected->isStatic;
+        llvm::Function* target = nullptr;
+        llvm::FunctionType* targetType = nullptr;
+        llvm::Value* receiver = nullptr;
+        llvm::StructType* virtualOwnerType = nullptr;
+        std::optional<unsigned> virtualSlot;
+
+        if (instanceMethod) {
+            auto* member = dynamic_cast<MemberAccessExpr*>(call.base.get());
+            const std::string receiverType = member
+                ? SemanticType(member->base.get()) : currentClassName;
+            const std::string ownerName = ClassNameFromType(receiverType);
+            receiver = member ? ObjectPointer(member->base.get(), receiverType) : currentThis;
+            if (!receiver) Fail("async instance method requires a receiver");
+            const std::string methodName = member
+                ? member->member : IdentifierName(call.base.get());
+            const std::string methodKey = CallableKey(methodName, selected->parameterTypes);
+            if (auto found = classes.find(ownerName); found != classes.end()) {
+                const auto method = found->second.methods.find(methodKey);
+                if (method == found->second.methods.end())
+                    Fail("class '" + ownerName + "' has no async method '" + methodName + "'");
+                targetType = MethodFunctionType(method->second);
+                target = module->getFunction(method->second.linkName);
+                virtualSlot = method->second.virtualSlot;
+                virtualOwnerType = found->second.llvmType;
+            }
+            else if (auto found = structs.find(ownerName); found != structs.end()) {
+                const auto method = found->second.methods.find(methodKey);
+                if (method == found->second.methods.end())
+                    Fail("struct '" + ownerName + "' has no async method '" + methodName + "'");
+                targetType = MethodFunctionType(method->second);
+                target = module->getFunction(method->second.linkName);
+            }
+            else Fail("async receiver type '" + ownerName + "' is not a class or struct");
+        }
+        else {
+            target = module->getFunction(name);
+            if (target) targetType = target->getFunctionType();
+        }
+        if (!target || !targetType) Fail("unknown async callable '" + name + "'");
+
+        const size_t capturedCount = call.arguments.size() + (instanceMethod ? 1U : 0U);
+        if (targetType->getNumParams() != capturedCount)
             Fail("invalid async argument count for '" + name + "'");
 
-        const std::uint64_t slotCount = static_cast<std::uint64_t>(call.arguments.size()) + 1;
+        const std::uint64_t slotCount = static_cast<std::uint64_t>(capturedCount) + 1;
         llvm::Value* contextPointer = builder.CreateCall(
             Malloc(), {builder.getInt64(slotCount * 8)}, "task.context");
 
         size_t argumentIndex = 0;
+        if (instanceMethod) {
+            llvm::Value* slot = builder.CreateGEP(
+                builder.getInt64Ty(), contextPointer, builder.getInt64(1), "task.receiver.slot");
+            builder.CreateStore(EncodeTaskSlot(builder, receiver), slot);
+            argumentIndex = 1;
+        }
         for (const auto& argument : call.arguments) {
             llvm::Value* argumentValue = Evaluate(argument.get());
             argumentValue = Coerce(argumentValue,
-                target->getFunctionType()->getParamType(static_cast<unsigned>(argumentIndex)));
+                targetType->getParamType(static_cast<unsigned>(argumentIndex)));
             llvm::Value* slot = builder.CreateGEP(
                 builder.getInt64Ty(), contextPointer,
                 builder.getInt64(static_cast<std::uint64_t>(argumentIndex + 1)), "task.argument.slot");
@@ -526,26 +1030,66 @@ namespace Absolute {
         llvm::Value* thunkContext = thunk->getArg(0);
 
         std::vector<llvm::Value*> thunkArguments;
-        thunkArguments.reserve(call.arguments.size());
-        for (size_t index = 0; index < call.arguments.size(); ++index) {
+        thunkArguments.reserve(capturedCount);
+        for (size_t index = 0; index < capturedCount; ++index) {
             llvm::Value* slot = thunkBuilder.CreateGEP(
                 thunkBuilder.getInt64Ty(), thunkContext,
                 thunkBuilder.getInt64(static_cast<std::uint64_t>(index + 1)), "task.argument.slot");
             llvm::Value* encoded = thunkBuilder.CreateLoad(
                 thunkBuilder.getInt64Ty(), slot, "task.argument");
             thunkArguments.push_back(DecodeTaskSlot(
-                thunkBuilder, encoded, target->getFunctionType()->getParamType(static_cast<unsigned>(index))));
+                thunkBuilder, encoded, targetType->getParamType(static_cast<unsigned>(index))));
         }
-        llvm::CallInst* result = thunkBuilder.CreateCall(target, thunkArguments,
-            target->getReturnType()->isVoidTy() ? "" : "task.result");
-        if (!target->getReturnType()->isVoidTy()) {
+        llvm::Value* callee = target;
+        if (virtualSlot) {
+            llvm::Value* vtableAddress = thunkBuilder.CreateStructGEP(
+                virtualOwnerType, thunkArguments.front(), 0, "task.vtable.address");
+            llvm::Value* vtable = thunkBuilder.CreateLoad(
+                thunkBuilder.getPtrTy(), vtableAddress, "task.vtable");
+            llvm::Value* slot = thunkBuilder.CreateGEP(
+                thunkBuilder.getPtrTy(), vtable, thunkBuilder.getInt64(*virtualSlot),
+                "task.virtual.slot");
+            callee = thunkBuilder.CreateLoad(
+                thunkBuilder.getPtrTy(), slot, "task.virtual.method");
+        }
+        llvm::CallInst* result = thunkBuilder.CreateCall(targetType, callee, thunkArguments,
+            targetType->getReturnType()->isVoidTy() ? "" : "task.result");
+        if (!targetType->getReturnType()->isVoidTy()) {
             llvm::Value* resultSlot = thunkBuilder.CreateGEP(
                 thunkBuilder.getInt64Ty(), thunkContext, thunkBuilder.getInt64(0), "task.result.slot");
             thunkBuilder.CreateStore(EncodeTaskSlot(thunkBuilder, result), resultSlot);
         }
         thunkBuilder.CreateRetVoid();
 
-        return builder.CreateCall(TaskSpawn(), {thunk, contextPointer}, "task.handle");
+        std::int32_t core = -1;
+        std::int32_t priority = 0;
+        std::string role;
+        const auto applyOptions = [&](const Attribute* attribute) {
+            if (!attribute) return;
+            for (const AttributeArgument& argument : attribute->arguments) {
+                if (argument.name == "core") core = static_cast<std::int32_t>(
+                    std::stoll(argument.value.text));
+                else if (argument.name == "priority") priority = static_cast<std::int32_t>(
+                    std::stoll(argument.value.text));
+                else if (argument.name == "role") {
+                    role = argument.value.text;
+                    if (role.size() >= 2 && role.front() == '"' && role.back() == '"')
+                        role = role.substr(1, role.size() - 2);
+                }
+            }
+        };
+        if (analyzer) {
+            const ExpressionInfo* info = analyzer->GetExpressionInfo(call);
+            FunctionDeclStmt* declaration = info
+                ? analyzer->FunctionDeclaration(info->symbol) : nullptr;
+            if (declaration) applyOptions(declaration->FindAttribute("task"));
+        }
+        applyOptions(currentSpawnAttribute);
+        llvm::Value* roleValue = role.empty()
+            ? static_cast<llvm::Value*>(llvm::ConstantPointerNull::get(builder.getPtrTy()))
+            : builder.CreateGlobalStringPtr(role, "task.role");
+        return builder.CreateCall(TaskSpawn(), {thunk, contextPointer,
+            builder.getInt32(core), builder.getInt32(priority), roleValue}, "task.handle");
     }
 
     llvm::Value* CodeGenerator::Impl::EmitAwait(PrefixUnaryExpr& expression) {
@@ -604,6 +1148,16 @@ namespace Absolute {
             requireValid ? "absolute_managed_require" : "absolute_managed_get", type);
     }
 
+    llvm::Value* CodeGenerator::Impl::EmitManagedGet(llvm::Value* handle, bool requireValid) {
+        // Managed slot storage is owned by the runtime and may grow on another
+        // thread. Keep generated code out of the runtime's container internals;
+        // local unchanged owners still use their cached pointee and never reach
+        // this synchronized lookup.
+        return builder.CreateCall(
+            ManagedGet(requireValid), {handle}, "managed.pointee");
+    }
+
+
     llvm::FunctionCallee CodeGenerator::Impl::ManagedValid() {
         llvm::FunctionType* type = llvm::FunctionType::get(
             builder.getInt1Ty(), {builder.getInt64Ty()}, false);
@@ -622,6 +1176,12 @@ namespace Absolute {
         if (name == "int32" || name == "uint32" || name == "float") return 4;
         if (name == "int64" || name == "uint64" || name == "double" || name == "string" ||
             IsPointerTypeName(name)) return 8;
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseCodegenGenericType(name, genericBase, genericArguments) &&
+            genericBase == "tuple")
+            return module->getDataLayout().getTypeAllocSize(
+                TypeFromName(name)).getFixedValue();
         if (classes.contains(name)) {
             FinalizeClass(name);
             return module->getDataLayout().getTypeAllocSize(classes.at(name).llvmType).getFixedValue();
@@ -647,7 +1207,12 @@ namespace Absolute {
     llvm::FunctionCallee CodeGenerator::Impl::ExitFailure() {
         llvm::FunctionType* type = llvm::FunctionType::get(
             builder.getVoidTy(), {builder.getInt32Ty()}, false);
-        return module->getOrInsertFunction("exit", type);
+        llvm::FunctionCallee callee = module->getOrInsertFunction("exit", type);
+        if (auto* exitFunc = llvm::dyn_cast<llvm::Function>(callee.getCallee())) {
+            exitFunc->addFnAttr(llvm::Attribute::NoReturn);
+            exitFunc->addFnAttr(llvm::Attribute::Cold);
+        }
+        return callee;
     }
 
     std::string CodeGenerator::Impl::SemanticType(Expression* expression) const {

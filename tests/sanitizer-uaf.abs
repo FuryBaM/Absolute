@@ -1,0 +1,5 @@
+int32 main() {
+    raw int32* ptr = new int32();
+    delete ptr;
+    return *ptr; // Use after free!
+}

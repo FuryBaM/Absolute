@@ -115,7 +115,7 @@ namespace Absolute {
                 llvm::MDNode::get(context,
                     {llvm::MDString::get(context, "llvm.loop.unroll.count"),
                      llvm::ConstantAsMetadata::get(
-                         llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 4))})
+                        llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 8))})
             };
             llvm::MDNode* loopId = llvm::MDNode::getDistinct(context, operands);
             loopId->replaceOperandWith(0, loopId);
@@ -151,6 +151,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(SingleStatement* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies || !stmt->expr) return;
+        impl->SetDebugLocation(stmt);
         impl->valueCreatesArrayOwner = false;
         impl->valueArrayOwner = nullptr;
         if (impl->SemanticType(stmt->expr.get()) == "void") stmt->expr->Accept(*this);
@@ -161,16 +162,20 @@ namespace Absolute {
 
     void CodeGenerator::Visit(CompoundStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
+        impl->PushDebugScope(stmt);
         impl->PushScope();
         for (const auto& statement : stmt->statements) {
             if (!statement || impl->builder.GetInsertBlock()->getTerminator()) break;
             statement->Accept(*this);
         }
         impl->PopScope(true);
+        impl->PopDebugScope();
     }
 
     void CodeGenerator::Visit(FunctionCallStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies || !stmt->value) return;
+        impl->SetDebugLocation(stmt);
         impl->valueCreatesArrayOwner = false;
         impl->valueArrayOwner = nullptr;
         if (impl->SemanticType(stmt->value.get()) == "void") stmt->value->Accept(*this);
@@ -195,6 +200,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(ReturnStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("return outside a function");
         if (function->getReturnType()->isVoidTy() && !impl->currentReturnStorage) {
@@ -203,10 +209,28 @@ namespace Absolute {
             impl->builder.CreateRetVoid();
             return;
         }
+        // C ABI bool returns i8 while Absolute evaluation produces i1.
+        llvm::Type* expectedReturn = impl->currentReturnStorage
+            ? impl->TypeFromName(impl->currentReturnTypeName)
+            : function->getReturnType();
+        if (auto* returnedIdentifier =
+            dynamic_cast<IdentifierExpr*>(stmt->expr.get())) {
+            if (Impl::Variable* returned =
+                impl->FindVariable(returnedIdentifier->name);
+                returned && returned->ownershipFlagStorage &&
+                impl->TypeNeedsCleanup(impl->currentReturnTypeName)) {
+                llvm::Value* owns = impl->builder.CreateLoad(
+                    impl->builder.getInt1Ty(),
+                    returned->ownershipFlagStorage,
+                    "return.is_owner");
+                impl->EmitOrExit(owns, "return.requires.owner");
+            }
+        }
         llvm::Value* result = impl->Coerce(
-            impl->Evaluate(stmt->expr.get()), impl->TypeFromName(impl->currentReturnTypeName));
+            impl->Evaluate(stmt->expr.get()), expectedReturn,
+            impl->SemanticType(stmt->expr.get()), impl->currentReturnTypeName);
         SymbolId transferredOwner = InvalidSymbolId;
-        if (IsManagedPointerTypeName(impl->currentReturnTypeName)) {
+        if (IsStrongManagedPointerTypeName(impl->currentReturnTypeName)) {
             const auto* returnedIdentifier = dynamic_cast<IdentifierExpr*>(stmt->expr.get());
             if (returnedIdentifier) {
                 Impl::Variable& returned = impl->RequireVariable(returnedIdentifier->name);
@@ -230,6 +254,7 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(AssignmentStmt* stmt) {
+        impl->SetDebugLocation(stmt);
         if (impl->phase == Impl::Phase::EmitBodies && stmt->expr) stmt->expr->Accept(*this);
     }
 
@@ -241,7 +266,11 @@ namespace Absolute {
             return;
         }
         if (!impl->CurrentFunction()) return;
+        impl->SetDebugLocation(stmt);
+        const Attribute* previousSpawnAttribute = impl->currentSpawnAttribute;
+        impl->currentSpawnAttribute = stmt->FindAttribute("spawn");
         stmt->expr->Accept(*this);
+        impl->currentSpawnAttribute = previousSpawnAttribute;
     }
 
     void CodeGenerator::Visit(StructDeclStmt* stmt) {
@@ -278,6 +307,14 @@ namespace Absolute {
 
     void CodeGenerator::Visit(InterfaceDeclStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        if (!stmt->templateParams.empty()) {
+            for (const std::string& specialization : impl->interfaceOrder) {
+                auto found = impl->interfaces.find(specialization);
+                if (found != impl->interfaces.end() && found->second.statement == stmt)
+                    impl->EmitInterfaceBodies(found->second);
+            }
+            return;
+        }
         const std::string name = impl->Qualify(stmt->name);
         auto found = impl->interfaces.find(name);
         if (found == impl->interfaces.end()) impl->Fail("unregistered interface '" + name + "'");
@@ -298,6 +335,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(IfStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("if outside a function");
 
@@ -327,6 +365,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(SwitchStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("switch outside a function");
 
@@ -359,6 +398,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(ThrowStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         llvm::Value* handle = nullptr;
         llvm::Value* type = nullptr;
         SymbolId transferredOwner = InvalidSymbolId;
@@ -388,6 +428,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(TryStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("try outside a function");
 
@@ -484,6 +525,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(DeferStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         if (!impl->CurrentFunction() || impl->deferredScopes.empty())
             impl->Fail("defer outside a function scope");
         impl->deferredScopes.back().push_back(stmt);
@@ -491,6 +533,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(ForStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("for outside a function");
 
@@ -523,6 +566,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(WhileStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("while outside a function");
 
@@ -540,7 +584,7 @@ namespace Absolute {
         if (stmt->body) stmt->body->Accept(*this);
         llvm::BasicBlock* backEdgeBlock = impl->builder.GetInsertBlock();
         impl->BranchIfNeeded(conditionBlock);
-        // Four copies amortize outer-loop control without the code-size and
+        // Eight copies amortize outer-loop control without the code-size and
         // register-pressure regression caused by unrestricted forced unrolling.
         if (ContainsDirectNestedLoop(stmt->body.get())) {
             SetNestedLoopUnrollCount(llvm::dyn_cast_or_null<llvm::BranchInst>(
@@ -563,6 +607,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(DoWhileStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("do-while outside a function");
 
@@ -584,20 +629,17 @@ namespace Absolute {
 
     void CodeGenerator::Visit(ForEachStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("foreach outside a function");
-        Impl::ArrayView source = impl->ViewOfArray(stmt->iterable.get());
-        if (source.dimensions.size() != 1)
-            impl->Fail("foreach requires a one-dimensional array or slice");
+        const std::string iterableType = impl->SemanticType(stmt->iterable.get());
+        const bool isArray = iterableType.ends_with("[]");
 
         impl->PushScope();
         if (!stmt->var) impl->Fail("foreach requires an iteration variable");
         stmt->var->Accept(*this);
         const std::string variableName = IdentifierName(stmt->var->name.get());
         Impl::Variable& iterationVariable = impl->RequireVariable(variableName);
-        llvm::AllocaInst* index = impl->CreateEntryAlloca(
-            *function, impl->builder.getInt64Ty(), "foreach.index");
-        impl->builder.CreateStore(impl->builder.getInt64(0), index);
 
         llvm::BasicBlock* conditionBlock = llvm::BasicBlock::Create(
             impl->context, "foreach.condition", function);
@@ -607,39 +649,156 @@ namespace Absolute {
             impl->context, "foreach.update", function);
         llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(
             impl->context, "foreach.end", function);
-        impl->builder.CreateBr(conditionBlock);
 
-        impl->builder.SetInsertPoint(conditionBlock);
-        llvm::Value* current = impl->builder.CreateLoad(
-            impl->builder.getInt64Ty(), index, "foreach.index.value");
-        impl->builder.CreateCondBr(impl->builder.CreateICmpULT(
-            current, source.dimensions.front(), "foreach.has.next"), bodyBlock, endBlock);
+        if (isArray) {
+            Impl::ArrayView source = impl->ViewOfArray(stmt->iterable.get());
+            if (source.dimensions.size() != 1)
+                impl->Fail("foreach requires a one-dimensional array or slice");
 
-        impl->loops.push_back({updateBlock, endBlock, impl->scopes.size()});
-        impl->builder.SetInsertPoint(bodyBlock);
-        llvm::Value* elementAddress = impl->builder.CreateInBoundsGEP(
-            source.elementType, source.address, current, "foreach.element.address");
-        llvm::Value* element = impl->builder.CreateLoad(
-            source.elementType, elementAddress, "foreach.element");
-        impl->builder.CreateStore(impl->Coerce(element, iterationVariable.type), iterationVariable.address);
-        if (stmt->body) stmt->body->Accept(*this);
-        impl->BranchIfNeeded(updateBlock);
+            llvm::AllocaInst* index = impl->CreateEntryAlloca(
+                *function, impl->builder.getInt64Ty(), "foreach.index");
+            impl->builder.CreateStore(impl->builder.getInt64(0), index);
+            impl->builder.CreateBr(conditionBlock);
 
-        impl->builder.SetInsertPoint(updateBlock);
-        llvm::Value* next = impl->builder.CreateAdd(
-            impl->builder.CreateLoad(impl->builder.getInt64Ty(), index),
-            impl->builder.getInt64(1), "foreach.next");
-        impl->builder.CreateStore(next, index);
-        impl->BranchIfNeeded(conditionBlock);
-        impl->loops.pop_back();
+            impl->builder.SetInsertPoint(conditionBlock);
+            llvm::Value* current = impl->builder.CreateLoad(
+                impl->builder.getInt64Ty(), index, "foreach.index.value");
+            impl->builder.CreateCondBr(impl->builder.CreateICmpULT(
+                current, source.dimensions.front(), "foreach.has.next"), bodyBlock, endBlock);
+
+            impl->loops.push_back({updateBlock, endBlock, impl->scopes.size()});
+            impl->builder.SetInsertPoint(bodyBlock);
+            llvm::Value* elementAddress = impl->builder.CreateInBoundsGEP(
+                source.elementType, source.address, current, "foreach.element.address");
+            llvm::Value* element = impl->builder.CreateLoad(
+                source.elementType, elementAddress, "foreach.element");
+            impl->builder.CreateStore(impl->Coerce(element, iterationVariable.type), iterationVariable.address);
+            if (stmt->body) stmt->body->Accept(*this);
+            impl->BranchIfNeeded(updateBlock);
+
+            impl->builder.SetInsertPoint(updateBlock);
+            llvm::Value* next = impl->builder.CreateAdd(
+                impl->builder.CreateLoad(impl->builder.getInt64Ty(), index),
+                impl->builder.getInt64(1), "foreach.next");
+            impl->builder.CreateStore(next, index);
+            impl->BranchIfNeeded(conditionBlock);
+            impl->loops.pop_back();
+        } else {
+            llvm::Value* iterable = impl->Evaluate(stmt->iterable.get());
+            llvm::Value* iterablePtr = impl->ObjectPointer(stmt->iterable.get(), iterableType);
+
+            auto callMethod = [&](llvm::Value* obj, const std::string& typeName, const std::string& methodName, const std::string& propertyName = "") -> std::pair<llvm::Value*, std::string> {
+                const std::string aggregateName = impl->ClassNameFromType(typeName);
+                std::string methodKey = CallableKey(methodName, {});
+                if (!propertyName.empty()) {
+                    methodKey = CallableKey(PropertyGetterName(propertyName), {});
+                }
+                
+                auto invoke = [&](const auto& info) -> std::pair<llvm::Value*, std::string> {
+                    auto method = info.methods.find(methodKey);
+                    if (method == info.methods.end()) return {nullptr, ""};
+                    llvm::Value* callee = nullptr;
+                    if (method->second.virtualSlot) {
+                        llvm::Value* vtableAddress = impl->builder.CreateStructGEP(info.llvmType, obj, 0);
+                        llvm::Value* vtable = impl->builder.CreateLoad(impl->builder.getPtrTy(), vtableAddress);
+                        llvm::Value* slot = impl->builder.CreateGEP(impl->builder.getPtrTy(), vtable, impl->builder.getInt64(*method->second.virtualSlot));
+                        callee = impl->builder.CreateLoad(impl->builder.getPtrTy(), slot);
+                    } else {
+                        callee = impl->module->getFunction(method->second.linkName);
+                    }
+                    llvm::Value* result = impl->EmitAbiCall(impl->MethodFunctionType(method->second), callee, method->second.returnType, {obj}, method->second.parameterTypes, {}, "foreach.call");
+                    impl->EmitExceptionCheck();
+                    return {result, method->second.returnType};
+                };
+
+                if (auto found = impl->classes.find(aggregateName); found != impl->classes.end()) {
+                    return invoke(found->second);
+                }
+                if (auto found = impl->interfaces.find(aggregateName); found != impl->interfaces.end()) {
+                    auto method = found->second.methods.find(methodKey);
+                    if (method == found->second.methods.end()) return {nullptr, ""};
+                    llvm::Value* vtable = impl->builder.CreateLoad(impl->builder.getPtrTy(), obj);
+                    llvm::Value* slot = impl->builder.CreateGEP(impl->builder.getPtrTy(), vtable, impl->builder.getInt64(*method->second.virtualSlot));
+                    llvm::Value* callee = impl->builder.CreateLoad(impl->builder.getPtrTy(), slot);
+                    llvm::Value* result = impl->EmitAbiCall(impl->MethodFunctionType(method->second), callee, method->second.returnType, {obj}, method->second.parameterTypes, {}, "foreach.call");
+                    impl->EmitExceptionCheck();
+                    return {result, method->second.returnType};
+                }
+                if (auto found = impl->structs.find(aggregateName); found != impl->structs.end()) {
+                    return invoke(found->second);
+                }
+                impl->Fail("type '" + typeName + "' does not support custom iterators");
+                return {nullptr, ""};
+            };
+
+            auto iterateResult = callMethod(iterablePtr, iterableType, "iterate");
+            llvm::Value* iteratorValue = iterateResult.first;
+            std::string iteratorType = iterateResult.second;
+            if (!iteratorValue) impl->Fail("missing iterate method on " + iterableType);
+
+            llvm::Type* iteratorLlvmType = impl->TypeFromName(iteratorType);
+            llvm::AllocaInst* iteratorAddress = impl->CreateEntryAlloca(*function, iteratorLlvmType, "foreach.iterator");
+            impl->builder.CreateStore(impl->Coerce(iteratorValue, iteratorLlvmType), iteratorAddress);
+
+            llvm::Value* iteratorObjPtr = iteratorAddress;
+            const bool managedIterator = IsStrongManagedPointerTypeName(iteratorType);
+            if (managedIterator) {
+                iteratorObjPtr = impl->EmitManagedGet(iteratorValue, true);
+                Impl::Variable owner;
+                owner.address = iteratorAddress;
+                owner.type = iteratorLlvmType;
+                owner.typeName = iteratorType;
+                owner.managedOwner = true;
+                impl->scopes.back().emplace(
+                    "__foreach.iterator." + std::to_string(impl->scopes.back().size()),
+                    std::move(owner));
+            }
+            else if (IsRawPointerTypeName(iteratorType)) {
+                iteratorObjPtr = iteratorValue;
+            }
+            else if (impl->TypeNeedsCleanup(iteratorType)) {
+                Impl::Variable owner;
+                owner.address = iteratorAddress;
+                owner.type = iteratorLlvmType;
+                owner.typeName = iteratorType;
+                owner.ownsAggregateResources = true;
+                impl->scopes.back().emplace(
+                    "__foreach.iterator." + std::to_string(impl->scopes.back().size()),
+                    std::move(owner));
+            }
+
+            impl->builder.CreateBr(conditionBlock);
+            
+            impl->builder.SetInsertPoint(conditionBlock);
+            auto nextResult = callMethod(iteratorObjPtr, iteratorType, "next");
+            llvm::Value* hasNext = nextResult.first;
+            if (!hasNext) impl->Fail("missing next method on iterator " + iteratorType);
+            impl->builder.CreateCondBr(impl->AsCondition(hasNext), bodyBlock, endBlock);
+
+            impl->loops.push_back({updateBlock, endBlock, impl->scopes.size()});
+            impl->builder.SetInsertPoint(bodyBlock);
+            
+            auto elementResult = callMethod(iteratorObjPtr, iteratorType, "value");
+            if (!elementResult.first) elementResult = callMethod(iteratorObjPtr, iteratorType, "", "value");
+            if (!elementResult.first) impl->Fail("missing value method or property on iterator " + iteratorType);
+            
+            impl->builder.CreateStore(impl->Coerce(elementResult.first, iterationVariable.type), iterationVariable.address);
+            
+            if (stmt->body) stmt->body->Accept(*this);
+            impl->BranchIfNeeded(updateBlock);
+
+            impl->builder.SetInsertPoint(updateBlock);
+            impl->BranchIfNeeded(conditionBlock);
+            impl->loops.pop_back();
+        }
 
         impl->builder.SetInsertPoint(endBlock);
         impl->PopScope(true);
     }
 
     void CodeGenerator::Visit(ContinueStmt* stmt) {
-        (void)stmt;
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         if (impl->loops.empty()) impl->Fail("continue outside a loop");
         impl->EmitTransferCleanups(impl->loops.back().scopeCount, true);
         if (impl->builder.GetInsertBlock()->getTerminator()) return;
@@ -647,8 +806,8 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(BreakStmt* stmt) {
-        (void)stmt;
         if (impl->phase != Impl::Phase::EmitBodies) return;
+        impl->SetDebugLocation(stmt);
         if (impl->loops.empty()) impl->Fail("break outside a loop");
         impl->EmitTransferCleanups(impl->loops.back().scopeCount, true);
         if (impl->builder.GetInsertBlock()->getTerminator()) return;

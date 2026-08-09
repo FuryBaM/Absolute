@@ -1,0 +1,251 @@
+namespace std.collections {
+    class VectorIterator<T> {
+        private T[] snapshot;
+        private int32 length;
+        private int32 index;
+
+        public VectorIterator(T[] source, int32 sourceLength) {
+            snapshot = copy(source[0:sourceLength]);
+            length = sourceLength;
+            index = -1;
+        }
+
+        public bool next() {
+            index = index + 1;
+            return index < length;
+        }
+
+        public T value {
+            get { return snapshot[index]; }
+        }
+    }
+
+    class VectorBuilder<T> {
+        private T[] buffer;
+        private int32 _count;
+        private int32 _capacity;
+        private bool _finished;
+
+        public VectorBuilder(T[] initialSource, int32 initialCount) {
+            _count = initialCount;
+            _capacity = initialCount > 4 ? initialCount : 4;
+            buffer = new T[_capacity];
+            int32 i = 0;
+            while (i < _count) {
+                buffer[i] = initialSource[i];
+                i = i + 1;
+            }
+            _finished = false;
+        }
+
+        public int32 count {
+            get { return _count; }
+        }
+
+        public void add(T element) {
+            if (_finished) {
+                throw new Error("VectorBuilder already finished");
+            }
+            if (_count == _capacity) {
+                int32 newCap = _capacity * 2;
+                T[] newBuf = new T[newCap];
+                int32 i = 0;
+                while (i < _count) {
+                    newBuf[i] = buffer[i];
+                    i = i + 1;
+                }
+                buffer = move(newBuf);
+                _capacity = newCap;
+            }
+            buffer[_count] = move(element);
+            _count = _count + 1;
+        }
+
+        public void setAt(int32 index, T element) {
+            if (_finished) {
+                throw new Error("VectorBuilder already finished");
+            }
+            if (index < 0 || index >= _count) {
+                throw new Error("Index out of bounds");
+            }
+            buffer[index] = move(element);
+        }
+
+        public T getAt(int32 index) {
+            if (index < 0 || index >= _count) {
+                throw new Error("Index out of bounds");
+            }
+            return buffer[index];
+        }
+
+        public void removeAt(int32 index) {
+            if (_finished) {
+                throw new Error("VectorBuilder already finished");
+            }
+            if (index < 0 || index >= _count) {
+                throw new Error("Index out of bounds");
+            }
+            int32 i = index;
+            while (i < _count - 1) {
+                buffer[i] = buffer[i + 1];
+                i = i + 1;
+            }
+            _count = _count - 1;
+        }
+
+        public std.collections.Vector<T>* finish() {
+            if (_finished) {
+                throw new Error("VectorBuilder already finished");
+            }
+            _finished = true;
+            std.collections.Vector<T>* result = new std.collections.Vector<T>();
+            int32 i = 0;
+            while (i < _count) {
+                result.push(buffer[i]);
+                i = i + 1;
+            }
+            return result;
+        }
+    }
+
+    class Vector<T> {
+        private T[] items;
+        private int32 _count;
+        private int32 _capacity;
+
+        public Vector() {
+            _count = 0;
+            _capacity = 4;
+            items = new T[4];
+        }
+
+        public Vector(int32 initialCapacity) {
+            _count = 0;
+            _capacity = initialCapacity > 0 ? initialCapacity : 4;
+            items = new T[_capacity];
+        }
+
+        public int32 count {
+            get { return _count; }
+        }
+
+        public int32 capacity {
+            get { return _capacity; }
+        }
+
+        public bool isEmpty {
+            get { return _count == 0; }
+        }
+
+        public T first {
+            get {
+                if (_count == 0) { throw new Error("Vector is empty"); }
+                return items[0];
+            }
+        }
+
+        public T last {
+            get {
+                if (_count == 0) { throw new Error("Vector is empty"); }
+                return items[_count - 1];
+            }
+        }
+
+        public nothrow void push(T element) {
+            if (_count == _capacity) {
+                int32 newCap = _capacity * 2;
+                T[] newItems = new T[newCap];
+                int32 i = 0;
+                while (i < _count) {
+                    unsafeArraySet(newItems, i, unsafeArrayGet(items, i));
+                    i = i + 1;
+                }
+                items = move(newItems);
+                _capacity = newCap;
+            }
+            // _count is below _capacity here, so the store is in range and the
+            // element index does not need checking again.
+            unsafeArraySet(items, _count, move(element));
+            _count = _count + 1;
+        }
+
+        public nothrow void reserve(int32 requestedCapacity) {
+            if (requestedCapacity <= _capacity) {
+                return;
+            }
+            T[] newItems = new T[requestedCapacity];
+            int32 i = 0;
+            while (i < _count) {
+                unsafeArraySet(newItems, i, unsafeArrayGet(items, i));
+                i = i + 1;
+            }
+            items = move(newItems);
+            _capacity = requestedCapacity;
+        }
+
+        public T pop() {
+            if (_count == 0) {
+                throw new Error("Vector is empty");
+            }
+            _count = _count - 1;
+            return unsafeArrayGet(items, _count);
+        }
+
+        public void clear() {
+            _count = 0;
+        }
+
+        public void removeAt(int32 index) {
+            if (index < 0 || index >= _count) {
+                throw new Error("Index out of bounds");
+            }
+            int32 i = index;
+            while (i < _count - 1) {
+                items[i] = items[i + 1];
+                i = i + 1;
+            }
+            _count = _count - 1;
+        }
+
+        // Горячий путь: быстрый доступ по индексу
+        public nothrow T this[int32 index] {
+            get {
+                // One unsigned compare covers both ends: a negative index
+                // becomes a very large unsigned value and fails the same test.
+                assert((index as uint32) < (_count as uint32), "Index out of bounds");
+                return unsafeArrayGet(items, index);
+            }
+            set {
+                assert((index as uint32) < (_count as uint32), "Index out of bounds");
+                unsafeArraySet(items, index, move(value));
+            }
+        }
+
+        // Unsafe zero-overhead view. Any structural mutation invalidates it.
+        public nothrow raw T* unsafeData() {
+            return unsafeArrayData(items);
+        }
+
+        public std.collections.VectorIterator<T>* iterate() {
+            return new std.collections.VectorIterator<T>(items, _count);
+        }
+
+        public std.collections.VectorBuilder<T>* builder() {
+            return new std.collections.VectorBuilder<T>(items, _count);
+        }
+
+        public T[] toArray() {
+            T[] res = new T[_count];
+            int32 i = 0;
+            while (i < _count) {
+                res[i] = items[i];
+                i = i + 1;
+            }
+            return res;
+        }
+
+        public T[] unsafeCopyRaw() {
+            return toArray();
+        }
+    }
+}

@@ -1,0 +1,31 @@
+import "std/collections/vector.abs";
+
+int32 main() {
+    int32 N = 1000000;
+    std.collections.Vector<int32>* v = new std.collections.Vector<int32>();
+
+    int32 i = 0;
+    while (i < N) {
+        v.push(i * 17 + 3);
+        i += 1;
+    }
+
+    int64 checksum = 0;
+    i = 0;
+    while (i < N) {
+        checksum += v[i];
+        i += 1;
+    }
+
+    // pop 500000
+    int32 popCount = 500000;
+    i = 0;
+    while (i < popCount) {
+        v.pop();
+        i += 1;
+    }
+
+    checksum += v.count;
+    println(checksum);
+    return 0;
+}

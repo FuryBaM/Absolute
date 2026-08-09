@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Absolute-CodeGen LANGUAGES CXX)
+project(Absolute-CodeGen LANGUAGES C CXX)
 
 option(ABSOLUTE_LLVM_USE_LIBEDIT "Allow LLVM to use LibEdit integration" OFF)
 option(ABSOLUTE_LLVM_USE_CURL "Allow LLVM to use CURL integration" OFF)
@@ -17,8 +17,21 @@ if(LLVM_PACKAGE_VERSION VERSION_LESS 18)
     message(FATAL_ERROR "Absolute requires LLVM 18 or newer; found ${LLVM_PACKAGE_VERSION}")
 endif()
 
-if(LLVM_PACKAGE_VERSION VERSION_GREATER_EQUAL 19)
-    message(WARNING "Absolute is validated with LLVM 18; LLVM ${LLVM_PACKAGE_VERSION} may require API adjustments")
+string(REGEX MATCH "^[0-9]+" ABSOLUTE_LLVM_MAJOR "${LLVM_PACKAGE_VERSION}")
+set(ABSOLUTE_EXPECT_LLVM_MAJOR "" CACHE STRING
+    "Require an exact LLVM major version (used by compatibility CI)")
+if(ABSOLUTE_EXPECT_LLVM_MAJOR AND
+   NOT ABSOLUTE_LLVM_MAJOR STREQUAL ABSOLUTE_EXPECT_LLVM_MAJOR)
+    message(FATAL_ERROR
+        "Expected LLVM ${ABSOLUTE_EXPECT_LLVM_MAJOR}, but LLVMConfig reports ${LLVM_PACKAGE_VERSION}")
+endif()
+
+if(LLVM_PACKAGE_VERSION VERSION_GREATER_EQUAL 22)
+    message(WARNING
+        "Absolute is validated with LLVM 18 through 21; LLVM ${LLVM_PACKAGE_VERSION} may require API adjustments")
+else()
+    message(STATUS
+        "Absolute LLVM compatibility range: 18 through 21 (using ${LLVM_PACKAGE_VERSION})")
 endif()
 
 # Official portable Windows LLVM 18 archives contain an absolute DIA SDK path
@@ -85,6 +98,7 @@ target_compile_features(Absolute-CodeGen PUBLIC cxx_std_20)
 target_include_directories(Absolute-CodeGen PUBLIC include)
 target_include_directories(Absolute-CodeGen SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
 
+# nativecodegen = host backend; WebAssembly enables --target wasm32-... object emit.
 llvm_map_components_to_libnames(ABSOLUTE_LLVM_LIBS
     Core
     Support
@@ -96,6 +110,7 @@ llvm_map_components_to_libnames(ABSOLUTE_LLVM_LIBS
     AsmParser
     Linker
     nativecodegen
+    WebAssembly
 )
 
 target_link_libraries(Absolute-CodeGen

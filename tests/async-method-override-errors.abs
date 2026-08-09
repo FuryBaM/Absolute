@@ -1,0 +1,15 @@
+class AsyncContract {
+    public virtual async const int32 read() {
+        return 1;
+    }
+}
+
+class SyncOverride : AsyncContract {
+    public override const int32 read() {
+        return 2;
+    }
+}
+
+int32 main() {
+    return 0;
+}

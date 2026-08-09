@@ -1,0 +1,83 @@
+struct OwnedNumbers {
+    public int32[] values;
+
+    public OwnedNumbers clone() const {
+        OwnedNumbers result;
+        result.values = copy(values[]);
+        return move(result);
+    }
+}
+
+class CloneBase {
+    public int32 value;
+
+    public CloneBase(int32 initial) {
+        value = initial;
+    }
+
+    public virtual CloneBase* clone() const {
+        return new CloneBase(value);
+    }
+
+    public virtual int32 kind() const {
+        return 1;
+    }
+}
+
+class CloneDerived : CloneBase {
+    public CloneDerived(int32 initial) {
+        base(initial);
+    }
+
+    public override CloneBase* clone() const {
+        return new CloneDerived(value);
+    }
+
+    public override int32 kind() const {
+        return 2;
+    }
+}
+
+interface ICloneValue {
+    ICloneValue* clone() const;
+    int32 read() const;
+}
+
+class CloneValue : ICloneValue {
+    public int32 value;
+
+    public CloneValue(int32 initial) {
+        value = initial;
+    }
+
+    public ICloneValue* clone() const {
+        return new CloneValue(value);
+    }
+
+    public int32 read() const {
+        return value;
+    }
+}
+
+int32 main() {
+    OwnedNumbers source;
+    source.values = copy({10, 20, 30});
+    OwnedNumbers cloned = copy(source);
+    cloned.values[0] = 99;
+    assert(source.values[0] == 10, "clone must not alias owned array storage");
+    assert(cloned.values[0] == 99, "clone must return an independent owner");
+
+    CloneBase* original = new CloneDerived(42);
+    CloneBase* objectCopy = copy(original);
+    objectCopy.value = 7;
+    assert(original.value == 42, "class clone must allocate an independent object");
+    assert(objectCopy.value == 7, "class clone must be writable");
+    assert(objectCopy.kind() == 2, "copy must use virtual clone dispatch");
+
+    ICloneValue* interfaceSource = new CloneValue(123);
+    ICloneValue* interfaceCopy = copy(interfaceSource);
+    assert(interfaceCopy.read() == 123, "copy must dispatch clone through an interface");
+
+    println("clone-copy=ok");
+    return 0;
+}

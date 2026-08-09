@@ -1,0 +1,107 @@
+class CallbackBox<K, V> {
+    private func<int64, K> callback;
+    private func<bool, K, K> equality;
+    private V stored;
+    private K[] keys;
+    private V[] values;
+    private int32[] states;
+    private int32 count;
+    private int32 tombstones;
+
+    public CallbackBox(
+        func<int64, K> action,
+        func<bool, K, K> equals,
+        V initial
+    ) {
+        callback = action;
+        equality = equals;
+        stored = initial;
+        keys = new K[4];
+        values = new V[4];
+        states = new int32[4];
+        int32 index = 0;
+        while (index < states.length) {
+            states[index] = 0;
+            index = index + 1;
+        }
+        count = 0;
+        tombstones = 0;
+    }
+
+    public int64 invoke(K key) {
+        func<int64, K> action = callback;
+        return action(key);
+    }
+
+    public V value {
+        get { return stored; }
+    }
+
+    public bool same(K left, K right) {
+        func<bool, K, K> equals = equality;
+        return equals(left, right);
+    }
+
+    public void assignFirst(K key, V next) {
+        keys[0] = key;
+        values[0] = next;
+        states[0] = 1;
+    }
+
+    public V first {
+        get { return values[0]; }
+    }
+}
+
+class GenericCodeBase<T, V> {
+    private V stored;
+
+    public GenericCodeBase(V initial) {
+        stored = initial;
+    }
+
+    public virtual int64 code(T value) {
+        return 0 as int64;
+    }
+
+    public V value {
+        get { return stored; }
+    }
+}
+
+class Int32Code<V> : GenericCodeBase<int32, V> {
+    public Int32Code(V initial) {
+        base(initial);
+    }
+
+    public override int64 code(int32 value) {
+        return value as int64;
+    }
+}
+
+int32 main() {
+    func<int64, int32> triple = fn(int32 value) => (value * 3) as int64;
+    func<bool, int32, int32> sameInt =
+        fn(int32 left, int32 right) => left == right;
+    CallbackBox<int32, string>* callback =
+        new CallbackBox<int32, string>(triple, sameInt, "callback");
+    assert(callback.invoke(14) == 42, "generic callback field ABI");
+    assert(callback.same(42, 42) && !callback.same(20, 22),
+        "multiple generic callback fields ABI");
+    callback.assignFirst(1, "arrays");
+    assert(callback.first == "arrays", "generic callback and array fields ABI");
+    assert(callback.value == "callback", "generic callback companion type");
+
+    CallbackBox<int32, int32>* valueCallback =
+        new CallbackBox<int32, int32>(triple, sameInt, 4);
+    assert(valueCallback.invoke(14) == 42 && valueCallback.value == 4,
+        "multiple callbacks followed by a value-type argument ABI");
+
+    Int32Code<string>* concrete = new Int32Code<string>("virtual");
+    GenericCodeBase<int32, string>* polymorphic = concrete;
+    assert(polymorphic.code(42) == 42, "generic value-type virtual override ABI");
+    assert(polymorphic.value == "virtual", "generic inherited storage");
+
+    println("generic-callback-abi=ok");
+    return 0;
+}

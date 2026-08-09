@@ -1,0 +1,5 @@
+int32 main() {
+    int64* value = new int64(42);
+    delete value;
+    return *value;
+}

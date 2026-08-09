@@ -52,7 +52,7 @@ namespace Absolute {
 
         if (!CurrentToken() || CurrentToken()->type != TokenType::BRACKET || CurrentToken()->value != "{") {
             ReportSyntaxError(CurrentToken(), "Expected '{' after while condition");
-            std::exit(EXIT_FAILURE);
+            throw std::runtime_error("Expected '{' after while condition");
         }
 
         std::unique_ptr<Statement> body = ParseCompoundStatement();
@@ -66,14 +66,14 @@ namespace Absolute {
 
         if (!CurrentToken() || CurrentToken()->type != TokenType::BRACKET || CurrentToken()->value != "{") {
             ReportSyntaxError(CurrentToken(), "Error: Expected '{' after 'do'");
-            std::exit(EXIT_FAILURE);
+            throw std::runtime_error("Error: Expected '{' after 'do'");
         }
 
         std::unique_ptr<Statement> body = ParseStatement();
 
         if (!CurrentToken() || CurrentToken()->type != TokenType::KEYWORD || CurrentToken()->value != "while") {
             ReportSyntaxError(CurrentToken(), "Error: Expected 'while' after do-while body.");
-            std::exit(EXIT_FAILURE);
+            throw std::runtime_error("Error: Expected 'while' after do-while body.");
         }
 
         Consume(TokenType::KEYWORD, "while");

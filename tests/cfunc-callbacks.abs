@@ -1,0 +1,23 @@
+export "C" int32 absolute_callback_add(int32 left, int32 right) {
+    return left + right;
+}
+
+export "C" int32 absolute_callback_double(int32 value) {
+    return value * 2;
+}
+
+int32 main() {
+    cfunc<int32, int32, int32> add = absolute_callback_add;
+    assert(add(20, 22) == 42, "cfunc call");
+
+    cfunc<int32, int32> doubleValue = absolute_callback_double;
+    assert(doubleValue(21) == 42, "cfunc unary");
+
+    cfunc<int32, int32> handler = null;
+    handler = absolute_callback_double;
+    assert(handler != null, "cfunc non-null");
+    assert(handler(3) == 6, "cfunc rebinding");
+
+    println("cfunc-callbacks=ok");
+    return 0;
+}

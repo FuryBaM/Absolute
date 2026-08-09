@@ -32,6 +32,10 @@ class Box<T> {
     }
 }
 
+int32 sumNestedPair(Pair<Pair<int32>> value) {
+    return value.first.first + value.second.second;
+}
+
 int32 main() {
     raw Pair<int32>* pair = new raw Pair<int32>(20, 22);
     assert(pair.left() + pair.right() == 42, "generic struct specialization");
@@ -44,6 +48,24 @@ int32 main() {
     Box<double>* doubles = new Box<double>(20.5);
     doubles.assign(21.0);
     assert(doubles.read() * 2.0 == 42.0, "generic class double specialization");
+
+    // The two closing brackets of a nested argument list arrive as one shift
+    // token. Splitting it must not disturb the tokens the parser still holds.
+    Pair<Pair<int32>> nestedPair;
+    nestedPair.first.first = 20;
+    nestedPair.second.second = 22;
+    assert(nestedPair.first.first + nestedPair.second.second == 42,
+        "nested generic struct closed by '>>'");
+
+    Pair<Pair<Pair<int32>>> deeplyNested;
+    deeplyNested.first.first.first = 42;
+    assert(deeplyNested.first.first.first == 42,
+        "three nested generic arguments closed by '>>>'");
+
+    assert(sumNestedPair(nestedPair) == 42,
+        "a nested generic argument closed by '>>' works as a parameter type");
+
+    assert((1024 >> 4) == 64, "right shift is still a shift");
 
     println("generic-types=ok");
     return 0;

@@ -1,0 +1,125 @@
+extern "C" raw void* absolute_channel_create(int32 capacity);
+extern "C" bool absolute_channel_send(raw void* channel, int64 value);
+extern "C" bool absolute_channel_try_send(raw void* channel, int64 value);
+extern "C" int64 absolute_channel_receive(raw void* channel);
+extern "C" bool absolute_channel_receive_checked(raw void* channel, raw int64* value);
+extern "C" bool absolute_channel_try_receive(raw void* channel, raw int64* value);
+extern "C" void absolute_channel_close(raw void* channel);
+extern "C" bool absolute_channel_is_closed(raw void* channel);
+extern "C" int32 absolute_channel_count(raw void* channel);
+extern "C" void absolute_channel_destroy(raw void* channel);
+
+namespace std.collections {
+
+    // Channel<T> transports copyable values through an explicit 64-bit codec.
+    // Managed object ownership uses std.concurrent.TransferChannel<T> instead.
+    class Channel<T> {
+        private raw void* handle;
+        private func<int64, T> encoder;
+        private func<T, int64> decoder;
+
+        public Channel(func<int64, T> encode, func<T, int64> decode) {
+            encoder = encode;
+            decoder = decode;
+            handle = absolute_channel_create(0);
+        }
+
+        public Channel(
+            func<int64, T> encode,
+            func<T, int64> decode,
+            int32 capacity
+        ) {
+            if (capacity < 0) {
+                throw new Error("Channel capacity must not be negative");
+            }
+            encoder = encode;
+            decoder = decode;
+            handle = absolute_channel_create(capacity);
+        }
+
+        public bool send(T message) {
+            func<int64, T> encode = encoder;
+            return absolute_channel_send(handle, encode(message));
+        }
+
+        public bool trySend(T message) {
+            func<int64, T> encode = encoder;
+            return absolute_channel_try_send(handle, encode(message));
+        }
+
+        public T receive() {
+            int64 encoded = 0;
+            if (!absolute_channel_receive_checked(handle, &encoded)) {
+                throw new Error("Channel is closed and empty");
+            }
+            func<T, int64> decode = decoder;
+            return decode(encoded);
+        }
+
+        public bool receiveWith(func<void, T> receiver) {
+            int64 encoded = 0;
+            if (!absolute_channel_receive_checked(handle, &encoded)) {
+                return false;
+            }
+            func<T, int64> decode = decoder;
+            receiver(decode(encoded));
+            return true;
+        }
+
+        public bool tryReceive(func<void, T> receiver) {
+            int64 encoded = 0;
+            if (!absolute_channel_try_receive(handle, &encoded)) {
+                return false;
+            }
+            func<T, int64> decode = decoder;
+            receiver(decode(encoded));
+            return true;
+        }
+
+        public int32 count {
+            get { return absolute_channel_count(handle); }
+        }
+
+        public void close() {
+            if (handle != null) {
+                absolute_channel_close(handle);
+            }
+        }
+
+        public bool isClosed() {
+            return absolute_channel_is_closed(handle);
+        }
+
+        public void destroy() {
+            if (handle != null) {
+                absolute_channel_destroy(handle);
+                handle = null;
+            }
+        }
+
+        public void dispose() { destroy(); }
+    }
+
+}
+
+namespace std.collections.channels {
+
+    Channel<int64>* int64Values(int32 capacity = 0) {
+        func<int64, int64> encode = fn(int64 value) => value;
+        func<int64, int64> decode = fn(int64 value) => value;
+        return new Channel<int64>(encode, decode, capacity);
+    }
+
+    Channel<int32>* int32Values(int32 capacity = 0) {
+        func<int64, int32> encode = fn(int32 value) => value as int64;
+        func<int32, int64> decode = fn(int64 value) => value as int32;
+        return new Channel<int32>(encode, decode, capacity);
+    }
+
+    Channel<bool>* boolValues(int32 capacity = 0) {
+        func<int64, bool> encode = fn(bool value) => value ? 1 : 0;
+        func<bool, int64> decode = fn(int64 value) => value != 0;
+        return new Channel<bool>(encode, decode, capacity);
+    }
+
+}

@@ -1,0 +1,101 @@
+import "../std/task.abs";
+import "../std/collections/channel.abs";
+import "../std/concurrent.abs";
+
+async int64 channelProducerTask(int64 chHandleVal, int64 count) {
+    raw void* chHandle = chHandleVal as raw void*;
+    int64 i = 0;
+    while (i < count) {
+        absolute_channel_send(chHandle, (i + 1) * 10);
+        i += 1;
+    }
+    return i;
+}
+
+async int64 channelConsumerTask(int64 chHandleVal, int64 count) {
+    raw void* chHandle = chHandleVal as raw void*;
+    int64 sum = 0;
+    int64 i = 0;
+    while (i < count) {
+        sum += absolute_channel_receive(chHandle);
+        i += 1;
+    }
+    return sum;
+}
+
+async int64 atomicIncrementTask(int64 atomicHandleVal, int64 iterations) {
+    raw void* atomicHandle = atomicHandleVal as raw void*;
+    int64 i = 0;
+    while (i < iterations) {
+        absolute_atomic_fetch_add(atomicHandle, 1);
+        i += 1;
+    }
+    return i;
+}
+
+async int32 main() {
+    // 1. Testing delay and CancellationToken
+    std.task.delay(5);
+    auto token = new std.task.CancellationToken();
+    assert(!token.isCancelled(), "token initial state");
+    token.cancel();
+    assert(token.isCancelled(), "token cancelled state");
+
+    // 2. Testing AtomicInt
+    auto atomic = new std.concurrent.AtomicInt(10);
+    assert(atomic.load() == 10, "atomic load");
+    atomic.fetchAdd(5);
+    assert(atomic.load() == 15, "atomic fetchAdd");
+    atomic.fetchSub(3);
+    assert(atomic.load() == 12, "atomic fetchSub");
+    bool casOk = atomic.compareExchange(12, 100);
+    assert(casOk, "atomic CAS success");
+    assert(atomic.load() == 100, "atomic value after CAS");
+
+    // 3. Testing Mutex
+    auto mtx = new std.concurrent.Mutex();
+    mtx.lock();
+    assert(!mtx.tryLock(), "mutex tryLock while locked");
+    mtx.unlock();
+    assert(mtx.tryLock(), "mutex tryLock after unlock");
+    mtx.unlock();
+
+    // 4. Testing Channel
+    auto ch = std.collections.channels.int64Values(5);
+    assert(!ch.isClosed(), "channel initially open");
+    ch.send(42 as int64);
+    ch.send(100 as int64);
+    assert(ch.receive() == 42, "channel receive 1");
+    assert(ch.receive() == 100, "channel receive 2");
+    ch.close();
+    assert(ch.isClosed(), "channel closed");
+
+    // 5. Testing Concurrent Channel Worker Tasks
+    raw void* asyncCh = absolute_channel_create(10);
+    int64 chAddr = asyncCh as int64;
+    auto prodTask = spawn channelProducerTask(chAddr, 5);
+    auto consTask = spawn channelConsumerTask(chAddr, 5);
+
+    int64 prodCount = await prodTask;
+    int64 sumReceived = await consTask;
+
+    assert(prodCount == 5, "producer task result");
+    assert(sumReceived == (10 + 20 + 30 + 40 + 50), "consumer task result match");
+    absolute_channel_destroy(asyncCh);
+
+    // 6. Testing Concurrent Atomic Increment Tasks
+    raw void* sharedCounter = absolute_atomic_create(0);
+    int64 counterAddr = sharedCounter as int64;
+    auto task1 = spawn atomicIncrementTask(counterAddr, 1000);
+    auto task2 = spawn atomicIncrementTask(counterAddr, 1000);
+
+    await task1;
+    await task2;
+
+    int64 finalCount = absolute_atomic_load(sharedCounter);
+    assert(finalCount == 2000, "atomic counter concurrent increment match");
+    absolute_atomic_destroy(sharedCounter);
+
+    println("async-concurrency-advanced=ok");
+    return 0;
+}

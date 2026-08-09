@@ -1,11 +1,15 @@
 #pragma once
 #include "codegen_pch.h"
+#include "expression_visitor.h"
 #include "analyzer.h"
 #include "codegen.h"
 #include "syntax_plugins.h"
+#include "type_names.h"
 
 namespace Absolute {
+    extern std::string g_last_context;
     namespace {
+
         class PrimitiveTypeNameVisitor final : public BaseIdentifierVisitor {
         public:
             std::string name;
@@ -21,7 +25,8 @@ namespace Absolute {
             void Visit(PointerTypeExpr* expr) override {
                 name.clear();
                 if (expr->pointee) expr->pointee->Accept(*this);
-                if (!name.empty()) name = (expr->raw ? "raw " : "") + name + "*";
+                if (!name.empty()) name = (expr->raw ? "raw " :
+                    (expr->weak ? "weak " : "")) + name + "*";
             }
 
             void Visit(ArrayTypeExpr* expr) override {
@@ -45,12 +50,38 @@ namespace Absolute {
             return visitor.identifierExpr ? visitor.identifierExpr->name : std::string{};
         }
 
+        inline size_t ArrayDeclaratorRank(const Expression* expression) {
+            size_t rank = 0;
+            const Expression* current = expression;
+            while (const auto* declarator = dynamic_cast<const ArrayAccessExpr*>(current)) {
+                rank += declarator->indexes.size();
+                current = declarator->base.get();
+            }
+            return rank;
+        }
+
+        inline void CollectArrayDeclaratorIndexes(
+            Expression* expression, std::vector<Expression*>& indexes) {
+            auto* declarator = dynamic_cast<ArrayAccessExpr*>(expression);
+            if (!declarator) return;
+            CollectArrayDeclaratorIndexes(declarator->base.get(), indexes);
+            for (const auto& index : declarator->indexes) indexes.push_back(index.get());
+        }
+
         inline bool IsRawPointerTypeName(const std::string& name) {
             return name.starts_with("raw ") && name.ends_with("*");
         }
 
+        inline bool IsWeakPointerTypeName(const std::string& name) {
+            return name.starts_with("weak ") && name.ends_with("*");
+        }
+
         inline bool IsManagedPointerTypeName(const std::string& name) {
             return !IsRawPointerTypeName(name) && name.ends_with("*");
+        }
+
+        inline bool IsStrongManagedPointerTypeName(const std::string& name) {
+            return IsManagedPointerTypeName(name) && !IsWeakPointerTypeName(name);
         }
 
         inline bool IsPointerTypeName(const std::string& name) {
@@ -59,6 +90,7 @@ namespace Absolute {
 
         inline std::string PointerPointeeName(std::string name) {
             if (IsRawPointerTypeName(name)) name.erase(0, 4);
+            else if (IsWeakPointerTypeName(name)) name.erase(0, 5);
             if (!name.empty() && name.back() == '*') name.pop_back();
             return name;
         }
@@ -83,8 +115,60 @@ namespace Absolute {
             return result;
         }
 
+        // Ordinary functions keep their source name as the link name, which
+        // makes an Absolute function named after a C runtime entry point
+        // replace that entry point at link time. The generated code and the
+        // Absolute runtime both call into these, so the program then corrupts
+        // itself instead of failing to link. Such a definition is given a
+        // private link name; `extern`, `export "C"`, and `main` are excluded by
+        // the caller because those deliberately own their C symbol.
+        inline bool IsReservedRuntimeSymbol(const std::string& name) {
+            static const std::unordered_set<std::string> reserved = {
+                // Allocation, which the managed runtime relies on directly.
+                "malloc", "calloc", "realloc", "free", "aligned_alloc",
+                "posix_memalign", "strdup", "strndup",
+                // Block operations LLVM emits for loops, copies, and literals.
+                "memcpy", "memmove", "memset", "memcmp", "bcmp",
+                "strlen", "strcmp", "strncmp", "strcpy", "strncpy", "strcat",
+                // Standard I/O, used by println and the runtime diagnostics.
+                "printf", "fprintf", "sprintf", "snprintf", "vprintf", "vfprintf",
+                "puts", "putchar", "fputs", "fputc", "fwrite", "fread",
+                "fopen", "fclose", "fflush",
+                // Process control, used by assert failures and unhandled errors.
+                "abort", "exit", "_exit", "atexit", "setjmp", "longjmp", "raise",
+                // Math helpers LLVM can materialize from arithmetic.
+                "pow", "powf", "sqrt", "sqrtf", "fmod", "fmodf",
+                "sin", "cos", "tan", "exp", "log", "log2", "log10",
+                // C++ runtime support pulled in by the native runtime library.
+                "__cxa_atexit", "__cxa_throw", "__cxa_begin_catch", "__cxa_end_catch",
+                "_Unwind_Resume",
+            };
+            if (reserved.contains(name)) return true;
+            // The Absolute runtime and the compiler-support libraries own these
+            // whole namespaces.
+            return name.starts_with("absolute_") || name.starts_with("pthread_") ||
+                name.starts_with("llvm.") || name.starts_with("__");
+        }
+
         inline bool IsTaskTypeName(const std::string& name) {
             return name.size() > 6 && name.starts_with("task<") && name.ends_with(">");
+        }
+
+        inline bool IsValueReferenceTypeName(const std::string& type) {
+            return IsCanonicalValueReferenceType(type);
+        }
+
+        inline bool IsConstValueReferenceTypeName(const std::string& type) {
+            return IsCanonicalConstValueReferenceType(type);
+        }
+
+        inline std::string ValueReferenceBaseTypeName(const std::string& type) {
+            return CanonicalValueReferenceBaseType(type);
+        }
+
+        inline std::string ValueReferenceTypeName(
+            const std::string& type, bool isConst, bool isReference) {
+            return CanonicalValueReferenceType(type, isConst, isReference);
         }
 
         inline bool HasModifier(const Statement& statement, const std::string& name) {
@@ -97,6 +181,26 @@ namespace Absolute {
                 function.addFnAttr(llvm::Attribute::AlwaysInline);
             if (statement.FindAttribute("noinline"))
                 function.addFnAttr(llvm::Attribute::NoInline);
+        }
+
+        inline void ApplyValueReferenceParameterAttributes(
+            llvm::Function& function, unsigned offset,
+            const std::vector<std::string>& parameterTypes) {
+            for (size_t index = 0; index < parameterTypes.size(); ++index) {
+                const std::string& type = parameterTypes[index];
+                if (!IsValueReferenceTypeName(type)) continue;
+                llvm::Argument* argument = function.getArg(
+                    offset + static_cast<unsigned>(index));
+                argument->addAttr(llvm::Attribute::NonNull);
+#if LLVM_VERSION_MAJOR >= 21
+                argument->addAttr(llvm::Attribute::getWithCaptureInfo(
+                    function.getContext(), llvm::CaptureInfo::none()));
+#else
+                argument->addAttr(llvm::Attribute::NoCapture);
+#endif
+                if (IsConstValueReferenceTypeName(type))
+                    argument->addAttr(llvm::Attribute::ReadOnly);
+            }
         }
 
         inline size_t ArrayRankName(std::string type) {
@@ -117,14 +221,25 @@ namespace Absolute {
             return IsTaskTypeName(name) ? name.substr(5, name.size() - 6) : std::string{};
         }
 
-        inline std::string SubstituteCodegenType(const std::string& type,
+        inline std::string SubstituteCodegenType(std::string type,
             const std::unordered_map<std::string, std::string>& substitutions) {
+            size_t startPos = type.find_first_not_of(" \t");
+            if (startPos != std::string::npos) {
+                size_t endPos = type.find_last_not_of(" \t");
+                type = type.substr(startPos, endPos - startPos + 1);
+            }
+            if (IsValueReferenceTypeName(type))
+                return ValueReferenceTypeName(
+                    SubstituteCodegenType(ValueReferenceBaseTypeName(type), substitutions),
+                    IsConstValueReferenceTypeName(type), true);
             if (const auto found = substitutions.find(type); found != substitutions.end())
                 return found->second;
+
             if (type.ends_with("[]"))
                 return SubstituteCodegenType(type.substr(0, type.size() - 2), substitutions) + "[]";
             if (IsPointerTypeName(type)) {
-                const std::string prefix = IsRawPointerTypeName(type) ? "raw " : "";
+                const std::string prefix = IsRawPointerTypeName(type) ? "raw " :
+                    (IsWeakPointerTypeName(type) ? "weak " : "");
                 return prefix + SubstituteCodegenType(PointerPointeeName(type), substitutions) + "*";
             }
             const size_t open = type.find('<');
@@ -168,6 +283,34 @@ namespace Absolute {
             return true;
         }
 
+        inline bool ParseCodegenFunctionType(const std::string& type,
+            std::string& returnType, std::vector<std::string>& parameterTypes) {
+            std::string base;
+            std::vector<std::string> arguments;
+            if (!ParseCodegenGenericType(type, base, arguments) || base != "func" ||
+                arguments.empty()) return false;
+            returnType = arguments.front();
+            parameterTypes.assign(arguments.begin() + 1, arguments.end());
+            return true;
+        }
+
+        inline bool ParseCodegenCFunctionType(const std::string& type,
+            std::string& returnType, std::vector<std::string>& parameterTypes) {
+            std::string base;
+            std::vector<std::string> arguments;
+            if (!ParseCodegenGenericType(type, base, arguments) || base != "cfunc" ||
+                arguments.empty()) return false;
+            returnType = arguments.front();
+            parameterTypes.assign(arguments.begin() + 1, arguments.end());
+            return true;
+        }
+
+        inline bool IsCodegenFunctionType(const std::string& type) {
+            std::string returnType;
+            std::vector<std::string> parameterTypes;
+            return ParseCodegenFunctionType(type, returnType, parameterTypes);
+        }
+
         inline std::optional<std::vector<size_t>> InferArrayShape(const ArrayExpr& array) {
             std::vector<size_t> childShape;
             bool hasChildShape = false;
@@ -186,6 +329,19 @@ namespace Absolute {
             }
             childShape.insert(childShape.begin(), array.values.size());
             return childShape;
+        }
+
+        inline std::optional<std::vector<size_t>> InferArrayStorageShape(
+            const ArrayExpr& array, size_t declaredRank) {
+            auto shape = InferArrayShape(array);
+            if (!shape || declaredRank != 1 || shape->size() <= 1) return shape;
+            size_t count = 1;
+            for (size_t dimension : *shape) {
+                if (dimension != 0 && count > std::numeric_limits<size_t>::max() / dimension)
+                    return std::nullopt;
+                count *= dimension;
+            }
+            return std::vector<size_t>{count};
         }
 
         inline void FlattenArrayValues(ArrayExpr& array, std::vector<Expression*>& output) {

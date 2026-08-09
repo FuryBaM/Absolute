@@ -1,0 +1,40 @@
+import "std/collections/hash_map.abs";
+
+// Fibonacci hashing for int32 — same multiplier as the C++ reference.
+int64 hashInt32(int32 value) {
+    uint32 h = (value as uint32) * 2654435761;
+    return h as int64;
+}
+
+bool equalsInt32(int32 left, int32 right) {
+    return left == right;
+}
+
+int32 main() {
+    int32 N = 200000;
+    std.collections.HashMap<int32, int32>* map =
+        new std.collections.HashMap<int32, int32>(hashInt32, equalsInt32);
+
+    // insert
+    int32 i = 0;
+    while (i < N) {
+        int32 k = i * 17 + 31;
+        int32 v = i * 13 + 7;
+        map.put(k, v);
+        i += 1;
+    }
+
+    // lookup
+    int64 checksum = 0;
+    i = 0;
+    while (i < N) {
+        int32 k = i * 17 + 31;
+        if (map.containsKey(k)) {
+            checksum += map[k];
+        }
+        i += 1;
+    }
+
+    println(checksum);
+    return 0;
+}

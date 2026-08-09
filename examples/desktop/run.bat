@@ -1,12 +1,6 @@
 @echo off
 setlocal EnableExtensions
 
-where wsl.exe >nul 2>nul
-if errorlevel 1 (
-    echo ERROR: WSL is required to run the Absolute LLVM compiler.
-    exit /b 1
-)
-
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 if not exist "%VSWHERE%" (
     echo ERROR: Visual Studio Installer was not found.
@@ -25,4 +19,3 @@ if errorlevel 1 exit /b 1
 
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0run-desktop.ps1" %*
 exit /b %ERRORLEVEL%
-

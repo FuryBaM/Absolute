@@ -1,0 +1,77 @@
+// OpenGL RHI demo: shader + vertex buffer + pipeline + bind/draw frame.
+// Esc quit. Requires Windows WGL OpenGL (Desktop.Gpu).
+
+int32 main() {
+    auto window = new Desktop.Window("Absolute GPU Triangle", 800, 450, true);
+    if (!window.isOpen()) {
+        println("Could not create desktop window");
+        return 1;
+    }
+
+    auto gpu = new Desktop.Gpu(window, Desktop.Gpu.BackendAuto);
+    if (!gpu.isValid()) {
+        println("GPU context failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    println("Desktop.Gpu backend:");
+    println(gpu.backend());
+
+    string vertexSource = "#version 330 core\nlayout(location = 0) in vec3 aPos;\nlayout(location = 1) in vec3 aColor;\nuniform float uTime;\nout vec3 vColor;\nvoid main() {\n    float c = cos(uTime);\n    float s = sin(uTime);\n    vec2 p = vec2(aPos.x * c - aPos.y * s, aPos.x * s + aPos.y * c);\n    gl_Position = vec4(p * 0.7, aPos.z, 1.0);\n    vColor = aColor;\n}\n";
+    string fragmentSource = "#version 330 core\nin vec3 vColor;\nout vec4 FragColor;\nvoid main() {\n    FragColor = vec4(vColor, 1.0);\n}\n";
+
+    auto program = gpu.createShader(vertexSource, fragmentSource);
+    if (program == null) {
+        println("createShader failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    // Interleaved [x,y,z, r,g,b] records flattened into one float[] buffer.
+    float[] vertices = {
+        { 0.0,  0.55, 0.0, 1.0,  0.35, 0.25},
+        {-0.55, -0.45, 0.0, 0.25, 0.85, 0.35},
+        { 0.55, -0.45, 0.0, 0.30, 0.45, 1.0}
+    };
+
+    auto buffer = gpu.createVertexBuffer(vertices);
+    if (buffer == null) {
+        println("createVertexBuffer failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    auto layout = gpu.createLayoutPos3Color3();
+    if (layout == null) {
+        println("createLayout failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    auto pipeline = gpu.createPipeline(program, layout);
+    if (pipeline == null) {
+        println("createPipeline failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    while (window.poll()) {
+        if (window.keyPressed(Desktop.KeyEscape())) {
+            break;
+        } else {
+            float t = Desktop.time() as float;
+
+            gpu.beginFrame();
+            gpu.clear(0.06, 0.07, 0.12, 1.0);
+            gpu.bind(pipeline);
+            gpu.bind(buffer);
+            gpu.setUniformF("uTime", t);
+            gpu.draw(3);
+            gpu.endFrame();
+            gpu.present();
+        }
+    }
+
+    return 0;
+}

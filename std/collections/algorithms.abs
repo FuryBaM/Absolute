@@ -1,0 +1,275 @@
+import "vector.abs";
+
+namespace std.collections {
+
+    extension void sort<T>(T[] items) {
+        int32 len = items.length;
+        int32 i = 1;
+        while (i < len) {
+            T key = items[i];
+            int32 j = i - 1;
+            while (j >= 0) {
+                if (items[j] > key) {
+                    items[j + 1] = items[j];
+                    j = j - 1;
+                } else {
+                    break;
+                }
+            }
+            items[j + 1] = key;
+            i = i + 1;
+        }
+    }
+
+    extension void sort<T>(Vector<T>* vec) {
+        int32 len = vec.count;
+        int32 i = 1;
+        while (i < len) {
+            T key = vec[i];
+            int32 j = i - 1;
+            while (j >= 0) {
+                if (vec[j] > key) {
+                    vec[j + 1] = vec[j];
+                    j = j - 1;
+                } else {
+                    break;
+                }
+            }
+            vec[j + 1] = key;
+            i = i + 1;
+        }
+    }
+
+    extension void sort<T>(T[] items, func<int32, T, T> comparator) {
+        int32 len = items.length;
+        int32 i = 1;
+        while (i < len) {
+            T key = items[i];
+            int32 j = i - 1;
+            while (j >= 0) {
+                if (comparator(items[j], key) > 0) {
+                    items[j + 1] = items[j];
+                    j = j - 1;
+                } else {
+                    break;
+                }
+            }
+            items[j + 1] = key;
+            i = i + 1;
+        }
+    }
+
+    extension void sort<T>(Vector<T>* vec, func<int32, T, T> comparator) {
+        int32 len = vec.count;
+        int32 i = 1;
+        while (i < len) {
+            T key = vec[i];
+            int32 j = i - 1;
+            while (j >= 0) {
+                if (comparator(vec[j], key) > 0) {
+                    vec[j + 1] = vec[j];
+                    j = j - 1;
+                } else {
+                    break;
+                }
+            }
+            vec[j + 1] = key;
+            i = i + 1;
+        }
+    }
+
+    extension int32 binarySearch<T>(T[] items, T target) {
+        int32 low = 0;
+        int32 high = items.length - 1;
+        while (low <= high) {
+            int32 mid = low + (high - low) / 2;
+            if (items[mid] == target) {
+                return mid;
+            }
+            if (items[mid] < target) {
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+        return -1;
+    }
+
+    extension int32 binarySearch<T>(Vector<T>* vec, T target) {
+        int32 low = 0;
+        int32 high = vec.count - 1;
+        while (low <= high) {
+            int32 mid = low + (high - low) / 2;
+            if (vec[mid] == target) {
+                return mid;
+            }
+            if (vec[mid] < target) {
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+        return -1;
+    }
+
+    extension void reverse<T>(T[] items) {
+        int32 i = 0;
+        int32 j = items.length - 1;
+        while (i < j) {
+            T temp = items[i];
+            items[i] = items[j];
+            items[j] = temp;
+            i = i + 1;
+            j = j - 1;
+        }
+    }
+
+    extension void reverse<T>(Vector<T>* vec) {
+        int32 i = 0;
+        int32 j = vec.count - 1;
+        while (i < j) {
+            T temp = vec[i];
+            vec[i] = vec[j];
+            vec[j] = temp;
+            i = i + 1;
+            j = j - 1;
+        }
+    }
+
+    extension int32 indexOf<T>(T[] items, T target) {
+        int32 i = 0;
+        int32 len = items.length;
+        while (i < len) {
+            if (items[i] == target) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    extension int32 indexOf<T>(Vector<T>* vec, T target) {
+        int32 i = 0;
+        int32 len = vec.count;
+        while (i < len) {
+            if (vec[i] == target) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    extension int32 find<T>(T[] items, func<bool, T> predicate) {
+        int32 i = 0;
+        int32 len = items.length;
+        while (i < len) {
+            if (predicate(items[i])) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    extension int32 find<T>(Vector<T>* vec, func<bool, T> predicate) {
+        int32 i = 0;
+        int32 len = vec.count;
+        while (i < len) {
+            if (predicate(vec[i])) {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    extension bool contains<T>(T[] items, T target) {
+        return indexOf<T>(items, target) != -1;
+    }
+
+    extension bool contains<T>(Vector<T>* vec, T target) {
+        return indexOf<T>(vec, target) != -1;
+    }
+
+    extension R[] transform<T, R>(T[] items, func<R, T> mapper) {
+        int32 len = items.length;
+        R[] result = new R[len];
+        int32 i = 0;
+        while (i < len) {
+            result[i] = mapper(items[i]);
+            i = i + 1;
+        }
+        return result;
+    }
+
+    extension Vector<R>* transform<T, R>(Vector<T>* vec, func<R, T> mapper) {
+        int32 len = vec.count;
+        Vector<R>* result = new Vector<R>();
+        int32 i = 0;
+        while (i < len) {
+            result.push(mapper(vec[i]));
+            i = i + 1;
+        }
+        return result;
+    }
+
+    extension T[] filter<T>(T[] items, func<bool, T> predicate) {
+        int32 len = items.length;
+        int32 matchCount = 0;
+        int32 i = 0;
+        while (i < len) {
+            if (predicate(items[i])) {
+                matchCount = matchCount + 1;
+            }
+            i = i + 1;
+        }
+        T[] result = new T[matchCount];
+        int32 outIdx = 0;
+        i = 0;
+        while (i < len) {
+            if (predicate(items[i])) {
+                result[outIdx] = items[i];
+                outIdx = outIdx + 1;
+            }
+            i = i + 1;
+        }
+        return result;
+    }
+
+    extension Vector<T>* filter<T>(Vector<T>* vec, func<bool, T> predicate) {
+        int32 len = vec.count;
+        Vector<T>* result = new Vector<T>();
+        int32 i = 0;
+        while (i < len) {
+            if (predicate(vec[i])) {
+                result.push(vec[i]);
+            }
+            i = i + 1;
+        }
+        return result;
+    }
+
+    extension Acc reduce<T, Acc>(T[] items, Acc initial, func<Acc, Acc, T> reducer) {
+        Acc accumulator = initial;
+        int32 len = items.length;
+        int32 i = 0;
+        while (i < len) {
+            accumulator = reducer(accumulator, items[i]);
+            i = i + 1;
+        }
+        return accumulator;
+    }
+
+    extension Acc reduce<T, Acc>(Vector<T>* vec, Acc initial, func<Acc, Acc, T> reducer) {
+        Acc accumulator = initial;
+        int32 len = vec.count;
+        int32 i = 0;
+        while (i < len) {
+            accumulator = reducer(accumulator, vec[i]);
+            i = i + 1;
+        }
+        return accumulator;
+    }
+
+}

@@ -23,7 +23,8 @@ namespace Absolute {
                 assigned = impl->ApplyBinary(
                     expr->op.substr(0, expr->op.size() - 1), current, assigned);
             }
-            assigned = impl->Coerce(assigned, impl->TypeFromName(targetTypeName));
+            assigned = impl->Coerce(assigned, impl->TypeFromName(targetTypeName),
+                impl->SemanticType(expr->value.get()), targetTypeName);
             impl->EmitPropertyAccessor(receiver, receiverType,
                 CallableKey(PropertySetterName(propertyName), {targetTypeName}), {assigned});
             impl->value = assigned;
@@ -47,7 +48,8 @@ namespace Absolute {
                 assigned = impl->ApplyBinary(
                     expr->op.substr(0, expr->op.size() - 1), current, assigned);
             }
-            assigned = impl->Coerce(assigned, impl->TypeFromName(targetTypeName));
+            assigned = impl->Coerce(assigned, impl->TypeFromName(targetTypeName),
+                impl->SemanticType(expr->value.get()), targetTypeName);
             std::vector<std::string> setterTypes = targetInfo->parameterTypes;
             setterTypes.push_back(targetTypeName);
             arguments.push_back(assigned);
@@ -70,6 +72,11 @@ namespace Absolute {
         llvm::Value* assigned = impl->Evaluate(expr->value.get());
         const bool createsOwner = impl->valueCreatesManagedOwner;
         llvm::Value* assignedPointee = impl->valueManagedPointee;
+        const bool createsClosureOwner = impl->valueCreatesClosureOwner;
+        std::string closureReturn;
+        std::vector<std::string> closureParameters;
+        const bool functionValue = ParseCodegenFunctionType(
+            targetTypeName, closureReturn, closureParameters);
 
         if (expr->op != "=") {
             llvm::Value* current = impl->builder.CreateLoad(targetType, targetAddress, "assignment.current");
@@ -98,19 +105,27 @@ namespace Absolute {
             }
         }
         if (targetSymbol && targetSymbol->kind == SymbolKind::Field &&
-            impl->TypeNeedsCleanup(targetTypeName)) {
+            impl->TypeNeedsCleanup(targetTypeName) && !functionValue) {
             impl->EmitValueCleanup(targetAddress, targetTypeName);
         }
-        assigned = impl->Coerce(assigned, targetType);
+        if (functionValue) {
+            if (!createsClosureOwner)
+                impl->builder.CreateCall(impl->ClosureRetain(), {assigned});
+            impl->EmitValueCleanup(targetAddress, targetTypeName);
+        }
+        assigned = impl->Coerce(assigned, targetType,
+            impl->SemanticType(expr->value.get()), targetTypeName);
         impl->builder.CreateStore(assigned, targetAddress);
         impl->value = assigned;
         impl->valueCreatesManagedOwner = false;
         impl->valueManagedPointee = nullptr;
         impl->valueCreatesArrayOwner = false;
         impl->valueArrayOwner = nullptr;
+        impl->valueCreatesClosureOwner = false;
     }
 
     void CodeGenerator::Visit(VarDeclExpr* expr) {
+        impl->SetDebugLocation(expr);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("global variables are not implemented yet");
         if (impl->scopes.empty()) impl->Fail("variable declaration outside a scope");
@@ -119,20 +134,22 @@ namespace Absolute {
         if (name.empty()) impl->Fail("variable declaration requires an identifier");
         const std::string baseTypeName = impl->ResolveTypeName(expr->type.get());
         const std::string declaredTypeName = impl->DeclaredTypeName(*expr);
-        if (auto* arrayDeclarator = dynamic_cast<ArrayAccessExpr*>(expr->name.get())) {
-            if (arrayDeclarator->indexes.empty()) impl->Fail("array declaration requires a dimension");
+        std::vector<Expression*> arrayDeclaratorIndexes;
+        CollectArrayDeclaratorIndexes(expr->name.get(), arrayDeclaratorIndexes);
+        if (!arrayDeclaratorIndexes.empty()) {
             llvm::Type* elementType = impl->TypeFromName(baseTypeName);
             std::vector<llvm::Value*> dimensions;
-            dimensions.reserve(arrayDeclarator->indexes.size());
+            dimensions.reserve(arrayDeclaratorIndexes.size());
 
             auto* literal = dynamic_cast<ArrayExpr*>(expr->value.get());
-            const auto inferredShape = literal ? InferArrayShape(*literal)
+            const auto inferredShape = literal ? InferArrayStorageShape(
+                *literal, arrayDeclaratorIndexes.size())
                 : std::optional<std::vector<size_t>>{};
-            for (size_t dimension = 0; dimension < arrayDeclarator->indexes.size(); ++dimension) {
+            for (size_t dimension = 0; dimension < arrayDeclaratorIndexes.size(); ++dimension) {
                 llvm::Value* size = nullptr;
-                if (arrayDeclarator->indexes[dimension]) {
+                if (arrayDeclaratorIndexes[dimension]) {
                     size = impl->Coerce(
-                        impl->Evaluate(arrayDeclarator->indexes[dimension].get()),
+                        impl->Evaluate(arrayDeclaratorIndexes[dimension]),
                         impl->builder.getInt64Ty());
                 }
                 else if (inferredShape && dimension < inferredShape->size()) {
@@ -165,14 +182,40 @@ namespace Absolute {
             variable.arrayElementType = elementType;
             variable.arrayDimensions = dimensions;
             variable.symbol = impl->SemanticSymbol(expr);
+            variable.arrayOwnerStorage = impl->CreateEntryAlloca(
+                *function, impl->builder.getPtrTy(), name + ".array.owner");
+            impl->builder.CreateStore(
+                llvm::ConstantPointerNull::get(impl->builder.getPtrTy()),
+                variable.arrayOwnerStorage);
             if (!impl->scopes.back().emplace(name, std::move(variable)).second)
                 impl->Fail("duplicate variable '" + name + "'");
+
+            if (impl->debugBuilder) {
+                Impl::ArrayView debugView;
+                debugView.address = address;
+                debugView.elementType = elementType;
+                debugView.typeName = declaredTypeName;
+                debugView.dimensions = dimensions;
+                debugView.owner = llvm::ConstantPointerNull::get(
+                    impl->builder.getPtrTy());
+                llvm::Value* debugDescriptor =
+                    impl->BuildArrayDescriptor(debugView);
+                llvm::AllocaInst* debugStorage = impl->CreateEntryAlloca(
+                    *function, debugDescriptor->getType(),
+                    name + ".debug.descriptor");
+                impl->builder.CreateStore(debugDescriptor, debugStorage);
+                impl->DeclareDebugVariable(
+                    name, declaredTypeName, debugStorage, expr);
+                impl->RequireVariable(name).debugStorage = debugStorage;
+            }
 
             if (literal) {
                 std::vector<Expression*> values;
                 FlattenArrayValues(*literal, values);
                 for (size_t index = 0; index < values.size(); ++index) {
-                    llvm::Value* initial = impl->Coerce(impl->Evaluate(values[index]), elementType);
+                    llvm::Value* initial = impl->Coerce(
+                        impl->Evaluate(values[index]), elementType,
+                        impl->SemanticType(values[index]), baseTypeName);
                     llvm::Value* destination = impl->builder.CreateInBoundsGEP(
                         elementType, address, impl->builder.getInt64(index), "array.initializer.element");
                     impl->builder.CreateStore(initial, destination);
@@ -199,6 +242,12 @@ namespace Absolute {
             variable.symbol = impl->SemanticSymbol(expr);
             variable.arrayOwner = view.owner;
             variable.ownsArrayStorage = ownsStorage;
+            variable.arrayOwnerStorage = impl->CreateEntryAlloca(
+                *function, impl->builder.getPtrTy(), name + ".array.owner");
+            impl->builder.CreateStore(
+                view.owner ? view.owner
+                    : llvm::ConstantPointerNull::get(impl->builder.getPtrTy()),
+                variable.arrayOwnerStorage);
             if (ownsStorage) variable.arrayOwnerSymbol = variable.symbol;
             else if (Impl::Variable* source = impl->FindVariable(
                 impl->SemanticSymbol(expr->value.get()))) {
@@ -207,6 +256,15 @@ namespace Absolute {
             }
             if (!impl->scopes.back().emplace(name, std::move(variable)).second) {
                 impl->Fail("duplicate variable '" + name + "'");
+            }
+            if (impl->debugBuilder) {
+                llvm::AllocaInst* debugStorage = impl->CreateEntryAlloca(
+                    *function, descriptor->getType(),
+                    name + ".debug.descriptor");
+                impl->builder.CreateStore(descriptor, debugStorage);
+                impl->DeclareDebugVariable(
+                    name, declaredTypeName, debugStorage, expr);
+                impl->RequireVariable(name).debugStorage = debugStorage;
             }
             impl->value = impl->BuildArrayDescriptor(view);
             impl->valueCreatesManagedOwner = false;
@@ -230,8 +288,20 @@ namespace Absolute {
         llvm::Value* initial = expr->value ? impl->Evaluate(expr->value.get()) : llvm::Constant::getNullValue(type);
         const bool createsOwner = impl->valueCreatesManagedOwner;
         llvm::Value* managedPointee = impl->valueManagedPointee;
-        initial = impl->Coerce(initial, type);
+        const bool createsClosureOwner = impl->valueCreatesClosureOwner;
+        std::string closureReturn;
+        std::vector<std::string> closureParameters;
+        const bool functionValue = ParseCodegenFunctionType(
+            typeName, closureReturn, closureParameters);
+        if (functionValue && !createsClosureOwner)
+            impl->builder.CreateCall(impl->ClosureRetain(), {initial});
+        initial = impl->Coerce(initial, type,
+            expr->value ? impl->SemanticType(expr->value.get()) : typeName, typeName);
         impl->builder.CreateStore(initial, address);
+        impl->DeclareDebugVariable(
+            name, typeName, address, expr);
+        if (functionValue)
+            impl->RequireVariable(name).ownsAggregateResources = true;
         if (staticOwner && createsOwner && managedPointee) {
             Impl::Variable& variable = impl->RequireVariable(name);
             variable.managedPointee = impl->CreateEntryAlloca(
@@ -241,6 +311,7 @@ namespace Absolute {
         impl->value = initial;
         impl->valueCreatesManagedOwner = false;
         impl->valueManagedPointee = nullptr;
+        impl->valueCreatesClosureOwner = false;
     }
 
     void CodeGenerator::Visit(MemberAccessExpr* expr) {
@@ -278,7 +349,64 @@ namespace Absolute {
             }
         }
         const std::string baseType = impl->SemanticType(expr->base.get());
+        if (ArrayRankName(baseType) > 0 && (expr->member == "length" || expr->member == "count")) {
+            if (impl->addressMode) impl->Fail("array length property is not assignable");
+            llvm::Value* descriptor = impl->Evaluate(expr->base.get());
+            if (descriptor->getType()->isPointerTy()) {
+                llvm::LoadInst* load = impl->builder.CreateLoad(
+                    impl->ArrayDescriptorType(baseType), descriptor, "array.descriptor");
+                load->setMetadata(llvm::LLVMContext::MD_invariant_load, llvm::MDNode::get(impl->context, {}));
+                descriptor = load;
+            }
+            llvm::Value* length64 = impl->builder.CreateExtractValue(descriptor, {2}, "array.length.i64");
+            impl->value = impl->builder.CreateTrunc(length64, impl->builder.getInt32Ty(), "array.length");
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
+
+        std::string tupleBase;
+        std::vector<std::string> tupleElements;
+        if (ParseCodegenGenericType(baseType, tupleBase, tupleElements) &&
+            tupleBase == "tuple") {
+            if (expr->member == "length" || expr->member == "count") {
+                if (impl->addressMode)
+                    impl->Fail("tuple length property is not assignable");
+                impl->value = impl->builder.getInt32(
+                    static_cast<std::uint32_t>(tupleElements.size()));
+                impl->valueCreatesManagedOwner = false;
+                return;
+            }
+            if (!expr->member.starts_with("item"))
+                impl->Fail("tuple has no member '" + expr->member + "'");
+            size_t index = tupleElements.size();
+            try {
+                index = static_cast<size_t>(
+                    std::stoull(expr->member.substr(4)));
+            }
+            catch (...) {
+                impl->Fail("invalid tuple member '" + expr->member + "'");
+            }
+            if (index >= tupleElements.size())
+                impl->Fail("tuple member index is out of range");
+            auto* tupleType = llvm::cast<llvm::StructType>(
+                impl->TypeFromName(baseType));
+            if (impl->addressMode) {
+                llvm::Value* baseAddress =
+                    impl->EvaluateAddress(expr->base.get());
+                impl->addressValue = impl->builder.CreateStructGEP(
+                    tupleType, baseAddress, static_cast<unsigned>(index),
+                    expr->member + ".address");
+                return;
+            }
+            llvm::Value* tuple = impl->Evaluate(expr->base.get());
+            impl->value = impl->builder.CreateExtractValue(
+                tuple, {static_cast<unsigned>(index)}, expr->member + ".value");
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
+
         const std::string aggregateName = impl->ClassNameFromType(baseType);
+
         llvm::Value* fieldAddress = nullptr;
         std::string fieldTypeName;
         if (auto found = impl->classes.find(aggregateName); found != impl->classes.end()) {
@@ -372,11 +500,38 @@ namespace Absolute {
             return;
         }
         llvm::Type* target = impl->ResolveType(expr->typeName.get());
-        impl->value = impl->Coerce(impl->Evaluate(expr->base.get()), target);
+        impl->value = impl->Coerce(impl->Evaluate(expr->base.get()), target,
+            sourceType, declaredTarget);
     }
 
     void CodeGenerator::Visit(ConstructorCallExpr* expr) {
         const std::string allocationType = impl->SemanticType(expr);
+        const std::string arrayTypeName = allocationType.empty()
+            ? impl->ResolveTypeName(expr->constructName.get())
+            : allocationType;
+        if (ArrayRankName(arrayTypeName) > 0) {
+            const size_t rank = ArrayRankName(arrayTypeName);
+            const std::string elemTypeName = ArrayElementTypeName(arrayTypeName, rank);
+            llvm::Type* elemType = impl->TypeFromName(elemTypeName);
+            llvm::Value* count = expr->arguments.empty()
+                ? impl->builder.getInt64(0)
+                : impl->Coerce(impl->Evaluate(expr->arguments[0].get()),
+                    impl->builder.getInt64Ty());
+            llvm::Value* elemSize = impl->builder.getInt64(impl->SizeOfTypeName(elemTypeName));
+            llvm::Value* allocBytes = impl->builder.CreateMul(count, elemSize, "array.alloc.bytes");
+            llvm::Value* dataPtr = impl->builder.CreateCall(
+                impl->Malloc(), {allocBytes}, "array.data.alloc");
+            Impl::ArrayView view;
+            view.address = dataPtr;
+            view.elementType = elemType;
+            view.typeName = arrayTypeName;
+            view.dimensions = {count};
+            view.owner = dataPtr;
+            impl->value = impl->BuildArrayDescriptor(view);
+            impl->valueCreatesManagedOwner = false;
+            impl->valueManagedPointee = nullptr;
+            return;
+        }
         const std::string pointeeType = allocationType.empty()
             ? impl->ResolveTypeName(expr->constructName.get())
             : PointerPointeeName(allocationType);
@@ -403,31 +558,44 @@ namespace Absolute {
                 impl->builder.CreateCall(impl->ManagedSetType(), {handle,
                     impl->builder.getInt64(impl->ExceptionTypeId(pointeeType))});
             }
-            pointer = impl->builder.CreateCall(impl->ManagedGet(true), {handle}, "managed.allocation");
+            pointer = impl->EmitManagedGet(handle, true);
             result = handle;
         }
 
         if (classAllocation) {
             Impl::ClassInfo& info = impl->classes.at(pointeeType);
             impl->InitializeObject(pointer, info);
-            if (llvm::Function* constructor = impl->module->getFunction(info.name + ".__ctor")) {
+            if (llvm::Function* constructor = impl->LookupConstructorFunction(info.name, expr)) {
                 std::vector<llvm::Value*> arguments;
+                std::vector<llvm::Value*> ownershipFlags;
                 std::vector<std::string> parameterTypes;
-                for (const auto& argument : expr->arguments)
-                    arguments.push_back(impl->Evaluate(argument.get()));
-                if (info.constructor) {
-                    for (const auto& parameter : info.constructor->parameters)
-                        parameterTypes.push_back(SubstituteCodegenType(
-                            impl->DeclaredTypeName(*parameter), info.substitutions));
+                if (const ExpressionInfo* callInfo = impl->analyzer
+                    ? impl->analyzer->GetExpressionInfo(*expr) : nullptr)
+                    parameterTypes = callInfo->parameterTypes;
+                else if (info.constructors.size() == 1)
+                    parameterTypes = impl->ConstructorParameterTypeNames(
+                        info.constructors.front(), info.substitutions);
+                std::vector<llvm::Value*> temporaryArrays;
+                std::vector<llvm::Value*> temporaryClosures;
+                for (size_t index = 0; index < expr->arguments.size(); ++index) {
+                    const std::string parameterType =
+                        index < parameterTypes.size()
+                        ? parameterTypes[index] : std::string{};
+                    ownershipFlags.push_back(impl->ArgumentOwnershipFlag(
+                        expr->arguments[index].get(), parameterType));
+                    arguments.push_back(impl->EvaluateCallArgument(
+                        expr->arguments[index].get(), temporaryArrays, temporaryClosures,
+                        parameterType));
                 }
                 impl->EmitAbiCall(constructor->getFunctionType(), constructor, "void",
-                    {pointer}, parameterTypes, arguments, "constructor.result");
+                    {pointer}, parameterTypes, arguments, "constructor.result",
+                    false, ownershipFlags);
                 impl->EmitExceptionCheck(
                     rawAllocation ? nullptr : result,
                     rawAllocation ? pointer : nullptr);
             }
-            else if (!expr->arguments.empty())
-                impl->Fail("class '" + info.name + "' has no constructor");
+            else if (!expr->arguments.empty() || !info.constructors.empty())
+                impl->Fail("class '" + info.name + "' has no matching constructor");
             impl->value = result;
             impl->valueCreatesManagedOwner = !rawAllocation;
             impl->valueManagedPointee = rawAllocation ? nullptr : pointer;
@@ -437,18 +605,33 @@ namespace Absolute {
         if (structAllocation) {
             Impl::StructInfo& info = impl->structs.at(pointeeType);
             impl->InitializeObject(pointer, info);
-            if (info.constructor) {
-                llvm::Function* constructor = impl->module->getFunction(info.name + ".__ctor");
+            if (!info.constructors.empty()) {
+                llvm::Function* constructor = impl->LookupConstructorFunction(info.name, expr);
                 if (!constructor) impl->Fail("missing constructor for '" + info.name + "'");
                 std::vector<llvm::Value*> arguments;
+                std::vector<llvm::Value*> ownershipFlags;
                 std::vector<std::string> parameterTypes;
-                for (const auto& argument : expr->arguments)
-                    arguments.push_back(impl->Evaluate(argument.get()));
-                for (const auto& parameter : info.constructor->parameters)
-                    parameterTypes.push_back(SubstituteCodegenType(
-                        impl->DeclaredTypeName(*parameter), info.substitutions));
+                if (const ExpressionInfo* callInfo = impl->analyzer
+                    ? impl->analyzer->GetExpressionInfo(*expr) : nullptr)
+                    parameterTypes = callInfo->parameterTypes;
+                else if (info.constructors.size() == 1)
+                    parameterTypes = impl->ConstructorParameterTypeNames(
+                        info.constructors.front(), info.substitutions);
+                std::vector<llvm::Value*> temporaryArrays;
+                std::vector<llvm::Value*> temporaryClosures;
+                for (size_t index = 0; index < expr->arguments.size(); ++index) {
+                    const std::string parameterType =
+                        index < parameterTypes.size()
+                        ? parameterTypes[index] : std::string{};
+                    ownershipFlags.push_back(impl->ArgumentOwnershipFlag(
+                        expr->arguments[index].get(), parameterType));
+                    arguments.push_back(impl->EvaluateCallArgument(
+                        expr->arguments[index].get(), temporaryArrays, temporaryClosures,
+                        parameterType));
+                }
                 impl->EmitAbiCall(constructor->getFunctionType(), constructor, "void",
-                    {pointer}, parameterTypes, arguments, "constructor.result");
+                    {pointer}, parameterTypes, arguments, "constructor.result",
+                    false, ownershipFlags);
                 impl->EmitExceptionCheck(
                     rawAllocation ? nullptr : result,
                     rawAllocation ? pointer : nullptr);
@@ -480,12 +663,21 @@ namespace Absolute {
             const std::string name = IdentifierName(expr->target.get());
             if (!name.empty()) {
                 Impl::Variable& variable = impl->RequireVariable(name);
+                if (variable.ownershipFlagStorage) {
+                    llvm::Value* owns = impl->builder.CreateLoad(
+                        impl->builder.getInt1Ty(),
+                        variable.ownershipFlagStorage,
+                        "delete.is_owner");
+                    impl->EmitOrExit(owns, "delete.requires.owner");
+                    impl->builder.CreateStore(
+                        impl->builder.getFalse(),
+                        variable.ownershipFlagStorage);
+                }
                 if (variable.managedPointee)
                     impl->builder.CreateStore(
                         llvm::ConstantPointerNull::get(impl->builder.getPtrTy()), variable.managedPointee);
             }
-            llvm::Value* pointee = impl->builder.CreateCall(
-                impl->ManagedGet(false), {pointer}, "delete.pointee");
+            llvm::Value* pointee = impl->EmitManagedGet(pointer, false);
             impl->EmitPointeeCleanup(pointee, typeName);
             impl->builder.CreateCall(impl->ManagedDestroy(), {pointer});
             impl->builder.CreateStore(impl->builder.getInt64(0), targetAddress);
@@ -500,6 +692,7 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(InstanceDeclExpr* expr) {
+        impl->SetDebugLocation(expr);
         llvm::Function* function = impl->CurrentFunction();
         if (!function || impl->scopes.empty()) impl->Fail("object declaration outside a function");
         const std::string name = IdentifierName(expr->identifierName.get());
@@ -520,6 +713,12 @@ namespace Absolute {
                 variable.symbol = impl->SemanticSymbol(expr);
                 variable.arrayOwner = view.owner;
                 variable.ownsArrayStorage = ownsStorage;
+                variable.arrayOwnerStorage = impl->CreateEntryAlloca(
+                    *function, impl->builder.getPtrTy(), name + ".array.owner");
+                impl->builder.CreateStore(
+                    view.owner ? view.owner
+                        : llvm::ConstantPointerNull::get(impl->builder.getPtrTy()),
+                    variable.arrayOwnerStorage);
                 if (ownsStorage) variable.arrayOwnerSymbol = variable.symbol;
                 else if (Impl::Variable* source = impl->FindVariable(
                     impl->SemanticSymbol(expr->value.get()))) {
@@ -528,6 +727,15 @@ namespace Absolute {
                 }
                 if (!impl->scopes.back().emplace(name, std::move(variable)).second) {
                     impl->Fail("duplicate array variable '" + name + "'");
+                }
+                if (impl->debugBuilder) {
+                    llvm::AllocaInst* debugStorage = impl->CreateEntryAlloca(
+                        *function, descriptor->getType(),
+                        name + ".debug.descriptor");
+                    impl->builder.CreateStore(descriptor, debugStorage);
+                    impl->DeclareDebugVariable(
+                        name, typeName, debugStorage, expr);
+                    impl->RequireVariable(name).debugStorage = debugStorage;
                 }
                 impl->value = impl->BuildArrayDescriptor(view);
                 impl->valueCreatesManagedOwner = false;
@@ -542,8 +750,16 @@ namespace Absolute {
             const bool staticOwner = IsManagedPointerTypeName(typeName) &&
                 impl->StaticManagedOwner(symbol);
             llvm::Value* initial = expr->value
-                ? impl->Coerce(impl->Evaluate(expr->value.get()), type)
+                ? impl->Evaluate(expr->value.get())
                 : llvm::Constant::getNullValue(type);
+            const bool createsClosureOwner = impl->valueCreatesClosureOwner;
+            std::string closureReturn;
+            std::vector<std::string> closureParameters;
+            const bool functionValue = ParseCodegenFunctionType(
+                typeName, closureReturn, closureParameters);
+            if (functionValue && !createsClosureOwner)
+                impl->builder.CreateCall(impl->ClosureRetain(), {initial});
+            initial = impl->Coerce(initial, type);
             const bool createsOwner = impl->valueCreatesManagedOwner;
             llvm::Value* managedPointee = impl->valueManagedPointee;
             impl->builder.CreateStore(initial, address);
@@ -551,6 +767,10 @@ namespace Absolute {
                 Impl::Variable{address, type, typeName, staticOwner, false, nullptr, {},
                     nullptr, symbol}).second)
                 impl->Fail("duplicate variable '" + name + "'");
+            impl->DeclareDebugVariable(
+                name, typeName, address, expr);
+            if (functionValue)
+                impl->RequireVariable(name).ownsAggregateResources = true;
             if (staticOwner && createsOwner && managedPointee) {
                 Impl::Variable& variable = impl->RequireVariable(name);
                 variable.managedPointee = impl->CreateEntryAlloca(
@@ -560,18 +780,14 @@ namespace Absolute {
             impl->value = initial;
             impl->valueCreatesManagedOwner = false;
             impl->valueManagedPointee = nullptr;
+            impl->valueCreatesClosureOwner = false;
             return;
         }
         llvm::StructType* llvmType = nullptr;
-        std::string constructorName;
-        if (auto found = impl->classes.find(typeName); found != impl->classes.end()) {
+        if (auto found = impl->classes.find(typeName); found != impl->classes.end())
             llvmType = found->second.llvmType;
-            constructorName = found->second.name + ".__ctor";
-        }
-        else if (auto found = impl->structs.find(typeName); found != impl->structs.end()) {
+        else if (auto found = impl->structs.find(typeName); found != impl->structs.end())
             llvmType = found->second.llvmType;
-            constructorName = found->second.name + ".__ctor";
-        }
         else impl->Fail("type '" + typeName + "' is not a class or struct");
 
         llvm::AllocaInst* address = impl->CreateEntryAlloca(*function, llvmType, name);
@@ -582,8 +798,10 @@ namespace Absolute {
             llvm::Value* initial = impl->Coerce(impl->Evaluate(expr->value.get()), llvmType);
             impl->builder.CreateStore(initial, address);
         }
-        else if (llvm::Function* constructor = impl->module->getFunction(constructorName);
+        else if (llvm::Function* constructor =
+            impl->module->getFunction(impl->ConstructorLinkName(typeName, {}));
             constructor && constructor->arg_size() == 1) {
+            // Zero-argument constructor (declared or synthetic).
             impl->builder.CreateCall(constructor, {address});
             impl->EmitExceptionCheck();
         }
@@ -592,6 +810,8 @@ namespace Absolute {
         variable.ownsAggregateResources = impl->TypeNeedsCleanup(typeName);
         if (!impl->scopes.back().emplace(name, std::move(variable)).second)
             impl->Fail("duplicate object '" + name + "'");
+        impl->DeclareDebugVariable(
+            name, typeName, address, expr);
         impl->value = impl->builder.CreateLoad(llvmType, address, name + ".value");
         impl->valueCreatesManagedOwner = false;
     }
@@ -751,6 +971,243 @@ namespace Absolute {
     void CodeGenerator::Visit(TemplateExpr* expr) {
         (void)expr;
         impl->Fail("generic specialization is not implemented yet");
+    }
+
+    void CodeGenerator::Visit(LambdaExpr* expr) {
+        const std::string lambdaType = impl->SemanticType(expr);
+        std::string returnType;
+        std::vector<std::string> parameterTypes;
+        if (!ParseCodegenFunctionType(lambdaType, returnType, parameterTypes))
+            impl->Fail("invalid lambda type '" + lambdaType + "'");
+
+        const std::uint64_t lambdaId = impl->lambdaCounter++;
+        const std::vector<LambdaCapture>& captures = impl->analyzer
+            ? impl->analyzer->LambdaCaptures(*expr)
+            : std::vector<LambdaCapture>{};
+        std::vector<llvm::Type*> captureTypes;
+        captureTypes.reserve(captures.size());
+        for (const LambdaCapture& capture : captures)
+            captureTypes.push_back(impl->TypeFromName(capture.type));
+        llvm::StructType* environmentType = captures.empty() ? nullptr
+            : llvm::StructType::create(impl->context, captureTypes,
+                "absolute.lambda.environment." + std::to_string(lambdaId));
+
+        llvm::FunctionType* functionType = impl->ClosureInvokeType(
+            returnType, parameterTypes);
+        llvm::Function* lambda = llvm::Function::Create(functionType,
+            llvm::Function::InternalLinkage,
+            "__absolute.lambda." + std::to_string(lambdaId), *impl->module);
+        lambda->setCallingConv(llvm::CallingConv::C);
+
+        const auto savedInsertPoint = impl->builder.saveIP();
+        auto savedScopes = std::move(impl->scopes);
+        auto savedLoops = std::move(impl->loops);
+        auto savedExceptionTargets = std::move(impl->exceptionTargets);
+        auto savedFinallyTargets = std::move(impl->finallyTargets);
+        auto savedCaughtExceptions = std::move(impl->caughtExceptions);
+        auto savedDeferredScopes = std::move(impl->deferredScopes);
+        const std::string savedReturnType = impl->currentReturnTypeName;
+        llvm::Value* savedReturnStorage = impl->currentReturnStorage;
+        const std::string savedClass = impl->currentClassName;
+        llvm::Value* savedThis = impl->currentThis;
+        // A lambda body emitted inside a constructor is a separate function that
+        // may run long after construction finished, so it must not inherit the
+        // constructor's partial-object cleanup.
+        const std::string savedConstructorClass = impl->currentConstructorClass;
+        impl->currentConstructorClass.clear();
+        const auto savedSubstitutions = impl->currentGenericSubstitutions;
+        llvm::DIScope* savedDebugScope = impl->currentDebugScope;
+        const auto savedDebugScopeStack = impl->debugScopeStack;
+        const llvm::DebugLoc savedDebugLocation =
+            impl->builder.getCurrentDebugLocation();
+
+        llvm::BasicBlock* entry = llvm::BasicBlock::Create(impl->context, "entry", lambda);
+        impl->builder.SetInsertPoint(entry);
+        impl->scopes.clear();
+        impl->loops.clear();
+        impl->exceptionTargets.clear();
+        impl->finallyTargets.clear();
+        impl->caughtExceptions.clear();
+        impl->deferredScopes.clear();
+        impl->PushScope();
+        impl->BeginDebugFunction(
+            *lambda, expr, "lambda." + std::to_string(lambdaId));
+        impl->currentReturnTypeName = returnType;
+        impl->currentClassName.clear();
+        impl->currentThis = nullptr;
+        unsigned argumentIndex = 0;
+        impl->currentReturnStorage = impl->AbiReturnOffset(returnType) != 0
+            ? lambda->getArg(argumentIndex++) : nullptr;
+        llvm::Argument* environment = lambda->getArg(argumentIndex++);
+        environment->setName("environment");
+        for (size_t index = 0; index < captures.size(); ++index) {
+            llvm::Value* address = impl->builder.CreateStructGEP(
+                environmentType, environment, static_cast<unsigned>(index),
+                captures[index].name + ".capture.address");
+            Impl::Variable variable;
+            variable.address = address;
+            variable.type = captureTypes[index];
+            variable.typeName = captures[index].type;
+            variable.symbol = captures[index].symbol;
+            if (!impl->scopes.back().emplace(captures[index].name,
+                std::move(variable)).second)
+                impl->Fail("duplicate lambda capture '" + captures[index].name + "'");
+            impl->DeclareDebugVariable(
+                captures[index].name, captures[index].type,
+                address, expr);
+            if (captures[index].name == "this") {
+                impl->currentThis = impl->builder.CreateLoad(
+                    captureTypes[index], address, "lambda.this");
+                impl->currentClassName = PointerPointeeName(captures[index].type);
+            }
+        }
+        for (size_t index = 0; index < expr->parameters.size(); ++index) {
+            llvm::Argument* argument = lambda->getArg(argumentIndex++);
+            argument->setName(IdentifierName(expr->parameters[index]->name.get()));
+            llvm::Argument* ownershipArgument =
+                impl->ParameterSupportsOwnershipName(parameterTypes[index])
+                ? lambda->getArg(argumentIndex++) : nullptr;
+            impl->BindCallableParameter(*argument, *expr->parameters[index],
+                parameterTypes[index], false, ownershipArgument);
+        }
+
+        if (expr->expressionBody) {
+            llvm::Value* result = impl->Evaluate(expr->expressionBody.get());
+            const bool createsClosureOwner = impl->valueCreatesClosureOwner;
+            std::string nestedReturn;
+            std::vector<std::string> nestedParameters;
+            if (ParseCodegenFunctionType(returnType, nestedReturn, nestedParameters) &&
+                !createsClosureOwner)
+                impl->builder.CreateCall(impl->ClosureRetain(), {result});
+            result = impl->Coerce(result, impl->TypeFromName(returnType));
+            if (impl->currentReturnStorage) {
+                impl->builder.CreateStore(result, impl->currentReturnStorage);
+                impl->builder.CreateRetVoid();
+            }
+            else impl->builder.CreateRet(result);
+        }
+        else if (expr->statementBody) {
+            expr->statementBody->Accept(*this);
+            if (impl->builder.GetInsertBlock() &&
+                !impl->builder.GetInsertBlock()->getTerminator()) {
+                if (returnType == "void") impl->builder.CreateRetVoid();
+                else impl->Fail("lambda body reached code generation without a return");
+            }
+        }
+
+        std::string verifierMessage;
+        llvm::raw_string_ostream verifierStream(verifierMessage);
+        if (llvm::verifyFunction(*lambda, &verifierStream)) {
+            verifierStream.flush();
+            impl->Fail("invalid lambda: " + verifierMessage);
+        }
+
+        impl->PopScope();
+        impl->EndDebugFunction();
+        impl->scopes = std::move(savedScopes);
+        impl->loops = std::move(savedLoops);
+        impl->exceptionTargets = std::move(savedExceptionTargets);
+        impl->finallyTargets = std::move(savedFinallyTargets);
+        impl->caughtExceptions = std::move(savedCaughtExceptions);
+        impl->deferredScopes = std::move(savedDeferredScopes);
+        impl->currentReturnTypeName = savedReturnType;
+        impl->currentReturnStorage = savedReturnStorage;
+        impl->currentClassName = savedClass;
+        impl->currentThis = savedThis;
+        impl->currentConstructorClass = savedConstructorClass;
+        impl->currentGenericSubstitutions = savedSubstitutions;
+        impl->builder.restoreIP(savedInsertPoint);
+        impl->currentDebugScope = savedDebugScope;
+        impl->debugScopeStack = savedDebugScopeStack;
+        impl->builder.SetCurrentDebugLocation(savedDebugLocation);
+
+        llvm::Value* environmentValue = llvm::ConstantPointerNull::get(
+            impl->builder.getPtrTy());
+        llvm::Function* destroyEnvironment = nullptr;
+        if (!captures.empty()) {
+            llvm::Value* environmentSize = impl->Coerce(
+                llvm::ConstantExpr::getSizeOf(environmentType),
+                impl->builder.getInt64Ty());
+            environmentValue = impl->builder.CreateCall(
+                impl->Malloc(), {environmentSize}, "lambda.environment");
+            for (size_t index = 0; index < captures.size(); ++index) {
+                Impl::Variable* source = impl->FindVariable(captures[index].symbol);
+                if (!source)
+                    impl->Fail("missing captured value '" + captures[index].name + "'");
+                llvm::Value* captured = impl->builder.CreateLoad(
+                    source->type, source->address, captures[index].name + ".captured");
+                std::string capturedReturn;
+                std::vector<std::string> capturedParameters;
+                if (ParseCodegenFunctionType(captures[index].type,
+                    capturedReturn, capturedParameters))
+                    impl->builder.CreateCall(impl->ClosureRetain(), {captured});
+                llvm::Value* destination = impl->builder.CreateStructGEP(
+                    environmentType, environmentValue, static_cast<unsigned>(index),
+                    captures[index].name + ".environment.address");
+                impl->builder.CreateStore(captured, destination);
+            }
+
+            llvm::FunctionType* destroyType = llvm::FunctionType::get(
+                impl->builder.getVoidTy(), {impl->builder.getPtrTy()}, false);
+            destroyEnvironment = llvm::Function::Create(destroyType,
+                llvm::Function::InternalLinkage,
+                "__absolute.lambda.destroy." + std::to_string(lambdaId), *impl->module);
+            const auto destroySaved = impl->builder.saveIP();
+            const llvm::DebugLoc destroySavedDebugLocation =
+                impl->builder.getCurrentDebugLocation();
+            llvm::BasicBlock* destroyEntry = llvm::BasicBlock::Create(
+                impl->context, "entry", destroyEnvironment);
+            impl->builder.SetInsertPoint(destroyEntry);
+            impl->builder.SetCurrentDebugLocation(llvm::DebugLoc());
+            llvm::Value* destroyedEnvironment = destroyEnvironment->getArg(0);
+            for (size_t index = 0; index < captures.size(); ++index) {
+                std::string capturedReturn;
+                std::vector<std::string> capturedParameters;
+                if (!ParseCodegenFunctionType(captures[index].type,
+                    capturedReturn, capturedParameters)) continue;
+                llvm::Value* address = impl->builder.CreateStructGEP(
+                    environmentType, destroyedEnvironment, static_cast<unsigned>(index),
+                    "captured.closure.address");
+                llvm::Value* captured = impl->builder.CreateLoad(
+                    impl->builder.getPtrTy(), address, "captured.closure");
+                impl->builder.CreateCall(impl->ClosureRelease(), {captured});
+            }
+            impl->builder.CreateCall(impl->Free(), {destroyedEnvironment});
+            impl->builder.CreateRetVoid();
+            impl->builder.restoreIP(destroySaved);
+            impl->builder.SetCurrentDebugLocation(destroySavedDebugLocation);
+        }
+
+        if (captures.empty()) {
+            llvm::Constant* initializer = llvm::ConstantStruct::get(
+                impl->ClosureObjectType(), {
+                    llvm::ConstantInt::getSigned(impl->builder.getInt64Ty(), -1), lambda,
+                    llvm::ConstantPointerNull::get(impl->builder.getPtrTy()),
+                    llvm::ConstantPointerNull::get(impl->builder.getPtrTy())});
+            impl->value = new llvm::GlobalVariable(*impl->module,
+                impl->ClosureObjectType(), true, llvm::GlobalValue::InternalLinkage,
+                initializer, "__absolute.lambda.value." + std::to_string(lambdaId));
+            impl->valueCreatesClosureOwner = false;
+        }
+        else {
+            llvm::Value* closureSize = impl->Coerce(
+                llvm::ConstantExpr::getSizeOf(impl->ClosureObjectType()),
+                impl->builder.getInt64Ty());
+            llvm::Value* closure = impl->builder.CreateCall(
+                impl->Malloc(), {closureSize}, "lambda.closure");
+            impl->builder.CreateStore(impl->builder.getInt64(1),
+                impl->builder.CreateStructGEP(
+                    impl->ClosureObjectType(), closure, 0, "closure.count.address"));
+            impl->builder.CreateStore(lambda, impl->builder.CreateStructGEP(
+                impl->ClosureObjectType(), closure, 1, "closure.invoke.address"));
+            impl->builder.CreateStore(environmentValue, impl->builder.CreateStructGEP(
+                impl->ClosureObjectType(), closure, 2, "closure.environment.address"));
+            impl->builder.CreateStore(destroyEnvironment, impl->builder.CreateStructGEP(
+                impl->ClosureObjectType(), closure, 3, "closure.destroy.address"));
+            impl->value = closure;
+            impl->valueCreatesClosureOwner = true;
+        }
+        impl->valueCreatesManagedOwner = false;
     }
 
 }

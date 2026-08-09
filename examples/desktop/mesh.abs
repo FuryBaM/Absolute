@@ -1,0 +1,71 @@
+// GPU OBJ mesh viewer: rotating lit cube.
+// Esc quit. Requires Windows OpenGL (Desktop.Gpu).
+
+int32 main() {
+    auto window = new Desktop.Window("Absolute Mesh", 800, 500, true);
+    if (!window.isOpen()) {
+        println("Could not create desktop window");
+        return 1;
+    }
+
+    auto gpu = new Desktop.Gpu(window, Desktop.Gpu.BackendOpenGL);
+    if (!gpu.isValid()) {
+        println("OpenGL GPU context failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    auto mesh = new Desktop.Mesh();
+    bool ok = mesh.loadObj("examples/desktop/assets/cube.obj");
+    if (!ok) {
+        ok = mesh.loadObj("assets/cube.obj");
+    }
+    if (!ok) {
+        println("Failed to load cube.obj");
+        return 1;
+    }
+
+    auto vb = gpu.createVertexBufferFromMesh(mesh);
+    auto ib = gpu.createIndexBufferFromMesh(mesh);
+    auto layout = gpu.createLayoutPos3Normal3Uv2();
+    if (vb == null || ib == null || layout == null) {
+        println("GPU buffer/layout create failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    string vs = "#version 330 core\nlayout(location=0) in vec3 aPos;\nlayout(location=1) in vec3 aNormal;\nlayout(location=2) in vec2 aUv;\nuniform float uTime;\nuniform float uScale;\nout vec3 vNormal;\nout vec2 vUv;\nvoid main(){\n  float c=cos(uTime); float s=sin(uTime);\n  vec3 p=aPos*uScale;\n  float px=p.x*c+p.z*s; float pz=-p.x*s+p.z*c;\n  p=vec3(px,p.y,pz);\n  float nx=aNormal.x*c+aNormal.z*s; float nz=-aNormal.x*s+aNormal.z*c;\n  vNormal=normalize(vec3(nx,aNormal.y,nz));\n  vUv=aUv;\n  float z=p.z+2.8;\n  gl_Position=vec4(p.x/z*1.7, p.y/z*1.7, p.z*0.05, 1.0);\n}\n";
+    string fs = "#version 330 core\nin vec3 vNormal;\nin vec2 vUv;\nout vec4 FragColor;\nvoid main(){\n  vec3 L=normalize(vec3(0.35,0.85,0.4));\n  float ndl=max(dot(normalize(vNormal),L),0.0);\n  float amb=0.18;\n  vec3 base=mix(vec3(0.35,0.55,0.95), vec3(0.95,0.75,0.35), vUv.x*0.35+vUv.y*0.25);\n  vec3 col=base*(amb+ndl*0.9);\n  FragColor=vec4(col,1.0);\n}\n";
+
+    auto program = gpu.createShader(vs, fs);
+    auto pipeline = gpu.createPipeline(program, layout);
+    if (program == null || pipeline == null) {
+        println("program/pipeline failed:");
+        println(gpu.lastError());
+        return 1;
+    }
+
+    int32 indexCount = mesh.indexCount();
+    println("OBJ mesh loaded");
+
+    while (window.poll()) {
+        if (window.keyPressed(Desktop.KeyEscape())) {
+            break;
+        } else {
+            float t = Desktop.time() as float;
+
+            gpu.beginFrame();
+            gpu.clear(0.05, 0.06, 0.10, 1.0);
+            gpu.bind(pipeline);
+            gpu.bind(vb);
+            gpu.bind(ib);
+            gpu.setUniformF("uTime", t * 0.8);
+            gpu.setUniformF("uScale", 1.0);
+            gpu.drawIndexed(indexCount);
+            gpu.endFrame();
+            gpu.present();
+        }
+    }
+
+    return 0;
+}

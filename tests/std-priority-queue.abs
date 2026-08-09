@@ -1,0 +1,56 @@
+import "../std/collections/priority_queue.abs";
+import "../std/string.abs";
+
+int32 main() {
+    func<int32, int32, int32> byPriority =
+        fn(int32 left, int32 right) => left / 10 - right / 10;
+
+    std.collections.PriorityQueue<int32>* queue =
+        new std.collections.PriorityQueue<int32>(byPriority, 2);
+
+    queue.enqueue(21);
+    queue.enqueue(11);
+    queue.enqueue(22);
+    queue.enqueue(12);
+    queue.enqueue(31);
+
+    assert(queue.count == 5, "priority queue count");
+    assert(queue.capacity >= 5, "priority queue growth");
+    assert(queue.peek == 11, "priority queue peek");
+    assert(queue.contains(31) && !queue.contains(99), "priority queue contains");
+
+    // Equal priorities preserve insertion order.
+    assert(queue.dequeue() == 11, "priority 1 first stable value");
+    assert(queue.dequeue() == 12, "priority 1 second stable value");
+    assert(queue.dequeue() == 21, "priority 2 first stable value");
+    assert(queue.dequeue() == 22, "priority 2 second stable value");
+    assert(queue.dequeue() == 31 && queue.isEmpty, "priority 3 value");
+
+    int32[] values = {50, 10, 30, 20, 40};
+    queue.enqueueAll(values);
+    assert(queue.dequeue() == 10, "enqueueAll heap order");
+    queue.clear();
+    assert(queue.isEmpty, "priority queue clear");
+
+    bool emptyRejected = false;
+    try {
+        queue.dequeue();
+    }
+    catch (Error* error) {
+        emptyRejected = true;
+    }
+    assert(emptyRejected, "empty priority queue throws");
+
+    func<int32, string, string> longestFirst =
+        fn(string left, string right) =>
+            std.text.codePointCount(right) - std.text.codePointCount(left);
+    std.collections.PriorityQueue<string>* strings =
+        new std.collections.PriorityQueue<string>(longestFirst);
+    strings.enqueue("a");
+    strings.enqueue("длиннее");
+    strings.enqueue("medium");
+    assert(strings.dequeue() == "длиннее", "domain comparator and Unicode");
+
+    println("std-priority-queue=ok");
+    return 0;
+}

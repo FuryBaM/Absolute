@@ -1,0 +1,52 @@
+import "../std/env.abs";
+
+int32 main() {
+    string varName = "ABSOLUTE_TEST_ENV_VAR";
+    string varValue = "hello_env_123";
+
+    if (std.env.has(varName)) {
+        std.env.removeVar(varName);
+    }
+    assert(!std.env.has(varName), "var must not exist initially");
+    assert(std.env.getOrDefault(varName, "fallback") == "fallback", "getOrDefault must return fallback");
+
+    std.env.setVar(varName, varValue);
+    assert(std.env.has(varName), "var must exist after set");
+    assert(std.env.getVar(varName) == varValue, "getVar must return set value");
+
+    std.env.removeVar(varName);
+    assert(!std.env.has(varName), "var must not exist after remove");
+
+    assert(std.env.argsCount() == 5, "launch argument count");
+    string[] launchArgs = std.env.args();
+    assert(launchArgs.length == 5 && launchArgs[0] == "positional", "launch argument snapshot");
+    assert(std.env.argAt(0) == "positional", "positional launch argument");
+    assert(std.env.hasArg("positional"), "hasArg must find a positional argument");
+    assert(std.env.flag("verbose"), "flag accepts a bare option name");
+    assert(std.env.flag("--verbose"), "flag accepts a normalized option name");
+    assert(std.env.hasParameter("mode"), "inline parameter must exist");
+    assert(std.env.parameter("mode") == "fast", "inline --name=value parameter");
+    assert(std.env.parameter("--output") == "hello world", "separate --name value parameter");
+    assert(std.env.parameterOrDefault("missing", "fallback") == "fallback", "missing parameter fallback");
+
+    bool missingThrew = false;
+    try {
+        std.env.parameter("missing");
+    }
+    catch (Error* error) {
+        missingThrew = true;
+    }
+    assert(missingThrew, "missing required parameter must throw");
+
+    bool boundsThrew = false;
+    try {
+        std.env.argAt(99);
+    }
+    catch (Error* error) {
+        boundsThrew = true;
+    }
+    assert(boundsThrew, "out-of-range launch argument must throw");
+
+    println("std-env=ok");
+    return 0;
+}

@@ -2,10 +2,43 @@
 #include "parser.h"
 
 namespace Absolute {
+    std::unique_ptr<LambdaExpr> Parser::ParseLambdaExpr()
+    {
+        Consume(TokenType::KEYWORD, "fn");
+        auto parameters = ParseParameters();
+        if (CurrentToken() && CurrentToken()->type == TokenType::OPERATOR &&
+            CurrentToken()->value == "=>") {
+            Consume(TokenType::OPERATOR, "=>");
+            auto body = ParseExpression();
+            if (!body) {
+                ReportSyntaxError(CurrentToken(), "A lambda requires an expression body");
+                throw std::runtime_error("Invalid lambda body");
+            }
+            return std::make_unique<LambdaExpr>(std::move(parameters), std::move(body));
+        }
+
+        std::unique_ptr<TypeExpr> returnType;
+        if (CurrentToken() && CurrentToken()->type == TokenType::OPERATOR &&
+            CurrentToken()->value == "->") {
+            Consume(TokenType::OPERATOR, "->");
+            returnType = ParseType();
+        }
+        if (!CurrentToken() || CurrentToken()->type != TokenType::BRACKET ||
+            CurrentToken()->value != "{") {
+            ReportSyntaxError(CurrentToken(),
+                "Expected '=>' expression or a lambda statement body");
+            throw std::runtime_error("Invalid lambda body");
+        }
+        auto body = ParseStatement();
+        return std::make_unique<LambdaExpr>(std::move(parameters),
+            std::move(returnType), std::move(body));
+    }
+
     bool Parser::LooksLikeFunctionDeclaration() const
     {
         size_t index = pos;
-        if (index < tokens.size() && tokens[index].type == TokenType::KEYWORD && tokens[index].value == "raw")
+        if (index < tokens.size() && tokens[index].type == TokenType::KEYWORD &&
+            (tokens[index].value == "raw" || tokens[index].value == "weak" || tokens[index].value == "shared"))
             ++index;
         if (index >= tokens.size()) return false;
         if (tokens[index].type == TokenType::KEYWORD && IsPrimitiveType(tokens[index].value)) {
@@ -13,8 +46,18 @@ namespace Absolute {
         }
         else if (tokens[index].type == TokenType::IDENTIFIER) {
             ++index;
-            while (index + 1 < tokens.size() && tokens[index].value == "." &&
-                tokens[index + 1].type == TokenType::IDENTIFIER) index += 2;
+            while (index < tokens.size()) {
+                if (index + 1 < tokens.size() && tokens[index].value == "." &&
+                    tokens[index + 1].type == TokenType::IDENTIFIER) {
+                    index += 2;
+                }
+                else if (tokens[index].value == "<") {
+                    size_t close = 0;
+                    if (!IsTemplateArgumentList(index, &close)) return false;
+                    index = close + 1;
+                }
+                else break;
+            }
         }
         else return false;
         while (index < tokens.size() && tokens[index].type == TokenType::OPERATOR && tokens[index].value == "*")
@@ -42,7 +85,7 @@ namespace Absolute {
             return std::make_unique<FunctionCallExpr>(std::move(base), std::move(arguments));
         }
         ReportSyntaxError(bracket, "Expected bracket '('");
-        std::exit(EXIT_FAILURE);
+        throw std::runtime_error("Expected bracket '('");
         return nullptr;
     }
 
@@ -157,12 +200,15 @@ namespace Absolute {
 
     std::unique_ptr<ReturnStmt> Parser::ParseReturnStmt()
     {
-	    Token* token = CurrentToken();
-	    if (token && token->type == TokenType::KEYWORD && token->value == "return") {
-		    Consume(TokenType::KEYWORD);
-		    std::unique_ptr<Expression> expr = ParseExpression();
-		    Consume(TokenType::DELIMITER);
-		    return std::make_unique<ReturnStmt>(std::move(expr));
+        Token* token = CurrentToken();
+        if (token && token->type == TokenType::KEYWORD && token->value == "return") {
+            Consume(TokenType::KEYWORD, "return");
+            std::unique_ptr<Expression> expr = nullptr;
+            if (CurrentToken() && !IsEndOfStatement(*CurrentToken())) {
+                expr = ParseExpression();
+            }
+            Consume(TokenType::DELIMITER, ";");
+            return std::make_unique<ReturnStmt>(std::move(expr));
         }
         return nullptr;
     }

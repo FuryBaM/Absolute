@@ -1,0 +1,582 @@
+// std.fs - UTF-8 filesystem paths, whole-file helpers, and streaming text files.
+
+import "string.abs";
+import "collections/vector.abs";
+
+extern "C" int32 absolute_fs_exists(string path);
+extern "C" int32 absolute_fs_is_file(string path);
+extern "C" int32 absolute_fs_is_directory(string path);
+extern "C" int64 absolute_fs_file_size(string path);
+extern "C" int32 absolute_fs_create_directories(string path);
+extern "C" int32 absolute_fs_remove(string path);
+extern "C" int32 absolute_fs_rename(string source, string destination);
+extern "C" int32 absolute_fs_copy_file(string source, string destination, int32 overwrite);
+extern "C" string absolute_fs_current_directory();
+extern "C" string absolute_fs_absolute(string path);
+extern "C" string absolute_fs_path_separator();
+extern "C" string absolute_fs_path_join(string left, string right);
+extern "C" string absolute_fs_path_normalize(string path);
+extern "C" string absolute_fs_path_parent(string path);
+extern "C" string absolute_fs_path_filename(string path);
+extern "C" string absolute_fs_path_stem(string path);
+extern "C" string absolute_fs_path_extension(string path);
+extern "C" int32 absolute_fs_path_is_absolute(string path);
+extern "C" string absolute_fs_read_text(string path);
+extern "C" int32 absolute_fs_write_text(string path, string text, int32 append);
+extern "C" raw uint8* absolute_fs_file_open(string path, string mode);
+extern "C" void absolute_fs_file_close(raw uint8* handle);
+extern "C" string absolute_fs_file_read_line(raw uint8* handle);
+extern "C" string absolute_fs_file_read_all(raw uint8* handle);
+extern "C" int32 absolute_fs_file_write(raw uint8* handle, string text);
+extern "C" int32 absolute_fs_file_flush(raw uint8* handle);
+extern "C" int32 absolute_fs_file_eof(raw uint8* handle);
+extern "C" int32 absolute_fs_metadata_type(string path);
+extern "C" int64 absolute_fs_metadata_modified_millis(string path);
+extern "C" int32 absolute_fs_metadata_read_only(string path);
+extern "C" raw uint8* absolute_fs_directory_open(string path, int32 recursive);
+extern "C" string absolute_fs_directory_next(raw uint8* handle);
+extern "C" void absolute_fs_directory_close(raw uint8* handle);
+extern "C" string absolute_fs_temp_directory();
+extern "C" string absolute_fs_create_temp_file(string prefix);
+extern "C" string absolute_fs_create_temp_directory(string prefix);
+extern "C" raw uint8* absolute_fs_watcher_open(string path, int32 recursive);
+extern "C" int32 absolute_fs_watcher_poll(raw uint8* handle);
+extern "C" string absolute_fs_watcher_path(raw uint8* handle);
+extern "C" void absolute_fs_watcher_close(raw uint8* handle);
+extern "C" string absolute_fs_error();
+
+namespace std.fs {
+    enum EntryType {
+        Missing,
+        File,
+        Directory,
+        Symlink,
+        Other
+    }
+
+    enum EventKind {
+        None,
+        Created,
+        Modified,
+        Removed
+    }
+
+    struct Metadata {
+        public string path;
+        public EntryType type;
+        public int64 size;
+        public int64 modifiedMillis;
+        public bool readOnly;
+
+        public bool exists() const { return type != EntryType.Missing; }
+        public bool isFile() const { return type == EntryType.File; }
+        public bool isDirectory() const { return type == EntryType.Directory; }
+        public bool isSymlink() const { return type == EntryType.Symlink; }
+
+        public Metadata clone() const {
+            Metadata value;
+            value.path = path;
+            value.type = type;
+            value.size = size;
+            value.modifiedMillis = modifiedMillis;
+            value.readOnly = readOnly;
+            return value;
+        }
+    }
+
+    struct FileEvent {
+        public EventKind kind;
+        public string path;
+
+        public FileEvent clone() const {
+            FileEvent value;
+            value.kind = kind;
+            value.path = path;
+            return value;
+        }
+    }
+
+    string error() {
+        return absolute_fs_error();
+    }
+
+    bool exists(string path) {
+        return absolute_fs_exists(path) != 0;
+    }
+
+    bool isFile(string path) {
+        return absolute_fs_is_file(path) != 0;
+    }
+
+    bool isDirectory(string path) {
+        return absolute_fs_is_directory(path) != 0;
+    }
+
+    int64 size(string path) {
+        int64 result = absolute_fs_file_size(path);
+        if (result < 0) {
+            throw new Error(format("file size failed: {}", error()));
+        }
+        return result;
+    }
+
+    void createDirectories(string path) {
+        if (absolute_fs_create_directories(path) == 0) {
+            throw new Error(format("create directories failed: {}", error()));
+        }
+    }
+
+    void remove(string path) {
+        if (absolute_fs_remove(path) == 0) {
+            throw new Error(format("remove failed: {}", error()));
+        }
+    }
+
+    void rename(string source, string destination) {
+        if (absolute_fs_rename(source, destination) == 0) {
+            throw new Error(format("rename failed: {}", error()));
+        }
+    }
+
+    void copyFile(string source, string destination, bool overwrite) {
+        if (absolute_fs_copy_file(source, destination, overwrite ? 1 : 0) == 0) {
+            throw new Error(format("copy file failed: {}", error()));
+        }
+    }
+
+    string currentDirectory() {
+        string result = absolute_fs_current_directory();
+        if (error() != "") {
+            throw new Error(format("current directory failed: {}", error()));
+        }
+        return result;
+    }
+
+    string absolute(string path) {
+        string result = absolute_fs_absolute(path);
+        if (error() != "") {
+            throw new Error(format("absolute path failed: {}", error()));
+        }
+        return result;
+    }
+
+    string readText(string path) {
+        string result = absolute_fs_read_text(path);
+        if (error() != "") {
+            throw new Error(format("read text failed: {}", error()));
+        }
+        return result;
+    }
+
+    void writeText(string path, string text) {
+        if (absolute_fs_write_text(path, text, 0) == 0) {
+            throw new Error(format("write text failed: {}", error()));
+        }
+    }
+
+    void appendText(string path, string text) {
+        if (absolute_fs_write_text(path, text, 1) == 0) {
+            throw new Error(format("append text failed: {}", error()));
+        }
+    }
+
+    class File {
+        private raw uint8* handle;
+
+        public File(string path, string mode) {
+            handle = absolute_fs_file_open(path, mode);
+            if (handle == null) {
+                throw new Error(format("open file failed: {}", error()));
+            }
+        }
+
+        public void destroy() {
+            if (handle != null) {
+                absolute_fs_file_close(handle);
+                handle = null;
+            }
+        }
+
+        public void close() { destroy(); }
+        public void dispose() { destroy(); }
+
+        public bool isOpen() {
+            return handle != null;
+        }
+
+        public string readLine() {
+            string result = absolute_fs_file_read_line(handle);
+            if (error() != "") {
+                throw new Error(format("read line failed: {}", error()));
+            }
+            return result;
+        }
+
+        public string readAll() {
+            string result = absolute_fs_file_read_all(handle);
+            if (error() != "") {
+                throw new Error(format("read file failed: {}", error()));
+            }
+            return result;
+        }
+
+        public void write(string text) {
+            if (absolute_fs_file_write(handle, text) == 0) {
+                throw new Error(format("write file failed: {}", error()));
+            }
+        }
+
+        public void flush() {
+            if (absolute_fs_file_flush(handle) == 0) {
+                throw new Error(format("flush file failed: {}", error()));
+            }
+        }
+
+        public bool eof() {
+            return absolute_fs_file_eof(handle) != 0;
+        }
+    }
+
+    EntryType entryType(int32 nativeType) {
+        if (nativeType == 1) { return EntryType.File; }
+        if (nativeType == 2) { return EntryType.Directory; }
+        if (nativeType == 3) { return EntryType.Symlink; }
+        if (nativeType == 4) { return EntryType.Other; }
+        return EntryType.Missing;
+    }
+
+    Metadata metadata(string path) {
+        int32 nativeType = absolute_fs_metadata_type(path);
+        if (nativeType < 0) {
+            throw new Error(format("metadata failed: {}", error()));
+        }
+        Metadata result;
+        result.path = std.text.concat("", path);
+        result.type = entryType(nativeType);
+        result.size = nativeType == 1 ? size(path) : 0;
+        result.modifiedMillis = nativeType == 0
+            ? 0 : absolute_fs_metadata_modified_millis(path);
+        if (nativeType != 0 && error() != "") {
+            throw new Error(format("metadata timestamp failed: {}", error()));
+        }
+        int32 readOnly = nativeType == 0
+            ? 0 : absolute_fs_metadata_read_only(path);
+        if (readOnly < 0) {
+            throw new Error(format("metadata permissions failed: {}", error()));
+        }
+        result.readOnly = readOnly != 0;
+        return result;
+    }
+
+    class DirectoryIterator {
+        private raw uint8* handle;
+        private string currentPath;
+
+        public DirectoryIterator(string path, bool recursive) {
+            handle = absolute_fs_directory_open(path, recursive ? 1 : 0);
+            if (handle == null) {
+                throw new Error(format("directory iteration failed: {}", error()));
+            }
+            currentPath = "";
+        }
+
+        public bool next() {
+            if (handle == null) { return false; }
+            string nextPath = absolute_fs_directory_next(handle);
+            if (nextPath == "") {
+                if (error() != "") {
+                    throw new Error(format("directory iteration failed: {}", error()));
+                }
+                currentPath = "";
+                return false;
+            }
+            currentPath = std.text.concat("", nextPath);
+            return true;
+        }
+
+        public string value {
+            get { return currentPath; }
+        }
+
+        public Metadata currentMetadata() {
+            return std.fs.metadata(currentPath);
+        }
+
+        public void destroy() {
+            if (handle != null) {
+                absolute_fs_directory_close(handle);
+                handle = null;
+            }
+        }
+
+        public void close() { destroy(); }
+        public void dispose() { destroy(); }
+    }
+
+    DirectoryIterator* iterateDirectory(string path, bool recursive = false) {
+        return new DirectoryIterator(path, recursive);
+    }
+
+    string[] collectDirectory(string path, bool recursive) {
+        std.collections.Vector<string>* result =
+            new std.collections.Vector<string>();
+        DirectoryIterator* iterator = iterateDirectory(path, recursive);
+        defer delete iterator;
+        while (iterator.next()) {
+            result.push(iterator.value);
+        }
+        return result.toArray();
+    }
+
+    string[] list(string path) {
+        return collectDirectory(path, false);
+    }
+
+    string[] walk(string path) {
+        return collectDirectory(path, true);
+    }
+
+    string tempDirectory() {
+        string result = absolute_fs_temp_directory();
+        if (error() != "") {
+            throw new Error(format("temporary directory lookup failed: {}", error()));
+        }
+        return std.text.concat("", result);
+    }
+
+    string createTempFile(string prefix = "absolute-") {
+        string result = absolute_fs_create_temp_file(prefix);
+        if (error() != "") {
+            throw new Error(format("temporary file creation failed: {}", error()));
+        }
+        return std.text.concat("", result);
+    }
+
+    string createTempDirectory(string prefix = "absolute-") {
+        string result = absolute_fs_create_temp_directory(prefix);
+        if (error() != "") {
+            throw new Error(format("temporary directory creation failed: {}", error()));
+        }
+        return std.text.concat("", result);
+    }
+
+    EventKind eventKind(int32 nativeKind) {
+        if (nativeKind == 1) { return EventKind.Created; }
+        if (nativeKind == 2) { return EventKind.Modified; }
+        if (nativeKind == 3) { return EventKind.Removed; }
+        return EventKind.None;
+    }
+
+    class Watcher {
+        private raw uint8* handle;
+        private FileEvent currentEvent;
+
+        public Watcher(string path, bool recursive) {
+            handle = absolute_fs_watcher_open(path, recursive ? 1 : 0);
+            if (handle == null) {
+                throw new Error(format("watcher creation failed: {}", error()));
+            }
+            currentEvent.kind = EventKind.None;
+            currentEvent.path = "";
+        }
+
+        public bool poll() {
+            if (handle == null) { return false; }
+            int32 kind = absolute_fs_watcher_poll(handle);
+            if (kind < 0) {
+                throw new Error(format("watcher poll failed: {}", error()));
+            }
+            if (kind == 0) {
+                currentEvent.kind = EventKind.None;
+                currentEvent.path = "";
+                return false;
+            }
+            currentEvent.kind = eventKind(kind);
+            currentEvent.path = std.text.concat(
+                "", absolute_fs_watcher_path(handle));
+            return true;
+        }
+
+        public FileEvent event {
+            get { return currentEvent; }
+        }
+
+        public void destroy() {
+            if (handle != null) {
+                absolute_fs_watcher_close(handle);
+                handle = null;
+            }
+        }
+
+        public void close() { destroy(); }
+        public void dispose() { destroy(); }
+    }
+
+    Watcher* watch(string path, bool recursive = false) {
+        return new Watcher(path, recursive);
+    }
+
+    File* open(string path, string mode) {
+        return new File(path, mode);
+    }
+
+    string separator() {
+        return absolute_fs_path_separator();
+    }
+
+    string join(string left, string right) {
+        string result = absolute_fs_path_join(left, right);
+        if (error() != "") {
+            throw new Error(format("path join failed: {}", error()));
+        }
+        return std.text.concat("", result);
+    }
+
+    string resolve(string base, string next) {
+        return join(base, next);
+    }
+
+    string combine(string[] segments) {
+        if (segments.length == 0) { return ""; }
+        string result = std.text.concat("", segments[0]);
+        int32 index = 1;
+        while (index < segments.length) {
+            result = join(result, segments[index]);
+            index = index + 1;
+        }
+        return result;
+    }
+
+    string normalize(string path) {
+        string result = absolute_fs_path_normalize(path);
+        if (error() != "") {
+            throw new Error(format("path normalize failed: {}", error()));
+        }
+        return std.text.concat("", result);
+    }
+
+    string parent(string path) {
+        string result = absolute_fs_path_parent(path);
+        if (error() != "") {
+            throw new Error(format("path parent failed: {}", error()));
+        }
+        return std.text.concat("", result);
+    }
+
+    string sibling(string path, string name) {
+        return join(parent(path), name);
+    }
+
+    string fileName(string path) {
+        string result = absolute_fs_path_filename(path);
+        if (error() != "") {
+            throw new Error(format("path filename failed: {}", error()));
+        }
+        return std.text.concat("", result);
+    }
+
+    string stem(string path) {
+        string result = absolute_fs_path_stem(path);
+        if (error() != "") {
+            throw new Error(format("path stem failed: {}", error()));
+        }
+        return std.text.concat("", result);
+    }
+
+    string extensionOf(string path) {
+        string result = absolute_fs_path_extension(path);
+        if (error() != "") {
+            throw new Error(format("path extension failed: {}", error()));
+        }
+        return std.text.concat("", result);
+    }
+
+    bool isAbsolute(string path) {
+        return absolute_fs_path_is_absolute(path) != 0;
+    }
+
+    class Path {
+        private string pathValue;
+
+        public Path(string initial) {
+            pathValue = std.text.concat("", std.fs.normalize(initial));
+        }
+
+        public string value {
+            get { return pathValue; }
+        }
+
+        public string name {
+            get { return std.fs.fileName(pathValue); }
+        }
+
+        public string stem {
+            get { return std.fs.stem(pathValue); }
+        }
+
+        public string ext {
+            get { return std.fs.extensionOf(pathValue); }
+        }
+
+        public bool absolute {
+            get { return std.fs.isAbsolute(pathValue); }
+        }
+
+        public string toString() {
+            return pathValue;
+        }
+
+        public Path* child(string segment) {
+            return new Path(std.fs.join(pathValue, segment));
+        }
+
+        public Path* parent() {
+            return new Path(std.fs.parent(pathValue));
+        }
+
+        public Path* sibling(string name) {
+            return new Path(std.fs.sibling(pathValue, name));
+        }
+
+        public void push(string segment) {
+            pathValue = std.text.concat("", std.fs.join(pathValue, segment));
+        }
+
+        public void pop() {
+            pathValue = std.text.concat("", std.fs.parent(pathValue));
+        }
+
+        public void normalize() {
+            pathValue = std.text.concat("", std.fs.normalize(pathValue));
+        }
+
+        public void makeAbsolute() {
+            pathValue = std.text.concat("", std.fs.absolute(pathValue));
+        }
+
+        public bool exists() { return std.fs.exists(pathValue); }
+        public bool isFile() { return std.fs.isFile(pathValue); }
+        public bool isDirectory() { return std.fs.isDirectory(pathValue); }
+        public int64 size() { return std.fs.size(pathValue); }
+        public string readText() { return std.fs.readText(pathValue); }
+        public void writeText(string text) { std.fs.writeText(pathValue, text); }
+        public void appendText(string text) { std.fs.appendText(pathValue, text); }
+        public void createDirectories() { std.fs.createDirectories(pathValue); }
+        public void remove() { std.fs.remove(pathValue); }
+        public File* open(string mode) { return std.fs.open(pathValue, mode); }
+    }
+
+    Path* path(string value) {
+        return new Path(value);
+    }
+
+    string[] readLines(string path) {
+        string text = readText(path);
+        string normalized = std.text.replace(text, "\r\n", "\n");
+        return std.text.split(normalized, "\n");
+    }
+
+    void writeLines(string path, string[] lines) {
+        writeText(path, std.text.join(lines, "\n"));
+    }
+}

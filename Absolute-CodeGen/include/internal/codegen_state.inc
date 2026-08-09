@@ -17,6 +17,9 @@
             bool ownsArrayStorage = false;
             SymbolId arrayOwnerSymbol = InvalidSymbolId;
             bool ownsAggregateResources = false;
+            llvm::AllocaInst* arrayOwnerStorage = nullptr;
+            llvm::AllocaInst* ownershipFlagStorage = nullptr;
+            llvm::AllocaInst* debugStorage = nullptr;
         };
 
         struct ArrayView {
@@ -63,7 +66,8 @@
             std::vector<InstanceDeclExpr*> ownStaticObjectFields;
             std::vector<FunctionDeclStmt*> ownMethods;
             std::vector<PropertyDeclStmt*> ownProperties;
-            ConstructorDeclStmt* constructor = nullptr;
+            // Overloaded constructors; empty means synthetic zero-arg if base needs one.
+            std::vector<ConstructorDeclStmt*> constructors;
             std::vector<ClassField> fields;
             std::unordered_map<std::string, ClassField> fieldByName;
             std::vector<StaticField> staticFields;
@@ -88,7 +92,7 @@
             std::vector<InstanceDeclExpr*> ownStaticObjectFields;
             std::vector<FunctionDeclStmt*> ownMethods;
             std::vector<PropertyDeclStmt*> ownProperties;
-            ConstructorDeclStmt* constructor = nullptr;
+            std::vector<ConstructorDeclStmt*> constructors;
             std::vector<ClassField> fields;
             std::unordered_map<std::string, ClassField> fieldByName;
             std::vector<StaticField> staticFields;
@@ -110,6 +114,7 @@
             std::unordered_map<std::string, ClassMethod> declaredMethods;
             std::unordered_map<std::string, ClassMethod> staticMethods;
             std::vector<StaticField> staticFields;
+            std::unordered_map<std::string, std::string> substitutions;
             std::unordered_set<std::string> ambiguousDefaults;
             bool finalizing = false;
             bool finalized = false;
@@ -148,11 +153,22 @@
         llvm::LLVMContext context;
         std::unique_ptr<llvm::Module> module;
         llvm::IRBuilder<> builder;
+        bool debugInfoEnabled = false;
+        OptimizationLevel currentOptimizationLevel = OptimizationLevel::O3;
+        std::unique_ptr<llvm::DIBuilder> debugBuilder;
+        llvm::DICompileUnit* debugCompileUnit = nullptr;
+        llvm::DIFile* defaultDebugFile = nullptr;
+        llvm::DIScope* currentDebugScope = nullptr;
+        std::vector<llvm::DIScope*> debugScopeStack;
+        std::unordered_map<std::string, llvm::DIFile*> debugFiles;
+        std::unordered_map<std::string, llvm::DIType*> debugTypes;
         llvm::Value* value = nullptr;
         Phase phase = Phase::DeclareFunctions;
         std::vector<std::unordered_map<std::string, Variable>> scopes;
         std::unordered_map<std::string, Variable> globals;
         std::unordered_map<std::string, llvm::StructType*> arrayDescriptorTypes;
+        llvm::StructType* closureObjectType = nullptr;
+        std::unordered_map<SymbolId, llvm::GlobalVariable*> functionClosures;
         std::unordered_map<std::string, ClassInfo> classes;
         std::vector<std::string> classOrder;
         std::unordered_map<std::string, StructInfo> structs;
@@ -177,15 +193,22 @@
         llvm::Value* valueManagedPointee = nullptr;
         bool valueCreatesArrayOwner = false;
         llvm::Value* valueArrayOwner = nullptr;
+        bool valueCreatesClosureOwner = false;
         std::string currentValueType;
         bool addressMode = false;
         llvm::Value* addressValue = nullptr;
         std::string currentReturnTypeName;
         llvm::Value* currentReturnStorage = nullptr;
         std::string currentClassName;
+        // Set while a constructor body is being emitted. A constructor that
+        // leaves through an exception has already initialized some fields, and
+        // nothing outside holds a name for them, so it releases them itself.
+        std::string currentConstructorClass;
         std::unordered_map<std::string, std::string> currentGenericSubstitutions;
         llvm::Value* currentThis = nullptr;
         std::uint64_t taskThunkCounter = 0;
+        const Attribute* currentSpawnAttribute = nullptr;
+        std::uint64_t lambdaCounter = 0;
 
         explicit Impl(CodeGenerator& visitor, const Analyzer* analyzer);
 

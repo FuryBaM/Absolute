@@ -1,0 +1,7 @@
+import "../std/collections/map.abs";
+
+int32 main() {
+    Map<int32, int32>* map = new Map<int32, int32>();
+    map.put(1, 10);
+    return 0;
+}

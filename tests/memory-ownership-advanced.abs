@@ -1,0 +1,15 @@
+class Document {
+    public string title;
+    public Document(string t) {
+        title = t;
+    }
+}
+
+void main() {
+    raw Document* rawPtr = new raw Document("test");
+    raw Document* borrowed = borrowRaw(rawPtr);
+    assert(borrowed.title == "test", "borrowed raw title check");
+    Document* adopted = adoptRaw(rawPtr);
+    assert(adopted.title == "test", "adopted title check");
+    print("memory-ownership-advanced=ok");
+}

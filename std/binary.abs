@@ -1,0 +1,93 @@
+extern "C" raw void* absolute_binary_writer_create();
+extern "C" void absolute_binary_writer_free(raw void* handle);
+extern "C" void absolute_binary_writer_write_byte(raw void* handle, uint8 val);
+extern "C" void absolute_binary_writer_write_i16(raw void* handle, int16 val);
+extern "C" void absolute_binary_writer_write_i32(raw void* handle, int32 val);
+extern "C" void absolute_binary_writer_write_i64(raw void* handle, int64 val);
+extern "C" void absolute_binary_writer_write_float(raw void* handle, float val);
+extern "C" void absolute_binary_writer_write_double(raw void* handle, double val);
+extern "C" void absolute_binary_writer_write_string(raw void* handle, string text);
+extern "C" void absolute_binary_writer_write_bytes(raw void* handle, raw void* data, int64 size);
+extern "C" int64 absolute_binary_writer_size(raw void* handle);
+extern "C" raw void* absolute_binary_writer_get_data(raw void* handle);
+extern "C" string absolute_binary_writer_to_hex(raw void* handle);
+
+extern "C" raw void* absolute_binary_reader_create(raw void* data, int64 size);
+extern "C" void absolute_binary_reader_free(raw void* handle);
+extern "C" uint8 absolute_binary_reader_read_byte(raw void* handle);
+extern "C" int16 absolute_binary_reader_read_i16(raw void* handle);
+extern "C" int32 absolute_binary_reader_read_i32(raw void* handle);
+extern "C" int64 absolute_binary_reader_read_i64(raw void* handle);
+extern "C" float absolute_binary_reader_read_float(raw void* handle);
+extern "C" double absolute_binary_reader_read_double(raw void* handle);
+extern "C" string absolute_binary_reader_read_string(raw void* handle);
+extern "C" int64 absolute_binary_reader_read_bytes(raw void* handle, raw void* dest, int64 size);
+extern "C" int64 absolute_binary_reader_position(raw void* handle);
+extern "C" int64 absolute_binary_reader_remaining(raw void* handle);
+extern "C" int32 absolute_binary_reader_is_eof(raw void* handle);
+extern "C" void absolute_binary_reader_seek(raw void* handle, int64 pos);
+
+namespace std.binary {
+    class BinaryWriter {
+        private raw void* handle;
+
+        public BinaryWriter() {
+            handle = absolute_binary_writer_create();
+        }
+
+        public void destroy() {
+            if (handle) {
+                absolute_binary_writer_free(handle);
+                handle = null;
+            }
+        }
+
+        public void dispose() { destroy(); }
+        public bool isOpen() { return handle != null; }
+
+        public void writeByte(uint8 val) { absolute_binary_writer_write_byte(handle, val); }
+        public void writeInt16(int16 val) { absolute_binary_writer_write_i16(handle, val); }
+        public void writeInt32(int32 val) { absolute_binary_writer_write_i32(handle, val); }
+        public void writeInt64(int64 val) { absolute_binary_writer_write_i64(handle, val); }
+        public void writeFloat(float val) { absolute_binary_writer_write_float(handle, val); }
+        public void writeDouble(double val) { absolute_binary_writer_write_double(handle, val); }
+        public void writeString(string val) { absolute_binary_writer_write_string(handle, val); }
+        public void writeBytes(raw void* data, int64 size) { absolute_binary_writer_write_bytes(handle, data, size); }
+
+        public int64 size() { return absolute_binary_writer_size(handle); }
+        public raw void* getData() { return absolute_binary_writer_get_data(handle); }
+        public string toHexString() { return absolute_binary_writer_to_hex(handle); }
+    }
+
+    class BinaryReader {
+        private raw void* handle;
+
+        public BinaryReader(raw void* data, int64 size) {
+            handle = absolute_binary_reader_create(data, size);
+        }
+
+        public void destroy() {
+            if (handle) {
+                absolute_binary_reader_free(handle);
+                handle = null;
+            }
+        }
+
+        public void dispose() { destroy(); }
+        public bool isOpen() { return handle != null; }
+
+        public uint8 readByte() { return absolute_binary_reader_read_byte(handle); }
+        public int16 readInt16() { return absolute_binary_reader_read_i16(handle); }
+        public int32 readInt32() { return absolute_binary_reader_read_i32(handle); }
+        public int64 readInt64() { return absolute_binary_reader_read_i64(handle); }
+        public float readFloat() { return absolute_binary_reader_read_float(handle); }
+        public double readDouble() { return absolute_binary_reader_read_double(handle); }
+        public string readString() { return absolute_binary_reader_read_string(handle); }
+        public int64 readBytes(raw void* dest, int64 size) { return absolute_binary_reader_read_bytes(handle, dest, size); }
+
+        public int64 position() { return absolute_binary_reader_position(handle); }
+        public int64 remaining() { return absolute_binary_reader_remaining(handle); }
+        public bool isEof() { return absolute_binary_reader_is_eof(handle) != 0; }
+        public void seek(int64 pos) { absolute_binary_reader_seek(handle, pos); }
+    }
+}

@@ -1,34 +1,167 @@
-# `absolute.shader` opaque AST plugin
+# `absolute.shader` — multi-target GPU IR
 
-This example uses the opaque plugin path rather than source expansion. The
-plugin receives an `AbsoluteParserCursorV1`, consumes its complete block, owns
-the resulting payload, validates it during semantic analysis, and emits a
-standalone LLVM IR module during code generation.
+Opaque plugin AST for shader stages. Declares typed inputs/outputs/uniforms and
+emits **first-class GPU IR** into the Absolute module:
+
+| IR | Kind | Accessor (per stage, e.g. `Vertex`) |
+|----|------|--------------------------------------|
+| GLSL 330 / compute 430 | `SOURCE_TEXT` / `glsl` | `absolute_shader_glsl_Vertex()` |
+| HLSL | `SOURCE_TEXT` / `hlsl` | `absolute_shader_hlsl_Vertex()` |
+| MSL (Metal source) | `SOURCE_TEXT` / `msl` | `absolute_shader_msl_Vertex()` |
+| SPIR-V | `ABSOLUTE_ARTIFACT_SPIRV` | `absolute_shader_spirv_Vertex()` + `_size` / `_has` |
+| DXIL | `ABSOLUTE_ARTIFACT_DXIL` | `absolute_shader_dxil_Vertex()` + `_size` / `_has` |
+| Metal IR (AIR) | `ABSOLUTE_ARTIFACT_METAL_IR` | reserved (`_has` is 0 until metallib is wired) |
+
+SPIR-V and DXIL are produced at emit-time with portable **DXC** when available
+(`.absolute/toolchains/dxc-spirv` or `ABSOLUTE_DXC`). Without DXC, source IR
+still emits and binary sizes are 0.
 
 ```absolute
 @shader.stage(Vertex)
 shader Vertex {
-    input position;
-    input normal;
-    output clipPosition;
+    input float3 position;
+    input float3 normal;
+    input float2 uv;
+    uniform float uTime;
+    uniform float uScale;
+    output float4 clipPosition;
+    output float3 vNormal;
+    output float2 vUv;
 }
+
+@shader.stage(Fragment)
+shader Fragment {
+    input float3 vNormal;
+    input float2 vUv;
+    output float4 FragColor;
+}
+
+extern "C" string absolute_shader_glsl_Vertex();
+extern "C" string absolute_shader_hlsl_Vertex();
+extern "C" string absolute_shader_msl_Vertex();
+extern "C" int32 absolute_shader_has_spirv_Vertex();
+extern "C" int32 absolute_shader_spirv_size_Vertex();
+
+// OpenGL RHI (GLSL):
+auto program = gpu.createShader(
+    absolute_shader_glsl_Vertex(),
+    absolute_shader_glsl_Fragment());
+
+// D3D11 / D3D12 / Vulkan RHI (HLSL):
+auto programD3D = gpu.createShader(
+    absolute_shader_hlsl_Vertex(),
+    absolute_shader_hlsl_Fragment());
 ```
 
-The example validates the qualified attribute received from the host and emits
-`absolute.shader.Vertex`, plus input/output and metadata count globals.
-This is deliberately a small shader DSL: a production plugin can replace the
-payload and callbacks with a real shader AST, type checker, SPIR-V/DXIL
-compiler, reflection data, or LLVM lowering without changing the Absolute AST.
+## Compute + `absolute.desktop`
 
-Opaque nodes use only the versioned C ABI. C++ AST and LLVM C++ objects never
-cross the dynamic-library boundary. The emitter returns textual LLVM IR as a
-complete module; Absolute parses, verifies, and links it into the destination
-module. Plugins are trusted native code, and duplicate or invalid symbols fail
-at link/verification time.
+The canonical `Compute` stage exposes `Shader.generatedComputeHlsl()` and
+`Shader.generatedComputeGlsl()` through
+`absolute-shader.prelude.abs`, loaded by the `.absplugin` manifest. The prelude
+is ordinary editable Absolute code, so user code does not need to declare
+`extern` accessors:
 
-Build and load on Windows:
+```absolute
+@shader.stage(Compute)
+shader Compute {
+    // Declaration order maps to HLSL u0..u7 and GLSL bindings 0..7.
+    storage float values;
+    workgroup 1, 1, 1;
+
+    // Portable body: HLSL id becomes gl_GlobalInvocationID for GLSL.
+    kernel {
+        values[id.x] = values[id.x] * 2.0;
+    }
+}
+
+auto compute = gpu.createComputeShader(
+    Shader.generatedComputeHlsl(),
+    Shader.generatedComputeGlsl());
+auto storage = gpu.createStorageBuffer(values);
+gpu.bind(compute);
+gpu.bindStorage(storage, 0);
+gpu.dispatch(values.length, 1, 1);
+storage.download(values);
+```
+
+The shader plugin owns stage parsing and HLSL/GLSL/MSL/DXIL/SPIR-V generation.
+The desktop plugin executes compute on OpenGL 4.3, D3D11, D3D12 and Vulkan,
+including storage buffers and CPU readback. Metal source is emitted, but
+`absolute.desktop` does not currently expose a Metal runtime backend.
+Compute storage is currently `float` only.
+
+## DSL
+
+| Declaration | Meaning |
+|-------------|---------|
+| `input [type] name;` | Vertex attribute (or fragment varying). Types: `float`, `float2`/`vec2`, `float3`/`vec3`, `float4`/`vec4`, `int`. Untyped names keep legacy inference (`position`→float3, `uv`→float2, …). |
+| `output [type] name;` | Stage output (`clipPosition` → `gl_Position` / `SV_POSITION` / `[[position]]`). |
+| `uniform [type] name;` | Uniform / cbuffer field (bound via `gpu.setUniformF` / `setUniformI`). |
+| `storage float name;` | Compute read/write storage. Declaration order becomes HLSL UAV `u0..u7`, GLSL SSBO binding `0..7`, and MSL buffer `0..7`. |
+| `workgroup x, y, z;` | Compute local group size emitted as HLSL `numthreads`, GLSL `local_size`, and MSL reflection. |
+| `kernel { ... }` | Portable compute body. `id.x/y/z` maps to the backend global invocation id; common float/vector expressions are emitted for HLSL, GLSL and MSL. |
+| `hlsl { ... }` | Backend-specific/legacy compute body. Prefer `kernel` for cross-API execution. |
+| `code { ... }` | Optional **full GLSL** body for the stage. Nested `{`/`}` supported. If omitted, a default mesh-style body is generated for GLSL/HLSL/MSL. `#version 330 core` is always prepended when missing. **Do not write `#...` in the body** — Absolute’s lexer rejects `#`. Custom `code` skips HLSL→SPIR-V/DXIL auto-compile. |
+
+`@shader.stage(Name)` must match the block stage name.
+
+**Note:** when this plugin is loaded, `shader` is a global keyword — do not use `shader` as an Absolute variable name (use `program` instead).
+
+## Emitted symbols (per stage, e.g. `Vertex`)
+
+| Symbol | Role |
+|--------|------|
+| `@absolute.shader.Vertex.input_count` | constant i32 |
+| `@absolute.shader.Compute.storage_count` / `.workgroup` | compute reflection constants |
+| `@absolute.shader.Vertex.glsl` / `.hlsl` / `.msl` | private source text |
+| `@absolute.shader.Vertex.spirv` / `.dxil` / `.metal_ir` | private binary blobs |
+| `absolute_shader_glsl_Vertex()` | GLSL source string |
+| `absolute_shader_hlsl_Vertex()` | HLSL source string |
+| `absolute_shader_msl_Vertex()` | MSL source string |
+| `absolute_shader_*_size_Vertex()` | byte length (source without NUL; binary raw size) |
+| `absolute_shader_has_spirv_Vertex()` | 1 if SPIR-V produced |
+| `absolute_shader_has_dxil_Vertex()` | 1 if DXIL produced |
+| `absolute_shader_has_metal_ir_Vertex()` | 1 if Metal AIR produced (currently 0) |
+| `absolute_shader_input_count_Vertex()` | reflection |
+| `absolute_shader_input_components_Vertex(i32)` | reflection |
+| `absolute_shader_vertex_stride_floats_Vertex()` | packed float stride |
+| `absolute_shader_storage_count_Compute()` | compute storage count |
+| `absolute_shader_workgroup_{x,y,z}_Compute()` | compute local group dimensions |
+| `Shader.generatedComputeHlsl()` | namespaced, predeclared bridge for `Desktop.Gpu.createComputeShader` |
+| `absolute_shader_artifact_kind_{spirv,dxil,metal_ir,source_text}()` | `AbsoluteArtifactKindV1` constants |
+
+Without `code { }`, generated bodies implement a default lit mesh pipeline (Y-rotation when `uTime` is present).
+
+## RHI bind examples
 
 ```powershell
-cmake --build build --config Release --target Absolute-Shader-Plugin
-absolutec program.abs --plugin build/plugins/shader/Release/absolute-shader.dll
+absolutec examples/desktop/shader-rhi.abs `
+  --plugin path/to/absolute-desktop.absplugin `
+  --plugin path/to/absolute-shader.absplugin `
+  --build-exe -o shader-rhi.exe
+
+# Multi-IR smoke (no window):
+absolutec examples/desktop/shader-multi-ir-smoke.abs `
+  --plugin path/to/absolute-shader.absplugin `
+  --build-exe -o shader-multi-ir-smoke.exe
+
+# End-to-end shader DSL → generated HLSL → D3D11 dispatch:
+absolutec examples/desktop/shader-compute.abs `
+  --plugin path/to/absolute-desktop.absplugin `
+  --plugin path/to/absolute-shader.absplugin `
+  --build-exe -o shader-compute.exe
+
+.\shader-compute.exe opengl
+.\shader-compute.exe d3d11
+.\shader-compute.exe d3d12
+.\shader-compute.exe vulkan
+```
+
+See `examples/desktop/shader-rhi.abs`, `shader-code.abs`,
+`shader-multi-ir-smoke.abs`, and `shader-compute.abs`.
+
+## Build plugin
+
+```powershell
+cmake --build .absolute/build/windows-release --target Absolute-Shader-Plugin
 ```

@@ -4,14 +4,24 @@
 namespace Absolute {
     std::unique_ptr<InstanceDeclExpr> Parser::ParseInstanceDeclExpr()
     {
+        const Token* start = CurrentToken();
         std::unique_ptr<UserTypeExpr> constructType = std::make_unique<UserTypeExpr>(ParseIdentifierExpr(true));
         std::unique_ptr<Expression> identifierName = ParsePrimaryExpr();
         std::unique_ptr<Expression> initializer = nullptr;
-        if (CurrentToken()->value == "=") {
+        // The source can end right after the name, so there may be no token.
+        if (CurrentToken() && CurrentToken()->value == "=") {
             Consume(TokenType::OPERATOR, "=");
             initializer = ParseExpression();
         }
-        return std::make_unique<InstanceDeclExpr>(std::move(constructType), std::move(identifierName), std::move(initializer));
+        auto declaration = std::make_unique<InstanceDeclExpr>(
+            std::move(constructType), std::move(identifierName),
+            std::move(initializer));
+        if (start) {
+            declaration->sourceFile = sourceFile;
+            declaration->line = start->line;
+            declaration->column = start->column;
+        }
+        return declaration;
     }
 
     std::unique_ptr<SingleStatement> Parser::ParseInstanceDeclStmt()

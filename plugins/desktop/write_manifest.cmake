@@ -17,9 +17,14 @@ file(WRITE "${OUTPUT}"
   \"version\": \"1.0.0\",
   \"abi\": 1,
   \"library\": \"${PLUGIN_NAME}\",
+  \"prelude\": \"absolute-desktop.prelude.abs\",
   \"editor\": \"absolute-desktop.editor.json\",
   \"nativeLibraries\": [${NATIVE_LIBRARIES}],
-  \"provides\": [\"desktop.window\", \"desktop.framebuffer\", \"desktop.input\"],
-  \"dependencies\": {}
+  \"provides\": [\"desktop.window\", \"desktop.framebuffer\", \"desktop.input\", \"desktop.gpu\", \"desktop.audio\"],
+  \"dependencies\": {},
+  \"optional_dependencies\": [
+    {\"name\": \"absolute.math\", \"version\": \"^2.0.0\", \"path\": \"../math/absolute-math.absplugin\"},
+    {\"name\": \"absolute.shader\", \"version\": \"^1.0.0\", \"path\": \"../shader/absolute-shader.absplugin\"}
+  ]
 }
 ")

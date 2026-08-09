@@ -1,0 +1,32 @@
+import "../std/string.abs";
+import "../std/uri.abs";
+import "../std/form.abs";
+
+int32 main() {
+    string urlBody = "username=john_doe&age=25&city=New+York";
+    std.form.FormData* form1 = std.form.parseUrlEncoded(urlBody);
+    defer delete form1;
+
+    assert(form1.size() == 3, "urlencoded count");
+    assert(form1.getValue("username") == "john_doe", "username match");
+    assert(form1.getValue("age") == "25", "age match");
+    assert(form1.getValue("city") == "New York", "city match");
+
+    string boundary = "---WebKitFormBoundary7MA4YWxkTrZu0gW";
+    string multiBody = format("--{}\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nMy Document\r\n--{}\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"test.txt\"\r\nContent-Type: text/plain\r\n\r\nHello World!\r\n--{}--\r\n", boundary, boundary, boundary);
+
+    std.form.FormData* form2 = std.form.parseMultipart(multiBody, boundary);
+    defer delete form2;
+
+    assert(form2.size() == 2, "multipart count");
+    assert(form2.getValue("title") == "My Document", "title match");
+
+    std.form.FormEntry fileEntry = form2.getEntry("upload");
+    assert(fileEntry.name == "upload", "fileEntry name match");
+    assert(fileEntry.filename == "test.txt", "filename match");
+    assert(fileEntry.contentType == "text/plain", "contentType match");
+    assert(fileEntry.value == "Hello World!", "file content match");
+
+    println("std-form=ok");
+    return 0;
+}

@@ -1,0 +1,23 @@
+import "../std/string.abs";
+
+export "C" int32 wasm_std_utf8_bytes() {
+    return std.text.byteCount("Привет");
+}
+
+int32 main() {
+    assert(wasm_std_utf8_bytes() == 12, "UTF-8 byte count on wasm");
+    assert(std.text.codePointCount("Привет") == 6, "Unicode code-point count on wasm");
+    assert(std.text.codePointAt("Привет", 0) == 1055, "Unicode code point on wasm");
+    assert(std.text.toUpper("привет") == "ПРИВЕТ", "Cyrillic uppercase on wasm");
+    assert(std.text.toLower("ПРИВЕТ") == "привет", "Cyrillic lowercase on wasm");
+    assert(std.text.trim(" \tПривет\r\n") == "Привет", "trim on wasm");
+    assert(std.text.indexOf("Я—Absolute", "Absolute") == 2, "Unicode index on wasm");
+    assert(std.text.lastIndexOf("тест/тест", "тест") == 5, "Unicode last index on wasm");
+    assert(std.text.substring("λAbsolute", 1, 8) == "Absolute", "Unicode substring on wasm");
+    assert(std.text.replace("one::two", "::", "/") == "one/two", "replace on wasm");
+    assert(std.text.repeat("аб", 2) == "абаб", "StringBuilder-backed repeat on wasm");
+    string[] parts = std.text.split("один::два", "::");
+    assert(parts.length == 2 && parts[1] == "два", "split on wasm");
+    println("std-string-wasm=ok");
+    return 0;
+}

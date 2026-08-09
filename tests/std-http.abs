@@ -1,0 +1,232 @@
+import "../std/http.abs";
+
+class StreamState {
+    public static string body = "";
+    public static int32 chunks = 0;
+}
+
+void collectStream(string chunk) {
+    StreamState.body = format("{}{}", StreamState.body, chunk);
+    StreamState.chunks = StreamState.chunks + 1;
+}
+
+async int32 doFetch(int32 port) {
+    string url = format("http://127.0.0.1:{}/test", port);
+    std.http.HttpResponse* response = std.http.fetch(url);
+    int32 ok = 0;
+    if (response != null) {
+        if (response.isSuccess() &&
+            response.statusCode == 200 &&
+            response.body == "Hello HTTP!" &&
+            response.headers.value("content-type") == "text/plain") {
+            ok = 1;
+        }
+        delete response;
+    }
+    return ok;
+}
+
+async int32 doPost(int32 port) {
+    string url = format("http://127.0.0.1:{}/echo", port);
+    std.http.HttpResponse* response =
+        std.http.post(url, "ping", "text/plain");
+    int32 ok = 0;
+    if (response != null) {
+        if (response.body == "pong") {
+            ok = 1;
+        }
+        delete response;
+    }
+    return ok;
+}
+
+async int32 doCustomHeaders(int32 port) {
+    string url = format("http://127.0.0.1:{}/headers", port);
+    std.http.Headers* headers = new std.http.Headers();
+    defer delete headers;
+    headers.put("X-Request-Id", "absolute-42");
+    std.http.RequestOptions* options = new std.http.RequestOptions();
+    defer delete options;
+    options.timeoutMilliseconds = 2000;
+    std.http.HttpResponse* response =
+        std.http.request("GET", url, "", headers, options);
+    int32 ok = 0;
+    if (response != null) {
+        if (response.body == "headers-ok" &&
+            response.headers.value("X-Response-Id") == "server-42") {
+            ok = 1;
+        }
+        delete response;
+    }
+    return ok;
+}
+
+async int32 doRedirect(int32 port) {
+    string url = format("http://127.0.0.1:{}/redirect", port);
+    std.http.HttpResponse* response = std.http.fetch(url);
+    int32 ok = 0;
+    if (response != null) {
+        if (response.statusCode == 200 &&
+            response.body == "redirect-ok" &&
+            response.headers.value("X-Redirected") == "yes") {
+            ok = 1;
+        }
+        delete response;
+    }
+    return ok;
+}
+
+async int32 doStream(int32 port) {
+    string url = format("http://127.0.0.1:{}/stream", port);
+    func<void, string> onChunk = collectStream;
+    std.http.HttpResponse* response = std.http.fetchStream(url, onChunk);
+    int32 ok = 0;
+    if (response != null) {
+        if (response.statusCode == 200 &&
+            response.body == "stream-body" &&
+            StreamState.body == "stream-body" &&
+            StreamState.chunks > 0) {
+            ok = 1;
+        }
+        delete response;
+    }
+    return ok;
+}
+
+async int32 doMultipart(int32 port) {
+    string url = format("http://127.0.0.1:{}/upload", port);
+    std.form.FormData* form = new std.form.FormData();
+    defer delete form;
+    form.addEntry(std.form.createEntry("title", "Absolute"));
+    form.addEntry(std.form.createFileEntry(
+        "source", "int32 main() {}", "main.abs", "text/plain"));
+    std.http.HttpResponse* response =
+        std.http.postMultipart(url, form, "absolute-test-boundary");
+    int32 ok = 0;
+    if (response != null) {
+        if (response.statusCode == 200 && response.body == "upload-ok") {
+            ok = 1;
+        }
+        delete response;
+    }
+    return ok;
+}
+
+async int32 main() {
+    std.http.Headers* headerModel = new std.http.Headers();
+    headerModel.add("X-First", "one");
+    headerModel.put("x-first", "two");
+    headerModel.add("X-Second", "three");
+    assert(headerModel.count == 2, "headers count");
+    assert(headerModel.contains("X-FIRST"), "headers case insensitive");
+    assert(headerModel.value("x-first") == "two", "headers put");
+    headerModel.remove("X-SECOND");
+    assert(headerModel.count == 1, "headers remove");
+    delete headerModel;
+
+    std.http.RequestOptions* cancelledOptions =
+        new std.http.RequestOptions();
+    cancelledOptions.cancellation.cancel();
+    bool cancellationCaught = false;
+    try {
+        std.http.HttpResponse* unexpected =
+            std.http.fetch("http://127.0.0.1:1/cancelled", cancelledOptions);
+        delete unexpected;
+    }
+    catch (Error* error) {
+        cancellationCaught = true;
+    }
+    assert(cancellationCaught, "pre-cancelled request");
+    delete cancelledOptions;
+
+    std.http.HttpServer* server = new std.http.HttpServer();
+    bool listening = server.listen("127.0.0.1", 0);
+    assert(listening, "server listen failed");
+    int32 serverPort = server.port();
+    assert(serverPort > 0, "server port invalid");
+
+    task<int32> fetchTask = spawn doFetch(serverPort);
+    std.http.HttpContext* fetchContext = server.accept();
+    assert(fetchContext != null, "fetch context null");
+    assert(fetchContext.request.method == "GET", "fetch method");
+    assert(fetchContext.request.url == "/test", "fetch url");
+    assert(fetchContext.request.headers.value("Host") == "127.0.0.1",
+        "host request header");
+    fetchContext.send(200, "text/plain", "Hello HTTP!");
+    delete fetchContext;
+    assert(await fetchTask == 1, "fetch response mismatch");
+
+    task<int32> postTask = spawn doPost(serverPort);
+    std.http.HttpContext* postContext = server.accept();
+    assert(postContext != null, "post context null");
+    assert(postContext.request.method == "POST", "post method");
+    assert(postContext.request.body == "ping", "post body");
+    assert(postContext.request.headers.value("Content-Type") == "text/plain",
+        "post content type");
+    postContext.send(200, "text/plain", "pong");
+    delete postContext;
+    assert(await postTask == 1, "post response mismatch");
+
+    task<int32> headerTask = spawn doCustomHeaders(serverPort);
+    std.http.HttpContext* headerContext = server.accept();
+    assert(headerContext != null, "header context null");
+    assert(headerContext.request.headers.value("x-request-id") ==
+        "absolute-42", "custom request header");
+    std.http.Headers* responseHeaders = new std.http.Headers();
+    responseHeaders.put("Content-Type", "text/plain");
+    responseHeaders.put("X-Response-Id", "server-42");
+    headerContext.send(200, responseHeaders, "headers-ok");
+    delete responseHeaders;
+    delete headerContext;
+    assert(await headerTask == 1, "custom headers mismatch");
+
+    task<int32> redirectTask = spawn doRedirect(serverPort);
+    std.http.HttpContext* redirectContext = server.accept();
+    assert(redirectContext.request.url == "/redirect", "redirect source");
+    std.http.Headers* redirectHeaders = new std.http.Headers();
+    redirectHeaders.put("Location", "/redirected");
+    redirectContext.send(302, redirectHeaders, "");
+    delete redirectHeaders;
+    delete redirectContext;
+    std.http.HttpContext* redirectedContext = server.accept();
+    assert(redirectedContext.request.url == "/redirected",
+        "redirect target");
+    std.http.Headers* redirectedHeaders = new std.http.Headers();
+    redirectedHeaders.put("Content-Type", "text/plain");
+    redirectedHeaders.put("X-Redirected", "yes");
+    redirectedContext.send(200, redirectedHeaders, "redirect-ok");
+    delete redirectedHeaders;
+    delete redirectedContext;
+    assert(await redirectTask == 1, "redirect mismatch");
+
+    task<int32> streamTask = spawn doStream(serverPort);
+    std.http.HttpContext* streamContext = server.accept();
+    assert(streamContext.request.url == "/stream", "stream target");
+    streamContext.send(200, "text/plain", "stream-body");
+    delete streamContext;
+    assert(await streamTask == 1, "stream body mismatch");
+
+    task<int32> multipartTask = spawn doMultipart(serverPort);
+    std.http.HttpContext* multipartContext = server.accept();
+    assert(multipartContext.request.url == "/upload", "multipart target");
+    assert(multipartContext.request.headers.value("Content-Type") ==
+        "multipart/form-data; boundary=absolute-test-boundary",
+        "multipart content type");
+    std.form.FormData* parsed = std.form.parseMultipart(
+        multipartContext.request.body, "absolute-test-boundary");
+    assert(parsed.getValue("title") == "Absolute", "multipart text field");
+    std.form.FormEntry source = parsed.getEntry("source");
+    assert(source.isFile, "multipart file marker");
+    assert(source.filename == "main.abs", "multipart filename");
+    assert(source.contentType == "text/plain", "multipart mime");
+    assert(source.value == "int32 main() {}", "multipart file body");
+    delete parsed;
+    multipartContext.send(200, "text/plain", "upload-ok");
+    delete multipartContext;
+    assert(await multipartTask == 1, "multipart response mismatch");
+
+    server.close();
+    delete server;
+    println("std-http=ok");
+    return 0;
+}

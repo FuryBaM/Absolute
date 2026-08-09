@@ -1,0 +1,33 @@
+import "../std/log.abs";
+
+int32 main() {
+    std.log.setMinLevel(std.log.Level.Info);
+    assert(std.log.isEnabled(), "logging enabled by default");
+    assert(std.log.minLevel() == std.log.Level.Info, "default min level is Info");
+    assert(!std.log.isEnabled(std.log.Level.Debug), "debug filtered at Info");
+    assert(std.log.isEnabled(std.log.Level.Info), "info enabled");
+    assert(std.log.isEnabled(std.log.Level.Error), "error enabled");
+    assert(!std.log.isEnabled(std.log.Level.Off), "off never logs");
+
+    std.log.info("std-log info line");
+    std.log.warn("std-log warn line");
+    std.log.error("std-log error line");
+    std.log.debug("std-log debug should be silent");
+
+    std.log.setMinLevel(std.log.Level.Debug);
+    assert(std.log.isEnabled(std.log.Level.Debug), "debug enabled after setMinLevel");
+    std.log.debug("std-log debug line");
+
+    std.log.setMinLevel(std.log.Level.Off);
+    assert(!std.log.isEnabled(std.log.Level.Error), "all levels off");
+    std.log.error("std-log should be silent when off");
+
+    std.log.setEnabled(false);
+    std.log.setMinLevel(std.log.Level.Trace);
+    assert(!std.log.isEnabled(std.log.Level.Trace), "disabled logger emits nothing");
+    std.log.setEnabled(true);
+    std.log.setMinLevel(std.log.Level.Info);
+
+    println("std-log=ok");
+    return 0;
+}

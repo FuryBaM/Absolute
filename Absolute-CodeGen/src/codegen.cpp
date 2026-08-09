@@ -26,10 +26,16 @@ namespace Absolute {
             llvm::Value* right = comparison.getOperand(1);
 
             if (llvm::isa<llvm::Constant>(left) || llvm::isa<llvm::Constant>(right)) {
+#if LLVM_VERSION_MAJOR >= 19
                 llvm::Constant* result = lazyValues.getPredicateAt(
                     predicate, left, right, context, true);
                 if (const auto* known = llvm::dyn_cast_or_null<llvm::ConstantInt>(result))
                     if (known->isOne()) return true;
+#else
+                if (lazyValues.getPredicateAt(
+                        predicate, left, right, context, true) == llvm::LazyValueInfo::True)
+                    return true;
+#endif
             }
 
             if (!left->getType()->isIntegerTy() || left->getType() != right->getType())
@@ -52,6 +58,7 @@ namespace Absolute {
             if (const auto* constant = llvm::dyn_cast<llvm::ConstantInt>(value))
                 return constant->isOne() == expected;
 
+#if LLVM_VERSION_MAJOR >= 19
             llvm::Constant* known = lazyValues.getPredicateAt(
                 llvm::CmpInst::ICMP_EQ,
                 value,
@@ -60,6 +67,15 @@ namespace Absolute {
                 true);
             if (const auto* result = llvm::dyn_cast_or_null<llvm::ConstantInt>(known))
                 if (result->isOne()) return true;
+#else
+            if (lazyValues.getPredicateAt(
+                    llvm::CmpInst::ICMP_EQ,
+                    value,
+                    llvm::ConstantInt::get(value->getType(), expected),
+                    context,
+                    true) == llvm::LazyValueInfo::True)
+                return true;
+#endif
 
             if (const auto* comparison = llvm::dyn_cast<llvm::ICmpInst>(value)) {
                 if (IsKnownIntegerComparison(
@@ -134,9 +150,11 @@ namespace Absolute {
                 }
 
                 for (auto& [branch, success] : rewrites) {
-                    llvm::BranchInst::Create(success, branch);
+                    llvm::IRBuilder<> rewriteBuilder(branch);
+                    rewriteBuilder.CreateBr(success);
                     branch->eraseFromParent();
                 }
+
                 return rewrites.empty()
                     ? llvm::PreservedAnalyses::all()
                     : llvm::PreservedAnalyses::none();
@@ -152,86 +170,30 @@ namespace Absolute {
         }
     }
 
+    void AddAbsoluteOptimizationPassesToPipeline(llvm::ModulePassManager& passes) {
+        AddAbsoluteOptimizationPasses(passes);
+    }
+
     CodeGenerator::CodeGenerator(const Analyzer* analyzer)
         : impl(std::make_unique<Impl>(*this, analyzer)) {
     }
 
     CodeGenerator::~CodeGenerator() = default;
 
-    std::string CodeGenerator::Generate(Program& program, const std::string& moduleName) {
-        return impl->Generate(program, moduleName);
+    std::string CodeGenerator::Generate(Program& program, const std::string& moduleName,
+        const std::string& targetTriple,
+        std::optional<OptimizationLevel> optimizationLevel,
+        bool debugInfo) {
+        return impl->Generate(
+            program, moduleName, targetTriple, optimizationLevel, debugInfo);
     }
 
     void CodeGenerator::GenerateObject(
-        Program& program, const std::string& moduleName, const std::string& outputPath) {
-        static std::once_flag initializeTarget;
-        std::call_once(initializeTarget, [] {
-            if (llvm::InitializeNativeTarget())
-                throw std::runtime_error("LLVM codegen: failed to initialize the native target");
-            if (llvm::InitializeNativeTargetAsmPrinter())
-                throw std::runtime_error("LLVM codegen: failed to initialize the native assembly printer");
-        });
-
-        const std::string triple = llvm::sys::getDefaultTargetTriple();
-        std::string targetError;
-        const llvm::Target* target = llvm::TargetRegistry::lookupTarget(triple, targetError);
-        if (!target)
-            throw std::runtime_error("cannot select target '" + triple + "': " + targetError);
-
-        llvm::TargetOptions options;
-        const std::string cpu = llvm::sys::getHostCPUName().str();
-        std::unique_ptr<llvm::TargetMachine> targetMachine(target->createTargetMachine(
-            triple, cpu.empty() ? "generic" : cpu, "", options, llvm::Reloc::PIC_,
-            std::nullopt, llvm::CodeGenOptLevel::Aggressive));
-        if (!targetMachine)
-            throw std::runtime_error("cannot create target machine for '" + triple + "'");
-
-        const std::string dataLayout =
-            targetMachine->createDataLayout().getStringRepresentation();
-        llvm::Module& generatedModule =
-            impl->BuildModule(program, moduleName, triple, dataLayout);
-
-        llvm::LoopAnalysisManager loopAnalyses;
-        llvm::FunctionAnalysisManager functionAnalyses;
-        llvm::CGSCCAnalysisManager cgsccAnalyses;
-        llvm::ModuleAnalysisManager moduleAnalyses;
-        llvm::PassBuilder passBuilder(targetMachine.get());
-        passBuilder.registerModuleAnalyses(moduleAnalyses);
-        passBuilder.registerCGSCCAnalyses(cgsccAnalyses);
-        passBuilder.registerFunctionAnalyses(functionAnalyses);
-        passBuilder.registerLoopAnalyses(loopAnalyses);
-        passBuilder.crossRegisterProxies(
-            loopAnalyses, functionAnalyses, cgsccAnalyses, moduleAnalyses);
-
-        llvm::ModulePassManager optimizationPasses =
-            passBuilder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
-        AddAbsoluteOptimizationPasses(optimizationPasses);
-        optimizationPasses.run(generatedModule, moduleAnalyses);
-
-        std::string verifierMessage;
-        llvm::raw_string_ostream verifierStream(verifierMessage);
-        if (llvm::verifyModule(generatedModule, &verifierStream)) {
-            verifierStream.flush();
-            throw std::runtime_error(
-                "optimized module verification failed: " + verifierMessage);
-        }
-
-        std::error_code error;
-        llvm::raw_fd_ostream output(outputPath, error, llvm::sys::fs::OF_None);
-        if (error)
-            throw std::runtime_error(
-                "cannot create object file '" + outputPath + "': " + error.message());
-
-        llvm::legacy::PassManager emissionPasses;
-#if LLVM_VERSION_MAJOR >= 18
-        constexpr llvm::CodeGenFileType fileType = llvm::CodeGenFileType::ObjectFile;
-#else
-        constexpr llvm::CodeGenFileType fileType = llvm::CGFT_ObjectFile;
-#endif
-        if (targetMachine->addPassesToEmitFile(
-            emissionPasses, output, nullptr, fileType))
-            throw std::runtime_error("target cannot emit an object file");
-        emissionPasses.run(generatedModule);
-        output.flush();
+        Program& program, const std::string& moduleName, const std::string& outputPath,
+        bool sanitizeAddress, const std::string& targetTriple,
+        OptimizationLevel optimizationLevel, bool debugInfo) {
+        impl->GenerateObject(
+            program, moduleName, outputPath, sanitizeAddress,
+            targetTriple, optimizationLevel, debugInfo);
     }
 }

@@ -1,5 +1,33 @@
 using Count = int32;
 using Counts = int32[];
+
+// These share their names with C runtime entry points that the generated code
+// and the Absolute runtime both call. They must not take over those symbols,
+// or managed allocation starts running user code and the process corrupts
+// itself. Zero-argument cases matter too: parameter types alone would not
+// make the link name unique.
+int32 free(int32 value) {
+    return value + 1;
+}
+
+int32 malloc(int32 value) {
+    return value + 2;
+}
+
+int32 abort() {
+    return 7;
+}
+
+// A sized declarator on the name declares an array for a user-defined element
+// type too, not only for a primitive one.
+struct GridCell {
+    public int32 row;
+    public int32 column;
+}
+
+int32 printf() {
+    return 9;
+}
 using FutureRecord = Record;
 using IntegerBox = Box<int32>;
 
@@ -27,6 +55,15 @@ Count add(const Count left, Count right) {
     return left + right;
 }
 
+class ShortCircuitState {
+    public static int32 calls = 0;
+}
+
+bool shortCircuitProbe() {
+    ShortCircuitState.calls = ShortCircuitState.calls + 1;
+    return true;
+}
+
 int32 main() {
     const Count answer = add(40, 2);
     Counts values = {20, 22};
@@ -39,6 +76,45 @@ int32 main() {
     assert(values[0] + values[1] == 42, "array type alias");
     assert(score == 42, "namespace type alias");
     assert(box.read() == 42, "generic specialization through alias");
+
+    assert(!(false && shortCircuitProbe()), "false && must skip the right operand");
+    assert(true || shortCircuitProbe(), "true || must skip the right operand");
+    assert(ShortCircuitState.calls == 0, "skipped logical operands must have no side effects");
+    assert(true && shortCircuitProbe(), "true && must evaluate the right operand");
+    assert(false || shortCircuitProbe(), "false || must evaluate the right operand");
+    assert(ShortCircuitState.calls == 2, "required logical operands must run exactly once");
+
+    int32[] empty = new int32[0];
+    assert(!(empty.length > 0 && empty[0] == 1),
+        "short-circuit and must protect guarded array access");
+    assert(empty.length == 0 || empty[0] == 1,
+        "short-circuit or must protect guarded array access");
+
+    assert(free(1) == 2 && malloc(1) == 3 && abort() == 7 && printf() == 9,
+        "functions named after C runtime symbols keep their own behavior");
+    int32* reservedNameHeap = new int32(41);
+    assert(*reservedNameHeap + 1 == 42,
+        "managed allocation still works beside those definitions");
+    delete reservedNameHeap;
+
+    GridCell cells[3];
+    int32 cellIndex = 0;
+    while (cellIndex < 3) {
+        cells[cellIndex].row = cellIndex;
+        cells[cellIndex].column = cellIndex * 2;
+        cellIndex += 1;
+    }
+    assert(cells[2].row == 2 && cells[2].column == 4,
+        "a sized declarator declares an array of a user-defined type");
+    GridCell single;
+    single.row = 5;
+    assert(single.row == 5, "an inline value declaration is still not an array");
+
+    int32 dividend = 84;
+    int32 divisor = 2;
+    assert(dividend / divisor == 42 && dividend % 5 == 4,
+        "checked division still computes the right answer");
+
     println("base-language=ok");
     return 0;
 }

@@ -8,6 +8,8 @@
 
         std::string DeclaredTypeName(VarDeclExpr& expression);
 
+        std::string CallableParameterTypeName(VarDeclExpr& expression);
+
         std::string QualifiedClassName(const std::string& name, const std::string& nameSpace) const;
 
         void CollectClass(ClassDeclStmt& statement, const std::string& nameSpace,
@@ -18,7 +20,9 @@
             const std::string& specializedName = {},
             std::unordered_map<std::string, std::string> substitutions = {});
 
-        void CollectInterface(InterfaceDeclStmt& statement, const std::string& nameSpace);
+        void CollectInterface(InterfaceDeclStmt& statement, const std::string& nameSpace,
+            const std::string& specializedName = {},
+            std::unordered_map<std::string, std::string> substitutions = {});
 
         void CollectClassDeclarations(const std::vector<std::unique_ptr<Statement>>& statements,
             const std::string& nameSpace = {});
@@ -29,7 +33,6 @@
 
         void FinalizeStruct(const std::string& name);
 
-        bool SameMethodSignature(FunctionDeclStmt& left, FunctionDeclStmt& right);
 
         void FinalizeClass(const std::string& name);
 
@@ -38,6 +41,15 @@
         llvm::Function* DeclareMethodFunction(const ClassMethod& method);
 
         bool ClassNeedsConstructor(const ClassInfo& info) const;
+        std::string ConstructorLinkName(const std::string& typeName,
+            const std::vector<std::string>& parameterTypes) const;
+        std::vector<std::string> ConstructorParameterTypeNames(
+            ConstructorDeclStmt* constructor,
+            const std::unordered_map<std::string, std::string>& substitutions);
+        llvm::Function* LookupConstructorFunction(
+            const std::string& typeName, Expression* call);
+        llvm::Function* DeclareConstructorFunction(
+            ClassInfo& info, ConstructorDeclStmt* constructor);
 
         bool RuntimeTypeDerivesFrom(const std::string& type, const std::string& base) const;
 

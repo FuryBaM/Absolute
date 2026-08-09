@@ -1,0 +1,40 @@
+class GraphNode {
+    public int32 value;
+    public GraphNode* child;
+    public weak GraphNode* parent;
+
+    public GraphNode(int32 initial) {
+        value = initial;
+        child = null;
+        parent = null;
+    }
+
+    public void createChild(int32 initial) {
+        child = new GraphNode(initial);
+    }
+}
+
+int32 main() {
+    GraphNode* root = new GraphNode(10);
+    root.createChild(20);
+    root.child.parent = root;
+    root.child.createChild(12);
+    root.child.child.parent = root.child;
+
+    weak GraphNode* childObserver = root.child;
+    weak GraphNode* grandchildObserver = root.child.child;
+    assert(childObserver.parent.value == 10, "weak parent points to the owning root");
+    assert(grandchildObserver.parent.value == 20, "nested weak parent points to its owner");
+
+    delete root;
+    assert(!childObserver, "recursive destruction expires the child observer");
+    assert(!grandchildObserver, "recursive destruction expires the grandchild observer");
+
+    GraphNode* replacement = new GraphNode(42);
+    assert(!childObserver, "slot reuse cannot revive a node from the old graph");
+    assert(!grandchildObserver, "generation checks keep the whole old graph expired");
+    delete replacement;
+
+    println("managed-graphs=ok");
+    return 0;
+}

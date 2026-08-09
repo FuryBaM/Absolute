@@ -1,6 +1,8 @@
 int32 main() {
     assert(Math.abs(-3.5) > 3.49, "abs");
     assert(Math.abs(-3) == 3, "abs overload");
+    float floatValue = -2.5 as float;
+    assert(Math.abs(floatValue) > 2.49, "float abs overload");
     assert(Math.sqrt(81.0) > 8.999, "sqrt");
     assert(Math.sin(1.5707963267948966) > 0.999, "sin");
     assert(Math.abs(Math.cos(3.141592653589793) + 1.0) < 0.001, "cos");
@@ -8,9 +10,11 @@ int32 main() {
     auto vector2 = new vec2(3.0, 4.0);
     auto vector2Offset = new vec2(1.0, 2.0);
     auto vector2Sum = vector2 + vector2Offset;
+    auto vector2Half = vector2 / 2.0;
     assert(Math.abs(Math.vec2Length(vector2) - 5.0) < 0.0001, "vec2 length");
     assert(Math.abs(vector2.length() - 5.0) < 0.0001, "vec2 length extension");
     assert(Math.abs(Math.vec2Dot(vector2Sum, vector2Offset) - 16.0) < 0.0001, "vec2 dot");
+    assert(Math.abs(vector2Half.y - 2.0) < 0.0001, "vec2 divide");
 
     auto eye = new vec3(0.0, 0.0, 1.0);
     auto center = new vec3(0.0, 0.0, 0.0);
@@ -24,6 +28,17 @@ int32 main() {
     assert(Math.abs(Math.vec3Dot(vector3Sum, up) - 1.0) < 0.0001, "vec3 add");
     assert(Math.abs(scaled.x - 2.0) < 0.0001, "vec3 scale");
     assert(Math.abs(typedVector.y + 1.0) < 0.0001, "explicit vec3 type");
+    auto diagonal = right + up;
+    auto normalized = diagonal.normalized();
+    assert(Math.abs(normalized.length() - 1.0) < 0.0001, "vec3 normalized method");
+    float[] packed3 = normalized.toFloatArray();
+    assert(packed3.length == 3, "vec3 float packing");
+
+    auto color = new vec4(0.25, 0.5, 0.75, 1.0);
+    auto brighter = color * 2.0;
+    assert(Math.abs(brighter.z - 1.5) < 0.0001, "vec4 scalar operator");
+    float[] packed4 = color.toFloatArray();
+    assert(packed4.length == 4, "vec4 float packing");
 
     auto identity3 = new mat3();
     Math.mat3Identity(identity3);
@@ -43,6 +58,11 @@ int32 main() {
     Math.mat4Identity(identity4);
     auto combined = identity4 * view;
     assert(Math.abs(combined.m23 + 1.0) < 0.0001, "mat4 multiply");
+    auto transformed = identity4 * new vec4(2.0, 3.0, 4.0, 1.0);
+    assert(Math.abs(transformed.z - 4.0) < 0.0001, "mat4 vec4 multiply");
+
+    assert(Math.clamp(2.0, 0.0, 1.0) == 1.0, "clamp");
+    assert(Math.abs(Math.degrees(Math.radians(90.0)) - 90.0) < 0.0001, "angle conversion");
 
     println("math-plugin=ok");
     return 0;

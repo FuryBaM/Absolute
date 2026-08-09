@@ -1,0 +1,103 @@
+// Constructor overloads for classes and structs.
+
+class Point {
+    public int32 x;
+    public int32 y;
+
+    public Point() {
+        x = 0;
+        y = 0;
+    }
+
+    public Point(int32 value) {
+        x = value;
+        y = value;
+    }
+
+    public Point(int32 px, int32 py) {
+        x = px;
+        y = py;
+    }
+
+    public int32 sum() {
+        return x + y;
+    }
+}
+
+class NamedPoint : Point {
+    public string label;
+
+    public NamedPoint() {
+        base();
+        label = "origin";
+    }
+
+    public NamedPoint(int32 value, string name) {
+        base(value);
+        label = name;
+    }
+
+    public NamedPoint(int32 px, int32 py, string name) {
+        base(px, py);
+        label = name;
+    }
+}
+
+struct Size {
+    public int32 w;
+    public int32 h;
+
+    public Size() {
+        w = 1;
+        h = 1;
+    }
+
+    public Size(int32 edge) {
+        w = edge;
+        h = edge;
+    }
+
+    public Size(int32 width, int32 height) {
+        w = width;
+        h = height;
+    }
+
+    public int32 area() {
+        return w * h;
+    }
+}
+
+int32 main() {
+    Point* a = new Point();
+    assert(a.sum() == 0, "default class ctor");
+
+    Point* b = new Point(3);
+    assert(b.sum() == 6, "single-arg class ctor");
+
+    Point* c = new Point(2, 5);
+    assert(c.sum() == 7, "two-arg class ctor");
+
+    NamedPoint* n0 = new NamedPoint();
+    assert(n0.sum() == 0, "derived default ctor base()");
+    assert(n0.label == "origin", "derived default label");
+
+    NamedPoint* n1 = new NamedPoint(4, "square");
+    assert(n1.sum() == 8, "derived base(int)");
+    assert(n1.label == "square", "derived label");
+
+    NamedPoint* n2 = new NamedPoint(1, 2, "pair");
+    assert(n2.sum() == 3, "derived base(int,int)");
+    assert(n2.label == "pair", "derived label 2");
+
+    Size s0;
+    assert(s0.area() == 1, "default struct ctor");
+
+    Size* s1 = new Size(3);
+    assert(s1.area() == 9, "single-arg struct ctor");
+
+    Size* s2 = new Size(2, 4);
+    assert(s2.area() == 8, "two-arg struct ctor");
+
+    println("constructor-overloads=ok");
+    return 0;
+}

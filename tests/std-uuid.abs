@@ -1,0 +1,55 @@
+import "../std/uuid.abs";
+
+int32 main() {
+    Uuid empty = std.uuid.nil();
+    assert(std.uuid.isNil(empty), "nil UUID");
+    assert(std.uuid.toString(empty) == "00000000-0000-0000-0000-000000000000",
+        "nil UUID formatting");
+
+    Uuid known = std.uuid.parse("550E8400-E29B-41D4-A716-446655440000");
+    assert(std.uuid.toString(known) == "550e8400-e29b-41d4-a716-446655440000",
+        "UUID canonical lowercase formatting");
+    assert(std.uuid.version(known) == 4, "UUID version");
+    assert(std.uuid.variant(known) == 2, "RFC UUID variant");
+    assert(std.uuid.equals(known, std.uuid.fromBytes(std.uuid.toBytes(known))),
+        "UUID byte round trip");
+
+    Uuid first = std.uuid.random();
+    Uuid second = std.uuid.random();
+    assert(!std.uuid.isNil(first), "random UUID must not be nil");
+    assert(!std.uuid.equals(first, second), "successive random UUIDs must differ");
+    assert(std.uuid.version(first) == 4, "random UUID version 4");
+    assert(std.uuid.variant(first) == 2, "random UUID RFC variant");
+    assert(std.uuid.equals(first, std.uuid.parse(std.uuid.toString(first))),
+        "random UUID text round trip");
+    Uuid previous = second;
+    int32 generated = 0;
+    while (generated < 1024) {
+        Uuid current = std.uuid.random();
+        assert(std.uuid.version(current) == 4 && std.uuid.variant(current) == 2,
+            "random UUID bits must remain stable");
+        assert(!std.uuid.equals(previous, current),
+            "adjacent random UUIDs must differ");
+        previous = current;
+        generated = generated + 1;
+    }
+
+    bool rejected = false;
+    try { std.uuid.parse("550e8400e29b41d4a716446655440000"); }
+    catch (Error* error) { rejected = true; }
+    assert(rejected, "UUID without canonical separators must fail");
+
+    rejected = false;
+    try { std.uuid.parse("550e8400-e29b-41d4-a716-44665544000z"); }
+    catch (Error* error) { rejected = true; }
+    assert(rejected, "UUID with invalid hex must fail");
+
+    uint8[] shortBytes = new uint8[15];
+    rejected = false;
+    try { std.uuid.fromBytes(shortBytes); }
+    catch (Error* error) { rejected = true; }
+    assert(rejected, "UUID byte length must be exact");
+
+    println("std-uuid=ok");
+    return 0;
+}

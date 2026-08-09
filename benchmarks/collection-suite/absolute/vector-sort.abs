@@ -1,0 +1,49 @@
+import "std/collections/vector.abs";
+
+int32 main() {
+    int32 SIZE = 100000;
+    std.collections.Vector<int32>* values = new std.collections.Vector<int32>();
+
+    // generate pseudorandom values
+    uint32 state = 123456789;
+    int32 i = 0;
+    while (i < SIZE) {
+        state = state * 1664525 + 1013904223;
+        values.push(state as int32);
+        i += 1;
+    }
+
+    // insertion sort (безопасный доступ по индексам через break)
+    int32 outer = 1;
+    while (outer < SIZE) {
+        int32 key = values[outer];
+        int32 j = outer - 1;
+
+        while (j >= 0) {
+            int32 cur = values[j];
+            if (cur <= key) {
+                break;
+            }
+            values[j + 1] = cur;
+            j -= 1;
+        }
+
+        values[j + 1] = key;
+        outer += 1;
+    }
+
+    // checksum calculation
+    int64 checksum = 0;
+    i = 0;
+    while (i < SIZE) {
+        checksum += values[i];
+        i += 1;
+    }
+    int32 first = values[0];
+    int32 last = values[SIZE - 1];
+    checksum += (first as int64) * 31;
+    checksum += (last as int64) * 17;
+
+    println(checksum);
+    return 0;
+}

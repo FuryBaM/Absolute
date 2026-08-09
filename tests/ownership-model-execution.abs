@@ -1,0 +1,51 @@
+class Document {
+    public string title;
+    public Document(string t) {
+        title = t;
+    }
+}
+
+void printDoc(Document* d) {
+    print(d.title);
+    print(";");
+}
+
+void processView(Document* doc) {
+    // doc is a borrowing view (ManagedSub)
+    printDoc(doc);
+}
+
+void processOwnerAndBorrow(Document* doc) {
+    // move at the call site makes doc the owner inside processOwnerAndBorrow
+    printDoc(doc); // passes View to printDoc
+}
+
+void saveToDatabase(Document* d) {
+    print("saved:");
+    print(d.title);
+    print(";");
+}
+
+void processOwnerAndTransfer(Document* doc) {
+    // doc owns here, then move transfers it further to saveToDatabase
+    saveToDatabase(move(doc));
+}
+
+void main() {
+    Document* test1 = new Document("Doc1");
+    Document* test2 = test1;
+
+    // 1. Pass View: test1 remains valid owner
+    processView(test1);
+    processView(test2);
+    assert(test1.title == "Doc1", "test1 valid after view pass");
+
+    // 2. Pass Owner: test1 transferred via move(test1)
+    processOwnerAndBorrow(move(test1));
+
+    // 3. Create test3 and transfer via move(test3) -> processOwnerAndTransfer -> saveToDatabase
+    Document* test3 = new Document("Doc2");
+    processOwnerAndTransfer(move(test3));
+
+    print("ownership-model-execution=ok");
+}

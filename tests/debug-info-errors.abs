@@ -1,0 +1,4 @@
+int32 main() {
+    debugBreak(1);
+    return 0;
+}

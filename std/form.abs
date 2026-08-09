@@ -1,0 +1,231 @@
+import "string.abs";
+import "uri.abs";
+import "collections/vector.abs";
+
+namespace std.form {
+    struct FormEntry {
+        public string name;
+        public string value;
+        public string filename;
+        public string contentType;
+        public bool isFile;
+
+        public FormEntry clone() const {
+            FormEntry e;
+            e.name = name;
+            e.value = value;
+            e.filename = filename;
+            e.contentType = contentType;
+            e.isFile = isFile;
+            return e;
+        }
+    }
+
+    FormEntry createEntry(string nameVal, string valueVal) {
+        FormEntry entry;
+        entry.name = nameVal;
+        entry.value = valueVal;
+        entry.filename = "";
+        entry.contentType = "";
+        entry.isFile = false;
+        return entry;
+    }
+
+    FormEntry createFileEntry(string nameVal, string valueVal, string fileVal, string mimeVal) {
+        FormEntry entry;
+        entry.name = nameVal;
+        entry.value = valueVal;
+        entry.filename = fileVal;
+        entry.contentType = mimeVal;
+        entry.isFile = fileVal != "";
+        return entry;
+    }
+
+    class FormData {
+        public std.collections.Vector<FormEntry>* entries;
+
+        public FormData() {
+            entries = new std.collections.Vector<FormEntry>();
+        }
+
+        public void addEntry(FormEntry entry) {
+            entries.push(move(entry));
+        }
+
+        public int32 size() {
+            return entries.count;
+        }
+
+        public string getValue(string name) {
+            int32 i = 0;
+            while (i < entries.count) {
+                FormEntry e = entries[i];
+                if (e.name == name) {
+                    return e.value;
+                }
+                i = i + 1;
+            }
+            return "";
+        }
+
+        public bool has(string name) {
+            int32 i = 0;
+            while (i < entries.count) {
+                FormEntry e = entries[i];
+                if (e.name == name) {
+                    return true;
+                }
+                i = i + 1;
+            }
+            return false;
+        }
+
+        public FormEntry getEntry(string name) {
+            int32 i = 0;
+            while (i < entries.count) {
+                FormEntry e = entries[i];
+                if (e.name == name) {
+                    return e;
+                }
+                i = i + 1;
+            }
+            FormEntry dummy;
+            dummy.name = "";
+            dummy.value = "";
+            dummy.filename = "";
+            dummy.contentType = "";
+            dummy.isFile = false;
+            return dummy;
+        }
+
+        public void dispose() {
+            if (entries != null) {
+                entries = null;
+            }
+        }
+
+        public void destroy() {
+            dispose();
+        }
+    }
+
+    FormData* parseUrlEncoded(string body) {
+        FormData* form = new FormData();
+        if (body == "") { return form; }
+
+        string normalized = std.text.replace(body, "+", "%20");
+        int32 start = 0;
+        int32 len = std.text.codePointCount(normalized);
+
+        while (start < len) {
+            int32 ampIndex = std.text.indexOf(std.text.substring(normalized, start, len - start), "&");
+            string pair = "";
+            if (ampIndex >= 0) {
+                pair = std.text.substring(normalized, start, ampIndex);
+                start = start + ampIndex + 1;
+            } else {
+                pair = std.text.substring(normalized, start, len - start);
+                start = len;
+            }
+
+            if (pair != "") {
+                int32 eqIndex = std.text.indexOf(pair, "=");
+                string k = "";
+                string v = "";
+                if (eqIndex >= 0) {
+                    k = std.text.substring(pair, 0, eqIndex);
+                    v = std.text.substring(pair, eqIndex + 1, std.text.codePointCount(pair) - (eqIndex + 1));
+                } else {
+                    k = pair;
+                }
+
+                k = std.uri.decode(k);
+                v = std.uri.decode(v);
+
+                form.addEntry(createEntry(k, v));
+            }
+        }
+
+        return form;
+    }
+
+    FormData* parseMultipart(string body, string boundary) {
+        FormData* form = new FormData();
+        if (body == "" || boundary == "") { return form; }
+
+        string delimiter = format("--{}", boundary);
+        int32 start = 0;
+        int32 bodyLen = std.text.codePointCount(body);
+
+        while (start < bodyLen) {
+            int32 partPos = std.text.indexOf(std.text.substring(body, start, bodyLen - start), delimiter);
+            if (partPos < 0) { break; }
+
+            start = start + partPos + std.text.codePointCount(delimiter);
+
+            if (std.text.startsWith(std.text.substring(body, start, bodyLen - start), "--")) {
+                break;
+            }
+            if (std.text.startsWith(std.text.substring(body, start, bodyLen - start), "\r\n")) {
+                start = start + 2;
+            }
+
+            int32 nextDelim = std.text.indexOf(std.text.substring(body, start, bodyLen - start), delimiter);
+            string chunk = "";
+            if (nextDelim >= 0) {
+                chunk = std.text.substring(body, start, nextDelim);
+            } else {
+                chunk = std.text.substring(body, start, bodyLen - start);
+            }
+
+            int32 headerSep = std.text.indexOf(chunk, "\r\n\r\n");
+            if (headerSep >= 0) {
+                string headers = std.text.substring(chunk, 0, headerSep);
+                string partBody = std.text.substring(chunk, headerSep + 4, std.text.codePointCount(chunk) - (headerSep + 4));
+
+                if (std.text.endsWith(partBody, "\r\n")) {
+                    partBody = std.text.substring(partBody, 0, std.text.codePointCount(partBody) - 2);
+                }
+
+                string name = "";
+                string filename = "";
+                string contentType = "";
+
+                int32 namePos = std.text.indexOf(headers, "name=\"");
+                if (namePos >= 0) {
+                    string sub = std.text.substring(headers, namePos + 6, std.text.codePointCount(headers) - (namePos + 6));
+                    int32 quote = std.text.indexOf(sub, "\"");
+                    if (quote >= 0) {
+                        name = std.text.substring(sub, 0, quote);
+                    }
+                }
+
+                int32 fnPos = std.text.indexOf(headers, "filename=\"");
+                if (fnPos >= 0) {
+                    string sub = std.text.substring(headers, fnPos + 10, std.text.codePointCount(headers) - (fnPos + 10));
+                    int32 quote = std.text.indexOf(sub, "\"");
+                    if (quote >= 0) {
+                        filename = std.text.substring(sub, 0, quote);
+                    }
+                }
+
+                int32 ctPos = std.text.indexOf(headers, "Content-Type: ");
+                if (ctPos >= 0) {
+                    string sub = std.text.substring(headers, ctPos + 14, std.text.codePointCount(headers) - (ctPos + 14));
+                    int32 endLine = std.text.indexOf(sub, "\r\n");
+                    if (endLine >= 0) {
+                        contentType = std.text.substring(sub, 0, endLine);
+                    } else {
+                        contentType = sub;
+                    }
+                }
+
+                if (name != "") {
+                    form.addEntry(createFileEntry(name, partBody, filename, contentType));
+                }
+            }
+        }
+
+        return form;
+    }
+}

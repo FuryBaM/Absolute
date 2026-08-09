@@ -1,0 +1,89 @@
+// Soft immediate-mode UI toolkit demo.
+// Esc quit. Click buttons, toggle checkbox, drag slider.
+
+int32 main() {
+    auto window = new Desktop.Window("Absolute UI", 720, 420, false);
+    if (!window.isOpen()) {
+        println("Could not create desktop window");
+        return 1;
+    }
+
+    auto font = new Desktop.Font("Segoe UI", 18, Desktop.Font.StyleNormal);
+    auto ui = new Desktop.Ui(window, font);
+
+    int32 clicks = 0;
+    bool option = true;
+    float volume = 0.6;
+    float progress = 0.0;
+
+    while (window.poll()) {
+        if (window.keyPressed(Desktop.KeyEscape())) {
+            break;
+        } else {
+            double dt = window.deltaTime();
+            if (dt <= 0.0) {
+                dt = 0.016;
+            }
+            if (dt > 0.05) {
+                dt = 0.05;
+            }
+            progress = progress + (dt as float) * 0.15;
+            if (progress > 1.0) {
+                progress = progress - 1.0;
+            }
+
+            window.clear(ui.theme.background);
+            ui.begin();
+
+            ui.panel(24, 24, 400, 340);
+            ui.label(44, 44, "Desktop.Ui toolkit");
+            ui.labelDim(44, 72, "immediate-mode soft widgets");
+
+            if (ui.button(44, 110, 140, 36, "Click me")) {
+                clicks = clicks + 1;
+            }
+            if (ui.button(200, 110, 140, 36, "Reset")) {
+                clicks = 0;
+                option = true;
+                volume = 0.6;
+            }
+
+            // Show click count with built-in font (no string format API required).
+            window.drawText(44, 160, "clicks:", ui.theme.textDim, 2);
+            // Draw clicks as bar ticks.
+            int32 i = 0;
+            int32 n = clicks;
+            if (n > 20) {
+                n = 20;
+            }
+            while (i < n) {
+                window.fillRect(140 + i * 10, 164, 6, 14, ui.theme.accent);
+                i = i + 1;
+            }
+
+            option = ui.checkbox(44, 200, "Enable feature", option);
+            ui.labelDim(44, 240, "Volume");
+            volume = ui.slider(44, 268, 300, 18, volume, 0.0, 1.0);
+
+            ui.labelDim(44, 304, "Progress");
+            ui.progress(44, 328, 300, 14, progress);
+
+            // Side info panel.
+            ui.panel(448, 24, 240, 200);
+            ui.label(468, 44, "State");
+            if (option) {
+                ui.labelDim(468, 80, "option: on");
+            } else {
+                ui.labelDim(468, 80, "option: off");
+            }
+            // Volume as progress for visual feedback.
+            ui.progress(468, 120, 200, 12, volume);
+            ui.labelDim(468, 150, "drag slider / Esc quit");
+
+            ui.end();
+            window.present();
+        }
+    }
+
+    return 0;
+}

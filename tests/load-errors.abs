@@ -1,0 +1,9 @@
+int32 main() {
+    load();
+    load("first.dll", "second.dll");
+    load(42);
+    isLoaded();
+    isLoaded(42);
+    loadError("unexpected");
+    return 0;
+}

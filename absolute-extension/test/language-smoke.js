@@ -1,0 +1,173 @@
+'use strict';
+
+const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const lang = require('../server/language');
+const toolchain = require('../toolchain');
+
+const repo = path.resolve(__dirname, '..', '..');
+const metadata = path.join(repo, 'plugins', 'desktop', 'absolute-desktop.editor.json');
+const sourceFile = path.join(repo, 'examples', 'desktop', 'd3d-triangle.abs');
+const index = lang.loadEditorIndex([], [metadata]);
+const duplicateIndex = lang.loadEditorIndex([metadata], [metadata]);
+assert.strictEqual(
+    duplicateIndex.entries.filter(entry => entry.fullName === 'Desktop.Window').length,
+    1,
+    'duplicate editor sidecars must not duplicate completion entries'
+);
+
+function positionOf(text, needle, occurrence = 0, inside = 1) {
+    let offset = -1;
+    for (let index = 0; index <= occurrence; index += 1)
+        offset = text.indexOf(needle, offset + 1);
+    assert(offset >= 0, `missing test token: ${needle}`);
+    const offsets = lang.lineOffsets(text);
+    return lang.offsetToPosition(offsets, offset + inside);
+}
+
+const sample = [
+    'int32 main() {',
+    '    auto window = new Desktop.Window("Demo", 800, 450, true);',
+    '    auto gpu = new Desktop.Gpu(window, Desktop.Gpu.BackendAuto);',
+    '    window.poll();',
+    '    gpu.clear(0.1, 0.2, 0.3, 1.0);',
+    '}'
+].join('\n');
+
+const windowHover = lang.hoverFor(index, sample, positionOf(sample, 'window.poll', 0, 2));
+assert(windowHover.contents.value.includes('Desktop.Window* window'));
+assert(windowHover.contents.value.includes('automatic cleanup'));
+
+const pollHover = lang.hoverFor(index, sample, positionOf(sample, 'poll', 0, 2));
+assert(pollHover.contents.value.includes('bool poll()'));
+assert(pollHover.contents.value.includes('Desktop.Window'));
+
+const sealSample = 'raw void* capsule = seal(move(owner));';
+const sealHover = lang.hoverFor(index, sealSample, positionOf(sealSample, 'seal', 0, 2));
+assert(sealHover.contents.value.includes('seal<T>'));
+assert(sealHover.contents.value.includes('expires sender aliases'));
+
+const unsealSample = 'Job* owner = unseal<Job>(capsule);';
+const unsealHover = lang.hoverFor(index, unsealSample, positionOf(unsealSample, 'unseal', 0, 2));
+assert(unsealHover.contents.value.includes('unseal<T>'));
+assert(unsealHover.contents.value.includes('new managed owner'));
+
+const locatedDiagnostics = lang.parseCompilerDiagnostics(
+    `${path.join(repo, 'tests', 'array-errors.abs')}:4:5: ` +
+        'Semantic error: array initializer size does not match dimension 1',
+    path.join(repo, 'tests', 'array-errors.abs'),
+    'int32 main() {\n    int32 wrongSize[3] = {1, 2};\n}'
+);
+assert.strictEqual(locatedDiagnostics.length, 1);
+assert.deepStrictEqual(locatedDiagnostics[0].range.start,
+    { line: 3, character: 4 });
+assert.strictEqual(locatedDiagnostics[0].message,
+    'array initializer size does not match dimension 1');
+
+const asyncSource = 'async int32 managedCapture(Node* value) {\n    return 1;\n}';
+const asyncDiagnostic = lang.parseCompilerDiagnostics(
+    `${path.join(repo, 'tests', 'async-lifetime-errors.abs')}:1:34: ` +
+        "Semantic error: async parameter 'value' cannot capture 'Node*'",
+    path.join(repo, 'tests', 'async-lifetime-errors.abs'),
+    asyncSource
+);
+assert.deepStrictEqual(asyncDiagnostic[0].range,
+    {
+        start: { line: 0, character: 33 },
+        end: { line: 0, character: 38 }
+    },
+    'compiler diagnostics should underline the complete source token');
+
+const windowCompletion = lang.completionItems(
+    index,
+    `${sample}\nwindow.`,
+    positionOf(`${sample}\nwindow.`, 'window.', 1, 'window.'.length)
+);
+assert(windowCompletion.some(item => item.label === 'poll'));
+assert(!windowCompletion.some(item => item.label === 'createShader'));
+
+const signatureText = `${sample}\nwindow.fillRect(10, 20, `;
+const signature = lang.signatureHelpFor(
+    index,
+    signatureText,
+    lang.offsetToPosition(lang.lineOffsets(signatureText), signatureText.length)
+);
+assert(signature);
+assert.strictEqual(signature.signatures[0].label,
+    'void fillRect(int32 x, int32 y, int32 width, int32 height, uint32 color)');
+assert.strictEqual(signature.activeParameter, 2);
+
+const resolutionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'absolute-compiler-resolution-'));
+try {
+    const fakeCompiler = process.platform === 'win32'
+        ? path.join(resolutionRoot, '.absolute', 'build', 'windows-release', 'Release', 'absolutec.exe')
+        : path.join(resolutionRoot, '.absolute', 'build', 'release', 'absolutec');
+    fs.mkdirSync(path.dirname(fakeCompiler), { recursive: true });
+    fs.writeFileSync(fakeCompiler, '');
+    const resolutionRoots = toolchain.candidateRoots([resolutionRoot]);
+
+    const staleRootHint = path.join(resolutionRoot, 'absolutec');
+    assert.strictEqual(
+        toolchain.resolveCompilerPath(staleRootHint, resolutionRoots).path,
+        path.resolve(fakeCompiler),
+        'a stale workspace-root absolutec hint must fall back to the configured build layout'
+    );
+    assert.strictEqual(
+        toolchain.resolveCompilerPath(path.dirname(fakeCompiler), resolutionRoots).path,
+        path.resolve(fakeCompiler),
+        'a compiler directory hint must resolve the executable inside it'
+    );
+} finally {
+    fs.rmSync(resolutionRoot, { recursive: true, force: true });
+}
+
+const roots = toolchain.candidateRoots([repo]);
+const compiler = toolchain.resolveCompilerPath('auto', roots);
+assert(compiler.path, 'workspace compiler should be auto-detected');
+const discovered = toolchain.discoverPlugins(roots);
+assert(discovered.desktop, 'desktop plugin manifest should be auto-detected');
+const selected = toolchain.selectPluginsForSource(sourceFile, discovered, []);
+assert(selected.includes(discovered.desktop), 'Desktop source should select the desktop plugin');
+
+const diagnostics = lang.runCompilerDiagnostics(
+    sourceFile,
+    compiler.path,
+    toolchain.pluginArguments(selected)
+);
+assert.deepStrictEqual(diagnostics, []);
+
+const parsed = JSON.parse(fs.readFileSync(metadata, 'utf8'));
+assert.strictEqual(parsed.plugin, 'absolute.desktop');
+
+const preludeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'absolute-prelude-'));
+try {
+    const preludeFile = path.join(preludeRoot, 'api.abs');
+    const manifestFile = path.join(preludeRoot, 'file-prelude.absplugin');
+    fs.writeFileSync(preludeFile, [
+        'namespace FilePrelude {',
+        '    int32 answer() { return 42; }',
+        '}'
+    ].join('\n'));
+    fs.writeFileSync(manifestFile, JSON.stringify({
+        name: 'file.prelude',
+        version: '1.0.0',
+        abi: 1,
+        library: 'unused-for-editor.dll',
+        prelude: 'api.abs'
+    }, null, 2));
+    const preludeIndex = lang.loadEditorIndex([manifestFile], []);
+    assert(preludeIndex.namespaceNames.has('FilePrelude'));
+    assert(preludeIndex.functionNames.has('answer'));
+    const answerHover = lang.hoverFor(
+        preludeIndex,
+        'FilePrelude.answer();',
+        positionOf('FilePrelude.answer();', 'answer', 0, 2)
+    );
+    assert(answerHover.contents.value.includes('api.abs'));
+} finally {
+    fs.rmSync(preludeRoot, { recursive: true, force: true });
+}
+
+console.log('absolute-extension language/toolchain smoke: OK');

@@ -1,0 +1,34 @@
+class WeakTarget {
+    public int32 value;
+
+    public WeakTarget(int32 initial) {
+        value = initial;
+    }
+}
+
+weak WeakTarget* weakFromFreshOwner() {
+    WeakTarget* local = new WeakTarget(1);
+    return local;
+}
+
+async int32 captureWeak(weak WeakTarget* value) {
+    return value.value;
+}
+
+extern "C" weak WeakTarget* externalWeak();
+
+int32 main() {
+    weak WeakTarget* orphan = new WeakTarget(1);
+
+    WeakTarget* owner = new WeakTarget(2);
+    weak WeakTarget* observer = owner;
+    WeakTarget* promoted = observer;
+    delete observer;
+    weak WeakTarget* moved = move(observer);
+
+    raw WeakTarget* rawOwner = new raw WeakTarget(3);
+    weak WeakTarget* fromRaw = rawOwner;
+    delete rawOwner;
+    delete owner;
+    return promoted.value + moved.value + fromRaw.value + orphan.value;
+}

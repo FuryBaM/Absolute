@@ -1,0 +1,23 @@
+import "../std/string.abs";
+import "../std/uri.abs";
+
+int32 main() {
+    string rawUrl = "http://127.0.0.1:8080/api/v1/resource?user=john#section1";
+    std.uri.Uri* uri = std.uri.parse(rawUrl);
+
+    assert(uri.scheme == "http", "scheme match");
+    assert(uri.host == "127.0.0.1", "host match");
+    assert(uri.port == 8080, "port match");
+    assert(uri.path == "/api/v1/resource", "path match");
+    assert(uri.query == "user=john", "query match");
+    assert(uri.fragment == "section1", "fragment match");
+
+    string encoded = std.uri.encode("hello world <foo>");
+    assert(encoded == "hello%20world%20%3Cfoo%3E", "uri encode match");
+    assert(std.uri.decode(encoded) == "hello world <foo>", "uri decode match");
+
+    delete uri;
+
+    println("std-uri=ok");
+    return 0;
+}

@@ -1,0 +1,97 @@
+import "../std/task.abs";
+import "../std/concurrent.abs";
+
+async void completeChild(int64 counterAddress, int64 amount) {
+    std.task.delay(2);
+    raw void* counter = counterAddress as raw void*;
+    absolute_atomic_fetch_add(counter, amount);
+}
+
+async void cancellationChild(int64 counterAddress) {
+    while (!std.task.cancelled()) {
+        std.task.delay(1);
+    }
+    raw void* counter = counterAddress as raw void*;
+    absolute_atomic_fetch_add(counter, 1);
+}
+
+async void cancellationDescendant(int64 counterAddress) {
+    while (!std.task.cancelled()) {
+        std.task.delay(1);
+    }
+    raw void* counter = counterAddress as raw void*;
+    absolute_atomic_fetch_add(counter, 1);
+}
+
+async void cancellationParent(int64 counterAddress) {
+    task<void> descendant =
+        spawn cancellationDescendant(counterAddress);
+    await descendant;
+}
+
+async void deadlineDescendant(int64 counterAddress) {
+    int32 inherited = std.task.deadlineRemaining();
+    std.task.delay(1000);
+    if (inherited >= 0 && inherited <= 100 &&
+        std.task.cancelled() &&
+        std.task.deadlineRemaining() == 0) {
+        raw void* counter = counterAddress as raw void*;
+        absolute_atomic_fetch_add(counter, 1);
+    }
+}
+
+async void deadlineParent(int64 counterAddress) {
+    std.task.setDeadlineAfter(30);
+    task<void> descendant = spawn deadlineDescendant(counterAddress);
+    await descendant;
+}
+
+async int32 main() {
+    raw void* completed = absolute_atomic_create(0);
+    int64 completedAddress = completed as int64;
+    {
+        auto taskSet = new std.task.TaskGroup();
+        task<void> first = spawn completeChild(completedAddress, 20);
+        task<void> second = spawn completeChild(completedAddress, 22);
+        assert(taskSet.add(first), "first child accepted");
+        assert(taskSet.add(second), "second child accepted");
+        assert(taskSet.count() == 2, "group owns both children");
+        taskSet.join();
+        assert(taskSet.count() == 0, "joined group is empty");
+    }
+    assert(absolute_atomic_load(completed) == 42, "joined children completed");
+    absolute_atomic_destroy(completed);
+
+    raw void* cancelled = absolute_atomic_create(0);
+    int64 cancelledAddress = cancelled as int64;
+    {
+        auto cancelledGroup = new std.task.TaskGroup();
+        task<void> child = spawn cancellationChild(cancelledAddress);
+        assert(cancelledGroup.add(child), "cancellable child accepted");
+    }
+    assert(absolute_atomic_load(cancelled) == 1, "cancellation reached child");
+    absolute_atomic_destroy(cancelled);
+
+    raw void* descendantCancelled = absolute_atomic_create(0);
+    int64 descendantCancelledAddress = descendantCancelled as int64;
+    {
+        auto hierarchy = new std.task.TaskGroup();
+        task<void> parent =
+            spawn cancellationParent(descendantCancelledAddress);
+        assert(hierarchy.add(parent), "parent task accepted");
+    }
+    assert(absolute_atomic_load(descendantCancelled) == 1,
+        "cancellation propagated to descendant");
+    absolute_atomic_destroy(descendantCancelled);
+
+    raw void* deadlineReached = absolute_atomic_create(0);
+    int64 deadlineAddress = deadlineReached as int64;
+    task<void> deadlineTask = spawn deadlineParent(deadlineAddress);
+    await deadlineTask;
+    assert(absolute_atomic_load(deadlineReached) == 1,
+        "deadline propagated to descendant");
+    absolute_atomic_destroy(deadlineReached);
+
+    println("task-group=ok");
+    return 0;
+}

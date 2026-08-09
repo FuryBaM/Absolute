@@ -1,40 +1,120 @@
 # Absolute Language for VS Code
 
-Language support for `.abs` files with syntax highlighting, plugin-aware
-completion/hover/semantic tokens, native build/run, and native debugging.
+Language support for `.abs` files with:
 
-The extension reads `plugins` and `pluginSearchPaths` from `.absproj`, follows
-`.absplugin` dependencies recursively, and consumes the manifest's safe `editor`
-JSON sidecar. Native DLL/SO files are never loaded into the VS Code process.
+- **LSP language intelligence** (`server/lsp-server.js`)
+  - type-aware completion, rich hover, and signature help
+  - inferred managed-owner types and RAII lifetime information
+  - plugin editor sidecars + core language documentation
+  - go-to-definition, find references, rename
+  - document / workspace symbols
+  - semantic highlighting
+  - document formatting
+  - code actions (format / refresh diagnostics)
+  - compiler diagnostics via `absolutec`
+- native **build / run / debug**
+- project and plugin discovery (safe JSON sidecars only; native DLL/SO never loads in VS Code)
+- automatic compiler/plugin discovery from workspace `.absolute/build` layouts
 
-Commands:
+## Commands
 
 - `Absolute: Build and Run` (`Ctrl+F5`)
 - `Absolute: Build and Debug` (`F5`)
 - `Absolute: Open Project`
-- `Absolute: Run Project` (`Ctrl+F5` while an `.absproj` is open)
-- `Absolute: Debug Project` (`F5` while an `.absproj` is open)
+- `Absolute: Run Project` / `Absolute: Debug Project`
 - `Absolute: Refresh Plugins`
 - `Absolute: Show Loaded Plugins`
+- `Absolute: Open Opaque Block` — virtual document + breakpoint map for `shader` blocks
+- `Absolute: Evaluate Expression` / `Absolute: Open REPL`
 
-For native compiler installations, set `absolute.compilerPath`. For custom
-toolchains, set `absolute.buildCommand`; it supports `{input}`, `{output}`,
-`{workspace}`, and `{plugins}` placeholders. The native debugger uses
-`cppvsdbg` on Windows and `cppdbg` on Linux/macOS, supplied by Microsoft's C/C++
-VS Code extension.
+See also [docs/debugging.md](https://github.com/FuryBaM/Absolute/blob/main/docs/debugging.md) for natvis, GDB printers, and layouts.
 
-The build and debug commands also work when a single `.abs` file is opened
-without opening its containing folder. In that mode the source directory is
-used as `${workspaceFolder}` and as the default build root.
+`F5` builds native output with `-g -O0`, emits PDB/CodeView on Windows or DWARF
+elsewhere, and supports source breakpoints in `.abs` files. Locals, addresses,
+array descriptors, managed handles, and synthetic parameter role values such as
+`node.isOwner` are available in the native debugger. `debugBreak()` provides an
+in-language conditional trap.
 
-During plugin development, `absolute.editorMetadata` can point directly to one
-or more `*.editor.json` sidecars. They affect IntelliSense only and are not
-passed to the compiler as native plugins.
+## Settings
 
-For this repository's Windows + WSL setup:
+| Setting | Purpose |
+|--------|---------|
+| `absolute.compilerPath` | `auto` (recommended) or an explicit compiler path |
+| `absolute.compilerArguments` | Extra compiler args |
+| `absolute.runArguments` | Arguments passed to Run/Debug and exposed through `std.env` |
+| `absolute.buildCommand` | Optional full build command (`{input}`, `{output}`, `{workspace}`, `{plugins}`) |
+| `absolute.outputDirectory` | Optional override; projects default to `build/`, files to `.absolute/out/` |
+| `absolute.plugins` / `absolute.pluginSearchPaths` | Plugin roots |
+| `absolute.editorMetadata` | Editor-only `*.editor.json` sidecars |
+| `absolute.debugger` | `auto` / `cppvsdbg` / `cppdbg` |
+
+The default `auto` mode checks `ABSOLUTEC`, workspace `.absolute/build`
+directories, common CMake/Visual Studio layouts, and finally `PATH`. Desktop,
+math, and shader plugins built in the same workspace are detected automatically
+and selected from the source being compiled.
+
+Explicit override:
 
 ```json
 {
-  "absolute.buildCommand": "${workspaceFolder}\\examples\\desktop\\run.bat -Source {input} -Output {output} -NoRun"
+  "absolute.compilerPath": "${workspaceFolder}\\.absolute\\build\\windows-release\\Release\\absolutec.exe"
 }
 ```
+
+Run arguments can be configured without changing the source:
+
+```json
+{
+  "absolute.runArguments": ["--mode=fast", "--verbose"]
+}
+```
+
+An `.absproj` may provide shared defaults in `runArgs`. Debug configurations
+can override them with the standard `launch.json` `args` array.
+
+First-time setup: `absolute build-compiler --bootstrap` from the repo root.
+Application projects build and run normally. Library projects build a
+`.dll`, `.so`, or `.dylib`; Run/Debug reports the built library instead of
+trying to launch it as an executable.
+
+## Architecture
+
+```
+VS Code extension (extension.js)
+  ├── build / run / native debug (cppvsdbg / cppdbg)
+  └── LSP client (client/lsp-client.js)
+        └── absolute-lsp (server/lsp-server.js + language.js)
+```
+
+Other editors can speak LSP directly:
+
+```bash
+node absolute-extension/server/lsp-server.js
+```
+
+## Developer CLI
+
+From the repo root:
+
+```bat
+absolute fmt tests\std-log.abs
+absolute test
+absolute doc std tests -o absolute-api.md
+absolute package list examples\chess\Chess.absproj
+```
+
+Commands:
+
+- `fmt` — format `.abs` sources
+- `test` — run CTest against a known build directory
+- `doc` — generate Markdown API outline from symbols
+- `package list|resolve` — inspect / dry-resolve project packages
+- `eval <expr>` / `repl` — expression evaluator and interactive REPL
+
+## Package
+
+```bash
+npx @vscode/vsce package
+```
+
+Install the produced `.vsix` with **Extensions: Install from VSIX…**.

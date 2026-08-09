@@ -1,4 +1,4 @@
-﻿#ifndef ABSOLUTE_PARSER_NODES_H
+#ifndef ABSOLUTE_PARSER_NODES_H
 #define ABSOLUTE_PARSER_NODES_H
 
 #include <algorithm>
@@ -33,6 +33,10 @@ namespace Absolute {
     };
 
     struct ASTNode {
+        std::string sourceFile;
+        int line = 0;
+        int column = 0;
+
         virtual ~ASTNode() = default;
 
         virtual void print(int indent = 0) {
@@ -45,6 +49,8 @@ namespace Absolute {
     };
 
     struct Expression : ASTNode {
+        bool isOutArgument = false;
+        bool isRefArgument = false;
         virtual void Accept(ExpressionVisitor& visitor) = 0;
     };
 

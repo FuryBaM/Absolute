@@ -1,0 +1,12 @@
+int32 main() {
+    int32 captured = 1;
+    func<int32> mutation = fn() => captured += 1;
+
+    raw int32* pointer = null;
+    func<int32> unsafeCapture = fn() => *pointer;
+
+    auto missingReturnType = fn() {
+        return 42;
+    };
+    return 0;
+}

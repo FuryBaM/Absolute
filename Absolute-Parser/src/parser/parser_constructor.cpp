@@ -33,7 +33,16 @@ namespace Absolute {
         }
 
         std::vector<std::unique_ptr<Expression>> arguments;
-        if (CurrentToken() && CurrentToken()->type == TokenType::BRACKET && CurrentToken()->value == "(")
+        if (CurrentToken() && CurrentToken()->type == TokenType::BRACKET && CurrentToken()->value == "[") {
+            Consume(TokenType::BRACKET, "[");
+            if (CurrentToken() && CurrentToken()->value != "]") {
+                arguments.push_back(ParseExpression());
+            }
+            Consume(TokenType::BRACKET, "]");
+            auto typeExpr = std::unique_ptr<TypeExpr>(static_cast<TypeExpr*>(type.release()));
+            type = std::make_unique<ArrayTypeExpr>(std::move(typeExpr));
+        }
+        else if (CurrentToken() && CurrentToken()->type == TokenType::BRACKET && CurrentToken()->value == "(")
             arguments = ParseArguments();
         return std::make_unique<ConstructorCallExpr>(std::move(type), std::move(arguments), raw);
     }

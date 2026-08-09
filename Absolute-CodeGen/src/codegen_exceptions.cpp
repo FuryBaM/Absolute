@@ -82,6 +82,35 @@ namespace Absolute {
 
         llvm::Function* function = CurrentFunction();
         if (!function) Fail("exception propagation outside a function");
+
+        // Leaving a constructor through an exception. Scope unwinding above has
+        // released the locals, but the fields already stored into `this` are not
+        // a scope and no caller has a name for them, so they would leak.
+        //
+        // Fields are released directly rather than through the class destructor,
+        // because that destructor first calls the type's own destroy() hook. A
+        // constructor that threw never established the invariants such a hook
+        // assumes, so running it here would execute user cleanup on an object
+        // that was never built.
+        //
+        // Only fields are touched, and only once each: currentConstructorClass is
+        // set after the base constructor has succeeded, so a failing base cleans
+        // its own fields on its own path and this frame never repeats that work.
+        // Object storage is zero-initialized before a constructor runs, so fields
+        // the constructor had not reached yet are null and cost a no-op.
+        if (!currentConstructorClass.empty() && currentThis) {
+            if (const auto found = classes.find(currentConstructorClass);
+                found != classes.end()) {
+                ClassInfo& partial = found->second;
+                for (auto field = partial.fields.rbegin();
+                    field != partial.fields.rend(); ++field) {
+                    if (!TypeNeedsCleanup(field->typeName)) continue;
+                    EmitValueCleanup(
+                        FieldAddress(currentThis, partial, *field), field->typeName);
+                }
+            }
+        }
+
         if (function->getName() == "main") {
             builder.CreateCall(ErrorReport());
             builder.CreateRet(builder.getInt32(1));

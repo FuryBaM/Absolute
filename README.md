@@ -4,7 +4,52 @@ Absolute is an experimental C++20 compiler frontend. The repository currently
 contains a lexer, parser/AST, a two-pass semantic analyzer, an LLVM IR backend,
 and the `absolutec` command-line driver.
 
+## Quick start
+
+Build the compiler once, then create either an application or a library:
+
+```powershell
+.\absolute build-compiler --bootstrap
+
+.\absolute new Demo --type app
+.\absolute run Demo
+
+.\absolute new Math --type lib
+.\absolute build Math
+```
+
+Inside a project, the manifest path is optional. `absolute build`, `run`,
+`clean`, and `info` find the nearest `.absproj` automatically. Application
+artifacts and native libraries are placed under the project's `build`
+directory; `absolute clean` removes only that directory.
+
+Project types:
+
+- `app` creates an executable project with `src/main.abs`;
+- `lib` creates a native shared library with `src/lib.abs` and an exported C
+  ABI function.
+
 ## Build
+
+The shortest native Windows workflow is:
+
+```powershell
+# First build; downloads the portable LLVM SDK once.
+.\absolute build-compiler --bootstrap
+
+# Later compiler rebuilds.
+.\absolute build-compiler
+
+# Build and run the complete test suite.
+.\absolute build-compiler --test
+```
+
+The root `absolute.bat` launcher finds the compiler in the repository build
+directories and initializes the MSVC environment when native linking needs it.
+Set `ABSOLUTEC` to use a compiler executable from another location.
+The convenient `build-compiler` command skips tests unless `--test` is passed.
+
+The underlying build commands remain available:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -26,12 +71,13 @@ This installs a portable LLVM 18.1.8 SDK under the ignored `.absolute`
 directory, builds the compiler and DLL plugins with MSVC, and runs the native
 tests. Later builds use `build-windows.bat` without `--bootstrap`. See
 [`docs/windows-build.md`](docs/windows-build.md) for toolchain overrides and
-benchmark commands.
+benchmark commands. The host platform matrix and CI coverage are summarized in
+[`docs/platforms.md`](docs/platforms.md).
 
 On multi-config generators such as Visual Studio, pass `--config Debug` to the
 build command.
 
-Release presets are available for WSL and Visual Studio:
+Release presets are available for WSL and native Windows:
 
 ```bash
 # Run inside WSL. Build artifacts stay on the Linux filesystem.
@@ -44,8 +90,10 @@ cmake --preset wsl-release-ninja
 ```
 
 ```powershell
-# Run from a Visual Studio developer shell. build-windows.bat is easier because
-# it detects and initializes the installed Visual Studio version automatically.
+# Windows presets use Ninja + MSVC (same layout as build-windows.bat).
+# Run from an x64 Native Tools / Developer PowerShell so cl.exe is on PATH.
+# Prefer build-windows.bat when you want vswhere + vcvars handled for you.
+# Bootstrapped ninja: .absolute\toolchains\ninja\ninja.exe
 cmake --preset windows-msvc-release
 cmake --build --preset windows-msvc-release --parallel
 ctest --preset windows-msvc-release
@@ -63,17 +111,63 @@ The native Windows backend is the default. Use
 
 ## Run
 
+Compile a source file to a native executable, or compile and run it immediately:
+
+```powershell
+.\absolute compile hello.abs
+.\absolute hello.abs
+.\absolute compile hello.abs --output bin\hello.exe
+.\absolute run hello.abs
+.\absolute run hello.abs -- first-argument "second argument"
+```
+
+Arguments before `--` belong to the compiler; arguments after it are passed to
+the compiled program. Project files work the same way, but can be omitted while
+the current directory is inside a project:
+
+```powershell
+absolute build
+absolute run -- argument-for-demo
+absolute info
+absolute clean
+```
+
+Standalone file artifacts stay under the nearby hidden `.absolute/out`
+directory instead of cluttering the source directory.
+
+An `.abs` or `.absproj` path can be used directly as a shorthand for
+`compile`. Use `.\absolute compiler ...` to pass arguments directly to
+`absolutec`, for example `.\absolute compiler code.abs --parse-only`. Run
+`.\absolute --help` for all developer commands.
+
+The compiler can also be invoked directly:
+
 ```bash
+absolutec --version
 ./build/Debug/absolutec code.abs --parse-only
 ```
 
-Create and build a project:
+Application files may use script-style top-level code without declaring
+`main` explicitly:
 
-```bash
-absolutec new Demo
-absolutec build Demo/Demo.absproj
-absolutec build Demo/Demo.absproj --emit-llvm -o Demo.ll
-lli Demo.ll
+```absolute
+int32 value = 40;
+value += 2;
+println(format("value={}", value));
+```
+
+The compiler moves top-level executable statements and their variable
+declarations into a hidden `int32 main()` and appends `return 0`. Functions,
+types, namespaces, imports, and plugin declarations remain at module scope. An
+explicit `main` keeps the traditional mode; combining it with executable
+top-level statements is a compile-time error instead of creating a second
+entry point. Module-level declarations may still accompany an explicit `main`.
+
+Create application and library projects:
+
+```powershell
+absolute new Demo --type app
+absolute new Math --type lib
 ```
 
 An `.absproj` file describes the entry source and directories compiled into one
@@ -82,13 +176,22 @@ module:
 ```json
 {
   "name": "Demo",
+  "type": "app",
   "entry": "src/main.abs",
   "sources": ["src"],
+  "runArgs": ["--mode=fast"],
   "plugins": ["plugins/absolute-unless.dll"],
   "nativeLibraries": ["native/MyLibrary.lib"],
   "nativeSearchPaths": ["native"]
 }
 ```
+
+`type` is optional for older projects and defaults to `app`. Library projects
+use `"type": "lib"`; `absolute build` produces `Name.dll` on Windows,
+`libName.so` on Linux, or `libName.dylib` on macOS. Use `export "C"` functions
+as the public library API. Application `runArgs` are passed by `absolute run`
+and exposed without the executable path through `std.env.argsCount()`,
+`std.env.argAt()`, `std.env.flag()`, and `std.env.parameter()`.
 
 Projects support recursive file imports and namespace imports:
 
@@ -206,6 +309,15 @@ specialization receives its own native layout and methods. CodeGen emits only
 used monomorphizations, without runtime boxing. See
 [docs/generics.md](docs/generics.md) for syntax and current constraint limits.
 
+## Tuples and variadic parameters
+
+Structural `tuple<T...>` values use `(a, b, ...)` literals and expose
+zero-based `item0`, `item1`, ... members plus read-only `length`/`count`.
+Functions, methods, and extension methods may declare a final
+`params T[] args` parameter. Expanded arguments use caller-side stack storage;
+an existing array is passed directly. See
+[docs/tuples-and-params.md](docs/tuples-and-params.md).
+
 ## Type aliases and const
 
 Core type aliases use `using Name = Type;` and are transparent during semantic
@@ -259,15 +371,24 @@ error strings must remain valid until that adapter is invoked again; the host
 copies them before the next invocation. No C++ AST objects or allocator-owned
 memory cross the DLL boundary.
 
-A plugin may additionally export `absolute_syntax_plugin_prelude_v1`. The
-returned Absolute source is parsed as a module before project sources. This is
-useful for libraries that add declarations and implementations without an
-artificial marker keyword. The included `absolute.math` plugin uses this hook to
-provide `Math.abs`, `Math.sqrt`, `Math.sin`, `Math.cos`, `vec2`, `vec3`, `mat3`,
-`mat4`, `Math.projection`, and `Math.lookAt`. Vector and matrix
-type aliases are available without `Math.`, including plugin-defined `+`, `-`,
-scalar multiplication, and matrix multiplication.
-See `plugins/math/README.md` for the complete API and matrix conventions.
+A manifest can load ordinary Absolute source before project sources:
+
+```json
+{
+  "library": "my-plugin.dll",
+  "prelude": "my-plugin.prelude.abs"
+}
+```
+
+Use `preludes: ["native.abs", "api.abs"]` to split a large API. These files are
+resolved relative to the `.absplugin` manifest and are indexed by the Absolute
+extension for completion and hover. This is useful for libraries that add
+declarations and implementations without an artificial marker keyword.
+
+The legacy `absolute_syntax_plugin_prelude_v1` native export remains supported
+when a prelude truly must be generated by C++. See
+`docs/plugin-manifests.md` for file preludes and `plugins/math/README.md` for
+the math API.
 
 Plugins cannot replace core keywords, duplicate another plugin's keyword, or
 load with a different ABI version. Recursive expansion is bounded and produces
@@ -364,10 +485,12 @@ debugging through `cppvsdbg` or `cppdbg`. It reads `.absproj` plugin roots,
 follows `.absplugin` dependencies, and consumes their safe `editor` JSON
 sidecars without loading native DLL/SO code into VS Code.
 
-Install the packaged extension:
+Package and install the VS Code extension:
 
 ```powershell
-code --install-extension absolute-extension\absolute-extension-0.2.1.vsix --force
+cd absolute-extension
+npx @vscode/vsce package
+code --install-extension absolute-extension-0.3.3.vsix --force
 ```
 
 Use `F5` to build and debug or `Ctrl+F5` to build and run. Compiler paths,
@@ -404,6 +527,11 @@ module directly runnable with `lli`.
 
 ## C and C++ interop
 
+Absolute language interop is **C ABI only**. Direct C++ ABI (mangling, classes,
+overloads, C++ exceptions) is not supported; expose a thin `extern "C"` shim
+from C++. The normative type and ownership rules are in
+[`docs/native-c-abi.md`](docs/native-c-abi.md).
+
 Absolute can call functions that use the stable C ABI. Declare the native
 function without a body:
 
@@ -435,15 +563,75 @@ extern "C" __declspec(dllexport) int native_add(int left, int right) {
 }
 ```
 
-On non-Windows platforms omit `__declspec(dllexport)`. Direct C++ ABI imports
-(overloads, classes and exceptions) are intentionally not supported yet because
-their binary names and rules differ between MSVC and Clang/GCC.
+On non-Windows platforms omit `__declspec(dllexport)`. Absolute rejects
+`extern "C++"` / `export "C++"` at parse time; C++ libraries must provide a C
+wrapper. Absolute `struct`/`class`/`interface` values, managed pointers, and
+array descriptors cannot cross the C boundary—use `raw T*` and scalars.
+C callbacks use `cfunc<Return, Params...>` (raw function pointers from
+`extern`/`export "C"` only). Native handles wrap `raw void*` in a resource
+`struct` with `destroy()`. See `docs/native-c-abi.md`.
+
+Generate Absolute declarations from a C header (requires `clang`):
+
+```bat
+node tools/absolute-bindgen.js native/api.h -o native/api.abs
+absolute bindgen native/api.h -o native/api.abs
+```
+
+### WebAssembly
+
+Absolute has an experimental **wasm32** backend (`wasm-ld` from the portable
+LLVM SDK or `PATH`). The runtime covers heap, managed pointers, sync and
+host-backed multi-thread tasks, virtual FS, env/process, HTTP/TCP host imports,
+WASI preview1 services, and optional shared-memory modules.
+
+```bat
+REM Build (host env imports: Node/browser)
+absolutec tests\wasm-smoke.abs --target wasm32-unknown-unknown --build-exe -o out.wasm
+node tools\absolute-wasm-run.js out.wasm
+node tools\absolute-wasm-run.js out.wasm -- --mode=release input.txt
+
+REM Developer helper (build / run / ctest -R wasm)
+absolute wasm build tests\wasm-smoke.abs -o out.wasm
+absolute wasm run out.wasm
+absolute wasm test
+
+REM WASI (fd_write / clock / args / env) — needs Absolute built with WASI object
+set ABSOLUTE_WASM_RUNTIME=wasi
+absolutec tests\wasm-smoke.abs --target wasm32-unknown-unknown --build-exe -o out-wasi.wasm
+node tools\absolute-wasm-wasi-run.js out-wasi.wasm
+
+REM Browser demo (COOP/COEP for worker + SharedArrayBuffer)
+node scripts\serve-wasm-demo.mjs
+```
+
+| Runtime | How |
+|---------|-----|
+| **host** (default) | `env.absolute_*` imports; `tools/absolute-wasm-host.js` |
+| **wasi** | `ABSOLUTE_WASM_RUNTIME=wasi` or `--runtime wasi` |
+| **shared** | `ABSOLUTE_WASM_RUNTIME=shared` — imported shared memory + locked heap |
+
+Details: [`docs/wasm-target.md`](docs/wasm-target.md), demo
+[`examples/wasm/`](examples/wasm/), platforms matrix
+[`docs/platforms.md`](docs/platforms.md). CI runs `ctest -R wasm` on Windows and
+Linux.
 
 Generate a native object without linking it:
 
 ```bash
 absolutec build Demo.absproj --emit-object -o Demo.obj
 ```
+
+Build a native shared library directly:
+
+```bash
+absolutec build Math.absproj --build-library -o Math.dll
+```
+
+On Linux use a `.so` output and on macOS use `.dylib`. The library command
+also produces the platform's normal import/object artifacts alongside the
+shared library, all contained by the project `build` directory when invoked
+through `absolute build`.
 
 Or let Absolute emit the object and call the C++ compiler driver to link the
 project's `nativeLibraries`. On a Visual Studio build this uses the configured
@@ -459,6 +647,32 @@ or linked manually. Current FFI types map primitive scalars directly; `string`
 is passed as a C `char*`. Ownership stays with the caller. Native exceptions
 must not enter `extern "C"`, and Absolute errors must be handled before leaving
 an `export "C"` function.
+
+External shared libraries that register functionality at runtime can be loaded
+without adding them to the project link list:
+
+```absolute
+if (!load("./extensions/physics.dll")) {
+    println("physics library was not loaded");
+}
+```
+
+`load(string)` returns `true` when the `.dll`/`.so` was loaded or had already
+been loaded through the same path, and `false` on failure. Loaded libraries stay
+resident until process exit. On POSIX their symbols are made globally visible
+with `RTLD_NOW | RTLD_GLOBAL`. Calls to ordinary `extern "C"` imports still need
+`nativeLibraries` when their symbols must be resolved while the executable is
+linked or started.
+
+Use `isLoaded(path)` to query the process-local loader cache. After a failed
+`load`, `loadError()` returns the thread-local platform diagnostic; a successful
+load clears it:
+
+```absolute
+if (!load("./extensions/audio.so")) {
+    println(loadError());
+}
+```
 
 ## Pointers and lifetime
 
@@ -484,12 +698,68 @@ int32* value = new int32(42);
 delete value;
 ```
 
+The native Release backend caches the pointee of a proven local managed owner
+after the allocation's initial generation check. Dereferences of that unchanged
+owner use the cached address directly, so hot loops contain no slot bounds or
+generation/lifetime checks. This elimination is limited to analyzer-proven owners:
+borrowed parameters, subscribers, and weak pointers continue through the
+generation-checked fast path. `delete`, ownership transfer, and reassignment
+invalidate or replace the cache, while dereference after `delete`/`move` is
+rejected before code generation.
+
+Use `weak T*` for an explicit non-owning handle that may be stored in fields or
+returned from an API:
+
+```absolute
+class Node {
+    public weak Node* parent;
+}
+
+Node* owner = new Node();
+weak Node* observer = owner;
+delete owner;
+assert(!observer);
+```
+
+Weak references reuse the same generation-checked managed handle, do not keep
+the object alive, and never participate in generated cleanup. Strong managed
+pointers convert to weak; conversion back, direct `new` into weak, `move`, and
+`delete` are rejected. See
+[docs/weak-managed-references.md](docs/weak-managed-references.md).
+
+For cyclic domain models, strong fields are containment edges and form a
+unique-ownership forest; parent, peer, and cross-links must be `weak`. Deleting a
+root recursively destroys strong children, while weak cycles own nothing and
+expire through the existing handle generation checks. Explicit strong
+back-edges are rejected at compile time. See
+[docs/managed-object-graphs.md](docs/managed-object-graphs.md).
+
+Ownership of a strong managed pointer can be transferred explicitly:
+
+```absolute
+Node* a = new Node();
+Node* b = move(a);
+```
+
+`b` becomes the owner; `a` is zeroed at runtime and treated as compile-time
+moved-from until assigned a fresh owner. Existing subscribers follow the new
+owner for lifetime analysis. Moving a subscriber/weak/const source, discarding
+the result, or moving into an ordinary borrowed pointer parameter is rejected.
+See [docs/managed-pointer-move.md](docs/managed-pointer-move.md).
+
 Managed pointer and array fields are owning resource slots. They accept a fresh
 owner (`new`, `copy(...)`, or an owning function result), destroy their previous
 value on reassignment, and are released automatically with the containing class
 or struct. Class and interface deletion dispatches through a destructor entry in
 vtable slot zero, so derived fields are cleaned even through a base pointer. See
 [docs/resource-ownership.md](docs/resource-ownership.md) for the full rules.
+
+Deep copying is explicit rather than based on C++ copy constructors. Arrays and
+slices use `copy(values)`; user types expose a public zero-argument
+`clone() const`, and `copy(value)` invokes it. Class/interface clone methods
+return a fresh managed pointer and participate in normal virtual dispatch.
+Resource-free struct assignment remains a cheap field-wise value copy. See
+[docs/copy-clone.md](docs/copy-clone.md).
 
 Use `raw T*` only for C interop or C++-style address operations. Raw pointers do
 not participate in generation checks or automatic lifetime management:
@@ -513,6 +783,11 @@ produce stable diagnostic codes (`E_RAW_DELETE_REQUIRED`, `E_RAW_OVERWRITE`, and
 `E_RAW_DOUBLE_DELETE`) through the analyzer API for IDE integrations. Borrowed raw
 addresses and raw values returned by external/native functions remain explicitly
 unsafe and are not automatically reclaimed.
+
+Use `--sanitize=address` with `--emit-object` or `--build-exe` to instrument unsafe
+raw memory accesses with AddressSanitizer. The native test suite runs real
+heap-use-after-free and double-free executables through ASan; managed allocation
+leaks are additionally detected by the generation-slot runtime at process exit.
 
 The analyzer also performs control-flow dataflow for definite assignment and
 pointer validity. Branch and loop states are merged by `SymbolId`; managed
@@ -542,7 +817,7 @@ when managed pointers are used.
 semantics: assigning, passing, or returning them copies the complete value.
 Structs containing managed pointers, owning array descriptors, or another
 resource-owning aggregate are move-only; implicit assignment, by-value arguments,
-and by-value returns are rejected until explicit `move` syntax is implemented.
+and by-value returns are rejected unless ownership is transferred with `move(...)`.
 Instance constructors and methods use the same syntax as class members:
 
 ```absolute
@@ -589,6 +864,27 @@ so mutating a by-value parameter never aliases the source. This applies equally
 to functions, methods, properties, and constructors. `extern "C"` declarations
 continue to use the platform C ABI. The exact lowering and copy-elision rules
 are documented in [docs/value-type-abi.md](docs/value-type-abi.md).
+
+Large resource-free structs may instead use parameter-only value references:
+
+```absolute
+int64 inspect(const LargeValue& value) {
+    return value.first;
+}
+
+void normalize(LargeValue& value) {
+    value.first = 0;
+}
+```
+
+`const T&` borrows read-only storage and accepts lvalues or a temporary valid
+through the call. `T&` requires a mutable lvalue and mutates caller storage.
+The spellings `const ref T` and `ref T` are source aliases normalized to the
+canonical ampersand form.
+Both lower to a non-null, non-capturing LLVM pointer without creating a managed
+or raw pointer value. They cannot cross async/C-ABI/closure boundaries or borrow
+resource-owning aggregates; overlapping mutable arguments are rejected. See
+[docs/value-references.md](docs/value-references.md).
 
 ## Static members
 
@@ -789,18 +1085,46 @@ async int32 main() {
 }
 ```
 
+Scheduling defaults can be attached to an async function, then selectively
+overridden for one spawn site:
+
+```absolute
+@task(core = 2, priority = 1, role = "worker")
+async int32 calculate(int32 value) {
+    return value * 2;
+}
+
+async int32 main() {
+    @spawn(priority = 3, role = "urgent")
+    task<int32> result = spawn calculate(21);
+    return await result;
+}
+```
+
+`core = -1` means no affinity, priority uses the portable `-3..3` range, and
+role creates a named scheduling lane whose label is visible through
+`std/task.abs`. See
+[`docs/task-scheduling.md`](docs/task-scheduling.md) for inheritance, runtime,
+and validation details.
+
+Classes and structs support static async methods and `const` instance async
+methods. Instance spawns capture a stable named `const` receiver; managed
+subscribers, raw pointers, temporaries, mutable bindings, and resource-owning
+receiver types are rejected. Virtual class methods keep normal vtable dispatch
+inside the task thunk. See [`docs/async-methods.md`](docs/async-methods.md).
+
 `await` is only valid inside an `async` function. Every local task must be
 awaited on every control-flow path before its scope is left, including through
 `return`, `break`, and `continue`; a task cannot be copied, reassigned, or
 awaited twice. The analyzer exposes `TaskState` in `ExpressionInfo` and emits
 stable `E_TASK_*` diagnostics for IDE integrations.
 
-The LLVM backend packs primitive arguments into an owned task context and emits
+The LLVM backend packs scalar/enum arguments into an owned task context and emits
 a private thunk for each spawn site. `Absolute-Runtime` executes these thunks
 on a shared native thread pool, and `await` suspends the calling OS thread until
-the result is ready. This first concurrency milestone supports primitive and
-pointer-shaped ABI values; cancellation, channels, async I/O, methods, and
-compile-time data-race checking are planned separately.
+the result is ready. Task arguments and results support only lifetime-independent
+scalar and enum values; cancellation, channels, async I/O,
+and broader compile-time data-race checking are planned separately.
 
 ## Arrays
 
@@ -815,6 +1139,12 @@ values[2] += 12;
 int32 matrix[2][3] = {{1, 2, 3}, {4, 5, 6}};
 matrix[1][0] = values[2];
 
+// Nested groups, but one contiguous float[] with length 6.
+float[] vertices = {
+    {0.0, 0.5, 0.0},
+    {0.5, 0.0, 1.0}
+};
+
 int32 inferred[] = {7, 8, 9};
 int32 length = 16;
 int32 buffer[length];
@@ -825,6 +1155,11 @@ must provide the complete index list, and generated code checks each index at
 runtime. An invalid size or out-of-bounds index prints a diagnostic and exits
 with a nonzero status. Literal shapes are checked statically for rank,
 rectangularity, and exact fixed dimensions.
+
+For a one-dimensional declaration (`T[]` or `T values[N]`), nested braces are
+readable record groups that flatten into one contiguous row-major buffer. The
+groups must be rectangular. A `T[][]` declaration still creates a true rank-2
+descriptor with multidimensional indexing.
 
 Code generation removes checks that are already true at compile time and emits
 `inbounds` addressing after every successful check. Native object and executable
@@ -904,6 +1239,11 @@ constructor body, with either explicit `base(...)` arguments or an automatic
 zero-argument call. Raw object graphs that own child nodes must release them
 explicitly before `delete`.
 
+Logical `&&` and `||` are short-circuiting: the right operand runs only when it
+can affect the result. This makes guards such as
+`values.length > 0 && values[0] == expected` safe and preserves operand side
+effects exactly once.
+
 Both pointer modes preserve class methods and virtual dispatch:
 
 ```absolute
@@ -914,6 +1254,60 @@ assert(unsafe.evaluate(40) == 42);
 assert(tracked.evaluate(40) == 42);
 delete unsafe;
 ```
+
+## Standard library
+
+The in-tree standard library lives under `std/` and is packaged as
+**`absolute.std`**. Namespace layout, import rules, SemVer, and stability tiers
+are defined in [`docs/standard-library.md`](docs/standard-library.md). Package
+identity: [`std/abspackage.json`](std/abspackage.json).
+
+## Filesystem, TCP, and HTTP
+
+`std/fs.abs` provides UTF-8 path helpers, whole-file text operations, directory
+creation, copy/rename/remove, and the resource-owning `std.fs.File` stream:
+
+```absolute
+import "std/fs.abs";
+
+std.fs.writeText("hello.txt", "hello");
+std.fs.appendText("hello.txt", " world");
+println(std.fs.readText("hello.txt"));
+
+std.fs.File* file = std.fs.open("hello.txt", "rb");
+println(file.readLine());
+delete file;
+```
+
+`std/net.abs` provides blocking cross-platform TCP sockets. Listener port `0`
+requests an ephemeral OS-assigned port:
+
+```absolute
+import "std/net.abs";
+
+std.net.TcpListener* listener = std.net.listenLocal(0);
+std.net.TcpSocket* client = std.net.connect("127.0.0.1", listener.port());
+std.net.TcpSocket* server = listener.accept();
+client.send("ping");
+println(server.receive(4096));
+delete server;
+delete client;
+delete listener;
+```
+
+`File` and TCP objects own opaque native handles and close them from `destroy()`.
+Text returned by a stream/socket read is a borrowed UTF-8 view valid until the
+next read on that same object; top-level filesystem result strings are valid
+until the next top-level result-producing filesystem call on the current thread.
+`std/http.abs` builds typed request/response headers, redirects, streaming body
+callbacks, cancellation, and multipart forms on top of TCP and verified TLS.
+Windows HTTPS uses WinHTTP and the Windows trust store; Unix uses system
+libcurl with peer and hostname verification.
+
+`std/concurrent.abs` provides scheduler-aware mutexes, semaphores,
+reader/writer locks, condition variables, atomics, and exactly-once
+initialization. Blocking from an Absolute task suspends its fiber instead of
+occupying the scheduler worker.
 
 For a Release build, replace `Debug` with `Release`.
 

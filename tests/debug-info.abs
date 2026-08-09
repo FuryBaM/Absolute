@@ -1,0 +1,69 @@
+class DebugNode {
+    public int32 value;
+
+    public DebugNode(int32 initial) {
+        value = initial;
+    }
+}
+
+struct DebugPair {
+    int32 left;
+    int64 right;
+}
+
+struct DebugCounter {
+    int32 value;
+}
+
+int32 inspect(
+    int32 value,
+    ref DebugCounter place,
+    DebugNode* view,
+    int32[] slice) {
+    assert(!isOwner(view), "ordinary managed argument is a view");
+    assert(!isOwner(slice), "ordinary array argument is a view");
+    place.value += value + view.value + slice[1];
+    return place.value;
+}
+
+DebugNode* forward(DebugNode* node) {
+    assert(isOwner(node), "move delivers the owner role");
+    return move(node);
+}
+
+int32 main() {
+    DebugCounter counter;
+    counter.value = 7;
+    raw int32* counterAddress = &counter.value;
+    DebugPair pair;
+    pair.left = 3;
+    pair.right = 9;
+    int32 offset = 1;
+    func<int32, int32> addOffset =
+        fn(int32 input) => input + offset;
+
+    DebugNode* owner = new DebugNode(40);
+    DebugNode* subscriber = owner;
+    weak DebugNode* observer = owner;
+    int32[] values = copy({1, 2, 3});
+
+    int32 snapshot = inspect(counter.value, counter, owner, values);
+    assert(snapshot == 56, "place and value parameters remain distinct");
+    assert(*counterAddress == counter.value, "raw address identifies the place");
+    assert(subscriber.value == 40 && observer.value == 40,
+        "subscriber and weak view expose the same object");
+
+    if (false) {
+        debugBreak();
+    }
+
+    DebugNode* forwarded = forward(move(owner));
+    assert(forwarded.value == 40, "owner survives explicit forwarding");
+    delete forwarded;
+    assert(!subscriber && !observer, "views expire with the owner");
+
+    assert(pair.left + pair.right == 12, "aggregate values stay visible");
+    assert(addOffset(41) == 42, "lambda has an independent debug scope");
+    println("debug-info=ok");
+    return 0;
+}

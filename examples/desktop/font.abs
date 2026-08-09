@@ -1,0 +1,61 @@
+// Soft TrueType / system fonts (Windows GDI Desktop.Font).
+// Esc quit. Compare built-in 8x8 with Segoe UI / Consolas.
+
+int32 main() {
+    auto window = new Desktop.Window("Absolute Fonts", 720, 400, false);
+    if (!window.isOpen()) {
+        println("Could not create desktop window");
+        return 1;
+    }
+
+    auto title = new Desktop.Font("Segoe UI", 28, Desktop.Font.StyleBold);
+    auto body = new Desktop.Font("Segoe UI", 18, Desktop.Font.StyleNormal);
+    auto mono = new Desktop.Font("Consolas", 16, Desktop.Font.StyleNormal);
+    if (!title.isValid() || !body.isValid() || !mono.isValid()) {
+        println("System font create failed (Windows GDI required)");
+        return 1;
+    }
+
+    // Optional private TTF from Windows fonts folder (ignore if missing).
+    auto fileFont = new Desktop.Font("Arial", 20, Desktop.Font.StyleNormal);
+    bool loadedFile = fileFont.loadFile("C:/Windows/Fonts/arial.ttf", 20, Desktop.Font.StyleNormal);
+    if (!loadedFile) {
+        loadedFile = fileFont.loadFile("C:\\Windows\\Fonts\\arial.ttf", 20, Desktop.Font.StyleNormal);
+    }
+
+    auto label = new Desktop.Sprite(280, 40);
+    label.clear(0);
+    label.drawFontText(mono, 0, 4, "sprite.drawFontText", Desktop.rgb(120, 220, 160));
+
+    string sample = "The quick brown fox\njumps over Absolute";
+
+    while (window.poll()) {
+        if (window.keyPressed(Desktop.KeyEscape())) {
+            break;
+        } else {
+            window.clear(Desktop.rgb(16, 18, 28));
+
+            window.drawFontText(title, 24, 20, "Desktop.Font (GDI)", Desktop.rgb(240, 244, 255));
+            window.drawFontText(body, 24, 64, sample, Desktop.rgb(200, 210, 230));
+
+            int32 mw = mono.measure("measure / lineHeight");
+            int32 mh = mono.lineHeight();
+            window.drawFontText(mono, 24, 140, "measure / lineHeight", Desktop.rgb(160, 200, 255));
+            window.fillRect(24, 140 + mh + 4, mw, 2, Desktop.rgb(80, 140, 220));
+
+            window.drawText(24, 200, "built-in 8x8 scale 2", Desktop.rgb(255, 200, 120), 2);
+
+            if (loadedFile) {
+                window.drawFontText(fileFont, 24, 250, "loadFile arial.ttf", Desktop.rgb(255, 180, 200));
+            } else {
+                window.drawFontText(body, 24, 250, "arial.ttf not loaded (optional)", Desktop.rgb(140, 140, 160));
+            }
+
+            window.drawSprite(label, 24, 320);
+            window.drawFontText(mono, 24, 360, "Esc quit", Desktop.rgb(120, 130, 150));
+            window.present();
+        }
+    }
+
+    return 0;
+}

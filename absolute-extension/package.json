@@ -1,24 +1,29 @@
 {
   "name": "absolute-extension",
   "displayName": "Absolute Language",
-  "description": "Absolute language support with plugin-aware IntelliSense, build, run, and native debugging.",
+  "description": "Absolute language support with LSP intelligence, plugin-aware IntelliSense, native and WebAssembly build/run, and native debugging.",
   "publisher": "FuryBaM",
-  "version": "0.2.1",
+  "version": "0.3.8",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FuryBaM/Absolute.git"
+  },
   "engines": {
     "vscode": "^1.80.0"
   },
-  "categories": ["Programming Languages", "Debuggers"],
+  "categories": ["Programming Languages", "Debuggers", "Formatters", "Linters"],
   "activationEvents": [
     "onLanguage:absolute",
     "onCommand:absolute.refreshPlugins",
     "onCommand:absolute.runFile",
+    "onCommand:absolute.runFileWasm",
     "onCommand:absolute.debugFile",
     "onCommand:absolute.openProject",
     "onCommand:absolute.runProject",
     "onCommand:absolute.debugProject",
     "onDebug:absolute"
   ],
-  "main": "./extension.js",
+  "main": "./extension-entry.js",
   "contributes": {
     "languages": [
       {
@@ -48,21 +53,27 @@
     ],
     "commands": [
       { "command": "absolute.runFile", "title": "Absolute: Build and Run", "category": "Absolute" },
+      { "command": "absolute.runFileWasm", "title": "Absolute: Build and Run as WebAssembly", "category": "Absolute" },
       { "command": "absolute.debugFile", "title": "Absolute: Build and Debug", "category": "Absolute" },
       { "command": "absolute.openProject", "title": "Absolute: Open Project", "category": "Absolute" },
       { "command": "absolute.runProject", "title": "Absolute: Run Project", "category": "Absolute" },
       { "command": "absolute.debugProject", "title": "Absolute: Debug Project", "category": "Absolute" },
       { "command": "absolute.refreshPlugins", "title": "Absolute: Refresh Plugins", "category": "Absolute" },
-      { "command": "absolute.showPluginInfo", "title": "Absolute: Show Loaded Plugins", "category": "Absolute" }
+      { "command": "absolute.showPluginInfo", "title": "Absolute: Show Loaded Plugins", "category": "Absolute" },
+      { "command": "absolute.openOpaqueBlock", "title": "Absolute: Open Opaque Block", "category": "Absolute" },
+      { "command": "absolute.evaluateExpression", "title": "Absolute: Evaluate Expression", "category": "Absolute" },
+      { "command": "absolute.openRepl", "title": "Absolute: Open REPL", "category": "Absolute" }
     ],
     "menus": {
       "editor/title/run": [
         { "command": "absolute.runFile", "when": "editorLangId == absolute", "group": "run@1" },
         { "command": "absolute.debugFile", "when": "editorLangId == absolute", "group": "run@2" },
+        { "command": "absolute.runFileWasm", "when": "editorLangId == absolute", "group": "run@3" },
         { "command": "absolute.runProject", "when": "editorLangId == absolute-project", "group": "run@1" },
         { "command": "absolute.debugProject", "when": "editorLangId == absolute-project", "group": "run@2" }
       ],
       "explorer/context": [
+        { "command": "absolute.runFileWasm", "when": "resourceExtname == .abs", "group": "navigation@1" },
         { "command": "absolute.openProject", "when": "resourceExtname == .absproj", "group": "navigation@1" },
         { "command": "absolute.runProject", "when": "resourceExtname == .absproj", "group": "navigation@2" },
         { "command": "absolute.debugProject", "when": "resourceExtname == .absproj", "group": "navigation@3" }
@@ -122,24 +133,35 @@
       "properties": {
         "absolute.compilerPath": {
           "type": "string",
-          "default": "absolutec",
-          "description": "Path to the Absolute compiler used for native --build-exe builds."
+          "default": "auto",
+          "description": "Absolute compiler path. 'auto' searches ABSOLUTEC, the workspace .absolute/build directories, common build layouts, and PATH. A directory containing absolutec is also accepted."
         },
         "absolute.compilerArguments": {
           "type": "array",
           "items": { "type": "string" },
           "default": [],
-          "description": "Additional arguments passed to absolutec before --build-exe."
+          "description": "Additional arguments passed to absolutec before the selected project output mode / diagnostics."
+        },
+        "absolute.runArguments": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Arguments passed to the built Absolute application by Run and Debug. They are available through std.env."
+        },
+        "absolute.nodePath": {
+          "type": "string",
+          "default": "node",
+          "description": "Node.js executable used by the WebAssembly host runner."
         },
         "absolute.buildCommand": {
           "type": "string",
           "default": "",
-          "description": "Optional shell build command. Placeholders: {input}, {output}, {workspace}, {plugins}. Overrides compilerPath."
+          "description": "Optional shell build command. Placeholders: {input}, {output}, {workspace}, {plugins}, {debug}. Overrides compilerPath for native builds."
         },
         "absolute.outputDirectory": {
           "type": "string",
-          "default": "${workspaceFolder}/.absolute/bin",
-          "description": "Directory for native executables."
+          "default": "",
+          "description": "Optional artifact directory. Empty uses build/ for projects and .absolute/out/ for standalone files."
         },
         "absolute.preferProject": {
           "type": "boolean",
@@ -178,7 +200,9 @@
     }
   },
   "scripts": {
-    "check": "node --check extension.js",
-    "package": "npx @vscode/vsce package --allow-missing-repository"
+    "check": "node --check extension.js && node --check extension-entry.js && node --check wasm-target.js && node --check toolchain.js && node --check client/lsp-client.js && node --check server/lsp-server.js && node --check server/language.js && node --check opaque-docs.js && node --check tools/absolute-repl.js && node --check tools/absolute-wasm-run.js && node --check scripts/sync-wasm-host.js && node --check ../tools/absolute-repl.js",
+    "test": "node test/language-smoke.js && node test/wasm-target-smoke.js",
+    "package": "node scripts/sync-wasm-host.js && npx @vscode/vsce package --allow-missing-repository",
+    "fmt-smoke": "node ../tools/absolute-dev.js fmt ../tests/std-log.abs"
   }
 }

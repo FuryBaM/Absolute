@@ -38,7 +38,12 @@ namespace Absolute {
             return key;
         };
         for (const std::string& parent : found->second.parents) {
-            const auto contract = types.find(parent);
+            std::string contractName = parent;
+            std::string genericBase;
+            std::vector<std::string> genericArguments;
+            if (ParseGenericTypeName(parent, genericBase, genericArguments))
+                contractName = genericBase;
+            const auto contract = types.find(contractName);
             if (contract == types.end() || contract->second.kind != TypeKind::Interface) continue;
             for (const auto& [methodName, overloads] : VisibleMembers(parent)) {
                 for (const MemberSignature& requirement : overloads) {
@@ -140,8 +145,10 @@ namespace Absolute {
                     symbol->access = member.access;
                     symbol->readAccess = member.readAccess;
                     symbol->writeAccess = member.writeAccess;
-                    if (const Symbol* original = table.Get(member.symbol))
+                    if (const Symbol* original = table.Get(member.symbol)) {
                         symbol->memberOwner = original->memberOwner;
+                        symbol->asyncFunction = original->asyncFunction;
+                    }
                 }
             }
         for (const auto& member : stmt->members) if (member) member->Accept(*this);
@@ -180,10 +187,15 @@ namespace Absolute {
         size_t classParentCount = 0;
         for (const std::string& parent : stmt->parents) {
             const std::string resolvedParent = ResolveTypeReference(parent);
-            if (!types.contains(resolvedParent))
+            std::string parentDefinition = resolvedParent;
+            std::string genericBase;
+            std::vector<std::string> genericArguments;
+            if (ParseGenericTypeName(resolvedParent, genericBase, genericArguments))
+                parentDefinition = genericBase;
+            if (!types.contains(parentDefinition))
                 Report("unknown parent type '" + parent + "' of class '" + typeName + "'");
-            else if (types[resolvedParent].kind == TypeKind::Class) ++classParentCount;
-            else if (types[resolvedParent].kind != TypeKind::Interface)
+            else if (types[parentDefinition].kind == TypeKind::Class) ++classParentCount;
+            else if (types[parentDefinition].kind != TypeKind::Interface)
                 Report("class '" + typeName + "' cannot inherit non-class type '" + resolvedParent + "'");
         }
         if (classParentCount > 1)
@@ -204,14 +216,17 @@ namespace Absolute {
                     symbol->access = member.access;
                     symbol->readAccess = member.readAccess;
                     symbol->writeAccess = member.writeAccess;
-                    if (const Symbol* original = table.Get(member.symbol))
+                    if (const Symbol* original = table.Get(member.symbol)) {
                         symbol->memberOwner = original->memberOwner;
+                        symbol->asyncFunction = original->asyncFunction;
+                    }
                 }
             }
         if (stmt->body) stmt->body->Accept(*this);
-        if (!types[typeName].constructor) {
+        if (types[typeName].constructors.empty()) {
             const std::string baseClass = DirectBaseClass(typeName);
             const auto baseParameters = ConstructorParameterTypes(baseClass);
+            // Synthetic zero-arg ctor needs a zero-arg (or synthetic) base constructor.
             if (!baseClass.empty() && baseParameters && !baseParameters->empty())
                 Report("implicit constructor of '" + typeName + "' cannot call base constructor '" +
                     baseClass + "' without arguments; declare a constructor with base(...)",
@@ -225,12 +240,18 @@ namespace Absolute {
 
     void Analyzer::Visit(InterfaceDeclStmt* stmt) {
         const std::string typeName = Qualify(stmt->name);
+        std::unordered_map<std::string, std::string> genericScope;
+        for (const Token& parameter : stmt->templateParams)
+            genericScope.emplace(parameter.value, parameter.value);
         if (phase == Phase::CollectTypeNames) {
             DeclareType(stmt->name, TypeKind::Interface);
+            for (const Token& parameter : stmt->templateParams)
+                types[typeName].genericParameters.push_back(parameter.value);
             return;
         }
         if (phase == Phase::CollectDeclarations) {
             auto& definition = types[typeName];
+            if (!genericScope.empty()) genericTypeScopes.push_back(genericScope);
             definition.parents.clear();
             for (const std::string& parent : stmt->parents)
                 definition.parents.push_back(ResolveTypeReference(parent));
@@ -241,12 +262,19 @@ namespace Absolute {
             for (const auto& indexer : stmt->indexers) if (indexer) indexer->Accept(*this);
             for (const auto& field : stmt->staticFields) if (field) field->Accept(*this);
             currentType = old;
+            if (!genericScope.empty()) genericTypeScopes.pop_back();
             return;
         }
         ValidateAttributes(*stmt, "interface declaration", false);
+        if (!genericScope.empty()) genericTypeScopes.push_back(genericScope);
         for (const std::string& parent : stmt->parents) {
             const std::string resolvedParent = ResolveTypeReference(parent);
-            const auto found = types.find(resolvedParent);
+            std::string parentDefinition = resolvedParent;
+            std::string genericBase;
+            std::vector<std::string> genericArguments;
+            if (ParseGenericTypeName(resolvedParent, genericBase, genericArguments))
+                parentDefinition = genericBase;
+            const auto found = types.find(parentDefinition);
             if (found == types.end())
                 Report("unknown parent interface '" + parent + "' of interface '" + typeName + "'");
             else if (found->second.kind != TypeKind::Interface)
@@ -268,8 +296,10 @@ namespace Absolute {
                     symbol->access = member.access;
                     symbol->readAccess = member.readAccess;
                     symbol->writeAccess = member.writeAccess;
-                    if (const Symbol* original = table.Get(member.symbol))
+                    if (const Symbol* original = table.Get(member.symbol)) {
                         symbol->memberOwner = original->memberOwner;
+                        symbol->asyncFunction = original->asyncFunction;
+                    }
                 }
             }
         for (const auto& method : stmt->methods) if (method) method->Accept(*this);
@@ -278,6 +308,7 @@ namespace Absolute {
         for (const auto& field : stmt->staticFields) if (field) field->Accept(*this);
         table.ExitScope();
         currentType = old;
+        if (!genericScope.empty()) genericTypeScopes.pop_back();
     }
 
     void Analyzer::Visit(PropertyDeclStmt* stmt) {
@@ -393,14 +424,35 @@ namespace Absolute {
             return;
         }
         if (phase == Phase::CollectDeclarations) {
-            if (types[currentType].constructor) Report("constructor of '" + currentType + "' is already declared");
-            else {
-                MemberSignature constructor{SymbolKind::Constructor, currentType,
-                    ResolveParameterTypes(stmt->parameters)};
-                constructor.access = DeclaredAccess(*stmt);
-                constructor.owner = currentType;
-                types[currentType].constructor = std::move(constructor);
+            MemberSignature constructor{SymbolKind::Constructor, currentType,
+                ResolveParameterTypes(stmt->parameters)};
+            constructor.access = DeclaredAccess(*stmt);
+            constructor.owner = currentType;
+            auto& overloads = types[currentType].constructors;
+            const bool collision = std::any_of(overloads.begin(), overloads.end(),
+                [&](const MemberSignature& existing) {
+                    return existing.parameterTypes == constructor.parameterTypes;
+                });
+            if (collision) {
+                Report("constructor of '" + currentType +
+                    "' already has an overload with this signature",
+                    "E_CONSTRUCTOR_REDEFINITION");
+                return;
             }
+            const auto declared = table.Declare(SymbolKind::Constructor,
+                currentType + ".__ctor", currentType, constructor.parameterTypes);
+            if (!declared) {
+                Report("constructor of '" + currentType +
+                    "' already has an overload with this signature",
+                    "E_CONSTRUCTOR_REDEFINITION");
+                return;
+            }
+            constructor.symbol = *declared;
+            if (Symbol* symbol = table.Get(*declared)) {
+                symbol->access = constructor.access;
+                symbol->memberOwner = currentType;
+            }
+            overloads.push_back(std::move(constructor));
             return;
         }
         ValidateAccessModifiers(*stmt, true, "constructor");
@@ -416,6 +468,19 @@ namespace Absolute {
             Report("constructor '" + stmt->name->value + "' must match type '" + currentType + "'");
         ++functionDepth;
         const bool oldConstructor = currentConstructor;
+        const SymbolId oldCallable = currentCallable;
+        currentCallable = InvalidSymbolId;
+        const std::vector<std::string> declaredParameterTypes =
+            ResolveParameterTypes(stmt->parameters);
+        for (const MemberSignature& constructor : types[currentType].constructors) {
+            if (constructor.parameterTypes == declaredParameterTypes) {
+                currentCallable = constructor.symbol;
+                break;
+            }
+        }
+        if (Symbol* callable = table.Get(currentCallable))
+            callable->parameterRequiresOwner.assign(
+                stmt->parameters.size(), false);
         currentConstructor = true;
         table.EnterScope();
         keepLifetimes.clear();
@@ -429,14 +494,34 @@ namespace Absolute {
         flowTerminated = false;
         PushKeepScope();
         PushValueFlowScope();
-        for (const auto& parameter : stmt->parameters) {
+        for (size_t parameterIndex = 0;
+            parameterIndex < stmt->parameters.size(); ++parameterIndex) {
+            const auto& parameter = stmt->parameters[parameterIndex];
             const std::string name = parameter ? ExtractIdentifier(parameter->name.get()) : std::string{};
             const std::string type = parameter ? ResolveDeclaredType(*parameter) : "error";
+            if (parameter)
+                ValidateValueReferenceParameter(*parameter, type, currentType + ".__ctor");
+            if (parameter)
             if (const auto declared = table.Declare(SymbolKind::Parameter, name, type)) {
-                table.Get(*declared)->isConst = parameter && parameter->isConst;
+                Symbol* symbol = table.Get(*declared);
+                symbol->isConst = parameter && parameter->isConst;
+                symbol->valueReference = parameter && parameter->isReference;
+                symbol->constValueReference = parameter && parameter->isReference && parameter->isConst;
+                symbol->rolePolymorphic = parameter &&
+                    ParameterSupportsOwnership(type);
+                symbol->parameterIndex = parameterIndex;
+                symbol->callableOwner = currentCallable;
+                if (parameter && IsStrongManagedPointerType(type)) {
+                    symbol->managedOwner = symbol->rolePolymorphic;
+                    symbol->managedBorrower = true;
+                }
+                else if (IsWeakPointerType(type)) symbol->managedBorrower = true;
+                if (parameter && ArrayRank(type) > 0)
+                    symbol->ownsArrayStorage = symbol->rolePolymorphic;
                 RegisterFlowSymbol(*declared, {InitializationState::Initialized,
                     IsPointerType(type) ? PointerValidity::Unknown : PointerValidity::NotPointer,
-                    InvalidSymbolId,
+                    symbol->rolePolymorphic && IsStrongManagedPointerType(type)
+                        ? *declared : InvalidSymbolId,
                     IsTaskType(type) ? TaskState::Unknown : TaskState::NotTask});
             }
             else Report("parameter '" + name + "' is already declared");
@@ -448,35 +533,65 @@ namespace Absolute {
             for (const auto& argument : stmt->baseArguments) Evaluate(argument.get());
         }
         else if (!baseClass.empty()) {
-            const auto declaredParameters = ConstructorParameterTypes(baseClass);
+            std::vector<MemberSignature> baseConstructors = ConstructorsOf(baseClass);
             std::string baseDefinition = baseClass;
             std::string genericBase;
             std::vector<std::string> genericArguments;
             if (ParseGenericTypeName(baseClass, genericBase, genericArguments))
                 baseDefinition = genericBase;
-            if (const auto base = types.find(baseDefinition);
-                base != types.end() && base->second.constructor)
-                RequireAccess(base->second.constructor->access, baseDefinition,
-                    baseDefinition, base->second.constructor->symbol);
-            const std::vector<std::string> expected = declaredParameters.value_or(
-                std::vector<std::string>{});
-            if (!stmt->hasExplicitBaseCall && declaredParameters && !expected.empty()) {
-                Report("constructor of '" + currentType + "' must call base(...) with " +
-                    std::to_string(expected.size()) + " argument(s)", "E_BASE_CONSTRUCTOR_REQUIRED");
+            if (!stmt->hasExplicitBaseCall) {
+                // Implicit base() requires a zero-arg (or synthetic) base constructor.
+                bool hasZeroArg = baseConstructors.empty();
+                for (const MemberSignature& constructor : baseConstructors)
+                    if (constructor.parameterTypes.empty()) {
+                        hasZeroArg = true;
+                        RequireAccess(constructor.access, baseDefinition,
+                            baseDefinition, constructor.symbol);
+                        break;
+                    }
+                if (!hasZeroArg)
+                    Report("constructor of '" + currentType +
+                        "' must call base(...) (base has no zero-argument constructor)",
+                        "E_BASE_CONSTRUCTOR_REQUIRED");
             }
             if (stmt->hasExplicitBaseCall) {
-                if (stmt->baseArguments.size() != expected.size())
-                    Report("base constructor of '" + baseClass + "' expects " +
-                        std::to_string(expected.size()) + " argument(s), got " +
-                        std::to_string(stmt->baseArguments.size()), "E_BASE_ARGUMENT_COUNT");
-                for (size_t index = 0; index < stmt->baseArguments.size(); ++index) {
-                    const std::string expectedType = index < expected.size() ? expected[index] : std::string{};
-                    const Result argument = EvaluateExpected(
-                        stmt->baseArguments[index].get(), expectedType);
-                    if (!expectedType.empty() && !IsAssignable(expectedType, argument.type))
-                        Report("base constructor argument " + std::to_string(index + 1) +
-                            " has type '" + argument.type + "', expected '" + expectedType + "'",
-                            "E_BASE_ARGUMENT_TYPE", argument.symbol);
+                std::vector<Result> baseArgs;
+                baseArgs.reserve(stmt->baseArguments.size());
+                for (const auto& argument : stmt->baseArguments)
+                    baseArgs.push_back(Evaluate(argument.get()));
+                const MemberSignature* selected = SelectConstructor(
+                    baseConstructors, baseArgs, baseClass);
+                if (selected)
+                    RequireAccess(selected->access, baseDefinition,
+                        baseDefinition, selected->symbol);
+                if (selected) {
+                    for (size_t index = 0; index < stmt->baseArguments.size(); ++index) {
+                        const std::string expectedType = index < selected->parameterTypes.size()
+                            ? selected->parameterTypes[index] : std::string{};
+                        const std::string expectedValueType = ValueReferenceBaseType(expectedType);
+                        const Result& argument = baseArgs[index];
+                        if (!expectedType.empty() && !IsAssignable(expectedValueType, argument.type))
+                            Report("base constructor argument " + std::to_string(index + 1) +
+                                " has type '" + argument.type + "', expected '" + expectedValueType + "'",
+                                "E_BASE_ARGUMENT_TYPE", argument.symbol);
+                        if (IsValueReferenceType(expectedType) &&
+                            !IsConstValueReferenceType(expectedType)) {
+                            if (!argument.isLValue)
+                                Report("mutable reference base constructor argument " +
+                                    std::to_string(index + 1) + " requires an lvalue",
+                                    "E_VALUE_REF_REQUIRES_LVALUE", argument.symbol);
+                            else if (IsConstMutationTarget(
+                                stmt->baseArguments[index].get(), argument))
+                                Report("mutable reference base constructor argument " +
+                                    std::to_string(index + 1) + " cannot borrow a const value",
+                                    "E_VALUE_REF_CONST_ARGUMENT", argument.symbol);
+                        }
+                        CheckManagedMoveArgument(argument, expectedType, index,
+                            "base constructor");
+                    }
+                    RecordOwnershipCall(selected->symbol, baseArgs,
+                        selected->parameterTypes,
+                        "base constructor '" + baseClass + "'");
                 }
             }
         }
@@ -488,6 +603,8 @@ namespace Absolute {
         table.ExitScope();
         --functionDepth;
         currentConstructor = oldConstructor;
+        currentCallable = oldCallable;
+        ownerGuardedParameters.clear();
     }
 
     void Analyzer::Visit(EnumDeclStmt* stmt) {

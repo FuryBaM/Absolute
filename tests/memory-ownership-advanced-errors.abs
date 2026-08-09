@@ -1,0 +1,9 @@
+class Document {
+}
+
+void main() {
+    Document* owner = new Document();
+    shared Document* unsupportedType = owner;
+    Document* unsupportedRetain = retainRaw(owner);
+    auto unsupportedShare = share(move(owner));
+}

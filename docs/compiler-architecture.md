@@ -123,7 +123,8 @@ interfaces. This keeps compiler and plugin toolchains decoupled.
 - lowering plugins translate new syntax into ordinary Absolute source/AST;
 - opaque plugins own an AST payload and participate in analysis/debug output
   and LLVM emission;
-- `.absplugin` manifests declare libraries, dependencies and editor metadata.
+- `.absplugin` manifests declare libraries, dependencies, ordinary `.abs`
+  preludes and editor metadata.
 
 A plugin must not silently replace a core keyword or bypass normal diagnostics.
 ABI additions require version/capability negotiation and compatibility tests.

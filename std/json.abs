@@ -1,0 +1,215 @@
+extern "C" raw void* absolute_json_create_null();
+extern "C" raw void* absolute_json_create_bool(int32 val);
+extern "C" raw void* absolute_json_create_number(double val);
+extern "C" raw void* absolute_json_create_string(string val);
+extern "C" raw void* absolute_json_create_array();
+extern "C" raw void* absolute_json_create_object();
+extern "C" void absolute_json_free(raw void* handle);
+
+extern "C" int32 absolute_json_get_type(raw void* handle);
+extern "C" int32 absolute_json_as_bool(raw void* handle);
+extern "C" double absolute_json_as_number(raw void* handle);
+extern "C" string absolute_json_as_string(raw void* handle);
+
+extern "C" int32 absolute_json_size(raw void* handle);
+extern "C" raw void* absolute_json_get_array_elem(raw void* handle, int32 index);
+extern "C" int32 absolute_json_has_property(raw void* handle, string key);
+extern "C" raw void* absolute_json_get_property(raw void* handle, string key);
+
+extern "C" void absolute_json_array_add(raw void* handle, raw void* item);
+extern "C" void absolute_json_object_set(raw void* handle, string key, raw void* item);
+
+extern "C" raw void* absolute_json_parse(string jsonText);
+extern "C" string absolute_json_stringify(raw void* handle, int32 pretty);
+extern "C" string absolute_json_get_last_error();
+
+namespace std.json {
+    enum JsonType {
+        Null,
+        Boolean,
+        Number,
+        String,
+        Array,
+        Object
+    }
+
+    class JsonValue {
+        private raw void* handle;
+        private bool isOwner;
+
+        public JsonValue(raw void* rawHandle, bool owner) {
+            handle = rawHandle;
+            isOwner = owner;
+        }
+
+        public raw void* getHandle() {
+            return handle;
+        }
+
+        public void destroy() {
+            if (isOwner && handle) {
+                absolute_json_free(handle);
+                handle = null;
+            }
+        }
+
+        public void dispose() { destroy(); }
+        public bool isValid() { return handle != null; }
+
+        public JsonType getType() {
+            int32 t = absolute_json_get_type(handle);
+            if (t == 0) { return JsonType.Null; }
+            if (t == 1) { return JsonType.Boolean; }
+            if (t == 2) { return JsonType.Number; }
+            if (t == 3) { return JsonType.String; }
+            if (t == 4) { return JsonType.Array; }
+            if (t == 5) { return JsonType.Object; }
+            return JsonType.Null;
+        }
+
+        public bool isNull() { return getType() == JsonType.Null; }
+        public bool isBool() { return getType() == JsonType.Boolean; }
+        public bool isNumber() { return getType() == JsonType.Number; }
+        public bool isString() { return getType() == JsonType.String; }
+        public bool isArray() { return getType() == JsonType.Array; }
+        public bool isObject() { return getType() == JsonType.Object; }
+
+        public bool asBool() { return absolute_json_as_bool(handle) != 0; }
+        public int64 asInt() { return absolute_json_as_number(handle) as int64; }
+        public double asDouble() { return absolute_json_as_number(handle); }
+        public string asString() { return absolute_json_as_string(handle); }
+
+        public int32 size() { return absolute_json_size(handle); }
+
+        public JsonValue* getAt(int32 index) {
+            raw void* child = absolute_json_get_array_elem(handle, index);
+            if (!child) { return null; }
+            return new JsonValue(child, false);
+        }
+
+        public bool hasProp(string key) {
+            return absolute_json_has_property(handle, key) != 0;
+        }
+
+        public JsonValue* getProp(string key) {
+            raw void* child = absolute_json_get_property(handle, key);
+            if (!child) { return null; }
+            return new JsonValue(child, false);
+        }
+
+        public string getStringOr(string key, string defaultValue) {
+            raw void* child = absolute_json_get_property(handle, key);
+            if (!child || absolute_json_get_type(child) != 3) { return defaultValue; }
+            return absolute_json_as_string(child);
+        }
+
+        public int64 getIntOr(string key, int64 defaultValue) {
+            raw void* child = absolute_json_get_property(handle, key);
+            if (!child || absolute_json_get_type(child) != 2) { return defaultValue; }
+            return absolute_json_as_number(child) as int64;
+        }
+
+        public bool getBoolOr(string key, bool defaultValue) {
+            raw void* child = absolute_json_get_property(handle, key);
+            if (!child || absolute_json_get_type(child) != 1) { return defaultValue; }
+            return absolute_json_as_bool(child) != 0;
+        }
+
+        public void add(JsonValue* item) {
+            if (item && isArray()) {
+                absolute_json_array_add(handle, item.getHandle());
+                item.isOwner = false;
+            }
+        }
+
+        public void addNumber(double value) {
+            absolute_json_array_add(handle, absolute_json_create_number(value));
+        }
+
+        public void addString(string value) {
+            absolute_json_array_add(handle, absolute_json_create_string(value));
+        }
+
+        public void addBool(bool value) {
+            absolute_json_array_add(handle, absolute_json_create_bool(value ? 1 : 0));
+        }
+
+        public void addNull() {
+            absolute_json_array_add(handle, absolute_json_create_null());
+        }
+
+        public void setProp(string key, JsonValue* val) {
+            if (val && isObject()) {
+                absolute_json_object_set(handle, key, val.getHandle());
+                val.isOwner = false;
+            }
+        }
+
+        public void setNumber(string key, double val) {
+            absolute_json_object_set(handle, key, absolute_json_create_number(val));
+        }
+
+        public void setString(string key, string val) {
+            absolute_json_object_set(handle, key, absolute_json_create_string(val));
+        }
+
+        public void setBool(string key, bool val) {
+            int32 intVal = 0;
+            if (val) { intVal = 1; }
+            absolute_json_object_set(handle, key, absolute_json_create_bool(intVal));
+        }
+
+        public void setNull(string key) {
+            absolute_json_object_set(handle, key, absolute_json_create_null());
+        }
+
+        public string stringify() {
+            return absolute_json_stringify(handle, 0);
+        }
+
+        public string stringifyPretty() {
+            return absolute_json_stringify(handle, 1);
+        }
+    }
+
+    JsonValue* createNull() {
+        return new JsonValue(absolute_json_create_null(), true);
+    }
+
+    JsonValue* createBool(bool v) {
+        int32 intVal = 0;
+        if (v) { intVal = 1; }
+        return new JsonValue(absolute_json_create_bool(intVal), true);
+    }
+
+    JsonValue* createNumber(double v) {
+        return new JsonValue(absolute_json_create_number(v), true);
+    }
+
+    JsonValue* createString(string v) {
+        return new JsonValue(absolute_json_create_string(v), true);
+    }
+
+    JsonValue* createArray() {
+        return new JsonValue(absolute_json_create_array(), true);
+    }
+
+    JsonValue* createObject() {
+        return new JsonValue(absolute_json_create_object(), true);
+    }
+
+    JsonValue* parse(string jsonText) {
+        raw void* root = absolute_json_parse(jsonText);
+        if (!root) { return null; }
+        return new JsonValue(root, true);
+    }
+
+    string stringify(JsonValue* val) {
+        if (!val) { return "null"; }
+        return val.stringify();
+    }
+
+    string getLastError() {
+        return absolute_json_get_last_error();
+    }
+}

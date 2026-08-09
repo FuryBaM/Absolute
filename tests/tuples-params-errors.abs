@@ -1,0 +1,13 @@
+void notLast(params int32[] values, int32 tail) {
+}
+
+void notArray(params int32 value) {
+}
+
+void ownsResources(params int32*[] values) {
+}
+
+int32 main() {
+    tuple<int32> invalid = (1, 2);
+    return 0;
+}

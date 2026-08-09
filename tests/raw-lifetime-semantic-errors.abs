@@ -1,0 +1,25 @@
+int32 returnAddressOfLocal() {
+    int32 value = 42;
+    raw int32* p = &value;
+    return p; // Should fail!
+}
+
+raw int32* returnAddressDirect() {
+    int32 value = 42;
+    return &value; // Should fail!
+}
+
+int32 useExpiredAlias() {
+    raw int32* outside = null;
+    {
+        int32 value = 42;
+        outside = &value;
+    }
+    int32 val = *outside; // Should fail with use-after-free!
+    return val;
+}
+
+
+int32 main() {
+    return 0;
+}

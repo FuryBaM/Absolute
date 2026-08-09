@@ -11,7 +11,8 @@ namespace Absolute {
             if (const auto* user = dynamic_cast<const UserTypeExpr*>(&type))
                 return std::make_unique<UserTypeExpr>(CloneTypeExpression(*user->typeExpr));
             if (const auto* pointer = dynamic_cast<const PointerTypeExpr*>(&type))
-                return std::make_unique<PointerTypeExpr>(CloneType(*pointer->pointee), pointer->raw);
+                return std::make_unique<PointerTypeExpr>(
+                    CloneType(*pointer->pointee), pointer->raw, pointer->weak);
             if (const auto* array = dynamic_cast<const ArrayTypeExpr*>(&type))
                 return std::make_unique<ArrayTypeExpr>(CloneType(*array->element));
             throw std::runtime_error("Unsupported property type expression");

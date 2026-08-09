@@ -1,0 +1,232 @@
+namespace std.collections {
+    class DequeIterator<T> {
+        private T[] snapshot;
+        private int32 index;
+
+        public DequeIterator(T[] source) {
+            snapshot = copy(source);
+            index = -1;
+        }
+
+        public bool next() {
+            index = index + 1;
+            return index < snapshot.length;
+        }
+
+        public T value {
+            get { return snapshot[index]; }
+        }
+    }
+
+    class Deque<T> {
+        private T[] items;
+        private int32 head;
+        private int32 _count;
+        private int32 _capacity;
+
+        public Deque(int32 initialCapacity = 8) {
+            if (initialCapacity < 1) {
+                throw new Error("Deque capacity must be positive");
+            }
+            _capacity = initialCapacity;
+            items = new T[_capacity];
+            head = 0;
+            _count = 0;
+        }
+
+        private void grow() {
+            int32 newCapacity = _capacity * 2;
+            T[] next = new T[newCapacity];
+            int32 index = 0;
+            while (index < _count) {
+                next[index] = items[(head + index) % _capacity];
+                index = index + 1;
+            }
+            items = move(next);
+            _capacity = newCapacity;
+            head = 0;
+        }
+
+        public int32 count {
+            get { return _count; }
+        }
+
+        public int32 capacity {
+            get { return _capacity; }
+        }
+
+        public bool isEmpty {
+            get { return _count == 0; }
+        }
+
+        public T front {
+            get {
+                if (_count == 0) { throw new Error("Deque is empty"); }
+                return items[head];
+            }
+        }
+
+        public T back {
+            get {
+                if (_count == 0) { throw new Error("Deque is empty"); }
+                return items[(head + _count - 1) % _capacity];
+            }
+        }
+
+        public void pushFront(T value) {
+            if (_count == _capacity) { grow(); }
+            head = (head + _capacity - 1) % _capacity;
+            items[head] = move(value);
+            _count = _count + 1;
+        }
+
+        public void pushBack(T value) {
+            if (_count == _capacity) { grow(); }
+            int32 index = (head + _count) % _capacity;
+            items[index] = move(value);
+            _count = _count + 1;
+        }
+
+        public T popFront() {
+            if (_count == 0) { throw new Error("Deque is empty"); }
+            T result = items[head];
+            head = (head + 1) % _capacity;
+            _count = _count - 1;
+            if (_count == 0) { head = 0; }
+            return result;
+        }
+
+        public T popBack() {
+            if (_count == 0) { throw new Error("Deque is empty"); }
+            int32 index = (head + _count - 1) % _capacity;
+            T result = items[index];
+            _count = _count - 1;
+            if (_count == 0) { head = 0; }
+            return result;
+        }
+
+        public void clear() {
+            head = 0;
+            _count = 0;
+        }
+
+        public bool contains(T target) {
+            int32 index = 0;
+            while (index < _count) {
+                if (items[(head + index) % _capacity] == target) {
+                    return true;
+                }
+                index = index + 1;
+            }
+            return false;
+        }
+
+        public T this[int32 index] {
+            get {
+                if (index < 0 || index >= _count) {
+                    throw new Error("Deque index out of bounds");
+                }
+                return items[(head + index) % _capacity];
+            }
+            set {
+                if (index < 0 || index >= _count) {
+                    throw new Error("Deque index out of bounds");
+                }
+                items[(head + index) % _capacity] = value;
+            }
+        }
+
+        public T[] toArray() {
+            T[] result = new T[_count];
+            int32 index = 0;
+            while (index < _count) {
+                result[index] = items[(head + index) % _capacity];
+                index = index + 1;
+            }
+            return result;
+        }
+
+        public DequeIterator<T>* iterate() {
+            return new DequeIterator<T>(toArray());
+        }
+    }
+
+    class Queue<T> {
+        private Deque<T>* storage;
+
+        public Queue(int32 initialCapacity = 8) {
+            storage = new Deque<T>(initialCapacity);
+        }
+
+        public int32 count {
+            get { return storage.count; }
+        }
+
+        public bool isEmpty {
+            get { return storage.isEmpty; }
+        }
+
+        public T front {
+            get { return storage.front; }
+        }
+
+        public void enqueue(T value) {
+            storage.pushBack(value);
+        }
+
+        public T dequeue() {
+            return storage.popFront();
+        }
+
+        public void clear() {
+            storage.clear();
+        }
+
+        public T[] toArray() {
+            return storage.toArray();
+        }
+    }
+
+    class Stack<T> {
+        private Deque<T>* storage;
+
+        public Stack(int32 initialCapacity = 8) {
+            storage = new Deque<T>(initialCapacity);
+        }
+
+        public int32 count {
+            get { return storage.count; }
+        }
+
+        public bool isEmpty {
+            get { return storage.isEmpty; }
+        }
+
+        public T top {
+            get { return storage.back; }
+        }
+
+        public void push(T value) {
+            storage.pushBack(value);
+        }
+
+        public T pop() {
+            return storage.popBack();
+        }
+
+        public void clear() {
+            storage.clear();
+        }
+
+        public T[] toArray() {
+            T[] source = storage.toArray();
+            T[] result = new T[source.length];
+            int32 index = 0;
+            while (index < source.length) {
+                result[index] = source[source.length - index - 1];
+                index = index + 1;
+            }
+            return result;
+        }
+    }
+}

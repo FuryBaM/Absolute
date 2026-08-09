@@ -1,0 +1,8 @@
+extern "C" raw int32* native_pointer_alias(raw int32* value);
+
+int32 main() {
+    raw int32* owner = new int32(42);
+    raw int32* escapedAlias = native_pointer_alias(owner);
+    delete owner;
+    return *escapedAlias;
+}

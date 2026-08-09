@@ -1,0 +1,36 @@
+class MutableAsync {
+    public async int32 read() {
+        return 1;
+    }
+}
+
+class StableAsync {
+    public async const int32 read() {
+        return 2;
+    }
+}
+
+struct ResourceAsync {
+    int32* child;
+
+    public async const int32 read() {
+        return 3;
+    }
+}
+
+async int32 main() {
+    StableAsync* mutableOwner = new StableAsync();
+    task<int32> mutableReceiver = spawn mutableOwner.read();
+
+    const StableAsync* subscriber = mutableOwner;
+    task<int32> subscriberReceiver = spawn subscriber.read();
+
+    const raw StableAsync* rawReceiver = new raw StableAsync();
+    task<int32> rawTask = spawn rawReceiver.read();
+
+    const ResourceAsync* resourceReceiver = new ResourceAsync();
+    task<int32> resourceTask = spawn resourceReceiver.read();
+
+    return await mutableReceiver + await subscriberReceiver +
+        await rawTask + await resourceTask;
+}

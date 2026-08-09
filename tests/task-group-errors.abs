@@ -1,0 +1,16 @@
+import "../std/task.abs";
+
+async void childWork() {
+    std.task.delay(1);
+}
+
+async int32 main() {
+    auto taskSet = new std.task.TaskGroup();
+    task<void> child = spawn childWork();
+    taskSet.add(child);
+
+    // A TaskGroup owns the task after the first add. Reusing the source would
+    // otherwise let two owners await/destroy the same runtime handle.
+    taskSet.add(child);
+    return 0;
+}

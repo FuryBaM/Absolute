@@ -27,12 +27,22 @@ int32 main() {
     int32 selected = chooseFirst<int32>(40, 2);
     int32 concreteOverload = preferConcrete(1);
 
+    // An explicit type argument must still allow the implicit numeric
+    // conversions an ordinary call accepts, instead of requiring the argument
+    // to already have the specialized type.
+    int64 widenedInteger = identity<int64>(7);
+    double widenedFloating = identity<double>(7);
+    int64 widenedSelected = chooseFirst<int64>(40, 2);
+
     assert(inferred == 42, "generic inference");
     assert(explicitValue == 21.5, "explicit generic argument");
     println(text);
     assert(firstValue == 7, "generic array pattern");
     assert(selected == 40, "generic multi-parameter call");
     assert(concreteOverload == 42, "non-generic overload wins an equal match");
+    assert(widenedInteger == 7, "explicit generic argument widens an integer");
+    assert(widenedFloating == 7.0, "explicit generic argument widens to floating point");
+    assert(widenedSelected == 40, "explicit generic argument widens every parameter");
     println("generic-functions=ok");
     return 0;
 }

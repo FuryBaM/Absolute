@@ -1,0 +1,27 @@
+@task(core = 0)
+int32 notAsync() {
+    return 1;
+}
+
+@task(priority = 4)
+async int32 badPriority() {
+    return 2;
+}
+
+@task(core = -2, role = 42)
+async int32 badOptions() {
+    return 3;
+}
+
+async int32 validTask() {
+    return 4;
+}
+
+async int32 main() {
+    @spawn(priority = "high", lane = "worker")
+    task<int32> invalidArguments = spawn validTask();
+
+    @spawn(core = 0)
+    int32 notASpawn = 5;
+    return await invalidArguments + notASpawn;
+}

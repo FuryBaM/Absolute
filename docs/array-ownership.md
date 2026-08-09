@@ -22,28 +22,54 @@ of the allocation and is the only pointer passed to `free`.
   call owns the descriptor's non-null allocation.
 - Creating another view or slice does not duplicate ownership. The new variable
   is a borrower and retains the root owner's symbol for return analysis.
-- Array parameters always borrow. A callee must not release their owner field.
+- An array lvalue passed normally is a borrowed view. `move(ownerArray)` or a
+  fresh owning result passes the owner role, which the callee releases on exit
+  unless moved onward.
 - Returning an owned variable or any of its aliases transfers the root owner to
   the caller. Cleanup in the callee skips that owner.
 - A caller releases an owning array at scope exit. A fresh owning argument is
-  released after the call, and an ignored owning result is released immediately.
+  released by the owner-role callee, and an ignored owning result is released
+  immediately.
 - `copy(freshOwningArray())` releases the temporary source after the `memcpy`
   and transfers only the newly copied buffer.
 - `free(null)` is valid, so a function may return either an owning copy or a
   borrowed global view on different paths without changing its ABI.
 
-There is no separate `borrow` pointer kind or runtime marker. Managed pointer
-parameters and array parameters are non-owning by language rule, slices are
-zero-copy views, and `raw` remains the explicit unsafe escape hatch.
+There is no separate `borrow` source type. Internal Absolute calls carry a
+hidden ownership-role bit for resource parameters; slices remain zero-copy
+views, and `raw` remains the explicit unsafe escape hatch.
+
+## Audited unchecked access
+
+`unsafeArrayGet(array, index)` and `unsafeArraySet(array, index, value)` are
+one-dimensional, unchecked compiler intrinsics. They perform no length check
+and an invalid index is undefined behavior. Safe application code should use
+ordinary `array[index]`.
+
+`unsafeArrayData(array)` returns a `raw T*` to the first element. The pointer
+borrows the array storage, must not be deleted, and is invalidated when its
+owner is destroyed or replaces the backing allocation. `Vector.unsafeData()`
+exposes the same explicitly unsafe view; callers must not retain it across
+`push` or another structural mutation.
+
+The intrinsics exist for standard-library containers that already validate a
+logical index against their own element count. For example, `Vector` checks
+`0 <= index < count` and then uses the intrinsic to avoid repeating a second
+capacity-array bounds check. The public collection operation remains checked;
+only its already-proven internal access is unchecked.
 
 ## Aggregate fields
 
 An array-valued class or struct field is an owning resource slot. Store a fresh
-`copy(...)`, an owning function result, or a global borrowed descriptor into the
-field. A local array or slice cannot escape into a field because its backing
-storage may disappear before the aggregate. Reassignment frees the old non-null
-owner, and the aggregate destructor frees the final value.
+`copy(...)`, transfer a local owning descriptor with `move(...)`, store an
+owning function result, or use a global borrowed descriptor. A local array or
+slice cannot otherwise escape into a field because its backing storage may
+disappear before the aggregate. Reassignment frees the old non-null owner, and
+the aggregate destructor frees the final value.
 
-The remaining boundaries are plugin-defined resources, async captures, and
-stronger lifetime diagnostics for temporary borrows. See
-`docs/resource-ownership.md` and `TODO.md`.
+The analyzer rejects local or borrowed views that escape through a return or an
+aggregate field unless an explicit `copy(...)`, returned owner, or global view
+makes the backing storage long-lived. Async task payloads cannot contain arrays
+or slices because the current task context stores only lifetime-independent
+scalar and enum values. Plugin-defined resource boundaries remain future work;
+see `docs/resource-ownership.md` and `TODO.md`.

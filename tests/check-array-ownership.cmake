@@ -18,10 +18,14 @@ string(REGEX MATCH "define %absolute[.]array[.]int32[.]1 @aliasedCopy\\([^}]+\\}
 if(NOT aliased_copy)
     message(FATAL_ERROR "aliasedCopy IR body was not found")
 endif()
-if(aliased_copy MATCHES "call void @free")
-    message(FATAL_ERROR "aliasedCopy frees storage instead of transferring its root owner")
+if(aliased_copy MATCHES "call void @free" AND
+    NOT aliased_copy MATCHES "br i1 %role[.]is[.]owner")
+    message(FATAL_ERROR
+        "aliasedCopy has unconditional parameter cleanup instead of role-aware RAII")
 endif()
 
-if(NOT ir MATCHES "%first[.]result = call i32 @first\\([^\r\n]+[\r\n]+[ ]*call void @free")
-    message(FATAL_ERROR "temporary array argument is not released after the call")
+if(NOT ir MATCHES
+    "%first[.]result = call i32 @first\\([^\r\n]+, i1 true\\)")
+    message(FATAL_ERROR
+        "temporary array argument does not transfer its owner role to the call")
 endif()

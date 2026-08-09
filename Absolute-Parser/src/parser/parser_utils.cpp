@@ -2,6 +2,23 @@
 #include "parser.h"
 
 namespace Absolute {
+    std::string Parser::ParseParentTypeName()
+    {
+        const size_t begin = pos;
+        std::unique_ptr<TypeExpr> type = ParseType();
+        if (!type) {
+            ReportSyntaxError(CurrentToken(), "Expected a parent type");
+            throw std::runtime_error("Invalid parent type");
+        }
+        if (dynamic_cast<PointerTypeExpr*>(type.get()) || dynamic_cast<ArrayTypeExpr*>(type.get())) {
+            ReportSyntaxError(CurrentToken(), "A parent must be a named type");
+            throw std::runtime_error("Invalid parent type");
+        }
+        std::string result;
+        for (size_t index = begin; index < pos; ++index) result += tokens[index].value;
+        return result;
+    }
+
     bool Parser::IsTemplateArgumentList(size_t start, size_t* close) const
     {
         if (start >= tokens.size() || tokens[start].value != "<") return false;
@@ -37,9 +54,11 @@ namespace Absolute {
                 continue;
             }
 
-            if (token.value == ".") {
-                if (expectType) return false;
-                expectType = true;
+            if (token.value == "." || token.value == "*" || token.value == "[" || token.value == "]") {
+                if (token.value == ".") {
+                    if (expectType) return false;
+                    expectType = true;
+                }
                 continue;
             }
 
@@ -86,7 +105,7 @@ namespace Absolute {
             std::string errorMsg = "Unexpected token: " + (token ? token->value : "EOF");
             errorMsg += ", expected: '" + TokenTypeToString(tokenType) + "'";
             ReportSyntaxError(token, errorMsg);
-            std::exit(EXIT_FAILURE);
+            throw std::runtime_error(errorMsg);
         }
         return token;
     }
@@ -107,17 +126,23 @@ namespace Absolute {
             std::string errorMsg = "Unexpected token: " + (token ? token->value : "EOF");
             errorMsg += ", expected: '" + expectedValue + "'";
             ReportSyntaxError(token, errorMsg);
-            std::exit(EXIT_FAILURE);
+            throw std::runtime_error(errorMsg);
         }
         return token;
     }
 
     void Parser::ConsumeTemplateClose()
     {
-        if (CurrentToken()->value == ">>") {
-            tokens[pos].value = ">";  // Первый '>'
-            Token twin(TokenType::OPERATOR, ">", CurrentToken()->line, CurrentToken()->column + 1);
-            tokens.insert(tokens.begin() + pos + 1, twin);  // Второй '>'
+        Token* token = RequireCurrent("'>'");
+        if (token->value == ">>") {
+            // The lexer reads the two closing brackets of a nested argument
+            // list as one shift operator. Split it in place: this call takes
+            // the first '>' and the token keeps the second one for the
+            // enclosing list. Inserting a token here instead would resize
+            // `tokens` and leave every Token* the parser still holds dangling.
+            token->value = ">";
+            ++token->column;
+            return;
         }
 
         Consume(TokenType::OPERATOR, ">");

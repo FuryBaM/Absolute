@@ -1,9 +1,12 @@
 #pragma once
 
 #include "expression_visitor.h"
+#include "optimization_level.h"
 #include "statement_visitor.h"
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace Absolute {
@@ -17,8 +20,16 @@ namespace Absolute {
         CodeGenerator(const CodeGenerator&) = delete;
         CodeGenerator& operator=(const CodeGenerator&) = delete;
 
-        std::string Generate(Program& program, const std::string& moduleName);
-        void GenerateObject(Program& program, const std::string& moduleName, const std::string& outputPath);
+        // targetTriple empty => host default (llvm::sys::getDefaultTargetTriple()).
+        std::string Generate(Program& program, const std::string& moduleName,
+            const std::string& targetTriple = {},
+            std::optional<OptimizationLevel> optimizationLevel = std::nullopt,
+            bool debugInfo = false);
+        void GenerateObject(Program& program, const std::string& moduleName,
+            const std::string& outputPath, bool sanitizeAddress = false,
+            const std::string& targetTriple = {},
+            OptimizationLevel optimizationLevel = OptimizationLevel::O3,
+            bool debugInfo = false);
 
         void Visit(PrimitiveTypeExpr* expr) override;
         void Visit(UserTypeExpr* expr) override;
@@ -46,6 +57,7 @@ namespace Absolute {
         void Visit(PrefixUnaryExpr* expr) override;
         void Visit(PostfixUnaryExpr* expr) override;
         void Visit(TemplateExpr* expr) override;
+        void Visit(LambdaExpr* expr) override;
 
         void Visit(SingleStatement* stmt) override;
         void Visit(CompoundStmt* stmt) override;

@@ -1,0 +1,3 @@
+interface IShape { double area(); double scaled(double f) { return area() * f; } }
+class Square : IShape { public double s; public Square(double x) { s = x; } public virtual double area() { return s * s; } }
+int32 main() { IShape* sh = new Square(2.0); println(sh.scaled(2.0)); return 0; }

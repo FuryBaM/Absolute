@@ -31,9 +31,38 @@
         llvm::Value* ManagedPointee(Expression* expression, llvm::Value* handle);
 
         llvm::Value* EvaluateCallArgument(Expression* expression,
-            std::vector<llvm::Value*>& temporaryArrayOwners);
+            std::vector<llvm::Value*>& temporaryArrayOwners,
+            std::vector<llvm::Value*>& temporaryClosureOwners,
+            const std::string& parameterType = {});
+
+        std::vector<llvm::Value*> EvaluateCallArguments(
+            const std::vector<Expression*>& expressions,
+            std::vector<llvm::Value*>& temporaryArrayOwners,
+            std::vector<llvm::Value*>& temporaryClosureOwners,
+            const std::vector<std::string>& parameterTypes,
+            bool variadicParameter,
+            std::vector<llvm::Value*>* ownershipFlags = nullptr);
+
+        llvm::Value* ArgumentOwnershipFlag(
+            Expression* expression, const std::string& parameterType);
+
+        void ConsumeTaskArgument(Expression* expression,
+            const std::string& parameterType);
 
         void ReleaseArrayTemporaries(const std::vector<llvm::Value*>& owners);
+
+        void ReleaseClosureTemporaries(const std::vector<llvm::Value*>& owners);
+
+        llvm::StructType* ClosureObjectType();
+
+        llvm::FunctionType* ClosureInvokeType(const std::string& returnType,
+            const std::vector<std::string>& parameterTypes);
+
+        llvm::Function* ClosureRetain();
+
+        llvm::Function* ClosureRelease();
+
+        llvm::Value* FunctionClosure(const Symbol& symbol);
 
         llvm::Value* BuildArrayDescriptor(const ArrayView& view);
 
@@ -49,11 +78,20 @@
 
         llvm::Value* Coerce(llvm::Value* source, llvm::Type* target);
 
+        llvm::Value* Coerce(llvm::Value* source, llvm::Type* target,
+            const std::string& sourceTypeName,
+            const std::string& targetTypeName);
+
         llvm::Type* CommonNumericType(llvm::Type* left, llvm::Type* right);
 
         llvm::Value* AsCondition(llvm::Value* condition);
 
         llvm::Value* ApplyBinary(const std::string& op, llvm::Value* left, llvm::Value* right);
+
+        llvm::Value* ApplyBinary(const std::string& op,
+            llvm::Value* left, llvm::Value* right,
+            const std::string& leftTypeName,
+            const std::string& rightTypeName);
 
         llvm::Value* One(llvm::Type* type);
 
@@ -77,6 +115,12 @@
 
         llvm::FunctionCallee Free();
 
+        llvm::FunctionCallee LoadDynamicLibrary();
+
+        llvm::FunctionCallee IsDynamicLibraryLoaded();
+
+        llvm::FunctionCallee DynamicLibraryError();
+
         llvm::Value* EncodeTaskSlot(llvm::IRBuilder<>& targetBuilder, llvm::Value* source);
 
         llvm::Value* DecodeTaskSlot(
@@ -89,6 +133,8 @@
         llvm::FunctionCallee ManagedCreate();
 
         llvm::FunctionCallee ManagedGet(bool requireValid = false);
+        
+        llvm::Value* EmitManagedGet(llvm::Value* handle, bool requireValid = false);
 
         llvm::FunctionCallee ManagedValid();
 

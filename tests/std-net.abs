@@ -1,0 +1,25 @@
+import "../std/net.abs";
+
+int32 main() {
+    std.net.TcpListener* listener = std.net.listenLocal(0);
+    int32 port = listener.port();
+    assert(port > 0, "ephemeral listener must expose its assigned port");
+
+    std.net.TcpSocket* client = std.net.connect("127.0.0.1", port);
+    std.net.TcpSocket* server = listener.accept();
+    client.setTimeout(2000);
+    server.setTimeout(2000);
+
+    assert(client.send("ping") == 4, "client must send the complete request");
+    assert(server.receive(4) == "ping", "server must receive the request");
+    assert(server.send("pong") == 4, "server must send the complete response");
+    assert(client.receive(4) == "pong", "client must receive the response");
+
+    client.shutdown();
+    server.shutdown();
+    delete server;
+    delete client;
+    delete listener;
+    println("std-net=ok");
+    return 0;
+}

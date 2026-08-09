@@ -1,0 +1,23 @@
+class Node {
+}
+
+int32 absoluteOnly(int32 value) {
+    return value;
+}
+
+export "C" int32 absolute_c_fn(int32 value) {
+    return value;
+}
+
+// Managed class inside cfunc signature is not C-compatible.
+export "C" int32 badCfuncParam(cfunc<int32, Node> bad) {
+    return 0;
+}
+
+int32 main() {
+    // Absolute functions cannot be stored as cfunc.
+    cfunc<int32, int32> handler = absoluteOnly;
+    // C ABI functions cannot be stored as Absolute func.
+    func<int32, int32> closure = absolute_c_fn;
+    return 0;
+}

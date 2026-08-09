@@ -2,11 +2,29 @@
   "schemaVersion": 1,
   "plugin": "absolute.shader",
   "keywords": [
-    { "name": "shader", "detail": "shader Name { ... }", "documentation": "Starts a plugin-owned opaque shader AST block.", "snippet": "shader ${1:Vertex} {\n    input ${2:position};\n    output ${3:clipPosition};\n}" },
+    { "name": "shader", "detail": "shader Name { ... }", "documentation": "Starts a plugin-owned opaque shader AST block. Open with Absolute: Open Opaque Block for virtual-document editing and breakpoint mapping.", "snippet": "shader ${1:Vertex} {\n    input ${2:position};\n    output ${3:clipPosition};\n}" },
     { "name": "input", "detail": "shader input declaration" },
-    { "name": "output", "detail": "shader output declaration" }
+    { "name": "output", "detail": "shader output declaration" },
+    { "name": "uniform", "detail": "uniform [type] name;", "documentation": "Declares a graphics-stage uniform/cbuffer field." },
+    { "name": "mat3", "detail": "3x3 matrix uniform", "documentation": "Compatible with absolute.math mat3 float packing. Matrix types are uniforms, not stage inputs/outputs." },
+    { "name": "mat4", "detail": "4x4 matrix uniform", "documentation": "Compatible with absolute.math mat4. Emits mat4 in GLSL and float4x4 in HLSL/MSL." },
+    { "name": "storage", "detail": "storage float name;", "documentation": "Declares a compute read/write storage buffer. Bindings are assigned as u0..u7 in declaration order." },
+    { "name": "workgroup", "detail": "workgroup x, y, z;", "documentation": "Declares the compute local group size for HLSL, GLSL and MSL." },
+    { "name": "kernel", "detail": "kernel { portable compute statements }", "documentation": "Portable compute body generated as HLSL, GLSL 430 and MSL. Use id.x/id.y/id.z for the global invocation id." },
+    { "name": "hlsl", "detail": "hlsl { backend-specific compute statements }", "documentation": "HLSL-compatible compute body retained for backwards compatibility. Prefer kernel {} for cross-API shaders." },
+    { "name": "code", "detail": "code { complete GLSL source }" }
   ],
   "snippets": [
-    { "label": "vertex shader block", "detail": "Create an Absolute shader block", "body": "shader ${1:Vertex} {\n    input ${2:position};\n    output ${3:clipPosition};\n}" }
+    { "label": "vertex shader block", "detail": "Create an Absolute shader block", "body": "shader ${1:Vertex} {\n    input ${2:position};\n    output ${3:clipPosition};\n}" },
+    { "label": "compute shader block", "detail": "Create a portable compute stage", "body": "@shader.stage(Compute)\nshader Compute {\n    storage float ${1:values};\n    workgroup ${2:1}, ${3:1}, ${4:1};\n    kernel {\n        $1[id.x] = ${5:values[id.x] * 2.0};\n    }\n}" },
+    { "label": "shader compute desktop", "detail": "Run compute on OpenGL, D3D11, D3D12 or Vulkan", "body": "auto ${1:compute} = ${2:gpu}.createComputeShader(\n    Shader.generatedComputeHlsl(),\n    Shader.generatedComputeGlsl());\nauto ${3:storage} = $2.createStorageBuffer(${4:values});\n$2.bind($1);\n$2.bindStorage($3, 0);\n$2.dispatch($4.length, 1, 1);\n$3.download($4);" }
+  ],
+  "embeddedLanguages": [
+    {
+      "tag": "shader",
+      "language": "hlsl",
+      "virtualDocumentScheme": "absolute-opaque",
+      "documentation": "Opaque shader bodies map to absolute-opaque virtual documents with host breakpoint line = block start."
+    }
   ]
 }

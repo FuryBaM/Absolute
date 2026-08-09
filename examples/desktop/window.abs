@@ -5,25 +5,35 @@ int32 main() {
         return 1;
     }
 
-    int32 position = 0;
-    int32 direction = 1;
+    double position = 0.0;
+    double direction = 1.0;
     while (window.poll()) {
-        if (window.keyDown(27)) {
-            window.close();
+        if (window.keyPressed(Desktop.KeyEscape())) {
+            break;
         }
         else {
+            double dt = window.deltaTime();
+            if (dt <= 0.0) {
+                dt = 0.016;
+            }
+            if (dt > 0.05) {
+                dt = 0.05;
+            }
+
             window.clear(Desktop.rgb(18, 22, 32));
-            window.fillRect(position, 170, 120, 90, Desktop.rgb(70, 150, 255));
-            window.fillRect(window.mouseX() - 5, window.mouseY() - 5, 10, 10,
-                Desktop.rgb(255, 190, 60));
+            window.fillRect((position) as int32, 170, 120, 90, Desktop.rgb(70, 150, 255));
+            window.drawLine(0, 0, window.width(), window.height(), Desktop.rgb(35, 45, 60));
+            window.fillCircle(window.mouseX(), window.mouseY(), 8, Desktop.rgb(255, 190, 60));
             window.present();
 
-            position += direction * 4;
-            if (position >= window.width() - 120) { direction = -1; }
-            if (position <= 0) { direction = 1; }
-            Desktop.sleep(16);
+            position = position + direction * 240.0 * dt;
+            if (position >= (window.width() - 120) as double) {
+                direction = -1.0;
+            }
+            if (position <= 0.0) {
+                direction = 1.0;
+            }
         }
     }
-    window.close();
     return 0;
 }

@@ -1,0 +1,8 @@
+// Pure C exports for wasm link smoke (no Absolute runtime builtins).
+export "C" int32 wasm_add(int32 left, int32 right) {
+    return left + right;
+}
+
+export "C" int32 wasm_mul(int32 left, int32 right) {
+    return left * right;
+}
