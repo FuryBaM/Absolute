@@ -798,9 +798,18 @@ Task-isolate, закрытый message envelope и transfer capsule описан
     Триггер внешний, поэтому смену парка раннеров как причину зелёного цвета
     исключить нельзя; в `ci-logs/toolchain.txt` добавлен `lscpu`, чтобы
     следующий случай читался по артефакту, а не по косвенным признакам.
-  - [ ] Подтвердить новый commit полным hosted run обоих required gates без rerun.
-    `Hardening required gate` зелёный в обоих параллельных прогонах без rerun;
-    `CI required gate` держит только `macos-smoke` (см. P4 ниже).
+  - [x] Подтвердить новый commit полным hosted run обоих required gates без rerun.
+    Выполнено на `5a01cd8`: оба гейта зелёные в обоих параллельных прогонах, все
+    32 проверки без единого rerun — `macos-smoke`, обе `ubuntu`, обе `windows`,
+    `windows-llvm-release`, `llvm-compatibility` 18–21, termux, wasm, TSan и
+    стресс-фаззинг. `ubuntu Debug` заняла 21м47с и 22м13с, то есть при прежнем
+    20-минутном лимите шага обе были бы убиты.
+  - [x] Убрать `detect_leaks` там, где LeakSanitizer отсутствует. Обвязка
+    `tests/run-sanitizer-clean.cmake` просила детекцию утечек везде, кроме
+    Windows и Termux, но на Darwin LeakSanitizer не существует: рантайм падал на
+    старте, а `abort_on_error=1` превращал это в ненулевой код возврата, из-за
+    чего на macOS падал каждый clean-случай. Darwin добавлен в тот же guard.
+    Остальные проверки ASan (use-after-free, double-free) не затронуты.
   - [ ] Подключить настоящий ARM64 Android/Termux self-hosted runner; Linux
     `ABSOLUTE_TERMUX=ON` contract не выдавать за Bionic/on-device выполнение.
 - [x] Разделить platform-specific failures и реальные regression failures, чтобы
@@ -966,18 +975,36 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 
 ### P4 — ownership torture suite
 
-- [ ] Покрыть уничтожение `managed(owner, sub)` при живых subscriber и `weak` aliases.
-- [ ] Проверить глубокие цепочки owner → sub → sub и cleanup в обратном порядке.
-- [ ] Проверить weak после destroy, generation reuse и большое количество reuse cycles.
+- [x] Покрыть уничтожение `managed(owner, sub)` при живых subscriber и `weak` aliases.
+  `tests/ownership-torture-graph.abs`: подписчики любой глубины и weak-алиасы с
+  обеих сторон истекают при уничтожении владельца.
+- [x] Проверить глубокие цепочки owner → sub → sub и cleanup в обратном порядке.
+  Порядок полей внутри объекта обратный, как и описано (след `321`). Но цепочка
+  через managed-поле разворачивается от корня к листу (след `123`), что
+  расходится с `docs/resource-ownership.md`. Тест закрепляет бесспорное — что
+  каждый уровень освобождается ровно один раз, — а расхождение ждёт решения:
+  правится документ или обход.
+- [x] Проверить weak после destroy, generation reuse и большое количество reuse
+  cycles. 500 циклов повторного использования слота, weak не воскресает.
 - [ ] Проверить compile-time запрет strong cycles и корректность графов с weak back-edge.
-- [ ] Проверить `move(owner)` через return, parameters, fields, generic wrappers,
+- [x] Проверить `move(owner)` через return, parameters, fields, generic wrappers,
   interface dispatch и исключения между move и завершением операции.
-- [ ] Проверить частично построенные объекты и исключения в constructor/base constructor.
+  `tests/ownership-torture-transfer.abs`; отдельно проверено, что удаление через
+  интерфейсный указатель доходит слотом 0 до самого производного деструктора.
+  Прошло без правок компилятора: раскрутка областей видимости покрывает бросок
+  после принятия владения, как только конструкторы перестали течь.
+- [x] Проверить частично построенные объекты и исключения в constructor/base
+  constructor. `tests/ownership-torture-construction.abs`. Нашлась утечка: при
+  исключении из конструктора терялись все уже проинициализированные поля.
+  Освобождаются только поля, без вызова собственного `destroy()` типа — объект
+  не достиг состояния, которое этот хук предполагает.
 - [ ] Проверить closure capture, escaping lambda, async boundary и task result ownership.
 - [ ] Проверить transfer capsule: seal/send/rehome/destroy, double-send, use-after-send,
   receiver cancellation и закрытие channel с непринятыми capsules.
 - [ ] Проверить ownership plugin resources и native handles при unload/reload plugin.
 - [ ] Запускать ownership corpus под ASan, UBSan, LSan и TSan, где применимо.
+  ASan подключён для всех трёх torture-тестов и зелёный на Linux и macOS.
+  Остаются UBSan и TSan; LSan на Darwin недоступен.
 - [ ] Добавить model-based generator операций `new`/alias/weak/move/delete/throw/return
   с эталонной моделью состояния lifetime.
 
@@ -1035,10 +1062,14 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 - [x] Scheduler не блокирует worker thread на channel/I/O/task wait.
 - [ ] Differential corpus не расходится между native/WASM и optimization levels.
 - [ ] Coverage-guided fuzzing работает в PR/nightly/weekly режимах и сохраняет corpus.
-- [ ] Ownership torture suite проходит под sanitizers. Единственное известное
-  падение — `absolute.run-sanitizer-ownership-stability` на `macos-smoke`; на
-  Linux тест проходит, полный набор там 501/501. Ровно этот тест держит
-  `CI required gate` красным, и для разбора нужен доступ к arm64 macOS.
+- [ ] Ownership torture suite проходит под sanitizers. Под ASan набор зелёный на
+  Linux и macOS; остаются UBSan и TSan, а также пункты P4, ещё не покрытые
+  тестами. Предыдущая редакция этого пункта утверждала, что
+  `absolute.run-sanitizer-ownership-stability` падает на macOS из-за дефекта
+  владения и что для разбора нужен Mac — это было неверно. Тест падал потому,
+  что обвязка просила `detect_leaks` на Darwin, где LeakSanitizer отсутствует;
+  после правки guard он зелёный. Признак, по которому это видно, — падение
+  всех `run-sanitizer-clean` при зелёных несанитайзерных вариантах тех же тестов.
 - [ ] Plugin ABI V1 проверяется старым SDK против нового host.
 - [ ] Несколько реальных integration projects собираются и выполняются в CI.
 - [ ] Incremental edit и LSP используют compiler semantic cache, а не полный re-run.
