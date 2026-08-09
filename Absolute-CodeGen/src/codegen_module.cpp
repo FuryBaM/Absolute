@@ -772,11 +772,17 @@ namespace Absolute {
                                    : static_cast<ASTNode*>(info.statement),
             info.name + "." + info.name);
         const std::string oldClass = currentClassName;
+        const std::string oldConstructorClass = currentConstructorClass;
         llvm::Value* oldThis = currentThis;
         const std::string oldReturn = currentReturnTypeName;
         const auto oldSubstitutions = currentGenericSubstitutions;
         currentGenericSubstitutions = info.substitutions;
         currentClassName = info.name;
+        // Stays empty until the base constructor has succeeded. While the base
+        // runs, no field of this class is initialized yet, and a base that throws
+        // releases its own fields on its own exception path — so this frame must
+        // not clean anything, or inherited fields would be released twice.
+        currentConstructorClass.clear();
         currentThis = function->getArg(0);
         currentReturnTypeName = "void";
         if (constructor) {
@@ -871,9 +877,13 @@ namespace Absolute {
                 EmitExceptionCheck();
             }
         }
+        // The base is established; from here a throw must release this object's
+        // own fields, including the inherited ones the base finished building.
+        currentConstructorClass = info.name;
         if (constructor && constructor->body) constructor->body->Accept(visitor);
         FinishClassCallable(*function);
         PopScope();
+        currentConstructorClass = oldConstructorClass;
         currentClassName = oldClass;
         currentThis = oldThis;
         currentReturnTypeName = oldReturn;
