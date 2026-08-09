@@ -807,7 +807,10 @@ namespace Absolute {
                 return false;
             }
             for (const auto& [memberName, overloads] : found->second.members) {
-                if (memberName == "destroy()") {
+                // Members are keyed by their bare name, so "destroy()" never
+                // matched and a type whose only resource was its own destroy()
+                // hook was treated as owning nothing.
+                if (memberName == "destroy") {
                     release();
                     return true;
                 }

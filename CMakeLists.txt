@@ -807,6 +807,17 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-transfer.abs"
     )
     add_test(
+        NAME absolute.ownership-torture-closures-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-closures.abs"
+    )
+    add_test(
+        NAME absolute.ownership-torture-capture-errors
+        COMMAND Absolute-Compiler
+            "${PROJECT_SOURCE_DIR}/tests/ownership-torture-capture-errors.abs"
+    )
+    set_tests_properties(absolute.ownership-torture-capture-errors PROPERTIES
+        WILL_FAIL TRUE)
+    add_test(
         NAME absolute.bytes-bytebuffer-test-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/bytes-bytebuffer-test.abs"
     )
@@ -1532,6 +1543,14 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-ownership-torture-transfer-ir
         )
         add_test(
+            NAME absolute.emit-ownership-torture-closures
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-closures.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/ownership-torture-closures.ll"
+        )
+        set_tests_properties(absolute.emit-ownership-torture-closures PROPERTIES
+            FIXTURES_SETUP absolute-ownership-torture-closures-ir
+        )
+        add_test(
             NAME absolute.emit-bytes-bytebuffer-test
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/bytes-bytebuffer-test.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/bytes-bytebuffer-test.ll"
@@ -1841,6 +1860,14 @@ if(BUILD_TESTING)
             set_tests_properties(absolute.run-ownership-torture-transfer PROPERTIES
                 FIXTURES_REQUIRED absolute-ownership-torture-transfer-ir
                 PASS_REGULAR_EXPRESSION "ownership-torture-transfer=ok"
+            )
+            add_test(
+                NAME absolute.run-ownership-torture-closures
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/ownership-torture-closures.ll"
+            )
+            set_tests_properties(absolute.run-ownership-torture-closures PROPERTIES
+                FIXTURES_REQUIRED absolute-ownership-torture-closures-ir
+                PASS_REGULAR_EXPRESSION "ownership-torture-closures=ok"
             )
             add_test(
                 NAME absolute.run-bytes-bytebuffer-test
@@ -2861,6 +2888,25 @@ if(BUILD_TESTING)
         )
         set_tests_properties(absolute.run-sanitizer-ownership-torture-transfer PROPERTIES
             FIXTURES_REQUIRED absolute-sanitizer-ownership-torture-transfer-executable
+            TIMEOUT 45)
+        add_test(
+            NAME absolute.build-sanitizer-ownership-torture-closures
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/tests/ownership-torture-closures.abs"
+                --sanitize=address --build-exe -O1
+                -o "${CMAKE_BINARY_DIR}/sanitizer-ownership-torture-closures-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-sanitizer-ownership-torture-closures PROPERTIES
+            FIXTURES_SETUP absolute-sanitizer-ownership-torture-closures-executable)
+        add_test(
+            NAME absolute.run-sanitizer-ownership-torture-closures
+            COMMAND "${CMAKE_COMMAND}"
+                -DEXECUTABLE=${CMAKE_BINARY_DIR}/sanitizer-ownership-torture-closures-app${CMAKE_EXECUTABLE_SUFFIX}
+                -DEXPECT=ownership-torture-closures=ok
+                -P "${PROJECT_SOURCE_DIR}/tests/run-sanitizer-clean.cmake"
+        )
+        set_tests_properties(absolute.run-sanitizer-ownership-torture-closures PROPERTIES
+            FIXTURES_REQUIRED absolute-sanitizer-ownership-torture-closures-executable
             TIMEOUT 45)
         add_test(
             NAME absolute.emit-object

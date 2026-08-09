@@ -1,0 +1,56 @@
+// P4 ownership torture: what a lambda must refuse to capture.
+//
+// A closure outlives the scope that created it, so capturing anything that owns
+// a resource by value would either duplicate the owner or leave the closure
+// holding an expired one. The analyzer rejects this with
+// E_LAMBDA_CAPTURE_RESOURCE; this file pins that the rejection covers every
+// shape of owner, not just managed pointers.
+//
+// Every capture below must be reported. The test passes only if compilation
+// fails, so a shape that silently becomes capturable shows up here.
+
+class Owner {
+    public int32 value;
+
+    public Owner(int32 initial) {
+        value = initial;
+    }
+}
+
+struct HoldsResource {
+    Owner* owned;
+}
+
+struct HoldsNativeHandle {
+    raw void* handle;
+
+    void destroy() {
+        handle = null;
+    }
+}
+
+async int32 produce(int32 value) {
+    return value;
+}
+
+int32 main() {
+    Owner* managed = new Owner(1);
+    func<int32> capturesManagedOwner = fn() => managed.value;
+
+    int32[] values = copy({1, 2, 3});
+    func<int32> capturesArray = fn() => values[0];
+
+    HoldsResource aggregate;
+    aggregate.owned = new Owner(2);
+    func<int32> capturesAggregate = fn() => aggregate.owned.value;
+
+    // A struct owns resources by virtue of declaring destroy(), so it is as
+    // uncapturable as one holding a managed pointer.
+    HoldsNativeHandle native;
+    func<bool> capturesDestroyHook = fn() => native.handle == null;
+
+    raw Owner* unmanaged = null;
+    func<int32> capturesRawPointer = fn() => unmanaged.value;
+
+    return 0;
+}
