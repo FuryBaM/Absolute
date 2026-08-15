@@ -752,6 +752,10 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 
 - [ ] Добиться стабильного прохождения Windows Debug/Release, Windows LLVM,
   Linux Debug/Release, Linux WASM, macOS smoke, Termux smoke и hardening/TSan.
+  Вся hosted-часть держит зелёный на `5a01cd8`, `c86949c` и `8b8ce57`. Пункт
+  оставлен открытым намеренно: `Termux smoke` здесь — это Linux-контракт
+  `ABSOLUTE_TERMUX=ON`, а не исполнение на Bionic, поэтому закрывать его до
+  появления настоящего ARM64-раннера из подпункта ниже было бы преувеличением.
   - [x] Зафиксировать hosted runners: `ubuntu-24.04`, `windows-2022`, `macos-15`;
     Windows native Release локально проходит 410/410, Termux host contract —
     143/143, scheduler harness — 100/100 повторов. Ручной on-device прогон на
@@ -1058,7 +1062,9 @@ Task-isolate, закрытый message envelope и transfer capsule описан
 
 ### Критерии завершения этапа
 
-- [ ] Вся поддерживаемая CI-матрица зелёная без manual rerun.
+- [x] Вся поддерживаемая CI-матрица зелёная без manual rerun. Держится на трёх
+  коммитах подряд: `5a01cd8` (оба параллельных прогона), `c86949c` и `8b8ce57` —
+  оба воркфлоу, `CI` и `test-hardening`, завершились success, ни одного rerun.
 - [x] Scheduler не блокирует worker thread на channel/I/O/task wait.
 - [ ] Differential corpus не расходится между native/WASM и optimization levels.
 - [ ] Coverage-guided fuzzing работает в PR/nightly/weekly режимах и сохраняет corpus.
