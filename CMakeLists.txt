@@ -3038,6 +3038,23 @@ if(BUILD_TESTING)
         target_link_libraries(plugin-api-unit-tests PRIVATE Absolute-Parser Absolute-Analyzer Absolute-CodeGen Absolute-Runtime)
         add_test(NAME absolute.plugin-api-unit-tests
             COMMAND plugin-api-unit-tests "$<TARGET_FILE:Absolute-Unless-Plugin>")
+        # The V1 ABI layout is compiled into every plugin already built against
+        # it, so a size or offset change is invisible at the source level and
+        # surfaces as a crash in someone else's binary. Guarded on 64-bit
+        # builds, which is what the checked-in layout describes.
+        if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+            add_executable(plugin-abi-dump tests/native/plugin_abi_dump.cpp)
+            target_include_directories(plugin-abi-dump PRIVATE
+                Absolute-Parser/include)
+            add_test(
+                NAME absolute.plugin-abi-v1-layout
+                COMMAND "${CMAKE_COMMAND}"
+                    -DDUMP=$<TARGET_FILE:plugin-abi-dump>
+                    -DGOLDEN=${PROJECT_SOURCE_DIR}/tests/abi/plugin-abi-v1-lp64.txt
+                    -P "${PROJECT_SOURCE_DIR}/tests/compare-abi-dump.cmake")
+            set_tests_properties(absolute.plugin-abi-v1-layout PROPERTIES
+                PASS_REGULAR_EXPRESSION "plugin-abi-v1=ok")
+        endif()
         add_test(
             NAME absolute.build-export-c-abi
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-c-abi.abs"
