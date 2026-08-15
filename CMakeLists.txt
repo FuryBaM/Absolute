@@ -245,6 +245,9 @@ if(BUILD_TESTING)
             -fno-omit-frame-pointer -g -O1)
 
         set(ABSOLUTE_FUZZ_TARGETS lexer parser)
+        # The manifest target parses package metadata rather than source, so it
+        # needs the package manager rather than the analyzer.
+        list(APPEND ABSOLUTE_FUZZ_TARGETS manifest)
         # The analyzer harness generates syntactically valid programs, so it
         # needs the analyzer as well as the parser.
         if(TARGET Absolute-Analyzer)
@@ -256,9 +259,19 @@ if(BUILD_TESTING)
         set(ABSOLUTE_FUZZ_SEEDS_parser "${PROJECT_SOURCE_DIR}/tests/fuzz/corpus")
         set(ABSOLUTE_FUZZ_SEEDS_analyzer
             "${PROJECT_SOURCE_DIR}/tests/fuzz/corpus-decisions")
+        set(ABSOLUTE_FUZZ_SEEDS_manifest
+            "${PROJECT_SOURCE_DIR}/tests/fuzz/corpus-manifests")
         foreach(fuzzer ${ABSOLUTE_FUZZ_TARGETS})
-            add_executable(absolute-${fuzzer}-fuzzer
-                tests/fuzz/${fuzzer}_fuzzer.cpp)
+            if(fuzzer STREQUAL "manifest")
+                add_executable(absolute-manifest-fuzzer
+                    tests/fuzz/manifest_fuzzer.cpp
+                    Absolute-Compiler/src/package_manager.cpp)
+                target_include_directories(absolute-manifest-fuzzer PRIVATE
+                    Absolute-Compiler/include)
+            else()
+                add_executable(absolute-${fuzzer}-fuzzer
+                    tests/fuzz/${fuzzer}_fuzzer.cpp)
+            endif()
             target_link_libraries(absolute-${fuzzer}-fuzzer
                 PRIVATE Absolute-Parser)
             if(fuzzer STREQUAL "analyzer")
