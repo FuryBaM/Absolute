@@ -210,6 +210,19 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.ownership-stability-differential PROPERTIES
             PASS_REGULAR_EXPRESSION "ownership-stability-differential=ok"
             TIMEOUT 240)
+        add_test(
+            NAME absolute.ownership-model-generator
+            COMMAND "${Python3_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tools/testing/ownership_model.py"
+                --compiler "$<TARGET_FILE:Absolute-Compiler>"
+                --work-dir
+                    "${CMAKE_BINARY_DIR}/differential/ownership-model/$<CONFIG>"
+                --programs 12
+                --steps 32
+                --seed 1)
+        set_tests_properties(absolute.ownership-model-generator PROPERTIES
+            PASS_REGULAR_EXPRESSION "ownership-model-generator=ok"
+            TIMEOUT 300)
     endif()
 
     # Coverage-guided fuzzing. libFuzzer ships with Clang's runtime, so the
