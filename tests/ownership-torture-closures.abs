@@ -1,0 +1,88 @@
+// P4 ownership torture: closures and the async boundary.
+//
+// Owners cannot cross either boundary by capture — the analyzer rejects that,
+// and tests/ownership-torture-capture-errors.abs pins the rejection. What is
+// left to check is the traffic that is allowed: a closure that outlives the
+// scope which built it, an owner living in a scope that also builds closures,
+// and owners created and released inside an async frame.
+//
+// A leak here is caught three ways: the assertions below, the runtime's own
+// "managed pointer(s) leaked" report at exit, and the AddressSanitizer variant.
+
+class Tracked {
+    public raw int32* live;
+    public int32 value;
+
+    public Tracked(raw int32* counter, int32 initial) {
+        live = counter;
+        value = initial;
+        *counter = *counter + 1;
+    }
+
+    public void destroy() {
+        if (live != null) {
+            *live = *live - 1;
+            live = null;
+        }
+    }
+}
+
+// The closure captures only an int32, so it may outlive this frame.
+func<int32, int32> makeScaler(int32 factor) {
+    return fn(int32 value) => value * factor;
+}
+
+// An owner and a closure share a scope. The closure never names the owner, so
+// the owner's lifetime is decided by the scope alone.
+int32 ownerAlongsideClosure(raw int32* live) {
+    Tracked* owner = new Tracked(live, 6);
+    func<int32, int32> scale = makeScaler(3);
+    int32 result = scale(owner.value);
+    delete owner;
+    return result;
+}
+
+// Ownership crosses into a callee as an argument rather than as a capture.
+int32 applyToOwner(Tracked* owned, func<int32, int32> transform) {
+    assert(isOwner(owned), "the owner arrives by move, not by capture");
+    return transform(owned.value);
+}
+
+async int32 allocatesInsideAsyncFrame(int32 seed) {
+    // The owner is created and released entirely inside the async frame; no
+    // pointer crosses the boundary, only the int32 result.
+    int32 live = 0;
+    raw int32* place = &live;
+    Tracked* owner = new Tracked(place, seed);
+    int32 value = owner.value * 2;
+    delete owner;
+    assert(live == 0, "the async frame releases what it allocated");
+    return value;
+}
+
+async int32 main() {
+    func<int32, int32> escaped = makeScaler(4);
+    assert(escaped(5) == 20, "a closure outlives the frame that built it");
+    assert(escaped(6) == 24, "and stays callable afterwards");
+
+    int32 live = 0;
+    raw int32* place = &live;
+
+    assert(ownerAlongsideClosure(place) == 18,
+        "an owner sharing a scope with a closure is released by the scope");
+    assert(live == 0, "no owner survives that scope");
+
+    Tracked* owner = new Tracked(place, 7);
+    assert(applyToOwner(move(owner), escaped) == 28,
+        "an owner moved past a closure is still readable");
+    assert(live == 0, "the callee released the owner it received");
+
+    task<int32> first = spawn allocatesInsideAsyncFrame(10);
+    task<int32> second = spawn allocatesInsideAsyncFrame(11);
+    assert(await first == 20, "first async frame result");
+    assert(await second == 22, "second async frame result");
+    assert(live == 0, "async frames leave no owner behind");
+
+    println("ownership-torture-closures=ok");
+    return 0;
+}

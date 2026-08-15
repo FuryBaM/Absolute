@@ -1,0 +1,171 @@
+// P4 ownership torture: the transfer capsule lifecycle.
+//
+// A capsule is the only way a unique object graph crosses an isolate boundary,
+// so every path out of one has to end in exactly one destruction: delivered and
+// deleted by the receiver, restored to the sender when the send fails, or
+// destroyed with the channel when nobody ever accepts it. tests/std-typed-channel.abs
+// already covers the happy path and the restore-on-failure path, but it asserts
+// only about the handles, never about the payload behind them — a capsule that
+// leaked its object graph would pass it unchanged.
+//
+// This file counts destructor runs instead. Every payload carries a probe that
+// increments a shared counter, so each case can state how many objects died and
+// when, which is what distinguishes a released capsule from a leaked one.
+//
+// Covered here: seal, send, double-send of an emptied message, use-after-send
+// through a stale alias, receive-and-delete, rejection by a closed channel, and
+// the destruction of capsules still queued when their channel goes away.
+
+import "../std/task.abs";
+import "../std/concurrent/transfer_channel.abs";
+
+struct DestroyProbe {
+    raw int32* counter;
+
+    void arm(raw int32* target) {
+        counter = target;
+    }
+
+    void destroy() {
+        if (counter != null) {
+            *counter = *counter + 1;
+        }
+    }
+}
+
+class Payload {
+    public int64 value;
+    public DestroyProbe probe;
+
+    public Payload(raw int32* counter, int64 initial) {
+        value = initial;
+        probe.arm(counter);
+    }
+}
+
+// Accepts a capsule in another domain and releases it there. The payload was
+// allocated by main, so a destructor run counted after the await proves the
+// object graph was rehomed rather than copied or abandoned.
+async int64 rehomingReceiver(int64 channelAddress) {
+    raw void* channel = channelAddress as raw void*;
+    raw void* capsule = absolute_transfer_channel_receive(channel);
+    if (capsule == null) {
+        return -1;
+    }
+    Payload* owned = unseal<Payload>(capsule);
+    int64 value = owned.value;
+    delete owned;
+    return value;
+}
+
+// Declines because it was cancelled before it ever looked at the channel. The
+// queued capsule has to survive the refusal and then die with the channel.
+//
+// This pins the ownership outcome of a receiver going away, not the runtime's
+// wakeup behaviour: the token is cancelled before the task starts, so the
+// refusal is deterministic and the test never races the scheduler.
+async int64 decliningReceiver(int64 channelAddress, int64 tokenAddress) {
+    raw void* token = tokenAddress as raw void*;
+    if (absolute_cancellation_token_is_cancelled(token)) {
+        return 0;
+    }
+    raw void* capsule =
+        absolute_transfer_channel_try_receive(channelAddress as raw void*);
+    if (capsule == null) {
+        return 0;
+    }
+    Payload* owned = unseal<Payload>(capsule);
+    delete owned;
+    return 1;
+}
+
+async int32 main() {
+    int32 destroyed = 0;
+
+    // A capsule that is delivered dies once, in the receiver's hands.
+    std.concurrent.TransferChannel<Payload>* channel =
+        new std.concurrent.TransferChannel<Payload>(1);
+    Payload* owner = new Payload(&destroyed, 1);
+    Payload* staleAlias = owner;
+    std.concurrent.Transfer<Payload>* message =
+        new std.concurrent.Transfer<Payload>(seal(move(owner)));
+    assert(!staleAlias, "seal expires the sender's aliases");
+    assert(channel.send(message), "sealed capsule is accepted");
+    assert(message.isEmpty(), "a successful send consumes the capsule");
+    assert(destroyed == 0, "sending does not destroy the payload");
+
+    // Sending the same message again must not deliver a second capsule.
+    assert(!channel.send(message), "an emptied message cannot be sent twice");
+    assert(destroyed == 0, "a refused double-send destroys nothing");
+
+    Payload* received = channel.receive();
+    assert(received != null, "capsule is delivered");
+    assert(received.value == 1, "the object graph survives the crossing");
+    assert(destroyed == 0, "delivery does not destroy the payload");
+    delete received;
+    assert(destroyed == 1, "the receiver's delete runs the destructor once");
+
+    // A send the channel refuses hands the capsule back intact, and the
+    // restored capsule still owns a live object.
+    Payload* rejectedOwner = new Payload(&destroyed, 2);
+    std.concurrent.Transfer<Payload>* rejected =
+        new std.concurrent.Transfer<Payload>(seal(move(rejectedOwner)));
+    channel.close();
+    assert(!channel.send(rejected), "a closed channel refuses the capsule");
+    assert(!rejected.isEmpty(), "a refused send restores the capsule");
+    assert(destroyed == 1, "a refused send destroys nothing");
+
+    Payload* reclaimed = unseal<Payload>(rejected.release());
+    assert(reclaimed.value == 2, "the restored capsule still owns its object");
+    delete reclaimed;
+    assert(destroyed == 2, "reclaiming and deleting runs the destructor once");
+
+    // Capsules nobody accepts must die with their channel rather than leak.
+    {
+        std.concurrent.TransferChannel<Payload>* abandoned =
+            new std.concurrent.TransferChannel<Payload>(2);
+        Payload* firstQueued = new Payload(&destroyed, 3);
+        Payload* secondQueued = new Payload(&destroyed, 4);
+        assert(abandoned.send(
+            new std.concurrent.Transfer<Payload>(seal(move(firstQueued)))),
+            "first capsule queued");
+        assert(abandoned.send(
+            new std.concurrent.Transfer<Payload>(seal(move(secondQueued)))),
+            "second capsule queued");
+        assert(destroyed == 2, "queued capsules are still alive");
+    }
+    assert(destroyed == 4,
+        "destroying a channel destroys both capsules nobody accepted");
+
+    // Rehome: the owner is sealed here and released in another domain.
+    raw void* crossing = absolute_transfer_channel_create(1);
+    Payload* travelling = new Payload(&destroyed, 7);
+    assert(absolute_transfer_channel_send(crossing, seal(move(travelling))),
+        "capsule accepted for the crossing");
+    task<int64> rehomed = spawn rehomingReceiver(crossing as int64);
+    assert(await rehomed == 7,
+        "the object graph arrives intact in the receiving domain");
+    assert(destroyed == 5,
+        "the receiving domain runs the destructor exactly once");
+    absolute_transfer_channel_close(crossing);
+    absolute_transfer_channel_destroy(crossing);
+    assert(destroyed == 5, "an emptied channel has nothing left to destroy");
+
+    // A cancelled receiver leaves the capsule for the channel to clean up.
+    raw void* token = absolute_cancellation_token_create();
+    absolute_cancellation_token_cancel(token);
+    raw void* declined = absolute_transfer_channel_create(1);
+    Payload* unclaimed = new Payload(&destroyed, 8);
+    assert(absolute_transfer_channel_send(declined, seal(move(unclaimed))),
+        "capsule queued for a receiver that will decline");
+    task<int64> refuser = spawn decliningReceiver(declined as int64, token as int64);
+    assert(await refuser == 0, "a cancelled receiver accepts nothing");
+    assert(destroyed == 5, "declining destroys nothing on its own");
+    absolute_transfer_channel_close(declined);
+    absolute_transfer_channel_destroy(declined);
+    assert(destroyed == 6, "the declined capsule dies with its channel");
+    absolute_cancellation_token_destroy(token);
+
+    println("ownership-torture-capsule=ok");
+    return 0;
+}

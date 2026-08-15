@@ -210,6 +210,19 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.ownership-stability-differential PROPERTIES
             PASS_REGULAR_EXPRESSION "ownership-stability-differential=ok"
             TIMEOUT 240)
+        add_test(
+            NAME absolute.ownership-model-generator
+            COMMAND "${Python3_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tools/testing/ownership_model.py"
+                --compiler "$<TARGET_FILE:Absolute-Compiler>"
+                --work-dir
+                    "${CMAKE_BINARY_DIR}/differential/ownership-model/$<CONFIG>"
+                --programs 12
+                --steps 32
+                --seed 1)
+        set_tests_properties(absolute.ownership-model-generator PROPERTIES
+            PASS_REGULAR_EXPRESSION "ownership-model-generator=ok"
+            TIMEOUT 300)
     endif()
 
     # Coverage-guided fuzzing. libFuzzer ships with Clang's runtime, so the
@@ -807,6 +820,42 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-transfer.abs"
     )
     add_test(
+        NAME absolute.ownership-torture-closures-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-closures.abs"
+    )
+    add_test(
+        NAME absolute.ownership-torture-capture-errors
+        COMMAND Absolute-Compiler
+            "${PROJECT_SOURCE_DIR}/tests/ownership-torture-capture-errors.abs"
+    )
+    set_tests_properties(absolute.ownership-torture-capture-errors PROPERTIES
+        WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.ownership-torture-weak-backedge-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-weak-backedge.abs"
+    )
+    add_test(
+        NAME absolute.ownership-torture-cycle-nested-errors
+        COMMAND Absolute-Compiler
+            "${PROJECT_SOURCE_DIR}/tests/ownership-torture-cycle-nested-errors.abs"
+    )
+    set_tests_properties(absolute.ownership-torture-cycle-nested-errors PROPERTIES
+        WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.ownership-torture-cycle-aliased-errors
+        COMMAND Absolute-Compiler
+            "${PROJECT_SOURCE_DIR}/tests/ownership-torture-cycle-aliased-errors.abs"
+    )
+    set_tests_properties(absolute.ownership-torture-cycle-aliased-errors PROPERTIES
+        WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.ownership-torture-cycle-mutual-errors
+        COMMAND Absolute-Compiler
+            "${PROJECT_SOURCE_DIR}/tests/ownership-torture-cycle-mutual-errors.abs"
+    )
+    set_tests_properties(absolute.ownership-torture-cycle-mutual-errors PROPERTIES
+        WILL_FAIL TRUE)
+    add_test(
         NAME absolute.bytes-bytebuffer-test-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/bytes-bytebuffer-test.abs"
     )
@@ -1042,6 +1091,10 @@ if(BUILD_TESTING)
     add_test(
         NAME absolute.std-typed-channel-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-typed-channel.abs"
+    )
+    add_test(
+        NAME absolute.ownership-torture-capsule-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-capsule.abs"
     )
     add_test(
         NAME absolute.ownership-transfer-errors
@@ -1532,6 +1585,22 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-ownership-torture-transfer-ir
         )
         add_test(
+            NAME absolute.emit-ownership-torture-closures
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-closures.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/ownership-torture-closures.ll"
+        )
+        set_tests_properties(absolute.emit-ownership-torture-closures PROPERTIES
+            FIXTURES_SETUP absolute-ownership-torture-closures-ir
+        )
+        add_test(
+            NAME absolute.emit-ownership-torture-weak-backedge
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-weak-backedge.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/ownership-torture-weak-backedge.ll"
+        )
+        set_tests_properties(absolute.emit-ownership-torture-weak-backedge PROPERTIES
+            FIXTURES_SETUP absolute-ownership-torture-weak-backedge-ir
+        )
+        add_test(
             NAME absolute.emit-bytes-bytebuffer-test
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/bytes-bytebuffer-test.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/bytes-bytebuffer-test.ll"
@@ -1841,6 +1910,22 @@ if(BUILD_TESTING)
             set_tests_properties(absolute.run-ownership-torture-transfer PROPERTIES
                 FIXTURES_REQUIRED absolute-ownership-torture-transfer-ir
                 PASS_REGULAR_EXPRESSION "ownership-torture-transfer=ok"
+            )
+            add_test(
+                NAME absolute.run-ownership-torture-closures
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/ownership-torture-closures.ll"
+            )
+            set_tests_properties(absolute.run-ownership-torture-closures PROPERTIES
+                FIXTURES_REQUIRED absolute-ownership-torture-closures-ir
+                PASS_REGULAR_EXPRESSION "ownership-torture-closures=ok"
+            )
+            add_test(
+                NAME absolute.run-ownership-torture-weak-backedge
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/ownership-torture-weak-backedge.ll"
+            )
+            set_tests_properties(absolute.run-ownership-torture-weak-backedge PROPERTIES
+                FIXTURES_REQUIRED absolute-ownership-torture-weak-backedge-ir
+                PASS_REGULAR_EXPRESSION "ownership-torture-weak-backedge=ok"
             )
             add_test(
                 NAME absolute.run-bytes-bytebuffer-test
@@ -2863,6 +2948,44 @@ if(BUILD_TESTING)
             FIXTURES_REQUIRED absolute-sanitizer-ownership-torture-transfer-executable
             TIMEOUT 45)
         add_test(
+            NAME absolute.build-sanitizer-ownership-torture-closures
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/tests/ownership-torture-closures.abs"
+                --sanitize=address --build-exe -O1
+                -o "${CMAKE_BINARY_DIR}/sanitizer-ownership-torture-closures-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-sanitizer-ownership-torture-closures PROPERTIES
+            FIXTURES_SETUP absolute-sanitizer-ownership-torture-closures-executable)
+        add_test(
+            NAME absolute.run-sanitizer-ownership-torture-closures
+            COMMAND "${CMAKE_COMMAND}"
+                -DEXECUTABLE=${CMAKE_BINARY_DIR}/sanitizer-ownership-torture-closures-app${CMAKE_EXECUTABLE_SUFFIX}
+                -DEXPECT=ownership-torture-closures=ok
+                -P "${PROJECT_SOURCE_DIR}/tests/run-sanitizer-clean.cmake"
+        )
+        set_tests_properties(absolute.run-sanitizer-ownership-torture-closures PROPERTIES
+            FIXTURES_REQUIRED absolute-sanitizer-ownership-torture-closures-executable
+            TIMEOUT 45)
+        add_test(
+            NAME absolute.build-sanitizer-ownership-torture-weak-backedge
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/tests/ownership-torture-weak-backedge.abs"
+                --sanitize=address --build-exe -O1
+                -o "${CMAKE_BINARY_DIR}/sanitizer-ownership-torture-weak-backedge-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-sanitizer-ownership-torture-weak-backedge PROPERTIES
+            FIXTURES_SETUP absolute-sanitizer-ownership-torture-weak-backedge-executable)
+        add_test(
+            NAME absolute.run-sanitizer-ownership-torture-weak-backedge
+            COMMAND "${CMAKE_COMMAND}"
+                -DEXECUTABLE=${CMAKE_BINARY_DIR}/sanitizer-ownership-torture-weak-backedge-app${CMAKE_EXECUTABLE_SUFFIX}
+                -DEXPECT=ownership-torture-weak-backedge=ok
+                -P "${PROJECT_SOURCE_DIR}/tests/run-sanitizer-clean.cmake"
+        )
+        set_tests_properties(absolute.run-sanitizer-ownership-torture-weak-backedge PROPERTIES
+            FIXTURES_REQUIRED absolute-sanitizer-ownership-torture-weak-backedge-executable
+            TIMEOUT 45)
+        add_test(
             NAME absolute.emit-object
             COMMAND Absolute-Compiler build "${CMAKE_BINARY_DIR}/NativeFfi-$<CONFIG>.absproj"
                 --emit-object -o "${CMAKE_BINARY_DIR}/native-ffi-object.o"
@@ -2913,7 +3036,8 @@ if(BUILD_TESTING)
             Absolute-CodeGen/include
         )
         target_link_libraries(plugin-api-unit-tests PRIVATE Absolute-Parser Absolute-Analyzer Absolute-CodeGen Absolute-Runtime)
-        add_test(NAME absolute.plugin-api-unit-tests COMMAND plugin-api-unit-tests)
+        add_test(NAME absolute.plugin-api-unit-tests
+            COMMAND plugin-api-unit-tests "$<TARGET_FILE:Absolute-Unless-Plugin>")
         add_test(
             NAME absolute.build-export-c-abi
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-c-abi.abs"
@@ -4075,6 +4199,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-std-typed-channel PROPERTIES
             FIXTURES_REQUIRED absolute-std-typed-channel-executable
             PASS_REGULAR_EXPRESSION "std-typed-channel=ok"
+        )
+        add_test(
+            NAME absolute.build-ownership-torture-capsule
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-capsule.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/ownership-torture-capsule-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-ownership-torture-capsule PROPERTIES
+            FIXTURES_SETUP absolute-ownership-torture-capsule-executable
+        )
+        add_test(NAME absolute.run-ownership-torture-capsule
+            COMMAND "${CMAKE_BINARY_DIR}/ownership-torture-capsule-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-ownership-torture-capsule PROPERTIES
+            FIXTURES_REQUIRED absolute-ownership-torture-capsule-executable
+            PASS_REGULAR_EXPRESSION "ownership-torture-capsule=ok"
         )
     endif()
 endif()

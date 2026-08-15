@@ -1,0 +1,29 @@
+// P4 ownership torture: two nodes that end up owning each other.
+//
+// One shape per file; see tests/ownership-torture-cycle-nested-errors.abs for
+// why. No single assignment repeats a name here, so the cycle exists only
+// across the pair: after the first move, right's allocation belongs to left,
+// and the second move hands left back to it.
+//
+// This shape compiled cleanly before Analyzer::TransferManagedAliases was
+// fixed, and the resulting program leaked both nodes — the runtime's own
+// managed-pointer report caught at exit what the analyzer should refuse to
+// emit at all.
+
+class Node {
+    public int32 id;
+    public Node* child;
+
+    public Node(int32 identifier) {
+        id = identifier;
+        child = null;
+    }
+}
+
+int32 main() {
+    Node* left = new Node(1);
+    Node* right = new Node(2);
+    left.child = move(right);
+    right.child = move(left);
+    return 0;
+}
