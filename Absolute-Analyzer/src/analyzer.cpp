@@ -450,7 +450,13 @@ namespace Absolute {
             previousOwner == nextOwner)
             return;
         for (auto& [id, state] : valueFlow) {
-            if (id != previousOwner && state.pointerOwner == previousOwner)
+            // The moved-from symbol is re-pointed alongside its aliases. It no
+            // longer owns the allocation either, and leaving it pointing at
+            // itself hides a back-edge onto it: with `left.child = move(right)`
+            // followed by `right.child = move(left)`, neither assignment names
+            // the same symbol twice, so the cycle is only visible if the first
+            // move records that right's allocation now belongs to left.
+            if (state.pointerOwner == previousOwner)
                 state.pointerOwner = nextOwner;
         }
     }

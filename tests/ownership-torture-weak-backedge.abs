@@ -1,0 +1,99 @@
+// P4 ownership torture: graphs whose back-edge is weak.
+//
+// A tree with parent pointers is the shape that forces the distinction the
+// ownership model rests on. Downward edges own: root -> child -> grandchild is
+// a strong chain, and destroying the root must release every level exactly
+// once. Upward edges only observe: the parent pointer is `weak T*`, so it
+// closes the graph without closing an ownership cycle. The same graph built
+// with a strong back-edge is rejected at compile time, which is pinned
+// separately in tests/ownership-torture-cycle-errors.abs.
+//
+// What this file checks:
+//   1. a weak back-edge reaches its parent while the graph is alive, at the
+//      root and one level down;
+//   2. destroying the root releases all three levels exactly once, so a weak
+//      back-edge neither keeps its parent alive nor causes a double release;
+//   3. every weak observer of the graph expires, whichever level it watched.
+//
+// Cleanup is observed with the digit-trace idiom from tests/defer.abs: each
+// destroy() appends its tag to a shared int32. The count of digits is what
+// matters here rather than their order, because a chain through a managed
+// field currently unwinds root-first while docs/resource-ownership.md
+// describes reverse field order; that discrepancy is recorded against the
+// owner/sub item and is not what this test is about.
+
+struct OrderProbe {
+    raw int32* trace;
+    int32 tag;
+
+    void arm(raw int32* target, int32 identifier) {
+        trace = target;
+        tag = identifier;
+    }
+
+    void destroy() {
+        if (trace != null) {
+            *trace = (*trace * 10) + tag;
+        }
+    }
+}
+
+class TreeNode {
+    public int32 id;
+    public OrderProbe probe;
+    public TreeNode* child;
+    public weak TreeNode* parent;
+
+    public TreeNode(raw int32* trace, int32 identifier) {
+        id = identifier;
+        probe.arm(trace, identifier);
+        child = null;
+        parent = null;
+    }
+}
+
+int32 main() {
+    int32 trace = 0;
+
+    TreeNode* root = new TreeNode(&trace, 1);
+    root.child = new TreeNode(&trace, 2);
+    root.child.parent = root;
+    root.child.child = new TreeNode(&trace, 3);
+    root.child.child.parent = root.child;
+
+    // The back-edge observes without owning, at both depths.
+    assert(root.child.parent.id == 1, "weak back-edge reaches the root");
+    assert(root.child.child.parent.id == 2,
+        "weak back-edge one level down reaches its own parent");
+
+    // Reaching the leaf upward and downward yields the same node.
+    assert(root.child.child.parent.child.id == 3,
+        "the graph closes through the weak edge");
+
+    weak TreeNode* observeRoot = root;
+    weak TreeNode* observeMiddle = root.child;
+    weak TreeNode* observeLeaf = root.child.child;
+    assert(observeLeaf.id == 3, "weak observer reads the leaf while it lives");
+
+    delete root;
+
+    assert(!observeRoot, "root expires when deleted");
+    assert(!observeMiddle, "child is released with the owner that held it");
+    assert(!observeLeaf, "grandchild is released with the owner that held it");
+
+    // Three destructors, one digit each. A level released twice would push a
+    // fourth digit; a level never released would leave only two.
+    int32 digits = 0;
+    int32 sum = 0;
+    int32 rest = trace;
+    while (rest > 0) {
+        sum = sum + (rest % 10);
+        digits = digits + 1;
+        rest = rest / 10;
+    }
+    assert(digits == 3, "each level ran its destructor exactly once");
+    assert(sum == 6, "the three tags that ran were 1, 2 and 3");
+
+    println("ownership-torture-weak-backedge=ok");
+    return 0;
+}
