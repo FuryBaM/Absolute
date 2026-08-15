@@ -299,7 +299,12 @@ if(BUILD_TESTING)
                     PASS_REGULAR_EXPRESSION "fuzz-${fuzzer}=ok"
                     TIMEOUT 900)
             endif()
+            list(APPEND ABSOLUTE_FUZZ_BINARIES absolute-${fuzzer}-fuzzer)
         endforeach()
+        # One target that builds every fuzzer. CI builds this rather than a
+        # list of names, so adding a fuzzer here cannot leave the workflow
+        # running a test whose binary was never built.
+        add_custom_target(absolute-fuzzers DEPENDS ${ABSOLUTE_FUZZ_BINARIES})
     endif()
 
     if(TARGET Absolute-Unless-Plugin)

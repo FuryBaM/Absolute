@@ -420,9 +420,9 @@ jobs:
             -DBUILD_TESTING=ON \
             -DABSOLUTE_ENABLE_LLVM=OFF \
             -DABSOLUTE_BUILD_EXAMPLE_PLUGINS=OFF
-          cmake --build build-fuzz --parallel 2 \
-            --target absolute-lexer-fuzzer absolute-parser-fuzzer \
-            absolute-analyzer-fuzzer
+          # Aggregate target, not a list of names: a fuzzer added to CMake is
+          # then built here without this file having to be remembered.
+          cmake --build build-fuzz --parallel 2 --target absolute-fuzzers
 
       - name: Fuzz lexer, parser and analyzer
         id: test
