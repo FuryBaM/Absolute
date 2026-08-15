@@ -1002,7 +1002,18 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   исключении из конструктора терялись все уже проинициализированные поля.
   Освобождаются только поля, без вызова собственного `destroy()` типа — объект
   не достиг состояния, которое этот хук предполагает.
-- [ ] Проверить closure capture, escaping lambda, async boundary и task result ownership.
+- [x] Проверить closure capture, escaping lambda, async boundary и task result
+  ownership. `tests/ownership-torture-closures.abs` покрывает разрешённое:
+  замыкание переживает построивший его кадр, владелец делит область видимости с
+  замыканиями, владелец передаётся в вызываемого рядом с closure-аргументом,
+  владельцы создаются и освобождаются внутри async-кадров через spawn/await.
+  `tests/ownership-torture-capture-errors.abs` закрепляет запрет: захват
+  указателя, массива, task или владеющего ресурсом значения отвергается с
+  `E_LAMBDA_CAPTURE_RESOURCE`. Одна из пяти форм не отвергалась —
+  `TypeOwnsResources` искал член по ключу `destroy()`, тогда как члены хранятся
+  под голым именем. Тот же дефект, что был исправлен в CodeGen, но в предикате с
+  большим охватом: он же управляет проверками return, присваивания и запретом
+  массивов владеющих элементов.
 - [ ] Проверить transfer capsule: seal/send/rehome/destroy, double-send, use-after-send,
   receiver cancellation и закрытие channel с непринятыми capsules.
 - [ ] Проверить ownership plugin resources и native handles при unload/reload plugin.
