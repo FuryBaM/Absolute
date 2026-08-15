@@ -245,6 +245,9 @@ if(BUILD_TESTING)
             -fno-omit-frame-pointer -g -O1)
 
         set(ABSOLUTE_FUZZ_TARGETS lexer parser)
+        # The manifest target parses package metadata rather than source, so it
+        # needs the package manager rather than the analyzer.
+        list(APPEND ABSOLUTE_FUZZ_TARGETS manifest)
         # The analyzer harness generates syntactically valid programs, so it
         # needs the analyzer as well as the parser.
         if(TARGET Absolute-Analyzer)
@@ -256,9 +259,19 @@ if(BUILD_TESTING)
         set(ABSOLUTE_FUZZ_SEEDS_parser "${PROJECT_SOURCE_DIR}/tests/fuzz/corpus")
         set(ABSOLUTE_FUZZ_SEEDS_analyzer
             "${PROJECT_SOURCE_DIR}/tests/fuzz/corpus-decisions")
+        set(ABSOLUTE_FUZZ_SEEDS_manifest
+            "${PROJECT_SOURCE_DIR}/tests/fuzz/corpus-manifests")
         foreach(fuzzer ${ABSOLUTE_FUZZ_TARGETS})
-            add_executable(absolute-${fuzzer}-fuzzer
-                tests/fuzz/${fuzzer}_fuzzer.cpp)
+            if(fuzzer STREQUAL "manifest")
+                add_executable(absolute-manifest-fuzzer
+                    tests/fuzz/manifest_fuzzer.cpp
+                    Absolute-Compiler/src/package_manager.cpp)
+                target_include_directories(absolute-manifest-fuzzer PRIVATE
+                    Absolute-Compiler/include)
+            else()
+                add_executable(absolute-${fuzzer}-fuzzer
+                    tests/fuzz/${fuzzer}_fuzzer.cpp)
+            endif()
             target_link_libraries(absolute-${fuzzer}-fuzzer
                 PRIVATE Absolute-Parser)
             if(fuzzer STREQUAL "analyzer")
@@ -286,7 +299,12 @@ if(BUILD_TESTING)
                     PASS_REGULAR_EXPRESSION "fuzz-${fuzzer}=ok"
                     TIMEOUT 900)
             endif()
+            list(APPEND ABSOLUTE_FUZZ_BINARIES absolute-${fuzzer}-fuzzer)
         endforeach()
+        # One target that builds every fuzzer. CI builds this rather than a
+        # list of names, so adding a fuzzer here cannot leave the workflow
+        # running a test whose binary was never built.
+        add_custom_target(absolute-fuzzers DEPENDS ${ABSOLUTE_FUZZ_BINARIES})
     endif()
 
     if(TARGET Absolute-Unless-Plugin)
@@ -3038,6 +3056,23 @@ if(BUILD_TESTING)
         target_link_libraries(plugin-api-unit-tests PRIVATE Absolute-Parser Absolute-Analyzer Absolute-CodeGen Absolute-Runtime)
         add_test(NAME absolute.plugin-api-unit-tests
             COMMAND plugin-api-unit-tests "$<TARGET_FILE:Absolute-Unless-Plugin>")
+        # The V1 ABI layout is compiled into every plugin already built against
+        # it, so a size or offset change is invisible at the source level and
+        # surfaces as a crash in someone else's binary. Guarded on 64-bit
+        # builds, which is what the checked-in layout describes.
+        if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+            add_executable(plugin-abi-dump tests/native/plugin_abi_dump.cpp)
+            target_include_directories(plugin-abi-dump PRIVATE
+                Absolute-Parser/include)
+            add_test(
+                NAME absolute.plugin-abi-v1-layout
+                COMMAND "${CMAKE_COMMAND}"
+                    -DDUMP=$<TARGET_FILE:plugin-abi-dump>
+                    -DGOLDEN=${PROJECT_SOURCE_DIR}/tests/abi/plugin-abi-v1-lp64.txt
+                    -P "${PROJECT_SOURCE_DIR}/tests/compare-abi-dump.cmake")
+            set_tests_properties(absolute.plugin-abi-v1-layout PROPERTIES
+                PASS_REGULAR_EXPRESSION "plugin-abi-v1=ok")
+        endif()
         add_test(
             NAME absolute.build-export-c-abi
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-c-abi.abs"

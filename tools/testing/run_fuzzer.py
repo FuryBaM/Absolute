@@ -101,7 +101,14 @@ def main() -> int:
         parser.error(f"fuzzer does not exist: {fuzzer}")
 
     budget = DEFAULT_BUDGET_SECONDS
+    # CMake expands $ENV{ABSOLUTE_FUZZ_SECONDS} into --budget-seconds when the
+    # build tree is configured, so a value exported later -- by a nightly or
+    # weekly CI run against an already-configured tree -- never reached here.
+    # Reading the environment at run time is what makes the documented widening
+    # actually widen anything.
     requested = (args.budget_seconds or "").strip()
+    if not requested:
+        requested = os.environ.get("ABSOLUTE_FUZZ_SECONDS", "").strip()
     if requested:
         try:
             budget = max(1, int(requested))
