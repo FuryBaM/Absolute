@@ -1028,18 +1028,20 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   под голым именем. Тот же дефект, что был исправлен в CodeGen, но в предикате с
   большим охватом: он же управляет проверками return, присваивания и запретом
   массивов владеющих элементов.
-- [ ] Проверить transfer capsule: seal/send/rehome/destroy, double-send, use-after-send,
+- [x] Проверить transfer capsule: seal/send/rehome/destroy, double-send, use-after-send,
   receiver cancellation и закрытие channel с непринятыми capsules.
-  `tests/ownership-torture-capsule.abs` закрывает seal, send, повторную отправку
-  опустошённого сообщения, обращение к устаревшему алиасу после seal, приём с
-  последующим delete, отказ закрытого канала с восстановлением capsule и
-  уничтожение capsule, которые никто не принял. Каждый случай считает запуски
-  деструктора: `tests/std-typed-channel.abs` проверял только сами дескрипторы,
-  поэтому capsule, потерявшая объектный граф, проходила его без изменений.
+  `tests/ownership-torture-capsule.abs`. Каждый случай считает запуски
+  деструктора, а не состояние дескрипторов: `tests/std-typed-channel.abs`
+  проверял только `isEmpty`, результат `send` и прочитанное значение, поэтому
+  capsule, потерявшая объектный граф, проходила его без изменений.
   Заявленное в P0 типизированное уничтожение непринятой capsule подтвердилось —
   оба queued-объекта уничтожаются ровно по разу при уничтожении канала.
-  Остаются rehome между domains отдельным тестом (сейчас пересечение границы
-  task покрыто только в `std-typed-channel`) и receiver cancellation.
+  Rehome покрыт отдельно: владелец запечатывается здесь, а освобождается в
+  другом domain, и счётчик после `await` показывает ровно один запуск.
+  Receiver cancellation зафиксирован по владению, а не по поведению
+  планировщика: токен отменяется до старта задачи, поэтому отказ детерминирован
+  и тест не гоняется с runtime. Отменённый получатель ничего не разрушает сам,
+  а непринятая capsule умирает вместе с каналом. 25/25 повторов стабильны.
 - [ ] Проверить ownership plugin resources и native handles при unload/reload plugin.
 - [ ] Запускать ownership corpus под ASan, UBSan, LSan и TSan, где применимо.
   ASan подключён для всех трёх torture-тестов и зелёный на Linux и macOS.
