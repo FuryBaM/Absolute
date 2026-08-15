@@ -28,7 +28,11 @@ namespace Absolute {
         };
         std::vector<RegisteredOpaqueRule> opaqueRules;
         std::unordered_map<std::string, size_t> opaqueRulesByKeyword;
-        std::vector<std::string> preludes;
+        struct RegisteredPrelude {
+            std::string pluginName;
+            std::string source;
+        };
+        std::vector<RegisteredPrelude> preludes;
         std::vector<PluginBinaryOperator> binaryOperators;
 
         std::string OperatorKey(const std::string& leftType, const std::string& operatorText,
@@ -39,7 +43,11 @@ namespace Absolute {
         std::unordered_map<std::string, size_t> binaryOperatorsBySignature;
 
         std::unordered_map<std::string, PluginResourceDescriptor> resourcesByTypeName;
-        std::unordered_map<std::string, std::string> virtualModulesByName;
+        struct RegisteredVirtualModule {
+            std::string pluginName;
+            std::string source;
+        };
+        std::unordered_map<std::string, RegisteredVirtualModule> virtualModulesByName;
 
         bool IsIdentifier(const std::string& value) {
             if (value.empty()) return false;
@@ -209,10 +217,62 @@ namespace Absolute {
         virtualModulesByName.clear();
     }
 
+    // Drops everything one plugin registered, so its library can be closed.
+    //
+    // ResetSyntaxPlugins clears the whole registry, which is only correct when
+    // every plugin is going away at once. Unloading a single plugin needs this
+    // instead: a rule left behind keeps a raw expand pointer into the image
+    // about to be unmapped, and its keyword stays claimed, so reloading the
+    // same plugin is refused as a duplicate registration.
+    void UnregisterSyntaxPlugin(const std::string& pluginName) {
+        std::vector<RegisteredRule> keptRules;
+        for (RegisteredRule& rule : rules)
+            if (rule.pluginName != pluginName) keptRules.push_back(std::move(rule));
+        rules = std::move(keptRules);
+        rulesByKeyword.clear();
+        for (size_t index = 0; index < rules.size(); ++index)
+            rulesByKeyword.emplace(rules[index].keyword, index);
+
+        std::vector<RegisteredOpaqueRule> keptOpaque;
+        for (RegisteredOpaqueRule& rule : opaqueRules)
+            if (rule.pluginName != pluginName) keptOpaque.push_back(std::move(rule));
+        opaqueRules = std::move(keptOpaque);
+        opaqueRulesByKeyword.clear();
+        for (size_t index = 0; index < opaqueRules.size(); ++index)
+            opaqueRulesByKeyword.emplace(opaqueRules[index].keyword, index);
+
+        std::vector<PluginBinaryOperator> keptOperators;
+        for (PluginBinaryOperator& op : binaryOperators)
+            if (op.pluginName != pluginName) keptOperators.push_back(std::move(op));
+        binaryOperators = std::move(keptOperators);
+        binaryOperatorsBySignature.clear();
+        for (size_t index = 0; index < binaryOperators.size(); ++index) {
+            binaryOperatorsBySignature.emplace(
+                OperatorKey(binaryOperators[index].leftType,
+                    binaryOperators[index].operatorText,
+                    binaryOperators[index].rightType),
+                index);
+        }
+
+        std::vector<RegisteredPrelude> keptPreludes;
+        for (RegisteredPrelude& prelude : preludes)
+            if (prelude.pluginName != pluginName) keptPreludes.push_back(std::move(prelude));
+        preludes = std::move(keptPreludes);
+
+        for (auto it = resourcesByTypeName.begin(); it != resourcesByTypeName.end(); ) {
+            if (it->second.pluginName == pluginName) it = resourcesByTypeName.erase(it);
+            else ++it;
+        }
+        for (auto it = virtualModulesByName.begin(); it != virtualModulesByName.end(); ) {
+            if (it->second.pluginName == pluginName) it = virtualModulesByName.erase(it);
+            else ++it;
+        }
+    }
+
     void RegisterSyntaxPluginPrelude(const std::string& pluginName, const char* source) {
         if (!source)
             throw std::runtime_error("Syntax plugin '" + pluginName + "' returned a null prelude");
-        if (source[0] != '\0') preludes.emplace_back(source);
+        if (source[0] != '\0') preludes.push_back({pluginName, source});
     }
 
     void RegisterPluginBinaryOperators(
@@ -317,14 +377,14 @@ namespace Absolute {
         for (size_t i = 0; i < modules->module_count; ++i) {
             const auto& mod = modules->modules[i];
             if (mod.module_name && mod.module_source) {
-                virtualModulesByName[mod.module_name] = mod.module_source;
+                virtualModulesByName[mod.module_name] = {pluginName, mod.module_source};
             }
         }
     }
 
     const std::string* FindPluginVirtualModule(const std::string& moduleName) {
         const auto found = virtualModulesByName.find(moduleName);
-        return found == virtualModulesByName.end() ? nullptr : &found->second;
+        return found == virtualModulesByName.end() ? nullptr : &found->second.source;
     }
 
     bool IsSyntaxPluginKeyword(const std::string& value) {
@@ -332,7 +392,11 @@ namespace Absolute {
     }
 
     std::vector<std::string> SyntaxPluginPreludes() {
-        return preludes;
+        std::vector<std::string> sources;
+        sources.reserve(preludes.size());
+        for (const RegisteredPrelude& prelude : preludes)
+            sources.push_back(prelude.source);
+        return sources;
     }
 
     const PluginBinaryOperator* FindPluginBinaryOperator(

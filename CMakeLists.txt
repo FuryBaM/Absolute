@@ -3023,7 +3023,8 @@ if(BUILD_TESTING)
             Absolute-CodeGen/include
         )
         target_link_libraries(plugin-api-unit-tests PRIVATE Absolute-Parser Absolute-Analyzer Absolute-CodeGen Absolute-Runtime)
-        add_test(NAME absolute.plugin-api-unit-tests COMMAND plugin-api-unit-tests)
+        add_test(NAME absolute.plugin-api-unit-tests
+            COMMAND plugin-api-unit-tests "$<TARGET_FILE:Absolute-Unless-Plugin>")
         add_test(
             NAME absolute.build-export-c-abi
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-c-abi.abs"

@@ -50,6 +50,7 @@ namespace Absolute {
     PARSER_API void RegisterPluginVirtualModules(
         const std::string& pluginName, const AbsoluteVirtualModuleTableV1* modules);
     PARSER_API void ResetSyntaxPlugins();
+    PARSER_API void UnregisterSyntaxPlugin(const std::string& pluginName);
     PARSER_API bool IsSyntaxPluginKeyword(const std::string& value);
     PARSER_API std::vector<std::string> SyntaxPluginPreludes();
     PARSER_API const PluginBinaryOperator* FindPluginBinaryOperator(

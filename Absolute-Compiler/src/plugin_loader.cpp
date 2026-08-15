@@ -418,6 +418,9 @@ namespace Absolute {
         if (plugin.compilerPlugin && plugin.compilerPlugin->shutdown) {
             plugin.compilerPlugin->shutdown(nullptr);
         }
+        // Before the image goes away: its rules hold raw expand pointers into
+        // it, and its keywords stay claimed against a reload.
+        UnregisterSyntaxPlugin(pluginName);
         if (plugin.handle) {
             const auto handleIt = std::find(handles.begin(), handles.end(), plugin.handle);
             if (handleIt != handles.end()) {
