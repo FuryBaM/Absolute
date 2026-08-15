@@ -1030,6 +1030,16 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   массивов владеющих элементов.
 - [ ] Проверить transfer capsule: seal/send/rehome/destroy, double-send, use-after-send,
   receiver cancellation и закрытие channel с непринятыми capsules.
+  `tests/ownership-torture-capsule.abs` закрывает seal, send, повторную отправку
+  опустошённого сообщения, обращение к устаревшему алиасу после seal, приём с
+  последующим delete, отказ закрытого канала с восстановлением capsule и
+  уничтожение capsule, которые никто не принял. Каждый случай считает запуски
+  деструктора: `tests/std-typed-channel.abs` проверял только сами дескрипторы,
+  поэтому capsule, потерявшая объектный граф, проходила его без изменений.
+  Заявленное в P0 типизированное уничтожение непринятой capsule подтвердилось —
+  оба queued-объекта уничтожаются ровно по разу при уничтожении канала.
+  Остаются rehome между domains отдельным тестом (сейчас пересечение границы
+  task покрыто только в `std-typed-channel`) и receiver cancellation.
 - [ ] Проверить ownership plugin resources и native handles при unload/reload plugin.
 - [ ] Запускать ownership corpus под ASan, UBSan, LSan и TSan, где применимо.
   ASan подключён для всех трёх torture-тестов и зелёный на Linux и macOS.

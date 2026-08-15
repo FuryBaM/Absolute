@@ -1080,6 +1080,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-typed-channel.abs"
     )
     add_test(
+        NAME absolute.ownership-torture-capsule-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-capsule.abs"
+    )
+    add_test(
         NAME absolute.ownership-transfer-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-transfer-errors.abs"
     )
@@ -4181,6 +4185,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-std-typed-channel PROPERTIES
             FIXTURES_REQUIRED absolute-std-typed-channel-executable
             PASS_REGULAR_EXPRESSION "std-typed-channel=ok"
+        )
+        add_test(
+            NAME absolute.build-ownership-torture-capsule
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-capsule.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/ownership-torture-capsule-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-ownership-torture-capsule PROPERTIES
+            FIXTURES_SETUP absolute-ownership-torture-capsule-executable
+        )
+        add_test(NAME absolute.run-ownership-torture-capsule
+            COMMAND "${CMAKE_BINARY_DIR}/ownership-torture-capsule-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-ownership-torture-capsule PROPERTIES
+            FIXTURES_REQUIRED absolute-ownership-torture-capsule-executable
+            PASS_REGULAR_EXPRESSION "ownership-torture-capsule=ok"
         )
     endif()
 endif()
