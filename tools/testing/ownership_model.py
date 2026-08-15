@@ -2,8 +2,9 @@
 """Model-based generator for ownership operations.
 
 Generates random but legal Absolute programs made of new/alias/weak/move/delete
-and checks the compiler and runtime against an independent model of lifetime
-state rather than against a hand-written expectation.
+plus ownership crossing frame boundaries by return and by unwinding, and checks
+the compiler and runtime against an independent model of lifetime state rather
+than against a hand-written expectation.
 
 The model is the point. It tracks, for every object, whether it is alive and
 which places name it, and it applies the ownership rules directly:
@@ -14,6 +15,10 @@ which places name it, and it applies the ownership rules directly:
   move        ownership leaves the source place, which becomes unusable
   delete      the object dies, every alias and weak handle naming it expires,
               and its destructor runs exactly once
+  return      an owner created in a callee arrives owned by the caller's place
+  throw       owners live in the unwound frame are released by the unwind, and
+              nothing outside it ever named them, so the count is the whole
+              observation
 
 Each generated statement is followed by assertions derived from the model: the
 truthiness of every live weak handle, and the running count of destructor calls.
@@ -66,6 +71,20 @@ class Obj {{
     }}
 }}
 
+// Ownership leaving a frame through return.
+Obj* produceOwner(raw int32* counter, int32 identifier) {{
+    Obj* fresh = new Obj(counter, identifier);
+    return move(fresh);
+}}
+
+// Owners alive in a frame that unwinds. Both must be released by the unwind,
+// which is what the caller's destructor count checks.
+int32 throwAfterAllocating(raw int32* counter, int32 first, int32 second) {{
+    Obj* one = new Obj(counter, first);
+    Obj* two = new Obj(counter, second);
+    throw new Error("generated unwind");
+}}
+
 int32 main() {{
     int32 destroyed = 0;
     raw int32* place = &destroyed;
@@ -95,6 +114,20 @@ class Model:
         place = self.fresh_place("owner")
         self.owners[place] = identifier
         return place, identifier
+
+    def unwound_pair(self) -> tuple[int, int]:
+        """Two objects created in a frame that then throws.
+
+        Nothing outside that frame ever names them, so the unwind is the only
+        thing that can release them: the count is the whole observation.
+        """
+        first = self.next_object + 1
+        second = self.next_object + 2
+        self.next_object += 2
+        self.alive[first] = False
+        self.alive[second] = False
+        self.destroyed += 2
+        return first, second
 
     def readable_places(self) -> list[str]:
         """Places naming a live object: owners and subscribers alike."""
@@ -161,14 +194,32 @@ def generate(seed: int, steps: int) -> tuple[str, int]:
         )
 
     for _ in range(steps):
-        choices = ["new"]
+        choices = ["new", "produce", "unwind"]
         if model.readable_places():
             choices += ["alias", "weak", "read"]
         if model.owning_places():
             choices += ["move", "delete", "delete"]
         operation = rng.choice(choices)
 
-        if operation == "new":
+        if operation == "produce":
+            place, identifier = model.new_object()
+            lines.append(
+                f"    Obj* {place} = produceOwner(place, {identifier});")
+            check_count(f"producing {place} through return")
+        elif operation == "unwind":
+            first, second = model.unwound_pair()
+            lines.append("    try {")
+            lines.append(
+                f"        throwAfterAllocating(place, {first}, {second});")
+            lines.append(
+                '        assert(false, "the throwing helper must not return");')
+            lines.append("    }")
+            lines.append("    catch (Error* failure) {")
+            lines.append('        assert(failure, "the unwind is observable");')
+            lines.append("    }")
+            check_weaks("an unwind elsewhere")
+            check_count("the unwind")
+        elif operation == "new":
             place, identifier = model.new_object()
             lines.append(f"    Obj* {place} = new Obj(place, {identifier});")
             check_count(f"new {place}")
