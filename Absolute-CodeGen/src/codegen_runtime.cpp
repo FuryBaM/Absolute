@@ -600,6 +600,8 @@ namespace Absolute {
                     ? "Array index out of bounds"
                     : name == "division.by.zero"
                         ? "Division by zero"
+                        : name == "division.overflow"
+                        ? "Division overflows: the most negative value divided by -1"
                         : name.ends_with(".requires.owner")
                         ? "Ownership operation requires an owner argument"
                         : "Runtime safety check failed";
@@ -760,21 +762,20 @@ namespace Absolute {
         // an edge case: 4294967295u > 1u came out false, (uint8)200 > 100 came
         // out false, and 4294967295u / 2 came out zero.
         //
-        // The rule is deliberately narrow. Unsigned only when an operand is
-        // declared uint and nothing on the other side is a wider signed type
-        // that could represent it anyway, so mixed arithmetic keeps behaving as
-        // it did and only genuinely unsigned operations change.
-        const auto declaredUnsigned = [](const std::string& name) {
-            return name.starts_with("uint");
-        };
-        const bool widerSignedOperand =
-            (leftTypeName == "int64" && !declaredUnsigned(rightTypeName)) ||
-            (rightTypeName == "int64" && !declaredUnsigned(leftTypeName));
-        const bool unsignedOperation =
-            (declaredUnsigned(leftTypeName) || declaredUnsigned(rightTypeName)) &&
-            !widerSignedOperand;
-        if (unsignedOperation && commonTypeName == "int64") commonTypeName = "uint64";
-        else if (unsignedOperation && commonTypeName == "int32") commonTypeName = "uint32";
+        // The same ladder the analyzer uses, so the two agree on the result
+        // type: int64 covers every uint32 and keeps the operation signed,
+        // nothing signed covers uint64, and at equal rank unsigned wins.
+        if (!commonTypeName.empty() && commonTypeName != "double" &&
+            commonTypeName != "float") {
+            if (leftTypeName == "uint64" || rightTypeName == "uint64")
+                commonTypeName = "uint64";
+            else if (leftTypeName == "int64" || rightTypeName == "int64")
+                commonTypeName = "int64";
+            else if (leftTypeName == "uint32" || rightTypeName == "uint32" ||
+                leftTypeName.starts_with("uint") || rightTypeName.starts_with("uint"))
+                commonTypeName = "uint32";
+        }
+        const bool unsignedOperation = commonTypeName.starts_with("uint");
         left = Coerce(left, type, leftTypeName, commonTypeName);
         right = Coerce(right, type, rightTypeName, commonTypeName);
         const bool floating = type->isFloatingPointTy();
@@ -796,6 +797,28 @@ namespace Absolute {
                     builder.CreateICmpNE(right, llvm::ConstantInt::get(type, 0),
                         "divisor.not.zero"),
                     "division.by.zero");
+
+                // The other undefined case: the most negative value divided by
+                // -1 has no representable quotient, so LLVM leaves it undefined
+                // and the result was observably garbage rather than a wrap.
+                // Unsigned division has no such case, so the guard is only
+                // emitted where it can happen.
+                if (!unsignedOperation && type->isIntegerTy()) {
+                    llvm::Constant* mostNegative = llvm::ConstantInt::get(
+                        type, llvm::APInt::getSignedMinValue(
+                            type->getIntegerBitWidth()));
+                    llvm::Value* leftIsMin = builder.CreateICmpEQ(
+                        left, mostNegative, "dividend.is.min");
+                    llvm::Value* rightIsMinusOne = builder.CreateICmpEQ(
+                        right, llvm::ConstantInt::getSigned(type, -1),
+                        "divisor.is.minus.one");
+                    EmitOrExit(
+                        builder.CreateNot(
+                            builder.CreateAnd(leftIsMin, rightIsMinusOne,
+                                "division.overflows"),
+                            "division.in.range"),
+                        "division.overflow");
+                }
             }
             if (op == "/") {
                 if (floating) return builder.CreateFDiv(left, right, "div");

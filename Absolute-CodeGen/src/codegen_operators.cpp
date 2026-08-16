@@ -214,13 +214,27 @@ namespace Absolute {
             // 2^31 came out negative, 2^32 came out zero, 10^10 came out
             // 1410065408. Widen only when the value does not fit, so every
             // literal that worked before keeps exactly the type it had.
-            const long long parsed = std::stoll(expr->value);
+            // Parsed unsigned, because the whole 64-bit range has to be
+            // reachable and a signed parse cannot get there. The literal is
+            // always positive here -- a minus sign is a separate unary
+            // expression -- so int64's minimum arrives as 2^63 and negating its
+            // bit pattern yields the minimum again, and uint64's maximum has no
+            // signed spelling at all. A signed parse threw out_of_range on both
+            // and the exception reached the user as a bare "Error: stoll".
+            unsigned long long parsed = 0;
+            try {
+                parsed = std::stoull(expr->value);
+            }
+            catch (const std::exception&) {
+                impl->Fail("integer literal '" + expr->value +
+                    "' does not fit in 64 bits");
+            }
             const bool fitsIn32 =
-                parsed >= static_cast<long long>(std::numeric_limits<int32_t>::min()) &&
-                parsed <= static_cast<long long>(std::numeric_limits<int32_t>::max());
+                parsed <= static_cast<unsigned long long>(
+                    std::numeric_limits<int32_t>::max());
             impl->value = llvm::ConstantInt::get(
                 fitsIn32 ? impl->builder.getInt32Ty() : impl->builder.getInt64Ty(),
-                parsed, true);
+                parsed, false);
         }
     }
 

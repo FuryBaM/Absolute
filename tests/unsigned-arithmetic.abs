@@ -27,9 +27,27 @@ int32 main() {
     assert(large > small, "unsigned bytes compare by magnitude");
     assert((large / 2) as int64 == 100, "unsigned byte division");
 
-    uint64 wide = 9223372036854775807;
-    assert(wide > 1, "unsigned 64-bit comparison");
-    assert((wide / 2) as int64 == 4611686018427387903, "unsigned 64-bit division");
+    // Division by one, so the result keeps its top bit set: below it a signed
+    // widening would look identical and the cast would prove nothing.
+    assert((big / 1) as int64 == 4294967295,
+        "an unsigned result widens without picking up a sign");
+    assert((big + 0) as int64 == 4294967295,
+        "the same for an unsigned sum");
+
+    // int64 represents every uint32, so mixing them stays signed.
+    int64 negative64 = -5;
+    uint32 oneWide = 1;
+    assert(negative64 + oneWide == -4,
+        "a wider signed type keeps the operation signed");
+
+    uint64 wide = 18446744073709551615;
+    assert((wide / 2) as int64 == 9223372036854775807,
+        "unsigned 64-bit division uses the whole range");
+
+    uint64 wideSigned = 9223372036854775807;
+    assert(wideSigned > 1, "unsigned 64-bit comparison");
+    assert((wideSigned / 2) as int64 == 4611686018427387903,
+        "unsigned 64-bit division of a value below the signed maximum");
 
     // Signed types keep their own semantics: the fix must not have widened
     // itself into them.

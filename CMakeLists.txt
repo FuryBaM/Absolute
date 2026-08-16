@@ -849,6 +849,10 @@ if(BUILD_TESTING)
     set_tests_properties(absolute.ownership-torture-capture-errors PROPERTIES
         WILL_FAIL TRUE)
     add_test(
+        NAME absolute.division-edges-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/division-edges.abs"
+    )
+    add_test(
         NAME absolute.unsigned-arithmetic-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/unsigned-arithmetic.abs"
     )
@@ -4278,6 +4282,36 @@ if(BUILD_TESTING)
         )
         add_test(NAME absolute.run-unsigned-arithmetic
             COMMAND "${CMAKE_BINARY_DIR}/unsigned-arithmetic-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-division-edges
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/division-edges.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/division-edges-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-division-edges PROPERTIES
+            FIXTURES_SETUP absolute-division-edges-executable
+        )
+        add_test(NAME absolute.run-division-edges
+            COMMAND "${CMAKE_BINARY_DIR}/division-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-division-edges PROPERTIES
+            FIXTURES_REQUIRED absolute-division-edges-executable
+            PASS_REGULAR_EXPRESSION "division-edges=ok"
+        )
+        # Exits with a diagnostic instead of returning, so the check is on the
+        # message rather than on a marker.
+        add_test(
+            NAME absolute.build-division-overflow-errors
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/division-overflow-errors.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/division-overflow-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-division-overflow-errors PROPERTIES
+            FIXTURES_SETUP absolute-division-overflow-executable
+        )
+        add_test(NAME absolute.run-division-overflow-errors
+            COMMAND "${CMAKE_BINARY_DIR}/division-overflow-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-division-overflow-errors PROPERTIES
+            FIXTURES_REQUIRED absolute-division-overflow-executable
+            PASS_REGULAR_EXPRESSION "Division overflows"
+        )
         set_tests_properties(absolute.run-unsigned-arithmetic PROPERTIES
             FIXTURES_REQUIRED absolute-unsigned-arithmetic-executable
             PASS_REGULAR_EXPRESSION "unsigned-arithmetic=ok"

@@ -300,12 +300,25 @@ namespace Absolute {
             location, builder.GetInsertBlock());
     }
 
+    unsigned long long CodeGenerator::Impl::ParseIntegerLiteral(const std::string& text) {
+        try {
+            return std::stoull(text);
+        }
+        catch (const std::exception&) {
+            Fail("integer literal '" + text + "' does not fit in 64 bits");
+        }
+        return 0;
+    }
+
     llvm::Constant* CodeGenerator::Impl::GlobalConstant(Expression* expression, llvm::Type* type) {
         if (!expression) return llvm::Constant::getNullValue(type);
         if (auto* number = dynamic_cast<NumberLiteralExpr*>(expression)) {
             if (type->isFloatingPointTy())
                 return llvm::ConstantFP::get(type, std::stod(number->value));
-            return llvm::ConstantInt::get(type, std::stoll(number->value), true);
+            // Unsigned parse for the same reason as the runtime path: the
+            // literal is positive and the full 64-bit range has to be
+            // reachable.
+            return llvm::ConstantInt::get(type, ParseIntegerLiteral(number->value), false);
         }
         if (auto* boolean = dynamic_cast<BooleanLiteralExpr*>(expression))
             return llvm::ConstantInt::get(type, boolean->value ? 1 : 0);
@@ -325,7 +338,10 @@ namespace Absolute {
             if (auto* number = dynamic_cast<NumberLiteralExpr*>(unary->operand.get())) {
                 if (type->isFloatingPointTy())
                     return llvm::ConstantFP::get(type, -std::stod(number->value));
-                return llvm::ConstantInt::get(type, -std::stoll(number->value), true);
+                // Negating the parsed pattern rather than parsing a negative
+                // number, so int64's minimum works: 2^63 negated is itself.
+                return llvm::ConstantInt::get(type,
+                    0ull - ParseIntegerLiteral(number->value), false);
             }
         }
         Fail("global initializer requires a constant primitive value");

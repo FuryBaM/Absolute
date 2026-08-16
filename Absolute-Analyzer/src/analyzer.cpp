@@ -943,7 +943,18 @@ namespace Absolute {
         if (!IsNumeric(left) || !IsNumeric(right)) return "error";
         if (left == "double" || right == "double") return "double";
         if (left == "float" || right == "float") return "float";
-        if (left == "int64" || right == "int64" || left == "uint64" || right == "uint64") return "int64";
+        // Unsignedness has to survive here, not just in CodeGen. The result
+        // type is what a later cast widens from, so collapsing uint32 to int32
+        // made `(unsignedValue / 1) as int64` sign-extend and produce -1 where
+        // the same value read through a variable produced 4294967295.
+        //
+        // The ladder follows which type can represent the other. int64 covers
+        // every uint32, so mixing them stays signed; nothing signed covers
+        // uint64, so mixing with it goes unsigned; at equal rank the unsigned
+        // side wins.
+        if (left == "uint64" || right == "uint64") return "uint64";
+        if (left == "int64" || right == "int64") return "int64";
+        if (left == "uint32" || right == "uint32") return "uint32";
         return "int32";
     }
 
