@@ -209,7 +209,18 @@ namespace Absolute {
             impl->value = llvm::ConstantFP::get(impl->builder.getDoubleTy(), std::stod(expr->value));
         }
         else {
-            impl->value = llvm::ConstantInt::get(impl->builder.getInt32Ty(), std::stoll(expr->value), true);
+            // The value was parsed as 64-bit and then truncated into an i32
+            // constant, so any literal wider than 32 bits was silently wrong:
+            // 2^31 came out negative, 2^32 came out zero, 10^10 came out
+            // 1410065408. Widen only when the value does not fit, so every
+            // literal that worked before keeps exactly the type it had.
+            const long long parsed = std::stoll(expr->value);
+            const bool fitsIn32 =
+                parsed >= static_cast<long long>(std::numeric_limits<int32_t>::min()) &&
+                parsed <= static_cast<long long>(std::numeric_limits<int32_t>::max());
+            impl->value = llvm::ConstantInt::get(
+                fitsIn32 ? impl->builder.getInt32Ty() : impl->builder.getInt64Ty(),
+                parsed, true);
         }
     }
 
