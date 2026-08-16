@@ -391,6 +391,31 @@ namespace Absolute {
             true, elementType, std::move(dimensionValues), nullptr, InvalidSymbolId});
     }
 
+    void CodeGenerator::Impl::DeclareGlobalScalar(VarDeclExpr& expression) {
+        const std::string name = IdentifierName(expression.name.get());
+        const std::string typeName = DeclaredTypeName(expression);
+        if (name.empty() || typeName.empty()) return;
+
+        // A module-scope owner would need answers this does not have: when its
+        // destructor runs, in what order against other globals, and who owns it
+        // while the module initializes. Refuse it by name here rather than
+        // emitting storage whose lifetime nobody has decided.
+        if (IsManagedPointerTypeName(typeName) || IsWeakPointerTypeName(typeName))
+            Fail("a managed or weak pointer cannot be declared at module scope");
+        if (IsTaskTypeName(typeName))
+            Fail("a task cannot be declared at module scope");
+
+        llvm::Type* type = TypeFromName(typeName);
+        if (!type) Fail("unknown type '" + typeName + "' for global '" + name + "'");
+        llvm::Constant* initializer = GlobalConstant(expression.value.get(), type);
+
+        const std::string globalName = Qualify(name);
+        auto* storage = new llvm::GlobalVariable(*module, type, false,
+            llvm::GlobalValue::ExternalLinkage, initializer, globalName);
+        globals.emplace(globalName, Variable{storage, type, typeName, false,
+            false, nullptr, {}, nullptr, InvalidSymbolId});
+    }
+
     llvm::Function* CodeGenerator::Impl::DeclareFunction(FunctionDeclStmt& statement) {
         return DeclareFunction(statement, nullptr);
     }

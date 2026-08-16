@@ -20,17 +20,8 @@ import "../../std/fs.abs";
 import "../../std/json.abs";
 import "../../std/string.abs";
 
-// Written as functions rather than module-level constants on purpose: a
-// variable at module scope is accepted by the analyzer and then fails in
-// codegen with "unknown variable or field", so globals are not usable today.
-// Found by this program; recorded in TODO.md with a minimal reproducer.
-int32 shardCount() {
-    return 4;
-}
-
-int32 filesPerShard() {
-    return 6;
-}
+const int32 SHARD_COUNT = 4;
+const int32 FILES_PER_SHARD = 6;
 
 string workRoot() {
     return "absolute-indexer-work";
@@ -70,7 +61,7 @@ async int64 indexShard(int64 shard, int64 resultsAddress) {
     int64 bytes = 0;
 
     int32 index = 0;
-    while (index < filesPerShard()) {
+    while (index < FILES_PER_SHARD) {
         string path = filePath(shardIndex, index);
         if (std.fs.exists(path)) {
             string content = std.fs.readText(path);
@@ -99,10 +90,10 @@ async int32 main() {
     int64 expectedBytes = 0;
 
     int32 shard = 0;
-    while (shard < shardCount()) {
+    while (shard < SHARD_COUNT) {
         std.fs.createDirectories(shardPath(shard));
         int32 index = 0;
-        while (index < filesPerShard()) {
+        while (index < FILES_PER_SHARD) {
             string content = fileContent(shard, index);
             std.fs.writeText(filePath(shard, index), content);
             expectedFiles += 1;
@@ -129,9 +120,9 @@ async int32 main() {
         "the recursive walk finds every generated file");
 
     // Index in parallel: one task per shard, all publishing into one array.
-    int64[] results = new int64[shardCount() * 3];
+    int64[] results = new int64[SHARD_COUNT * 3];
     int32 slot = 0;
-    while (slot < shardCount() * 3) {
+    while (slot < SHARD_COUNT * 3) {
         results[slot] = 0;
         slot += 1;
     }
@@ -157,9 +148,9 @@ async int32 main() {
     int64 totalLines = 0;
     int64 totalBytes = 0;
     shard = 0;
-    while (shard < shardCount()) {
+    while (shard < SHARD_COUNT) {
         int32 base = shard * 3;
-        assert(results[base] == filesPerShard() as int64,
+        assert(results[base] == FILES_PER_SHARD as int64,
             "each shard indexed its whole share");
         totalFiles += results[base];
         totalLines += results[base + 1];
@@ -177,7 +168,7 @@ async int32 main() {
     report.setNumber("files", totalFiles as double);
     report.setNumber("lines", totalLines as double);
     report.setNumber("bytes", totalBytes as double);
-    report.setNumber("shards", shardCount() as double);
+    report.setNumber("shards", SHARD_COUNT as double);
     string encoded = report.stringify();
     delete report;
 
@@ -201,9 +192,9 @@ async int32 main() {
     // Leave nothing behind: the next run must generate the same tree from
     // scratch rather than index whatever the previous one left.
     shard = 0;
-    while (shard < shardCount()) {
+    while (shard < SHARD_COUNT) {
         int32 index = 0;
-        while (index < filesPerShard()) {
+        while (index < FILES_PER_SHARD) {
             std.fs.remove(filePath(shard, index));
             index += 1;
         }

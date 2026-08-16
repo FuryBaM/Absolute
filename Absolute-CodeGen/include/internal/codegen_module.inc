@@ -3,6 +3,7 @@
         llvm::Constant* GlobalConstant(Expression* expression, llvm::Type* type);
 
         void DeclareGlobalArray(VarDeclExpr& expression);
+        void DeclareGlobalScalar(VarDeclExpr& expression);
 
         llvm::Function* DeclareFunction(FunctionDeclStmt& statement);
 
