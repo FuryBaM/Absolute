@@ -849,6 +849,10 @@ if(BUILD_TESTING)
     set_tests_properties(absolute.ownership-torture-capture-errors PROPERTIES
         WILL_FAIL TRUE)
     add_test(
+        NAME absolute.unsigned-arithmetic-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/unsigned-arithmetic.abs"
+    )
+    add_test(
         NAME absolute.wide-integer-literals-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/wide-integer-literals.abs"
     )
@@ -4264,6 +4268,20 @@ if(BUILD_TESTING)
         )
         add_test(NAME absolute.run-wide-integer-literals
             COMMAND "${CMAKE_BINARY_DIR}/wide-integer-literals-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-unsigned-arithmetic
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/unsigned-arithmetic.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/unsigned-arithmetic-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-unsigned-arithmetic PROPERTIES
+            FIXTURES_SETUP absolute-unsigned-arithmetic-executable
+        )
+        add_test(NAME absolute.run-unsigned-arithmetic
+            COMMAND "${CMAKE_BINARY_DIR}/unsigned-arithmetic-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-unsigned-arithmetic PROPERTIES
+            FIXTURES_REQUIRED absolute-unsigned-arithmetic-executable
+            PASS_REGULAR_EXPRESSION "unsigned-arithmetic=ok"
+        )
         set_tests_properties(absolute.run-wide-integer-literals PROPERTIES
             FIXTURES_REQUIRED absolute-wide-integer-literals-executable
             PASS_REGULAR_EXPRESSION "wide-integer-literals=ok"

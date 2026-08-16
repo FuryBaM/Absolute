@@ -1,0 +1,44 @@
+// Unsigned integer semantics.
+//
+// An LLVM integer type carries no signedness, so division, remainder,
+// comparison and right shift have to pick their instruction from the declared
+// type. They did not: every unsigned value was treated as signed, which made
+// ordinary comparisons come out backwards rather than merely imprecise.
+//
+// Nothing pinned this, so the wrongness was silent. These cases are chosen to
+// sit above the signed maximum of their width, because that is exactly where a
+// signed instruction changes the answer and below it nothing would show.
+
+int32 main() {
+    // Above int32's maximum, so a signed comparison sees a negative number.
+    uint32 big = 4294967295;
+    uint32 one = 1;
+    assert(big > one, "an unsigned value above the signed maximum is the larger one");
+    assert(!(big < one), "and is not the smaller one");
+    assert(big >= one, "the same for the inclusive comparison");
+
+    assert((big / 2) as int64 == 2147483647, "unsigned division halves the value");
+    assert((big % 10) as int64 == 5, "unsigned remainder");
+    assert((big >> 1) as int64 == 2147483647, "unsigned shift fills with zero");
+
+    // Above int8's maximum, where the wrap is easiest to read.
+    uint8 large = 200;
+    uint8 small = 100;
+    assert(large > small, "unsigned bytes compare by magnitude");
+    assert((large / 2) as int64 == 100, "unsigned byte division");
+
+    uint64 wide = 9223372036854775807;
+    assert(wide > 1, "unsigned 64-bit comparison");
+    assert((wide / 2) as int64 == 4611686018427387903, "unsigned 64-bit division");
+
+    // Signed types keep their own semantics: the fix must not have widened
+    // itself into them.
+    int32 negative = -7;
+    assert(negative / 2 == -3, "signed division truncates toward zero");
+    assert(negative % 2 == -1, "signed remainder keeps the sign");
+    assert(-8 >> 1 == -4, "signed shift keeps the sign bit");
+    assert(negative < 1, "signed comparison sees the negative value");
+
+    println("unsigned-arithmetic=ok");
+    return 0;
+}

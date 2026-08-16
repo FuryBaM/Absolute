@@ -753,6 +753,28 @@ namespace Absolute {
         else if (leftTypeName == "int64" || rightTypeName == "int64" ||
             leftTypeName == "uint64" || rightTypeName == "uint64") commonTypeName = "int64";
         else if (!leftTypeName.empty() || !rightTypeName.empty()) commonTypeName = "int32";
+
+        // An LLVM integer type carries no signedness, so the instruction has to
+        // be chosen from the declared types. Without this every unsigned value
+        // was divided, compared and right-shifted as a signed one, which is not
+        // an edge case: 4294967295u > 1u came out false, (uint8)200 > 100 came
+        // out false, and 4294967295u / 2 came out zero.
+        //
+        // The rule is deliberately narrow. Unsigned only when an operand is
+        // declared uint and nothing on the other side is a wider signed type
+        // that could represent it anyway, so mixed arithmetic keeps behaving as
+        // it did and only genuinely unsigned operations change.
+        const auto declaredUnsigned = [](const std::string& name) {
+            return name.starts_with("uint");
+        };
+        const bool widerSignedOperand =
+            (leftTypeName == "int64" && !declaredUnsigned(rightTypeName)) ||
+            (rightTypeName == "int64" && !declaredUnsigned(leftTypeName));
+        const bool unsignedOperation =
+            (declaredUnsigned(leftTypeName) || declaredUnsigned(rightTypeName)) &&
+            !widerSignedOperand;
+        if (unsignedOperation && commonTypeName == "int64") commonTypeName = "uint64";
+        else if (unsignedOperation && commonTypeName == "int32") commonTypeName = "uint32";
         left = Coerce(left, type, leftTypeName, commonTypeName);
         right = Coerce(right, type, rightTypeName, commonTypeName);
         const bool floating = type->isFloatingPointTy();
@@ -775,26 +797,47 @@ namespace Absolute {
                         "divisor.not.zero"),
                     "division.by.zero");
             }
-            if (op == "/")
-                return floating ? builder.CreateFDiv(left, right, "div")
+            if (op == "/") {
+                if (floating) return builder.CreateFDiv(left, right, "div");
+                return unsignedOperation ? builder.CreateUDiv(left, right, "div")
                     : builder.CreateSDiv(left, right, "div");
-            return floating ? builder.CreateFRem(left, right, "rem")
+            }
+            if (floating) return builder.CreateFRem(left, right, "rem");
+            return unsignedOperation ? builder.CreateURem(left, right, "rem")
                 : builder.CreateSRem(left, right, "rem");
         }
 
         if (op == "==") return floating ? builder.CreateFCmpOEQ(left, right, "equal") : builder.CreateICmpEQ(left, right, "equal");
         if (op == "!=") return floating ? builder.CreateFCmpONE(left, right, "not.equal") : builder.CreateICmpNE(left, right, "not.equal");
-        if (op == "<") return floating ? builder.CreateFCmpOLT(left, right, "less") : builder.CreateICmpSLT(left, right, "less");
-        if (op == "<=") return floating ? builder.CreateFCmpOLE(left, right, "less.equal") : builder.CreateICmpSLE(left, right, "less.equal");
-        if (op == ">") return floating ? builder.CreateFCmpOGT(left, right, "greater") : builder.CreateICmpSGT(left, right, "greater");
-        if (op == ">=") return floating ? builder.CreateFCmpOGE(left, right, "greater.equal") : builder.CreateICmpSGE(left, right, "greater.equal");
+        if (op == "<") {
+            if (floating) return builder.CreateFCmpOLT(left, right, "less");
+            return unsignedOperation ? builder.CreateICmpULT(left, right, "less")
+                : builder.CreateICmpSLT(left, right, "less");
+        }
+        if (op == "<=") {
+            if (floating) return builder.CreateFCmpOLE(left, right, "less.equal");
+            return unsignedOperation ? builder.CreateICmpULE(left, right, "less.equal")
+                : builder.CreateICmpSLE(left, right, "less.equal");
+        }
+        if (op == ">") {
+            if (floating) return builder.CreateFCmpOGT(left, right, "greater");
+            return unsignedOperation ? builder.CreateICmpUGT(left, right, "greater")
+                : builder.CreateICmpSGT(left, right, "greater");
+        }
+        if (op == ">=") {
+            if (floating) return builder.CreateFCmpOGE(left, right, "greater.equal");
+            return unsignedOperation ? builder.CreateICmpUGE(left, right, "greater.equal")
+                : builder.CreateICmpSGE(left, right, "greater.equal");
+        }
 
         if (!type->isIntegerTy()) Fail("bitwise operator requires integer operands");
         if (op == "&") return builder.CreateAnd(left, right, "bit.and");
         if (op == "|") return builder.CreateOr(left, right, "bit.or");
         if (op == "^") return builder.CreateXor(left, right, "bit.xor");
         if (op == "<<") return builder.CreateShl(left, right, "shift.left");
-        if (op == ">>") return builder.CreateAShr(left, right, "shift.right");
+        if (op == ">>")
+            return unsignedOperation ? builder.CreateLShr(left, right, "shift.right")
+                : builder.CreateAShr(left, right, "shift.right");
         Fail("unsupported binary operator '" + op + "'");
     }
 
