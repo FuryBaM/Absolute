@@ -189,6 +189,22 @@ namespace Absolute {
             Save(expr, {InvalidSymbolId, type, false});
             return;
         }
+        // Module scope has no destruction point: the storage is created once and
+        // lives until the process ends, so nothing defines when an owner there
+        // would be released or in what order against other globals. Refuse it
+        // here, where the message can carry a file, a line and a column;
+        // CodeGen keeps the same refusal as a backstop for paths that reach it
+        // without semantic analysis.
+        // Only heap owners: a global array has static storage and no
+        // destructor to schedule, which is why arrays have always been
+        // allowed here and stay allowed.
+        if (currentType.empty() && functionDepth == 0 && ArrayRank(type) == 0 &&
+            (IsManagedPointerType(type) || IsWeakPointerType(type) ||
+             IsTaskType(type)))
+            Report("'" + name + "' owns a resource and cannot be declared at module scope; "
+                "module storage is never destroyed, so its destruction point and order "
+                "would be undefined",
+                "E_MODULE_SCOPE_OWNER");
         if (expr->isStatic && !fieldDeclaration)
             Report("static field '" + name + "' must be declared inside a class, struct, or interface",
                 "E_STATIC_NON_MEMBER_FIELD");

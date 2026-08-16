@@ -6,6 +6,10 @@
 // while the module initializes. Rather than emitting storage whose lifetime
 // nobody has decided, the declaration is refused.
 //
+// Rejected by the analyzer, so the message carries a file, a line and a column
+// and the program is refused without reaching the backend. CodeGen keeps the
+// same refusal as a backstop.
+//
 // The test passes only if compilation fails. It is separate from
 // tests/global-variables.abs on purpose: that file pins what module scope now
 // supports, and mixing a rejected declaration into it would make the whole

@@ -856,12 +856,9 @@ if(BUILD_TESTING)
         NAME absolute.global-variables-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/global-variables.abs"
     )
-    # Built rather than only analysed: module-scope storage is decided in
-    # codegen, so a semantic-only run would pass and prove nothing.
     add_test(
         NAME absolute.global-owner-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/global-owner-errors.abs"
-            --build-exe -o "${CMAKE_BINARY_DIR}/global-owner-errors-app${CMAKE_EXECUTABLE_SUFFIX}"
     )
     set_tests_properties(absolute.global-owner-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
