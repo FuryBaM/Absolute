@@ -1,0 +1,75 @@
+// Variables at module scope.
+//
+// These used to pass semantic analysis and then fail in codegen with
+// "unknown variable or field", because only arrays had storage emitted at
+// module scope and scalars fell through silently. The error named whichever
+// expression first read the variable, not the declaration that was never
+// emitted, which is why it read like a missing identifier rather than a
+// missing feature.
+//
+// What this pins:
+//   1. a constant is readable from main, from a plain function and from an
+//      async one, so the storage is visible wherever code runs;
+//   2. a mutable global keeps its value across calls, so it is one place
+//      rather than a fresh copy per read;
+//   3. every primitive shape works, including the string and null cases that
+//      need pointer storage rather than an integer constant.
+
+import "../std/string.abs";
+
+const int32 LIMIT = 6;
+const int64 WIDE = 4294967296;
+const double RATIO = 1.5;
+const bool ENABLED = true;
+const char MARKER = 'A';
+const string NAME = "absolute";
+const int32 NEGATIVE = -7;
+
+int32 counter = 0;
+
+class Node {
+    public int32 value;
+
+    public Node(int32 initial) {
+        value = initial;
+    }
+}
+
+int32 readLimit() {
+    return LIMIT;
+}
+
+async int64 readLimitAsync() {
+    return LIMIT as int64;
+}
+
+void bump() {
+    counter += LIMIT;
+}
+
+async int32 main() {
+    assert(LIMIT == 6, "constant read from main");
+    assert(readLimit() == 6, "constant read from a function");
+
+    task<int64> reader = spawn readLimitAsync();
+    assert(await reader == 6, "constant read from an async frame");
+
+    assert(WIDE == 4294967296, "64-bit constant keeps its width");
+    assert(RATIO > 1.4 && RATIO < 1.6, "floating point constant");
+    assert(ENABLED, "boolean constant");
+    assert(MARKER == 'A', "character constant");
+    assert(std.text.byteCount(NAME) == 8, "string constant");
+    assert(NEGATIVE == -7, "negated constant");
+
+    // A mutable global is one place, not a fresh value per read.
+    assert(counter == 0, "mutable global starts at its initializer");
+    bump();
+    assert(counter == 6, "mutable global keeps the write");
+    bump();
+    assert(counter == 12, "writes accumulate across calls");
+    counter = 100;
+    assert(counter == 100, "a global is assignable from main");
+
+    println("global-variables=ok");
+    return 0;
+}

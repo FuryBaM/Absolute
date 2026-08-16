@@ -3,6 +3,8 @@
         llvm::Constant* GlobalConstant(Expression* expression, llvm::Type* type);
 
         void DeclareGlobalArray(VarDeclExpr& expression);
+        void DeclareGlobalScalar(VarDeclExpr& expression);
+        unsigned long long ParseIntegerLiteral(const std::string& text);
 
         llvm::Function* DeclareFunction(FunctionDeclStmt& statement);
 

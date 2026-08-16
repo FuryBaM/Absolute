@@ -1,0 +1,30 @@
+// An owner cannot live at module scope.
+//
+// Module-scope storage is emitted once and never destroyed, so a managed
+// pointer there would need answers the language does not currently give: when
+// its destructor runs, in what order against other globals, and who owns it
+// while the module initializes. Rather than emitting storage whose lifetime
+// nobody has decided, the declaration is refused.
+//
+// Rejected by the analyzer, so the message carries a file, a line and a column
+// and the program is refused without reaching the backend. CodeGen keeps the
+// same refusal as a backstop.
+//
+// The test passes only if compilation fails. It is separate from
+// tests/global-variables.abs on purpose: that file pins what module scope now
+// supports, and mixing a rejected declaration into it would make the whole
+// file fail for one line and prove nothing about the rest.
+
+class Node {
+    public int32 value;
+
+    public Node(int32 initial) {
+        value = initial;
+    }
+}
+
+Node* GLOBAL_OWNER = null;
+
+int32 main() {
+    return 0;
+}

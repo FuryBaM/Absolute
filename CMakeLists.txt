@@ -849,6 +849,27 @@ if(BUILD_TESTING)
     set_tests_properties(absolute.ownership-torture-capture-errors PROPERTIES
         WILL_FAIL TRUE)
     add_test(
+        NAME absolute.division-edges-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/division-edges.abs"
+    )
+    add_test(
+        NAME absolute.unsigned-arithmetic-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/unsigned-arithmetic.abs"
+    )
+    add_test(
+        NAME absolute.wide-integer-literals-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/wide-integer-literals.abs"
+    )
+    add_test(
+        NAME absolute.global-variables-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/global-variables.abs"
+    )
+    add_test(
+        NAME absolute.global-owner-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/global-owner-errors.abs"
+    )
+    set_tests_properties(absolute.global-owner-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
         NAME absolute.ownership-torture-weak-backedge-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-weak-backedge.abs"
     )
@@ -4231,6 +4252,78 @@ if(BUILD_TESTING)
         )
         add_test(NAME absolute.run-std-typed-channel
             COMMAND "${CMAKE_BINARY_DIR}/std-typed-channel-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-global-variables
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/global-variables.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/global-variables-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-global-variables PROPERTIES
+            FIXTURES_SETUP absolute-global-variables-executable
+        )
+        add_test(NAME absolute.run-global-variables
+            COMMAND "${CMAKE_BINARY_DIR}/global-variables-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-wide-integer-literals
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/wide-integer-literals.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/wide-integer-literals-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-wide-integer-literals PROPERTIES
+            FIXTURES_SETUP absolute-wide-integer-literals-executable
+        )
+        add_test(NAME absolute.run-wide-integer-literals
+            COMMAND "${CMAKE_BINARY_DIR}/wide-integer-literals-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-unsigned-arithmetic
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/unsigned-arithmetic.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/unsigned-arithmetic-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-unsigned-arithmetic PROPERTIES
+            FIXTURES_SETUP absolute-unsigned-arithmetic-executable
+        )
+        add_test(NAME absolute.run-unsigned-arithmetic
+            COMMAND "${CMAKE_BINARY_DIR}/unsigned-arithmetic-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-division-edges
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/division-edges.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/division-edges-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-division-edges PROPERTIES
+            FIXTURES_SETUP absolute-division-edges-executable
+        )
+        add_test(NAME absolute.run-division-edges
+            COMMAND "${CMAKE_BINARY_DIR}/division-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-division-edges PROPERTIES
+            FIXTURES_REQUIRED absolute-division-edges-executable
+            PASS_REGULAR_EXPRESSION "division-edges=ok"
+        )
+        # Exits with a diagnostic instead of returning, so the check is on the
+        # message rather than on a marker.
+        add_test(
+            NAME absolute.build-division-overflow-errors
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/division-overflow-errors.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/division-overflow-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-division-overflow-errors PROPERTIES
+            FIXTURES_SETUP absolute-division-overflow-executable
+        )
+        add_test(NAME absolute.run-division-overflow-errors
+            COMMAND "${CMAKE_BINARY_DIR}/division-overflow-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-division-overflow-errors PROPERTIES
+            FIXTURES_REQUIRED absolute-division-overflow-executable
+            PASS_REGULAR_EXPRESSION "Division overflows"
+        )
+        set_tests_properties(absolute.run-unsigned-arithmetic PROPERTIES
+            FIXTURES_REQUIRED absolute-unsigned-arithmetic-executable
+            PASS_REGULAR_EXPRESSION "unsigned-arithmetic=ok"
+        )
+        set_tests_properties(absolute.run-wide-integer-literals PROPERTIES
+            FIXTURES_REQUIRED absolute-wide-integer-literals-executable
+            PASS_REGULAR_EXPRESSION "wide-integer-literals=ok"
+        )
+        set_tests_properties(absolute.run-global-variables PROPERTIES
+            FIXTURES_REQUIRED absolute-global-variables-executable
+            PASS_REGULAR_EXPRESSION "global-variables=ok"
+        )
         # Integration project: exercises std.fs, std.json and tasks together
         # rather than one subsystem at a time. It generates and removes its own
         # tree, so it runs in its own directory to keep that tree out of the

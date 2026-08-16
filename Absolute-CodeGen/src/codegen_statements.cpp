@@ -261,8 +261,14 @@ namespace Absolute {
     void CodeGenerator::Visit(VarDeclStmt* stmt) {
         if (!stmt->expr) return;
         if (impl->phase == Impl::Phase::DeclareFunctions) {
+            // Module scope. Arrays already had storage emitted here; scalars
+            // fell through silently and were then reported as an unknown
+            // variable by whichever expression first read them, which named
+            // the use rather than the declaration that was never emitted.
             if (ArrayRankName(impl->DeclaredTypeName(*stmt->expr)) > 0)
                 impl->DeclareGlobalArray(*stmt->expr);
+            else
+                impl->DeclareGlobalScalar(*stmt->expr);
             return;
         }
         if (!impl->CurrentFunction()) return;

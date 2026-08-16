@@ -1,0 +1,80 @@
+// Unsigned integer semantics.
+//
+// An LLVM integer type carries no signedness, so division, remainder,
+// comparison and right shift have to pick their instruction from the declared
+// type. They did not: every unsigned value was treated as signed, which made
+// ordinary comparisons come out backwards rather than merely imprecise.
+//
+// Nothing pinned this, so the wrongness was silent. These cases are chosen to
+// sit above the signed maximum of their width, because that is exactly where a
+// signed instruction changes the answer and below it nothing would show.
+
+int32 main() {
+    // Above int32's maximum, so a signed comparison sees a negative number.
+    uint32 big = 4294967295;
+    uint32 one = 1;
+    assert(big > one, "an unsigned value above the signed maximum is the larger one");
+    assert(!(big < one), "and is not the smaller one");
+    assert(big >= one, "the same for the inclusive comparison");
+
+    assert((big / 2) as int64 == 2147483647, "unsigned division halves the value");
+    assert((big % 10) as int64 == 5, "unsigned remainder");
+    assert((big >> 1) as int64 == 2147483647, "unsigned shift fills with zero");
+
+    // Above int8's maximum, where the wrap is easiest to read.
+    uint8 large = 200;
+    uint8 small = 100;
+    assert(large > small, "unsigned bytes compare by magnitude");
+    assert((large / 2) as int64 == 100, "unsigned byte division");
+
+    // Division by one, so the result keeps its top bit set: below it a signed
+    // widening would look identical and the cast would prove nothing.
+    assert((big / 1) as int64 == 4294967295,
+        "an unsigned result widens without picking up a sign");
+    assert((big + 0) as int64 == 4294967295,
+        "the same for an unsigned sum");
+
+    // int64 represents every uint32, so mixing them stays signed.
+    int64 negative64 = -5;
+    uint32 oneWide = 1;
+    assert(negative64 + oneWide == -4,
+        "a wider signed type keeps the operation signed");
+
+    uint64 wide = 18446744073709551615;
+    assert((wide / 2) as int64 == 9223372036854775807,
+        "unsigned 64-bit division uses the whole range");
+
+    uint64 wideSigned = 9223372036854775807;
+    assert(wideSigned > 1, "unsigned 64-bit comparison");
+    assert((wideSigned / 2) as int64 == 4611686018427387903,
+        "unsigned 64-bit division of a value below the signed maximum");
+
+    // Signed types keep their own semantics: the fix must not have widened
+    // itself into them.
+    int32 negative = -7;
+    assert(negative / 2 == -3, "signed division truncates toward zero");
+    assert(negative % 2 == -1, "signed remainder keeps the sign");
+    assert(-8 >> 1 == -4, "signed shift keeps the sign bit");
+    assert(negative < 1, "signed comparison sees the negative value");
+
+    // A compound assignment must pick the same instruction its spelled-out
+    // form does. It went through an untyped path and did not.
+    uint32 compound = 4294967295;
+    compound /= 2;
+    assert(compound as int64 == 2147483647, "unsigned compound division");
+
+    uint32 remainder = 4294967295;
+    remainder %= 10;
+    assert(remainder as int64 == 5, "unsigned compound remainder");
+
+    uint8 narrowCompound = 200;
+    narrowCompound /= 2;
+    assert(narrowCompound as int64 == 100, "unsigned byte compound division");
+
+    int32 signedCompound = -7;
+    signedCompound /= 2;
+    assert(signedCompound == -3, "signed compound division is unchanged");
+
+    println("unsigned-arithmetic=ok");
+    return 0;
+}
