@@ -4231,6 +4231,31 @@ if(BUILD_TESTING)
         )
         add_test(NAME absolute.run-std-typed-channel
             COMMAND "${CMAKE_BINARY_DIR}/std-typed-channel-app${CMAKE_EXECUTABLE_SUFFIX}")
+        # Integration project: exercises std.fs, std.json and tasks together
+        # rather than one subsystem at a time. It generates and removes its own
+        # tree, so it runs in its own directory to keep that tree out of the
+        # build root.
+        add_test(
+            NAME absolute.build-integration-file-indexer
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/examples/integration/file-indexer.abs"
+                --build-exe
+                -o "${CMAKE_BINARY_DIR}/integration-file-indexer${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-integration-file-indexer PROPERTIES
+            FIXTURES_SETUP absolute-integration-file-indexer
+        )
+        add_test(
+            NAME absolute.run-integration-file-indexer
+            COMMAND "${CMAKE_BINARY_DIR}/integration-file-indexer${CMAKE_EXECUTABLE_SUFFIX}"
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/integration-work"
+        )
+        set_tests_properties(absolute.run-integration-file-indexer PROPERTIES
+            FIXTURES_REQUIRED absolute-integration-file-indexer
+            PASS_REGULAR_EXPRESSION "integration-file-indexer=ok"
+            TIMEOUT 120
+        )
+        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/integration-work")
         set_tests_properties(absolute.run-std-typed-channel PROPERTIES
             FIXTURES_REQUIRED absolute-std-typed-channel-executable
             PASS_REGULAR_EXPRESSION "std-typed-channel=ok"
