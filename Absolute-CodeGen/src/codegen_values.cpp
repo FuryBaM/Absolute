@@ -80,7 +80,15 @@ namespace Absolute {
 
         if (expr->op != "=") {
             llvm::Value* current = impl->builder.CreateLoad(targetType, targetAddress, "assignment.current");
-            assigned = impl->ApplyBinary(expr->op.substr(0, expr->op.size() - 1), current, assigned);
+            // With the type names, so a compound assignment picks the same
+            // instruction its spelled-out form would. Without them this call
+            // went through the untyped overload and every unsigned `/=`, `%=`
+            // and `>>=` was emitted signed while `a = a / b` was not:
+            // 4294967295u /= 2 gave zero where the same division gave
+            // 2147483647.
+            assigned = impl->ApplyBinary(
+                expr->op.substr(0, expr->op.size() - 1), current, assigned,
+                targetTypeName, impl->SemanticType(expr->value.get()));
         }
 
         if (IsManagedPointerTypeName(targetTypeName)) {

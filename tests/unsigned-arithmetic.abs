@@ -57,6 +57,24 @@ int32 main() {
     assert(-8 >> 1 == -4, "signed shift keeps the sign bit");
     assert(negative < 1, "signed comparison sees the negative value");
 
+    // A compound assignment must pick the same instruction its spelled-out
+    // form does. It went through an untyped path and did not.
+    uint32 compound = 4294967295;
+    compound /= 2;
+    assert(compound as int64 == 2147483647, "unsigned compound division");
+
+    uint32 remainder = 4294967295;
+    remainder %= 10;
+    assert(remainder as int64 == 5, "unsigned compound remainder");
+
+    uint8 narrowCompound = 200;
+    narrowCompound /= 2;
+    assert(narrowCompound as int64 == 100, "unsigned byte compound division");
+
+    int32 signedCompound = -7;
+    signedCompound /= 2;
+    assert(signedCompound == -3, "signed compound division is unchanged");
+
     println("unsigned-arithmetic=ok");
     return 0;
 }
