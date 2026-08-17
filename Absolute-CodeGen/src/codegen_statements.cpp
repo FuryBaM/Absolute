@@ -419,6 +419,7 @@ namespace Absolute {
                 impl->builder.CreateICmpNE(dynamicType, impl->builder.getInt64(0)),
                 dynamicType, staticType, "exception.effective.type");
             transferredOwner = impl->SemanticSymbol(stmt->value.get());
+            impl->EmitErrorDetails(handle, PointerPointeeName(exceptionType));
         }
         else {
             if (impl->caughtExceptions.empty()) impl->Fail("rethrow outside catch");

@@ -7,6 +7,34 @@ namespace Absolute {
                 {builder.getInt64Ty(), builder.getInt64Ty()}, false));
     }
 
+    llvm::FunctionCallee CodeGenerator::Impl::ErrorSetDetails() {
+        return module->getOrInsertFunction("absolute_error_set_details",
+            llvm::FunctionType::get(builder.getVoidTy(),
+                {builder.getPtrTy(), builder.getPtrTy()}, false));
+    }
+
+    void CodeGenerator::Impl::EmitErrorDetails(
+        llvm::Value* handle, const std::string& typeName) {
+        if (!handle || typeName.empty()) return;
+        llvm::Value* name = builder.CreateGlobalStringPtr(typeName, "exception.type.name");
+        // Every thrown object derives from Error, whose first declared field is
+        // the message, and base fields are laid out first, so the field of the
+        // static type is the field of the object. A type the backend does not
+        // know about reports its name alone rather than nothing.
+        llvm::Value* message = llvm::ConstantPointerNull::get(builder.getPtrTy());
+        if (const auto found = classes.find(typeName); found != classes.end()) {
+            if (const auto field = found->second.fieldByName.find("message");
+                field != found->second.fieldByName.end() &&
+                field->second.typeName == "string") {
+                llvm::Value* object = EmitManagedGet(handle);
+                message = builder.CreateLoad(builder.getPtrTy(),
+                    FieldAddress(object, found->second, field->second),
+                    "exception.message");
+            }
+        }
+        builder.CreateCall(ErrorSetDetails(), {name, message});
+    }
+
     llvm::FunctionCallee CodeGenerator::Impl::ErrorPending() {
         return module->getOrInsertFunction("absolute_error_pending",
             llvm::FunctionType::get(builder.getInt1Ty(), {}, false));

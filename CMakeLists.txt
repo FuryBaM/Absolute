@@ -909,6 +909,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-json-edges.abs"
     )
     add_test(
+        NAME absolute.unhandled-exception-report-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/unhandled-exception-report.abs"
+    )
+    add_test(
         NAME absolute.floating-literal-range-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/floating-literal-range-errors.abs"
     )
@@ -4454,6 +4458,21 @@ if(BUILD_TESTING)
         )
         add_test(NAME absolute.run-std-json-edges
             COMMAND "${CMAKE_BINARY_DIR}/std-json-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-unhandled-exception-report
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/unhandled-exception-report.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/unhandled-exception-report-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-unhandled-exception-report PROPERTIES
+            FIXTURES_SETUP absolute-unhandled-exception-report-executable
+        )
+        # Exits through the unhandled path, so the check is on what it printed.
+        add_test(NAME absolute.run-unhandled-exception-report
+            COMMAND "${CMAKE_BINARY_DIR}/unhandled-exception-report-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-unhandled-exception-report PROPERTIES
+            FIXTURES_REQUIRED absolute-unhandled-exception-report-executable
+            PASS_REGULAR_EXPRESSION "Unhandled Absolute exception: ParseError: source is empty"
+        )
         set_tests_properties(absolute.run-std-json-edges PROPERTIES
             FIXTURES_REQUIRED absolute-std-json-edges-executable
             PASS_REGULAR_EXPRESSION "std-json-edges=ok"
