@@ -882,6 +882,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-instantiation-widths.abs"
     )
     add_test(
+        NAME absolute.wasm-console-libcalls-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/wasm-console-libcalls.abs"
+    )
+    add_test(
         NAME absolute.literal-range-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/literal-range-errors.abs"
     )
@@ -2443,6 +2447,28 @@ if(BUILD_TESTING)
                         -DNODE=${ABSOLUTE_NODE_FOR_WASM}
                         -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-std-string.cmake"
+                )
+                add_test(
+                    NAME absolute.run-wasm-console-libcalls
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-console-libcalls.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-console-libcalls.wasm
+                        -DMARKER=wasm-console-libcalls=ok
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-marker.cmake"
+                )
+                add_test(
+                    NAME absolute.run-wasm-stdin-eof
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-stdin-eof.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-stdin-eof.wasm
+                        -DMARKER=wasm-stdin-eof=ok
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-marker.cmake"
                 )
                 add_test(
                     NAME absolute.run-wasm-std-deque

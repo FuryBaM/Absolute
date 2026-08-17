@@ -163,8 +163,23 @@ Untested guesses, offered as starting points rather than predictions:
    Arithmetic on a bare `T` is refused for want of constraints, which is a
    documented boundary rather than a defect (docs/generics.md). See
    `tests/generic-instantiation-widths.abs` and `tests/literal-range-errors.abs`.
-3. **The WASM backend against native** — the differential corpus now covers
-   float and integer edges, but only in shapes it generates.
+3. ~~**The WASM backend against native**~~ — swept by hand, outside the shapes
+   the generator produces: every runnable test in `tests/` built for both
+   backends and diffed, output and exit status. Arithmetic, ownership, strings,
+   collections, exceptions and the runtime diagnostics all agree -- a bounds
+   failure prints the same message and exits the same way on both. Two link
+   gaps and one behavioural difference came out of it. The optimizer rewrites
+   `printf("%c", value)` into `putchar`, which the wasm runtime shim did not
+   define, so printing a char failed to link for wasm while building natively;
+   `getchar` was missing for the same reason on the reading side. Both are now
+   in the shim, reading as end-of-input because the sandbox has no stdin. The
+   difference that remains is by construction: a wasm instance cannot wait on
+   another worker, so channels there never block -- a send to a full channel
+   fails and a receive from an empty one yields zero, which a program cannot
+   tell from a real zero. `tests/concurrency-stress.abs` loses messages on wasm
+   for exactly that reason. Now written down in docs/wasm-target.md, with
+   `absolute_channel_receive_checked` as the way to tell the two apart. See
+   `tests/wasm-console-libcalls.abs` and `tests/wasm-stdin-eof.abs`.
 4. **Collection boundaries** — empty, single-element, capacity transitions,
    iterator invalidation under mutation.
 
