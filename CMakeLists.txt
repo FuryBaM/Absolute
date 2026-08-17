@@ -896,25 +896,17 @@ if(BUILD_TESTING)
     set_tests_properties(absolute.value-place-errors PROPERTIES
         PASS_REGULAR_EXPRESSION "which is a copy rather than a place"
     )
-    add_test(
-        NAME absolute.collection-boundaries-semantic
-        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/collection-boundaries.abs"
-    )
+    # collection-boundaries, std-json-edges and hostile-input have no separate
+    # semantic test: each imports most of std, so compiling it twice per
+    # configuration is the most expensive thing in the suite, and the build
+    # test below already runs the analyzer over it.
     add_test(
         NAME absolute.floating-point-edges-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/floating-point-edges.abs"
     )
     add_test(
-        NAME absolute.std-json-edges-semantic
-        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-json-edges.abs"
-    )
-    add_test(
         NAME absolute.unhandled-exception-report-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/unhandled-exception-report.abs"
-    )
-    add_test(
-        NAME absolute.hostile-input-semantic
-        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/hostile-input.abs"
     )
     add_test(
         NAME absolute.discarded-owner-errors

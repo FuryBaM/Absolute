@@ -104,7 +104,12 @@ jobs:
       - name: Test (Ubuntu)
         id: test_linux
         if: runner.os == 'Linux'
-        timeout-minutes: 35
+        # Debug builds the compiler without optimization and then runs it once
+        # per test, so this step is roughly five times the Release one: 6.5
+        # minutes there against 35 here, which is exactly where it was killed.
+        # 50 leaves room under the 60-minute job cap without turning a hang
+        # into a long wait -- ctest still caps each individual test at 180s.
+        timeout-minutes: 50
         shell: bash
         run: |
           set -o pipefail
