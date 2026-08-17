@@ -313,6 +313,9 @@ namespace Absolute {
         Result result;
         int typeContextDepth = 0;
         int loopDepth = 0;
+        // Only so a stray break inside a switch can be told why it is
+        // refused, rather than being called loop-related.
+        int switchDepth = 0;
         int functionDepth = 0;
         int catchDepth = 0;
         int finallyDepth = 0;

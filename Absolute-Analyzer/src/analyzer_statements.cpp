@@ -319,6 +319,7 @@ namespace Absolute {
 
     void Analyzer::Visit(SwitchStmt* stmt) {
         if (phase == Phase::CollectDeclarations) return;
+        ++switchDepth;
         const Result selector = Evaluate(stmt->value.get());
         const auto enumType = types.find(selector.type);
         const bool selectsEnum = enumType != types.end() && enumType->second.kind == TypeKind::Enum;
@@ -380,7 +381,14 @@ namespace Absolute {
                     "E_SWITCH_CASE_CONSTANT");
             }
             else if (!labels.insert(*key).second) {
-                Report("duplicate case label '" + *key + "'", "E_DUPLICATE_SWITCH_CASE");
+                // The key is an internal encoding -- "integer:1", "enum:Color.Red"
+                // -- that exists to make two spellings of the same constant
+                // compare equal. Reporting it verbatim showed the user a prefix
+                // their program never mentions.
+                const size_t separator = key->find(':');
+                Report("duplicate case label '" +
+                    (separator == std::string::npos ? *key : key->substr(separator + 1)) + "'",
+                    "E_DUPLICATE_SWITCH_CASE");
             }
             else if (*key == "bool:true") coversTrue = true;
             else if (*key == "bool:false") coversFalse = true;
@@ -434,6 +442,7 @@ namespace Absolute {
         MergeKeepPaths(base, continuingPaths);
         MergeValueFlowPaths(baseValues, continuingValuePaths);
         flowTerminated = exhaustive && continuingPaths.empty();
+        --switchDepth;
     }
 
     void Analyzer::Visit(ThrowStmt* stmt) {
@@ -842,7 +851,13 @@ namespace Absolute {
             Report("break is not allowed inside finally", "E_FINALLY_CONTROL_TRANSFER");
         if (deferDepth > 0)
             Report("break is not allowed inside defer", "E_DEFER_CONTROL_TRANSFER");
-        if (loopDepth == 0) Report("break statement is outside a loop");
+        // Naming the switch explicitly, because a C habit puts break at the end
+        // of every arm and "outside a loop" does not explain why it is refused.
+        if (loopDepth == 0)
+            Report(switchDepth > 0
+                ? std::string("break statement is outside a loop; switch and match cases "
+                    "do not fall through, so break is unnecessary")
+                : std::string("break statement is outside a loop"));
         else {
             CheckKeepScopesFrom(loopKeepDepths.back(), "break");
             CheckTaskScopesFrom(loopKeepDepths.back(), "break");

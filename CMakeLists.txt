@@ -909,6 +909,13 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/negated-literal-typing.abs"
     )
     add_test(
+        NAME absolute.switch-diagnostics-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/switch-diagnostics-errors.abs"
+    )
+    set_tests_properties(absolute.switch-diagnostics-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "duplicate case label '1'"
+    )
+    add_test(
         NAME absolute.unhandled-exception-report-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/unhandled-exception-report.abs"
     )
