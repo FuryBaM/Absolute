@@ -1,5 +1,9 @@
 #include "codegen_internal.h"
 
+#include <cerrno>
+#include <cmath>
+#include <cstdlib>
+
 namespace Absolute {
     void AddAbsoluteOptimizationPassesToPipeline(llvm::ModulePassManager& passes);
 
@@ -318,11 +322,29 @@ namespace Absolute {
         return 0;
     }
 
+    double CodeGenerator::Impl::ParseFloatingLiteral(const std::string& text) {
+        errno = 0;
+        char* end = nullptr;
+        const double value = std::strtod(text.c_str(), &end);
+        if (!end || *end != '\0')
+            Fail("floating literal '" + text + "' is not a number");
+        // A subnormal is flagged out of range by the C library and is still a
+        // value a double holds, which is why std::stod was the wrong tool: it
+        // threw on 1e-308. Only a result that keeps nothing of what was written
+        // is refused -- an overflow to infinity, or an underflow all the way to
+        // zero from a literal that was not zero.
+        if (std::isinf(value))
+            Fail("floating literal '" + text + "' is larger than a double can hold");
+        if (value == 0.0 && errno == ERANGE)
+            Fail("floating literal '" + text + "' is smaller than a double can hold");
+        return value;
+    }
+
     llvm::Constant* CodeGenerator::Impl::GlobalConstant(Expression* expression, llvm::Type* type) {
         if (!expression) return llvm::Constant::getNullValue(type);
         if (auto* number = dynamic_cast<NumberLiteralExpr*>(expression)) {
             if (type->isFloatingPointTy())
-                return llvm::ConstantFP::get(type, std::stod(number->value));
+                return llvm::ConstantFP::get(type, ParseFloatingLiteral(number->value));
             // Unsigned parse for the same reason as the runtime path: the
             // literal is positive and the full 64-bit range has to be
             // reachable.
@@ -345,7 +367,7 @@ namespace Absolute {
             unary && unary->op == "-") {
             if (auto* number = dynamic_cast<NumberLiteralExpr*>(unary->operand.get())) {
                 if (type->isFloatingPointTy())
-                    return llvm::ConstantFP::get(type, -std::stod(number->value));
+                    return llvm::ConstantFP::get(type, -ParseFloatingLiteral(number->value));
                 // Negating the parsed pattern rather than parsing a negative
                 // number, so int64's minimum works: 2^63 negated is itself.
                 return llvm::ConstantInt::get(type,

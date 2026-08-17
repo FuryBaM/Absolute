@@ -901,6 +901,17 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/collection-boundaries.abs"
     )
     add_test(
+        NAME absolute.floating-point-edges-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/floating-point-edges.abs"
+    )
+    add_test(
+        NAME absolute.floating-literal-range-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/floating-literal-range-errors.abs"
+    )
+    set_tests_properties(absolute.floating-literal-range-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "is larger than a double can hold"
+    )
+    add_test(
         NAME absolute.literal-range-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/literal-range-errors.abs"
     )
@@ -4419,6 +4430,20 @@ if(BUILD_TESTING)
         )
         add_test(NAME absolute.run-collection-boundaries
             COMMAND "${CMAKE_BINARY_DIR}/collection-boundaries-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-floating-point-edges
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/floating-point-edges.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/floating-point-edges-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-floating-point-edges PROPERTIES
+            FIXTURES_SETUP absolute-floating-point-edges-executable
+        )
+        add_test(NAME absolute.run-floating-point-edges
+            COMMAND "${CMAKE_BINARY_DIR}/floating-point-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-floating-point-edges PROPERTIES
+            FIXTURES_REQUIRED absolute-floating-point-edges-executable
+            PASS_REGULAR_EXPRESSION "floating-point-edges=ok"
+        )
         set_tests_properties(absolute.run-collection-boundaries PROPERTIES
             FIXTURES_REQUIRED absolute-collection-boundaries-executable
             PASS_REGULAR_EXPRESSION "collection-boundaries=ok"

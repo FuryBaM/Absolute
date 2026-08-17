@@ -1,0 +1,94 @@
+// Floating point where the answer is not the obvious one.
+//
+// Three defects came out of this file, all silent or nearly so:
+//
+//   - `nan != nan` was false. The backend emitted the ordered comparison, which
+//     is false whenever an operand is NaN, so both `==` and `!=` answered false
+//     at once and `a != b` stopped being the negation of `a == b`.
+//   - `1e-308` did not compile. std::stod throws on anything the C library
+//     flags as out of range, subnormals included, and the exception reached the
+//     user as a bare "Error: stod".
+//   - `1e18 as int32` was poison: a different number on each build, a value
+//     that broke the formatter it was passed to, and native and wasm
+//     disagreeing on every out-of-range conversion. Conversions saturate now.
+//
+// The values are the ones where a wrong implementation has to show: NaN against
+// itself, the boundaries of each integer type, 2^24+1 in a float and 2^53+1 in
+// a double, and the subnormal range.
+
+int32 main() {
+    double zero = 0.0;
+    double one = 1.0;
+
+    // Ordinary IEEE arithmetic.
+    assert(0.1 + 0.2 != 0.3, "binary rounding leaves a tail");
+    assert(zero == -0.0, "zero and negative zero compare equal");
+    assert(7.5 / 2.5 == 3.0, "exact division is exact");
+    assert(7.5 % 2.0 == 1.5, "the remainder keeps the fraction");
+
+    // NaN: unequal to everything including itself, and unordered against all.
+    double nan = zero / zero;
+    assert(!(nan == nan), "NaN is not equal to itself");
+    assert(nan != nan, "NaN is unequal to itself, which is the same statement");
+    assert(!(nan < one) && !(nan > one), "NaN is unordered against a number");
+    assert(!(nan <= nan) && !(nan >= nan), "NaN is unordered against itself");
+    assert((nan != one) && !(nan == one), "the two comparisons stay each other's negation");
+
+    // Infinity.
+    double infinity = one / zero;
+    assert(infinity > 1e308, "infinity is above every finite value");
+    double negativeOne = -one;
+    assert(negativeOne / zero < -1e308, "negative infinity is below every finite value");
+    assert(one / infinity == 0.0, "a finite value over infinity is zero");
+    assert((infinity - infinity) != (infinity - infinity), "inf minus inf is NaN");
+
+    // Subnormals are values a double holds, so they compile and keep a sign.
+    double subnormal = 1e-308;
+    assert(subnormal > 0.0, "a subnormal literal is positive");
+    assert(subnormal < 1e-307, "and smaller than the normal below it");
+    double deeper = 1e-320;
+    assert(deeper > 0.0 && deeper < subnormal, "a deeper subnormal is smaller still");
+
+    // float holds fewer bits than double.
+    float narrowFloat = 16777217.0;
+    assert((narrowFloat as int32) == 16777216, "a float cannot hold 2^24+1");
+    double wideDouble = 16777217.0;
+    assert((wideDouble as int64) == 16777217, "a double can");
+    int64 pastMantissa = 9007199254740993;
+    assert(((pastMantissa as double) as int64) == 9007199254740992,
+        "2^53+1 loses its last bit in a double");
+
+    // Conversions saturate instead of going undefined.
+    double huge = 1e18;
+    assert((huge as int32) == 2147483647, "past int32's maximum clamps to it");
+    assert((huge as int64) == 1000000000000000000, "a value that fits is exact");
+    double negativeHuge = -huge;
+    assert((negativeHuge as int32) == -2147483648, "past int32's minimum clamps to it");
+    assert((nan as int32) == 0, "NaN converts to zero");
+    assert((infinity as int32) == 2147483647, "infinity clamps to the maximum");
+    assert((infinity as int64) == 9223372036854775807, "and to int64's maximum");
+    double negativeInfinity = -infinity;
+    assert((negativeInfinity as int64) == -9223372036854775808, "negative infinity to its minimum");
+    double minusOne = -1.0;
+    assert((minusOne as uint32) == 0, "a negative value clamps to zero in an unsigned type");
+    assert((1e18 as uint32) == 4294967295, "past uint32's maximum clamps to it");
+
+    // `as` binds like a suffix, tighter than a prefix minus, so `-1.0 as uint32`
+    // is the negation of a converted 1 and not the conversion of -1. Pinned
+    // because the two readings differ only for unsigned targets, where one
+    // saturates to zero and the other wraps to the maximum.
+    assert((-1.0 as uint32) == 4294967295, "a prefix minus applies after the cast");
+    assert(((-1.0) as uint32) == 0, "parentheses give the other reading");
+
+    // Truncation toward zero, in both directions.
+    assert((2.9 as int32) == 2, "a positive value truncates down");
+    double negativeFraction = -2.9;
+    assert((negativeFraction as int32) == -2, "a negative value truncates toward zero");
+
+    // The integer side of the round trip is exact within the mantissa.
+    int64 exact = 1234567890123;
+    assert(((exact as double) as int64) == exact, "an integer inside the mantissa round-trips");
+
+    println("floating-point-edges=ok");
+    return 0;
+}

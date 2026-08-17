@@ -199,7 +199,33 @@ they say where not to look again.
    line, instead of by the backend naming its own mechanism. See
    `tests/value-place-access.abs` and `tests/value-place-errors.abs`.
 
-## 6. The method that worked
+## 6. Beyond the list: floating point
+
+Swept after section 5 ran out, because it is where the correct answer is least
+obvious and a wrong one least visible. Three defects, all found by comparing
+against what IEEE 754 says rather than against what looked reasonable:
+
+- **`nan != nan` was false.** The backend emitted the ordered comparison for
+  `!=`, which is false whenever an operand is NaN, so `==` and `!=` both
+  answered false and `a != b` stopped being the negation of `a == b`.
+- **`1e-308` did not compile.** `std::stod` throws on every result the C
+  library flags as out of range, subnormals included, and the exception reached
+  the user as a bare `Error: stod` -- the same shape the integer path had
+  already been fixed for. Subnormals are values a double holds; they are
+  accepted now, and only a literal that overflows to infinity or underflows to
+  zero is refused.
+- **`1e18 as int32` was poison.** The plain conversions are undefined when the
+  value does not fit: a different number on each build, `inf as int32` breaking
+  the formatter it was passed to, and native and wasm disagreeing on every
+  out-of-range case. Conversions saturate now, which is defined on every
+  target.
+
+One thing to know rather than to fix: `as` binds like a suffix, tighter than a
+prefix minus, so `-1.0 as uint32` is the negation of a converted `1`. The
+readings differ only for unsigned targets; both are pinned in
+`tests/floating-point-edges.abs`.
+
+## 7. The method that worked
 
 Worth repeating, because reading code did not find any of this.
 
@@ -217,7 +243,7 @@ by another route. The compound-assignment defect was found that way, not by
 sweeping again: `a = a / b` had been fixed while `a /= b` still used an untyped
 overload.
 
-## 7. Environment note
+## 8. Environment note
 
 During this work the container repeatedly reverted the working tree to an older
 commit and deleted the build directory. Pushed commits were never affected, but
