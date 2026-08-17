@@ -1320,12 +1320,36 @@ namespace Absolute {
         builder.SetInsertPoint(entry);
         llvm::Value* object = function->getArg(0);
 
-        auto destroyMethod = info.methods.find(CallableKey("destroy", {}));
-        if (destroyMethod != info.methods.end()) {
+        // Every destroy() hook in the hierarchy, most-derived first. `methods`
+        // merges inherited entries, so a derived declaration shadows its
+        // base's under the same key: taking only that one meant a base that
+        // closes a handle or frees native memory silently stopped doing it as
+        // soon as any derived class declared a hook of its own. Its fields
+        // were still released -- only the hand-written half went missing,
+        // which is why nothing failed loudly. `declaredMethods` holds just
+        // what a class declares itself, so walking the base chain finds the
+        // shadowed bodies, and the link name keeps an inherited entry from
+        // being called twice.
+        std::vector<const ClassMethod*> hooks;
+        std::unordered_set<std::string> emitted;
+        const auto collectHook = [&](const std::unordered_map<std::string, ClassMethod>& methods) {
+            const auto found = methods.find(CallableKey("destroy", {}));
+            if (found == methods.end()) return;
+            if (!emitted.insert(found->second.linkName).second) return;
+            hooks.push_back(&found->second);
+        };
+        collectHook(info.methods);
+        for (std::string base = info.baseClass; !base.empty();) {
+            const auto found = classes.find(base);
+            if (found == classes.end()) break;
+            collectHook(found->second.declaredMethods);
+            base = found->second.baseClass;
+        }
+        for (const ClassMethod* hook : hooks) {
             llvm::FunctionCallee callee = module->getOrInsertFunction(
-                destroyMethod->second.linkName, MethodFunctionType(destroyMethod->second));
-            EmitAbiCall(MethodFunctionType(destroyMethod->second), callee.getCallee(),
-                destroyMethod->second.returnType, {object}, destroyMethod->second.parameterTypes, {}, "class.destroy.user");
+                hook->linkName, MethodFunctionType(*hook));
+            EmitAbiCall(MethodFunctionType(*hook), callee.getCallee(),
+                hook->returnType, {object}, hook->parameterTypes, {}, "class.destroy.user");
         }
 
         for (auto field = info.fields.rbegin(); field != info.fields.rend(); ++field) {

@@ -16,9 +16,30 @@ build/Release/absolutec file.abs --build-exe -o app && ./app
 
 ## 1. Open defects
 
-None verified. The one candidate carried over from the previous session did not
-survive a check, and the correction is recorded below rather than dropped,
-because the wrong version of it was written down first.
+None. What this section held was closed in the session that follows the one
+which wrote it; each entry below records what the fix was, so a regression is
+recognizable rather than rediscovered.
+
+### Fixed: a base class's destroy() was silently skipped
+
+Found while checking section 3, and the only silent wrong answer in this file.
+A derived `destroy()` shadows its base's under the same method key in
+`ClassInfo::methods`, and the synthesized destructor took that one entry, so a
+base that closes a handle or frees native memory stopped doing it the moment
+any derived class declared a hook of its own. Its *fields* were still released,
+which is why nothing failed loudly -- only the hand-written half went missing.
+
+```absolute
+class Base    { void destroy() { print(4); } }
+class Derived : Base { void destroy() { print(5); } }
+// delete a Derived: printed 5, never 4
+```
+
+`EmitClassDestructor` now walks the base chain through `declaredMethods`, which
+holds only what each class declares itself, and calls every hook most-derived
+first, deduplicated by link name so an inherited entry is not called twice.
+Pinned by `tests/destruction-order.abs`, including the dispatch through a
+base-class pointer.
 
 ### Retired: "a module-scope struct never runs its destroy()"
 
@@ -26,51 +47,62 @@ It cannot be declared at all. Every form is refused:
 
 ```absolute
 struct Handle { int32 value; void destroy() { value = 0; } }
-Handle GLOBAL = Handle();      // Top-level executable statements cannot be
-                               // combined with an explicit main function
+Handle GLOBAL;                 // a module-scope declaration must be a
+                               // primitive with a constant initializer
 ```
 
 Module-scope declarations only accept constant primitive initializers, which is
-what `GlobalConstant` in `Absolute-CodeGen/src/codegen_module.cpp` supports. A
-struct needs a constructor call, so the declaration reads as an executable
-statement and is rejected. Primitives and primitive arrays work; struct-typed
-globals do not exist, so there is no destructor to schedule and nothing silently
-wrong.
+what `GlobalConstant` in `Absolute-CodeGen/src/codegen_module.cpp` supports.
+Primitives and primitive arrays work; struct-typed globals do not exist, so
+there is no destructor to schedule and nothing silently wrong.
 
-Two things are still worth doing here, neither of them a defect:
+The two follow-ups this entry left behind are done:
 
-- **The message is misleading.** "Top-level executable statements cannot be
-  combined with an explicit main function" describes the parse, not the
-  problem. Something like "a module-scope initializer must be a constant"
-  would point at the actual limit.
-- **The limitation is undocumented.** Nothing states that module scope is
-  primitives only.
+- **The message.** It used to read "Top-level executable statements cannot be
+  combined with an explicit main function", which describes the parse and not
+  the problem -- the declaration is not executable. It now names the limit, the
+  variable and its type, with a file, line and column.
+- **The limitation.** `docs/module-scope.md` states what module scope accepts,
+  what it refuses and why, and where the rest belongs.
 
 ## 2. Missing features that fail loudly
 
-These produce honest syntax errors. They are not silent, and nothing computes
-a wrong result — but they are ordinary notation a user will expect.
+All four now lex. They were honest syntax errors rather than wrong answers, but
+they are ordinary notation, and a language with `double` and no way to write
+`1e-9` was missing something people reach for immediately.
 
 | Form | Status |
 |---|---|
-| `0xFF`, `0b1010`, `0o17` | not lexed |
-| `1_000_000` | not lexed |
-| `1e3`, `1e-9` | not lexed |
-| `>>=`, `<<=` | not parsed |
+| `0xFF`, `0b1010`, `0o17` | lexed, any case, with `_` between digits |
+| `1_000_000` | lexed |
+| `1e3`, `1e-9`, `1.5e2` | lexed |
+| `>>=`, `<<=` | parsed |
 
-The exponent form is the most conspicuous: a language with `double` and no way
-to write `1e-9` is missing something people reach for immediately.
+Bases and separators are normalized in the lexer, because every consumer
+downstream reads the token text with `std::stoull`, which would have read
+`0xFF` as 0 and stopped at the `x`. The exponent cannot be normalized away, so
+float detection moved from "the text contains a dot" to `IsFloatingLiteral`,
+which also knows the `e` in `0xE1` is a digit. A literal the pattern can only
+match part of -- `0xZZ`, `1_`, `1e`, `12abc` -- is a lexical error at its own
+line and column instead of a number followed by a stray identifier.
+
+Covered by `tests/literal-notation.abs` and `tests/literal-notation-errors.abs`.
 
 ## 3. Behaviour that contradicts the documentation
 
-A chain through a managed field unwinds root-first (trace `123`), while
-`docs/resource-ownership.md` describes reverse field order. Fields *within* an
-object do unwind in reverse (trace `321`), so only the chain case disagrees.
+Resolved in favour of the traversal: the document was incomplete, not wrong.
 
-`tests/ownership-torture-graph.abs` pins the part that is not in dispute —
-every level is released exactly once — and accepts any permutation, so the test
-will not block either resolution. Someone has to decide whether the document or
-the traversal is wrong.
+A chain through a managed field unwinds root-first (trace `123`) and fields
+within an object unwind in reverse declaration order (trace `321`). These are
+halves of one rule -- the object's own `destroy()` runs first, then its fields
+in reverse order -- so an owner is torn down before what it owns and a hook can
+still reach its own fields, while later fields go before the earlier ones they
+may depend on. That is the same order C++ gives a destructor body and its
+members, and reversing the chain would mean a hook running after its own fields
+were gone.
+
+`docs/resource-ownership.md` stated only the field half. It now states both,
+and `tests/destruction-order.abs` pins them.
 
 ## 4. Swept and clean — do not redo these
 
@@ -84,7 +116,7 @@ narrow where to look.
 - **Numeric semantics: swept and now covered.** 10 of 24 probes failed; all
   fixed, with tests at the boundaries. See `tests/unsigned-arithmetic.abs`,
   `tests/wide-integer-literals.abs`, `tests/division-edges.abs`,
-  `tests/global-variables.abs`.
+  `tests/global-variables.abs`, `tests/literal-notation.abs`.
 - **Ownership, scheduler, collections, CI matrix.** Findings here came slowly
   and needed real effort; coverage is dense.
 

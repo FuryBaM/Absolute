@@ -27,7 +27,10 @@ no `keep` or `borrow` marker is stored in the object at runtime.
 The compiler synthesizes one internal destructor for every class or struct that
 owns resources, directly or through nested fields. It runs in this order:
 
-1. The user `destroy()` hook of the object itself, if it declares one.
+1. The user `destroy()` hook of the object itself, if it declares one, then the
+   hook of each base class up the chain. A derived `destroy()` does not replace
+   its base's: both run, most-derived first, so a base still releases what it
+   allocated.
 2. The object's fields, in reverse declaration/layout order.
 
 An owner is therefore torn down before what it owns, which is what lets

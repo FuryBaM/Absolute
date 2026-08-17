@@ -72,6 +72,20 @@ class Holder {
     }
 }
 
+class Base {
+    FieldA* owned;
+
+    void destroy() {
+        Trace.record(4);
+    }
+}
+
+class Derived : Base {
+    void destroy() {
+        Trace.record(5);
+    }
+}
+
 int32 main() {
     // A chain of owning fields: the outermost owner is torn down first, so its
     // destroy() can still reach what it owns.
@@ -92,6 +106,24 @@ int32 main() {
     delete holder;
     assert(Trace.steps == 9321,
         "fields are destroyed in reverse declaration order, after the hook");
+
+    // Every hook in the hierarchy runs, most-derived first. A derived
+    // declaration shadows its base's under the same method key, so taking only
+    // the shadowing one dropped the base's release logic silently: its fields
+    // were still released and nothing failed, only the hand-written half went
+    // missing.
+    Trace.reset();
+    Derived* derived = new Derived();
+    derived.owned = new FieldA();
+    delete derived;
+    assert(Trace.steps == 541, "a base destroy() runs after the derived one");
+
+    // Same through a base-class pointer, where slot zero dispatches to the
+    // most-derived destructor.
+    Trace.reset();
+    Base* asBase = new Derived();
+    delete asBase;
+    assert(Trace.steps == 54, "the chain is the same through a base pointer");
 
     println("destruction-order=ok");
     return 0;
