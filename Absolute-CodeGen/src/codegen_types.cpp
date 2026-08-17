@@ -1130,6 +1130,22 @@ namespace Absolute {
         return found->second;
     }
 
+    bool CodeGenerator::Impl::HasAddressableStorage(Expression* expression) {
+        if (!expression || !analyzer) return true;
+        const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
+        if (!info) return true;
+        if (!info->placeInfo.addressable) return false;
+        Expression* base = nullptr;
+        if (auto* member = dynamic_cast<MemberAccessExpr*>(expression)) base = member->base.get();
+        else if (auto* array = dynamic_cast<ArrayAccessExpr*>(expression)) base = array->base.get();
+        if (!base) return true;
+        // Through a pointer or an array descriptor the field has real storage
+        // behind it, whatever the expression that produced the pointer was.
+        const std::string baseType = SemanticType(base);
+        if (IsPointerTypeName(baseType) || ArrayRankName(baseType) > 0) return true;
+        return HasAddressableStorage(base);
+    }
+
     llvm::Value* CodeGenerator::Impl::ObjectPointer(Expression* expression, const std::string& typeName) {
         if (IsPointerTypeName(typeName)) {
             const bool oldAddressMode = addressMode;
@@ -1138,6 +1154,23 @@ namespace Absolute {
             addressMode = oldAddressMode;
             return IsManagedPointerTypeName(typeName)
                 ? ManagedPointee(expression, pointer) : pointer;
+        }
+        // A struct value that is not a place -- what a property getter or a
+        // function returns -- has no address to take, but reading a field of
+        // it is ordinary notation: `pair.key`, `config().timeout`. Copy it into
+        // a temporary and read from there. Only when reading: with addressMode
+        // set the caller is writing, and a write has to keep failing, because
+        // it would land in the copy and be lost.
+        if (!addressMode && !HasAddressableStorage(expression)) {
+            const bool oldAddressMode = addressMode;
+            addressMode = false;
+            llvm::Value* value = Evaluate(expression);
+            addressMode = oldAddressMode;
+            llvm::Type* valueType = TypeFromName(typeName);
+            llvm::AllocaInst* temporary = CreateEntryAlloca(
+                *CurrentFunction(), valueType, "value.temporary");
+            builder.CreateStore(Coerce(value, valueType), temporary);
+            return temporary;
         }
         return EvaluateAddress(expression);
     }

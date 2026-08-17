@@ -886,6 +886,21 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/wasm-console-libcalls.abs"
     )
     add_test(
+        NAME absolute.value-place-access-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/value-place-access.abs"
+    )
+    add_test(
+        NAME absolute.value-place-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/value-place-errors.abs"
+    )
+    set_tests_properties(absolute.value-place-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "which is a copy rather than a place"
+    )
+    add_test(
+        NAME absolute.collection-boundaries-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/collection-boundaries.abs"
+    )
+    add_test(
         NAME absolute.literal-range-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/literal-range-errors.abs"
     )
@@ -4380,6 +4395,34 @@ if(BUILD_TESTING)
         )
         add_test(NAME absolute.run-generic-instantiation-widths
             COMMAND "${CMAKE_BINARY_DIR}/generic-instantiation-widths-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-value-place-access
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/value-place-access.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/value-place-access-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-value-place-access PROPERTIES
+            FIXTURES_SETUP absolute-value-place-access-executable
+        )
+        add_test(NAME absolute.run-value-place-access
+            COMMAND "${CMAKE_BINARY_DIR}/value-place-access-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-value-place-access PROPERTIES
+            FIXTURES_REQUIRED absolute-value-place-access-executable
+            PASS_REGULAR_EXPRESSION "value-place-access=ok"
+        )
+        add_test(
+            NAME absolute.build-collection-boundaries
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/collection-boundaries.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/collection-boundaries-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-collection-boundaries PROPERTIES
+            FIXTURES_SETUP absolute-collection-boundaries-executable
+        )
+        add_test(NAME absolute.run-collection-boundaries
+            COMMAND "${CMAKE_BINARY_DIR}/collection-boundaries-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-collection-boundaries PROPERTIES
+            FIXTURES_REQUIRED absolute-collection-boundaries-executable
+            PASS_REGULAR_EXPRESSION "collection-boundaries=ok"
+        )
         set_tests_properties(absolute.run-generic-instantiation-widths PROPERTIES
             FIXTURES_REQUIRED absolute-generic-instantiation-widths-executable
             PASS_REGULAR_EXPRESSION "generic-instantiation-widths=ok"

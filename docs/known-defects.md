@@ -134,7 +134,9 @@ narrow where to look.
 
 ## 5. Not swept — candidates, in rough order of expected yield
 
-Untested guesses, offered as starting points rather than predictions:
+All four have now been swept; what each turned up is recorded in place. Kept as
+a list rather than deleted, because the negative results are the useful part:
+they say where not to look again.
 
 1. ~~**Pointer arithmetic**~~ — swept. The arithmetic itself was right:
    offsets scale by the element (checked with `int64` and with a struct whose
@@ -180,8 +182,22 @@ Untested guesses, offered as starting points rather than predictions:
    for exactly that reason. Now written down in docs/wasm-target.md, with
    `absolute_channel_receive_checked` as the way to tell the two apart. See
    `tests/wasm-console-libcalls.abs` and `tests/wasm-stdin-eof.abs`.
-4. **Collection boundaries** — empty, single-element, capacity transitions,
-   iterator invalidation under mutation.
+4. ~~**Collection boundaries**~~ — swept. Vector, Deque, Map, Set, HashMap and
+   PriorityQueue all hold at their edges: empty and single-element containers,
+   reallocation points, a deque whose contents straddle the end of its buffer
+   before it grows, hash-map tombstones left by removing every other key and
+   then refilled, and mutation under a live iterator, which yields its snapshot
+   as documented. Everything passed on the first run; `tests/collection-
+   boundaries.abs` keeps the record so a boundary nobody checks cannot drift.
+   The one defect the sweep found was not in the containers. Reading a field of
+   the `KeyValuePair` a map iterator returns did not compile: a property getter
+   and a function return a copy, not storage, and member access asked for an
+   address anyway, so `pair.key` and `config().timeout` failed with "a property
+   is not addressable" or "expression is not assignable". The value is now
+   copied into a temporary and read from there, and a *write* through such a
+   copy is refused by the analyzer, where the message can carry a file and a
+   line, instead of by the backend naming its own mechanism. See
+   `tests/value-place-access.abs` and `tests/value-place-errors.abs`.
 
 ## 6. The method that worked
 

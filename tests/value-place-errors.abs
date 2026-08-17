@@ -1,0 +1,42 @@
+// Writing through a value that is not a place is refused.
+//
+// Reading a field of a property's or a function's result is ordinary and the
+// backend copies the value into a temporary to do it
+// (tests/value-place-access.abs). A write cannot take that route: it would
+// land in the temporary and vanish, so the assignment is refused where it is
+// written, with a file, a line and a column, rather than by the backend as "a
+// property is not addressable".
+//
+// Compiled for the diagnostics, so the file never runs.
+
+struct Point {
+    public int32 x;
+    public int32 y;
+}
+
+class Holder {
+    private Point stored;
+
+    public Holder() {
+        stored.x = 3;
+        stored.y = 4;
+    }
+
+    public Point value {
+        get { return stored; }
+        set { stored = value; }
+    }
+
+    public Point makeValue() {
+        return stored;
+    }
+}
+
+int32 main() {
+    Holder* holder = new Holder();
+
+    holder.value.x = 99;
+    holder.makeValue().y = 99;
+
+    return holder.value.x;
+}
