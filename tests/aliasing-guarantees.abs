@@ -1,0 +1,152 @@
+// What may and may not share storage.
+//
+// The backend tells the optimizer that an element of an array of primitives
+// and a field of an object are different storage. That is what lets an array's
+// data pointer and its length stay in registers across a loop, and it is why
+// an insertion sort through a collection went from 3.59 seconds to 1.39. It is
+// also a promise: if two accesses the backend called distinct ever reach the
+// same byte, the optimizer is free to reorder them and the program silently
+// computes the wrong answer.
+//
+// So this file writes through every pair that could overlap and reads the
+// result back. Each assertion fails if the promise is broken; none of them can
+// be constant-folded away, because the values come from a loop the compiler
+// cannot see through.
+
+import "std/collections/vector.abs";
+
+struct Point {
+    public int32 x;
+    public int32 y;
+}
+
+class Holder {
+    public int32[] values;
+    public int32 count;
+    public int64 total;
+
+    public Holder(int32 size) {
+        values = new int32[size];
+        count = size;
+        total = 0;
+    }
+
+    // Writing elements while reading the fields that describe them. If an
+    // element store were allowed to move across the count load, the loop would
+    // read a stale bound.
+    public int64 fill(int32 limit) {
+        int32 index = 0;
+        while (index < count && index < limit) {
+            values[index] = index * 2;
+            total += values[index];
+            count = count;
+            index += 1;
+        }
+        return total;
+    }
+
+    // A field written between element writes: neither may be lost.
+    public int64 interleave(int32 limit) {
+        int32 index = 0;
+        while (index < limit) {
+            values[index] = index;
+            total = total + values[index];
+            count = index + 1;
+            index += 1;
+        }
+        return total;
+    }
+}
+
+int32 main() {
+    // An array field and the fields beside it, written in the same loop.
+    Holder* holder = new Holder(64);
+    assert(holder.fill(64) == 4032, "elements and fields agree during a fill");
+    assert(holder.count == 64, "the count survived the element writes");
+
+    Holder* second = new Holder(16);
+    assert(second.interleave(16) == 120, "a field written between element writes");
+    assert(second.count == 16, "and the last write to it is the one that stands");
+    assert(second.values[15] == 15, "while the elements kept their values");
+    delete holder;
+    delete second;
+
+    // An array of structs: the element bytes and the field bytes are the same
+    // bytes, which is why an element of an array of structs is not described.
+    Point[] points = new Point[8];
+    int32 index = 0;
+    while (index < 8) {
+        points[index].x = index;
+        points[index].y = index * 10;
+        index += 1;
+    }
+    int64 sum = 0;
+    index = 0;
+    while (index < 8) {
+        sum += points[index].x + points[index].y;
+        index += 1;
+    }
+    assert(sum == 308, "fields written through array elements read back");
+
+    // A raw view over a collection's buffer, which the language allows and
+    // which aliases the very elements the indexer reaches. Writes through one
+    // must be visible through the other.
+    std.collections.Vector<int32>* numbers = new std.collections.Vector<int32>();
+    index = 0;
+    while (index < 32) {
+        numbers.push(index);
+        index += 1;
+    }
+    raw int32* data = numbers.unsafeData();
+    index = 0;
+    while (index < 32) {
+        *(data + index) = index * 3;
+        index += 1;
+    }
+    int64 throughIndexer = 0;
+    index = 0;
+    while (index < 32) {
+        throughIndexer += numbers[index];
+        index += 1;
+    }
+    assert(throughIndexer == 1488, "the indexer sees what the raw view wrote");
+
+    index = 0;
+    while (index < 32) {
+        numbers[index] = index;
+        index += 1;
+    }
+    int64 throughView = 0;
+    index = 0;
+    while (index < 32) {
+        throughView += *(data + index);
+        index += 1;
+    }
+    assert(throughView == 496, "and the raw view sees what the indexer wrote");
+    delete numbers;
+
+    // Two arrays of different element types, written in one loop: distinct
+    // storage, and each keeps its own values.
+    int32[] narrow = new int32[16];
+    int64[] wide = new int64[16];
+    index = 0;
+    while (index < 16) {
+        narrow[index] = index;
+        wide[index] = index * 1000;
+        narrow[index] = narrow[index] + 1;
+        index += 1;
+    }
+    int64 narrowSum = 0;
+    int64 wideSum = 0;
+    index = 0;
+    while (index < 16) {
+        narrowSum += narrow[index];
+        wideSum += wide[index];
+        index += 1;
+    }
+    assert(narrowSum == 136, "the int32 array kept its own values");
+    assert(wideSum == 120000, "and the int64 array kept its own");
+
+    println("aliasing-guarantees=ok");
+    return 0;
+}

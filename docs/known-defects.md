@@ -400,7 +400,55 @@ satisfying two interfaces that declare the same method, defaults inherited
 through a diamond, and a class override winning over a default that another
 default calls.
 
-## 11. The method that worked
+## 11. Beyond the list: where the language was slow
+
+Found by running the benchmark suites rather than by probing for wrong answers,
+and both are the same kind of defect as the rest: something the program pays
+for that nothing in the source asks for.
+
+- **Every dereference of a managed pointer took a global lock.**
+  `absolute_managed_get` held a mutex while it read one slot, so an object
+  reached through a parameter -- most code -- cost 22 nanoseconds per element
+  access against 0.6 for the same array in a local. An insertion sort over
+  100000 elements took 55 seconds instead of 1.5. Slots now live in chunks that
+  are allocated once and never move, so a reader can hold a slot's address
+  without a lock, and the fields it reads are atomic; the generation is read
+  before and after the pointer so an expired slot is reported rather than
+  handed over. Allocation, destruction and transfer keep the mutex. The same
+  sort: **55.9 seconds becomes 15.8**.
+- **Nothing told the optimizer that an element is not a field.** Every access
+  through an object reloaded the array's data pointer and its length, and a
+  bounds check that never changes could not leave the loop: 16 instructions in
+  the inner loop where the same sort on a local array ran 6. Loads and stores
+  now carry type-based alias information, and only where the type owns its
+  storage -- a field, and an element of an array of primitives. A raw pointer,
+  a value reference and an element of an array of structs stay undescribed,
+  which means they may alias anything, which is always safe.
+  **Insertion sort through a `Vector<int32>`: 3.59 seconds becomes 1.39**,
+  against 1.73 for the same program in C++ with `std::vector` -- and the bounds
+  check is still there.
+
+Where that leaves the suites, as multiples of Absolute's time (higher is
+slower, so `C++ 1.25x` means Absolute is faster):
+
+| Suite | C++ | Java | JavaScript |
+|---|---:|---:|---:|
+| algorithm | 0.99x | 1.30x | 1.99x |
+| pointer-object | 0.99x | 1.90x | 3.66x |
+| array | 1.18x | 2.25x | 4.56x |
+| collection | 0.69x | 6.33x | 4.93x |
+
+What is still open in the collections is `vector-push-sum` and
+`hashmap-insert-lookup`, both around 0.5x: growth policy and probing strategy,
+which are library design rather than anything the compiler emits.
+
+`tests/aliasing-guarantees.abs` pins the promise the second fix makes, by
+writing through every pair of accesses that could overlap -- an array field
+beside the fields that describe it, fields written through elements of an array
+of structs, a raw view over a collection's buffer against its own indexer --
+and reading the result back.
+
+## 12. The method that worked
 
 Worth repeating, because reading code did not find any of this.
 
@@ -418,7 +466,7 @@ by another route. The compound-assignment defect was found that way, not by
 sweeping again: `a = a / b` had been fixed while `a /= b` still used an untyped
 overload.
 
-## 12. Environment note
+## 13. Environment note
 
 During this work the container repeatedly reverted the working tree to an older
 commit and deleted the build directory. Pushed commits were never affected, but

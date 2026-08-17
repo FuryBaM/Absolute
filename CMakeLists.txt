@@ -909,6 +909,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/negated-literal-typing.abs"
     )
     add_test(
+        NAME absolute.aliasing-guarantees-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/aliasing-guarantees.abs"
+    )
+    add_test(
         NAME absolute.main-parameters-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/main-parameters-errors.abs"
     )
@@ -4543,6 +4547,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-hostile-input PROPERTIES
             FIXTURES_REQUIRED absolute-hostile-input-executable
             PASS_REGULAR_EXPRESSION "hostile-input=ok"
+        )
+        add_test(
+            NAME absolute.build-aliasing-guarantees
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/aliasing-guarantees.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/aliasing-guarantees-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-aliasing-guarantees PROPERTIES
+            FIXTURES_SETUP absolute-aliasing-guarantees-executable
+        )
+        add_test(NAME absolute.run-aliasing-guarantees
+            COMMAND "${CMAKE_BINARY_DIR}/aliasing-guarantees-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-aliasing-guarantees PROPERTIES
+            FIXTURES_REQUIRED absolute-aliasing-guarantees-executable
+            PASS_REGULAR_EXPRESSION "aliasing-guarantees=ok"
         )
         add_test(
             NAME absolute.build-command-line-arguments
