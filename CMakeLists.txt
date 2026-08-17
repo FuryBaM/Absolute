@@ -905,6 +905,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/floating-point-edges.abs"
     )
     add_test(
+        NAME absolute.std-json-edges-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-json-edges.abs"
+    )
+    add_test(
         NAME absolute.floating-literal-range-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/floating-literal-range-errors.abs"
     )
@@ -4440,6 +4444,20 @@ if(BUILD_TESTING)
         )
         add_test(NAME absolute.run-floating-point-edges
             COMMAND "${CMAKE_BINARY_DIR}/floating-point-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-std-json-edges
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-json-edges.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/std-json-edges-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-std-json-edges PROPERTIES
+            FIXTURES_SETUP absolute-std-json-edges-executable
+        )
+        add_test(NAME absolute.run-std-json-edges
+            COMMAND "${CMAKE_BINARY_DIR}/std-json-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-std-json-edges PROPERTIES
+            FIXTURES_REQUIRED absolute-std-json-edges-executable
+            PASS_REGULAR_EXPRESSION "std-json-edges=ok"
+        )
         set_tests_properties(absolute.run-floating-point-edges PROPERTIES
             FIXTURES_REQUIRED absolute-floating-point-edges-executable
             PASS_REGULAR_EXPRESSION "floating-point-edges=ok"

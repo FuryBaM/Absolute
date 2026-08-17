@@ -225,7 +225,28 @@ prefix minus, so `-1.0 as uint32` is the negation of a converted `1`. The
 readings differ only for unsigned targets; both are pinned in
 `tests/floating-point-edges.abs`.
 
-## 7. The method that worked
+## 7. Beyond the list: JSON input that killed the process
+
+The floating-point sweep pointed at a second `std::stod`, this one in the JSON
+parser, and the consequence there is worse than a compile error.
+
+- **A legal number aborted the program.** `std::stod` throws whenever the C
+  library flags the result out of range, subnormals included, and the parser
+  did not catch it: a document containing `1e-308` killed the process with an
+  uncaught `std::out_of_range` from inside `std.json.parse`. Any program
+  parsing input it did not write could be stopped by a number in the payload.
+- **A malformed `\uXXXX` escape did the same.** `std::stoul("ZZZZ", …, 16)`
+  throws `invalid_argument`, and the parser already had an error channel it
+  never got to use.
+
+Both are input, not programming errors, so both now travel through that error
+channel or through the value the C library returns: an overflowing number
+becomes infinity, an underflowing one becomes zero, a bad escape returns null
+with a message. `std.json.getDoubleOr` was added while writing the test, since
+the typed getters could read an integer, a string and a bool but not a double.
+Covered by `tests/std-json-edges.abs`.
+
+## 8. The method that worked
 
 Worth repeating, because reading code did not find any of this.
 
@@ -243,7 +264,7 @@ by another route. The compound-assignment defect was found that way, not by
 sweeping again: `a = a / b` had been fixed while `a /= b` still used an untyped
 overload.
 
-## 8. Environment note
+## 9. Environment note
 
 During this work the container repeatedly reverted the working tree to an older
 commit and deleted the build directory. Pushed commits were never affected, but
