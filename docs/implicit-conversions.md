@@ -39,7 +39,9 @@ int32 smallest = -2147483648; // allowed: the sign belongs to the literal
 
 An integer literal takes the narrowest type that holds it — `int32`, else
 `int64`, else `uint64` — which is also what decides an inferred generic
-parameter: `identity(10000000000)` instantiates with `int64`.
+parameter: `identity(10000000000)` instantiates with `int64`. A minus in front
+of the literal is part of the constant, so `-9223372036854775808` is an `int64`
+and not the negation of a `uint64`.
 
 ## Floating point to integer
 

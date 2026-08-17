@@ -128,7 +128,7 @@ namespace Absolute {
     // parameter inferred from the argument, most visibly -- a wider literal
     // was truncated to i32 without a word. identity(10000000000) returned
     // 1410065408.
-    static std::string IntegerLiteralType(const std::string& text) {
+    static std::string IntegerLiteralType(const std::string& text, bool negated) {
         unsigned long long parsed = 0;
         try {
             parsed = std::stoull(text);
@@ -137,10 +137,19 @@ namespace Absolute {
             // Out of 64-bit range entirely; the backend reports it by value.
             return "uint64";
         }
-        if (parsed <= static_cast<unsigned long long>(std::numeric_limits<std::int32_t>::max()))
-            return "int32";
-        if (parsed <= static_cast<unsigned long long>(std::numeric_limits<std::int64_t>::max()))
-            return "int64";
+        // A minus in front of the literal is part of the constant, so the type
+        // is chosen for the value the source writes. Without this,
+        // -9223372036854775808 -- int64's minimum -- had a magnitude that only
+        // uint64 could hold, so the negation wrapped and printing it produced
+        // 9223372036854775808. The sign was gone and nothing said so.
+        const unsigned long long signedMaximum = negated
+            ? static_cast<unsigned long long>(std::numeric_limits<std::int64_t>::max()) + 1
+            : static_cast<unsigned long long>(std::numeric_limits<std::int64_t>::max());
+        const unsigned long long narrowMaximum = negated
+            ? static_cast<unsigned long long>(std::numeric_limits<std::int32_t>::max()) + 1
+            : static_cast<unsigned long long>(std::numeric_limits<std::int32_t>::max());
+        if (parsed <= narrowMaximum) return "int32";
+        if (parsed <= signedMaximum) return "int64";
         return "uint64";
     }
 
@@ -191,7 +200,7 @@ namespace Absolute {
             Save(expr, {InvalidSymbolId, "double", false});
             return;
         }
-        const std::string literalType = IntegerLiteralType(expr->value);
+        const std::string literalType = IntegerLiteralType(expr->value, literalSign < 0);
         if (IsInteger(expectedType)) {
             unsigned long long magnitude = 0;
             bool parsed = true;

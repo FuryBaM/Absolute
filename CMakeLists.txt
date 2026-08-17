@@ -905,6 +905,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/floating-point-edges.abs"
     )
     add_test(
+        NAME absolute.negated-literal-typing-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/negated-literal-typing.abs"
+    )
+    add_test(
         NAME absolute.unhandled-exception-report-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/unhandled-exception-report.abs"
     )
@@ -4451,6 +4455,20 @@ if(BUILD_TESTING)
         )
         add_test(NAME absolute.run-floating-point-edges
             COMMAND "${CMAKE_BINARY_DIR}/floating-point-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-negated-literal-typing
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/negated-literal-typing.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/negated-literal-typing-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-negated-literal-typing PROPERTIES
+            FIXTURES_SETUP absolute-negated-literal-typing-executable
+        )
+        add_test(NAME absolute.run-negated-literal-typing
+            COMMAND "${CMAKE_BINARY_DIR}/negated-literal-typing-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-negated-literal-typing PROPERTIES
+            FIXTURES_REQUIRED absolute-negated-literal-typing-executable
+            PASS_REGULAR_EXPRESSION "negated-literal-typing=ok"
+        )
         add_test(
             NAME absolute.build-std-json-edges
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-json-edges.abs"

@@ -1,0 +1,45 @@
+// The type of a literal written with a minus in front of it.
+//
+// A literal takes the narrowest type that holds it, and the minus is part of
+// the constant rather than an operation applied afterwards. Without that, the
+// magnitude 9223372036854775808 fit only uint64, so `-9223372036854775808` --
+// int64's minimum, written the only way it can be written -- negated an
+// unsigned value, wrapped, and printed as 9223372036854775808. The sign was
+// gone and nothing said so.
+//
+// It only showed where no declared type steered the literal: `int64 x = -92...`
+// stores the right bits either way. `format` and `print` are exactly that
+// place, which is where it turned up.
+
+int32 main() {
+    // The minimum of each signed width, in a context with no expected type.
+    assert(format("{}", -9223372036854775808) == "-9223372036854775808",
+        "int64's minimum keeps its sign");
+    assert(format("{}", -2147483648) == "-2147483648",
+        "int32's minimum keeps its sign");
+    assert(format("{}", -128) == "-128", "a small negative keeps its sign");
+
+    // The same values through a declared type, which always worked.
+    int64 wideMinimum = -9223372036854775808;
+    assert(format("{}", wideMinimum) == "-9223372036854775808",
+        "the declared int64 minimum prints the same");
+    int32 narrowMinimum = -2147483648;
+    assert(format("{}", narrowMinimum) == "-2147483648",
+        "the declared int32 minimum prints the same");
+
+    // A positive literal of the same magnitude is unsigned, and stays so.
+    assert(format("{}", 9223372036854775808) == "9223372036854775808",
+        "the positive magnitude is not a signed value");
+    assert(format("{}", 18446744073709551615) == "18446744073709551615",
+        "uint64's maximum prints unsigned");
+
+    // Arithmetic on the negated minimum behaves as int64, not as a wrapped
+    // unsigned: adding one moves toward zero.
+    int64 nearMinimum = -9223372036854775808;
+    nearMinimum = nearMinimum + 1;
+    assert(nearMinimum == -9223372036854775807, "int64's minimum plus one");
+    assert(nearMinimum < 0, "and it is still negative");
+
+    println("negated-literal-typing=ok");
+    return 0;
+}
