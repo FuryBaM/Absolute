@@ -25,6 +25,11 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+// Without this, <windows.h> defines `max` and `min` as macros and every
+// std::max in this translation unit stops compiling under MSVC.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <sys/types.h>
