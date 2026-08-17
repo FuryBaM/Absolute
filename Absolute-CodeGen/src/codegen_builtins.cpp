@@ -121,8 +121,16 @@ namespace Absolute {
                     index, builder.getInt64Ty(), !unsignedIndex, "unsafe.array.index");
             llvm::Value* address = builder.CreateInBoundsGEP(
                 view.elementType, view.address, index, "unsafe.array.element.address");
+            const std::string accessedElementType =
+                ArrayElementTypeName(SemanticType(expression.arguments[0].get()));
             if (!isSet) {
                 value = builder.CreateLoad(view.elementType, address, "unsafe.array.element");
+                // Described as an element like any other: the check in front of
+                // it is the caller's, not a reason for the access to alias more
+                // than it does. Without this the indexer of a collection
+                // reloaded the object's count and data pointer on every
+                // element, and its bounds check stayed inside the loop.
+                TagAccess(value, TbaaElementAccess(accessedElementType));
                 valueCreatesManagedOwner = false;
                 valueCreatesArrayOwner = false;
                 valueCreatesClosureOwner = false;
@@ -134,7 +142,8 @@ namespace Absolute {
             llvm::Value* assigned = Coerce(
                 Evaluate(source), view.elementType,
                 SemanticType(source), elementTypeName);
-            builder.CreateStore(assigned, address);
+            TagAccess(builder.CreateStore(assigned, address),
+                TbaaElementAccess(elementTypeName));
             value = nullptr;
             valueCreatesManagedOwner = false;
             valueCreatesArrayOwner = false;

@@ -202,6 +202,8 @@
             std::string typeName;
         };
         std::vector<TemporaryOwner> temporaryManagedOwners;
+        llvm::MDNode* tbaaRoot = nullptr;
+        std::unordered_map<std::string, llvm::MDNode*> tbaaTypeNodes;
         bool valueCreatesArrayOwner = false;
         llvm::Value* valueArrayOwner = nullptr;
         bool valueCreatesClosureOwner = false;

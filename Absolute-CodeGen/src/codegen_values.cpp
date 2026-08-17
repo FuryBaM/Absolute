@@ -130,7 +130,16 @@ namespace Absolute {
         }
         assigned = impl->Coerce(assigned, targetType,
             impl->SemanticType(expr->value.get()), targetTypeName);
-        impl->builder.CreateStore(assigned, targetAddress);
+        llvm::Value* store = impl->builder.CreateStore(assigned, targetAddress);
+        // An element of an array and a field of an object are different
+        // storage, and saying so is what lets the optimizer keep an array's
+        // data pointer and its length in registers across a loop.
+        if (dynamic_cast<ArrayAccessExpr*>(expr->target.get()))
+            impl->TagAccess(store, impl->TbaaElementAccess(targetTypeName));
+        else if (dynamic_cast<MemberAccessExpr*>(expr->target.get()) ||
+            (!impl->FindVariable(IdentifierName(expr->target.get())) &&
+                !IdentifierName(expr->target.get()).empty()))
+            impl->TagAccess(store, impl->TbaaFieldAccess(targetTypeName));
         impl->value = assigned;
         impl->valueCreatesManagedOwner = false;
         impl->valueManagedPointee = nullptr;
@@ -447,6 +456,7 @@ namespace Absolute {
         }
         impl->value = impl->builder.CreateLoad(
             impl->TypeFromName(fieldTypeName), fieldAddress, expr->member + ".value");
+        impl->TagAccess(impl->value, impl->TbaaFieldAccess(fieldTypeName));
         impl->valueCreatesManagedOwner = false;
     }
 

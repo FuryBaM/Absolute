@@ -130,8 +130,10 @@ namespace Absolute {
                 impl->addressValue = fieldAddress;
                 return;
             }
-            llvm::Type* fieldType = impl->TypeFromName(impl->SemanticType(expr));
+            const std::string fieldTypeName = impl->SemanticType(expr);
+            llvm::Type* fieldType = impl->TypeFromName(fieldTypeName);
             impl->value = impl->builder.CreateLoad(fieldType, fieldAddress, expr->name + ".value");
+            impl->TagAccess(impl->value, impl->TbaaFieldAccess(fieldTypeName));
             impl->valueCreatesManagedOwner = false;
             return;
         }
@@ -646,8 +648,10 @@ namespace Absolute {
             impl->addressValue = address;
             return;
         }
-        llvm::Type* elementType = impl->TypeFromName(impl->SemanticType(expr));
+        const std::string elementTypeName = impl->SemanticType(expr);
+        llvm::Type* elementType = impl->TypeFromName(elementTypeName);
         impl->value = impl->builder.CreateLoad(elementType, address, "array.element");
+        impl->TagAccess(impl->value, impl->TbaaElementAccess(elementTypeName));
         impl->valueCreatesManagedOwner = false;
     }
 

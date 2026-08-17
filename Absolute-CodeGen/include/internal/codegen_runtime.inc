@@ -99,6 +99,22 @@
         // body ends is a statement kind that never opened a scope.
         void RequireNoPendingTemporaries(const std::string& where);
 
+        // Type-based alias information, so the optimizer knows that storing an
+        // element of an array cannot change a field of an object. Without it
+        // every access through `this` reloads the array's data pointer and its
+        // length, and a bounds check that is the same on every iteration
+        // cannot be lifted out of the loop.
+        //
+        // Only two kinds of access are described, and only where the type is
+        // known to be its own storage: an object's field, and an element of an
+        // array of primitives. Everything else -- a raw pointer, a value
+        // reference, an element of an array of structs -- is left untagged,
+        // which means "may alias anything" and is always safe.
+        llvm::MDNode* TbaaNode(const std::string& name);
+        llvm::MDNode* TbaaFieldAccess(const std::string& typeName);
+        llvm::MDNode* TbaaElementAccess(const std::string& typeName);
+        void TagAccess(llvm::Value* instruction, llvm::MDNode* tag);
+
         llvm::StructType* ClosureObjectType();
 
         llvm::FunctionType* ClosureInvokeType(const std::string& returnType,

@@ -400,6 +400,56 @@ namespace Absolute {
         valueManagedPointee = nullptr;
     }
 
+    namespace {
+        // Only these describe storage that is entirely their own. A field of
+        // struct type shares its bytes with the struct around it, and an
+        // element of an array of structs shares its bytes with that struct's
+        // fields, so neither is described and both keep aliasing everything.
+        bool IsPrimitiveStorageType(const std::string& typeName) {
+            return typeName == "int8" || typeName == "uint8" || typeName == "char" ||
+                typeName == "int16" || typeName == "uint16" ||
+                typeName == "int32" || typeName == "uint32" ||
+                typeName == "int64" || typeName == "uint64" ||
+                typeName == "bool" || typeName == "float" || typeName == "double";
+        }
+    }
+
+    // One scalar type node per described type, under a single root, and the
+    // access tag LLVM wants: {type, type, offset}.
+    llvm::MDNode* CodeGenerator::Impl::TbaaNode(const std::string& name) {
+        if (const auto found = tbaaTypeNodes.find(name); found != tbaaTypeNodes.end())
+            return found->second;
+        llvm::MDBuilder builder(context);
+        if (!tbaaRoot) tbaaRoot = builder.createTBAARoot("Absolute");
+        llvm::MDNode* type = builder.createTBAAScalarTypeNode(name, tbaaRoot);
+        llvm::MDNode* tag = builder.createTBAAStructTagNode(type, type, 0);
+        tbaaTypeNodes.emplace(name, tag);
+        return tag;
+    }
+
+    llvm::MDNode* CodeGenerator::Impl::TbaaFieldAccess(const std::string& typeName) {
+        // An array-typed field holds a descriptor, which is three words of the
+        // object rather than the elements themselves, so it is described like
+        // any other field: the elements it points at are somewhere else.
+        const bool describable = IsPrimitiveStorageType(typeName) ||
+            ArrayRankName(typeName) > 0 || IsPointerTypeName(typeName);
+        if (!describable) return nullptr;
+        const std::string name = "absolute.field." +
+            (ArrayRankName(typeName) > 0 ? std::string("descriptor") : typeName);
+        return TbaaNode(name);
+    }
+
+    llvm::MDNode* CodeGenerator::Impl::TbaaElementAccess(const std::string& typeName) {
+        if (!IsPrimitiveStorageType(typeName)) return nullptr;
+        return TbaaNode("absolute.element." + typeName);
+    }
+
+    void CodeGenerator::Impl::TagAccess(llvm::Value* instruction, llvm::MDNode* tag) {
+        if (!tag) return;
+        if (auto* memory = llvm::dyn_cast_or_null<llvm::Instruction>(instruction))
+            memory->setMetadata(llvm::LLVMContext::MD_tbaa, tag);
+    }
+
     void CodeGenerator::Impl::RequireNoPendingTemporaries(const std::string& where) {
         if (!temporaryManagedOwners.empty())
             Fail("temporary owner left unreleased in " + where);
