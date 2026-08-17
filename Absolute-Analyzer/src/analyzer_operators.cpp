@@ -2,7 +2,11 @@
 
 #include <cerrno>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
+#include <limits>
+#include <unordered_map>
+#include <utility>
 
 namespace Absolute {
     void Analyzer::Visit(BinaryExpr* expr) {

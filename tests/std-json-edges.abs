@@ -1,0 +1,52 @@
+// JSON input that used to kill the process.
+//
+// The parser converted numbers with std::stod and \uXXXX escapes with
+// std::stoul, and both throw. Neither exception had anywhere to go: a document
+// containing `1e-308` -- a legal JSON number a double holds exactly -- aborted
+// the program with an uncaught std::out_of_range from inside the parser, and
+// `"\uZZZZ"` did the same with std::invalid_argument. Input is data, not a
+// programming error, so both now come back through the parser's own error
+// channel or as the value the C library gives.
+//
+// The numbers are the ones where the C library sets ERANGE: a subnormal, an
+// overflowing exponent, and one that underflows to zero.
+
+import "../std/json.abs";
+import "../std/string.abs";
+
+int32 main() {
+    // Numbers at the edges of what a double can hold.
+    std.json.JsonValue* subnormal = std.json.parse("{\"v\":1e-308}");
+    assert(subnormal != null, "a subnormal number parses");
+    assert(subnormal.getDoubleOr("v", 0.0) > 0.0, "and keeps its value");
+
+    std.json.JsonValue* overflowing = std.json.parse("{\"v\":1e400}");
+    assert(overflowing != null, "an overflowing number parses");
+    assert(overflowing.getDoubleOr("v", 0.0) > 1e308, "and becomes infinite");
+
+    std.json.JsonValue* underflowing = std.json.parse("{\"v\":1e-400}");
+    assert(underflowing != null, "an underflowing number parses");
+    assert(underflowing.getDoubleOr("v", 1.0) == 0.0, "and becomes zero");
+
+    // Ordinary numbers are unaffected, including a negative and an exponent.
+    std.json.JsonValue* plain = std.json.parse("{\"a\":2,\"b\":-3.5,\"c\":1.5e3}");
+    assert(plain != null, "an ordinary document parses");
+    assert(plain.getIntOr("a", 0) == 2, "an integer reads back");
+    assert(plain.getDoubleOr("b", 0.0) == -3.5, "a negative fraction reads back");
+    assert(plain.getDoubleOr("c", 0.0) == 1500.0, "an exponent reads back");
+
+    // A malformed escape is refused rather than fatal.
+    std.json.JsonValue* badEscape = std.json.parse("{\"v\":\"\\uZZZZ\"}");
+    assert(badEscape == null, "a malformed \\u escape is refused");
+
+    // A well-formed one still decodes, on both sides of the ASCII boundary.
+    std.json.JsonValue* ascii = std.json.parse("{\"v\":\"\\u0041\"}");
+    assert(ascii != null && ascii.getStringOr("v", "") == "A", "\\u0041 decodes to A");
+    std.json.JsonValue* cyrillic = std.json.parse("{\"v\":\"\\u0416\"}");
+    assert(cyrillic != null, "a two-byte escape decodes");
+    assert(std.text.byteCount(cyrillic.getStringOr("v", "")) == 2,
+        "and occupies two bytes in UTF-8");
+
+    println("std-json-edges=ok");
+    return 0;
+}
