@@ -331,7 +331,7 @@ namespace Absolute {
             if (const auto* boolean = dynamic_cast<BooleanLiteralExpr*>(expression))
                 return std::string("bool:") + (boolean->value ? "true" : "false");
             if (const auto* number = dynamic_cast<NumberLiteralExpr*>(expression)) {
-                if (number->value.find('.') != std::string::npos) return std::nullopt;
+                if (IsFloatingLiteral(number->value)) return std::nullopt;
                 return "integer:" + std::to_string(std::stoll(number->value));
             }
             if (const auto* character = dynamic_cast<CharLiteralExpr*>(expression))
@@ -340,7 +340,7 @@ namespace Absolute {
                 if ((unary->op == "+" || unary->op == "-") &&
                     dynamic_cast<NumberLiteralExpr*>(unary->operand.get())) {
                     const auto* number = static_cast<NumberLiteralExpr*>(unary->operand.get());
-                    if (number->value.find('.') != std::string::npos) return std::nullopt;
+                    if (IsFloatingLiteral(number->value)) return std::nullopt;
                     const std::int64_t magnitude = std::stoll(number->value);
                     return "integer:" + std::to_string(unary->op == "-" ? -magnitude : magnitude);
                 }

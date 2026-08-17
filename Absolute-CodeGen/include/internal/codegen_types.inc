@@ -76,6 +76,12 @@
 
         llvm::Value* ObjectPointer(Expression* expression, const std::string& typeName);
 
+        // Whether an expression names storage the program can point at. A
+        // field is only as addressable as whatever it lives in, so a field of
+        // a property's or a function's result is not -- unless the chain
+        // passes through a pointer, which supplies a real address.
+        bool HasAddressableStorage(Expression* expression);
+
         llvm::Value* EmitPropertyAccessor(Expression* receiver,
             const std::string& receiverType, const std::string& methodKey,
             const std::vector<llvm::Value*>& explicitArguments);

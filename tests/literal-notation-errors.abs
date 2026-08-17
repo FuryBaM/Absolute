@@ -1,0 +1,15 @@
+// A numeric literal the lexer can only match part of is refused where it is
+// written.
+//
+// The number pattern accepts `_` between digits but never at an edge, and a
+// base prefix must be followed by digits of that base. Without an explicit
+// check the leftover characters would lex as an identifier -- `0xZZ` as `0`
+// and `ZZ` -- and the program would be rejected somewhere later with a message
+// about a stray token instead of about the literal.
+//
+// Compiled for the diagnostic, so the file never runs.
+
+int32 main() {
+    int32 wrong = 0xZZ;
+    return wrong;
+}

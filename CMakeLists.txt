@@ -210,6 +210,19 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.ownership-stability-differential PROPERTIES
             PASS_REGULAR_EXPRESSION "ownership-stability-differential=ok"
             TIMEOUT 240)
+        add_test(
+            NAME absolute.ownership-model-generator
+            COMMAND "${Python3_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tools/testing/ownership_model.py"
+                --compiler "$<TARGET_FILE:Absolute-Compiler>"
+                --work-dir
+                    "${CMAKE_BINARY_DIR}/differential/ownership-model/$<CONFIG>"
+                --programs 12
+                --steps 32
+                --seed 1)
+        set_tests_properties(absolute.ownership-model-generator PROPERTIES
+            PASS_REGULAR_EXPRESSION "ownership-model-generator=ok"
+            TIMEOUT 300)
     endif()
 
     # Coverage-guided fuzzing. libFuzzer ships with Clang's runtime, so the
@@ -232,6 +245,9 @@ if(BUILD_TESTING)
             -fno-omit-frame-pointer -g -O1)
 
         set(ABSOLUTE_FUZZ_TARGETS lexer parser)
+        # The manifest target parses package metadata rather than source, so it
+        # needs the package manager rather than the analyzer.
+        list(APPEND ABSOLUTE_FUZZ_TARGETS manifest)
         # The analyzer harness generates syntactically valid programs, so it
         # needs the analyzer as well as the parser.
         if(TARGET Absolute-Analyzer)
@@ -243,9 +259,19 @@ if(BUILD_TESTING)
         set(ABSOLUTE_FUZZ_SEEDS_parser "${PROJECT_SOURCE_DIR}/tests/fuzz/corpus")
         set(ABSOLUTE_FUZZ_SEEDS_analyzer
             "${PROJECT_SOURCE_DIR}/tests/fuzz/corpus-decisions")
+        set(ABSOLUTE_FUZZ_SEEDS_manifest
+            "${PROJECT_SOURCE_DIR}/tests/fuzz/corpus-manifests")
         foreach(fuzzer ${ABSOLUTE_FUZZ_TARGETS})
-            add_executable(absolute-${fuzzer}-fuzzer
-                tests/fuzz/${fuzzer}_fuzzer.cpp)
+            if(fuzzer STREQUAL "manifest")
+                add_executable(absolute-manifest-fuzzer
+                    tests/fuzz/manifest_fuzzer.cpp
+                    Absolute-Compiler/src/package_manager.cpp)
+                target_include_directories(absolute-manifest-fuzzer PRIVATE
+                    Absolute-Compiler/include)
+            else()
+                add_executable(absolute-${fuzzer}-fuzzer
+                    tests/fuzz/${fuzzer}_fuzzer.cpp)
+            endif()
             target_link_libraries(absolute-${fuzzer}-fuzzer
                 PRIVATE Absolute-Parser)
             if(fuzzer STREQUAL "analyzer")
@@ -273,7 +299,12 @@ if(BUILD_TESTING)
                     PASS_REGULAR_EXPRESSION "fuzz-${fuzzer}=ok"
                     TIMEOUT 900)
             endif()
+            list(APPEND ABSOLUTE_FUZZ_BINARIES absolute-${fuzzer}-fuzzer)
         endforeach()
+        # One target that builds every fuzzer. CI builds this rather than a
+        # list of names, so adding a fuzzer here cannot leave the workflow
+        # running a test whose binary was never built.
+        add_custom_target(absolute-fuzzers DEPENDS ${ABSOLUTE_FUZZ_BINARIES})
     endif()
 
     if(TARGET Absolute-Unless-Plugin)
@@ -807,6 +838,124 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-transfer.abs"
     )
     add_test(
+        NAME absolute.ownership-torture-closures-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-closures.abs"
+    )
+    add_test(
+        NAME absolute.ownership-torture-capture-errors
+        COMMAND Absolute-Compiler
+            "${PROJECT_SOURCE_DIR}/tests/ownership-torture-capture-errors.abs"
+    )
+    set_tests_properties(absolute.ownership-torture-capture-errors PROPERTIES
+        WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.division-edges-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/division-edges.abs"
+    )
+    add_test(
+        NAME absolute.unsigned-arithmetic-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/unsigned-arithmetic.abs"
+    )
+    add_test(
+        NAME absolute.wide-integer-literals-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/wide-integer-literals.abs"
+    )
+    add_test(
+        NAME absolute.literal-notation-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/literal-notation.abs"
+    )
+    add_test(
+        NAME absolute.literal-notation-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/literal-notation-errors.abs"
+    )
+    set_tests_properties(absolute.literal-notation-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.destruction-order-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/destruction-order.abs"
+    )
+    add_test(
+        NAME absolute.pointer-arithmetic-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-arithmetic.abs"
+    )
+    add_test(
+        NAME absolute.generic-instantiation-widths-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-instantiation-widths.abs"
+    )
+    add_test(
+        NAME absolute.wasm-console-libcalls-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/wasm-console-libcalls.abs"
+    )
+    add_test(
+        NAME absolute.value-place-access-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/value-place-access.abs"
+    )
+    add_test(
+        NAME absolute.value-place-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/value-place-errors.abs"
+    )
+    set_tests_properties(absolute.value-place-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "which is a copy rather than a place"
+    )
+    add_test(
+        NAME absolute.collection-boundaries-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/collection-boundaries.abs"
+    )
+    add_test(
+        NAME absolute.literal-range-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/literal-range-errors.abs"
+    )
+    set_tests_properties(absolute.literal-range-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "integer literal 4294967296 does not fit in 'int32'"
+    )
+    add_test(
+        NAME absolute.pointer-arithmetic-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-arithmetic-errors.abs"
+    )
+    set_tests_properties(absolute.pointer-arithmetic-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "a raw pointer supports only '\\+=' and '-=' with an integer step"
+    )
+    add_test(
+        NAME absolute.module-scope-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/module-scope-errors.abs"
+    )
+    set_tests_properties(absolute.module-scope-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "a module-scope declaration must be a primitive with a constant initializer"
+    )
+    add_test(
+        NAME absolute.global-variables-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/global-variables.abs"
+    )
+    add_test(
+        NAME absolute.global-owner-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/global-owner-errors.abs"
+    )
+    set_tests_properties(absolute.global-owner-errors PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.ownership-torture-weak-backedge-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-weak-backedge.abs"
+    )
+    add_test(
+        NAME absolute.ownership-torture-cycle-nested-errors
+        COMMAND Absolute-Compiler
+            "${PROJECT_SOURCE_DIR}/tests/ownership-torture-cycle-nested-errors.abs"
+    )
+    set_tests_properties(absolute.ownership-torture-cycle-nested-errors PROPERTIES
+        WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.ownership-torture-cycle-aliased-errors
+        COMMAND Absolute-Compiler
+            "${PROJECT_SOURCE_DIR}/tests/ownership-torture-cycle-aliased-errors.abs"
+    )
+    set_tests_properties(absolute.ownership-torture-cycle-aliased-errors PROPERTIES
+        WILL_FAIL TRUE)
+    add_test(
+        NAME absolute.ownership-torture-cycle-mutual-errors
+        COMMAND Absolute-Compiler
+            "${PROJECT_SOURCE_DIR}/tests/ownership-torture-cycle-mutual-errors.abs"
+    )
+    set_tests_properties(absolute.ownership-torture-cycle-mutual-errors PROPERTIES
+        WILL_FAIL TRUE)
+    add_test(
         NAME absolute.bytes-bytebuffer-test-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/bytes-bytebuffer-test.abs"
     )
@@ -1042,6 +1191,10 @@ if(BUILD_TESTING)
     add_test(
         NAME absolute.std-typed-channel-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-typed-channel.abs"
+    )
+    add_test(
+        NAME absolute.ownership-torture-capsule-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-capsule.abs"
     )
     add_test(
         NAME absolute.ownership-transfer-errors
@@ -1532,6 +1685,22 @@ if(BUILD_TESTING)
             FIXTURES_SETUP absolute-ownership-torture-transfer-ir
         )
         add_test(
+            NAME absolute.emit-ownership-torture-closures
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-closures.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/ownership-torture-closures.ll"
+        )
+        set_tests_properties(absolute.emit-ownership-torture-closures PROPERTIES
+            FIXTURES_SETUP absolute-ownership-torture-closures-ir
+        )
+        add_test(
+            NAME absolute.emit-ownership-torture-weak-backedge
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-weak-backedge.abs"
+                --emit-llvm -o "${CMAKE_BINARY_DIR}/ownership-torture-weak-backedge.ll"
+        )
+        set_tests_properties(absolute.emit-ownership-torture-weak-backedge PROPERTIES
+            FIXTURES_SETUP absolute-ownership-torture-weak-backedge-ir
+        )
+        add_test(
             NAME absolute.emit-bytes-bytebuffer-test
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/bytes-bytebuffer-test.abs"
                 --emit-llvm -o "${CMAKE_BINARY_DIR}/bytes-bytebuffer-test.ll"
@@ -1841,6 +2010,22 @@ if(BUILD_TESTING)
             set_tests_properties(absolute.run-ownership-torture-transfer PROPERTIES
                 FIXTURES_REQUIRED absolute-ownership-torture-transfer-ir
                 PASS_REGULAR_EXPRESSION "ownership-torture-transfer=ok"
+            )
+            add_test(
+                NAME absolute.run-ownership-torture-closures
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/ownership-torture-closures.ll"
+            )
+            set_tests_properties(absolute.run-ownership-torture-closures PROPERTIES
+                FIXTURES_REQUIRED absolute-ownership-torture-closures-ir
+                PASS_REGULAR_EXPRESSION "ownership-torture-closures=ok"
+            )
+            add_test(
+                NAME absolute.run-ownership-torture-weak-backedge
+                COMMAND "${ABSOLUTE_LLI_EXECUTABLE}" ${ABSOLUTE_LLI_RUNTIME_ARGS} "${CMAKE_BINARY_DIR}/ownership-torture-weak-backedge.ll"
+            )
+            set_tests_properties(absolute.run-ownership-torture-weak-backedge PROPERTIES
+                FIXTURES_REQUIRED absolute-ownership-torture-weak-backedge-ir
+                PASS_REGULAR_EXPRESSION "ownership-torture-weak-backedge=ok"
             )
             add_test(
                 NAME absolute.run-bytes-bytebuffer-test
@@ -2277,6 +2462,28 @@ if(BUILD_TESTING)
                         -DNODE=${ABSOLUTE_NODE_FOR_WASM}
                         -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-std-string.cmake"
+                )
+                add_test(
+                    NAME absolute.run-wasm-console-libcalls
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-console-libcalls.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-console-libcalls.wasm
+                        -DMARKER=wasm-console-libcalls=ok
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-marker.cmake"
+                )
+                add_test(
+                    NAME absolute.run-wasm-stdin-eof
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-stdin-eof.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-stdin-eof.wasm
+                        -DMARKER=wasm-stdin-eof=ok
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-marker.cmake"
                 )
                 add_test(
                     NAME absolute.run-wasm-std-deque
@@ -2863,6 +3070,44 @@ if(BUILD_TESTING)
             FIXTURES_REQUIRED absolute-sanitizer-ownership-torture-transfer-executable
             TIMEOUT 45)
         add_test(
+            NAME absolute.build-sanitizer-ownership-torture-closures
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/tests/ownership-torture-closures.abs"
+                --sanitize=address --build-exe -O1
+                -o "${CMAKE_BINARY_DIR}/sanitizer-ownership-torture-closures-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-sanitizer-ownership-torture-closures PROPERTIES
+            FIXTURES_SETUP absolute-sanitizer-ownership-torture-closures-executable)
+        add_test(
+            NAME absolute.run-sanitizer-ownership-torture-closures
+            COMMAND "${CMAKE_COMMAND}"
+                -DEXECUTABLE=${CMAKE_BINARY_DIR}/sanitizer-ownership-torture-closures-app${CMAKE_EXECUTABLE_SUFFIX}
+                -DEXPECT=ownership-torture-closures=ok
+                -P "${PROJECT_SOURCE_DIR}/tests/run-sanitizer-clean.cmake"
+        )
+        set_tests_properties(absolute.run-sanitizer-ownership-torture-closures PROPERTIES
+            FIXTURES_REQUIRED absolute-sanitizer-ownership-torture-closures-executable
+            TIMEOUT 45)
+        add_test(
+            NAME absolute.build-sanitizer-ownership-torture-weak-backedge
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/tests/ownership-torture-weak-backedge.abs"
+                --sanitize=address --build-exe -O1
+                -o "${CMAKE_BINARY_DIR}/sanitizer-ownership-torture-weak-backedge-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-sanitizer-ownership-torture-weak-backedge PROPERTIES
+            FIXTURES_SETUP absolute-sanitizer-ownership-torture-weak-backedge-executable)
+        add_test(
+            NAME absolute.run-sanitizer-ownership-torture-weak-backedge
+            COMMAND "${CMAKE_COMMAND}"
+                -DEXECUTABLE=${CMAKE_BINARY_DIR}/sanitizer-ownership-torture-weak-backedge-app${CMAKE_EXECUTABLE_SUFFIX}
+                -DEXPECT=ownership-torture-weak-backedge=ok
+                -P "${PROJECT_SOURCE_DIR}/tests/run-sanitizer-clean.cmake"
+        )
+        set_tests_properties(absolute.run-sanitizer-ownership-torture-weak-backedge PROPERTIES
+            FIXTURES_REQUIRED absolute-sanitizer-ownership-torture-weak-backedge-executable
+            TIMEOUT 45)
+        add_test(
             NAME absolute.emit-object
             COMMAND Absolute-Compiler build "${CMAKE_BINARY_DIR}/NativeFfi-$<CONFIG>.absproj"
                 --emit-object -o "${CMAKE_BINARY_DIR}/native-ffi-object.o"
@@ -2913,7 +3158,25 @@ if(BUILD_TESTING)
             Absolute-CodeGen/include
         )
         target_link_libraries(plugin-api-unit-tests PRIVATE Absolute-Parser Absolute-Analyzer Absolute-CodeGen Absolute-Runtime)
-        add_test(NAME absolute.plugin-api-unit-tests COMMAND plugin-api-unit-tests)
+        add_test(NAME absolute.plugin-api-unit-tests
+            COMMAND plugin-api-unit-tests "$<TARGET_FILE:Absolute-Unless-Plugin>")
+        # The V1 ABI layout is compiled into every plugin already built against
+        # it, so a size or offset change is invisible at the source level and
+        # surfaces as a crash in someone else's binary. Guarded on 64-bit
+        # builds, which is what the checked-in layout describes.
+        if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+            add_executable(plugin-abi-dump tests/native/plugin_abi_dump.cpp)
+            target_include_directories(plugin-abi-dump PRIVATE
+                Absolute-Parser/include)
+            add_test(
+                NAME absolute.plugin-abi-v1-layout
+                COMMAND "${CMAKE_COMMAND}"
+                    -DDUMP=$<TARGET_FILE:plugin-abi-dump>
+                    -DGOLDEN=${PROJECT_SOURCE_DIR}/tests/abi/plugin-abi-v1-lp64.txt
+                    -P "${PROJECT_SOURCE_DIR}/tests/compare-abi-dump.cmake")
+            set_tests_properties(absolute.plugin-abi-v1-layout PROPERTIES
+                PASS_REGULAR_EXPRESSION "plugin-abi-v1=ok")
+        endif()
         add_test(
             NAME absolute.build-export-c-abi
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/export-c-abi.abs"
@@ -4072,9 +4335,204 @@ if(BUILD_TESTING)
         )
         add_test(NAME absolute.run-std-typed-channel
             COMMAND "${CMAKE_BINARY_DIR}/std-typed-channel-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-global-variables
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/global-variables.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/global-variables-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-global-variables PROPERTIES
+            FIXTURES_SETUP absolute-global-variables-executable
+        )
+        add_test(NAME absolute.run-global-variables
+            COMMAND "${CMAKE_BINARY_DIR}/global-variables-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-wide-integer-literals
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/wide-integer-literals.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/wide-integer-literals-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-wide-integer-literals PROPERTIES
+            FIXTURES_SETUP absolute-wide-integer-literals-executable
+        )
+        add_test(NAME absolute.run-wide-integer-literals
+            COMMAND "${CMAKE_BINARY_DIR}/wide-integer-literals-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-literal-notation
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/literal-notation.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/literal-notation-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-literal-notation PROPERTIES
+            FIXTURES_SETUP absolute-literal-notation-executable
+        )
+        add_test(NAME absolute.run-literal-notation
+            COMMAND "${CMAKE_BINARY_DIR}/literal-notation-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-destruction-order
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/destruction-order.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/destruction-order-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-destruction-order PROPERTIES
+            FIXTURES_SETUP absolute-destruction-order-executable
+        )
+        add_test(NAME absolute.run-destruction-order
+            COMMAND "${CMAKE_BINARY_DIR}/destruction-order-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-pointer-arithmetic
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-arithmetic.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/pointer-arithmetic-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-pointer-arithmetic PROPERTIES
+            FIXTURES_SETUP absolute-pointer-arithmetic-executable
+        )
+        add_test(NAME absolute.run-pointer-arithmetic
+            COMMAND "${CMAKE_BINARY_DIR}/pointer-arithmetic-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-generic-instantiation-widths
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-instantiation-widths.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/generic-instantiation-widths-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-generic-instantiation-widths PROPERTIES
+            FIXTURES_SETUP absolute-generic-instantiation-widths-executable
+        )
+        add_test(NAME absolute.run-generic-instantiation-widths
+            COMMAND "${CMAKE_BINARY_DIR}/generic-instantiation-widths-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-value-place-access
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/value-place-access.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/value-place-access-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-value-place-access PROPERTIES
+            FIXTURES_SETUP absolute-value-place-access-executable
+        )
+        add_test(NAME absolute.run-value-place-access
+            COMMAND "${CMAKE_BINARY_DIR}/value-place-access-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-value-place-access PROPERTIES
+            FIXTURES_REQUIRED absolute-value-place-access-executable
+            PASS_REGULAR_EXPRESSION "value-place-access=ok"
+        )
+        add_test(
+            NAME absolute.build-collection-boundaries
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/collection-boundaries.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/collection-boundaries-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-collection-boundaries PROPERTIES
+            FIXTURES_SETUP absolute-collection-boundaries-executable
+        )
+        add_test(NAME absolute.run-collection-boundaries
+            COMMAND "${CMAKE_BINARY_DIR}/collection-boundaries-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-collection-boundaries PROPERTIES
+            FIXTURES_REQUIRED absolute-collection-boundaries-executable
+            PASS_REGULAR_EXPRESSION "collection-boundaries=ok"
+        )
+        set_tests_properties(absolute.run-generic-instantiation-widths PROPERTIES
+            FIXTURES_REQUIRED absolute-generic-instantiation-widths-executable
+            PASS_REGULAR_EXPRESSION "generic-instantiation-widths=ok"
+        )
+        set_tests_properties(absolute.run-pointer-arithmetic PROPERTIES
+            FIXTURES_REQUIRED absolute-pointer-arithmetic-executable
+            PASS_REGULAR_EXPRESSION "pointer-arithmetic=ok"
+        )
+        set_tests_properties(absolute.run-destruction-order PROPERTIES
+            FIXTURES_REQUIRED absolute-destruction-order-executable
+            PASS_REGULAR_EXPRESSION "destruction-order=ok"
+        )
+        add_test(
+            NAME absolute.build-unsigned-arithmetic
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/unsigned-arithmetic.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/unsigned-arithmetic-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-unsigned-arithmetic PROPERTIES
+            FIXTURES_SETUP absolute-unsigned-arithmetic-executable
+        )
+        add_test(NAME absolute.run-unsigned-arithmetic
+            COMMAND "${CMAKE_BINARY_DIR}/unsigned-arithmetic-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-division-edges
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/division-edges.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/division-edges-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-division-edges PROPERTIES
+            FIXTURES_SETUP absolute-division-edges-executable
+        )
+        add_test(NAME absolute.run-division-edges
+            COMMAND "${CMAKE_BINARY_DIR}/division-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-division-edges PROPERTIES
+            FIXTURES_REQUIRED absolute-division-edges-executable
+            PASS_REGULAR_EXPRESSION "division-edges=ok"
+        )
+        # Exits with a diagnostic instead of returning, so the check is on the
+        # message rather than on a marker.
+        add_test(
+            NAME absolute.build-division-overflow-errors
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/division-overflow-errors.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/division-overflow-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-division-overflow-errors PROPERTIES
+            FIXTURES_SETUP absolute-division-overflow-executable
+        )
+        add_test(NAME absolute.run-division-overflow-errors
+            COMMAND "${CMAKE_BINARY_DIR}/division-overflow-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-division-overflow-errors PROPERTIES
+            FIXTURES_REQUIRED absolute-division-overflow-executable
+            PASS_REGULAR_EXPRESSION "Division overflows"
+        )
+        set_tests_properties(absolute.run-unsigned-arithmetic PROPERTIES
+            FIXTURES_REQUIRED absolute-unsigned-arithmetic-executable
+            PASS_REGULAR_EXPRESSION "unsigned-arithmetic=ok"
+        )
+        set_tests_properties(absolute.run-wide-integer-literals PROPERTIES
+            FIXTURES_REQUIRED absolute-wide-integer-literals-executable
+            PASS_REGULAR_EXPRESSION "wide-integer-literals=ok"
+        )
+        set_tests_properties(absolute.run-literal-notation PROPERTIES
+            FIXTURES_REQUIRED absolute-literal-notation-executable
+            PASS_REGULAR_EXPRESSION "literal-notation=ok"
+        )
+        set_tests_properties(absolute.run-global-variables PROPERTIES
+            FIXTURES_REQUIRED absolute-global-variables-executable
+            PASS_REGULAR_EXPRESSION "global-variables=ok"
+        )
+        # Integration project: exercises std.fs, std.json and tasks together
+        # rather than one subsystem at a time. It generates and removes its own
+        # tree, so it runs in its own directory to keep that tree out of the
+        # build root.
+        add_test(
+            NAME absolute.build-integration-file-indexer
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/examples/integration/file-indexer.abs"
+                --build-exe
+                -o "${CMAKE_BINARY_DIR}/integration-file-indexer${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-integration-file-indexer PROPERTIES
+            FIXTURES_SETUP absolute-integration-file-indexer
+        )
+        add_test(
+            NAME absolute.run-integration-file-indexer
+            COMMAND "${CMAKE_BINARY_DIR}/integration-file-indexer${CMAKE_EXECUTABLE_SUFFIX}"
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/integration-work"
+        )
+        set_tests_properties(absolute.run-integration-file-indexer PROPERTIES
+            FIXTURES_REQUIRED absolute-integration-file-indexer
+            PASS_REGULAR_EXPRESSION "integration-file-indexer=ok"
+            TIMEOUT 120
+        )
+        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/integration-work")
         set_tests_properties(absolute.run-std-typed-channel PROPERTIES
             FIXTURES_REQUIRED absolute-std-typed-channel-executable
             PASS_REGULAR_EXPRESSION "std-typed-channel=ok"
+        )
+        add_test(
+            NAME absolute.build-ownership-torture-capsule
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-torture-capsule.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/ownership-torture-capsule-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-ownership-torture-capsule PROPERTIES
+            FIXTURES_SETUP absolute-ownership-torture-capsule-executable
+        )
+        add_test(NAME absolute.run-ownership-torture-capsule
+            COMMAND "${CMAKE_BINARY_DIR}/ownership-torture-capsule-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-ownership-torture-capsule PROPERTIES
+            FIXTURES_REQUIRED absolute-ownership-torture-capsule-executable
+            PASS_REGULAR_EXPRESSION "ownership-torture-capsule=ok"
         )
     endif()
 endif()

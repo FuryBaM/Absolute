@@ -12,8 +12,7 @@ import sys
 from pathlib import Path
 
 from optimization_differential import (
-    expected_checksum,
-    generate_program,
+    build_case,
     normalized_output,
 )
 
@@ -160,19 +159,9 @@ def main() -> int:
     executable_suffix = ".exe" if os.name == "nt" else ""
 
     for case_id in range(args.cases):
-        first = rng.randint(1, 1_000_000)
-        second = rng.randint(1, 1_000_000)
-        salt = rng.randint(1, 100_000)
-        iterations = rng.randint(24, 96)
-        expected = expected_checksum(
-            first, second, salt, iterations)
+        source_text, expected = build_case(rng, case_id)
         source = root / f"case-{case_id:03d}.abs"
-        source.write_text(
-            generate_program(
-                case_id, first, second, salt,
-                iterations, expected),
-            encoding="utf-8",
-        )
+        source.write_text(source_text, encoding="utf-8")
 
         native = root / (
             f"case-{case_id:03d}-native{executable_suffix}")
@@ -190,7 +179,7 @@ def main() -> int:
         if native_result is None:
             return 1
         native_output = normalized_output(native_result.stdout)
-        if native_output != str(expected):
+        if expected is not None and native_output != str(expected):
             write_failure(
                 root, "native output differs from generated oracle",
                 case_id, "native", [str(native)],
@@ -216,7 +205,7 @@ def main() -> int:
         if wasm_result is None:
             return 1
         wasm_output = normalized_output(wasm_result.stdout)
-        if wasm_output != str(expected):
+        if expected is not None and wasm_output != str(expected):
             write_failure(
                 root, "WebAssembly output differs from generated oracle",
                 case_id, "wasm", wasm_run, wasm_result,

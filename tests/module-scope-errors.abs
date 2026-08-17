@@ -1,0 +1,27 @@
+// A module-scope declaration of a user type is refused, and says why.
+//
+// `Handle GLOBAL;` parses as an inline value declaration rather than as a
+// variable declaration statement, so the script entry point counted it as an
+// executable statement and, next to an explicit main, rejected it as "top-level
+// executable statements cannot be combined with an explicit main function".
+// That message describes the parse and not the problem: the declaration is not
+// executable, and module scope simply holds nothing but primitives with
+// constant initializers.
+//
+// Compiled for the diagnostic, so the file never runs. What module scope does
+// accept is in docs/module-scope.md, and the accepted forms run in
+// tests/global-variables.abs.
+
+struct Handle {
+    int32 value;
+
+    void destroy() {
+        value = 0;
+    }
+}
+
+Handle GLOBAL;
+
+int32 main() {
+    return GLOBAL.value;
+}

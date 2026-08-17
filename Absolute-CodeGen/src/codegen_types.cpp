@@ -1130,6 +1130,22 @@ namespace Absolute {
         return found->second;
     }
 
+    bool CodeGenerator::Impl::HasAddressableStorage(Expression* expression) {
+        if (!expression || !analyzer) return true;
+        const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
+        if (!info) return true;
+        if (!info->placeInfo.addressable) return false;
+        Expression* base = nullptr;
+        if (auto* member = dynamic_cast<MemberAccessExpr*>(expression)) base = member->base.get();
+        else if (auto* array = dynamic_cast<ArrayAccessExpr*>(expression)) base = array->base.get();
+        if (!base) return true;
+        // Through a pointer or an array descriptor the field has real storage
+        // behind it, whatever the expression that produced the pointer was.
+        const std::string baseType = SemanticType(base);
+        if (IsPointerTypeName(baseType) || ArrayRankName(baseType) > 0) return true;
+        return HasAddressableStorage(base);
+    }
+
     llvm::Value* CodeGenerator::Impl::ObjectPointer(Expression* expression, const std::string& typeName) {
         if (IsPointerTypeName(typeName)) {
             const bool oldAddressMode = addressMode;
@@ -1138,6 +1154,23 @@ namespace Absolute {
             addressMode = oldAddressMode;
             return IsManagedPointerTypeName(typeName)
                 ? ManagedPointee(expression, pointer) : pointer;
+        }
+        // A struct value that is not a place -- what a property getter or a
+        // function returns -- has no address to take, but reading a field of
+        // it is ordinary notation: `pair.key`, `config().timeout`. Copy it into
+        // a temporary and read from there. Only when reading: with addressMode
+        // set the caller is writing, and a write has to keep failing, because
+        // it would land in the copy and be lost.
+        if (!addressMode && !HasAddressableStorage(expression)) {
+            const bool oldAddressMode = addressMode;
+            addressMode = false;
+            llvm::Value* value = Evaluate(expression);
+            addressMode = oldAddressMode;
+            llvm::Type* valueType = TypeFromName(typeName);
+            llvm::AllocaInst* temporary = CreateEntryAlloca(
+                *CurrentFunction(), valueType, "value.temporary");
+            builder.CreateStore(Coerce(value, valueType), temporary);
+            return temporary;
         }
         return EvaluateAddress(expression);
     }
@@ -1320,12 +1353,36 @@ namespace Absolute {
         builder.SetInsertPoint(entry);
         llvm::Value* object = function->getArg(0);
 
-        auto destroyMethod = info.methods.find(CallableKey("destroy", {}));
-        if (destroyMethod != info.methods.end()) {
+        // Every destroy() hook in the hierarchy, most-derived first. `methods`
+        // merges inherited entries, so a derived declaration shadows its
+        // base's under the same key: taking only that one meant a base that
+        // closes a handle or frees native memory silently stopped doing it as
+        // soon as any derived class declared a hook of its own. Its fields
+        // were still released -- only the hand-written half went missing,
+        // which is why nothing failed loudly. `declaredMethods` holds just
+        // what a class declares itself, so walking the base chain finds the
+        // shadowed bodies, and the link name keeps an inherited entry from
+        // being called twice.
+        std::vector<const ClassMethod*> hooks;
+        std::unordered_set<std::string> emitted;
+        const auto collectHook = [&](const std::unordered_map<std::string, ClassMethod>& methods) {
+            const auto found = methods.find(CallableKey("destroy", {}));
+            if (found == methods.end()) return;
+            if (!emitted.insert(found->second.linkName).second) return;
+            hooks.push_back(&found->second);
+        };
+        collectHook(info.methods);
+        for (std::string base = info.baseClass; !base.empty();) {
+            const auto found = classes.find(base);
+            if (found == classes.end()) break;
+            collectHook(found->second.declaredMethods);
+            base = found->second.baseClass;
+        }
+        for (const ClassMethod* hook : hooks) {
             llvm::FunctionCallee callee = module->getOrInsertFunction(
-                destroyMethod->second.linkName, MethodFunctionType(destroyMethod->second));
-            EmitAbiCall(MethodFunctionType(destroyMethod->second), callee.getCallee(),
-                destroyMethod->second.returnType, {object}, destroyMethod->second.parameterTypes, {}, "class.destroy.user");
+                hook->linkName, MethodFunctionType(*hook));
+            EmitAbiCall(MethodFunctionType(*hook), callee.getCallee(),
+                hook->returnType, {object}, hook->parameterTypes, {}, "class.destroy.user");
         }
 
         for (auto field = info.fields.rbegin(); field != info.fields.rend(); ++field) {

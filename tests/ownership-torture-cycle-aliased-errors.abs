@@ -1,0 +1,29 @@
+// P4 ownership torture: a strong back-edge spelled through a local alias.
+//
+// One shape per file; see tests/ownership-torture-cycle-nested-errors.abs for
+// why. The moved expression names `alias` rather than `root`.
+//
+// The rejection here is not the cycle diagnostic and is not expected to be:
+// binding `alias` to `root` makes it a subscriber, and a subscriber cannot be
+// moved at all, so the assignment is refused before a cycle can form. That is
+// the stronger of the two rules, and this file pins that it is the one that
+// fires — if moving a subscriber ever became legal, the cycle check would have
+// to catch this shape instead, and this test would start reporting the other
+// message rather than silently passing.
+
+class Node {
+    public int32 id;
+    public Node* child;
+
+    public Node(int32 identifier) {
+        id = identifier;
+        child = null;
+    }
+}
+
+int32 main() {
+    Node* root = new Node(1);
+    Node* alias = root;
+    root.child = move(alias);
+    return 0;
+}

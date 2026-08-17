@@ -1,0 +1,84 @@
+// Notation a numeric literal can be written in.
+//
+// Four ordinary forms did not lex: `0xFF`, `0b1010` and `0o17` split into a
+// number and an identifier, `1_000_000` did the same, and `1e-9` broke on the
+// exponent. Shift assignment (`<<=`, `>>=`) was not an operator at all, even
+// though the backend already lowered it. None of these was silent -- every one
+// of them was a syntax error -- but the value each denotes is unambiguous and
+// people reach for them immediately.
+//
+// The values below are chosen so a base confusion has to show: 0b1010 is 10 in
+// binary and 1010 read as decimal, 0o17 is 15 in octal and 17 read as decimal,
+// and 0xE1 has an `e` inside it that must not read as an exponent.
+
+int32 hexFromReturn() {
+    return 0x7FFFFFFF;
+}
+
+int32 main() {
+    // Base prefixes, upper and lower case.
+    assert(0xFF == 255, "hex literal");
+    assert(0Xff == 255, "hex literal, uppercase prefix and lowercase digits");
+    assert(0xE1 == 225, "an 'e' inside a hex literal is a digit, not an exponent");
+    assert(0b1010 == 10, "binary literal is not read as decimal 1010");
+    assert(0B1010 == 10, "binary literal, uppercase prefix");
+    assert(0o17 == 15, "octal literal is not read as decimal 17");
+    assert(0O17 == 15, "octal literal, uppercase prefix");
+    assert(0x0 == 0, "zero in hex");
+
+    // The bases reach the whole 64-bit range, like decimal literals do.
+    int64 wideHex = 0x1_0000_0000;
+    assert(wideHex == 4294967296, "2^32 written in hex survives");
+    uint64 allOnes = 0xFFFFFFFFFFFFFFFF;
+    assert(allOnes == 18446744073709551615, "uint64's maximum has a hex spelling");
+
+    // Digit separators are spelling and carry no value of their own.
+    assert(1_000_000 == 1000000, "digit separators in a decimal literal");
+    assert(0xFF_FF == 65535, "digit separators in a hex literal");
+    assert(0b1111_0000 == 240, "digit separators in a binary literal");
+    assert(1_0.5 == 10.5, "digit separators before the fraction");
+
+    // Exponents, with and without a fraction, and in both directions.
+    double thousand = 1e3;
+    assert(thousand == 1000.0, "positive exponent");
+    double tiny = 1e-9;
+    assert(tiny > 0.0, "a negative exponent is not zero");
+    assert(tiny < 0.000000002, "1e-9 is smaller than 2e-9");
+    assert(1.5e2 == 150.0, "a fraction with an exponent");
+    assert(1E3 == 1000.0, "uppercase exponent marker");
+    assert(2e+3 == 2000.0, "an explicitly positive exponent");
+    assert(1_000e-3 == 1.0, "separators and an exponent together");
+
+    // An exponent literal is a double, not an integer, so it divides as one.
+    double half = 1e0 / 2.0;
+    assert(half == 0.5, "an exponent literal is floating point");
+
+    // Shift assignment agrees with the spelled-out form it stands for.
+    int32 left = 1;
+    left <<= 4;
+    assert(left == 16, "<<= shifts left");
+    int32 right = 256;
+    right >>= 4;
+    assert(right == 16, ">>= shifts right");
+
+    // Right shift follows the declared type: unsigned shifts in zeros where
+    // signed would carry the sign bit down.
+    uint32 unsignedTop = 4294967295;
+    unsignedTop >>= 31;
+    assert(unsignedTop == 1, "unsigned >>= does not sign-extend");
+    int32 negative = -256;
+    negative >>= 4;
+    assert(negative == -16, "signed >>= keeps the sign");
+
+    int64 wideShift = 1;
+    wideShift <<= 40;
+    assert(wideShift == 1099511627776, "<<= reaches past 32 bits");
+
+    // The literal forms work where any other literal does.
+    assert(hexFromReturn() == 2147483647, "return carries a hex literal");
+    int32[] table = {0x1, 0b10, 0o4, 8};
+    assert(table[0] + table[1] + table[2] + table[3] == 15, "array elements in mixed bases");
+
+    println("literal-notation=ok");
+    return 0;
+}

@@ -450,7 +450,13 @@ namespace Absolute {
             previousOwner == nextOwner)
             return;
         for (auto& [id, state] : valueFlow) {
-            if (id != previousOwner && state.pointerOwner == previousOwner)
+            // The moved-from symbol is re-pointed alongside its aliases. It no
+            // longer owns the allocation either, and leaving it pointing at
+            // itself hides a back-edge onto it: with `left.child = move(right)`
+            // followed by `right.child = move(left)`, neither assignment names
+            // the same symbol twice, so the cycle is only visible if the first
+            // move records that right's allocation now belongs to left.
+            if (state.pointerOwner == previousOwner)
                 state.pointerOwner = nextOwner;
         }
     }
@@ -807,7 +813,10 @@ namespace Absolute {
                 return false;
             }
             for (const auto& [memberName, overloads] : found->second.members) {
-                if (memberName == "destroy()") {
+                // Members are keyed by their bare name, so "destroy()" never
+                // matched and a type whose only resource was its own destroy()
+                // hook was treated as owning nothing.
+                if (memberName == "destroy") {
                     release();
                     return true;
                 }
@@ -934,7 +943,18 @@ namespace Absolute {
         if (!IsNumeric(left) || !IsNumeric(right)) return "error";
         if (left == "double" || right == "double") return "double";
         if (left == "float" || right == "float") return "float";
-        if (left == "int64" || right == "int64" || left == "uint64" || right == "uint64") return "int64";
+        // Unsignedness has to survive here, not just in CodeGen. The result
+        // type is what a later cast widens from, so collapsing uint32 to int32
+        // made `(unsignedValue / 1) as int64` sign-extend and produce -1 where
+        // the same value read through a variable produced 4294967295.
+        //
+        // The ladder follows which type can represent the other. int64 covers
+        // every uint32, so mixing them stays signed; nothing signed covers
+        // uint64, so mixing with it goes unsigned; at equal rank the unsigned
+        // side wins.
+        if (left == "uint64" || right == "uint64") return "uint64";
+        if (left == "int64" || right == "int64") return "int64";
+        if (left == "uint32" || right == "uint32") return "uint32";
         return "int32";
     }
 
@@ -2196,6 +2216,30 @@ namespace Absolute {
         Expression* expression, const Result& target, const std::string& operation) {
         if (IsConstMutationTarget(expression, target))
             Report(operation + " cannot modify a const value", "E_CONST_MUTATION", target.symbol);
+
+        // Writing to a field of something that is not a place. Reading one is
+        // ordinary -- `pair.key`, `config().timeout` -- and the backend copies
+        // the value into a temporary to do it, but a write would land in that
+        // copy and be lost. The backend refuses it as "a property is not
+        // addressable", which names the mechanism rather than the rule, and
+        // without a file or a line.
+        for (Expression* current = expression; current;) {
+            Expression* base = nullptr;
+            if (auto* member = dynamic_cast<MemberAccessExpr*>(current)) base = member->base.get();
+            else if (auto* array = dynamic_cast<ArrayAccessExpr*>(current)) base = array->base.get();
+            else break;
+            if (!base) break;
+            const ExpressionInfo* info = GetExpressionInfo(*base);
+            if (info && !info->placeInfo.addressable && !IsPointerType(info->type) &&
+                ArrayRank(info->type) == 0) {
+                Report(operation + " cannot write through '" + info->type +
+                    "', which is a copy rather than a place; assign it to a variable, "
+                    "change it there, and store it back",
+                    "E_WRITE_THROUGH_COPY", target.symbol);
+                break;
+            }
+            current = base;
+        }
     }
 
 }

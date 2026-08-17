@@ -300,12 +300,33 @@ namespace Absolute {
             location, builder.GetInsertBlock());
     }
 
+    unsigned long long CodeGenerator::Impl::ParseIntegerLiteral(const std::string& text) {
+        try {
+            size_t consumed = 0;
+            const unsigned long long value = std::stoull(text, &consumed);
+            // std::stoull stops at the first character it cannot use and
+            // reports success, so a floating literal reaching an integer
+            // constant would come out as its leading digits: 1e3 as 1. Refuse
+            // instead of storing a wrong number.
+            if (consumed != text.size())
+                Fail("integer constant expected, but the literal is '" + text + "'");
+            return value;
+        }
+        catch (const std::exception&) {
+            Fail("integer literal '" + text + "' does not fit in 64 bits");
+        }
+        return 0;
+    }
+
     llvm::Constant* CodeGenerator::Impl::GlobalConstant(Expression* expression, llvm::Type* type) {
         if (!expression) return llvm::Constant::getNullValue(type);
         if (auto* number = dynamic_cast<NumberLiteralExpr*>(expression)) {
             if (type->isFloatingPointTy())
                 return llvm::ConstantFP::get(type, std::stod(number->value));
-            return llvm::ConstantInt::get(type, std::stoll(number->value), true);
+            // Unsigned parse for the same reason as the runtime path: the
+            // literal is positive and the full 64-bit range has to be
+            // reachable.
+            return llvm::ConstantInt::get(type, ParseIntegerLiteral(number->value), false);
         }
         if (auto* boolean = dynamic_cast<BooleanLiteralExpr*>(expression))
             return llvm::ConstantInt::get(type, boolean->value ? 1 : 0);
@@ -325,10 +346,18 @@ namespace Absolute {
             if (auto* number = dynamic_cast<NumberLiteralExpr*>(unary->operand.get())) {
                 if (type->isFloatingPointTy())
                     return llvm::ConstantFP::get(type, -std::stod(number->value));
-                return llvm::ConstantInt::get(type, -std::stoll(number->value), true);
+                // Negating the parsed pattern rather than parsing a negative
+                // number, so int64's minimum works: 2^63 negated is itself.
+                return llvm::ConstantInt::get(type,
+                    0ull - ParseIntegerLiteral(number->value), false);
             }
         }
-        Fail("global initializer requires a constant primitive value");
+        // Module storage is emitted once, before anything runs, so its
+        // initializer has to be a value the backend can write into the object
+        // file. Nothing folds constant expressions here, which is why `1 + 2`
+        // is refused as readily as a constructor call.
+        Fail("a module-scope initializer must be a constant literal, not an "
+            "expression evaluated at run time");
     }
 
     void CodeGenerator::Impl::DeclareGlobalArray(VarDeclExpr& expression) {
@@ -389,6 +418,31 @@ namespace Absolute {
         for (size_t dimension : dimensions) dimensionValues.push_back(builder.getInt64(dimension));
         globals.emplace(globalName, Variable{address, elementType, typeName, false,
             true, elementType, std::move(dimensionValues), nullptr, InvalidSymbolId});
+    }
+
+    void CodeGenerator::Impl::DeclareGlobalScalar(VarDeclExpr& expression) {
+        const std::string name = IdentifierName(expression.name.get());
+        const std::string typeName = DeclaredTypeName(expression);
+        if (name.empty() || typeName.empty()) return;
+
+        // A module-scope owner would need answers this does not have: when its
+        // destructor runs, in what order against other globals, and who owns it
+        // while the module initializes. Refuse it by name here rather than
+        // emitting storage whose lifetime nobody has decided.
+        if (IsManagedPointerTypeName(typeName) || IsWeakPointerTypeName(typeName))
+            Fail("a managed or weak pointer cannot be declared at module scope");
+        if (IsTaskTypeName(typeName))
+            Fail("a task cannot be declared at module scope");
+
+        llvm::Type* type = TypeFromName(typeName);
+        if (!type) Fail("unknown type '" + typeName + "' for global '" + name + "'");
+        llvm::Constant* initializer = GlobalConstant(expression.value.get(), type);
+
+        const std::string globalName = Qualify(name);
+        auto* storage = new llvm::GlobalVariable(*module, type, false,
+            llvm::GlobalValue::ExternalLinkage, initializer, globalName);
+        globals.emplace(globalName, Variable{storage, type, typeName, false,
+            false, nullptr, {}, nullptr, InvalidSymbolId});
     }
 
     llvm::Function* CodeGenerator::Impl::DeclareFunction(FunctionDeclStmt& statement) {

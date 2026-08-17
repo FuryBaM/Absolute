@@ -1,0 +1,47 @@
+// Integer literals wider than 32 bits.
+//
+// Literals were parsed as 64-bit and then emitted as an i32 constant, so
+// anything past 2^31 was silently wrong rather than diagnosed: 2^31 came back
+// negative, 2^32 came back zero, and 10^10 came back 1410065408. Nothing
+// pinned the boundary, so the wrap was invisible.
+//
+// The cases below sit either side of it deliberately: the 32-bit ones prove
+// the narrow path did not change, and the wide ones prove the value survives.
+
+int64 wideFromReturn() {
+    return 4294967296;
+}
+
+int32 main() {
+    int32 narrowMax = 2147483647;
+    int32 narrowMin = -2147483648;
+    assert(narrowMax == 2147483647, "largest 32-bit literal is unchanged");
+    assert(narrowMin == -2147483648, "smallest 32-bit literal is unchanged");
+
+    int64 justPast = 2147483648;
+    assert(justPast == 2147483648, "one past the 32-bit maximum stays positive");
+    assert(justPast > 0, "the sign did not wrap");
+
+    int64 power32 = 4294967296;
+    assert(power32 == 4294967296, "2^32 survives as itself");
+    assert(power32 != 0, "2^32 did not truncate to zero");
+
+    int64 tenBillion = 10000000000;
+    assert(tenBillion == 10000000000, "10^10 survives");
+
+    int64 assigned = 0;
+    assigned = 4294967296;
+    assert(assigned == 4294967296, "assignment carries the wide literal");
+
+    assert(wideFromReturn() == 4294967296, "return carries the wide literal");
+
+    int64 negative = -4294967296;
+    assert(negative == -4294967296, "negated wide literal keeps its magnitude");
+
+    // Arithmetic on a widened literal stays wide.
+    int64 sum = power32 + 1;
+    assert(sum == 4294967297, "arithmetic above the 32-bit range is exact");
+
+    println("wide-integer-literals=ok");
+    return 0;
+}

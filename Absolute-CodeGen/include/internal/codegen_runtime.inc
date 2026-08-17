@@ -95,6 +95,14 @@
 
         llvm::Value* One(llvm::Type* type);
 
+        // Offsets a raw pointer by `index` elements of its pointee type, the
+        // one lowering `p + n`, `p += n`, `p++` and `p[n]` all share so they
+        // cannot drift apart. `subtract` negates the index rather than taking
+        // a separate path, because that is the only difference between them.
+        llvm::Value* PointerOffset(llvm::Value* pointer,
+            const std::string& pointerTypeName,
+            llvm::Value* index, bool subtract);
+
         void BranchIfNeeded(llvm::BasicBlock* target);
 
         llvm::Function* CurrentFunction();

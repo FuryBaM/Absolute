@@ -1,0 +1,209 @@
+// Integration project: a parallel file indexer.
+//
+// Exercises std.fs, std.json, collections and tasks together in one program
+// rather than one subsystem at a time, which is the point of an integration
+// project: the interesting failures live between the parts.
+//
+// The program is hermetic. It creates its own tree under the working
+// directory, indexes it, checks the result against counts it computed while
+// generating, emits a JSON report, and removes the tree. Nothing depends on
+// what happens to be on disk, so the run is deterministic and repeatable.
+//
+// Shape of the parallel section, and why it looks like this: an async
+// parameter cannot be a string, because a task context cannot own a string's
+// lifetime safely. Workers therefore take integers and rebuild their own paths
+// from the same naming convention the generator used, and report through a
+// shared results array addressed by shard. That is the isolation model working
+// as designed rather than a workaround for it.
+
+import "../../std/fs.abs";
+import "../../std/json.abs";
+import "../../std/string.abs";
+
+const int32 SHARD_COUNT = 4;
+const int32 FILES_PER_SHARD = 6;
+
+string workRoot() {
+    return "absolute-indexer-work";
+}
+
+string shardPath(int32 shard) {
+    return std.fs.join(workRoot(), format("shard-{}", shard));
+}
+
+string filePath(int32 shard, int32 index) {
+    return std.fs.join(shardPath(shard), format("file-{}.txt", index));
+}
+
+// Deterministic content: line count varies per file so a shard that indexed
+// the wrong files cannot accidentally match the expected totals.
+string fileContent(int32 shard, int32 index) {
+    string text = "";
+    int32 lines = 1 + ((shard + index) % 5);
+    int32 line = 0;
+    while (line < lines) {
+        text = std.text.concat(text,
+            format("shard {} file {} line {}\n", shard, index, line));
+        line += 1;
+    }
+    return text;
+}
+
+// Worker: index one shard and publish its counts.
+//
+// Slot layout in the shared array is three int64 per shard: files, lines,
+// bytes. Each worker owns its own slots, so the writes never overlap.
+async int64 indexShard(int64 shard, int64 resultsAddress) {
+    raw int64* results = resultsAddress as raw int64*;
+    int32 shardIndex = shard as int32;
+    int64 files = 0;
+    int64 lines = 0;
+    int64 bytes = 0;
+
+    int32 index = 0;
+    while (index < FILES_PER_SHARD) {
+        string path = filePath(shardIndex, index);
+        if (std.fs.exists(path)) {
+            string content = std.fs.readText(path);
+            files += 1;
+            bytes += std.text.byteCount(content) as int64;
+            // Every line ends in a newline, so the split leaves one empty
+            // trailing element that is not a line.
+            string[] pieces = std.text.split(content, "\n");
+            lines += (pieces.length - 1) as int64;
+        }
+        index += 1;
+    }
+
+    // raw pointers are not indexable, so the slots are addressed by offset.
+    int32 base = shardIndex * 3;
+    *(results + base) = files;
+    *(results + base + 1) = lines;
+    *(results + base + 2) = bytes;
+    return files;
+}
+
+async int32 main() {
+    // Generate the tree, recording what the indexer is expected to find.
+    int64 expectedFiles = 0;
+    int64 expectedLines = 0;
+    int64 expectedBytes = 0;
+
+    int32 shard = 0;
+    while (shard < SHARD_COUNT) {
+        std.fs.createDirectories(shardPath(shard));
+        int32 index = 0;
+        while (index < FILES_PER_SHARD) {
+            string content = fileContent(shard, index);
+            std.fs.writeText(filePath(shard, index), content);
+            expectedFiles += 1;
+            expectedBytes += std.text.byteCount(content) as int64;
+            string[] pieces = std.text.split(content, "\n");
+            expectedLines += (pieces.length - 1) as int64;
+            index += 1;
+        }
+        shard += 1;
+    }
+
+    // The walk is what a real indexer starts from, so check it sees exactly
+    // the tree that was generated before any counting happens.
+    int64 walked = 0;
+    std.fs.DirectoryIterator* walk =
+        new std.fs.DirectoryIterator(workRoot(), true);
+    while (walk.next()) {
+        if (std.fs.isFile(walk.value)) {
+            walked += 1;
+        }
+    }
+    delete walk;
+    assert(walked == expectedFiles,
+        "the recursive walk finds every generated file");
+
+    // Index in parallel: one task per shard, all publishing into one array.
+    int64[] results = new int64[SHARD_COUNT * 3];
+    int32 slot = 0;
+    while (slot < SHARD_COUNT * 3) {
+        results[slot] = 0;
+        slot += 1;
+    }
+    raw int64* resultsAddress = &results[0];
+
+    // Tasks cannot be copied or reassigned, so they are not held in an array:
+    // each one is its own place, spawned before any is awaited so the four
+    // actually overlap.
+    int64 address = resultsAddress as int64;
+    task<int64> worker0 = spawn indexShard(0 as int64, address);
+    task<int64> worker1 = spawn indexShard(1 as int64, address);
+    task<int64> worker2 = spawn indexShard(2 as int64, address);
+    task<int64> worker3 = spawn indexShard(3 as int64, address);
+
+    int64 reportedFiles = await worker0;
+    reportedFiles += await worker1;
+    reportedFiles += await worker2;
+    reportedFiles += await worker3;
+    assert(reportedFiles == expectedFiles,
+        "every worker reported the files it indexed");
+
+    int64 totalFiles = 0;
+    int64 totalLines = 0;
+    int64 totalBytes = 0;
+    shard = 0;
+    while (shard < SHARD_COUNT) {
+        int32 base = shard * 3;
+        assert(results[base] == FILES_PER_SHARD as int64,
+            "each shard indexed its whole share");
+        totalFiles += results[base];
+        totalLines += results[base + 1];
+        totalBytes += results[base + 2];
+        shard += 1;
+    }
+
+    assert(totalFiles == expectedFiles, "indexed file count matches generation");
+    assert(totalLines == expectedLines, "indexed line count matches generation");
+    assert(totalBytes == expectedBytes, "indexed byte count matches generation");
+
+    // Emit the report the way a CLI would, and read it back: a report that
+    // cannot be parsed again is not a report.
+    std.json.JsonValue* report = std.json.createObject();
+    report.setNumber("files", totalFiles as double);
+    report.setNumber("lines", totalLines as double);
+    report.setNumber("bytes", totalBytes as double);
+    report.setNumber("shards", SHARD_COUNT as double);
+    string encoded = report.stringify();
+    delete report;
+
+    std.json.JsonValue* parsed = std.json.parse(encoded);
+    assert(parsed.isValid(), "the emitted report parses");
+    // getProp hands back an owner, so each lookup is a place that has to be
+    // released; leaving them anonymous inside the assert leaked two handles
+    // and the runtime's exit report caught it.
+    std.json.JsonValue* filesField = parsed.getProp("files");
+    assert(filesField.asDouble() as int64 == expectedFiles,
+        "the report carries the indexed file count");
+    delete filesField;
+
+    std.json.JsonValue* linesField = parsed.getProp("lines");
+    assert(linesField.asDouble() as int64 == expectedLines,
+        "the report carries the indexed line count");
+    delete linesField;
+
+    delete parsed;
+
+    // Leave nothing behind: the next run must generate the same tree from
+    // scratch rather than index whatever the previous one left.
+    shard = 0;
+    while (shard < SHARD_COUNT) {
+        int32 index = 0;
+        while (index < FILES_PER_SHARD) {
+            std.fs.remove(filePath(shard, index));
+            index += 1;
+        }
+        std.fs.remove(shardPath(shard));
+        shard += 1;
+    }
+    std.fs.remove(workRoot());
+    assert(!std.fs.exists(workRoot()), "the work tree is removed");
+
+    println("integration-file-indexer=ok");
+    return 0;
+}

@@ -1,10 +1,12 @@
 #include "package_manager.h"
 #include "plugin_api.h"
 #include "syntax_plugins.h"
+#include "plugin_loader.h"
 
 #include <cassert>
 #include <fstream>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 
 using namespace Absolute;
@@ -164,13 +166,48 @@ void TestP3IdeDebuggerAndIsolation() {
     std::cout << "[UNIT TEST] P3 IDE, Debugger, and Permission policies unit tests passed.\n";
 }
 
-int main() {
+// A plugin's registrations must not outlive the library they point into.
+// RegisteredRule keeps the expand callback as a raw function pointer into the
+// plugin image, so a rule left behind after dlclose is a call into unmapped
+// code. The reload path makes the same leftover visible without dereferencing
+// anything: re-registering a keyword the registry still holds is refused.
+void TestPluginUnloadClearsRegistrations(const std::string& pluginPath) {
+    if (pluginPath.empty()) {
+        std::cout << "[UNIT TEST] Plugin unload test skipped (no plugin path).\n";
+        return;
+    }
+    // Checked with explicit throws rather than assert(): this file is built in
+    // Release for the CI matrix, where NDEBUG turns every assert into a no-op.
+    auto require = [](bool condition, const char* what) {
+        if (!condition) throw std::runtime_error(std::string("plugin unload: ") + what);
+    };
+
+    ResetSyntaxPlugins();
+    {
+        PluginManager manager;
+        manager.Load(pluginPath);
+        require(IsSyntaxPluginKeyword("unless"), "keyword missing after load");
+
+        manager.Unload("absolute.unless");
+        require(!IsSyntaxPluginKeyword("unless"),
+            "keyword still claimed after unload, so the rule outlived its library");
+
+        manager.Load(pluginPath);
+        require(IsSyntaxPluginKeyword("unless"), "keyword missing after reload");
+    }
+    ResetSyntaxPlugins();
+    std::cout << "[UNIT TEST] Plugin unload/reload registration tests passed.\n";
+}
+
+int main(int argc, char** argv) {
+    const std::string pluginPath = argc > 1 ? argv[1] : "";
     try {
         TestSemVerEngine();
         TestPluginCAbiLayout();
         TestSourceMapperStructures();
         TestP2ArtifactsAndBackends();
         TestP3IdeDebuggerAndIsolation();
+        TestPluginUnloadClearsRegistrations(pluginPath);
         std::cout << "All P0/P1/P2/P3 C++ plugin API unit tests passed successfully!\n";
         return 0;
     } catch (const std::exception& ex) {

@@ -1,0 +1,11 @@
+// The most negative value divided by -1 must not produce a number.
+//
+// This program exits with a diagnostic rather than returning; the test asserts
+// on that message. Written as its own file because the process ends here.
+
+int32 main() {
+    int32 minimum = -2147483648;
+    int32 minusOne = -1;
+    println(minimum / minusOne);
+    return 0;
+}

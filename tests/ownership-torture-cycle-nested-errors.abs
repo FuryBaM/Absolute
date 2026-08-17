@@ -1,0 +1,28 @@
+// P4 ownership torture: a strong back-edge two levels below its root.
+//
+// Each cycle shape lives in its own file on purpose. These tests pass when
+// compilation fails, so putting several shapes in one file lets a shape that
+// stopped being rejected hide behind its neighbours — which is exactly what
+// happened while writing them: the mutual-ownership shape compiled cleanly and
+// was masked by the other two until they were separated.
+//
+// tests/ownership-p0-cycles.abs pins the direct form, `root.child = move(root)`.
+// Here the assignment target sits two levels down, so the back-edge is not
+// syntactically adjacent to the name it closes onto.
+
+class Node {
+    public int32 id;
+    public Node* child;
+
+    public Node(int32 identifier) {
+        id = identifier;
+        child = null;
+    }
+}
+
+int32 main() {
+    Node* root = new Node(1);
+    root.child = new Node(2);
+    root.child.child = move(root);
+    return 0;
+}

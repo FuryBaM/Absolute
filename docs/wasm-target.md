@@ -37,6 +37,19 @@ absolutec tests\wasm-export-only.abs --target wasm32-unknown-unknown --build-exe
 | pthread / wasi-threads ABI and TLS | Not available; use Absolute task workers |
 | `std.process.run`, dynamic libraries, UDP | Not available in sandboxed wasm |
 | Blocking `std.time.sleep` in a reactor | Cooperative no-op; schedule in the host |
+| Blocking channel send/receive | Non-blocking; see below |
+| Standard input (`getchar`, `fgetc`, `getc`) | Always end-of-input (-1) |
+
+### Channels do not block here
+
+A wasm instance cannot synchronously wait for another worker instance, so
+`absolute_channel_send` never waits for room and `absolute_channel_receive`
+never waits for a value. A send to a full channel reports failure; a receive
+from an empty one yields zero, which a program cannot tell from a real zero.
+Use `absolute_channel_receive_checked`, which reports whether a value was taken,
+whenever the distinction matters -- and expect a producer/consumer program
+written against the native blocking semantics to lose messages here rather than
+to wait for them.
 
 ## Runtime and linking
 

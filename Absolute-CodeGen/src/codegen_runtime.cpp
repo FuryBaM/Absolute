@@ -600,6 +600,8 @@ namespace Absolute {
                     ? "Array index out of bounds"
                     : name == "division.by.zero"
                         ? "Division by zero"
+                        : name == "division.overflow"
+                        ? "Division overflows: the most negative value divided by -1"
                         : name.ends_with(".requires.owner")
                         ? "Ownership operation requires an owner argument"
                         : "Runtime safety check failed";
@@ -753,6 +755,27 @@ namespace Absolute {
         else if (leftTypeName == "int64" || rightTypeName == "int64" ||
             leftTypeName == "uint64" || rightTypeName == "uint64") commonTypeName = "int64";
         else if (!leftTypeName.empty() || !rightTypeName.empty()) commonTypeName = "int32";
+
+        // An LLVM integer type carries no signedness, so the instruction has to
+        // be chosen from the declared types. Without this every unsigned value
+        // was divided, compared and right-shifted as a signed one, which is not
+        // an edge case: 4294967295u > 1u came out false, (uint8)200 > 100 came
+        // out false, and 4294967295u / 2 came out zero.
+        //
+        // The same ladder the analyzer uses, so the two agree on the result
+        // type: int64 covers every uint32 and keeps the operation signed,
+        // nothing signed covers uint64, and at equal rank unsigned wins.
+        if (!commonTypeName.empty() && commonTypeName != "double" &&
+            commonTypeName != "float") {
+            if (leftTypeName == "uint64" || rightTypeName == "uint64")
+                commonTypeName = "uint64";
+            else if (leftTypeName == "int64" || rightTypeName == "int64")
+                commonTypeName = "int64";
+            else if (leftTypeName == "uint32" || rightTypeName == "uint32" ||
+                leftTypeName.starts_with("uint") || rightTypeName.starts_with("uint"))
+                commonTypeName = "uint32";
+        }
+        const bool unsignedOperation = commonTypeName.starts_with("uint");
         left = Coerce(left, type, leftTypeName, commonTypeName);
         right = Coerce(right, type, rightTypeName, commonTypeName);
         const bool floating = type->isFloatingPointTy();
@@ -774,27 +797,70 @@ namespace Absolute {
                     builder.CreateICmpNE(right, llvm::ConstantInt::get(type, 0),
                         "divisor.not.zero"),
                     "division.by.zero");
+
+                // The other undefined case: the most negative value divided by
+                // -1 has no representable quotient, so LLVM leaves it undefined
+                // and the result was observably garbage rather than a wrap.
+                // Unsigned division has no such case, so the guard is only
+                // emitted where it can happen.
+                if (!unsignedOperation && type->isIntegerTy()) {
+                    llvm::Constant* mostNegative = llvm::ConstantInt::get(
+                        type, llvm::APInt::getSignedMinValue(
+                            type->getIntegerBitWidth()));
+                    llvm::Value* leftIsMin = builder.CreateICmpEQ(
+                        left, mostNegative, "dividend.is.min");
+                    llvm::Value* rightIsMinusOne = builder.CreateICmpEQ(
+                        right, llvm::ConstantInt::getSigned(type, -1),
+                        "divisor.is.minus.one");
+                    EmitOrExit(
+                        builder.CreateNot(
+                            builder.CreateAnd(leftIsMin, rightIsMinusOne,
+                                "division.overflows"),
+                            "division.in.range"),
+                        "division.overflow");
+                }
             }
-            if (op == "/")
-                return floating ? builder.CreateFDiv(left, right, "div")
+            if (op == "/") {
+                if (floating) return builder.CreateFDiv(left, right, "div");
+                return unsignedOperation ? builder.CreateUDiv(left, right, "div")
                     : builder.CreateSDiv(left, right, "div");
-            return floating ? builder.CreateFRem(left, right, "rem")
+            }
+            if (floating) return builder.CreateFRem(left, right, "rem");
+            return unsignedOperation ? builder.CreateURem(left, right, "rem")
                 : builder.CreateSRem(left, right, "rem");
         }
 
         if (op == "==") return floating ? builder.CreateFCmpOEQ(left, right, "equal") : builder.CreateICmpEQ(left, right, "equal");
         if (op == "!=") return floating ? builder.CreateFCmpONE(left, right, "not.equal") : builder.CreateICmpNE(left, right, "not.equal");
-        if (op == "<") return floating ? builder.CreateFCmpOLT(left, right, "less") : builder.CreateICmpSLT(left, right, "less");
-        if (op == "<=") return floating ? builder.CreateFCmpOLE(left, right, "less.equal") : builder.CreateICmpSLE(left, right, "less.equal");
-        if (op == ">") return floating ? builder.CreateFCmpOGT(left, right, "greater") : builder.CreateICmpSGT(left, right, "greater");
-        if (op == ">=") return floating ? builder.CreateFCmpOGE(left, right, "greater.equal") : builder.CreateICmpSGE(left, right, "greater.equal");
+        if (op == "<") {
+            if (floating) return builder.CreateFCmpOLT(left, right, "less");
+            return unsignedOperation ? builder.CreateICmpULT(left, right, "less")
+                : builder.CreateICmpSLT(left, right, "less");
+        }
+        if (op == "<=") {
+            if (floating) return builder.CreateFCmpOLE(left, right, "less.equal");
+            return unsignedOperation ? builder.CreateICmpULE(left, right, "less.equal")
+                : builder.CreateICmpSLE(left, right, "less.equal");
+        }
+        if (op == ">") {
+            if (floating) return builder.CreateFCmpOGT(left, right, "greater");
+            return unsignedOperation ? builder.CreateICmpUGT(left, right, "greater")
+                : builder.CreateICmpSGT(left, right, "greater");
+        }
+        if (op == ">=") {
+            if (floating) return builder.CreateFCmpOGE(left, right, "greater.equal");
+            return unsignedOperation ? builder.CreateICmpUGE(left, right, "greater.equal")
+                : builder.CreateICmpSGE(left, right, "greater.equal");
+        }
 
         if (!type->isIntegerTy()) Fail("bitwise operator requires integer operands");
         if (op == "&") return builder.CreateAnd(left, right, "bit.and");
         if (op == "|") return builder.CreateOr(left, right, "bit.or");
         if (op == "^") return builder.CreateXor(left, right, "bit.xor");
         if (op == "<<") return builder.CreateShl(left, right, "shift.left");
-        if (op == ">>") return builder.CreateAShr(left, right, "shift.right");
+        if (op == ">>")
+            return unsignedOperation ? builder.CreateLShr(left, right, "shift.right")
+                : builder.CreateAShr(left, right, "shift.right");
         Fail("unsupported binary operator '" + op + "'");
     }
 
@@ -802,6 +868,14 @@ namespace Absolute {
         if (type->isFloatingPointTy()) return llvm::ConstantFP::get(type, 1.0);
         if (type->isIntegerTy()) return llvm::ConstantInt::get(type, 1);
         Fail("increment requires a numeric operand");
+    }
+
+    llvm::Value* CodeGenerator::Impl::PointerOffset(llvm::Value* pointer,
+        const std::string& pointerTypeName, llvm::Value* index, bool subtract) {
+        llvm::Value* scaled = Coerce(index, builder.getInt64Ty());
+        if (subtract) scaled = builder.CreateNeg(scaled, "pointer.negative.offset");
+        return builder.CreateGEP(TypeFromName(PointerPointeeName(pointerTypeName)),
+            pointer, scaled, "pointer.offset");
     }
 
     void CodeGenerator::Impl::BranchIfNeeded(llvm::BasicBlock* target) {
