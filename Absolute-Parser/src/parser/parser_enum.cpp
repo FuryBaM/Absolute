@@ -5,7 +5,7 @@ namespace Absolute {
     std::unique_ptr<EnumDeclStmt> Parser::ParseEnumDecl() {
         std::vector<Token> modifiers = this->modifiers;
         std::vector<Attribute> attributes = this->attributes;
-        std::vector<std::string> members;
+        std::vector<EnumMemberDecl> members;
 
         Consume(TokenType::KEYWORD, "enum");
         Token* name = Consume(TokenType::IDENTIFIER);
@@ -23,7 +23,55 @@ namespace Absolute {
             }
 
             Token* member = Consume(TokenType::IDENTIFIER);
-            members.push_back(member->value);
+            EnumMemberDecl declared;
+            declared.name = member->value;
+            declared.sourceFile = sourceFile;
+            declared.line = member->line;
+            declared.column = member->column;
+
+            // `Name = 404`, with an optional sign. A number and nothing else:
+            // an expression here would need constant folding, and the member a
+            // program means to name is always written out.
+            if (CurrentToken()->value == "=" && CurrentToken()->type == TokenType::OPERATOR) {
+                Consume(TokenType::OPERATOR, "=");
+                bool negative = false;
+                if (CurrentToken()->value == "-" || CurrentToken()->value == "+") {
+                    negative = CurrentToken()->value == "-";
+                    Consume(TokenType::OPERATOR);
+                }
+                Token* number = CurrentToken();
+                if (!number || number->type != TokenType::NUMBER ||
+                    IsFloatingLiteral(number->value)) {
+                    ReportSyntaxError(number, "Enum member '" + declared.name +
+                        "' must be given an integer, but found '" +
+                        (number ? number->value : std::string("end of file")) + "'");
+                    throw std::runtime_error("Enum member must be given an integer");
+                }
+                Consume(TokenType::NUMBER);
+                // The magnitude is checked against the enum's width by the
+                // analyzer, where the message carries the file and the line;
+                // only a value no 64-bit integer can hold is caught here.
+                try {
+                    const unsigned long long magnitude = std::stoull(number->value);
+                    const unsigned long long limit = negative
+                        ? 9223372036854775808ull : 9223372036854775807ull;
+                    if (magnitude > limit) throw std::out_of_range(number->value);
+                    // Through the unsigned value, so the minimum of the width
+                    // -- whose magnitude a signed integer cannot hold -- is
+                    // converted rather than overflowed.
+                    declared.value = negative
+                        ? static_cast<long long>(~magnitude + 1ull)
+                        : static_cast<long long>(magnitude);
+                }
+                catch (const std::exception&) {
+                    ReportSyntaxError(number, "Enum member '" + declared.name +
+                        "' is given " + (negative ? "-" : "") + number->value +
+                        ", which no integer can hold");
+                    throw std::runtime_error("Enum member value is out of range");
+                }
+                declared.hasValue = true;
+            }
+            members.push_back(std::move(declared));
 
             expectComma = true; // После идентификатора теперь ожидаем запятую
         }

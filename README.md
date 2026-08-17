@@ -272,6 +272,24 @@ enum matches require every member, and integer/character matches require a
 branch handles values not listed by a case. Case labels must be compile-time
 boolean, integer, character, or enum constants, and duplicates are rejected.
 
+A member may be given the number it stands for, which is what a C header or a
+protocol fixes; a member without one continues from its predecessor, and the
+first starts at zero. An enum is 32 bits wide, so a member outside that range
+is refused, and two members may not share a number — `match` names every
+member, and two labels of equal value cannot both be reached.
+
+```absolute
+enum Status { Ok = 200, Moved = 301, NotFound = 404 }
+enum Counting { First = 100, Second, Third }   // 100, 101, 102
+
+int32 code = Status.NotFound as int32;         // 404
+```
+
+`as` reads the number out of an enum. It does not go the other way: an integer
+does not convert to an enum, so every value of an enum type is a member some
+case names, which is what makes an exhaustive `match` a guarantee rather than a
+convention.
+
 ## Error model
 
 Absolute uses typed, unchecked exceptions for exceptional failures. All thrown

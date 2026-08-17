@@ -620,17 +620,53 @@ namespace Absolute {
         if (phase != Phase::CollectDeclarations) return;
         TypeDefinition& definition = types[typeName];
         definition.enumMembers.clear();
+        definition.enumValues.clear();
         std::unordered_set<std::string> members;
-        for (const std::string& member : stmt->members) {
-            if (!members.insert(member).second) {
-                Report("enum '" + typeName + "' contains duplicate member '" + member + "'",
+        // A member without a number takes the one after its predecessor, and
+        // the first takes zero -- the rule every language with this notation
+        // uses, and the one that keeps an enum written without any numbers
+        // exactly as it was.
+        long long next = 0;
+        std::unordered_map<long long, std::string> taken;
+        for (const EnumMemberDecl& member : stmt->members) {
+            // The member's own line, rather than the declaration's, so a long
+            // enum says which entry is meant.
+            const Token where(TokenType::IDENTIFIER, member.name, member.line, member.column);
+            if (!members.insert(member.name).second) {
+                ReportAt(&where,
+                    "enum '" + typeName + "' contains duplicate member '" + member.name + "'",
                     "E_DUPLICATE_ENUM_MEMBER");
                 continue;
             }
-            definition.enumMembers.push_back(member);
-            const std::string qualifiedMember = typeName + "." + member;
+            const long long value = member.hasValue ? member.value : next;
+            next = value + 1;
+            // An enum is an i32 wherever it is stored and at the C boundary
+            // (docs/native-c-abi.md), so a member that does not fit there has
+            // no representation to be given.
+            if (value < -2147483648LL || value > 2147483647LL) {
+                ReportAt(&where,
+                    "enum member '" + typeName + "." + member.name + "' is given " +
+                    std::to_string(value) + ", which does not fit in the 32 bits an enum has",
+                    "E_ENUM_VALUE_OUT_OF_RANGE");
+                continue;
+            }
+            // Two members with one value would make a match unsatisfiable --
+            // it must name every member, and two labels of equal value cannot
+            // both be reached. Refused here rather than left to the backend,
+            // which would emit a switch with a repeated case.
+            if (const auto existing = taken.find(value); existing != taken.end()) {
+                ReportAt(&where,
+                    "enum members '" + typeName + "." + existing->second + "' and '" +
+                    typeName + "." + member.name + "' are both " + std::to_string(value) +
+                    "; each member needs its own value", "E_DUPLICATE_ENUM_VALUE");
+                continue;
+            }
+            taken.emplace(value, member.name);
+            definition.enumMembers.push_back(member.name);
+            definition.enumValues.push_back(static_cast<std::int32_t>(value));
+            const std::string qualifiedMember = typeName + "." + member.name;
             if (!table.Declare(SymbolKind::Variable, qualifiedMember, typeName))
-                Report("enum member '" + qualifiedMember + "' is already declared",
+                ReportAt(&where, "enum member '" + qualifiedMember + "' is already declared",
                     "E_DUPLICATE_ENUM_MEMBER");
         }
     }

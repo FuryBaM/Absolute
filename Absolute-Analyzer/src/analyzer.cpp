@@ -855,6 +855,11 @@ namespace Absolute {
         return found != types.end() && found->second.kind == TypeKind::Enum;
     }
 
+    bool Analyzer::IsEnumType(const std::string& name) const {
+        const auto found = types.find(name);
+        return found != types.end() && found->second.kind == TypeKind::Enum;
+    }
+
     bool Analyzer::IsDerivedFrom(const std::string& type, const std::string& base) const {
         if (type == base) return true;
         std::string definitionName = type;

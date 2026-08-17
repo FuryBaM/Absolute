@@ -337,6 +337,41 @@ out clean: complement at each width, mixed-signedness `&`, `|`, `^`, and the
 signed/unsigned split in `>>`. See `tests/shift-boundaries.abs`,
 `tests/shift-range-errors.abs` and `tests/shift-amount-runtime.abs`.
 
+## 10. Beyond the list: an enum that could not carry a number
+
+Found by probing enums for wrong answers and finding none -- everything an enum
+could not do, it refused loudly. But one of those refusals was `enum Status {
+NotFound = 404 }`, a syntax error, and an enum crosses the C boundary as an i32
+(docs/native-c-abi.md) whose number is exactly what the other side reads. A
+member was numbered by position and nothing else, so an enum could not stand
+for an HTTP status, an errno, or any C constant, and the number was not
+readable from Absolute either.
+
+Members can be given numbers now, a member without one continues from its
+predecessor, and `as` reads the number out. Three refusals came with it, each
+for a reason rather than for want of implementation:
+
+- **Two members with one number.** `match` must name every member, and two
+  labels of equal value cannot both be reached, so the enum could not be
+  matched at all -- and the backend would have been handed a switch with a
+  repeated case.
+- **A number outside 32 bits**, which the width has no room for.
+- **An integer converted to an enum.** That would produce values no member
+  stands for, and every exhaustive `match` in the language rests on that being
+  impossible. The conversion stays one-way on purpose.
+
+See `tests/enum-values.abs`, `tests/enum-value-errors.abs` and
+`tests/enum-value-syntax-errors.abs`.
+
+**Defer: swept and clean.** Checked alongside: a defer registered in a loop
+body runs at the end of each iteration, an inner block's defers run before the
+enclosing scope's, a defer in a branch that is not taken does not run, a return
+value is read before the defers run, and a defer inside a switch case runs when
+the case does. `defer delete p` inside a loop does not satisfy the deletion of
+an owner declared outside it, which is the conservative answer -- the loop may
+run zero times. `tests/defer.abs` already pins LIFO order, `break`, `continue`,
+exception propagation and a throwing deferred body.
+
 **Interfaces and virtual dispatch: swept and clean.** Checked before the
 shifts, and recorded here because the negative result is worth as much as a
 find: an interface default method calling the contract it belongs to, a class
@@ -347,7 +382,7 @@ satisfying two interfaces that declare the same method, defaults inherited
 through a diamond, and a class override winning over a default that another
 default calls.
 
-## 10. The method that worked
+## 11. The method that worked
 
 Worth repeating, because reading code did not find any of this.
 
@@ -365,7 +400,7 @@ by another route. The compound-assignment defect was found that way, not by
 sweeping again: `a = a / b` had been fixed while `a /= b` still used an untyped
 overload.
 
-## 11. Environment note
+## 12. Environment note
 
 During this work the container repeatedly reverted the working tree to an older
 commit and deleted the build directory. Pushed commits were never affected, but

@@ -226,6 +226,9 @@ namespace Absolute {
             std::vector<MemberSignature> constructors;
             std::vector<std::string> parents;
             std::vector<std::string> enumMembers;
+            // Parallel to enumMembers: the number each one stands for, which a
+            // member may be given rather than take from its position.
+            std::vector<std::int32_t> enumValues;
             TypeKind kind = TypeKind::Other;
             std::vector<std::string> genericParameters;
         };
@@ -488,6 +491,7 @@ namespace Absolute {
         void CheckShiftAmount(
             Expression* amount, const std::string& resultType, const std::string& op);
         bool IsAssignable(const std::string& target, const std::string& source) const;
+        bool IsEnumType(const std::string& name) const;
         bool IsDerivedFrom(const std::string& type, const std::string& base) const;
         AccessLevel DeclaredAccess(const Statement& statement) const;
         void ValidateAccessModifiers(const Statement& statement,

@@ -909,6 +909,24 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/negated-literal-typing.abs"
     )
     add_test(
+        NAME absolute.enum-values-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/enum-values.abs"
+    )
+    add_test(
+        NAME absolute.enum-value-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/enum-value-errors.abs"
+    )
+    set_tests_properties(absolute.enum-value-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "each member needs its own value"
+    )
+    add_test(
+        NAME absolute.enum-value-syntax-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/enum-value-syntax-errors.abs"
+    )
+    set_tests_properties(absolute.enum-value-syntax-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "must be given an integer"
+    )
+    add_test(
         NAME absolute.shift-boundaries-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/shift-boundaries.abs"
     )
@@ -4510,6 +4528,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-hostile-input PROPERTIES
             FIXTURES_REQUIRED absolute-hostile-input-executable
             PASS_REGULAR_EXPRESSION "hostile-input=ok"
+        )
+        add_test(
+            NAME absolute.build-enum-values
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/enum-values.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/enum-values-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-enum-values PROPERTIES
+            FIXTURES_SETUP absolute-enum-values-executable
+        )
+        add_test(NAME absolute.run-enum-values
+            COMMAND "${CMAKE_BINARY_DIR}/enum-values-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-enum-values PROPERTIES
+            FIXTURES_REQUIRED absolute-enum-values-executable
+            PASS_REGULAR_EXPRESSION "enum-values=ok"
         )
         add_test(
             NAME absolute.build-shift-boundaries

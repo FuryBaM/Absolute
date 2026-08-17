@@ -1,0 +1,16 @@
+// What may follow the '=' in an enum member.
+//
+// An integer, with an optional sign, and nothing else. An expression would
+// need constant folding in the parser, and the member a program means to name
+// is always written out; a fraction has no meaning for a 32-bit member. The
+// refusal names the member so a long enum says which entry is meant.
+//
+// The parse fails, so nothing after this point is reached.
+
+enum Fractional {
+    Half = 1.5
+}
+
+int32 main() {
+    return 0;
+}

@@ -395,9 +395,15 @@ namespace Absolute {
                 if (classes.contains(name) || structs.contains(name) || interfaces.contains(name) ||
                     !enumTypes.insert(name).second)
                     Fail("duplicate type '" + name + "'");
-                for (size_t index = 0; index < enumDeclaration->members.size(); ++index) {
-                    const std::string member = name + "." + enumDeclaration->members[index];
-                    if (!enumConstants.emplace(member, static_cast<std::int32_t>(index)).second)
+                // A member stands for the number written after it, or for one
+                // past its predecessor. The analyzer has already refused a
+                // value that does not fit an i32 and two members sharing one.
+                long long next = 0;
+                for (const EnumMemberDecl& declared : enumDeclaration->members) {
+                    const std::string member = name + "." + declared.name;
+                    const long long value = declared.hasValue ? declared.value : next;
+                    next = value + 1;
+                    if (!enumConstants.emplace(member, static_cast<std::int32_t>(value)).second)
                         Fail("duplicate enum member '" + member + "'");
                 }
             }

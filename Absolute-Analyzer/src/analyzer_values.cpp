@@ -620,7 +620,15 @@ namespace Absolute {
 
         const bool pointerToInt = IsInteger(target) && IsRawPointerType(base.type);
         const bool intToPointer = IsRawPointerType(target) && IsInteger(base.type);
-        if (!IsAssignable(target, base.type) && !(IsNumeric(target) && IsNumeric(base.type)) && !pointerToInt && !intToPointer)
+        // A member may be given a number that means something outside the
+        // program -- an HTTP status, a C constant -- so the number has to be
+        // readable. Only this direction: making an enum out of an arbitrary
+        // integer would produce values no member stands for, and `match` is
+        // exhaustive precisely because that cannot happen.
+        const bool enumToInt = IsInteger(target) && IsEnumType(base.type);
+        if (!IsAssignable(target, base.type) &&
+            !(IsNumeric(target) && IsNumeric(base.type)) &&
+            !pointerToInt && !intToPointer && !enumToInt)
             Report("cannot cast '" + base.type + "' to '" + target + "'");
         Save(expr, {InvalidSymbolId, target, false});
     }
