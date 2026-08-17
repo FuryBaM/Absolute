@@ -41,6 +41,47 @@ An integer literal takes the narrowest type that holds it — `int32`, else
 `int64`, else `uint64` — which is also what decides an inferred generic
 parameter: `identity(10000000000)` instantiates with `int64`.
 
+## Floating point to integer
+
+A conversion from `float` or `double` to an integer type truncates toward zero,
+and saturates when the value does not fit: anything past an end clamps to that
+end, and `NaN` becomes zero. The same rule holds on every target, so a native
+build and a wasm build give the same answer.
+
+```absolute
+double huge = 1e18;
+int32 clamped = huge as int32;      // 2147483647
+int32 negative = -1e18 as int32;    // -2147483648
+int32 fromNan = (0.0 / 0.0) as int32;  // 0
+uint32 fromNegative = -1.0 as uint32;  // 0
+```
+
+Saturation is a deliberate choice over the C rule, where a value that does not
+fit is undefined: that produced a different number on each build, and a value
+that broke the formatter it was passed to.
+
+`as` binds like a suffix, tighter than a prefix `-`, so `-1.0 as uint32` is the
+negation of a converted `1` and not the conversion of `-1`. The two readings
+agree everywhere except an unsigned target, where one saturates to zero and the
+other wraps to the maximum; parenthesise when the distinction matters.
+
+```absolute
+uint32 negated = -1.0 as uint32;     // 4294967295: -(1.0 as uint32)
+uint32 converted = (-1.0) as uint32; // 0: the negative value saturates
+```
+
+## Floating point literals
+
+A literal is a `double`. Subnormal values are accepted, with the precision a
+double gives them; a literal that keeps nothing of what was written — one that
+overflows to infinity, or underflows all the way to zero — is refused with
+`E_LITERAL_OUT_OF_RANGE`.
+
+```absolute
+double small = 1e-308;   // accepted, subnormal
+double lost = 1e400;     // refused: larger than a double can hold
+```
+
 
 ## References and null
 

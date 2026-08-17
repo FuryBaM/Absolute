@@ -1,5 +1,9 @@
 #include "analyzer_internal.h"
 
+#include <cerrno>
+#include <cmath>
+#include <cstdlib>
+
 namespace Absolute {
     void Analyzer::Visit(BinaryExpr* expr) {
         const Result left = Evaluate(expr->left.get());
@@ -165,6 +169,21 @@ namespace Absolute {
 
     void Analyzer::Visit(NumberLiteralExpr* expr) {
         if (IsFloatingLiteral(expr->value)) {
+            // Reported here rather than only in the backend so the message
+            // carries a file, a line and a column. A subnormal is a value a
+            // double holds and is accepted; only a literal that keeps nothing
+            // of what was written is refused.
+            errno = 0;
+            char* end = nullptr;
+            const double parsed = std::strtod(expr->value.c_str(), &end);
+            if (end && *end == '\0' && errno == ERANGE) {
+                if (std::isinf(parsed))
+                    Report("floating literal " + expr->value +
+                        " is larger than a double can hold", "E_LITERAL_OUT_OF_RANGE");
+                else if (parsed == 0.0)
+                    Report("floating literal " + expr->value +
+                        " is smaller than a double can hold", "E_LITERAL_OUT_OF_RANGE");
+            }
             Save(expr, {InvalidSymbolId, "double", false});
             return;
         }
