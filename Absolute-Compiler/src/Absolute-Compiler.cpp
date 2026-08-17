@@ -541,6 +541,31 @@ namespace {
             dynamic_cast<const OpaquePluginStmt*>(&statement);
     }
 
+    // `Handle GLOBAL;` parses as an inline value declaration rather than as a
+    // VarDeclStmt, so the script entry point counts it as executable and, next
+    // to an explicit main, used to reject it as a "top-level executable
+    // statement". That describes the parse, not the problem: the declaration
+    // is not executable, module scope simply holds nothing but primitives with
+    // constant initializers.
+    const InstanceDeclExpr* AsInstanceDeclaration(const Statement& statement) {
+        const auto* single = dynamic_cast<const SingleStatement*>(&statement);
+        return single ? dynamic_cast<const InstanceDeclExpr*>(single->expr.get()) : nullptr;
+    }
+
+    std::string ExpressionName(const Expression* expression) {
+        if (const auto* identifier = dynamic_cast<const IdentifierExpr*>(expression))
+            return identifier->name;
+        if (const auto* userType = dynamic_cast<const UserTypeExpr*>(expression))
+            return ExpressionName(userType->typeExpr.get());
+        return {};
+    }
+
+    std::string SourceLocation(const ASTNode& node) {
+        if (node.sourceFile.empty() || node.line <= 0) return {};
+        return node.sourceFile + ':' + std::to_string(node.line) + ':' +
+            std::to_string(std::max(node.column, 1)) + ": ";
+    }
+
     bool IsExplicitMain(const Statement& statement) {
         const auto* function = dynamic_cast<const FunctionDeclStmt*>(&statement);
         return function && function->name && function->name->value == "main";
@@ -558,6 +583,20 @@ namespace {
             });
         if (!executableTopLevel) return;
         if (explicitMain) {
+            for (const std::unique_ptr<Statement>& statement : statements) {
+                if (!statement || IsHardTopLevelDeclaration(*statement)) continue;
+                const InstanceDeclExpr* declaration = AsInstanceDeclaration(*statement);
+                if (!declaration) continue;
+                const std::string name = ExpressionName(declaration->identifierName.get());
+                const std::string type = ExpressionName(declaration->constructType.get());
+                std::string message = SourceLocation(*declaration) +
+                    "a module-scope declaration must be a primitive with a constant "
+                    "initializer";
+                if (!name.empty() && !type.empty())
+                    message += ", so '" + name + "' of type '" + type + "' cannot be declared here";
+                message += "; declare it inside a function, or make it a constant primitive";
+                throw std::runtime_error(message);
+            }
             throw std::runtime_error(
                 "Top-level executable statements cannot be combined with an explicit main function");
         }

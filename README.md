@@ -161,7 +161,10 @@ declarations into a hidden `int32 main()` and appends `return 0`. Functions,
 types, namespaces, imports, and plugin declarations remain at module scope. An
 explicit `main` keeps the traditional mode; combining it with executable
 top-level statements is a compile-time error instead of creating a second
-entry point. Module-level declarations may still accompany an explicit `main`.
+entry point. Module-level declarations may still accompany an explicit `main`,
+but module scope holds only primitives and primitive arrays with constant
+initializers — see [docs/module-scope.md](docs/module-scope.md) for what is
+allowed there and where everything else belongs.
 
 Create application and library projects:
 

@@ -56,6 +56,9 @@ namespace Absolute {
 	bool IsPostfixUnary(const Token& token);
 	bool IsValidTokenValue(TokenType tokenType, const std::string& value);
 	bool IsLiteral(const TokenType& type);
+	// True when a NUMBER token denotes a floating-point value. The dot is not
+	// the only spelling: `1e-9` has no dot and is not an integer.
+	bool IsFloatingLiteral(const std::string& literal);
 	bool IsEndOfStatement(const Token& token);
 	OperatorCategory GetOperatorCategory(const std::string& op);
 	std::vector<Token> lexer(const std::string& code);

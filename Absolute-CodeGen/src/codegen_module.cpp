@@ -302,7 +302,15 @@ namespace Absolute {
 
     unsigned long long CodeGenerator::Impl::ParseIntegerLiteral(const std::string& text) {
         try {
-            return std::stoull(text);
+            size_t consumed = 0;
+            const unsigned long long value = std::stoull(text, &consumed);
+            // std::stoull stops at the first character it cannot use and
+            // reports success, so a floating literal reaching an integer
+            // constant would come out as its leading digits: 1e3 as 1. Refuse
+            // instead of storing a wrong number.
+            if (consumed != text.size())
+                Fail("integer constant expected, but the literal is '" + text + "'");
+            return value;
         }
         catch (const std::exception&) {
             Fail("integer literal '" + text + "' does not fit in 64 bits");
@@ -344,7 +352,12 @@ namespace Absolute {
                     0ull - ParseIntegerLiteral(number->value), false);
             }
         }
-        Fail("global initializer requires a constant primitive value");
+        // Module storage is emitted once, before anything runs, so its
+        // initializer has to be a value the backend can write into the object
+        // file. Nothing folds constant expressions here, which is why `1 + 2`
+        // is refused as readily as a constructor call.
+        Fail("a module-scope initializer must be a constant literal, not an "
+            "expression evaluated at run time");
     }
 
     void CodeGenerator::Impl::DeclareGlobalArray(VarDeclExpr& expression) {

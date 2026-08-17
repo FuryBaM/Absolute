@@ -25,10 +25,25 @@ no `keep` or `borrow` marker is stored in the object at runtime.
 ## Aggregate destruction
 
 The compiler synthesizes one internal destructor for every class or struct that
-owns resources, directly or through nested fields. Fields are destroyed in
-reverse declaration/layout order. Managed pointees are destroyed recursively,
-then their generation-checked handles are invalidated; array owners are passed
-to `free` and their descriptors are zeroed.
+owns resources, directly or through nested fields. It runs in this order:
+
+1. The user `destroy()` hook of the object itself, if it declares one, then the
+   hook of each base class up the chain. A derived `destroy()` does not replace
+   its base's: both run, most-derived first, so a base still releases what it
+   allocated.
+2. The object's fields, in reverse declaration/layout order.
+
+An owner is therefore torn down before what it owns, which is what lets
+`destroy()` still read and use its own fields. Applied recursively down a chain
+of owning fields, the outermost owner's hook runs first and the innermost last:
+for `root -> mid -> leaf`, the order is `root.destroy()`, `mid.destroy()`,
+`leaf.destroy()`. Within one object the direction is the opposite, because
+later fields may depend on earlier ones: a class declaring `a`, `b`, `c`
+releases `c`, then `b`, then `a`. `tests/destruction-order.abs` pins both.
+
+Managed pointees are destroyed recursively, then their generation-checked
+handles are invalidated; array owners are passed to `free` and their
+descriptors are zeroed.
 
 Vtable slot zero is reserved for the class destructor. Deleting or automatically
 releasing a class through a base-class or interface managed/raw pointer loads
