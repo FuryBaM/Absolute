@@ -154,6 +154,12 @@
 
         llvm::FunctionCallee ErrorSet();
 
+        // Records what an unhandled report can actually say: the thrown
+        // type's name and the Error's own message, both known here and
+        // neither recoverable from the hashed type identifier.
+        llvm::FunctionCallee ErrorSetDetails();
+        void EmitErrorDetails(llvm::Value* handle, const std::string& typeName);
+
         llvm::FunctionCallee ErrorPending();
 
         llvm::FunctionCallee ErrorType();

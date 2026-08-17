@@ -1,0 +1,39 @@
+// What an unhandled exception says on its way out.
+//
+// It used to say this:
+//
+//   Unhandled Absolute exception (type-id=6860172195720241041)
+//
+// The runtime knew only the hashed type identifier, so a program that failed
+// told its user nothing -- not the type, not the message the Error was built
+// with, not even that a message existed. std.text.repeat(text, -3) threw a
+// perfectly clear "repeat count must be non-negative" that nobody could read.
+//
+// The throw site knows both, so it records them: the static type name and the
+// message field every Error carries. A throw through a base-typed owner
+// reports the static type -- `Error` rather than `ParseError` -- because that
+// is what the throw site knows; the message is exact either way.
+//
+// Exits through the unhandled path on purpose, so absolute.run-unhandled-
+// exception-report checks the message on stderr rather than a marker.
+
+class ParseError : Error {
+    public ParseError(string text) {
+        base(text);
+    }
+}
+
+int32 main() {
+    // Caught exceptions are unaffected: the report is only for what escapes.
+    bool caught = false;
+    try {
+        throw new ParseError("caught and handled");
+    }
+    catch (ParseError* error) {
+        caught = true;
+    }
+    assert(caught, "an ordinary catch still runs");
+
+    println("unhandled-exception-report=reached");
+    throw new ParseError("source is empty");
+}

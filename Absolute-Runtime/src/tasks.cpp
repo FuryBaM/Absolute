@@ -34,6 +34,9 @@ extern "C" bool absolute_error_pending();
 extern "C" std::uint64_t absolute_error_type();
 extern "C" std::uint64_t absolute_error_take();
 extern "C" void absolute_error_set(std::uint64_t handle, std::uint64_t type);
+extern "C" void absolute_error_set_details(const char* typeName, const char* message);
+extern "C" const char* absolute_error_type_name();
+extern "C" const char* absolute_error_message();
 extern "C" void absolute_managed_destroy(std::uint64_t handle);
 extern "C" void absolute_capsule_destroy(void* capsule);
 extern "C" bool absolute_channel_receive_checked(void* channel, std::int64_t* value);
@@ -131,6 +134,10 @@ namespace {
         std::vector<Task*> completionWaiters;
         std::uint64_t errorHandle = 0;
         std::uint64_t errorType = 0;
+        // The error state is thread-local and the awaiting thread is not
+        // the one that threw, so the description travels with the task.
+        std::string errorTypeName;
+        std::string errorMessage;
         TaskState state = TaskState::Pending;
         std::shared_ptr<TaskControl> control =
             std::make_shared<TaskControl>();
@@ -564,6 +571,8 @@ namespace {
                 task->entry(task->context);
                 if (absolute_error_pending()) {
                     task->errorType = absolute_error_type();
+                    task->errorTypeName = absolute_error_type_name();
+                    task->errorMessage = absolute_error_message();
                     task->errorHandle = absolute_error_take();
                 }
             }
@@ -1046,8 +1055,10 @@ extern "C" void* absolute_task_await(void* handle) {
     Task* task = static_cast<Task*>(handle);
     Wait(*task);
     void* context = task->context;
-    if (task->errorHandle)
+    if (task->errorHandle) {
+        absolute_error_set_details(task->errorTypeName.c_str(), task->errorMessage.c_str());
         absolute_error_set(task->errorHandle, task->errorType);
+    }
     delete task;
     return context;
 }

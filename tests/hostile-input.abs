@@ -1,0 +1,109 @@
+// Standard library calls with input chosen to break them.
+//
+// The rule this file pins is one rule: a library given input it cannot use
+// reports an error, and never takes the process down with it. Two calls broke
+// it, both by letting a C++ exception escape into generated code that has no
+// handler for it:
+//
+//   - std.json.parse on a document containing 1e-308, through std::stod
+//     (tests/std-json-edges.abs covers the parser in detail);
+//   - std.fs.readText on a directory, which opens as a stream and then throws
+//     std::ios_base::failure out of the read.
+//
+// Everything else already threw an ordinary Error -- but nobody could read it
+// until the unhandled report learned to print messages
+// (tests/unhandled-exception-report.abs).
+
+import "../std/string.abs";
+import "../std/encoding.abs";
+import "../std/datetime.abs";
+import "../std/fs.abs";
+import "../std/json.abs";
+
+int32 main() {
+    int32 reported = 0;
+
+    // Text: out-of-range indices answer with a value, a negative count throws.
+    assert(std.text.substring("abc", 10, 5) == "", "a start past the end is empty");
+    assert(std.text.substring("abc", -1, -1) == "", "negative bounds are empty");
+    assert(std.text.codePointAt("abc", 99) == -1, "an index past the end reports -1");
+    assert(std.text.codePointAt("abc", -1) == -1, "a negative index reports -1");
+    assert(std.text.parseInt("not a number") == 0, "unparseable text is zero");
+    assert(std.text.parseInt("99999999999999999999") == 0, "an unrepresentable number is zero");
+    try {
+        string ignored = std.text.repeat("ab", -3);
+        assert(false, "a negative repeat count must be refused");
+    }
+    catch (Error* error) {
+        reported = reported + 1;
+    }
+
+    // Encoding: malformed input is refused, not decoded into rubbish.
+    try {
+        uint8[] ignored = std.encoding.hexDecode("abc");
+        assert(false, "an odd hex length must be refused");
+    }
+    catch (Error* error) {
+        reported = reported + 1;
+    }
+    try {
+        uint8[] ignored = std.encoding.hexDecode("zz");
+        assert(false, "a non-hex digit must be refused");
+    }
+    catch (Error* error) {
+        reported = reported + 1;
+    }
+    try {
+        uint8[] ignored = std.encoding.base64Decode("!!!!");
+        assert(false, "a non-Base64 character must be refused");
+    }
+    catch (Error* error) {
+        reported = reported + 1;
+    }
+
+    // Dates: garbage and out-of-range components are refused.
+    try {
+        DateTime ignored = std.datetime.parseIso("not a date");
+        assert(false, "unparseable text must be refused");
+    }
+    catch (Error* error) {
+        reported = reported + 1;
+    }
+    try {
+        DateTime ignored = std.datetime.parseIso("2026-13-99T99:99:99Z");
+        assert(false, "an impossible month must be refused");
+    }
+    catch (Error* error) {
+        reported = reported + 1;
+    }
+
+    // Filesystem: a missing path, and a directory where a file is expected.
+    try {
+        string ignored = std.fs.readText("/nonexistent/path/file.txt");
+        assert(false, "a missing file must be refused");
+    }
+    catch (Error* error) {
+        reported = reported + 1;
+    }
+    try {
+        string ignored = std.fs.readText(".");
+        assert(false, "reading a directory must be refused, not fatal");
+    }
+    catch (Error* error) {
+        reported = reported + 1;
+    }
+    assert(!std.fs.exists(""), "an empty path exists nowhere");
+
+    // JSON: numbers at the edges parse, malformed escapes come back as null.
+    std.json.JsonValue* subnormal = std.json.parse("{\"v\":1e-308}");
+    assert(subnormal != null, "a subnormal number does not abort the parser");
+    std.json.JsonValue* badEscape = std.json.parse("{\"v\":\"\\uZZZZ\"}");
+    assert(badEscape == null, "a malformed escape does not abort the parser");
+    // Both results are bound on purpose: an owner produced inside a larger
+    // expression is still lost, which docs/known-defects.md records.
+
+    assert(reported == 8, "every refusal arrived as a catchable Error");
+
+    println("hostile-input=ok");
+    return 0;
+}
