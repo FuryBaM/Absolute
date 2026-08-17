@@ -400,6 +400,13 @@ int putc(int value, void* stream) {
 // from, so a read reports end-of-input rather than failing to link. Programs
 // that read interactively already have to handle EOF; on wasm they take that
 // path immediately. docs/wasm-target.md says so.
+/* Nothing here buffers: the console writes straight through the host import.
+   Defined because generated code calls it before abort(). */
+int fflush(void* stream) {
+    (void)stream;
+    return 0;
+}
+
 int getchar(void) {
     return -1;
 }

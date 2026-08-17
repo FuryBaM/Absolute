@@ -46,6 +46,17 @@ namespace Absolute {
             if (info && info->isMoveResult)
                 Report("move result must be consumed by an assignment, field store, "
                     "argument, or return", "E_MOVE_RESULT_UNUSED", info->symbol);
+            // The same rule for the other ways to produce a managed or raw
+            // owner. A discarded move was already refused while `new Box();`
+            // and a call returning an owner were accepted and leaked -- the
+            // program ran, and the leak checker aborted it at exit with a
+            // handle number and no idea where it came from. Arrays are not
+            // included: the backend already releases an array temporary at the
+            // end of the statement, which tests/array-copy.abs relies on.
+            else if (info && (info->createsManagedOwner || info->createsRawOwner))
+                Report("this expression produces an owner that nothing takes; "
+                    "bind it to a variable, pass it on, return it, or delete it",
+                    "E_OWNING_RESULT_DISCARDED", info->symbol);
         }
     }
 

@@ -913,6 +913,17 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/unhandled-exception-report.abs"
     )
     add_test(
+        NAME absolute.hostile-input-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/hostile-input.abs"
+    )
+    add_test(
+        NAME absolute.discarded-owner-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/discarded-owner-errors.abs"
+    )
+    set_tests_properties(absolute.discarded-owner-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "produces an owner that nothing takes"
+    )
+    add_test(
         NAME absolute.floating-literal-range-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/floating-literal-range-errors.abs"
     )
@@ -4458,6 +4469,20 @@ if(BUILD_TESTING)
         )
         add_test(NAME absolute.run-std-json-edges
             COMMAND "${CMAKE_BINARY_DIR}/std-json-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-hostile-input
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/hostile-input.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/hostile-input-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-hostile-input PROPERTIES
+            FIXTURES_SETUP absolute-hostile-input-executable
+        )
+        add_test(NAME absolute.run-hostile-input
+            COMMAND "${CMAKE_BINARY_DIR}/hostile-input-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-hostile-input PROPERTIES
+            FIXTURES_REQUIRED absolute-hostile-input-executable
+            PASS_REGULAR_EXPRESSION "hostile-input=ok"
+        )
         add_test(
             NAME absolute.build-unhandled-exception-report
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/unhandled-exception-report.abs"

@@ -76,6 +76,15 @@ namespace Absolute {
             }
             format += '\n';
             EmitPrintf(format, values);
+            // abort() does not flush stdio, and stdout is fully buffered
+            // whenever it is not a terminal -- a pipe, a file, a CI log. The
+            // message was written into that buffer and died there, so a failing
+            // assertion looked like a bare exit code 134 everywhere it mattered
+            // most. Flushing every stream first costs one call on a path that
+            // is about to end the process.
+            builder.CreateCall(module->getOrInsertFunction("fflush",
+                llvm::FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy()}, false)),
+                {llvm::ConstantPointerNull::get(builder.getPtrTy())});
             builder.CreateCall(Abort());
             builder.CreateUnreachable();
             builder.SetInsertPoint(success);
