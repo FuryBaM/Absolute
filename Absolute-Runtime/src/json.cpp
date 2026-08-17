@@ -4,6 +4,7 @@
 #include <sstream>
 #include <cstdint>
 #include <cctype>
+#include <cerrno>
 #include <cstdlib>
 
 enum JsonNodeType {
@@ -114,7 +115,22 @@ namespace {
                 while (pos < src.size() && std::isdigit(static_cast<unsigned char>(src[pos]))) pos++;
             }
             std::string numStr = src.substr(start, pos - start);
-            double val = std::stod(numStr);
+            // strtod, not std::stod: stod throws whenever the C library flags
+            // the result out of range, and that includes every subnormal. A
+            // document containing 1e-308 -- a legal JSON number a double holds
+            // exactly -- killed the process with an uncaught std::out_of_range
+            // from inside the parser. Out-of-range input is data, not a
+            // programming error: an overflow keeps the infinity strtod
+            // returns, an underflow keeps its zero, and neither aborts.
+            errno = 0;
+            const char* numBegin = numStr.c_str();
+            char* numEnd = nullptr;
+            double val = std::strtod(numBegin, &numEnd);
+            if (numEnd == numBegin) {
+                error = "Invalid number";
+                return nullptr;
+            }
+            errno = 0;
             auto node = new AbsoluteJsonNode();
             node->type = JSON_NUMBER;
             node->numberValue = val;
@@ -154,8 +170,17 @@ namespace {
                             return nullptr;
                         }
                         std::string hexStr = src.substr(pos, 4);
+                        // Rejected rather than converted: std::stoul throws on
+                        // "\uZZZZ", and the exception left the parser through
+                        // an abort instead of through its own error channel.
+                        if (hexStr.find_first_not_of("0123456789abcdefABCDEF") !=
+                            std::string::npos) {
+                            error = "Invalid \\uXXXX escape";
+                            return nullptr;
+                        }
                         pos += 4;
-                        uint32_t code = static_cast<uint32_t>(std::stoul(hexStr, nullptr, 16));
+                        uint32_t code = static_cast<uint32_t>(
+                            std::strtoul(hexStr.c_str(), nullptr, 16));
                         if (code <= 0x7F) {
                             res += static_cast<char>(code);
                         } else if (code <= 0x7FF) {

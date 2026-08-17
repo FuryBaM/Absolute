@@ -109,6 +109,12 @@ namespace std.json {
             return absolute_json_as_number(child) as int64;
         }
 
+        public double getDoubleOr(string key, double defaultValue) {
+            raw void* child = absolute_json_get_property(handle, key);
+            if (!child || absolute_json_get_type(child) != 2) { return defaultValue; }
+            return absolute_json_as_number(child);
+        }
+
         public bool getBoolOr(string key, bool defaultValue) {
             raw void* child = absolute_json_get_property(handle, key);
             if (!child || absolute_json_get_type(child) != 1) { return defaultValue; }
