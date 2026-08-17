@@ -874,6 +874,47 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/destruction-order.abs"
     )
     add_test(
+        NAME absolute.pointer-arithmetic-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-arithmetic.abs"
+    )
+    add_test(
+        NAME absolute.generic-instantiation-widths-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-instantiation-widths.abs"
+    )
+    add_test(
+        NAME absolute.wasm-console-libcalls-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/wasm-console-libcalls.abs"
+    )
+    add_test(
+        NAME absolute.value-place-access-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/value-place-access.abs"
+    )
+    add_test(
+        NAME absolute.value-place-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/value-place-errors.abs"
+    )
+    set_tests_properties(absolute.value-place-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "which is a copy rather than a place"
+    )
+    add_test(
+        NAME absolute.collection-boundaries-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/collection-boundaries.abs"
+    )
+    add_test(
+        NAME absolute.literal-range-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/literal-range-errors.abs"
+    )
+    set_tests_properties(absolute.literal-range-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "integer literal 4294967296 does not fit in 'int32'"
+    )
+    add_test(
+        NAME absolute.pointer-arithmetic-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-arithmetic-errors.abs"
+    )
+    set_tests_properties(absolute.pointer-arithmetic-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "a raw pointer supports only '\\+=' and '-=' with an integer step"
+    )
+    add_test(
         NAME absolute.module-scope-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/module-scope-errors.abs"
     )
@@ -2421,6 +2462,28 @@ if(BUILD_TESTING)
                         -DNODE=${ABSOLUTE_NODE_FOR_WASM}
                         -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-std-string.cmake"
+                )
+                add_test(
+                    NAME absolute.run-wasm-console-libcalls
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-console-libcalls.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-console-libcalls.wasm
+                        -DMARKER=wasm-console-libcalls=ok
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-marker.cmake"
+                )
+                add_test(
+                    NAME absolute.run-wasm-stdin-eof
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/tests/wasm-stdin-eof.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/wasm-stdin-eof.wasm
+                        -DMARKER=wasm-stdin-eof=ok
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-marker.cmake"
                 )
                 add_test(
                     NAME absolute.run-wasm-std-deque
@@ -4312,6 +4375,62 @@ if(BUILD_TESTING)
         )
         add_test(NAME absolute.run-destruction-order
             COMMAND "${CMAKE_BINARY_DIR}/destruction-order-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-pointer-arithmetic
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-arithmetic.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/pointer-arithmetic-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-pointer-arithmetic PROPERTIES
+            FIXTURES_SETUP absolute-pointer-arithmetic-executable
+        )
+        add_test(NAME absolute.run-pointer-arithmetic
+            COMMAND "${CMAKE_BINARY_DIR}/pointer-arithmetic-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-generic-instantiation-widths
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-instantiation-widths.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/generic-instantiation-widths-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-generic-instantiation-widths PROPERTIES
+            FIXTURES_SETUP absolute-generic-instantiation-widths-executable
+        )
+        add_test(NAME absolute.run-generic-instantiation-widths
+            COMMAND "${CMAKE_BINARY_DIR}/generic-instantiation-widths-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-value-place-access
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/value-place-access.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/value-place-access-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-value-place-access PROPERTIES
+            FIXTURES_SETUP absolute-value-place-access-executable
+        )
+        add_test(NAME absolute.run-value-place-access
+            COMMAND "${CMAKE_BINARY_DIR}/value-place-access-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-value-place-access PROPERTIES
+            FIXTURES_REQUIRED absolute-value-place-access-executable
+            PASS_REGULAR_EXPRESSION "value-place-access=ok"
+        )
+        add_test(
+            NAME absolute.build-collection-boundaries
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/collection-boundaries.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/collection-boundaries-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-collection-boundaries PROPERTIES
+            FIXTURES_SETUP absolute-collection-boundaries-executable
+        )
+        add_test(NAME absolute.run-collection-boundaries
+            COMMAND "${CMAKE_BINARY_DIR}/collection-boundaries-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-collection-boundaries PROPERTIES
+            FIXTURES_REQUIRED absolute-collection-boundaries-executable
+            PASS_REGULAR_EXPRESSION "collection-boundaries=ok"
+        )
+        set_tests_properties(absolute.run-generic-instantiation-widths PROPERTIES
+            FIXTURES_REQUIRED absolute-generic-instantiation-widths-executable
+            PASS_REGULAR_EXPRESSION "generic-instantiation-widths=ok"
+        )
+        set_tests_properties(absolute.run-pointer-arithmetic PROPERTIES
+            FIXTURES_REQUIRED absolute-pointer-arithmetic-executable
+            PASS_REGULAR_EXPRESSION "pointer-arithmetic=ok"
+        )
         set_tests_properties(absolute.run-destruction-order PROPERTIES
             FIXTURES_REQUIRED absolute-destruction-order-executable
             PASS_REGULAR_EXPRESSION "destruction-order=ok"

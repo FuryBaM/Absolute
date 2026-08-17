@@ -1,0 +1,34 @@
+// Console calls the source never writes, but LLVM does.
+//
+// printf is rewritten by the optimizer: `printf("%c", value)` becomes putchar,
+// and a constant string with a newline becomes puts. The wasm runtime shim
+// provided puts and not putchar, so printing a char failed to link for wasm --
+// with a message naming a symbol the program does not mention -- while the same
+// source built and ran natively. Reading is the mirror case: getchar had no
+// definition either, so any program that reads input failed to link instead of
+// seeing the end-of-input the sandbox actually offers.
+//
+// Built for wasm by absolute.run-wasm-console-libcalls, which is where this
+// test earns its keep; it runs natively too so both backends stay comparable.
+
+extern "C" int32 getchar();
+
+int32 main() {
+    char letter = 'A';
+    print(letter);
+    print('B');
+    println("");
+
+    // Each of these is a shape the optimizer rewrites differently: a bare
+    // constant line, a formatted value, and a char in the middle of a string.
+    println("plain line");
+    println(format("value={}", 42));
+    println(format("{}{}{}", 'x', 'y', 'z'));
+
+    // Reading reports end-of-input rather than failing to link.
+    int32 first = getchar();
+    assert(first < 0, "a sandboxed module reads end-of-input");
+
+    println("wasm-console-libcalls=ok");
+    return 0;
+}

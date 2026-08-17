@@ -321,6 +321,10 @@ namespace Absolute {
         std::string currentType;
         std::string currentReturnType;
         std::string expectedType;
+        // -1 while a numeric literal is being visited as the operand of a
+        // unary minus, so the range check sees the constant the source
+        // actually writes: -2147483648 fits int32, 2147483648 does not.
+        int literalSign = 1;
         std::string currentNamespace;
         bool callable = false;
         std::vector<std::string> callableParameters;

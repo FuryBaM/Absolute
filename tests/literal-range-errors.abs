@@ -1,0 +1,36 @@
+// A literal that cannot fit its target type is refused.
+//
+// Narrowing between values is allowed on purpose
+// (docs/implicit-conversions.md), but a literal is not a value the compiler
+// has to take on trust: it can see that 4294967296 is not an int32. It used to
+// truncate it to 0 and say nothing, in a declaration, an argument, a return
+// and an array element alike.
+//
+// The boundaries are pinned from the accepting side in
+// tests/wide-integer-literals.abs and tests/literal-notation.abs: 2147483647
+// is an int32, -2147483648 is an int32, 18446744073709551615 is a uint64, and
+// a negated literal is measured with its sign, so this file only carries the
+// cases that must fail.
+//
+// Compiled for the diagnostics, so the file never runs.
+
+int32 narrow(int32 value) {
+    return value;
+}
+
+int8 tooSmallToReturn() {
+    return 300;
+}
+
+int32 main() {
+    int32 pastSignedMaximum = 2147483648;
+    uint32 pastUnsignedMaximum = 4294967296;
+    int8 pastByte = 128;
+    uint8 pastUnsignedByte = 256;
+    int64 pastWideMaximum = 9223372036854775808;
+    int32 fromCall = narrow(4294967296);
+    int32[] table = {1, 2147483648};
+
+    return pastSignedMaximum + pastByte + fromCall + table[0] +
+        tooSmallToReturn() + pastUnsignedByte;
+}

@@ -16,9 +16,21 @@ build/Release/absolutec file.abs --build-exe -o app && ./app
 
 ## 1. Open defects
 
-None. What this section held was closed in the session that follows the one
-which wrote it; each entry below records what the fix was, so a regression is
-recognizable rather than rediscovered.
+One unreproduced observation, below. Everything else this section held was
+closed in the session that follows the one which wrote it; each entry records
+what the fix was, so a regression is recognizable rather than rediscovered.
+
+### Unreproduced: `absolute.run-task-scheduling` aborted once under load
+
+Seen once in eight full parallel runs of the suite on Linux. It did not
+reproduce: 30 direct runs of the binary and 12 scheduler-only parallel ctest
+runs were all clean, and four further full runs were clean. No diagnostic was
+captured, so there is nothing here but the fact that it happened.
+
+Recorded rather than dropped, because a scheduler abort that appears only under
+CPU contention is exactly the kind of thing a green suite hides. The next
+occurrence should be captured with `--output-on-failure` before anything else
+is concluded.
 
 ### Fixed: a base class's destroy() was silently skipped
 
@@ -122,16 +134,70 @@ narrow where to look.
 
 ## 5. Not swept — candidates, in rough order of expected yield
 
-Untested guesses, offered as starting points rather than predictions:
+All four have now been swept; what each turned up is recorded in place. Kept as
+a list rather than deleted, because the negative results are the useful part:
+they say where not to look again.
 
-1. **Pointer arithmetic** — `raw T*` offsets, comparison, subtraction, and the
-   interaction with array storage.
-2. **Generic instantiation** — specialisation with mixed widths and
-   signedness, given that signedness was where every recent defect lived.
-3. **The WASM backend against native** — the differential corpus now covers
-   float and integer edges, but only in shapes it generates.
-4. **Collection boundaries** — empty, single-element, capacity transitions,
-   iterator invalidation under mutation.
+1. ~~**Pointer arithmetic**~~ — swept. The arithmetic itself was right:
+   offsets scale by the element (checked with `int64` and with a struct whose
+   stride includes padding, where adding bytes would show), differences count
+   elements and keep their sign, comparisons order addresses, stores through a
+   computed address land in the array behind it, and both a managed pointee and
+   a `void` pointee are refused. What was missing was the notation a buffer
+   walk is written in: `p += n`, `p++` and `p[i]` were all refused, the first
+   because a compound assignment checked the step against the target type, so
+   `p += 2` read as assigning an int32 to a pointer while `p = p + 2` was
+   accepted. All three now lower through one shared offset. An indexer declared
+   on the pointee still wins over `p[i]`, which is what `raw IndexedBox*` in
+   `tests/indexers-codegen.abs` relies on. See `tests/pointer-arithmetic.abs`
+   and `tests/pointer-arithmetic-errors.abs`.
+2. ~~**Generic instantiation**~~ — swept. Substitution held: two
+   specializations with the same machine width and different signedness do not
+   share a body, a field or a return of substituted type keeps its signedness,
+   and comparisons inside an open generic body pick the right instruction.
+   Inference did not: every integer literal was typed int32 by the analyzer
+   regardless of magnitude, so `identity(10000000000)` inferred `T = int32` and
+   returned 1410065408. A literal now takes the narrowest type that holds it,
+   which is what the backend always did when emitting one -- the two only
+   agreed while the literal fit. The same disagreement was truncating
+   `int32 x = 4294967296` to 0 in silence; a literal that cannot fit its target
+   is now `E_LITERAL_OUT_OF_RANGE`, while narrowing a *value* stays allowed.
+   Arithmetic on a bare `T` is refused for want of constraints, which is a
+   documented boundary rather than a defect (docs/generics.md). See
+   `tests/generic-instantiation-widths.abs` and `tests/literal-range-errors.abs`.
+3. ~~**The WASM backend against native**~~ — swept by hand, outside the shapes
+   the generator produces: every runnable test in `tests/` built for both
+   backends and diffed, output and exit status. Arithmetic, ownership, strings,
+   collections, exceptions and the runtime diagnostics all agree -- a bounds
+   failure prints the same message and exits the same way on both. Two link
+   gaps and one behavioural difference came out of it. The optimizer rewrites
+   `printf("%c", value)` into `putchar`, which the wasm runtime shim did not
+   define, so printing a char failed to link for wasm while building natively;
+   `getchar` was missing for the same reason on the reading side. Both are now
+   in the shim, reading as end-of-input because the sandbox has no stdin. The
+   difference that remains is by construction: a wasm instance cannot wait on
+   another worker, so channels there never block -- a send to a full channel
+   fails and a receive from an empty one yields zero, which a program cannot
+   tell from a real zero. `tests/concurrency-stress.abs` loses messages on wasm
+   for exactly that reason. Now written down in docs/wasm-target.md, with
+   `absolute_channel_receive_checked` as the way to tell the two apart. See
+   `tests/wasm-console-libcalls.abs` and `tests/wasm-stdin-eof.abs`.
+4. ~~**Collection boundaries**~~ — swept. Vector, Deque, Map, Set, HashMap and
+   PriorityQueue all hold at their edges: empty and single-element containers,
+   reallocation points, a deque whose contents straddle the end of its buffer
+   before it grows, hash-map tombstones left by removing every other key and
+   then refilled, and mutation under a live iterator, which yields its snapshot
+   as documented. Everything passed on the first run; `tests/collection-
+   boundaries.abs` keeps the record so a boundary nobody checks cannot drift.
+   The one defect the sweep found was not in the containers. Reading a field of
+   the `KeyValuePair` a map iterator returns did not compile: a property getter
+   and a function return a copy, not storage, and member access asked for an
+   address anyway, so `pair.key` and `config().timeout` failed with "a property
+   is not addressable" or "expression is not assignable". The value is now
+   copied into a temporary and read from there, and a *write* through such a
+   copy is refused by the analyzer, where the message can carry a file and a
+   line, instead of by the backend naming its own mechanism. See
+   `tests/value-place-access.abs` and `tests/value-place-errors.abs`.
 
 ## 6. The method that worked
 

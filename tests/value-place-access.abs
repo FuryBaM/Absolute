@@ -1,0 +1,93 @@
+// Reading a member of a value that is not a place.
+//
+// A property getter and a function both return a copy, not storage, so there
+// is no address to take. Member access asked for one anyway, and reading an
+// ordinary `pair.key` or `config().timeout` failed to compile -- with "a
+// property is not addressable" or "expression is not assignable", messages
+// about the mechanism rather than about anything the program did. The value is
+// now copied into a temporary and read from there.
+//
+// Writing through such a copy stays refused, and that refusal is the other
+// half of this test: see tests/value-place-errors.abs. It has to keep failing,
+// because the write would land in the temporary and be lost.
+
+struct Point {
+    public int32 x;
+    public int32 y;
+
+    public int32 sum() {
+        return x + y;
+    }
+}
+
+struct Nested {
+    public Point inner;
+    public int32 tag;
+}
+
+class Holder {
+    private Point stored;
+    private Nested deep;
+
+    public Holder() {
+        stored.x = 3;
+        stored.y = 4;
+        deep.inner.x = 10;
+        deep.inner.y = 20;
+        deep.tag = 7;
+    }
+
+    public Point value {
+        get { return stored; }
+    }
+
+    public Nested nested {
+        get { return deep; }
+    }
+
+    public Point makeValue() {
+        return stored;
+    }
+}
+
+Point makeFree() {
+    Point result;
+    result.x = 100;
+    result.y = 200;
+    return result;
+}
+
+int32 main() {
+    Holder* holder = new Holder();
+
+    // A field of a property's result.
+    assert(holder.value.x == 3, "a field of a property result reads");
+    assert(holder.value.y == 4, "the second field reads too");
+
+    // A method on a property's result -- the same address requirement.
+    assert(holder.value.sum() == 7, "a method on a property result runs");
+
+    // A field of a method's result, and of a free function's result.
+    assert(holder.makeValue().x == 3, "a field of a method result reads");
+    assert(makeFree().y == 200, "a field of a function result reads");
+    assert(makeFree().sum() == 300, "a method on a function result runs");
+
+    // Two levels deep, where the intermediate is also a copy.
+    assert(holder.nested.tag == 7, "a field of a nested property result reads");
+    assert(holder.nested.inner.x == 10, "a field of a field of a copy reads");
+    assert(holder.nested.inner.sum() == 30, "a method under two copies runs");
+
+    // The copy is independent: reading it twice gives the same answer, and
+    // nothing about the source changed.
+    assert(holder.value.x == holder.value.x, "the copy is stable across reads");
+    assert(holder.makeValue().sum() == holder.value.sum(), "both routes agree");
+
+    // A place still behaves as a place: same shape, assignable.
+    Point local = holder.value;
+    local.x = 42;
+    assert(local.x == 42, "a copy in a variable is writable");
+    assert(holder.value.x == 3, "writing the copy did not touch the source");
+
+    println("value-place-access=ok");
+    return 0;
+}

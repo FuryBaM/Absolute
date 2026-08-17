@@ -1158,6 +1158,28 @@ namespace Absolute {
                 }
                 else if (cost == bestCost) ambiguous = true;
             }
+            if (!selected && IsRawPointerType(base.type)) {
+                // `p[i]` on a raw pointer is `*(p + i)`, the spelling every
+                // buffer walk reaches for. It was refused as "not an array and
+                // has no matching indexer" even though the equivalent
+                // arithmetic was accepted. Reached only after the indexer
+                // search fails, so a raw pointer to a type that declares an
+                // indexer keeps calling it. Raw only: a managed pointer has no
+                // arithmetic, and one index into it would walk off its own
+                // allocation.
+                if (expr->indexes.size() != 1)
+                    Report("a raw pointer takes exactly one index");
+                else if (!indexes.empty() && !IsInteger(indexes.front().type) &&
+                    indexes.front().type != "error")
+                    Report("pointer index must be an integer, got '" +
+                        indexes.front().type + "'");
+                if (base.pointerValidity == PointerValidity::Null)
+                    Report("null pointer is dereferenced", "E_NULL_DEREFERENCE", base.symbol);
+                else if (base.pointerValidity == PointerValidity::Deleted)
+                    Report("deleted pointer is dereferenced", "E_USE_AFTER_DELETE", base.symbol);
+                Save(expr, {InvalidSymbolId, PointerPointee(base.type), true});
+                return;
+            }
             if (!selected) {
                 Report("object of type '" + base.type +
                     "' is not an array and has no matching indexer", "E_INDEXER_NOT_FOUND");

@@ -2216,6 +2216,30 @@ namespace Absolute {
         Expression* expression, const Result& target, const std::string& operation) {
         if (IsConstMutationTarget(expression, target))
             Report(operation + " cannot modify a const value", "E_CONST_MUTATION", target.symbol);
+
+        // Writing to a field of something that is not a place. Reading one is
+        // ordinary -- `pair.key`, `config().timeout` -- and the backend copies
+        // the value into a temporary to do it, but a write would land in that
+        // copy and be lost. The backend refuses it as "a property is not
+        // addressable", which names the mechanism rather than the rule, and
+        // without a file or a line.
+        for (Expression* current = expression; current;) {
+            Expression* base = nullptr;
+            if (auto* member = dynamic_cast<MemberAccessExpr*>(current)) base = member->base.get();
+            else if (auto* array = dynamic_cast<ArrayAccessExpr*>(current)) base = array->base.get();
+            else break;
+            if (!base) break;
+            const ExpressionInfo* info = GetExpressionInfo(*base);
+            if (info && !info->placeInfo.addressable && !IsPointerType(info->type) &&
+                ArrayRank(info->type) == 0) {
+                Report(operation + " cannot write through '" + info->type +
+                    "', which is a copy rather than a place; assign it to a variable, "
+                    "change it there, and store it back",
+                    "E_WRITE_THROUGH_COPY", target.symbol);
+                break;
+            }
+            current = base;
+        }
     }
 
 }

@@ -1,0 +1,254 @@
+// Collections at their edges: empty, single, capacity transitions, and
+// mutation under an iterator.
+//
+// The handoff listed this as unswept. The containers held up -- everything
+// below passed the first time it ran -- so this file is the record of that,
+// kept because a boundary nobody checks is a boundary that drifts. The one
+// defect the sweep did find was not in the containers: reading a field of a
+// KeyValuePair returned by a map iterator did not compile, which is
+// tests/value-place-access.abs.
+//
+// The values are chosen so a mistake has to show: the default capacity is 4,
+// so 17 pushes cross two reallocations; the deque is filled, partly drained
+// and refilled so its contents straddle the end of the buffer before it grows;
+// the hash map removes every other key to leave tombstones behind and then
+// reinserts them.
+
+import "../std/collections/vector.abs";
+import "../std/collections/deque.abs";
+import "../std/collections/map.abs";
+import "../std/collections/set.abs";
+import "../std/collections/hash_map.abs";
+import "../std/collections/priority_queue.abs";
+
+int32 main() {
+    // ---- Vector ----------------------------------------------------------
+    Vector<int32>* empty = new Vector<int32>();
+    assert(empty.count == 0 && empty.isEmpty, "a new vector is empty");
+    int32[] nothing = empty.toArray();
+    assert(nothing.length == 0, "an empty vector converts to a zero-length array");
+
+    Vector<int32>* grown = new Vector<int32>();
+    int32 i = 0;
+    while (i < 17) {
+        grown.push(i * 10);
+        i = i + 1;
+    }
+    assert(grown.count == 17, "every push counted");
+    assert(grown.capacity == 32, "capacity doubled past 4, 8 and 16");
+    bool ordered = true;
+    int32 j = 0;
+    while (j < grown.count) {
+        if (grown[j] != j * 10) { ordered = false; }
+        j = j + 1;
+    }
+    assert(ordered, "no element was dropped or duplicated by a reallocation");
+
+    Vector<int32>* one = new Vector<int32>();
+    one.push(7);
+    assert(one.first == 7 && one.last == 7, "one element is both ends");
+    assert(one.pop() == 7 && one.isEmpty, "popping the only element empties it");
+    one.push(9);
+    assert(one[0] == 9, "an emptied vector takes elements again");
+
+    Vector<int32>* removals = new Vector<int32>();
+    removals.push(1); removals.push(2); removals.push(3);
+    removals.removeAt(0);
+    assert(removals[0] == 2 && removals[1] == 3, "removing the first shifts the rest down");
+    removals.removeAt(removals.count - 1);
+    assert(removals.count == 1 && removals[0] == 2, "removing the last leaves the rest");
+    removals.removeAt(0);
+    assert(removals.isEmpty, "removing the only element empties it");
+
+    Vector<int32>* reserved = new Vector<int32>(2);
+    reserved.push(1);
+    reserved.reserve(1);
+    assert(reserved.capacity == 2, "reserving less than the capacity changes nothing");
+    reserved.reserve(10);
+    assert(reserved.capacity == 10 && reserved[0] == 1, "reserving more keeps the elements");
+
+    // ---- Deque -----------------------------------------------------------
+    // Fill, drain from the front, refill so the contents wrap, then grow.
+    Deque<int32>* deque = new Deque<int32>(4);
+    deque.pushBack(1); deque.pushBack(2); deque.pushBack(3); deque.pushBack(4);
+    assert(deque.popFront() == 1 && deque.popFront() == 2, "the front comes off in order");
+    deque.pushBack(5); deque.pushBack(6);
+    assert(deque.front == 3 && deque.back == 6, "the ends are right across the wrap");
+    deque.pushBack(7);
+    assert(deque.count == 5 && deque.capacity == 8, "a wrapped deque grows");
+    assert(deque.popFront() == 3 && deque.popFront() == 4 && deque.popFront() == 5 &&
+        deque.popFront() == 6 && deque.popFront() == 7,
+        "growth preserved the order across the wrap");
+    assert(deque.isEmpty, "the deque drained empty");
+
+    Deque<int32>* single = new Deque<int32>(1);
+    single.pushFront(42);
+    assert(single.front == 42 && single.back == 42, "one element is both ends");
+    assert(single.popBack() == 42 && single.isEmpty, "popping the only element empties it");
+    single.pushBack(43);
+    assert(single.popFront() == 43, "an emptied deque takes elements again");
+
+    Deque<int32>* fronts = new Deque<int32>(2);
+    fronts.pushFront(3); fronts.pushFront(2); fronts.pushFront(1);
+    assert(fronts.popFront() == 1 && fronts.popFront() == 2 && fronts.popFront() == 3,
+        "pushFront keeps its order across a growth");
+
+    // ---- Map and Set -----------------------------------------------------
+    Map<int32, int32>* map = new Map<int32, int32>();
+    assert(map.count == 0 && !map.containsKey(1), "a new map is empty");
+    assert(!map.remove(1), "removing from an empty map reports nothing removed");
+    map.put(1, 10);
+    map.put(1, 11);
+    assert(map.count == 1 && map[1] == 11, "putting an existing key overwrites it");
+
+    int32 k = 0;
+    while (k < 40) {
+        map.put(k, k * 2);
+        k = k + 1;
+    }
+    bool present = true;
+    int32 m = 0;
+    while (m < 40) {
+        if (!map.containsKey(m) || map[m] != m * 2) { present = false; }
+        m = m + 1;
+    }
+    assert(present && map.count == 40, "every key survived the growth");
+    map.remove(0);
+    map.remove(39);
+    map.remove(20);
+    assert(map.count == 37, "three removals removed three entries");
+    assert(!map.containsKey(0) && !map.containsKey(39) && !map.containsKey(20),
+        "the removed keys are gone");
+    assert(map.containsKey(1) && map.containsKey(38) && map.containsKey(19) &&
+        map.containsKey(21), "their neighbours are not");
+
+    Set<int32>* unique = new Set<int32>();
+    assert(!unique.contains(1), "a new set contains nothing");
+    unique.add(1);
+    unique.add(1);
+    assert(unique.count == 1, "adding the same element twice adds it once");
+    unique.remove(1);
+    assert(unique.count == 0 && !unique.contains(1), "removing the only element empties it");
+
+    // ---- Iterators under mutation ---------------------------------------
+    // The iterator holds a snapshot, so growth, assignment and clear() during
+    // iteration must not change what it yields.
+    Vector<int32>* iterated = new Vector<int32>();
+    iterated.push(1); iterated.push(2); iterated.push(3);
+    VectorIterator<int32>* iterator = iterated.iterate();
+    int32 seen = 0;
+    int32 steps = 0;
+    while (iterator.next()) {
+        seen = seen + iterator.value;
+        steps = steps + 1;
+        if (steps == 1) {
+            iterated.push(4); iterated.push(5); iterated.push(6); iterated.push(7);
+            iterated[0] = 100;
+            iterated.clear();
+        }
+    }
+    assert(seen == 6 && steps == 3, "the iterator yielded its snapshot, not the mutations");
+    assert(iterated.count == 0, "the mutations really happened");
+
+    Map<int32, int32>* iteratedMap = new Map<int32, int32>();
+    iteratedMap.put(1, 10);
+    iteratedMap.put(2, 20);
+    MapIterator<int32, int32>* mapIterator = iteratedMap.iterate();
+    int32 total = 0;
+    int32 mapSteps = 0;
+    while (mapIterator.next()) {
+        total = total + mapIterator.value.value;
+        mapSteps = mapSteps + 1;
+        if (mapSteps == 1) {
+            iteratedMap.put(3, 30);
+            iteratedMap.remove(1);
+        }
+    }
+    assert(total == 30 && mapSteps == 2, "the map iterator yielded its snapshot");
+    assert(iteratedMap.count == 2, "the map really changed underneath it");
+
+    // ---- HashMap ---------------------------------------------------------
+    func<int64, int32> hash = fn(int32 key) => key as int64;
+    func<bool, int32, int32> equals = fn(int32 a, int32 b) => a == b;
+    std.collections.HashMap<int32, int32>* table =
+        new std.collections.HashMap<int32, int32>(hash, equals, 4);
+    assert(table.count == 0 && !table.containsKey(1), "a new hash map is empty");
+    assert(!table.remove(1), "removing from an empty hash map reports nothing removed");
+
+    int32 h = 0;
+    while (h < 200) {
+        table.put(h, h * 3);
+        h = h + 1;
+    }
+    bool all = true;
+    int32 r = 0;
+    while (r < 200) {
+        if (!table.containsKey(r) || table[r] != r * 3) { all = false; }
+        r = r + 1;
+    }
+    assert(all && table.count == 200, "every key survived several rehashes");
+
+    // Leave tombstones behind, check the rest, then fill the holes again.
+    int32 e = 0;
+    while (e < 200) {
+        table.remove(e);
+        e = e + 2;
+    }
+    assert(table.count == 100, "half the keys are gone");
+    bool odds = true;
+    int32 o = 1;
+    while (o < 200) {
+        if (!table.containsKey(o) || table[o] != o * 3) { odds = false; }
+        o = o + 2;
+    }
+    assert(odds, "the other half reads through the tombstones");
+    int32 back = 0;
+    while (back < 200) {
+        table.put(back, back * 5);
+        back = back + 2;
+    }
+    assert(table.count == 200 && table[2] == 10, "reinserted keys take the tombstoned slots");
+    assert(!table.tryAdd(1, 99) && table[1] == 3, "tryAdd leaves an existing key alone");
+    table.clear();
+    assert(table.count == 0 && !table.containsKey(1), "clear empties it");
+    table.put(5, 50);
+    assert(table[5] == 50 && table.count == 1, "a cleared hash map takes entries again");
+
+    // ---- PriorityQueue ---------------------------------------------------
+    func<int32, int32, int32> ascending = fn(int32 a, int32 b) => a - b;
+    std.collections.PriorityQueue<int32>* queue =
+        new std.collections.PriorityQueue<int32>(ascending, 1);
+    assert(queue.count == 0, "a new queue is empty");
+    queue.enqueue(5);
+    assert(queue.peek == 5 && queue.dequeue() == 5 && queue.count == 0,
+        "one element goes in and comes back out");
+
+    // Equal keys, inserted in reverse, across several growths.
+    int32 p = 10;
+    while (p > 0) {
+        queue.enqueue(p);
+        queue.enqueue(p);
+        p = p - 1;
+    }
+    assert(queue.count == 20, "every enqueue counted");
+    bool sorted = true;
+    int32 previous = 0;
+    int32 taken = 0;
+    while (queue.count > 0) {
+        int32 next = queue.dequeue();
+        if (next < previous) { sorted = false; }
+        previous = next;
+        taken = taken + 1;
+    }
+    assert(sorted && taken == 20, "the heap drained in order");
+
+    int32[] none = new int32[0];
+    queue.enqueueAll(none);
+    assert(queue.count == 0, "enqueueing an empty array adds nothing");
+    queue.clear();
+    queue.enqueue(1);
+    assert(queue.dequeue() == 1, "a cleared queue takes elements again");
+
+    println("collection-boundaries=ok");
+    return 0;
+}

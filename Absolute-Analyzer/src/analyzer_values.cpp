@@ -24,7 +24,24 @@ namespace Absolute {
             Report("array variables cannot be reassigned; assign an element or declare a new array view");
         if (ArrayRank(target.type) > 0 && expr->op != "=")
             Report("array fields only support direct '=' assignment");
-        if (!IsAssignable(target.type, value.type))
+        // A compound assignment stores the result of `target op value`, not
+        // the value itself, and for a raw pointer those differ: `p += 2` adds
+        // two elements and stores a pointer. Checking the value against the
+        // target rejected the whole notation, even though `p = p + 2` was
+        // accepted and lowered correctly.
+        const bool pointerCompound = expr->op != "=" && IsRawPointerType(target.type);
+        const bool pointerStep = pointerCompound &&
+            (expr->op == "+=" || expr->op == "-=") && IsInteger(value.type);
+        if (pointerCompound) {
+            // One message, not two: the generic check would add "cannot assign
+            // 'int32' to 'raw int32*'", which is exactly the wrong reading of
+            // `p *= 2` -- nothing is being assigned to the pointer.
+            if (!pointerStep)
+                Report("a raw pointer supports only '+=' and '-=' with an integer step, "
+                    "but the operator is '" + expr->op + "' and the step has type '" +
+                    value.type + "'");
+        }
+        else if (!IsAssignable(target.type, value.type))
             Report("cannot assign '" + value.type + "' to '" + target.type + "'");
         if (IsTaskType(target.type))
             Report("tasks cannot be reassigned or copied", "E_TASK_ASSIGNMENT", target.symbol);
@@ -896,7 +913,15 @@ namespace Absolute {
         const AccessMode previousAccess = accessMode;
         if (expr->op == "&") accessMode = AccessMode::Address;
         else if (expr->op == "++" || expr->op == "--") accessMode = AccessMode::Write;
+        // A minus in front of a literal belongs to the constant, not to a
+        // separate operation, so the range check has to see them together:
+        // -2147483648 is an int32 and 2147483648 on its own is not.
+        const int previousSign = literalSign;
+        if ((expr->op == "-" || expr->op == "+") &&
+            dynamic_cast<NumberLiteralExpr*>(expr->operand.get()))
+            literalSign = expr->op == "-" ? -previousSign : previousSign;
         const Result operand = Evaluate(expr->operand.get());
+        literalSign = previousSign;
         accessMode = previousAccess;
         if (expr->op == "&") {
             if (!operand.isLValue) Report("operator '&' requires an assignable value");
@@ -943,8 +968,13 @@ namespace Absolute {
             return;
         }
         if (expr->op == "++" || expr->op == "--") {
-            if (!operand.isLValue || !IsNumeric(operand.type))
-                Report("operator '" + expr->op + "' requires an assignable numeric operand");
+            // A raw pointer steps by one element, the same rule `p + 1`
+            // already follows. Only raw: a managed pointer has no arithmetic
+            // at all, and stepping one would walk off its own allocation.
+            if (!operand.isLValue ||
+                (!IsNumeric(operand.type) && !IsRawPointerType(operand.type)))
+                Report("operator '" + expr->op +
+                    "' requires an assignable numeric or raw pointer operand");
             const Symbol* symbol = table.Get(operand.symbol);
             if (symbol && (symbol->kind == SymbolKind::Property ||
                 symbol->kind == SymbolKind::Indexer) && !symbol->canRead)
@@ -963,8 +993,10 @@ namespace Absolute {
         accessMode = AccessMode::Write;
         const Result operand = Evaluate(expr->operand.get());
         accessMode = previousAccess;
-        if (!operand.isLValue || !IsNumeric(operand.type))
-            Report("operator '" + expr->op + "' requires an assignable numeric operand");
+        if (!operand.isLValue ||
+            (!IsNumeric(operand.type) && !IsRawPointerType(operand.type)))
+            Report("operator '" + expr->op +
+                "' requires an assignable numeric or raw pointer operand");
         const Symbol* symbol = table.Get(operand.symbol);
         if (symbol && (symbol->kind == SymbolKind::Property ||
             symbol->kind == SymbolKind::Indexer) && !symbol->canRead)

@@ -24,6 +24,24 @@ the call site:
 float frameTime = timer.deltaTime() as float;
 ```
 
+A literal is not covered by that allowance. Narrowing a *value* keeps whatever
+the conversion leaves behind, but a literal is a constant the compiler can
+measure, so one that cannot be represented in its target type is refused rather
+than truncated:
+
+```absolute
+int64 wide = someInt64;
+int32 narrowed = wide;      // allowed: a value conversion
+int32 tooLarge = 4294967296;  // refused: E_LITERAL_OUT_OF_RANGE
+uint32 mask = 4294967295;     // allowed: it fits uint32
+int32 smallest = -2147483648; // allowed: the sign belongs to the literal
+```
+
+An integer literal takes the narrowest type that holds it — `int32`, else
+`int64`, else `uint64` — which is also what decides an inferred generic
+parameter: `identity(10000000000)` instantiates with `int64`.
+
+
 ## References and null
 
 - `null` converts to pointer and C-function-pointer types.

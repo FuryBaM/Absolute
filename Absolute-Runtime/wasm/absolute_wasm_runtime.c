@@ -375,6 +375,45 @@ int puts(const char* text) {
     return 0;
 }
 
+// Nothing generated calls putchar or fputc by name. LLVM rewrites them out of
+// printf: `printf("%c", value)` becomes putchar, and printing a char is
+// ordinary, so without these the module failed to link for wasm -- with a
+// message about a symbol the source never mentions -- while the identical
+// program built natively.
+int putchar(int value) {
+    const uint8_t byte = (uint8_t)value;
+    absolute_host_log(&byte, 1);
+    return value;
+}
+
+int fputc(int value, void* stream) {
+    (void)stream;
+    return putchar(value);
+}
+
+int putc(int value, void* stream) {
+    (void)stream;
+    return putchar(value);
+}
+
+// The host gives a module a console to write to and no standard input to read
+// from, so a read reports end-of-input rather than failing to link. Programs
+// that read interactively already have to handle EOF; on wasm they take that
+// path immediately. docs/wasm-target.md says so.
+int getchar(void) {
+    return -1;
+}
+
+int fgetc(void* stream) {
+    (void)stream;
+    return -1;
+}
+
+int getc(void* stream) {
+    (void)stream;
+    return -1;
+}
+
 static void format_putc(char* out, size_t cap, size_t* offset, char value) {
     if (out && *offset + 1 < cap)
         out[*offset] = value;
