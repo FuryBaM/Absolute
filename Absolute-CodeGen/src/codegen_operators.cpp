@@ -205,7 +205,7 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(NumberLiteralExpr* expr) {
-        if (expr->value.find('.') != std::string::npos) {
+        if (IsFloatingLiteral(expr->value)) {
             impl->value = llvm::ConstantFP::get(impl->builder.getDoubleTy(), std::stod(expr->value));
         }
         else {

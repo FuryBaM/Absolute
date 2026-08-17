@@ -36,10 +36,17 @@ namespace Absolute {
                 continue;
             }
 
-            if (token.value == ">" || token.value == ">>") {
+            // `>>=` closes two argument lists whose last `>` is immediately
+            // followed by an assignment, as in `Map<int32, List<int32>>= m`.
+            // Before shift-assignment existed the lexer produced `>>` and `=`
+            // there, so leaving it out would have made that spelling stop
+            // parsing. `>=` is deliberately not a close: `a < b >= c` is an
+            // ordinary comparison, and accepting it here would read it as a
+            // template argument list.
+            if (token.value == ">" || token.value == ">>" || token.value == ">>=") {
                 if (expectType) return false;
 
-                const size_t closes = token.value == ">>" ? 2 : 1;
+                const size_t closes = token.value == ">" ? 1 : 2;
                 if (closes >= depth) {
                     if (close) *close = index;
                     return true;
@@ -134,13 +141,14 @@ namespace Absolute {
     void Parser::ConsumeTemplateClose()
     {
         Token* token = RequireCurrent("'>'");
-        if (token->value == ">>") {
+        if (token->value.size() > 1 && token->value.front() == '>') {
             // The lexer reads the two closing brackets of a nested argument
-            // list as one shift operator. Split it in place: this call takes
-            // the first '>' and the token keeps the second one for the
-            // enclosing list. Inserting a token here instead would resize
+            // list as one shift operator, and `>>=` when an assignment follows
+            // them. Split it in place: this call takes the first '>' and the
+            // token keeps the rest -- '>' or '>=' -- for the enclosing list or
+            // for the assignment. Inserting a token here instead would resize
             // `tokens` and leave every Token* the parser still holds dangling.
-            token->value = ">";
+            token->value.erase(0, 1);
             ++token->column;
             return;
         }

@@ -302,7 +302,15 @@ namespace Absolute {
 
     unsigned long long CodeGenerator::Impl::ParseIntegerLiteral(const std::string& text) {
         try {
-            return std::stoull(text);
+            size_t consumed = 0;
+            const unsigned long long value = std::stoull(text, &consumed);
+            // std::stoull stops at the first character it cannot use and
+            // reports success, so a floating literal reaching an integer
+            // constant would come out as its leading digits: 1e3 as 1. Refuse
+            // instead of storing a wrong number.
+            if (consumed != text.size())
+                Fail("integer constant expected, but the literal is '" + text + "'");
+            return value;
         }
         catch (const std::exception&) {
             Fail("integer literal '" + text + "' does not fit in 64 bits");

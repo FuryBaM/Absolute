@@ -114,7 +114,7 @@ namespace Absolute {
     }
     void Analyzer::Visit(BooleanLiteralExpr* expr) { Save(expr, {InvalidSymbolId, "bool", false}); }
     void Analyzer::Visit(NumberLiteralExpr* expr) {
-        Save(expr, {InvalidSymbolId, expr->value.find('.') == std::string::npos ? "int32" : "double", false});
+        Save(expr, {InvalidSymbolId, IsFloatingLiteral(expr->value) ? "double" : "int32", false});
     }
     void Analyzer::Visit(StringLiteralExpr* expr) { Save(expr, {InvalidSymbolId, "string", false}); }
     void Analyzer::Visit(CharLiteralExpr* expr) { Save(expr, {InvalidSymbolId, "char", false}); }
