@@ -588,6 +588,29 @@ namespace Absolute {
                 return;
             }
         }
+        // `p[i]` on a raw pointer is `*(p + i)`: one offset, then a load, or
+        // the address itself when this access is an assignment target. It
+        // reaches neither the array descriptor below -- a raw pointer carries
+        // no dimensions -- nor the indexer path above.
+        const std::string baseType = impl->SemanticType(expr->base.get());
+        if (IsRawPointerTypeName(baseType)) {
+            if (expr->indexes.size() != 1 || !expr->indexes.front())
+                impl->Fail("a raw pointer takes exactly one index");
+            const bool outerAddressMode = impl->addressMode;
+            impl->addressMode = false;
+            llvm::Value* pointer = impl->Evaluate(expr->base.get());
+            llvm::Value* index = impl->Evaluate(expr->indexes.front().get());
+            impl->addressMode = outerAddressMode;
+            llvm::Value* address = impl->PointerOffset(pointer, baseType, index, false);
+            if (outerAddressMode) {
+                impl->addressValue = address;
+                return;
+            }
+            impl->value = impl->builder.CreateLoad(
+                impl->TypeFromName(PointerPointeeName(baseType)), address, "pointer.element");
+            impl->valueCreatesManagedOwner = false;
+            return;
+        }
         if (expr->indexes.size() == 1 && !expr->indexes.front()) {
             if (impl->addressMode) impl->Fail("a slice is not assignable");
             Impl::ArrayView view = impl->ViewOfArray(expr->base.get());

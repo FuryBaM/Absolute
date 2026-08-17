@@ -78,7 +78,14 @@ namespace Absolute {
         const bool functionValue = ParseCodegenFunctionType(
             targetTypeName, closureReturn, closureParameters);
 
-        if (expr->op != "=") {
+        if (expr->op != "=" && IsRawPointerTypeName(targetTypeName)) {
+            // `p += n` steps by elements, so it goes through the same offset
+            // the binary form uses. ApplyBinary works on numbers and would
+            // have to treat the address as one.
+            llvm::Value* current = impl->builder.CreateLoad(targetType, targetAddress, "assignment.current");
+            assigned = impl->PointerOffset(current, targetTypeName, assigned, expr->op == "-=");
+        }
+        else if (expr->op != "=") {
             llvm::Value* current = impl->builder.CreateLoad(targetType, targetAddress, "assignment.current");
             // With the type names, so a compound assignment picks the same
             // instruction its spelled-out form would. Without them this call
@@ -906,7 +913,13 @@ namespace Absolute {
             }
             Impl::Variable& variable = impl->AddressOf(expr->operand.get());
             llvm::Value* current = impl->builder.CreateLoad(variable.type, variable.address, "prefix.current");
-            llvm::Value* updated = impl->ApplyBinary(expr->op == "++" ? "+" : "-", current, impl->One(variable.type));
+            // A raw pointer steps by one element, not by one byte, so it takes
+            // the same offset the binary and compound forms take.
+            const std::string operandType = impl->SemanticType(expr->operand.get());
+            llvm::Value* updated = IsRawPointerTypeName(operandType)
+                ? impl->PointerOffset(current, operandType,
+                    impl->builder.getInt64(1), expr->op == "--")
+                : impl->ApplyBinary(expr->op == "++" ? "+" : "-", current, impl->One(variable.type));
             impl->builder.CreateStore(updated, variable.address);
             impl->value = updated;
             return;
@@ -971,7 +984,11 @@ namespace Absolute {
         }
         Impl::Variable& variable = impl->AddressOf(expr->operand.get());
         llvm::Value* current = impl->builder.CreateLoad(variable.type, variable.address, "postfix.current");
-        llvm::Value* updated = impl->ApplyBinary(expr->op == "++" ? "+" : "-", current, impl->One(variable.type));
+        const std::string operandType = impl->SemanticType(expr->operand.get());
+        llvm::Value* updated = IsRawPointerTypeName(operandType)
+            ? impl->PointerOffset(current, operandType,
+                impl->builder.getInt64(1), expr->op == "--")
+            : impl->ApplyBinary(expr->op == "++" ? "+" : "-", current, impl->One(variable.type));
         impl->builder.CreateStore(updated, variable.address);
         impl->value = current;
     }

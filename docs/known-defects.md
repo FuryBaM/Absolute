@@ -124,8 +124,19 @@ narrow where to look.
 
 Untested guesses, offered as starting points rather than predictions:
 
-1. **Pointer arithmetic** — `raw T*` offsets, comparison, subtraction, and the
-   interaction with array storage.
+1. ~~**Pointer arithmetic**~~ — swept. The arithmetic itself was right:
+   offsets scale by the element (checked with `int64` and with a struct whose
+   stride includes padding, where adding bytes would show), differences count
+   elements and keep their sign, comparisons order addresses, stores through a
+   computed address land in the array behind it, and both a managed pointee and
+   a `void` pointee are refused. What was missing was the notation a buffer
+   walk is written in: `p += n`, `p++` and `p[i]` were all refused, the first
+   because a compound assignment checked the step against the target type, so
+   `p += 2` read as assigning an int32 to a pointer while `p = p + 2` was
+   accepted. All three now lower through one shared offset. An indexer declared
+   on the pointee still wins over `p[i]`, which is what `raw IndexedBox*` in
+   `tests/indexers-codegen.abs` relies on. See `tests/pointer-arithmetic.abs`
+   and `tests/pointer-arithmetic-errors.abs`.
 2. **Generic instantiation** — specialisation with mixed widths and
    signedness, given that signedness was where every recent defect lived.
 3. **The WASM backend against native** — the differential corpus now covers

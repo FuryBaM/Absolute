@@ -1,0 +1,27 @@
+// What address arithmetic still refuses.
+//
+// Raw pointers stepping by elements does not make every pointer arithmetic:
+// a managed pointer owns one allocation and stepping off it has no meaning, so
+// arithmetic, stepping and indexing stay refused there. A raw pointer takes
+// only `+=` and `-=`, and only with an integer step.
+//
+// Compiled for the diagnostics, so the file never runs.
+
+class Point {
+    int32 x;
+}
+
+int32 main() {
+    int32[] data = {1, 2};
+    raw int32* p = &data[0];
+
+    p *= 2;
+    p += 1.5;
+
+    Point* managed = new Point();
+    Point* shifted = managed + 1;
+    managed++;
+    int32 element = managed[0];
+
+    return element + shifted.x;
+}

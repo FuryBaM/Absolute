@@ -1,0 +1,100 @@
+// Address arithmetic on `raw T*`.
+//
+// The scaling, the difference and the comparisons were already right; what was
+// missing was the notation a buffer walk is written in. `p += n`, `p++` and
+// `p[i]` were all refused -- the first because a compound assignment checked
+// the step against the target type, so `p += 2` read as assigning an int32 to
+// a pointer, while `p = p + 2` was accepted and lowered correctly.
+//
+// The element type here is int64 on purpose: with a one-byte element, adding
+// bytes and adding elements give the same answer and a scaling defect hides.
+// Wide has trailing padding for the same reason -- its stride is 16, not the 9
+// bytes its fields occupy.
+
+struct Wide {
+    int64 a;
+    int8 b;
+}
+
+int32 main() {
+    int64[] data = {100, 200, 300, 400};
+    raw int64* base = &data[0];
+
+    // Offsets scale by the element, in both directions.
+    assert(*(base + 2) == 300, "p + n scales by the element size");
+    raw int64* last = base + 3;
+    assert(*last == 400, "the last element is reachable");
+    assert(*(last - 2) == 200, "p - n walks back by elements");
+
+    // A difference counts elements, and keeps its sign.
+    assert(last - base == 3, "a pointer difference counts elements, not bytes");
+    assert(base - last == -3, "a negative difference stays negative");
+
+    // Comparisons order addresses.
+    assert(base < last, "an earlier address compares less");
+    assert(last > base, "a later address compares greater");
+    assert(base == base, "the same address compares equal");
+    assert(base != last, "different addresses compare unequal");
+
+    // Steps: compound assignment, prefix and postfix.
+    raw int64* cursor = base;
+    cursor += 2;
+    assert(*cursor == 300, "+= steps by elements");
+    cursor -= 1;
+    assert(*cursor == 200, "-= steps back by elements");
+    cursor++;
+    assert(*cursor == 300, "postfix ++ steps one element");
+    cursor--;
+    assert(*cursor == 200, "postfix -- steps back one element");
+    ++cursor;
+    assert(*cursor == 300, "prefix ++ steps one element");
+    --cursor;
+    assert(*cursor == 200, "prefix -- steps back one element");
+
+    // Postfix yields the address before the step, prefix the one after.
+    raw int64* postfix = base;
+    raw int64* before = postfix++;
+    assert(*before == 100, "postfix ++ returns the old address");
+    assert(*postfix == 200, "postfix ++ leaves the new address behind");
+    raw int64* prefix = base;
+    raw int64* after = ++prefix;
+    assert(*after == 200, "prefix ++ returns the new address");
+
+    // Indexing is the arithmetic spelled differently, including as a target.
+    assert(base[0] == 100, "p[0] is the first element");
+    assert(base[2] == *(base + 2), "p[i] agrees with *(p + i)");
+    int32 index = 3;
+    assert(base[index] == 400, "a variable index works");
+    base[1] = 999;
+    assert(data[1] == 999, "p[i] is an assignment target");
+    base[1] += 1;
+    assert(data[1] == 1000, "p[i] takes a compound assignment");
+    raw int64* middle = base + 2;
+    assert(middle[-1] == 1000, "a negative index walks back");
+    data[1] = 200;
+
+    // A struct element steps by its layout, padding included.
+    Wide[] items = new Wide[3];
+    items[0].a = 11;
+    items[2].a = 33;
+    raw Wide* first = &items[0];
+    assert((first + 2) - first == 2, "struct pointers step by whole elements");
+    assert(first[2].a == 33, "indexing reaches the third struct");
+
+    // Walking a buffer to its end, the reason all of this exists.
+    raw int64* walk = base;
+    raw int64* end = base + 4;
+    int64 sum = 0;
+    while (walk < end) {
+        sum += *walk;
+        walk++;
+    }
+    assert(sum == 1000, "walking the buffer visits every element once");
+
+    // Storing through a computed address reaches the array behind it.
+    *(base + 2) = 42;
+    assert(data[2] == 42, "a store through p + n lands in the array");
+
+    println("pointer-arithmetic=ok");
+    return 0;
+}

@@ -874,6 +874,17 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/destruction-order.abs"
     )
     add_test(
+        NAME absolute.pointer-arithmetic-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-arithmetic.abs"
+    )
+    add_test(
+        NAME absolute.pointer-arithmetic-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-arithmetic-errors.abs"
+    )
+    set_tests_properties(absolute.pointer-arithmetic-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "a raw pointer supports only '\\+=' and '-=' with an integer step"
+    )
+    add_test(
         NAME absolute.module-scope-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/module-scope-errors.abs"
     )
@@ -4312,6 +4323,20 @@ if(BUILD_TESTING)
         )
         add_test(NAME absolute.run-destruction-order
             COMMAND "${CMAKE_BINARY_DIR}/destruction-order-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-pointer-arithmetic
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-arithmetic.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/pointer-arithmetic-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-pointer-arithmetic PROPERTIES
+            FIXTURES_SETUP absolute-pointer-arithmetic-executable
+        )
+        add_test(NAME absolute.run-pointer-arithmetic
+            COMMAND "${CMAKE_BINARY_DIR}/pointer-arithmetic-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-pointer-arithmetic PROPERTIES
+            FIXTURES_REQUIRED absolute-pointer-arithmetic-executable
+            PASS_REGULAR_EXPRESSION "pointer-arithmetic=ok"
+        )
         set_tests_properties(absolute.run-destruction-order PROPERTIES
             FIXTURES_REQUIRED absolute-destruction-order-executable
             PASS_REGULAR_EXPRESSION "destruction-order=ok"

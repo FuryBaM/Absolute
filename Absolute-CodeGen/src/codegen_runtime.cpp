@@ -870,6 +870,14 @@ namespace Absolute {
         Fail("increment requires a numeric operand");
     }
 
+    llvm::Value* CodeGenerator::Impl::PointerOffset(llvm::Value* pointer,
+        const std::string& pointerTypeName, llvm::Value* index, bool subtract) {
+        llvm::Value* scaled = Coerce(index, builder.getInt64Ty());
+        if (subtract) scaled = builder.CreateNeg(scaled, "pointer.negative.offset");
+        return builder.CreateGEP(TypeFromName(PointerPointeeName(pointerTypeName)),
+            pointer, scaled, "pointer.offset");
+    }
+
     void CodeGenerator::Impl::BranchIfNeeded(llvm::BasicBlock* target) {
         llvm::BasicBlock* block = builder.GetInsertBlock();
         if (block && !block->getTerminator()) builder.CreateBr(target);
