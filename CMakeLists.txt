@@ -909,6 +909,17 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/negated-literal-typing.abs"
     )
     add_test(
+        NAME absolute.main-parameters-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/main-parameters-errors.abs"
+    )
+    set_tests_properties(absolute.main-parameters-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "entry function 'main' takes no parameters"
+    )
+    add_test(
+        NAME absolute.command-line-arguments-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/command-line-arguments.abs"
+    )
+    add_test(
         NAME absolute.temporary-owners-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/temporary-owners.abs"
     )
@@ -4532,6 +4543,28 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-hostile-input PROPERTIES
             FIXTURES_REQUIRED absolute-hostile-input-executable
             PASS_REGULAR_EXPRESSION "hostile-input=ok"
+        )
+        add_test(
+            NAME absolute.build-command-line-arguments
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/command-line-arguments.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/command-line-arguments-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-command-line-arguments PROPERTIES
+            FIXTURES_SETUP absolute-command-line-arguments-executable
+        )
+        # Once with no arguments and once with two, since the count is what the
+        # entry-point parameter used to get wrong.
+        add_test(NAME absolute.run-command-line-arguments
+            COMMAND "${CMAKE_BINARY_DIR}/command-line-arguments-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-command-line-arguments PROPERTIES
+            FIXTURES_REQUIRED absolute-command-line-arguments-executable
+            PASS_REGULAR_EXPRESSION "command-line-arguments=ok"
+        )
+        add_test(NAME absolute.run-command-line-arguments-with-arguments
+            COMMAND "${CMAKE_BINARY_DIR}/command-line-arguments-app${CMAKE_EXECUTABLE_SUFFIX}" first second)
+        set_tests_properties(absolute.run-command-line-arguments-with-arguments PROPERTIES
+            FIXTURES_REQUIRED absolute-command-line-arguments-executable
+            PASS_REGULAR_EXPRESSION "command-line-arguments=ok"
         )
         add_test(
             NAME absolute.build-temporary-owners

@@ -1,0 +1,47 @@
+// Reading command-line arguments the way the language provides.
+//
+// The counterpart to tests/main-parameters-errors.abs: `main` takes nothing,
+// and the arguments come from `std.env`, which reads them from the operating
+// system. The test is run without arguments, so what it pins is the shape of
+// the answer -- a count that is a real number rather than stack contents, and
+// an out-of-range index that returns an empty string instead of reading past
+// the end.
+
+import "std/env.abs";
+
+int32 main() {
+    const int32 count = std.env.argsCount();
+    assert(count >= 0, "the count is a real number");
+    assert(count < 1000000, "and not whatever the stack happened to hold");
+
+    string[] arguments = std.env.args();
+    assert(arguments.length == count, "args() agrees with argsCount()");
+
+    // Every index inside the range answers.
+    int32 index = 0;
+    while (index < count) {
+        assert(std.env.argAt(index) == arguments[index],
+            "argAt agrees with the array");
+        index += 1;
+    }
+
+    // Every index outside it is refused, which is what an entry-point
+    // parameter could not do: there the index was checked against a length
+    // that came from the stack.
+    bool refusedNegative = false;
+    try { std.env.argAt(-1); }
+    catch (Error* error) { refusedNegative = true; }
+    assert(refusedNegative, "a negative index is refused");
+
+    bool refusedPastEnd = false;
+    try { std.env.argAt(count); }
+    catch (Error* error) { refusedPastEnd = true; }
+    assert(refusedPastEnd, "one past the end is refused");
+
+    // The searches read the same list.
+    assert(!std.env.hasArg("--a-flag-this-test-was-not-given"),
+        "a flag that was not passed is not found");
+
+    println("command-line-arguments=ok");
+    return 0;
+}

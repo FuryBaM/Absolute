@@ -1090,6 +1090,15 @@ namespace Absolute {
             Report("entry function 'main' cannot be exported", "E_EXPORT_MAIN");
         if (name == "main" && functionOverloads.contains(name))
             Report("entry function 'main' cannot be overloaded", "E_MAIN_OVERLOAD");
+        // The entry point is the C `main`, which is called with (argc, argv).
+        // A declared parameter was accepted and then built out of whatever the
+        // registers happened to hold: `main(string[] args)` read `args.length`
+        // as 913878280 and crashed on `args[1]` about half the time, differing
+        // from run to run. Arguments have their own way in, so the declaration
+        // is refused rather than given a second, quieter one.
+        if (name == "main" && !statement.parameters.empty())
+            Report("entry function 'main' takes no parameters; read command-line "
+                "arguments with std.env.args()", "E_MAIN_PARAMETERS");
         if (statement.IsExternal() && functionOverloads.contains(name) &&
             std::any_of(functionOverloads[name].begin(), functionOverloads[name].end(), [&](SymbolId id) {
                 const Symbol* existing = table.Get(id);
