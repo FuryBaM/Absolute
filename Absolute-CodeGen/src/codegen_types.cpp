@@ -1156,7 +1156,11 @@ namespace Absolute {
         if (IsPointerTypeName(typeName)) {
             const bool oldAddressMode = addressMode;
             addressMode = false;
-            llvm::Value* pointer = Evaluate(expression);
+            // Reading a member or calling a method borrows the object: it does
+            // not take the owner, so `make().value` used to drop the handle and
+            // leak it. Registered for the end of the statement instead, which
+            // is late enough for a chain like `make().child.value` to finish.
+            llvm::Value* pointer = EvaluateBorrowed(expression);
             addressMode = oldAddressMode;
             return IsManagedPointerTypeName(typeName)
                 ? ManagedPointee(expression, pointer) : pointer;

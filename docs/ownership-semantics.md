@@ -51,6 +51,34 @@ void process(Node* node) {
 Raw and weak pointers remain explicit pointer representations because they
 change safety and cleanup behavior; they are not ownership roles.
 
+## Owners produced inside an expression
+
+An owner that a statement produces but never binds is a **temporary**, and it
+is destroyed when that statement ends:
+
+```absolute
+if (parse(text) != null) { … }   // the parsed owner is released here
+int32 count = load().items;      // and so is the loaded one
+```
+
+The end of the statement rather than the point of use, so that a chain keeps
+working: `load().config.timeout` reads through the object twice, and the object
+has to outlive both reads. A temporary borrowed on one path of a short circuit,
+a ternary arm, or a loop condition is released on that path, once per time it
+is produced.
+
+Only a freshly produced owner becomes a temporary. A variable holding one is
+never released by an expression that reads it, and an owner handed to a
+function is the callee's — the caller does not release it a second time. A
+statement that produces an owner and does nothing else with it at all is still
+refused (`E_OWNING_RESULT_DISCARDED`): the release makes borrowing safe, not
+`new Node();` meaningful.
+
+Leaving a statement through an exception releases its temporaries too.
+`tests/temporary-owners.abs` pins each of these with a destruction count, so a
+missed release shows as a leak and a double release shows as a count that is
+too high.
+
 The executable matrix is `tests/ownership-semantics-matrix.abs`; its negative
 counterpart checks invalid owner-required calls and subscriber/weak moves.
 Benchmarks live under `benchmarks/value-ref-suite` and

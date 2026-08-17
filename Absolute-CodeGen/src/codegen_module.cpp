@@ -593,6 +593,7 @@ namespace Absolute {
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
         builder.SetInsertPoint(entry);
         PushScope();
+        FunctionTemporaryScope bodyTemporaries(*this);
         BeginDebugFunction(*function, &statement,
             specialization ? specialization->name : statement.name->value);
         const std::string oldReturnTypeName = currentReturnTypeName;
@@ -618,6 +619,7 @@ namespace Absolute {
         }
 
         if (statement.body) statement.body->Accept(visitor);
+        RequireNoPendingTemporaries("'" + function->getName().str() + "'");
         if (!builder.GetInsertBlock()->getTerminator()) {
             EmitScopeCleanup(scopes.size() - 1);
             if (!builder.GetInsertBlock() ||
@@ -769,6 +771,7 @@ namespace Absolute {
         llvm::Function* function = DeclareMethodFunction(method);
         if (!function->empty()) return;
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+        FunctionTemporaryScope bodyTemporaries(*this);
         builder.SetInsertPoint(entry);
         PushScope();
         BeginDebugFunction(
@@ -841,6 +844,7 @@ namespace Absolute {
         llvm::Function* function = DeclareConstructorFunction(info, constructor);
         if (!function || !function->empty()) return;
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+        FunctionTemporaryScope bodyTemporaries(*this);
         builder.SetInsertPoint(entry);
         PushScope();
         BeginDebugFunction(
@@ -994,6 +998,7 @@ namespace Absolute {
         llvm::Function* function = DeclareMethodFunction(method);
         if (!function->empty()) return;
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+        FunctionTemporaryScope bodyTemporaries(*this);
         builder.SetInsertPoint(entry);
         PushScope();
         BeginDebugFunction(
@@ -1046,6 +1051,7 @@ namespace Absolute {
         llvm::Function* function = DeclareMethodFunction(method);
         if (!function->empty()) return;
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+        FunctionTemporaryScope bodyTemporaries(*this);
         builder.SetInsertPoint(entry);
         PushScope();
         BeginDebugFunction(
@@ -1126,6 +1132,7 @@ namespace Absolute {
             function = module->getFunction(ConstructorLinkName(info.name, parameterTypes));
             if (!function || !function->empty()) continue;
             llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+            FunctionTemporaryScope bodyTemporaries(*this);
             builder.SetInsertPoint(entry);
             PushScope();
             BeginDebugFunction(

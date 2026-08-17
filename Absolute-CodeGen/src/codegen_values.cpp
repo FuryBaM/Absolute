@@ -460,12 +460,17 @@ namespace Absolute {
                 (impl->classes.contains(runtimeTarget) || impl->interfaces.contains(runtimeTarget)));
         if (runtimeOperation) {
             llvm::Value* reference = impl->Evaluate(expr->base.get());
+            const bool baseCreatesManagedOwner = impl->valueCreatesManagedOwner;
             llvm::Value* sourcePointee = impl->valueManagedPointee;
             const ExpressionInfo* sourceInfo = impl->analyzer
                 ? impl->analyzer->GetExpressionInfo(*expr->base) : nullptr;
             llvm::Value* matches = impl->EmitRuntimeTypeTest(
                 reference, sourceType, runtimeTarget);
             if (expr->operation == "is") {
+                // `is` answers a question about the object and gives back a
+                // bool, so an owner asked about -- `make() is Base` -- is
+                // nobody's afterwards. It waits for the end of the statement.
+                if (baseCreatesManagedOwner) impl->RegisterTemporaryOwner(reference, sourceType);
                 impl->value = matches;
                 impl->valueCreatesManagedOwner = false;
                 impl->valueManagedPointee = nullptr;
@@ -1054,6 +1059,11 @@ namespace Absolute {
         impl->finallyTargets.clear();
         impl->caughtExceptions.clear();
         impl->deferredScopes.clear();
+        // A lambda body is emitted in the middle of the body that writes it, so
+        // it needs the same isolation a function body gets: an owner produced
+        // here belongs to this function's blocks and must be released in them.
+        std::vector<Impl::TemporaryOwner> enclosingTemporaries;
+        enclosingTemporaries.swap(impl->temporaryManagedOwners);
         impl->PushScope();
         impl->BeginDebugFunction(
             *lambda, expr, "lambda." + std::to_string(lambdaId));
@@ -1097,8 +1107,12 @@ namespace Absolute {
         }
 
         if (expr->expressionBody) {
+            // The body is one expression and the return terminates the block,
+            // so what it borrowed is released by hand, before the terminator.
+            const size_t temporaryMark = impl->temporaryManagedOwners.size();
             llvm::Value* result = impl->Evaluate(expr->expressionBody.get());
             const bool createsClosureOwner = impl->valueCreatesClosureOwner;
+            impl->ReleaseTemporaryOwners(temporaryMark);
             std::string nestedReturn;
             std::vector<std::string> nestedParameters;
             if (ParseCodegenFunctionType(returnType, nestedReturn, nestedParameters) &&
@@ -1119,6 +1133,10 @@ namespace Absolute {
                 else impl->Fail("lambda body reached code generation without a return");
             }
         }
+
+        if (!impl->temporaryManagedOwners.empty())
+            impl->Fail("temporary owner left unreleased in a lambda body");
+        impl->temporaryManagedOwners.swap(enclosingTemporaries);
 
         std::string verifierMessage;
         llvm::raw_string_ostream verifierStream(verifierMessage);

@@ -617,11 +617,18 @@ namespace {
                     std::lock_guard taskLock(work.task->mutex);
                     work.task->state = TaskState::Done;
                     work.task->done = true;
+                    // Counted before anyone is told the task is done, and under
+                    // the same lock. `await` returns the moment it observes
+                    // `done`, so counting afterwards left a window in which a
+                    // program could await two tasks and then read a metric that
+                    // did not include them yet -- which is exactly what
+                    // tests/task-scheduling.abs asserts, and what it failed on
+                    // under CPU contention: 18 runs in 60 with the machine
+                    // busy, and none when it was idle.
+                    completedTasks.fetch_add(1, std::memory_order_relaxed);
                     waiters.swap(work.task->completionWaiters);
                     work.task->completed.notify_all();
                 }
-                completedTasks.fetch_add(
-                    1, std::memory_order_relaxed);
                 for (Task* waiter : waiters)
                     Resume(waiter);
             }

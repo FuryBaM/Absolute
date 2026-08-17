@@ -382,6 +382,51 @@ namespace Absolute {
         for (llvm::Value* owner : owners) builder.CreateCall(ClosureRelease(), {owner});
     }
 
+    llvm::Value* CodeGenerator::Impl::EvaluateBorrowed(Expression* expression) {
+        llvm::Value* value = Evaluate(expression);
+        // Only a freshly produced owner is registered. The flag is false for a
+        // variable holding one, which is what keeps this from destroying
+        // something its scope still owns.
+        if (valueCreatesManagedOwner && value)
+            RegisterTemporaryOwner(value, SemanticType(expression));
+        return value;
+    }
+
+    void CodeGenerator::Impl::RegisterTemporaryOwner(
+        llvm::Value* handle, const std::string& typeName) {
+        if (!handle) return;
+        temporaryManagedOwners.push_back({handle, typeName});
+        valueCreatesManagedOwner = false;
+        valueManagedPointee = nullptr;
+    }
+
+    void CodeGenerator::Impl::RequireNoPendingTemporaries(const std::string& where) {
+        if (!temporaryManagedOwners.empty())
+            Fail("temporary owner left unreleased in " + where);
+    }
+
+    void CodeGenerator::Impl::ReleaseTemporaryOwners(size_t mark) {
+        if (temporaryManagedOwners.size() <= mark) return;
+        // Nothing may be emitted into a block a terminator has already closed,
+        // so a scope has to close before the return or branch its statement
+        // ends with. The guard is here to keep malformed IR out if one does
+        // not.
+        llvm::BasicBlock* block = builder.GetInsertBlock();
+        if (block && !block->getTerminator()) {
+            // The same two steps `delete` takes, in the same order: what the
+            // object owns goes first, then the object. Destroying the handle
+            // alone left every managed field of the temporary behind, which is
+            // a quieter leak than the one this replaced.
+            for (size_t index = temporaryManagedOwners.size(); index > mark; --index) {
+                const TemporaryOwner& temporary = temporaryManagedOwners[index - 1];
+                llvm::Value* pointee = EmitManagedGet(temporary.handle, false);
+                EmitPointeeCleanup(pointee, temporary.typeName);
+                builder.CreateCall(ManagedDestroy(), {temporary.handle});
+            }
+        }
+        temporaryManagedOwners.resize(mark);
+    }
+
     llvm::StructType* CodeGenerator::Impl::ClosureObjectType() {
         if (closureObjectType) return closureObjectType;
         closureObjectType = llvm::StructType::create(context, "absolute.closure");

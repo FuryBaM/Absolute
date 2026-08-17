@@ -53,6 +53,52 @@
 
         void ReleaseClosureTemporaries(const std::vector<llvm::Value*>& owners);
 
+        // Evaluate an operand that only reads what it is given. If the operand
+        // produced an owner -- `make()` rather than a variable holding one --
+        // the handle is kept for the end of the statement instead of being
+        // dropped on the floor, which is what leaked it.
+        llvm::Value* EvaluateBorrowed(Expression* expression);
+
+        void RegisterTemporaryOwner(llvm::Value* handle, const std::string& typeName);
+
+        void ReleaseTemporaryOwners(size_t mark);
+
+        // Destroys, at the end of the statement it was opened for, every owner
+        // registered inside it. Statements nest, so each scope only releases
+        // what appeared after it opened.
+        struct TemporaryOwnerScope {
+            explicit TemporaryOwnerScope(Impl& owner)
+                : impl(owner), mark(owner.temporaryManagedOwners.size()) {
+            }
+            TemporaryOwnerScope(const TemporaryOwnerScope&) = delete;
+            TemporaryOwnerScope& operator=(const TemporaryOwnerScope&) = delete;
+            ~TemporaryOwnerScope() { impl.ReleaseTemporaryOwners(mark); }
+
+            Impl& impl;
+            size_t mark;
+        };
+
+        // Keeps one body's pending temporaries out of another's. Bodies nest --
+        // a lambda is emitted in the middle of the function that writes it, a
+        // generic specialization in the middle of its first caller -- and an
+        // SSA value belongs to exactly one function, so a release emitted in
+        // the wrong one is invalid IR rather than a leak.
+        struct FunctionTemporaryScope {
+            explicit FunctionTemporaryScope(Impl& owner) : impl(owner) {
+                saved.swap(owner.temporaryManagedOwners);
+            }
+            FunctionTemporaryScope(const FunctionTemporaryScope&) = delete;
+            FunctionTemporaryScope& operator=(const FunctionTemporaryScope&) = delete;
+            ~FunctionTemporaryScope() { impl.temporaryManagedOwners.swap(saved); }
+
+            Impl& impl;
+            std::vector<TemporaryOwner> saved;
+        };
+
+        // Every statement releases what it produced, so anything left when a
+        // body ends is a statement kind that never opened a scope.
+        void RequireNoPendingTemporaries(const std::string& where);
+
         llvm::StructType* ClosureObjectType();
 
         llvm::FunctionType* ClosureInvokeType(const std::string& returnType,

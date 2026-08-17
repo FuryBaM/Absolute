@@ -191,6 +191,17 @@
         std::unordered_map<std::string, std::string> functionLinkNames;
         bool valueCreatesManagedOwner = false;
         llvm::Value* valueManagedPointee = nullptr;
+        // Owners produced inside a larger expression that nothing takes: a
+        // comparison, a member read, a condition. They are destroyed at the end
+        // of the statement that produced them, so the handles wait here until
+        // the statement's TemporaryOwnerScope closes. The type name travels
+        // with the handle because releasing an owner means releasing what it
+        // owns first, which needs to know what it is.
+        struct TemporaryOwner {
+            llvm::Value* handle = nullptr;
+            std::string typeName;
+        };
+        std::vector<TemporaryOwner> temporaryManagedOwners;
         bool valueCreatesArrayOwner = false;
         llvm::Value* valueArrayOwner = nullptr;
         bool valueCreatesClosureOwner = false;

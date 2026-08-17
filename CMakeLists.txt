@@ -909,6 +909,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/negated-literal-typing.abs"
     )
     add_test(
+        NAME absolute.temporary-owners-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/temporary-owners.abs"
+    )
+    add_test(
         NAME absolute.enum-values-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/enum-values.abs"
     )
@@ -4528,6 +4532,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-hostile-input PROPERTIES
             FIXTURES_REQUIRED absolute-hostile-input-executable
             PASS_REGULAR_EXPRESSION "hostile-input=ok"
+        )
+        add_test(
+            NAME absolute.build-temporary-owners
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/temporary-owners.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/temporary-owners-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-temporary-owners PROPERTIES
+            FIXTURES_SETUP absolute-temporary-owners-executable
+        )
+        add_test(NAME absolute.run-temporary-owners
+            COMMAND "${CMAKE_BINARY_DIR}/temporary-owners-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-temporary-owners PROPERTIES
+            FIXTURES_REQUIRED absolute-temporary-owners-executable
+            PASS_REGULAR_EXPRESSION "temporary-owners=ok"
         )
         add_test(
             NAME absolute.build-enum-values

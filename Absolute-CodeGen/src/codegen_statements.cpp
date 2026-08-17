@@ -152,6 +152,9 @@ namespace Absolute {
     void CodeGenerator::Visit(SingleStatement* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies || !stmt->expr) return;
         impl->SetDebugLocation(stmt);
+        // An owner produced inside this statement that nothing took is
+        // destroyed when the statement ends.
+        Impl::TemporaryOwnerScope temporaries(*impl);
         impl->valueCreatesArrayOwner = false;
         impl->valueArrayOwner = nullptr;
         if (impl->SemanticType(stmt->expr.get()) == "void") stmt->expr->Accept(*this);
@@ -176,6 +179,7 @@ namespace Absolute {
     void CodeGenerator::Visit(FunctionCallStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies || !stmt->value) return;
         impl->SetDebugLocation(stmt);
+        Impl::TemporaryOwnerScope temporaries(*impl);
         impl->valueCreatesArrayOwner = false;
         impl->valueArrayOwner = nullptr;
         if (impl->SemanticType(stmt->value.get()) == "void") stmt->value->Accept(*this);
@@ -226,9 +230,13 @@ namespace Absolute {
                 impl->EmitOrExit(owns, "return.requires.owner");
             }
         }
+        // Released by hand rather than by a scope: the statement ends with a
+        // terminator, and nothing may be emitted after one.
+        const size_t temporaryMark = impl->temporaryManagedOwners.size();
         llvm::Value* result = impl->Coerce(
             impl->Evaluate(stmt->expr.get()), expectedReturn,
             impl->SemanticType(stmt->expr.get()), impl->currentReturnTypeName);
+        impl->ReleaseTemporaryOwners(temporaryMark);
         SymbolId transferredOwner = InvalidSymbolId;
         if (IsStrongManagedPointerTypeName(impl->currentReturnTypeName)) {
             const auto* returnedIdentifier = dynamic_cast<IdentifierExpr*>(stmt->expr.get());
@@ -255,7 +263,9 @@ namespace Absolute {
 
     void CodeGenerator::Visit(AssignmentStmt* stmt) {
         impl->SetDebugLocation(stmt);
-        if (impl->phase == Impl::Phase::EmitBodies && stmt->expr) stmt->expr->Accept(*this);
+        if (impl->phase != Impl::Phase::EmitBodies || !stmt->expr) return;
+        Impl::TemporaryOwnerScope temporaries(*impl);
+        stmt->expr->Accept(*this);
     }
 
     void CodeGenerator::Visit(VarDeclStmt* stmt) {
@@ -273,6 +283,7 @@ namespace Absolute {
         }
         if (!impl->CurrentFunction()) return;
         impl->SetDebugLocation(stmt);
+        Impl::TemporaryOwnerScope temporaries(*impl);
         const Attribute* previousSpawnAttribute = impl->currentSpawnAttribute;
         impl->currentSpawnAttribute = stmt->FindAttribute("spawn");
         stmt->expr->Accept(*this);
@@ -348,7 +359,13 @@ namespace Absolute {
         llvm::BasicBlock* mergeBlock = llvm::BasicBlock::Create(impl->context, "if.end", function);
         for (size_t index = 0; index < stmt->branches.size(); ++index) {
             auto& branch = stmt->branches[index];
-            llvm::Value* condition = impl->AsCondition(impl->Evaluate(branch.condition.get()));
+            llvm::Value* condition = nullptr;
+            {
+                // Released inside the block that tested it, so a condition on
+                // one path does not name a value another path never produced.
+                Impl::TemporaryOwnerScope temporaries(*impl);
+                condition = impl->AsCondition(impl->EvaluateBorrowed(branch.condition.get()));
+            }
             llvm::BasicBlock* bodyBlock = llvm::BasicBlock::Create(impl->context, "if.body", function);
             const bool hasNext = index + 1 < stmt->branches.size() || stmt->elseBranch;
             llvm::BasicBlock* nextBlock = hasNext
@@ -375,7 +392,11 @@ namespace Absolute {
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("switch outside a function");
 
-        llvm::Value* selector = impl->Evaluate(stmt->value.get());
+        llvm::Value* selector = nullptr;
+        {
+            Impl::TemporaryOwnerScope temporaries(*impl);
+            selector = impl->EvaluateBorrowed(stmt->value.get());
+        }
         llvm::Type* selectorType = selector->getType();
         if (!selectorType->isIntegerTy())
             impl->Fail("switch value must lower to an integer");
@@ -408,9 +429,13 @@ namespace Absolute {
         llvm::Value* handle = nullptr;
         llvm::Value* type = nullptr;
         SymbolId transferredOwner = InvalidSymbolId;
+        const size_t temporaryMark = impl->temporaryManagedOwners.size();
         if (stmt->value) {
             const std::string exceptionType = impl->SemanticType(stmt->value.get());
             handle = impl->Evaluate(stmt->value.get());
+            // Before the throw leaves: nothing may be emitted after it. The
+            // thrown owner itself is transferred, not registered.
+            impl->ReleaseTemporaryOwners(temporaryMark);
             llvm::Value* dynamicType = impl->builder.CreateCall(
                 impl->ManagedType(), {handle}, "exception.dynamic.type");
             llvm::Value* staticType = impl->builder.getInt64(
@@ -554,7 +579,13 @@ namespace Absolute {
         impl->builder.CreateBr(conditionBlock);
 
         impl->builder.SetInsertPoint(conditionBlock);
-        llvm::Value* condition = stmt->condition ? impl->AsCondition(impl->Evaluate(stmt->condition.get())) : impl->builder.getTrue();
+        llvm::Value* condition = impl->builder.getTrue();
+        if (stmt->condition) {
+            // Inside the condition block: the condition runs once per
+            // iteration, so what it produces is released once per iteration.
+            Impl::TemporaryOwnerScope temporaries(*impl);
+            condition = impl->AsCondition(impl->EvaluateBorrowed(stmt->condition.get()));
+        }
         impl->builder.CreateCondBr(condition, bodyBlock, endBlock);
 
         impl->loops.push_back({updateBlock, endBlock, impl->scopes.size()});
@@ -584,7 +615,12 @@ namespace Absolute {
         impl->builder.CreateBr(conditionBlock);
 
         impl->builder.SetInsertPoint(conditionBlock);
-        impl->builder.CreateCondBr(impl->AsCondition(impl->Evaluate(stmt->condition.get())), bodyBlock, endBlock);
+        llvm::Value* condition = nullptr;
+        {
+            Impl::TemporaryOwnerScope temporaries(*impl);
+            condition = impl->AsCondition(impl->EvaluateBorrowed(stmt->condition.get()));
+        }
+        impl->builder.CreateCondBr(condition, bodyBlock, endBlock);
 
         impl->loops.push_back({conditionBlock, endBlock, impl->scopes.size()});
         impl->builder.SetInsertPoint(bodyBlock);
@@ -629,7 +665,12 @@ namespace Absolute {
         impl->BranchIfNeeded(conditionBlock);
 
         impl->builder.SetInsertPoint(conditionBlock);
-        impl->builder.CreateCondBr(impl->AsCondition(impl->Evaluate(stmt->condition.get())), bodyBlock, endBlock);
+        llvm::Value* condition = nullptr;
+        {
+            Impl::TemporaryOwnerScope temporaries(*impl);
+            condition = impl->AsCondition(impl->EvaluateBorrowed(stmt->condition.get()));
+        }
+        impl->builder.CreateCondBr(condition, bodyBlock, endBlock);
         impl->loops.pop_back();
         impl->builder.SetInsertPoint(endBlock);
     }
@@ -639,6 +680,10 @@ namespace Absolute {
         impl->SetDebugLocation(stmt);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("foreach outside a function");
+        // The iterable is evaluated once, before the loop, and read on every
+        // iteration, so a temporary source -- `for (x in makeList())` -- has to
+        // outlive the loop and is released after it.
+        Impl::TemporaryOwnerScope temporaries(*impl);
         const std::string iterableType = impl->SemanticType(stmt->iterable.get());
         const bool isArray = iterableType.ends_with("[]");
 

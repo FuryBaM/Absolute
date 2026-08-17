@@ -16,56 +16,74 @@ build/Release/absolutec file.abs --build-exe -o app && ./app
 
 ## 1. Open defects
 
-One real defect and one unreproduced observation, below. Everything else this
-section held was closed in the session that follows the one which wrote it;
-each entry records what the fix was, so a regression is recognizable rather
-than rediscovered.
+Nothing open. Every entry this section held has been closed, and each one
+records what the fix was, so a regression is recognizable rather than
+rediscovered.
 
-### Open: an owner produced inside a larger expression is lost
+### Fixed: an owner produced inside a larger expression was lost
 
-A statement that discards an owner is refused now
-(`tests/discarded-owner-errors.abs`), but the rule only sees the top of the
-statement. An owner produced deeper in an expression still leaks:
+The ownership rules only ever named the top of a statement, so an owner
+produced deeper in one was created, read, and dropped:
 
 ```absolute
-class Box { public int32 value; }
-Box* make() { return new Box(); }
-
-int32 main() {
-    if (make() != null) { println("compared"); }   // leaks
-    int32 v = make().value;                        // leaks
-    return 0;
-}
+if (make() != null) { println("compared"); }   // leaked
+int32 v = make().value;                        // leaked
 ```
 
-Each of these ends with "memory leak detected for handle N" and an abort at
-exit. `std.json.parse(text)` used in a condition is the shape that found it.
+Each ended with "memory leak detected for handle N" and an abort at exit.
+`std.json.parse(text)` used in a condition is the shape that found it. The two
+answers on the table were to refuse such an expression or to release it; the
+release was chosen, so `if (parse(x) != null)` keeps working.
 
-The fix is a design decision rather than a patch, which is why it is recorded
-instead of guessed at:
+An unbound owner is now destroyed at the end of the statement that produced it
+-- the end of the statement, not the point of use, so `make().child.value` can
+still read through the object after the first borrow. The accounting is the
+part that had to be right, and it is narrow on purpose: only an expression that
+*produces* an owner is registered, which is why a variable holding one is never
+touched, and an owner handed to a function stays the callee's. Releasing means
+the same two steps `delete` takes -- what the object owns, then the object --
+because destroying the handle alone left every managed field behind.
 
-- **Refuse it**, extending the statement rule to any owning subexpression that
-  nothing consumes. Consistent with `move`, and it makes `if (parse(x) != null)`
-  a compile error the user has to rewrite.
-- **Release it**, destroying an unbound owning temporary at the end of its
-  statement, the way the backend already releases array and closure
-  temporaries. Ordinary code keeps working, at the cost of a rule about
-  temporaries that the ownership model does not currently have.
+Three things it had to get right beyond the leak, each found by a probe rather
+than by reading:
 
-Getting the accounting wrong in the second option double-frees, so it wants
-deliberate design and its own torture cases either way.
+- **A borrow on a path that may not run** -- the right side of `&&`, a ternary
+  arm, a loop condition -- is released on that path. A release after the merge
+  would name a value that path never produced, which is invalid IR, not a leak.
+- **A body emitted inside another body.** A lambda is emitted in the middle of
+  the function that writes it, and an SSA value belongs to exactly one
+  function; the first version put the lambda's destroys in `main`, and the
+  verifier caught it. Every body emitter now isolates its own temporaries, and
+  anything left pending when a body ends fails the build instead of leaking.
+- **Leaving through an exception**, where the statement's own release never
+  runs. The unwind path releases them.
 
-### Unreproduced: `absolute.run-task-scheduling` aborted once under load
+Pinned by `tests/temporary-owners.abs`, which counts destructions rather than
+watching for a crash: a missed release shows up as a leak at exit, a double
+release as a count that is too high. `docs/ownership-semantics.md` states the
+rule.
 
-Seen once in eight full parallel runs of the suite on Linux. It did not
-reproduce: 30 direct runs of the binary and 12 scheduler-only parallel ctest
-runs were all clean, and four further full runs were clean. No diagnostic was
-captured, so there is nothing here but the fact that it happened.
+### Fixed: `absolute.run-task-scheduling` aborted under load
 
-Recorded rather than dropped, because a scheduler abort that appears only under
-CPU contention is exactly the kind of thing a green suite hides. The next
-occurrence should be captured with `--output-on-failure` before anything else
-is concluded.
+Recorded here as an unreproduced observation -- seen once in eight full
+parallel runs, then clean through 30 direct runs, 12 scheduler-only parallel
+runs and four more full runs. It reappeared once during this session's suite
+runs, which was the second sighting, and this time it reproduced: with eight
+busy loops competing for the CPU, the binary failed **18 times in 60**. Idle,
+it never fails. The doc's own advice applied -- a scheduler failure that only
+appears under contention is exactly what a green suite hides -- and the missing
+piece was simply making the machine busy while running it.
+
+The failure was always the same assertion, `metrics completed tasks`, and the
+cause is an ordering one rather than a race on the counter itself. A worker
+finishing a task marked it done and woke its waiters under the task's lock, and
+incremented `completedTasks` *after* releasing that lock. `await` returns the
+moment it sees `done`, so a program could await two tasks and then read a
+metric that did not include either of them yet. The counter is now incremented
+inside the same critical section, before the waiters are told -- anything that
+can observe the completion observes the count that goes with it.
+
+Same 60 runs under the same contention afterwards: no failures.
 
 ### Fixed: a base class's destroy() was silently skipped
 

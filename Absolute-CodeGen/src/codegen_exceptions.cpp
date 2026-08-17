@@ -161,6 +161,16 @@ namespace Absolute {
             builder.CreateCall(ManagedDestroy(), {temporaryManagedOwner});
         if (temporaryRawOwner)
             builder.CreateCall(Free(), {temporaryRawOwner});
+        // The statement that owns these temporaries is being left through its
+        // exception path, so the release it ends with never runs. They are
+        // released here instead, without being taken off the ledger: the
+        // ordinary path still has its own release to emit.
+        for (size_t index = temporaryManagedOwners.size(); index > 0; --index) {
+            const TemporaryOwner& temporary = temporaryManagedOwners[index - 1];
+            llvm::Value* pointee = EmitManagedGet(temporary.handle, false);
+            EmitPointeeCleanup(pointee, temporary.typeName);
+            builder.CreateCall(ManagedDestroy(), {temporary.handle});
+        }
         EmitExceptionPropagation();
         builder.SetInsertPoint(continueBlock);
     }

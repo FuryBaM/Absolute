@@ -11,6 +11,9 @@ namespace Absolute {
             llvm::Function* function = impl->CurrentFunction();
             if (!function) impl->Fail("logical expression outside a function");
 
+            // The left operand always runs, so it can wait for the end of the
+            // statement; the right one cannot, and is handled below.
+            if (leftCreatesManagedOwner) impl->RegisterTemporaryOwner(left, leftType);
             left = impl->AsCondition(left);
             llvm::BasicBlock* leftBlock = impl->builder.GetInsertBlock();
             llvm::BasicBlock* rightBlock =
@@ -23,7 +26,14 @@ namespace Absolute {
                 impl->builder.CreateCondBr(left, mergeBlock, rightBlock);
 
             impl->builder.SetInsertPoint(rightBlock);
-            llvm::Value* right = impl->AsCondition(impl->Evaluate(expr->right.get()));
+            llvm::Value* right = nullptr;
+            {
+                // The right operand only runs on one path, so an owner it
+                // produces has to be released on that path: a destroy after the
+                // merge would name a value that does not reach it.
+                Impl::TemporaryOwnerScope shortCircuit(*impl);
+                right = impl->AsCondition(impl->EvaluateBorrowed(expr->right.get()));
+            }
             rightBlock = impl->builder.GetInsertBlock();
             impl->BranchIfNeeded(mergeBlock);
 
@@ -68,6 +78,14 @@ namespace Absolute {
             impl->valueManagedPointee = nullptr;
             return;
         }
+
+        // Everything from here borrows its operands: a comparison, a pointer
+        // difference, arithmetic. None of them takes the owner, so an operand
+        // that produced one -- `make() != null` -- waits for the end of the
+        // statement instead of being dropped. The plugin path above is
+        // unchanged: it destroys its operands as soon as the call returns.
+        if (leftCreatesManagedOwner) impl->RegisterTemporaryOwner(left, leftType);
+        if (rightCreatesManagedOwner) impl->RegisterTemporaryOwner(right, rightType);
 
         const bool leftRaw = IsRawPointerTypeName(leftType);
         const bool rightRaw = IsRawPointerTypeName(rightType);
@@ -170,13 +188,24 @@ namespace Absolute {
         llvm::BasicBlock* mergeBlock = llvm::BasicBlock::Create(impl->context, "ternary.end", function);
         impl->builder.CreateCondBr(condition, trueBlock, falseBlock);
 
+        // Each arm runs on its own path, so an owner borrowed inside one is
+        // released inside it. The arm's own result is not touched: it may be
+        // the owner the ternary yields.
         impl->builder.SetInsertPoint(trueBlock);
-        llvm::Value* trueValue = impl->Evaluate(expr->trueExpr.get());
+        llvm::Value* trueValue = nullptr;
+        {
+            Impl::TemporaryOwnerScope arm(*impl);
+            trueValue = impl->Evaluate(expr->trueExpr.get());
+        }
         trueBlock = impl->builder.GetInsertBlock();
         impl->BranchIfNeeded(mergeBlock);
 
         impl->builder.SetInsertPoint(falseBlock);
-        llvm::Value* falseValue = impl->Evaluate(expr->falseExpr.get());
+        llvm::Value* falseValue = nullptr;
+        {
+            Impl::TemporaryOwnerScope arm(*impl);
+            falseValue = impl->Evaluate(expr->falseExpr.get());
+        }
         falseBlock = impl->builder.GetInsertBlock();
         impl->BranchIfNeeded(mergeBlock);
 
