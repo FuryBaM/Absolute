@@ -683,9 +683,18 @@ namespace Absolute {
                 : builder.CreateSIToFP(source, target, "int.to.fp");
         }
         if (sourceType->isFloatingPointTy() && target->isIntegerTy()) {
-            return targetUnsigned
-                ? builder.CreateFPToUI(source, target, "fp.to.uint")
-                : builder.CreateFPToSI(source, target, "fp.to.int");
+            // Saturating, because the plain conversions are poison whenever the
+            // value does not fit: `1e18 as int32` gave a different number on
+            // each build, `inf as int32` produced a value that broke the
+            // formatter it was passed to, and native and wasm disagreed on all
+            // of them. The saturating intrinsics are defined everywhere -- NaN
+            // becomes 0, and anything past an end clamps to it -- and lower to
+            // the same instruction the target already uses for a checked
+            // conversion. docs/implicit-conversions.md says so.
+            return builder.CreateIntrinsic(
+                targetUnsigned ? llvm::Intrinsic::fptoui_sat : llvm::Intrinsic::fptosi_sat,
+                {target, sourceType}, {source}, nullptr,
+                targetUnsigned ? "fp.to.uint" : "fp.to.int");
         }
         if (sourceType->isFloatingPointTy() && target->isFloatingPointTy()) {
             return builder.CreateFPCast(source, target, "fp.cast");
@@ -831,7 +840,11 @@ namespace Absolute {
         }
 
         if (op == "==") return floating ? builder.CreateFCmpOEQ(left, right, "equal") : builder.CreateICmpEQ(left, right, "equal");
-        if (op == "!=") return floating ? builder.CreateFCmpONE(left, right, "not.equal") : builder.CreateICmpNE(left, right, "not.equal");
+        // Unordered, so that `a != b` stays the negation of `a == b` when
+        // either side is NaN. The ordered form is false whenever an operand is
+        // NaN, which made `nan != nan` false while `nan == nan` was also false
+        // -- both answers wrong at once, and silently.
+        if (op == "!=") return floating ? builder.CreateFCmpUNE(left, right, "not.equal") : builder.CreateICmpNE(left, right, "not.equal");
         if (op == "<") {
             if (floating) return builder.CreateFCmpOLT(left, right, "less");
             return unsignedOperation ? builder.CreateICmpULT(left, right, "less")

@@ -206,7 +206,7 @@ namespace Absolute {
 
     void CodeGenerator::Visit(NumberLiteralExpr* expr) {
         if (IsFloatingLiteral(expr->value)) {
-            impl->value = llvm::ConstantFP::get(impl->builder.getDoubleTy(), std::stod(expr->value));
+            impl->value = llvm::ConstantFP::get(impl->builder.getDoubleTy(), impl->ParseFloatingLiteral(expr->value));
         }
         else {
             // The value was parsed as 64-bit and then truncated into an i32
