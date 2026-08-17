@@ -113,8 +113,73 @@ namespace Absolute {
             InitializationState::Initialized, PointerValidity::Null, InvalidSymbolId});
     }
     void Analyzer::Visit(BooleanLiteralExpr* expr) { Save(expr, {InvalidSymbolId, "bool", false}); }
+    // An integer literal takes the narrowest type that can hold it, which is
+    // what the backend has always done when emitting one. The analyzer called
+    // every integer literal int32, and the two only agreed while the literal
+    // fit: wherever the analyzer's type decided the storage -- a generic
+    // parameter inferred from the argument, most visibly -- a wider literal
+    // was truncated to i32 without a word. identity(10000000000) returned
+    // 1410065408.
+    static std::string IntegerLiteralType(const std::string& text) {
+        unsigned long long parsed = 0;
+        try {
+            parsed = std::stoull(text);
+        }
+        catch (const std::exception&) {
+            // Out of 64-bit range entirely; the backend reports it by value.
+            return "uint64";
+        }
+        if (parsed <= static_cast<unsigned long long>(std::numeric_limits<std::int32_t>::max()))
+            return "int32";
+        if (parsed <= static_cast<unsigned long long>(std::numeric_limits<std::int64_t>::max()))
+            return "int64";
+        return "uint64";
+    }
+
+    // The widest magnitude each integer type can hold, positive and negative.
+    // Narrowing between values is allowed on purpose (docs/implicit-conversions
+    // .md), but a literal is not a value the compiler has to take on trust: it
+    // can see that 4294967296 is not an int32, and truncating it to 0 without a
+    // word is the same silent wrongness the type rules exist to prevent.
+    static bool IntegerLiteralFits(
+        const std::string& target, unsigned long long magnitude, bool negative) {
+        static const std::unordered_map<std::string, std::pair<unsigned long long, unsigned long long>>
+            limits = {
+                // {largest positive, largest magnitude when negated}
+                {"int8", {127ull, 128ull}},
+                {"int16", {32767ull, 32768ull}},
+                {"int32", {2147483647ull, 2147483648ull}},
+                {"int64", {9223372036854775807ull, 9223372036854775808ull}},
+                {"uint8", {255ull, 256ull}},
+                {"uint16", {65535ull, 65536ull}},
+                {"uint32", {4294967295ull, 4294967296ull}},
+                {"uint64", {18446744073709551615ull, 18446744073709551615ull}},
+                {"char", {255ull, 256ull}},
+            };
+        const auto found = limits.find(target);
+        if (found == limits.end()) return true;
+        // A negated literal is allowed up to the wrapped magnitude of the
+        // width, which is what an unsigned mask written as -1 relies on.
+        return magnitude <= (negative ? found->second.second : found->second.first);
+    }
+
     void Analyzer::Visit(NumberLiteralExpr* expr) {
-        Save(expr, {InvalidSymbolId, IsFloatingLiteral(expr->value) ? "double" : "int32", false});
+        if (IsFloatingLiteral(expr->value)) {
+            Save(expr, {InvalidSymbolId, "double", false});
+            return;
+        }
+        const std::string literalType = IntegerLiteralType(expr->value);
+        if (IsInteger(expectedType)) {
+            unsigned long long magnitude = 0;
+            bool parsed = true;
+            try { magnitude = std::stoull(expr->value); }
+            catch (const std::exception&) { parsed = false; }
+            if (!parsed || !IntegerLiteralFits(expectedType, magnitude, literalSign < 0))
+                Report("integer literal " + std::string(literalSign < 0 ? "-" : "") +
+                    expr->value + " does not fit in '" + expectedType + "'",
+                    "E_LITERAL_OUT_OF_RANGE");
+        }
+        Save(expr, {InvalidSymbolId, literalType, false});
     }
     void Analyzer::Visit(StringLiteralExpr* expr) { Save(expr, {InvalidSymbolId, "string", false}); }
     void Analyzer::Visit(CharLiteralExpr* expr) { Save(expr, {InvalidSymbolId, "char", false}); }

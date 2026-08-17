@@ -878,6 +878,17 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-arithmetic.abs"
     )
     add_test(
+        NAME absolute.generic-instantiation-widths-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-instantiation-widths.abs"
+    )
+    add_test(
+        NAME absolute.literal-range-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/literal-range-errors.abs"
+    )
+    set_tests_properties(absolute.literal-range-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "integer literal 4294967296 does not fit in 'int32'"
+    )
+    add_test(
         NAME absolute.pointer-arithmetic-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/pointer-arithmetic-errors.abs"
     )
@@ -4333,6 +4344,20 @@ if(BUILD_TESTING)
         )
         add_test(NAME absolute.run-pointer-arithmetic
             COMMAND "${CMAKE_BINARY_DIR}/pointer-arithmetic-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-generic-instantiation-widths
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-instantiation-widths.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/generic-instantiation-widths-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-generic-instantiation-widths PROPERTIES
+            FIXTURES_SETUP absolute-generic-instantiation-widths-executable
+        )
+        add_test(NAME absolute.run-generic-instantiation-widths
+            COMMAND "${CMAKE_BINARY_DIR}/generic-instantiation-widths-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-generic-instantiation-widths PROPERTIES
+            FIXTURES_REQUIRED absolute-generic-instantiation-widths-executable
+            PASS_REGULAR_EXPRESSION "generic-instantiation-widths=ok"
+        )
         set_tests_properties(absolute.run-pointer-arithmetic PROPERTIES
             FIXTURES_REQUIRED absolute-pointer-arithmetic-executable
             PASS_REGULAR_EXPRESSION "pointer-arithmetic=ok"

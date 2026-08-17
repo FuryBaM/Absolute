@@ -913,7 +913,15 @@ namespace Absolute {
         const AccessMode previousAccess = accessMode;
         if (expr->op == "&") accessMode = AccessMode::Address;
         else if (expr->op == "++" || expr->op == "--") accessMode = AccessMode::Write;
+        // A minus in front of a literal belongs to the constant, not to a
+        // separate operation, so the range check has to see them together:
+        // -2147483648 is an int32 and 2147483648 on its own is not.
+        const int previousSign = literalSign;
+        if ((expr->op == "-" || expr->op == "+") &&
+            dynamic_cast<NumberLiteralExpr*>(expr->operand.get()))
+            literalSign = expr->op == "-" ? -previousSign : previousSign;
         const Result operand = Evaluate(expr->operand.get());
+        literalSign = previousSign;
         accessMode = previousAccess;
         if (expr->op == "&") {
             if (!operand.isLValue) Report("operator '&' requires an assignable value");

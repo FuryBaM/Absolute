@@ -16,9 +16,21 @@ build/Release/absolutec file.abs --build-exe -o app && ./app
 
 ## 1. Open defects
 
-None. What this section held was closed in the session that follows the one
-which wrote it; each entry below records what the fix was, so a regression is
-recognizable rather than rediscovered.
+One unreproduced observation, below. Everything else this section held was
+closed in the session that follows the one which wrote it; each entry records
+what the fix was, so a regression is recognizable rather than rediscovered.
+
+### Unreproduced: `absolute.run-task-scheduling` aborted once under load
+
+Seen once in eight full parallel runs of the suite on Linux. It did not
+reproduce: 30 direct runs of the binary and 12 scheduler-only parallel ctest
+runs were all clean, and four further full runs were clean. No diagnostic was
+captured, so there is nothing here but the fact that it happened.
+
+Recorded rather than dropped, because a scheduler abort that appears only under
+CPU contention is exactly the kind of thing a green suite hides. The next
+occurrence should be captured with `--output-on-failure` before anything else
+is concluded.
 
 ### Fixed: a base class's destroy() was silently skipped
 
@@ -137,8 +149,20 @@ Untested guesses, offered as starting points rather than predictions:
    on the pointee still wins over `p[i]`, which is what `raw IndexedBox*` in
    `tests/indexers-codegen.abs` relies on. See `tests/pointer-arithmetic.abs`
    and `tests/pointer-arithmetic-errors.abs`.
-2. **Generic instantiation** — specialisation with mixed widths and
-   signedness, given that signedness was where every recent defect lived.
+2. ~~**Generic instantiation**~~ — swept. Substitution held: two
+   specializations with the same machine width and different signedness do not
+   share a body, a field or a return of substituted type keeps its signedness,
+   and comparisons inside an open generic body pick the right instruction.
+   Inference did not: every integer literal was typed int32 by the analyzer
+   regardless of magnitude, so `identity(10000000000)` inferred `T = int32` and
+   returned 1410065408. A literal now takes the narrowest type that holds it,
+   which is what the backend always did when emitting one -- the two only
+   agreed while the literal fit. The same disagreement was truncating
+   `int32 x = 4294967296` to 0 in silence; a literal that cannot fit its target
+   is now `E_LITERAL_OUT_OF_RANGE`, while narrowing a *value* stays allowed.
+   Arithmetic on a bare `T` is refused for want of constraints, which is a
+   documented boundary rather than a defect (docs/generics.md). See
+   `tests/generic-instantiation-widths.abs` and `tests/literal-range-errors.abs`.
 3. **The WASM backend against native** — the differential corpus now covers
    float and integer edges, but only in shapes it generates.
 4. **Collection boundaries** — empty, single-element, capacity transitions,
