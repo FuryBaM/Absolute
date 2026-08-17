@@ -1,0 +1,31 @@
+// An owner that nothing takes is refused where it is written.
+//
+// A discarded `move(...)` was already refused, but the other two ways to
+// produce an owner were not: `new Box();` and a call returning `Box*` compiled,
+// ran, and leaked. The managed leak checker then aborted the program at exit
+// with a handle number and no hint of where the allocation came from, and the
+// raw case leaked in silence.
+//
+// Arrays are deliberately not covered: the backend releases an array temporary
+// at the end of its statement, which tests/array-copy.abs relies on.
+//
+// Compiled for the diagnostics, so the file never runs. What is still open is
+// an owner produced *inside* a larger expression -- `if (make() != null)` --
+// which this rule does not see; docs/known-defects.md carries the reproducer.
+
+class Box {
+    public int32 value;
+}
+
+Box* makeManaged() {
+    return new Box();
+}
+
+int32 main() {
+    new Box();
+    makeManaged();
+    new raw Box();
+
+    Box* kept = makeManaged();
+    return kept.value;
+}

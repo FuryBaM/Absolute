@@ -16,9 +16,44 @@ build/Release/absolutec file.abs --build-exe -o app && ./app
 
 ## 1. Open defects
 
-One unreproduced observation, below. Everything else this section held was
-closed in the session that follows the one which wrote it; each entry records
-what the fix was, so a regression is recognizable rather than rediscovered.
+One real defect and one unreproduced observation, below. Everything else this
+section held was closed in the session that follows the one which wrote it;
+each entry records what the fix was, so a regression is recognizable rather
+than rediscovered.
+
+### Open: an owner produced inside a larger expression is lost
+
+A statement that discards an owner is refused now
+(`tests/discarded-owner-errors.abs`), but the rule only sees the top of the
+statement. An owner produced deeper in an expression still leaks:
+
+```absolute
+class Box { public int32 value; }
+Box* make() { return new Box(); }
+
+int32 main() {
+    if (make() != null) { println("compared"); }   // leaks
+    int32 v = make().value;                        // leaks
+    return 0;
+}
+```
+
+Each of these ends with "memory leak detected for handle N" and an abort at
+exit. `std.json.parse(text)` used in a condition is the shape that found it.
+
+The fix is a design decision rather than a patch, which is why it is recorded
+instead of guessed at:
+
+- **Refuse it**, extending the statement rule to any owning subexpression that
+  nothing consumes. Consistent with `move`, and it makes `if (parse(x) != null)`
+  a compile error the user has to rewrite.
+- **Release it**, destroying an unbound owning temporary at the end of its
+  statement, the way the backend already releases array and closure
+  temporaries. Ordinary code keeps working, at the cost of a rule about
+  temporaries that the ownership model does not currently have.
+
+Getting the accounting wrong in the second option double-frees, so it wants
+deliberate design and its own torture cases either way.
 
 ### Unreproduced: `absolute.run-task-scheduling` aborted once under load
 
@@ -225,7 +260,31 @@ prefix minus, so `-1.0 as uint32` is the negation of a converted `1`. The
 readings differ only for unsigned targets; both are pinned in
 `tests/floating-point-edges.abs`.
 
-## 7. Beyond the list: JSON input that killed the process
+## 7. Beyond the list: a library that aborted, and an assert nobody could read
+
+Probing the standard library with input chosen to break it -- indices past the
+end, negative counts, malformed encodings, a directory where a file belongs --
+turned up three things, two of them fatal to the process.
+
+- **A legal JSON number aborted the program**, and so did a malformed
+  `\uXXXX` escape. Section 8 has the detail.
+- **`std.fs.readText` on a directory aborted.** A directory opens as a stream
+  and fails on the first read, and libstdc++ reports that by throwing
+  `std::ios_base::failure` out of the iterator -- past the runtime, past
+  generated code that has no handler, into `std::terminate`. It is an ordinary
+  filesystem error now, named as one.
+- **A failing `assert` printed nothing.** The message went to stdout and
+  `abort()` does not flush stdio, so whenever stdout was not a terminal -- a
+  pipe, a file, a CI log -- the text died in the buffer and the failure was a
+  bare exit code 134. Every test in this repository is written on `assert`, so
+  every one of them failed mutely; the suite leans on `PASS_REGULAR_EXPRESSION`
+  markers partly because of this. Generated code flushes before aborting now.
+
+Everything else refused its input properly, and those refusals became readable
+for the first time once the unhandled report learned to print messages. The
+sweep is pinned by `tests/hostile-input.abs`.
+
+## 8. Beyond the list: JSON input that killed the process
 
 The floating-point sweep pointed at a second `std::stod`, this one in the JSON
 parser, and the consequence there is worse than a compile error.
@@ -246,7 +305,7 @@ with a message. `std.json.getDoubleOr` was added while writing the test, since
 the typed getters could read an integer, a string and a bool but not a double.
 Covered by `tests/std-json-edges.abs`.
 
-## 8. The method that worked
+## 9. The method that worked
 
 Worth repeating, because reading code did not find any of this.
 
@@ -264,7 +323,7 @@ by another route. The compound-assignment defect was found that way, not by
 sweeping again: `a = a / b` had been fixed while `a /= b` still used an untyped
 overload.
 
-## 9. Environment note
+## 10. Environment note
 
 During this work the container repeatedly reverted the working tree to an older
 commit and deleted the build directory. Pushed commits were never affected, but
