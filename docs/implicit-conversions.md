@@ -72,6 +72,30 @@ uint32 negated = -1.0 as uint32;     // 4294967295: -(1.0 as uint32)
 uint32 converted = (-1.0) as uint32; // 0: the negative value saturates
 ```
 
+## Shift amounts
+
+A binary operator produces the wider of its two operand types, and a shift is
+no exception: both sides are widened to that type first, and the shift happens
+at its width. `int32 << int32` shifts at 32 bits; the same left operand shifted
+by an `int64` amount shifts at 64.
+
+The amount has to be less than that width. An amount equal to it or larger —
+and a negative one — is refused, because there is no answer to give: LLVM
+leaves such a shift undefined, which produced `-1780665664` for `1 << 32` on
+one build and a value the formatter could not print for `1 << 40`. An amount
+written in the source is refused when the program is compiled
+(`E_SHIFT_OUT_OF_RANGE`); one that arrives in a variable is checked where it is
+used, and the program says so and exits, the way a zero divisor and an
+out-of-bounds index do.
+
+```absolute
+int32 one = 1;
+int32 top = one << 31;      // allowed: the largest amount at 32 bits
+int32 gone = one << 32;     // refused: E_SHIFT_OUT_OF_RANGE
+int64 count = 40;
+int64 wide = one << count;  // allowed: an int64 result shifts at 64 bits
+```
+
 ## Floating point literals
 
 A literal is a `double`. Subnormal values are accepted, with the precision a

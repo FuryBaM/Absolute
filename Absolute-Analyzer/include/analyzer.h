@@ -485,6 +485,8 @@ namespace Absolute {
         bool IsAsyncTaskValueType(const std::string& name) const;
         bool IsNumeric(const std::string& name) const;
         bool IsInteger(const std::string& name) const;
+        void CheckShiftAmount(
+            Expression* amount, const std::string& resultType, const std::string& op);
         bool IsAssignable(const std::string& target, const std::string& source) const;
         bool IsDerivedFrom(const std::string& type, const std::string& base) const;
         AccessLevel DeclaredAccess(const Statement& statement) const;

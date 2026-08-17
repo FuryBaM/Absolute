@@ -1,0 +1,86 @@
+// What a shift does at the edges of its width.
+//
+// Shifting a value by its own width or more is undefined in LLVM -- not a
+// wrap, not a zero, but whatever the optimizer produces. `1 << 32` printed
+// -1780665664, `1 << 40` produced a value `format` could not print at all, and
+// nothing about either said anything was wrong. Those amounts are refused now
+// (tests/shift-range-errors.abs for the written-out ones, and the runtime
+// check for the computed ones), so this file pins the shifts that must keep
+// working: the last legal amount at each width, both directions, both
+// signednesses.
+//
+// The width a shift happens at is the width of the result type, which is the
+// wider of the two operands -- the same rule every other binary operator here
+// follows. That is why `one << count` below is a 64-bit shift even though the
+// value being shifted is an int32, and it is pinned rather than assumed.
+
+int32 shift(int32 value, int32 amount) {
+    return value << amount;
+}
+
+int32 main() {
+    // The largest legal amount at 32 bits, where the bit lands in the sign.
+    int32 one = 1;
+    assert(one << 31 == -2147483648, "1 << 31 fills the sign bit");
+    assert(one << 30 == 1073741824, "one below it is positive");
+    assert(one << 0 == 1, "a shift by zero is the value itself");
+
+    // Right shifts differ by signedness: the sign bit is copied for a signed
+    // value and zero-filled for an unsigned one.
+    int32 negative = -1;
+    assert(negative >> 31 == -1, "an arithmetic shift keeps the sign");
+    assert(negative >> 1 == -1, "and -1 stays -1 however far it goes");
+    int32 signedTop = -2147483648;
+    assert(signedTop >> 1 == -1073741824, "the most negative value halves");
+
+    uint32 all = 4294967295;
+    assert((all >> 31) as int64 == 1, "a logical shift fills with zero");
+    uint32 top = 2147483648;
+    assert((top >> 1) as int64 == 1073741824, "the top bit moves down, not out");
+
+    // 64 bits, at the same boundary.
+    int64 wide = 1;
+    assert(wide << 63 == -9223372036854775808, "1 << 63 fills int64's sign bit");
+    assert(wide << 62 == 4611686018427387904, "one below it is positive");
+    uint64 wideAll = 18446744073709551615;
+    assert(wideAll >> 63 == 1, "the widest unsigned value shifts down to one");
+
+    // The result type sets the width, so a wider amount widens the shift: this
+    // is a 64-bit shift, and 40 is a legal amount for it.
+    int64 count = 40;
+    assert(one << count == 1099511627776, "a wider amount shifts at the wider width");
+
+    // Narrow operands are widened first, which is why the intermediate value
+    // is 510 and only storing it back to a uint8 truncates.
+    uint8 small = 255;
+    assert((small << 1) as int64 == 510, "a narrow value shifts at the wider width");
+    uint8 stored = small << 1;
+    assert(stored as int64 == 254, "storing it back to uint8 truncates");
+
+    // The compound forms lower through the same shift.
+    int32 value = 1;
+    value <<= 31;
+    assert(value == -2147483648, "<<= reaches the sign bit too");
+    value >>= 31;
+    assert(value == -1, ">>= on a signed value copies the sign");
+    uint32 unsignedValue = 4294967295;
+    unsignedValue >>= 31;
+    assert(unsignedValue as int64 == 1, ">>= on an unsigned value fills with zero");
+
+    // A computed amount is checked at runtime; every amount below the width
+    // passes that check and shifts normally.
+    assert(shift(1, 3) == 8, "a computed amount in range shifts");
+    assert(shift(1, 31) == -2147483648, "including the largest legal one");
+
+    // Bit operations either side of the shifts, at the boundaries where a
+    // signed reading of an unsigned value would show.
+    uint32 zeroMask = 0;
+    assert((~zeroMask) as int64 == 4294967295, "complement of an unsigned zero");
+    int32 zero = 0;
+    assert(~zero == -1, "complement of a signed zero");
+    assert((all & negative) as int64 == 4294967295, "unsigned and -1 keeps every bit");
+    assert((all ^ all) as int64 == 0, "a value against itself clears");
+
+    println("shift-boundaries=ok");
+    return 0;
+}

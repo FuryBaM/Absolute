@@ -43,6 +43,11 @@ namespace Absolute {
         }
         else if (!IsAssignable(target.type, value.type))
             Report("cannot assign '" + value.type + "' to '" + target.type + "'");
+        // The compound form lowers through the same shift as `a = a << n`, so
+        // it has the same undefined case and gets the same answer here.
+        if ((expr->op == "<<=" || expr->op == ">>=") &&
+            IsInteger(target.type) && IsInteger(value.type))
+            CheckShiftAmount(expr->value.get(), CommonType(target.type, value.type), expr->op);
         if (IsTaskType(target.type))
             Report("tasks cannot be reassigned or copied", "E_TASK_ASSIGNMENT", target.symbol);
         const bool owningField = targetSymbol &&

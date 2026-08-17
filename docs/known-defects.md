@@ -305,7 +305,49 @@ with a message. `std.json.getDoubleOr` was added while writing the test, since
 the typed getters could read an integer, a string and a bool but not a double.
 Covered by `tests/std-json-edges.abs`.
 
-## 9. The method that worked
+## 9. Beyond the list: a shift nobody could predict
+
+Swept after the switch and match diagnostics, on the reasoning that a shift has
+the same shape as the division that was already found wrong: an operand range
+LLVM leaves undefined, in an operator that looks total.
+
+- **A shift by the width, or more, was undefined.** `1 << 32` on an int32
+  printed -1780665664, `1 << 40` produced a value `format` could not print at
+  all, `int64 1 << 64` printed 9, and each rebuild was free to choose
+  differently. Not a wrap and not a zero -- poison, in the same way an
+  unchecked `sdiv` by zero is.
+- **A negative amount was the same case**, since the shift instruction reads
+  the amount as unsigned.
+- **The compound forms reached the same instruction**, so `c <<= 32` was wrong
+  in exactly the same way.
+
+Refused rather than defined, following the answer division overflow got: a
+program that shifts a 32-bit value by 32 has a bug in it, and a plausible
+looking 0 hides it. An amount written in the source is refused by the analyzer,
+where the message carries a file, a line and the width it was measured against;
+a computed amount is checked where it is used and the program exits with a
+message. Native and wasm agree on both paths.
+
+The width a shift happens at is the width of its *result* type -- the wider of
+the two operands, like every other binary operator here -- so `one << count`
+with an int64 count is a 64-bit shift even though `one` is an int32. That was
+already true; it is now written down (docs/implicit-conversions.md) and pinned,
+because it decides which amounts are legal. Everything around the shifts came
+out clean: complement at each width, mixed-signedness `&`, `|`, `^`, and the
+signed/unsigned split in `>>`. See `tests/shift-boundaries.abs`,
+`tests/shift-range-errors.abs` and `tests/shift-amount-runtime.abs`.
+
+**Interfaces and virtual dispatch: swept and clean.** Checked before the
+shifts, and recorded here because the negative result is worth as much as a
+find: an interface default method calling the contract it belongs to, a class
+overriding that default, a three-level virtual chain, and a virtual call made
+from a base-class method all dispatch to the most-derived implementation.
+`tests/interfaces-codegen.abs` already pins the harder shapes -- one class
+satisfying two interfaces that declare the same method, defaults inherited
+through a diamond, and a class override winning over a default that another
+default calls.
+
+## 10. The method that worked
 
 Worth repeating, because reading code did not find any of this.
 
@@ -323,7 +365,7 @@ by another route. The compound-assignment defect was found that way, not by
 sweeping again: `a = a / b` had been fixed while `a /= b` still used an untyped
 overload.
 
-## 10. Environment note
+## 11. Environment note
 
 During this work the container repeatedly reverted the working tree to an older
 commit and deleted the build directory. Pushed commits were never affected, but

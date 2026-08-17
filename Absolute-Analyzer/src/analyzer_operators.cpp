@@ -9,6 +9,57 @@
 #include <utility>
 
 namespace Absolute {
+    namespace {
+        // The width a shift happens at, which is the width of the result type:
+        // both operands are widened to it before the shift, so `1 << 40` is out
+        // of range for an int32 result and in range for an int64 one.
+        unsigned IntegerWidth(const std::string& type) {
+            if (type == "int8" || type == "uint8" || type == "char") return 8;
+            if (type == "int16" || type == "uint16") return 16;
+            if (type == "int64" || type == "uint64") return 64;
+            return 32;
+        }
+
+        // A shift amount the source writes out, so it can be judged here where
+        // the message carries a file and a line. Anything computed is checked
+        // at runtime instead.
+        bool WrittenShiftAmount(Expression* expression,
+            unsigned long long& magnitude, bool& negative) {
+            negative = false;
+            const auto* number = dynamic_cast<const NumberLiteralExpr*>(expression);
+            if (const auto* unary = dynamic_cast<const PrefixUnaryExpr*>(expression);
+                unary && (unary->op == "-" || unary->op == "+")) {
+                number = dynamic_cast<const NumberLiteralExpr*>(unary->operand.get());
+                negative = unary->op == "-";
+            }
+            if (!number || IsFloatingLiteral(number->value)) return false;
+            try { magnitude = std::stoull(number->value); }
+            catch (const std::exception&) { return false; }
+            return true;
+        }
+    }
+
+    // A shift by the width of the value being shifted, or more, is undefined in
+    // LLVM rather than a wrap or a zero: `1 << 32` printed -1780665664 on one
+    // build, `1 << 40` produced a value the formatter could not print at all,
+    // and each rebuild was free to choose differently. Refused rather than
+    // defined, which is the same answer division overflow got -- a program that
+    // shifts a 32-bit value by 32 has a bug in it, and a plausible-looking 0
+    // would hide it.
+    void Analyzer::CheckShiftAmount(
+        Expression* amount, const std::string& resultType, const std::string& op) {
+        if (!amount || !IsInteger(resultType)) return;
+        unsigned long long magnitude = 0;
+        bool negative = false;
+        if (!WrittenShiftAmount(amount, magnitude, negative)) return;
+        const unsigned width = IntegerWidth(resultType);
+        if (magnitude < width && !(negative && magnitude != 0)) return;
+        Report("shift amount " + std::string(negative ? "-" : "") +
+            std::to_string(magnitude) + " is out of range for '" + op +
+            "' on '" + resultType + "', which is " + std::to_string(width) +
+            " bits wide", "E_SHIFT_OUT_OF_RANGE");
+    }
+
     void Analyzer::Visit(BinaryExpr* expr) {
         const Result left = Evaluate(expr->left.get());
         const Result right = Evaluate(expr->right.get());
@@ -69,7 +120,10 @@ namespace Absolute {
         }
         else if (op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>") {
             if (!IsInteger(left.type) || !IsInteger(right.type)) Report("bitwise operands must be integers");
-            Save(expr, {InvalidSymbolId, CommonType(left.type, right.type), false});
+            const std::string resultType = CommonType(left.type, right.type);
+            if (op == "<<" || op == ">>")
+                CheckShiftAmount(expr->right.get(), resultType, op);
+            Save(expr, {InvalidSymbolId, resultType, false});
         }
         else {
             if (!IsNumeric(left.type) || !IsNumeric(right.type))

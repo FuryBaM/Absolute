@@ -602,6 +602,8 @@ namespace Absolute {
                         ? "Division by zero"
                         : name == "division.overflow"
                         ? "Division overflows: the most negative value divided by -1"
+                        : name == "shift.amount"
+                        ? "Shift amount is out of range: it must be less than the width of the shifted value"
                         : name.ends_with(".requires.owner")
                         ? "Ownership operation requires an owner argument"
                         : "Runtime safety check failed";
@@ -870,10 +872,25 @@ namespace Absolute {
         if (op == "&") return builder.CreateAnd(left, right, "bit.and");
         if (op == "|") return builder.CreateOr(left, right, "bit.or");
         if (op == "^") return builder.CreateXor(left, right, "bit.xor");
-        if (op == "<<") return builder.CreateShl(left, right, "shift.left");
-        if (op == ">>")
+        if (op == "<<" || op == ">>") {
+            // A shift by the width of the shifted value, or more, is undefined
+            // in LLVM the same way division by zero is: not a wrap, not a zero,
+            // but a value the optimizer may choose freely. `1 << 32` printed
+            // -1780665664 and `1 << 40` produced something the formatter could
+            // not print at all. A written-out amount is refused by the analyzer,
+            // where the message has a line; a computed one is checked here.
+            const unsigned width = type->getIntegerBitWidth();
+            llvm::Constant* limit = llvm::ConstantInt::get(type, width);
+            if (const auto* amount = llvm::dyn_cast<llvm::ConstantInt>(right);
+                amount && amount->getValue().uge(width))
+                Fail("shift amount is not less than the width of the shifted value");
+            // Unsigned, so a negative amount is caught by the same comparison.
+            EmitOrExit(builder.CreateICmpULT(right, limit, "shift.amount.valid"),
+                "shift.amount");
+            if (op == "<<") return builder.CreateShl(left, right, "shift.left");
             return unsignedOperation ? builder.CreateLShr(left, right, "shift.right")
                 : builder.CreateAShr(left, right, "shift.right");
+        }
         Fail("unsupported binary operator '" + op + "'");
     }
 

@@ -909,6 +909,17 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/negated-literal-typing.abs"
     )
     add_test(
+        NAME absolute.shift-boundaries-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/shift-boundaries.abs"
+    )
+    add_test(
+        NAME absolute.shift-range-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/shift-range-errors.abs"
+    )
+    set_tests_properties(absolute.shift-range-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "shift amount 32 is out of range"
+    )
+    add_test(
         NAME absolute.switch-diagnostics-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/switch-diagnostics-errors.abs"
     )
@@ -4499,6 +4510,35 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-hostile-input PROPERTIES
             FIXTURES_REQUIRED absolute-hostile-input-executable
             PASS_REGULAR_EXPRESSION "hostile-input=ok"
+        )
+        add_test(
+            NAME absolute.build-shift-boundaries
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/shift-boundaries.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/shift-boundaries-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-shift-boundaries PROPERTIES
+            FIXTURES_SETUP absolute-shift-boundaries-executable
+        )
+        add_test(NAME absolute.run-shift-boundaries
+            COMMAND "${CMAKE_BINARY_DIR}/shift-boundaries-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-shift-boundaries PROPERTIES
+            FIXTURES_REQUIRED absolute-shift-boundaries-executable
+            PASS_REGULAR_EXPRESSION "shift-boundaries=ok"
+        )
+        add_test(
+            NAME absolute.build-shift-amount-runtime
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/shift-amount-runtime.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/shift-amount-runtime-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-shift-amount-runtime PROPERTIES
+            FIXTURES_SETUP absolute-shift-amount-runtime-executable
+        )
+        # Exits through the runtime check, so the check is on what it printed.
+        add_test(NAME absolute.run-shift-amount-runtime
+            COMMAND "${CMAKE_BINARY_DIR}/shift-amount-runtime-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-shift-amount-runtime PROPERTIES
+            FIXTURES_REQUIRED absolute-shift-amount-runtime-executable
+            PASS_REGULAR_EXPRESSION "Shift amount is out of range"
         )
         add_test(
             NAME absolute.build-unhandled-exception-report
