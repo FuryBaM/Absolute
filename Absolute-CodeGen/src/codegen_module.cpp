@@ -352,7 +352,12 @@ namespace Absolute {
                     0ull - ParseIntegerLiteral(number->value), false);
             }
         }
-        Fail("global initializer requires a constant primitive value");
+        // Module storage is emitted once, before anything runs, so its
+        // initializer has to be a value the backend can write into the object
+        // file. Nothing folds constant expressions here, which is why `1 + 2`
+        // is refused as readily as a constructor call.
+        Fail("a module-scope initializer must be a constant literal, not an "
+            "expression evaluated at run time");
     }
 
     void CodeGenerator::Impl::DeclareGlobalArray(VarDeclExpr& expression) {

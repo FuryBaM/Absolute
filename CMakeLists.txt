@@ -870,6 +870,17 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.literal-notation-errors PROPERTIES WILL_FAIL TRUE)
     add_test(
+        NAME absolute.destruction-order-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/destruction-order.abs"
+    )
+    add_test(
+        NAME absolute.module-scope-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/module-scope-errors.abs"
+    )
+    set_tests_properties(absolute.module-scope-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "a module-scope declaration must be a primitive with a constant initializer"
+    )
+    add_test(
         NAME absolute.global-variables-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/global-variables.abs"
     )
@@ -4291,6 +4302,20 @@ if(BUILD_TESTING)
         )
         add_test(NAME absolute.run-literal-notation
             COMMAND "${CMAKE_BINARY_DIR}/literal-notation-app${CMAKE_EXECUTABLE_SUFFIX}")
+        add_test(
+            NAME absolute.build-destruction-order
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/destruction-order.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/destruction-order-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-destruction-order PROPERTIES
+            FIXTURES_SETUP absolute-destruction-order-executable
+        )
+        add_test(NAME absolute.run-destruction-order
+            COMMAND "${CMAKE_BINARY_DIR}/destruction-order-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-destruction-order PROPERTIES
+            FIXTURES_REQUIRED absolute-destruction-order-executable
+            PASS_REGULAR_EXPRESSION "destruction-order=ok"
+        )
         add_test(
             NAME absolute.build-unsigned-arithmetic
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/unsigned-arithmetic.abs"
