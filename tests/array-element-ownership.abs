@@ -80,6 +80,40 @@ int32 main() {
     }
     assert(Counted.live == 0, "the array released all three, once each");
 
+    // An allocated array of owners, which is the spelling `new T*[n]` did not
+    // parse at all: the star was read as multiplication and the `[` after it as
+    // the start of an expression, so an array of owners could only be written
+    // as a literal with a fixed element count.
+    {
+        Counted*[] allocated = new Counted*[5];
+        int32 index = 0;
+        while (index < 5) {
+            allocated[index] = new Counted(index);
+            index += 1;
+        }
+        assert(Counted.live == 5, "the allocated array holds five owners");
+        assert(allocated[4].value == 4, "and the last one kept its value");
+    }
+    assert(Counted.live == 0, "the allocated array released all five");
+
+    // Elements never assigned are null handles -- calloc'd storage -- and
+    // releasing them is a no-op rather than a crash.
+    {
+        Counted*[] partial = new Counted*[4];
+        partial[1] = new Counted(1);
+        assert(Counted.live == 1, "only the assigned element exists");
+    }
+    assert(Counted.live == 0, "and the three null elements cost nothing");
+
+    // A raw pointer element: the array releases the storage it owns, and the
+    // raw allocations stay the program's own business, as raw always is.
+    {
+        raw int32*[] blocks = new raw int32*[2];
+        blocks[0] = new raw int32(7);
+        assert(*blocks[0] == 7, "the raw element holds what was put in it");
+        delete blocks[0];
+    }
+
     // Many rounds, so a release that ran twice or not at all would show as a
     // count that does not return to zero.
     int32 round = 0;

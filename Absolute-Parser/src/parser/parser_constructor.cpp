@@ -32,6 +32,32 @@ namespace Absolute {
             }
         }
 
+        // `new Cell*[n]`: the star belongs to the element type. Without this the
+        // star was parsed as multiplication and the `[` after it as the start of
+        // an expression, so an array of pointers could only be written as a
+        // literal with a fixed element count -- while the type itself was
+        // otherwise usable everywhere.
+        //
+        // Consumed only when an array suffix actually follows, so no expression
+        // that could be a multiplication changes meaning. A leading `raw`
+        // qualifies the element pointer here rather than the allocation, which
+        // is what `raw Cell*[]` means as a declared type.
+        size_t stars = 0;
+        while (PeekToken(stars) && PeekToken(stars)->type == TokenType::OPERATOR &&
+            PeekToken(stars)->value == "*") ++stars;
+        if (stars > 0 && PeekToken(stars) &&
+            PeekToken(stars)->type == TokenType::BRACKET &&
+            PeekToken(stars)->value == "[") {
+            for (size_t star = 0; star < stars; ++star) {
+                Consume(TokenType::OPERATOR, "*");
+                auto pointee = std::unique_ptr<TypeExpr>(
+                    static_cast<TypeExpr*>(type.release()));
+                type = std::make_unique<PointerTypeExpr>(
+                    std::move(pointee), raw, false, false);
+                raw = false;
+            }
+        }
+
         std::vector<std::unique_ptr<Expression>> arguments;
         if (CurrentToken() && CurrentToken()->type == TokenType::BRACKET && CurrentToken()->value == "[") {
             Consume(TokenType::BRACKET, "[");

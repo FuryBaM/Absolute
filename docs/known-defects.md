@@ -697,11 +697,14 @@ hook across 64 rounds, so a release that ran twice or not at all shows as a
 count that does not return to zero; it is built at `-O0` under the sanitizer
 for the same reason the storage-release case is.
 
-**Still open, and smaller:** `new T*[n]` does not parse for any pointer element
-type, so an array of owners can only be made from a literal with a fixed
-element count. The type is otherwise fully usable -- declared, initialized from
-a literal, indexed, passed -- which makes this a gap in the parser rather than
-a rule.
+**And the spelling that made it worse.** `new T*[n]` did not parse for any
+pointer element type: the constructor parser built its type by hand and never
+consumed a `*`, so the star was read as multiplication and the `[` after it as
+the start of an expression. An array of owners could only be written as a
+literal with a fixed element count -- exactly the case that leaked -- while the
+type itself was usable everywhere else. The star is consumed now, and only when
+an array suffix actually follows, so nothing that could be a multiplication
+changes meaning: `new Point() * 2` still multiplies.
 
 ## 16. The method that worked
 
