@@ -627,12 +627,24 @@ widths -- and each of the three defects below came out of the first runs.
   plain class, a free function, or a generic *function* with an explicit type
   argument had always done (`tests/generic-member-conversions.abs`).
 
-**And one in the harness rather than the language.** The differential runners
+**And two in the harness rather than the language.** The differential runners
 inherited their own standard input, so a test in the suite that reads to end of
 file blocked on whatever was attached to the process that started the run: the
 same corpus finished in seconds from one shell and sat until the timeout from
 another. Every runner passes a closed stdin now. What a test answers must not
 depend on who started it.
+
+The second is worse, because it reported success. The suite differential
+compares targets only when it has both a runtime to run the module and the host
+that loads it; given one without the other it skipped the WebAssembly build for
+every program, compared the optimization levels alone, and printed
+`suite-differential=ok`. A run asked to compare two targets compared one and
+said it was fine. Half the pair is refused now, with a message naming what is
+missing -- and the axis is switched on in the test's own registration rather
+than only being available from a command line, because until then the
+comparison the corpus was added for had never actually run outside a hand
+invocation. With it on: 151 programs, `-O0` against `-O3` against WebAssembly,
+one nondeterministic program excluded by name, zero disagreements.
 
 ## 15. The method that worked
 

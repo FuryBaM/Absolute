@@ -201,6 +201,24 @@ if(BUILD_TESTING)
         # -O0 and -O3 must answer the same. The generated corpora cover one
         # program shape each; this one covers everything the language has a test
         # for, which is where a shim that parsed a number differently was hiding.
+        #
+        # The second axis is the target. That is the one the number-parsing
+        # defect actually needed -- native and wasm answered differently and
+        # nothing compared them -- so it is switched on wherever the host can
+        # build and run a module. Both a runtime and a linker are required: the
+        # tool refuses half the pair rather than silently comparing one target
+        # and reporting success, so this either asks for the axis and gets it or
+        # does not ask.
+        find_program(ABSOLUTE_NODE_FOR_DIFFERENTIAL NAMES node nodejs)
+        find_program(ABSOLUTE_WASM_LD_FOR_DIFFERENTIAL NAMES wasm-ld wasm-ld.exe
+            HINTS "${LLVM_TOOLS_BINARY_DIR}"
+                  "${PROJECT_SOURCE_DIR}/.absolute/toolchains/llvm-18.1.8/bin")
+        set(absolute_suite_differential_target_axis)
+        if(ABSOLUTE_NODE_FOR_DIFFERENTIAL AND ABSOLUTE_WASM_LD_FOR_DIFFERENTIAL)
+            set(absolute_suite_differential_target_axis
+                --node "${ABSOLUTE_NODE_FOR_DIFFERENTIAL}"
+                --wasm-host "${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js")
+        endif()
         add_test(
             NAME absolute.suite-differential
             COMMAND "${Python3_EXECUTABLE}"
@@ -208,12 +226,13 @@ if(BUILD_TESTING)
                 --compiler "$<TARGET_FILE:Absolute-Compiler>"
                 --tests "${PROJECT_SOURCE_DIR}/tests"
                 --levels O0,O3
+                ${absolute_suite_differential_target_axis}
                 --work-dir "${CMAKE_BINARY_DIR}/differential/suite/$<CONFIG>"
                 --configuration "$<CONFIG>")
         set_tests_properties(absolute.suite-differential PROPERTIES
             PASS_REGULAR_EXPRESSION "suite-differential=ok"
             LABELS differential
-            TIMEOUT 2400)
+            TIMEOUT 3600)
         add_test(
             NAME absolute.metamorphic-differential
             COMMAND "${Python3_EXECUTABLE}"
