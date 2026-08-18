@@ -428,6 +428,20 @@ for that nothing in the source asks for.
   against 1.73 for the same program in C++ with `std::vector` -- and the bounds
   check is still there.
 
+**Found while checking those measurements: the two targets disagreed about a
+number.** `std.text.parseInt` answers zero natively when the number does not
+fit, because `std::stoi` throws `out_of_range` and the wrapper catches it, but
+the wasm shim had its own loop that accumulated into a signed int32 and kept
+going. `"99999999999999999999"` was 0 natively and 1661992959 on wasm,
+`"2147483648"` was 0 against -2147483648, `"-2147483649"` was 0 against
+2147483647 -- a program parsing input it did not write got a different number
+depending on where it ran. The shim accumulates wide and unsigned now and stops
+at the same limit, asymmetric because -2147483648 is representable and
+2147483648 is not. The rest of the text API was swept the same way afterwards
+and agrees on every boundary: substrings past the end, negative bounds, code
+points in Cyrillic and emoji, `indexOf`, `replace` to empty, `trim`, `repeat`
+with a negative count. See `tests/text-number-parsing.abs`.
+
 Where that leaves the suites, as multiples of Absolute's time (higher is
 slower, so `C++ 1.25x` means Absolute is faster):
 

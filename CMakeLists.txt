@@ -909,6 +909,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/negated-literal-typing.abs"
     )
     add_test(
+        NAME absolute.text-number-parsing-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/text-number-parsing.abs"
+    )
+    add_test(
         NAME absolute.aliasing-guarantees-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/aliasing-guarantees.abs"
     )
@@ -4547,6 +4551,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-hostile-input PROPERTIES
             FIXTURES_REQUIRED absolute-hostile-input-executable
             PASS_REGULAR_EXPRESSION "hostile-input=ok"
+        )
+        add_test(
+            NAME absolute.build-text-number-parsing
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/text-number-parsing.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/text-number-parsing-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-text-number-parsing PROPERTIES
+            FIXTURES_SETUP absolute-text-number-parsing-executable
+        )
+        add_test(NAME absolute.run-text-number-parsing
+            COMMAND "${CMAKE_BINARY_DIR}/text-number-parsing-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-text-number-parsing PROPERTIES
+            FIXTURES_REQUIRED absolute-text-number-parsing-executable
+            PASS_REGULAR_EXPRESSION "text-number-parsing=ok"
         )
         add_test(
             NAME absolute.build-aliasing-guarantees

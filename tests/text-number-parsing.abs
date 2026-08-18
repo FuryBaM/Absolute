@@ -1,0 +1,51 @@
+// The edges of std.text.parseInt, and the same answer on every target.
+//
+// The native runtime parses with std::stoi and answers zero when the number
+// does not fit, because stoi throws out_of_range and the wrapper catches it.
+// The wasm shim had its own loop that accumulated into a signed int32 and kept
+// going, so the two targets disagreed exactly where it matters least visibly:
+// "99999999999999999999" was 0 natively and 1661992959 on wasm, "2147483648"
+// was 0 against -2147483648, and "-2147483649" was 0 against 2147483647. A
+// program that parses input it did not write got a different number depending
+// on where it ran, with nothing to say so.
+//
+// The differential harness found it, not a test, which is why the boundaries
+// are pinned here.
+
+import "std/string.abs";
+
+int32 main() {
+    // The largest and smallest values that fit, which must survive.
+    assert(std.text.parseInt("2147483647") == 2147483647, "the maximum parses");
+    assert(std.text.parseInt("-2147483648") == -2147483648, "the minimum parses");
+    assert(std.text.parseInt("2147483646") == 2147483646, "one below the maximum");
+    assert(std.text.parseInt("-2147483647") == -2147483647, "one above the minimum");
+
+    // One step past each end, where the answer is zero rather than a wrap. The
+    // limit is asymmetric: 2147483648 does not fit, -2147483648 does.
+    assert(std.text.parseInt("2147483648") == 0, "one past the maximum is zero");
+    assert(std.text.parseInt("-2147483649") == 0, "one past the minimum is zero");
+    assert(std.text.parseInt("99999999999999999999") == 0,
+        "a number no integer can hold is zero");
+    assert(std.text.parseInt("-99999999999999999999") == 0,
+        "and the same going the other way");
+
+    // The ordinary shapes, which both targets already agreed on and which the
+    // overflow check must not disturb.
+    assert(std.text.parseInt("0") == 0, "zero");
+    assert(std.text.parseInt("+7") == 7, "a leading plus");
+    assert(std.text.parseInt("-7") == -7, "a leading minus");
+    assert(std.text.parseInt("   -12") == -12, "leading spaces are skipped");
+    assert(std.text.parseInt("42abc") == 42, "the digits before other text");
+    assert(std.text.parseInt("3.9") == 3, "the digits before a dot");
+    assert(std.text.parseInt("") == 0, "empty text is zero");
+    assert(std.text.parseInt("not a number") == 0, "unparseable text is zero");
+    assert(std.text.parseInt("-") == 0, "a sign with no digits is zero");
+
+    // A long run of leading zeros is a value, not an overflow.
+    assert(std.text.parseInt("000000000000000000000000042") == 42,
+        "leading zeros do not overflow the accumulator");
+
+    println("text-number-parsing=ok");
+    return 0;
+}

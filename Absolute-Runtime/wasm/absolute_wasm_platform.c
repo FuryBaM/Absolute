@@ -333,16 +333,29 @@ int32_t absolute_string_parse_int(const char* text) {
         return 0;
     while (wasm_string_is_space(*text))
         ++text;
-    int sign = 1;
+    int negative = 0;
     if (*text == '-' || *text == '+')
-        sign = *text++ == '-' ? -1 : 1;
-    int32_t value = 0;
+        negative = *text++ == '-';
+    /* Accumulated wide and unsigned, because the native side answers zero for a
+       number that does not fit -- std::stoi throws out_of_range and the wrapper
+       catches it -- while this loop used to wrap a signed int32 and keep going:
+       "99999999999999999999" came out as 1661992959 here and 0 there, and
+       "2147483648" as -2147483648 against 0. The limit is asymmetric because
+       -2147483648 is representable and 2147483648 is not. */
+    unsigned long long magnitude = 0;
+    const unsigned long long limit = negative ? 2147483648ULL : 2147483647ULL;
     int found = 0;
     while (*text >= '0' && *text <= '9') {
-        value = value * 10 + (*text++ - '0');
+        magnitude = magnitude * 10ULL + (unsigned long long)(*text++ - '0');
         found = 1;
+        if (magnitude > limit)
+            return 0;
     }
-    return found ? value * sign : 0;
+    if (!found)
+        return 0;
+    return negative
+        ? (int32_t)(0U - (unsigned int)magnitude)
+        : (int32_t)magnitude;
 }
 
 int32_t absolute_string_contains(const char* text, const char* sub) {
