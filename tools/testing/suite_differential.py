@@ -168,6 +168,17 @@ def main() -> int:
         print("suite-differential: no tests matched", file=sys.stderr)
         return 1
 
+    # Asking for the WebAssembly axis takes both a node to run it and the host
+    # that loads the module. Giving one without the other used to run the
+    # native comparison alone and report success, so a run that was meant to
+    # compare two targets compared one and said `ok` -- the worst answer a
+    # harness can give, because it is indistinguishable from having done the
+    # work. Either both are present or the run refuses.
+    if bool(args.node) != bool(args.wasm_host):
+        print("suite-differential: --node and --wasm-host go together; "
+              "the WebAssembly axis needs a runtime and the host that loads "
+              "the module", file=sys.stderr)
+        return 2
     runner = None
     if args.node and args.wasm_host:
         runner = work / "run-absolute-wasm.js"
