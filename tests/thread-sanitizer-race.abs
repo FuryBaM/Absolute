@@ -1,0 +1,55 @@
+// A deliberate data race, so that a clean ThreadSanitizer run means something.
+//
+// Every other case built with --sanitize=thread asserts an absence, and an
+// absence is what an instrumentation that does nothing also produces. This
+// program is the control: two tasks read-modify-write the same int64 through a
+// raw pointer with no lock and no atomic, which is a race by construction, and
+// the build is expected to report it. If this one ever comes back clean, the
+// instrumentation stopped working and the rest of the thread-sanitizer cases
+// are proving nothing.
+//
+// It is not run outside the sanitizer: the answer it prints is whatever the
+// interleaving produced, which is the point.
+import "std/task.abs";
+import "std/concurrent.abs";
+
+// Both racers wait at the counter until the other has reached it. Without that
+// rendezvous the two tasks can run one after the other on a busy machine, and
+// then the scheduler's own handoff orders their accesses -- ThreadSanitizer
+// sees the ordering, reports nothing, and this case fails for the one reason
+// it must never fail: looking clean.
+async int64 racer(int64 address, int64 readyAddress, int64 iterations) {
+    raw int64* slot = address as raw int64*;
+    raw void* ready = readyAddress as raw void*;
+    absolute_atomic_fetch_add(ready, 1);
+    int32 waited = 0;
+    while (absolute_atomic_load(ready) < 2 && waited < 2000) {
+        std.task.delay(1);
+        waited += 1;
+    }
+
+    int64 index = 0;
+    while (index < iterations) {
+        // Not `+= 1`: the read and the write are what the two tasks interleave.
+        slot[0] = slot[0] + 1;
+        // Yielding inside the loop keeps both tasks in it at the same time
+        // even where the scheduler has fewer workers than tasks.
+        if ((index & 1023) == 0) { std.task.delay(1); }
+        index += 1;
+    }
+    return index;
+}
+
+async int32 main() {
+    int64 counter = 0;
+    raw int64* address = &counter;
+    int64 handle = address as int64;
+    std.concurrent.AtomicInt* ready = new std.concurrent.AtomicInt(0);
+    int64 readyHandle = ready.nativeHandle() as int64;
+    task<int64> first = spawn racer(handle, readyHandle, 40000);
+    task<int64> second = spawn racer(handle, readyHandle, 40000);
+    int64 performed = await first + await second;
+    delete ready;
+    println(performed);
+    return 0;
+}

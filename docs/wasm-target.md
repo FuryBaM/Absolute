@@ -31,6 +31,7 @@ absolutec tests\wasm-export-only.abs --target wasm32-unknown-unknown --build-exe
 | Mode | Result |
 |------|--------|
 | `--target wasm32-... --sanitize=address` | Error |
+| `--target wasm32-... --sanitize=thread` | Error |
 | `--build-exe --target` for non-wasm triples | Error |
 | `load(.dll)` / desktop plugins on wasm | not available |
 | Full WASI sysroot / wasi-sdk libc | Not shipped |

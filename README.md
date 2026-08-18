@@ -810,6 +810,14 @@ raw memory accesses with AddressSanitizer. The native test suite runs real
 heap-use-after-free and double-free executables through ASan; managed allocation
 leaks are additionally detected by the generation-slot runtime at process exit.
 
+`--sanitize=thread` instruments the same way for ThreadSanitizer, and links a
+copy of the runtime that was itself built for it: TSan reasons about the whole
+program, so an uninstrumented scheduler on the other side of a lock turns every
+guarded access into a reported race. The two are alternatives rather than flags
+— their shadow memory overlaps — and asking for both is refused. Where the host
+cannot build a ThreadSanitizer runtime (Windows, Android/Termux, cross builds),
+the option reports that instead of producing a program that runs unchecked.
+
 The analyzer also performs control-flow dataflow for definite assignment and
 pointer validity. Branch and loop states are merged by `SymbolId`; managed
 subscribers retain their owner identity and become `Expired` when that owner is

@@ -190,10 +190,10 @@ namespace Absolute {
 
     void CodeGenerator::GenerateObject(
         Program& program, const std::string& moduleName, const std::string& outputPath,
-        bool sanitizeAddress, const std::string& targetTriple,
+        Sanitizer sanitizer, const std::string& targetTriple,
         OptimizationLevel optimizationLevel, bool debugInfo) {
         impl->GenerateObject(
-            program, moduleName, outputPath, sanitizeAddress,
+            program, moduleName, outputPath, sanitizer,
             targetTriple, optimizationLevel, debugInfo);
     }
 }

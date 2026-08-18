@@ -3106,6 +3106,88 @@ if(BUILD_TESTING)
             set(ABSOLUTE_SANITIZER_DETECT_LEAKS ON)
         endif()
 
+        # ThreadSanitizer for the code the compiler emits, not just for the
+        # runtime it links against. TSan reasons about the whole program, so
+        # both sides have to be instrumented: Absolute-Runtime-Tsan is the
+        # second copy of the runtime that exists for this, and without it an
+        # uninstrumented lock on the runtime's side turns every guarded access
+        # into a reported race.
+        #
+        # The corpus is the concurrency the language actually offers -- spawn,
+        # await, task groups, channels, the concurrent primitives -- plus one
+        # program with a deliberate race. That last one is not decoration: a
+        # clean run proves nothing unless the instrumentation is known to be
+        # live, and the only proof of that is a race it does report.
+        if(TARGET Absolute-Runtime-Tsan)
+            foreach(thread_case IN ITEMS
+                "task-scheduling=task-scheduling=ok"
+                "task-group=task-group=ok"
+                "concurrency-stress=concurrency-stress=ok"
+                "async-concurrency-advanced=async-concurrency-advanced=ok"
+                "std-concurrent-primitives=std-concurrent-primitives=ok"
+                "std-typed-channel=std-typed-channel=ok")
+                string(REGEX MATCH "^[^=]+" thread_name "${thread_case}")
+                string(REGEX REPLACE "^[^=]+=" "" thread_marker "${thread_case}")
+                add_test(
+                    NAME absolute.build-thread-sanitizer-${thread_name}
+                    COMMAND Absolute-Compiler
+                        "${PROJECT_SOURCE_DIR}/tests/${thread_name}.abs"
+                        --sanitize=thread --build-exe -O1
+                        -o "${CMAKE_BINARY_DIR}/thread-sanitizer-${thread_name}-app${CMAKE_EXECUTABLE_SUFFIX}"
+                )
+                set_tests_properties(absolute.build-thread-sanitizer-${thread_name}
+                    PROPERTIES FIXTURES_SETUP
+                        absolute-thread-sanitizer-${thread_name}-executable)
+                add_test(
+                    NAME absolute.run-thread-sanitizer-${thread_name}
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DEXECUTABLE=${CMAKE_BINARY_DIR}/thread-sanitizer-${thread_name}-app${CMAKE_EXECUTABLE_SUFFIX}
+                        -DEXPECT=${thread_marker}
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-thread-sanitizer.cmake"
+                )
+                set_tests_properties(absolute.run-thread-sanitizer-${thread_name}
+                    PROPERTIES
+                        FIXTURES_REQUIRED
+                            absolute-thread-sanitizer-${thread_name}-executable
+                        RUN_SERIAL TRUE
+                        TIMEOUT 600)
+            endforeach()
+
+            add_test(
+                NAME absolute.build-thread-sanitizer-race
+                COMMAND Absolute-Compiler
+                    "${PROJECT_SOURCE_DIR}/tests/thread-sanitizer-race.abs"
+                    --sanitize=thread --build-exe -O1
+                    -o "${CMAKE_BINARY_DIR}/thread-sanitizer-race-app${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.build-thread-sanitizer-race PROPERTIES
+                FIXTURES_SETUP absolute-thread-sanitizer-race-executable)
+            add_test(
+                NAME absolute.run-thread-sanitizer-race
+                COMMAND "${CMAKE_COMMAND}"
+                    -DEXECUTABLE=${CMAKE_BINARY_DIR}/thread-sanitizer-race-app${CMAKE_EXECUTABLE_SUFFIX}
+                    -DEXPECT_RACE=ON
+                    -P "${PROJECT_SOURCE_DIR}/tests/run-thread-sanitizer.cmake"
+            )
+            set_tests_properties(absolute.run-thread-sanitizer-race PROPERTIES
+                FIXTURES_REQUIRED absolute-thread-sanitizer-race-executable
+                RUN_SERIAL TRUE
+                TIMEOUT 300)
+
+            # Address and thread instrumentation share shadow memory, so a
+            # program asking for both would run under neither.
+            add_test(
+                NAME absolute.sanitizer-combination-refused
+                COMMAND Absolute-Compiler
+                    "${PROJECT_SOURCE_DIR}/tests/thread-sanitizer-race.abs"
+                    --sanitize=address --sanitize=thread --build-exe
+                    -o "${CMAKE_BINARY_DIR}/sanitizer-combination${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.sanitizer-combination-refused PROPERTIES
+                PASS_REGULAR_EXPRESSION "cannot be combined"
+                TIMEOUT 60)
+        endif()
+
         # Generated whole programs -- arrays with computed indices, classes with
         # array and managed fields, owners created and released inside loops,
         # recursion -- built twice and checked three ways: the sanitizer, the

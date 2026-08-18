@@ -47,6 +47,46 @@ if(ABSOLUTE_BUILD_RUNTIME_SHARED)
         POSITION_INDEPENDENT_CODE ON)
 endif()
 
+# A second copy of the runtime, instrumented for ThreadSanitizer. It exists
+# because TSan is whole-program: a race between generated code and the runtime's
+# own scheduler is only visible if both sides are instrumented, and an
+# uninstrumented library on the other side of a lock produces false reports
+# rather than silence. Probed rather than assumed -- TSan needs a supported
+# target and a compiler that ships its runtime -- and skipped where it is not
+# available, which is what the ABSOLUTE_RUNTIME_TSAN_AVAILABLE answer is for.
+# Building it costs a second compile of the runtime, so it follows
+# BUILD_TESTING by default: a build that runs the suite gets the option
+# checked, a plain release build does not pay for it unless it asks.
+option(ABSOLUTE_BUILD_RUNTIME_TSAN
+    "Build a ThreadSanitizer copy of the runtime, enabling --sanitize=thread"
+    ${BUILD_TESTING})
+include(CheckCXXSourceCompiles)
+set(ABSOLUTE_TSAN_FLAGS -fsanitize=thread -fno-omit-frame-pointer)
+if(NOT ABSOLUTE_BUILD_RUNTIME_TSAN OR WIN32 OR ANDROID OR
+        DEFINED ENV{TERMUX_VERSION} OR CMAKE_CROSSCOMPILING)
+    set(ABSOLUTE_RUNTIME_TSAN_AVAILABLE OFF)
+else()
+    set(CMAKE_REQUIRED_FLAGS "-fsanitize=thread")
+    set(CMAKE_REQUIRED_LINK_OPTIONS "-fsanitize=thread")
+    check_cxx_source_compiles("int main() { return 0; }"
+        ABSOLUTE_TSAN_USABLE)
+    unset(CMAKE_REQUIRED_FLAGS)
+    unset(CMAKE_REQUIRED_LINK_OPTIONS)
+    set(ABSOLUTE_RUNTIME_TSAN_AVAILABLE ${ABSOLUTE_TSAN_USABLE})
+endif()
+set(ABSOLUTE_RUNTIME_TSAN_AVAILABLE ${ABSOLUTE_RUNTIME_TSAN_AVAILABLE}
+    CACHE INTERNAL "ThreadSanitizer runtime variant can be built")
+if(ABSOLUTE_RUNTIME_TSAN_AVAILABLE)
+    add_library(Absolute-Runtime-Tsan STATIC ${ABSOLUTE_RUNTIME_SOURCES})
+    target_compile_features(Absolute-Runtime-Tsan PUBLIC cxx_std_20)
+    target_compile_options(Absolute-Runtime-Tsan PRIVATE ${ABSOLUTE_TSAN_FLAGS})
+    target_link_options(Absolute-Runtime-Tsan PUBLIC -fsanitize=thread)
+    target_link_libraries(Absolute-Runtime-Tsan PUBLIC
+        Threads::Threads ${CMAKE_DL_LIBS})
+    set_target_properties(Absolute-Runtime-Tsan PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+endif()
+
 if(ANDROID OR DEFINED ENV{TERMUX_VERSION})
     find_package(PkgConfig QUIET)
     if(PkgConfig_FOUND)

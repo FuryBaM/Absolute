@@ -64,6 +64,13 @@ if(TARGET Absolute-CodeGen)
         ABSOLUTE_HOST_LINKER="${ABSOLUTE_NATIVE_LINKER}"
         ABSOLUTE_RUNTIME_LIBRARY="$<TARGET_FILE:Absolute-Runtime>"
     )
+    if(TARGET Absolute-Runtime-Tsan)
+        # --sanitize=thread links this instead of the ordinary archive: an
+        # uninstrumented runtime under TSan reports races that are not there.
+        target_compile_definitions(Absolute-Compiler PRIVATE
+            ABSOLUTE_RUNTIME_LIBRARY_TSAN="$<TARGET_FILE:Absolute-Runtime-Tsan>"
+        )
+    endif()
     if(CMAKE_DL_LIBS)
         target_compile_definitions(Absolute-Compiler PRIVATE
             ABSOLUTE_RUNTIME_DL_LIBRARY="${CMAKE_DL_LIBS}"

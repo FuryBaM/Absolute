@@ -14,6 +14,15 @@ namespace Absolute {
 
     class CodeGenerator final : public ExpressionVisitor, public StatementVisitor {
     public:
+        // Which sanitizer the generated code is instrumented for. They are
+        // alternatives rather than flags: address and thread use incompatible
+        // shadow memory, and a program built for both runs under neither.
+        enum class Sanitizer {
+            None,
+            Address,
+            Thread
+        };
+
         explicit CodeGenerator(const Analyzer* analyzer = nullptr);
         ~CodeGenerator() override;
 
@@ -26,7 +35,7 @@ namespace Absolute {
             std::optional<OptimizationLevel> optimizationLevel = std::nullopt,
             bool debugInfo = false);
         void GenerateObject(Program& program, const std::string& moduleName,
-            const std::string& outputPath, bool sanitizeAddress = false,
+            const std::string& outputPath, Sanitizer sanitizer = Sanitizer::None,
             const std::string& targetTriple = {},
             OptimizationLevel optimizationLevel = OptimizationLevel::O3,
             bool debugInfo = false);

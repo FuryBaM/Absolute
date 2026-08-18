@@ -58,6 +58,7 @@ namespace {
         bool buildLibrary = false;
         bool parseOnly = false;
         bool sanitizeAddress = false;
+        bool sanitizeThread = false;
         bool debugInfo = false;
         std::optional<OptimizationLevel> optimizationLevel;
         std::string targetTriple; // empty => host default
@@ -138,9 +139,46 @@ namespace {
         std::vector<fs::path> nativeLibraries;
         std::vector<fs::path> nativeSearchPaths;
         bool sanitizeAddress = false;
+        bool sanitizeThread = false;
         bool debugInfo = false;
         OptimizationLevel optimizationLevel = OptimizationLevel::O3;
     };
+
+#ifdef ABSOLUTE_HAS_LLVM
+    // Which copy of the runtime a generated program links against. There is
+    // only one for everything except ThreadSanitizer, which needs its own:
+    // TSan reasons about the whole program, so an uninstrumented scheduler on
+    // the other side of a lock is reported as a race rather than ignored.
+    const char* RuntimeLibraryForLink([[maybe_unused]] bool sanitizeThread) {
+        if (sanitizeThread) {
+#ifdef ABSOLUTE_RUNTIME_LIBRARY_TSAN
+            return ABSOLUTE_RUNTIME_LIBRARY_TSAN;
+#else
+            throw std::runtime_error(
+                "--sanitize=thread needs a runtime built for ThreadSanitizer, "
+                "which this build of the compiler does not have");
+#endif
+        }
+#ifdef ABSOLUTE_RUNTIME_LIBRARY
+        return ABSOLUTE_RUNTIME_LIBRARY;
+#else
+        return nullptr;
+#endif
+    }
+
+    // Address and thread instrumentation are alternatives: their shadow
+    // mappings overlap, so a program built for both runs under neither. The
+    // driver refuses the pair rather than silently keeping one.
+    CodeGenerator::Sanitizer SelectedSanitizer(bool address, bool thread) {
+        if (address && thread) {
+            throw std::runtime_error(
+                "--sanitize=address and --sanitize=thread cannot be combined");
+        }
+        if (thread) return CodeGenerator::Sanitizer::Thread;
+        if (address) return CodeGenerator::Sanitizer::Address;
+        return CodeGenerator::Sanitizer::None;
+    }
+#endif
 
     void PrintUsage(std::ostream& output = std::cerr) {
         output
@@ -154,7 +192,7 @@ namespace {
             << "  --target <triple>     host default, or e.g. wasm32-unknown-unknown\n"
             << "  -O0 | -O1 | -O2 | -O3\n"
             << "  -g                    emit source and local-variable debug information\n"
-            << "  --sanitize=address    (host targets only)\n"
+            << "  --sanitize=address | --sanitize=thread    (host targets only)\n"
             << "  --plugin path | --plugin-path directory | -o output\n";
     }
 
@@ -167,6 +205,7 @@ namespace {
             else if (argument == "--build-library") result.buildLibrary = true;
             else if (argument == "--parse-only") result.parseOnly = true;
             else if (argument == "--sanitize=address") result.sanitizeAddress = true;
+            else if (argument == "--sanitize=thread") result.sanitizeThread = true;
             else if (argument == "-g" || argument == "--debug-info") result.debugInfo = true;
             else if (argument == "-O0") {
                 result.optimizationLevel = OptimizationLevel::O0;
@@ -784,7 +823,8 @@ namespace {
         fs::path object = modulePath;
         object.replace_extension(".o");
         generator.GenerateObject(program, compilation.moduleName, object.string(),
-            false, targetTriple, compilation.optimizationLevel,
+            CodeGenerator::Sanitizer::None, targetTriple,
+            compilation.optimizationLevel,
             compilation.debugInfo);
 
         std::vector<std::string> linkArgs = {
@@ -899,7 +939,8 @@ namespace {
         object.replace_extension(".o");
 #endif
         generator.GenerateObject(program, compilation.moduleName, object.string(),
-            compilation.sanitizeAddress, {},
+            SelectedSanitizer(compilation.sanitizeAddress,
+                compilation.sanitizeThread), {},
             compilation.optimizationLevel,
             compilation.debugInfo);
 
@@ -914,9 +955,8 @@ namespace {
             pdb.replace_extension(".pdb");
             arguments << "/debug:full\n/pdb:" << QuoteResponseArgument(pdb) << '\n';
         }
-#ifdef ABSOLUTE_RUNTIME_LIBRARY
-        arguments << QuoteResponseArgument(ABSOLUTE_RUNTIME_LIBRARY) << '\n';
-#endif
+        if (const char* runtime = RuntimeLibraryForLink(compilation.sanitizeThread))
+            arguments << QuoteResponseArgument(runtime) << '\n';
         for (const fs::path& library : compilation.nativeLibraries)
             arguments << QuoteResponseArgument(library) << '\n';
         // LLVM-emitted COFF objects do not carry the /DEFAULTLIB directives
@@ -932,9 +972,8 @@ namespace {
             arguments << "/LIBPATH:" << QuoteResponseArgument(path) << '\n';
 #else
         arguments << QuoteResponseArgument(object) << '\n';
-#ifdef ABSOLUTE_RUNTIME_LIBRARY
-        arguments << QuoteResponseArgument(ABSOLUTE_RUNTIME_LIBRARY) << '\n';
-#endif
+        if (const char* runtime = RuntimeLibraryForLink(compilation.sanitizeThread))
+            arguments << QuoteResponseArgument(runtime) << '\n';
 #ifdef ABSOLUTE_RUNTIME_DL_LIBRARY
         arguments << "-l" ABSOLUTE_RUNTIME_DL_LIBRARY "\n";
 #endif
@@ -946,6 +985,7 @@ namespace {
         for (const fs::path& path : compilation.nativeSearchPaths)
             arguments << "-L" << QuoteResponseArgument(path) << '\n';
         if (compilation.sanitizeAddress) arguments << "-fsanitize=address\n";
+        if (compilation.sanitizeThread) arguments << "-fsanitize=thread\n";
         if (compilation.debugInfo) arguments << "-g\n";
         arguments << "-o\n" << QuoteResponseArgument(executable) << '\n';
 #endif
@@ -999,7 +1039,8 @@ namespace {
         object.replace_extension(".o");
 #endif
         generator.GenerateObject(program, compilation.moduleName, object.string(),
-            compilation.sanitizeAddress, {},
+            SelectedSanitizer(compilation.sanitizeAddress,
+                compilation.sanitizeThread), {},
             compilation.optimizationLevel,
             compilation.debugInfo);
 
@@ -1017,9 +1058,8 @@ namespace {
             pdb.replace_extension(".pdb");
             arguments << "/debug:full\n/pdb:" << QuoteResponseArgument(pdb) << '\n';
         }
-#ifdef ABSOLUTE_RUNTIME_LIBRARY
-        arguments << QuoteResponseArgument(ABSOLUTE_RUNTIME_LIBRARY) << '\n';
-#endif
+        if (const char* runtime = RuntimeLibraryForLink(compilation.sanitizeThread))
+            arguments << QuoteResponseArgument(runtime) << '\n';
         for (const fs::path& nativeLibrary : compilation.nativeLibraries)
             arguments << QuoteResponseArgument(nativeLibrary) << '\n';
         arguments << "msvcrt.lib\nvcruntime.lib\nucrt.lib\noldnames.lib\n"
@@ -1032,9 +1072,8 @@ namespace {
             arguments << "/LIBPATH:" << QuoteResponseArgument(path) << '\n';
 #else
         arguments << "-shared\n" << QuoteResponseArgument(object) << '\n';
-#ifdef ABSOLUTE_RUNTIME_LIBRARY
-        arguments << QuoteResponseArgument(ABSOLUTE_RUNTIME_LIBRARY) << '\n';
-#endif
+        if (const char* runtime = RuntimeLibraryForLink(compilation.sanitizeThread))
+            arguments << QuoteResponseArgument(runtime) << '\n';
 #ifdef ABSOLUTE_RUNTIME_DL_LIBRARY
         arguments << "-l" ABSOLUTE_RUNTIME_DL_LIBRARY "\n";
 #endif
@@ -1046,6 +1085,7 @@ namespace {
         for (const fs::path& path : compilation.nativeSearchPaths)
             arguments << "-L" << QuoteResponseArgument(path) << '\n';
         if (compilation.sanitizeAddress) arguments << "-fsanitize=address\n";
+        if (compilation.sanitizeThread) arguments << "-fsanitize=thread\n";
         if (compilation.debugInfo) arguments << "-g\n";
         arguments << "-o\n" << QuoteResponseArgument(library) << '\n';
 #endif
@@ -1104,6 +1144,7 @@ int main(int argc, char* argv[]) {
         for (const fs::path& plugin : commandLine.plugins) plugins.Load(plugin);
         Compilation compilation = LoadCompilation(commandLine.input, plugins);
         compilation.sanitizeAddress = commandLine.sanitizeAddress;
+        compilation.sanitizeThread = commandLine.sanitizeThread;
         compilation.debugInfo = commandLine.debugInfo;
         compilation.optimizationLevel =
             commandLine.optimizationLevel.value_or(
@@ -1121,6 +1162,10 @@ int main(int argc, char* argv[]) {
             if (wasmTarget && commandLine.sanitizeAddress) {
                 throw std::runtime_error(
                     "AddressSanitizer is not supported for WebAssembly targets");
+            }
+            if (wasmTarget && commandLine.sanitizeThread) {
+                throw std::runtime_error(
+                    "ThreadSanitizer is not supported for WebAssembly targets");
             }
 
             CodeGenerator generator(&analyzer);
@@ -1146,7 +1191,9 @@ int main(int argc, char* argv[]) {
                     }
                 }
                 generator.GenerateObject(*compilation.program, compilation.moduleName,
-                    output.string(), compilation.sanitizeAddress,
+                    output.string(),
+                    SelectedSanitizer(compilation.sanitizeAddress,
+                        compilation.sanitizeThread),
                     commandLine.targetTriple,
                     compilation.optimizationLevel,
                     compilation.debugInfo);

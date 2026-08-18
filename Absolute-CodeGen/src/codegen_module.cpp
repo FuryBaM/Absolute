@@ -34,19 +34,32 @@ namespace Absolute {
             llvm::Module& module,
             llvm::TargetMachine* targetMachine,
             OptimizationLevel level,
-            bool sanitizeAddress) {
+            CodeGenerator::Sanitizer sanitizer) {
             llvm::LoopAnalysisManager loopAnalyses;
             llvm::FunctionAnalysisManager functionAnalyses;
             llvm::CGSCCAnalysisManager cgsccAnalyses;
             llvm::ModuleAnalysisManager moduleAnalyses;
             llvm::PassBuilder passBuilder(targetMachine);
-            if (sanitizeAddress) {
+            if (sanitizer == CodeGenerator::Sanitizer::Address) {
                 passBuilder.registerOptimizerLastEPCallback(
                     [](llvm::ModulePassManager& passes,
                         llvm::OptimizationLevel) {
                         llvm::AddressSanitizerOptions options;
                         passes.addPass(
                             llvm::AddressSanitizerPass(options));
+                    });
+            }
+            // The module pass creates the constructor that calls __tsan_init;
+            // the function pass instruments the accesses. Both are needed, and
+            // in that order, or the instrumented program starts without a
+            // sanitizer to report to.
+            if (sanitizer == CodeGenerator::Sanitizer::Thread) {
+                passBuilder.registerOptimizerLastEPCallback(
+                    [](llvm::ModulePassManager& passes,
+                        llvm::OptimizationLevel) {
+                        passes.addPass(llvm::ModuleThreadSanitizerPass());
+                        passes.addPass(llvm::createModuleToFunctionPassAdaptor(
+                            llvm::ThreadSanitizerPass()));
                     });
             }
             passBuilder.registerModuleAnalyses(moduleAnalyses);
@@ -1327,7 +1340,8 @@ namespace Absolute {
             BuildModule(program, moduleName, triple);
         if (optimizationLevel)
             OptimizeModule(
-                generatedModule, nullptr, *optimizationLevel, false);
+                generatedModule, nullptr, *optimizationLevel,
+                CodeGenerator::Sanitizer::None);
 
         std::string output;
         llvm::raw_string_ostream stream(output);
@@ -1337,7 +1351,7 @@ namespace Absolute {
     }
 
     void CodeGenerator::Impl::GenerateObject(Program& program, const std::string& moduleName,
-        const std::string& outputPath, bool sanitizeAddress,
+        const std::string& outputPath, Sanitizer sanitizer,
         const std::string& targetTriple,
         OptimizationLevel optimizationLevel,
         bool debugInfo) {
@@ -1347,8 +1361,10 @@ namespace Absolute {
 
         const std::string tripleName = ResolveTargetTriple(targetTriple);
         const llvm::Triple triple(tripleName);
-        if (sanitizeAddress && IsWebAssemblyTriple(triple))
-            Fail("AddressSanitizer is not supported for WebAssembly targets");
+        if (sanitizer != Sanitizer::None && IsWebAssemblyTriple(triple))
+            Fail(sanitizer == Sanitizer::Thread
+                ? "ThreadSanitizer is not supported for WebAssembly targets"
+                : "AddressSanitizer is not supported for WebAssembly targets");
 
         std::string targetError;
         const llvm::Target* target = llvm::TargetRegistry::lookupTarget(tripleName, targetError);
@@ -1395,16 +1411,19 @@ namespace Absolute {
         if (!targetMachine) Fail("cannot create target machine for '" + tripleName + "'");
         const std::string dataLayout = targetMachine->createDataLayout().getStringRepresentation();
         llvm::Module& generatedModule = BuildModule(program, moduleName, tripleName, dataLayout);
-        if (sanitizeAddress) {
+        if (sanitizer != Sanitizer::None) {
+            const llvm::Attribute::AttrKind kind =
+                sanitizer == Sanitizer::Thread
+                    ? llvm::Attribute::SanitizeThread
+                    : llvm::Attribute::SanitizeAddress;
             for (llvm::Function& function : generatedModule) {
-                if (!function.isDeclaration())
-                    function.addFnAttr(llvm::Attribute::SanitizeAddress);
+                if (!function.isDeclaration()) function.addFnAttr(kind);
             }
         }
 
         OptimizeModule(
             generatedModule, targetMachine.get(),
-            optimizationLevel, sanitizeAddress);
+            optimizationLevel, sanitizer);
 
         std::error_code error;
         llvm::raw_fd_ostream output(outputPath, error, llvm::sys::fs::OF_None);

@@ -553,7 +553,39 @@ A sweep of the whole suite under `-O0` with leak checking on found no other
 kind of leak: everything that remains traces to `absolute_string_*`, which is
 the open defect in section 1.
 
-## 13. The method that worked
+## 13. Beyond the list: a test that could not overlap
+
+Turning ThreadSanitizer on for generated code -- `--sanitize=thread`, plus a
+copy of the runtime built for it, because TSan reasons about the whole program
+-- found no races in what the language offers for concurrency: spawn, await,
+task groups, channels, the concurrent primitives. It did find a test that was
+asserting something its own setup prevented.
+
+`tests/std-concurrent-primitives.abs` checks that an `RwLock` lets two readers
+in at once, by spawning two readers, waiting two milliseconds, spawning a
+writer, and asserting afterwards that the peak reader count reached two. The
+lock prefers writers, which is the right choice and is why the check could
+fail: a writer that got in between the two readers held the second one out, so
+the readers never overlapped and the assertion was false through no fault of
+the lock. Under the sanitizer, where everything starts slower, that happened in
+5 runs out of 30.
+
+The readers now wait for each other inside the lock, and the writer is spawned
+only once both are in. The sequence the test describes is the sequence it runs:
+0 failures in 40 under the sanitizer, and 0 in 40 with the machine's cores
+deliberately loaded.
+
+The clean runs are worth something only because one program is expected to be
+dirty. `tests/thread-sanitizer-race.abs` has two tasks read-modify-write the
+same `int64` through a raw pointer with no lock and no atomic, and the case
+fails if the sanitizer does *not* report it -- an instrumentation that has
+quietly stopped working produces exactly the same clean output as code that is
+correct. The two racers rendezvous on an atomic before starting, because
+without that they can run one after the other on a loaded machine and the
+scheduler's own handoff orders their accesses, which is not a race and is not
+reported.
+
+## 14. The method that worked
 
 Worth repeating, because reading code did not find any of this.
 
@@ -571,7 +603,7 @@ by another route. The compound-assignment defect was found that way, not by
 sweeping again: `a = a / b` had been fixed while `a /= b` still used an untyped
 overload.
 
-## 14. Environment note
+## 15. Environment note
 
 During this work the container repeatedly reverted the working tree to an older
 commit and deleted the build directory. Pushed commits were never affected, but

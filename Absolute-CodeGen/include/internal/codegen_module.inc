@@ -52,7 +52,7 @@
             bool debugInfo = false);
 
         void GenerateObject(Program& program, const std::string& moduleName,
-            const std::string& outputPath, bool sanitizeAddress = false,
+            const std::string& outputPath, Sanitizer sanitizer = Sanitizer::None,
             const std::string& targetTriple = {},
             OptimizationLevel optimizationLevel = OptimizationLevel::O3,
             bool debugInfo = false);
