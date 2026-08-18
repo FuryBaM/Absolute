@@ -34,6 +34,14 @@ namespace Absolute {
             const std::string& targetTriple = {},
             std::optional<OptimizationLevel> optimizationLevel = std::nullopt,
             bool debugInfo = false);
+        // Turns off the type-based alias information the backend attaches to
+        // field and element accesses. A diagnostic switch, not a tuning knob:
+        // its purpose is to build the same program twice and compare, because
+        // a tag that claims two accesses cannot overlap when they can is
+        // undefined behaviour the optimizer believes, and the difference
+        // between the two builds is the only thing that shows it.
+        void SetTypeAliasInfo(bool enabled);
+
         void GenerateObject(Program& program, const std::string& moduleName,
             const std::string& outputPath, Sanitizer sanitizer = Sanitizer::None,
             const std::string& targetTriple = {},

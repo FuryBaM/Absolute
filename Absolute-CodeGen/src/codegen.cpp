@@ -188,6 +188,10 @@ namespace Absolute {
             program, moduleName, targetTriple, optimizationLevel, debugInfo);
     }
 
+    void CodeGenerator::SetTypeAliasInfo(bool enabled) {
+        impl->typeAliasInfoEnabled = enabled;
+    }
+
     void CodeGenerator::GenerateObject(
         Program& program, const std::string& moduleName, const std::string& outputPath,
         Sanitizer sanitizer, const std::string& targetTriple,

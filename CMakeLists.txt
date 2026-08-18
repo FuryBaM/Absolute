@@ -233,6 +233,27 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "suite-differential=ok"
             LABELS differential
             TIMEOUT 3600)
+        # The alias information the backend attaches to field and element
+        # accesses is a promise to the optimizer, and a wrong promise is
+        # undefined behaviour it acts on rather than a slow program. Neither
+        # -O0 nor a sanitizer can see that: at -O0 the metadata is present and
+        # unused, and a load hoisted out of a loop reads memory it is entitled
+        # to read. The only thing that shows a false tag is the same program
+        # built twice at the same optimization level, once told what may alias
+        # and once told nothing -- where telling nothing is always safe.
+        add_test(
+            NAME absolute.alias-differential
+            COMMAND "${Python3_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tools/testing/alias_differential.py"
+                --compiler "$<TARGET_FILE:Absolute-Compiler>"
+                --tests "${PROJECT_SOURCE_DIR}/tests"
+                --levels O2,O3
+                --work-dir "${CMAKE_BINARY_DIR}/differential/alias/$<CONFIG>"
+                --configuration "$<CONFIG>")
+        set_tests_properties(absolute.alias-differential PROPERTIES
+            PASS_REGULAR_EXPRESSION "alias-differential=ok"
+            LABELS differential
+            TIMEOUT 3600)
         add_test(
             NAME absolute.metamorphic-differential
             COMMAND "${Python3_EXECUTABLE}"

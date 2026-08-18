@@ -460,7 +460,7 @@ namespace Absolute {
     }
 
     void CodeGenerator::Impl::TagAccess(llvm::Value* instruction, llvm::MDNode* tag) {
-        if (!tag) return;
+        if (!tag || !typeAliasInfoEnabled) return;
         if (auto* memory = llvm::dyn_cast_or_null<llvm::Instruction>(instruction))
             memory->setMetadata(llvm::LLVMContext::MD_tbaa, tag);
     }

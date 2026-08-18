@@ -210,6 +210,13 @@
             bool isArrayBuffer = false;
         };
         std::vector<TemporaryOwner> temporaryManagedOwners;
+        // Type-based alias information can be turned off, which is only ever
+        // useful for one thing: building the same program twice and comparing.
+        // A tag that claims two accesses cannot overlap when they can is
+        // undefined behaviour the optimizer acts on, and the difference between
+        // the two builds is the only way to see it -- both are correct code by
+        // themselves, and the wrong one is still wrong at -O0.
+        bool typeAliasInfoEnabled = true;
         llvm::MDNode* tbaaRoot = nullptr;
         std::unordered_map<std::string, llvm::MDNode*> tbaaTypeNodes;
         bool valueCreatesArrayOwner = false;

@@ -59,6 +59,7 @@ namespace {
         bool parseOnly = false;
         bool sanitizeAddress = false;
         bool sanitizeThread = false;
+        bool typeAliasInfo = true;
         bool debugInfo = false;
         std::optional<OptimizationLevel> optimizationLevel;
         std::string targetTriple; // empty => host default
@@ -140,6 +141,7 @@ namespace {
         std::vector<fs::path> nativeSearchPaths;
         bool sanitizeAddress = false;
         bool sanitizeThread = false;
+        bool typeAliasInfo = true;
         bool debugInfo = false;
         OptimizationLevel optimizationLevel = OptimizationLevel::O3;
     };
@@ -193,6 +195,8 @@ namespace {
             << "  -O0 | -O1 | -O2 | -O3\n"
             << "  -g                    emit source and local-variable debug information\n"
             << "  --sanitize=address | --sanitize=thread    (host targets only)\n"
+            << "  --no-type-alias-info  build without type-based alias information,\n"
+            << "                        for comparing against a build that has it\n"
             << "  --plugin path | --plugin-path directory | -o output\n";
     }
 
@@ -206,6 +210,7 @@ namespace {
             else if (argument == "--parse-only") result.parseOnly = true;
             else if (argument == "--sanitize=address") result.sanitizeAddress = true;
             else if (argument == "--sanitize=thread") result.sanitizeThread = true;
+            else if (argument == "--no-type-alias-info") result.typeAliasInfo = false;
             else if (argument == "-g" || argument == "--debug-info") result.debugInfo = true;
             else if (argument == "-O0") {
                 result.optimizationLevel = OptimizationLevel::O0;
@@ -1145,6 +1150,7 @@ int main(int argc, char* argv[]) {
         Compilation compilation = LoadCompilation(commandLine.input, plugins);
         compilation.sanitizeAddress = commandLine.sanitizeAddress;
         compilation.sanitizeThread = commandLine.sanitizeThread;
+        compilation.typeAliasInfo = commandLine.typeAliasInfo;
         compilation.debugInfo = commandLine.debugInfo;
         compilation.optimizationLevel =
             commandLine.optimizationLevel.value_or(
@@ -1169,6 +1175,7 @@ int main(int argc, char* argv[]) {
             }
 
             CodeGenerator generator(&analyzer);
+            generator.SetTypeAliasInfo(compilation.typeAliasInfo);
             if (commandLine.emitLlvm) {
                 const std::string ir = generator.Generate(*compilation.program, compilation.moduleName,
                     commandLine.targetTriple,
