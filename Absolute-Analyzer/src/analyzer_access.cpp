@@ -1135,6 +1135,15 @@ namespace Absolute {
         }
         std::vector<Result> indexes;
         indexes.reserve(expr->indexes.size());
+        // An index is read, whatever is being done to the element it selects.
+        // The access mode belongs to the target of the statement -- write for
+        // `a[i] = v`, delete for `delete a[i]`, address for `&a[i]` -- and
+        // letting it reach the index expression made the index inherit the
+        // target's rules: `a[i % a.length] = v` was refused because `length`
+        // is read-only, which it is, and which has nothing to do with reading
+        // it to compute an index.
+        const AccessMode previousAccess = accessMode;
+        accessMode = AccessMode::Read;
         for (const auto& index : expr->indexes) {
             if (!index) {
                 Report("array access requires an index", "E_ARRAY_INDEX_MISSING");
@@ -1147,6 +1156,7 @@ namespace Absolute {
                 Report("array index must be an integer, got '" + indexResult.type + "'",
                     "E_ARRAY_INDEX_TYPE");
         }
+        accessMode = previousAccess;
         if (rank == 0) {
             const auto members = FindMembers(base.type, IndexerMemberName());
             const MemberSignature* selected = nullptr;
@@ -1248,6 +1258,9 @@ namespace Absolute {
             Report("slice specifies " + std::to_string(expr->ranges.size()) +
                 " range(s), but array has rank " + std::to_string(rank), "E_SLICE_RANGE_COUNT");
         }
+        // Bounds are read for the same reason indexes are.
+        const AccessMode previousAccess = accessMode;
+        accessMode = AccessMode::Read;
         for (const auto& range : expr->ranges) {
             for (Expression* bound : {range.begin.get(), range.end.get()}) {
                 if (!bound) continue;
@@ -1256,6 +1269,7 @@ namespace Absolute {
                     Report("slice bounds must be integers", "E_SLICE_BOUND_TYPE");
             }
         }
+        accessMode = previousAccess;
         Save(expr, {base.symbol, rank > 0 ? base.type : "error", false});
     }
 }

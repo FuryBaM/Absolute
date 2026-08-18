@@ -1010,6 +1010,18 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-storage-release.abs"
     )
     add_test(
+        NAME absolute.array-zero-initialization-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-zero-initialization.abs"
+    )
+    add_test(
+        NAME absolute.index-expression-context-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/index-expression-context.abs"
+    )
+    add_test(
+        NAME absolute.generic-member-conversions-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-member-conversions.abs"
+    )
+    add_test(
         NAME absolute.main-parameters-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/main-parameters-errors.abs"
     )
@@ -3347,6 +3359,26 @@ if(BUILD_TESTING)
                 TIMEOUT 120)
         endforeach()
 
+        add_test(
+            NAME absolute.build-sanitizer-array-zero-initialization
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/tests/array-zero-initialization.abs"
+                --sanitize=address --build-exe -O0
+                -o "${CMAKE_BINARY_DIR}/sanitizer-array-zero-initialization-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-sanitizer-array-zero-initialization PROPERTIES
+            FIXTURES_SETUP absolute-sanitizer-array-zero-initialization-executable)
+        add_test(
+            NAME absolute.run-sanitizer-array-zero-initialization
+            COMMAND "${CMAKE_COMMAND}"
+                -DEXECUTABLE=${CMAKE_BINARY_DIR}/sanitizer-array-zero-initialization-app${CMAKE_EXECUTABLE_SUFFIX}
+                -DEXPECT=array-zero-initialization=ok
+                -DDETECT_LEAKS=${ABSOLUTE_SANITIZER_DETECT_LEAKS}
+                -P "${PROJECT_SOURCE_DIR}/tests/run-sanitizer-clean.cmake"
+        )
+        set_tests_properties(absolute.run-sanitizer-array-zero-initialization PROPERTIES
+            FIXTURES_REQUIRED absolute-sanitizer-array-zero-initialization-executable
+            TIMEOUT 120)
         # Built at -O0, unlike every other sanitizer case above: the storage
         # behind a local array is dead once the array is, so from -O1 upwards
         # the optimizer deletes both the allocation and the leak. A missing
@@ -4839,6 +4871,48 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-text-number-parsing PROPERTIES
             FIXTURES_REQUIRED absolute-text-number-parsing-executable
             PASS_REGULAR_EXPRESSION "text-number-parsing=ok"
+        )
+        add_test(
+            NAME absolute.build-array-zero-initialization
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-zero-initialization.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/array-zero-initialization-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-array-zero-initialization PROPERTIES
+            FIXTURES_SETUP absolute-array-zero-initialization-executable
+        )
+        add_test(NAME absolute.run-array-zero-initialization
+            COMMAND "${CMAKE_BINARY_DIR}/array-zero-initialization-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-array-zero-initialization PROPERTIES
+            FIXTURES_REQUIRED absolute-array-zero-initialization-executable
+            PASS_REGULAR_EXPRESSION "array-zero-initialization=ok"
+        )
+        add_test(
+            NAME absolute.build-index-expression-context
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/index-expression-context.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/index-expression-context-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-index-expression-context PROPERTIES
+            FIXTURES_SETUP absolute-index-expression-context-executable
+        )
+        add_test(NAME absolute.run-index-expression-context
+            COMMAND "${CMAKE_BINARY_DIR}/index-expression-context-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-index-expression-context PROPERTIES
+            FIXTURES_REQUIRED absolute-index-expression-context-executable
+            PASS_REGULAR_EXPRESSION "index-expression-context=ok"
+        )
+        add_test(
+            NAME absolute.build-generic-member-conversions
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-member-conversions.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/generic-member-conversions-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-generic-member-conversions PROPERTIES
+            FIXTURES_SETUP absolute-generic-member-conversions-executable
+        )
+        add_test(NAME absolute.run-generic-member-conversions
+            COMMAND "${CMAKE_BINARY_DIR}/generic-member-conversions-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-generic-member-conversions PROPERTIES
+            FIXTURES_REQUIRED absolute-generic-member-conversions-executable
+            PASS_REGULAR_EXPRESSION "generic-member-conversions=ok"
         )
         add_test(
             NAME absolute.build-array-storage-release

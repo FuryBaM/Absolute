@@ -1109,6 +1109,12 @@ namespace Absolute {
         return module->getOrInsertFunction("malloc", type);
     }
 
+    llvm::FunctionCallee CodeGenerator::Impl::Calloc() {
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getPtrTy(), {builder.getInt64Ty(), builder.getInt64Ty()}, false);
+        return module->getOrInsertFunction("calloc", type);
+    }
+
     llvm::FunctionCallee CodeGenerator::Impl::Free() {
         llvm::FunctionType* type = llvm::FunctionType::get(
             builder.getVoidTy(), {builder.getPtrTy()}, false);

@@ -193,6 +193,12 @@
 
         llvm::FunctionCallee Malloc();
 
+        // Array storage is zero-initialized, which is what the language
+        // promises and what `malloc` does not do. calloc rather than a memset
+        // because a large allocation then costs zero pages from the operating
+        // system instead of a write over every byte.
+        llvm::FunctionCallee Calloc();
+
         llvm::FunctionCallee Free();
 
         llvm::FunctionCallee LoadDynamicLibrary();

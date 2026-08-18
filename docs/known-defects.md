@@ -585,7 +585,56 @@ without that they can run one after the other on a loaded machine and the
 scheduler's own handoff orders their accesses, which is not a race and is not
 reported.
 
-## 14. The method that worked
+## 14. Beyond the list: four more shapes in the fuzzer
+
+The generated corpus started with one program shape. Four more were added --
+virtual dispatch through an interface, exceptions leaving frames that hold
+owners, closures that capture and escape, generics specialized at several
+widths -- and each of the three defects below came out of the first runs.
+
+- **Array storage was not zero-initialized**, which the documentation says it
+  is (README: "Array storage is zero-initialized"). `new T[n]` called `malloc`
+  and handed back whatever the allocator had in that block, so a program that
+  read an element before writing it got one answer at `-O0`, another at `-O3`,
+  and a third under AddressSanitizer -- three answers to a question the
+  language says has one. That is how it surfaced: the fuzzer builds `-O0` under
+  the sanitizer and `-O3` without it, and the two disagreed while both ran
+  clean. Array *literals* were always zeroed -- an alloca and an explicit
+  memset -- so only `new` was affected. It allocates with `calloc` now, which
+  also means a large array costs zero pages from the operating system rather
+  than a write over every byte. `tests/array-zero-initialization.abs` probes it
+  the way it has to be probed: allocate, fill, release, allocate the same size
+  again, because a first allocation usually sits on a fresh page that is zero
+  anyway and proves nothing.
+
+- **An index expression inherited the statement's access mode.** Writing
+  `a[i % a.length] = v` was refused with "array property 'length' is
+  read-only". It is read-only, and that has nothing to do with reading it to
+  compute an index: the mode belongs to the target of the statement -- write
+  for an assignment, address for `&a[i]` -- and it was reaching the index and
+  the slice bounds as well. Both are reads now, whatever is being done to the
+  element they select, and the refusals that should stay still fire
+  (`tests/index-expression-context.abs`, and the error cases in
+  `tests/array-errors.abs`).
+
+- **A method of a generic class refused the conversions every other call
+  accepts.** `Box<int64>.put(7)` was reported as "no overload accepts (int32)".
+  The parameter really had been substituted to `int64`, but the method's symbol
+  still carries the class's `T`, so the call went through generic unification,
+  whose job is to bind type variables and which decides a pattern containing
+  none by equality. A pattern with no variable in it binds nothing and now
+  defers to the conversion rules, which is what the same call written against a
+  plain class, a free function, or a generic *function* with an explicit type
+  argument had always done (`tests/generic-member-conversions.abs`).
+
+**And one in the harness rather than the language.** The differential runners
+inherited their own standard input, so a test in the suite that reads to end of
+file blocked on whatever was attached to the process that started the run: the
+same corpus finished in seconds from one shell and sat until the timeout from
+another. Every runner passes a closed stdin now. What a test answers must not
+depend on who started it.
+
+## 15. The method that worked
 
 Worth repeating, because reading code did not find any of this.
 
@@ -603,7 +652,7 @@ by another route. The compound-assignment defect was found that way, not by
 sweeping again: `a = a / b` had been fixed while `a /= b` still used an untyped
 overload.
 
-## 15. Environment note
+## 16. Environment note
 
 During this work the container repeatedly reverted the working tree to an older
 commit and deleted the build directory. Pushed commits were never affected, but

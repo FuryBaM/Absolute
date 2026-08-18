@@ -548,9 +548,14 @@ namespace Absolute {
                 : impl->Coerce(impl->Evaluate(expr->arguments[0].get()),
                     impl->builder.getInt64Ty());
             llvm::Value* elemSize = impl->builder.getInt64(impl->SizeOfTypeName(elemTypeName));
-            llvm::Value* allocBytes = impl->builder.CreateMul(count, elemSize, "array.alloc.bytes");
+            // calloc, not malloc: "Array storage is zero-initialized" is a
+            // documented promise, and it was not kept. A fresh `new int64[16]`
+            // handed back whatever the allocator had there, so a program that
+            // read an element it had not written yet got a different answer at
+            // -O0 than at -O3, and a different one again under a sanitizer --
+            // three answers to a question the language says has one.
             llvm::Value* dataPtr = impl->builder.CreateCall(
-                impl->Malloc(), {allocBytes}, "array.data.alloc");
+                impl->Calloc(), {count, elemSize}, "array.data.alloc");
             Impl::ArrayView view;
             view.address = dataPtr;
             view.elementType = elemType;

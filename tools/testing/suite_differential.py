@@ -91,8 +91,14 @@ class Outcome:
 
 
 def run(command: list[str], timeout: int) -> subprocess.CompletedProcess:
+    # Closed standard input, not the runner's own. A program in the suite that
+    # reads until end of file -- and one does -- otherwise blocks on whatever
+    # the caller's stdin happened to be, so the same corpus finished in seconds
+    # from one shell and sat there until the timeout from another. The answer a
+    # test gives must not depend on who started it.
     return subprocess.run(
-        command, capture_output=True, text=True, timeout=timeout, check=False)
+        command, capture_output=True, text=True, timeout=timeout, check=False,
+        stdin=subprocess.DEVNULL)
 
 
 def runnable_tests(directory: Path, only: str | None) -> list[Path]:

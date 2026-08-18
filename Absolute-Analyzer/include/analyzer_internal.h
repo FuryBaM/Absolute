@@ -230,9 +230,38 @@ namespace Absolute {
             return result + ">";
         }
 
+        // Whether a type variable appears anywhere inside a pattern -- as the
+        // pattern itself, an element type, a pointee, or a type argument.
+        inline bool MentionsGenericParameter(const std::string& pattern,
+            const std::unordered_set<std::string>& parameters) {
+            if (parameters.contains(pattern)) return true;
+            if (pattern.ends_with("[]"))
+                return MentionsGenericParameter(
+                    pattern.substr(0, pattern.size() - 2), parameters);
+            if (IsPointerType(pattern))
+                return MentionsGenericParameter(PointerPointee(pattern), parameters);
+            std::string base;
+            std::vector<std::string> arguments;
+            if (ParseGenericTypeName(pattern, base, arguments)) {
+                for (const std::string& argument : arguments)
+                    if (MentionsGenericParameter(argument, parameters)) return true;
+            }
+            return false;
+        }
+
         inline bool UnifyGenericType(const std::string& pattern, const std::string& actual,
             const std::unordered_set<std::string>& parameters,
             std::unordered_map<std::string, std::string>& substitutions) {
+            // A pattern with no type variable in it binds nothing, so there is
+            // nothing here to decide: whether the argument fits the parameter is
+            // a conversion question, and answering it with an equality test is
+            // what refused `Box<int64>.put(7)`. A method of a generic class
+            // carries the class's type parameter in its symbol but has its own
+            // parameters already substituted, so the pattern was the concrete
+            // `int64`, unification demanded exactly `int64`, and an `int32` that
+            // any ordinary call widens was rejected as a failed unification
+            // rather than considered as a conversion.
+            if (!MentionsGenericParameter(pattern, parameters)) return true;
             if (parameters.contains(pattern)) {
                 const auto found = substitutions.find(pattern);
                 if (found == substitutions.end()) {
