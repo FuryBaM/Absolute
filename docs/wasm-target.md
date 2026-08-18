@@ -224,6 +224,16 @@ Link against `absolute_wasm_runtime_wasi.o` (no custom `env.*` Absolute host):
 | `environ_*` | seed for `absolute_env_*` (table capped) |
 | `proc_exit` | `absolute_process_exit` / abort |
 
+A failing runtime check ends differently on the two targets, and a host has to
+know which it is looking at. Natively the check prints its message and calls
+`exit(1)`. On wasm the shim's `exit` is `__builtin_trap()`, because a module
+cannot hand an exit code back through a trap: the host sees
+`RuntimeError: unreachable`, and the message the check printed is in the
+captured log, written before the trap. A host that reports the error without
+first flushing what the module logged loses the only part that says what
+happened -- which is what `tools/testing/suite_differential.py` had to fix in
+its own runner before the WebAssembly comparison meant anything.
+
 How to build:
 
 ```bat

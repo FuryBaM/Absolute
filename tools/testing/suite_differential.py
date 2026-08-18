@@ -52,13 +52,21 @@ async function main() {
     const bytes = fs.readFileSync(process.argv[3]);
     const session = await instantiateAbsoluteWasm(
         bytes, { captureLogs: true, allowNetwork: false });
+    let code = 0;
     try {
-        const code = session.exports.main();
-        process.stdout.write(session.logs.join(''));
-        process.exitCode = code;
+        code = session.exports.main();
+    } catch (error) {
+        // A runtime check on wasm ends in a trap, because the shim's exit() is
+        // __builtin_trap(): the module cannot hand an exit code back. The
+        // program has already written its message to the log by then, so the
+        // log is what gets compared, and the trap counts as the failing exit
+        // the native build reports.
+        code = 1;
     } finally {
+        process.stdout.write(session.logs.join(''));
         try { session.host.shutdown(); } catch (_) {}
     }
+    process.exitCode = code;
 }
 
 main().catch((error) => {
@@ -188,14 +196,17 @@ def main() -> int:
                              args.timeout)
         except subprocess.TimeoutExpired:
             repeat = None
-        if repeat and (repeat.output != outcomes[0].output or
+        if repeat and (repeat.output.rstrip() != outcomes[0].output.rstrip() or
                        repeat.exit_code != outcomes[0].exit_code):
             unstable += 1
             continue
         compared += 1
         first = outcomes[0]
         for other in outcomes[1:]:
-            if other.exit_code == first.exit_code and other.output == first.output:
+            # Compared without trailing blank lines: the two runners end their
+            # output differently and that says nothing about the program.
+            if (other.exit_code == first.exit_code and
+                    other.output.rstrip() == first.output.rstrip()):
                 continue
             disagreements += 1
             print(f"MISMATCH {source.name}: {first.label} exit={first.exit_code} "

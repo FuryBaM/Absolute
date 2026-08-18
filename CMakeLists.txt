@@ -935,6 +935,68 @@ if(BUILD_TESTING)
         NAME absolute.negated-literal-typing-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/negated-literal-typing.abs"
     )
+    # Test programs that were in the tree but in nobody's list. Found by
+    # checking every tests/*.abs against CMakeLists: ten had no registration at
+    # all, so they were carried along, edited when something near them changed,
+    # and never run. These are the ones that build here; `native-handle-wrapper`
+    # and `desktop-window-smoke` need a companion library and a desktop plugin.
+    foreach(unregistered_case IN ITEMS
+            "abi-numeric-semantics=numeric-semantics=ok"
+            "collection-snapshot-stress=collection-snapshot-stress=ok"
+            "concurrency-stress=concurrency-stress=ok")
+        string(REGEX MATCH "^[^=]+" unregistered_name "${unregistered_case}")
+        string(REGEX REPLACE "^[^=]+=" "" unregistered_marker "${unregistered_case}")
+        add_test(
+            NAME absolute.${unregistered_name}-semantic
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/${unregistered_name}.abs")
+        if(ABSOLUTE_ENABLE_LLVM)
+            add_test(
+                NAME absolute.build-${unregistered_name}
+                COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/${unregistered_name}.abs"
+                    --build-exe
+                    -o "${CMAKE_BINARY_DIR}/${unregistered_name}-app${CMAKE_EXECUTABLE_SUFFIX}")
+            set_tests_properties(absolute.build-${unregistered_name} PROPERTIES
+                FIXTURES_SETUP absolute-${unregistered_name}-executable)
+            add_test(NAME absolute.run-${unregistered_name}
+                COMMAND "${CMAKE_BINARY_DIR}/${unregistered_name}-app${CMAKE_EXECUTABLE_SUFFIX}")
+            set_tests_properties(absolute.run-${unregistered_name} PROPERTIES
+                FIXTURES_REQUIRED absolute-${unregistered_name}-executable
+                PASS_REGULAR_EXPRESSION "${unregistered_marker}"
+                TIMEOUT 120)
+        endif()
+    endforeach()
+
+    # The same, for the ones that answer with an exit code instead of a marker.
+    foreach(exit_code_case IN ITEMS std-collections-all std-collections-vector
+            test_map test_vec_mini)
+        add_test(
+            NAME absolute.${exit_code_case}-semantic
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/${exit_code_case}.abs")
+        if(ABSOLUTE_ENABLE_LLVM)
+            add_test(
+                NAME absolute.build-${exit_code_case}
+                COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/${exit_code_case}.abs"
+                    --build-exe
+                    -o "${CMAKE_BINARY_DIR}/${exit_code_case}-app${CMAKE_EXECUTABLE_SUFFIX}")
+            set_tests_properties(absolute.build-${exit_code_case} PROPERTIES
+                FIXTURES_SETUP absolute-${exit_code_case}-executable)
+            add_test(NAME absolute.run-${exit_code_case}
+                COMMAND "${CMAKE_BINARY_DIR}/${exit_code_case}-app${CMAKE_EXECUTABLE_SUFFIX}")
+            set_tests_properties(absolute.run-${exit_code_case} PROPERTIES
+                FIXTURES_REQUIRED absolute-${exit_code_case}-executable
+                TIMEOUT 120)
+        endif()
+    endforeach()
+
+    # Written as a probe against a rule that did not exist yet -- its own comment
+    # says "should be an error according to TODO" -- and the rule exists now, so
+    # it is an error test.
+    add_test(
+        NAME absolute.struct-copy-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/struct-copy-test.abs")
+    set_tests_properties(absolute.struct-copy-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_RESOURCE_AGGREGATE_COPY")
+
     add_test(
         NAME absolute.text-number-parsing-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/text-number-parsing.abs"
