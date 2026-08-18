@@ -375,7 +375,7 @@ namespace Absolute {
         const std::string baseType = impl->SemanticType(expr->base.get());
         if (ArrayRankName(baseType) > 0 && (expr->member == "length" || expr->member == "count")) {
             if (impl->addressMode) impl->Fail("array length property is not assignable");
-            llvm::Value* descriptor = impl->Evaluate(expr->base.get());
+            llvm::Value* descriptor = impl->EvaluateBorrowed(expr->base.get());
             if (descriptor->getType()->isPointerTy()) {
                 llvm::LoadInst* load = impl->builder.CreateLoad(
                     impl->ArrayDescriptorType(baseType), descriptor, "array.descriptor");
@@ -560,6 +560,15 @@ namespace Absolute {
             impl->value = impl->BuildArrayDescriptor(view);
             impl->valueCreatesManagedOwner = false;
             impl->valueManagedPointee = nullptr;
+            // `new T[n]` produces an owner, and saying so is what connects it to
+            // the release that already exists: a scope frees the array storage
+            // it owns, a call frees an array temporary the callee did not take.
+            // Without these two lines the buffer was allocated and never freed
+            // -- every local array in every program -- and only -O0 showed it,
+            // because at -O1 and above the optimizer deletes an allocation
+            // nothing reads back.
+            impl->valueCreatesArrayOwner = true;
+            impl->valueArrayOwner = dataPtr;
             return;
         }
         const std::string pointeeType = allocationType.empty()

@@ -502,7 +502,58 @@ beside the fields that describe it, fields written through elements of an array
 of structs, a raw view over a collection's buffer against its own indexer --
 and reading the result back.
 
-## 12. The method that worked
+## 12. Beyond the list: what a generated program found in the backend
+
+Nothing in the suite was probing whole programs under a sanitizer. The corpora
+that existed generate one expression shape each -- integer mixing, floating
+arithmetic, integer edges, ownership operations -- and none of them is compiled
+with `--sanitize=address`. `tools/testing/codegen_fuzz.py` fills that gap: it
+generates valid, self-checking programs -- a class with an array field and a
+managed field, loops over computed indices, owners created and released inside
+a loop, recursion -- builds each one at `-O0` under the sanitizer and again at
+`-O3`, and asks three questions that are not a second implementation of the
+semantics: did the sanitizer complain, did anything leak, and do the two builds
+print the same number.
+
+The first run answered "yes, leaked, 4 x N bytes" on every program.
+
+- **Every local array in every program was allocated and never freed.** `new
+  T[n]` produced its descriptor without ever being marked as an owner, so the
+  release that already existed -- a scope frees the array storage it owns --
+  never fired. There was no `free` in the emitted IR at all. It survived a
+  green suite for two reasons: the programs print the right answer, and from
+  `-O1` upwards the optimizer deletes an allocation nothing reads back, so the
+  bytes only exist at `-O0`, which is not where anything was being checked.
+  Two lines in the array branch of the constructor-call visitor, and the
+  existing release connects.
+
+- **An array produced inside a larger expression was dropped on the floor.**
+  `map.toArray().length` allocated a snapshot that nothing named and nothing
+  freed. The temporary-owner ledger that holds unbound managed owners until the
+  end of a statement now also holds array buffers, which are released with
+  `free` rather than the two steps `delete` takes. A *slice* is deliberately
+  not registered: `return copy(values)[1:3]` keeps referring to the same
+  buffer, so ending its life with the statement would return freed storage.
+
+- **The base of an index was evaluated twice**, and this one is a wrong answer
+  rather than a leak. The access visitor took a view of the base, then computed
+  the element address, which took a view of the base again -- so for a variable
+  it cost two extra loads, and for anything else it ran the expression a second
+  time. `batch()[0]` called `batch()` twice, read its element out of the second
+  array, and released the first; a function with a side effect had it happen
+  twice, and the index and the release were looking at different memory. The
+  leak is what exposed it: one allocation freed, two made. The address
+  computation now takes the view the caller already has.
+
+`tests/array-storage-release.abs` pins all three, and is the one sanitizer case
+built at `-O0` rather than `-O1`, because at `-O1` a missing release is not
+observable. The fuzzer runs as `absolute.codegen-fuzz`.
+
+A sweep of the whole suite under `-O0` with leak checking on found no other
+kind of leak: everything that remains traces to `absolute_string_*`, which is
+the open defect in section 1.
+
+## 13. The method that worked
 
 Worth repeating, because reading code did not find any of this.
 
@@ -520,7 +571,7 @@ by another route. The compound-assignment defect was found that way, not by
 sweeping again: `a = a / b` had been fixed while `a /= b` still used an untyped
 overload.
 
-## 13. Environment note
+## 14. Environment note
 
 During this work the container repeatedly reverted the working tree to an older
 commit and deleted the build directory. Pushed commits were never affected, but

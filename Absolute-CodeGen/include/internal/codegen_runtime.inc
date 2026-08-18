@@ -61,6 +61,8 @@
 
         void RegisterTemporaryOwner(llvm::Value* handle, const std::string& typeName);
 
+        void RegisterTemporaryArrayOwner(llvm::Value* owner);
+
         void ReleaseTemporaryOwners(size_t mark);
 
         // Destroys, at the end of the statement it was opened for, every owner
@@ -134,7 +136,15 @@
 
         void EmitOrExit(llvm::Value* condition, const std::string& name);
 
-        llvm::Value* ArrayElementAddress(ArrayAccessExpr& expression);
+        // Takes the view of the base rather than computing one, because the
+        // caller already has it and computing a second one evaluates the base a
+        // second time. For a variable that only cost two loads; for anything
+        // else -- `batch()[0]`, `snapshot()[i]` -- it ran the expression twice,
+        // so a call with a side effect happened twice, the index read one array
+        // while the release freed the other, and the value came from a
+        // different array than the one the program thought it indexed.
+        llvm::Value* ArrayElementAddress(
+            ArrayAccessExpr& expression, const ArrayView& view);
 
         llvm::AllocaInst* CreateEntryAlloca(llvm::Function& function, llvm::Type* type, const std::string& name);
 

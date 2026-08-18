@@ -200,6 +200,9 @@
         struct TemporaryOwner {
             llvm::Value* handle = nullptr;
             std::string typeName;
+            // An array owner is a plain buffer: it is released with free(),
+            // while a managed owner needs the two steps delete takes.
+            bool isArrayBuffer = false;
         };
         std::vector<TemporaryOwner> temporaryManagedOwners;
         llvm::MDNode* tbaaRoot = nullptr;

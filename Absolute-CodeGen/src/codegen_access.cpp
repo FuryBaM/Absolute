@@ -625,9 +625,13 @@ namespace Absolute {
             return;
         }
         Impl::ArrayView view = impl->ViewOfArray(expr->base.get());
+        // Whether the base produced the storage it describes is decided here,
+        // before an index is evaluated: evaluating one overwrites the answer.
+        const bool borrowedArrayOwner = impl->valueCreatesArrayOwner;
+        llvm::Value* borrowedArrayBuffer = impl->valueArrayOwner;
         if (expr->indexes.size() < view.dimensions.size()) {
             if (impl->addressMode) impl->Fail("sub-array slice is not assignable");
-            llvm::Value* address = impl->ArrayElementAddress(*expr);
+            llvm::Value* address = impl->ArrayElementAddress(*expr, view);
             std::vector<llvm::Value*> subDims;
             for (size_t d = expr->indexes.size(); d < view.dimensions.size(); ++d) {
                 subDims.push_back(view.dimensions[d]);
@@ -640,10 +644,21 @@ namespace Absolute {
             subView.owner = view.owner;
             impl->value = impl->BuildArrayDescriptor(subView);
             impl->valueCreatesManagedOwner = false;
+            // A row of an array is still that array's storage, so ownership
+            // travels with it rather than ending here.
+            impl->valueCreatesArrayOwner = borrowedArrayOwner;
+            impl->valueArrayOwner = borrowedArrayBuffer;
             return;
         }
 
-        llvm::Value* address = impl->ArrayElementAddress(*expr);
+        // Reading one element takes a value out of the array and keeps nothing
+        // of it, so an array the expression produced -- `snapshot()[0]` -- is
+        // released with the statement. A *slice* is the opposite: it keeps
+        // referring to the same buffer, which is why the branch above does not
+        // do this and `return copy(values)[1:3]` still owns what it returns.
+        llvm::Value* address = impl->ArrayElementAddress(*expr, view);
+        if (borrowedArrayOwner && borrowedArrayBuffer)
+            impl->RegisterTemporaryArrayOwner(borrowedArrayBuffer);
         if (impl->addressMode) {
             impl->addressValue = address;
             return;

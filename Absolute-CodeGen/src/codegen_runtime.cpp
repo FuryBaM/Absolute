@@ -389,6 +389,11 @@ namespace Absolute {
         // something its scope still owns.
         if (valueCreatesManagedOwner && value)
             RegisterTemporaryOwner(value, SemanticType(expression));
+        // An array produced by an expression owns its buffer the same way, and
+        // is dropped the same way: `map.toArray().length` allocated a snapshot
+        // and read one field of it.
+        if (valueCreatesArrayOwner && valueArrayOwner)
+            RegisterTemporaryArrayOwner(valueArrayOwner);
         return value;
     }
 
@@ -455,6 +460,13 @@ namespace Absolute {
             Fail("temporary owner left unreleased in " + where);
     }
 
+    void CodeGenerator::Impl::RegisterTemporaryArrayOwner(llvm::Value* owner) {
+        if (!owner) return;
+        temporaryManagedOwners.push_back({owner, {}, true});
+        valueCreatesArrayOwner = false;
+        valueArrayOwner = nullptr;
+    }
+
     void CodeGenerator::Impl::ReleaseTemporaryOwners(size_t mark) {
         if (temporaryManagedOwners.size() <= mark) return;
         // Nothing may be emitted into a block a terminator has already closed,
@@ -469,6 +481,10 @@ namespace Absolute {
             // a quieter leak than the one this replaced.
             for (size_t index = temporaryManagedOwners.size(); index > mark; --index) {
                 const TemporaryOwner& temporary = temporaryManagedOwners[index - 1];
+                if (temporary.isArrayBuffer) {
+                    builder.CreateCall(Free(), {temporary.handle});
+                    continue;
+                }
                 llvm::Value* pointee = EmitManagedGet(temporary.handle, false);
                 EmitPointeeCleanup(pointee, temporary.typeName);
                 builder.CreateCall(ManagedDestroy(), {temporary.handle});
@@ -708,8 +724,8 @@ namespace Absolute {
         builder.SetInsertPoint(success);
     }
 
-    llvm::Value* CodeGenerator::Impl::ArrayElementAddress(ArrayAccessExpr& expression) {
-        ArrayView view = ViewOfArray(expression.base.get());
+    llvm::Value* CodeGenerator::Impl::ArrayElementAddress(
+        ArrayAccessExpr& expression, const ArrayView& view) {
         if (expression.indexes.size() > view.dimensions.size())
             Fail("array access provides too many dimensions");
 

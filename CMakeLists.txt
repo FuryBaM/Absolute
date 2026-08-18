@@ -1006,6 +1006,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/aliasing-guarantees.abs"
     )
     add_test(
+        NAME absolute.array-storage-release-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-storage-release.abs"
+    )
+    add_test(
         NAME absolute.main-parameters-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/main-parameters-errors.abs"
     )
@@ -3102,6 +3106,31 @@ if(BUILD_TESTING)
             set(ABSOLUTE_SANITIZER_DETECT_LEAKS ON)
         endif()
 
+        # Generated whole programs -- arrays with computed indices, classes with
+        # array and managed fields, owners created and released inside loops,
+        # recursion -- built twice and checked three ways: the sanitizer, the
+        # leak checker, and agreement between -O0 and -O3. The corpora that came
+        # before generate one expression shape each and none of them runs under
+        # a sanitizer, which is how "every local array is allocated and never
+        # freed" survived a green suite: at -O1 and above the optimizer deletes
+        # an allocation nothing reads back, so only -O0 with leak checking on
+        # could see it.
+        if(Python3_Interpreter_FOUND)
+            add_test(
+                NAME absolute.codegen-fuzz
+                COMMAND "${Python3_EXECUTABLE}"
+                    "${PROJECT_SOURCE_DIR}/tools/testing/codegen_fuzz.py"
+                    --compiler "$<TARGET_FILE:Absolute-Compiler>"
+                    --work-dir "${CMAKE_BINARY_DIR}/differential/codegen-fuzz/$<CONFIG>"
+                    --cases 12
+                    --detect-leaks ${ABSOLUTE_SANITIZER_DETECT_LEAKS}
+                    --configuration "$<CONFIG>")
+            set_tests_properties(absolute.codegen-fuzz PROPERTIES
+                PASS_REGULAR_EXPRESSION "codegen-fuzz=ok"
+                LABELS differential
+                TIMEOUT 900)
+        endif()
+
         add_test(
             NAME absolute.build-sanitizer-uaf
             COMMAND Absolute-Compiler build "${CMAKE_BINARY_DIR}/SanitizerUaf-$<CONFIG>.absproj"
@@ -3236,6 +3265,30 @@ if(BUILD_TESTING)
                 TIMEOUT 120)
         endforeach()
 
+        # Built at -O0, unlike every other sanitizer case above: the storage
+        # behind a local array is dead once the array is, so from -O1 upwards
+        # the optimizer deletes both the allocation and the leak. A missing
+        # release is only observable where the allocation still happens.
+        add_test(
+            NAME absolute.build-sanitizer-array-storage-release
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/tests/array-storage-release.abs"
+                --sanitize=address --build-exe -O0
+                -o "${CMAKE_BINARY_DIR}/sanitizer-array-storage-release-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-sanitizer-array-storage-release PROPERTIES
+            FIXTURES_SETUP absolute-sanitizer-array-storage-release-executable)
+        add_test(
+            NAME absolute.run-sanitizer-array-storage-release
+            COMMAND "${CMAKE_COMMAND}"
+                -DEXECUTABLE=${CMAKE_BINARY_DIR}/sanitizer-array-storage-release-app${CMAKE_EXECUTABLE_SUFFIX}
+                -DEXPECT=array-storage-release=ok
+                -DDETECT_LEAKS=${ABSOLUTE_SANITIZER_DETECT_LEAKS}
+                -P "${PROJECT_SOURCE_DIR}/tests/run-sanitizer-clean.cmake"
+        )
+        set_tests_properties(absolute.run-sanitizer-array-storage-release PROPERTIES
+            FIXTURES_REQUIRED absolute-sanitizer-array-storage-release-executable
+            TIMEOUT 60)
         add_test(
             NAME absolute.build-sanitizer-ownership-torture-graph
             COMMAND Absolute-Compiler
@@ -4704,6 +4757,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-text-number-parsing PROPERTIES
             FIXTURES_REQUIRED absolute-text-number-parsing-executable
             PASS_REGULAR_EXPRESSION "text-number-parsing=ok"
+        )
+        add_test(
+            NAME absolute.build-array-storage-release
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-storage-release.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/array-storage-release-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-array-storage-release PROPERTIES
+            FIXTURES_SETUP absolute-array-storage-release-executable
+        )
+        add_test(NAME absolute.run-array-storage-release
+            COMMAND "${CMAKE_BINARY_DIR}/array-storage-release-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-array-storage-release PROPERTIES
+            FIXTURES_REQUIRED absolute-array-storage-release-executable
+            PASS_REGULAR_EXPRESSION "array-storage-release=ok"
         )
         add_test(
             NAME absolute.build-aliasing-guarantees
