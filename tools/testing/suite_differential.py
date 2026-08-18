@@ -41,6 +41,13 @@ SKIP_MARKERS = (
 NEEDS_HOST_FACILITIES = frozenset({
     "std-env", "std-fs", "std-http", "std-net", "std-net-udp", "std-process",
     "concurrency-stress",
+    # Registered for WebAssembly only -- their ctest entry builds for wasm32 and
+    # runs the module under node -- and each asserts what the wasm host
+    # provides: a virtual filesystem where a backslash is a separator (on Linux
+    # it is an ordinary character in a name, documented in docs/wasm-target.md),
+    # affinity that is unsupported there, the WASI services, the sandboxed
+    # network. Natively they assert the opposite of what is true, by design.
+    "wasm-fs", "wasm-full-runtime", "wasm-net", "wasm-wasi-services",
 })
 
 

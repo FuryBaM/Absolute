@@ -224,6 +224,15 @@ Link against `absolute_wasm_runtime_wasi.o` (no custom `env.*` Absolute host):
 | `environ_*` | seed for `absolute_env_*` (table capped) |
 | `proc_exit` | `absolute_process_exit` / abort |
 
+`std.fs.normalize` and the path helpers around it read a backslash differently
+on the two targets, and a program that normalizes a Windows-shaped path gets
+different answers: `normalize("tmp\\assets\\..\\hello.txt")` is
+`tmp/hello.txt` on wasm, where the virtual filesystem accepts either separator,
+and `tmp\assets\..\hello.txt` on Linux, where a backslash is an ordinary
+character in a file name and collapsing it would rename the file being asked
+about. Both are right for the filesystem underneath them; a program that must
+agree everywhere should use `/` or ask `std.fs.join` to build the path.
+
 A failing runtime check ends differently on the two targets, and a host has to
 know which it is looking at. Natively the check prints its message and calls
 `exit(1)`. On wasm the shim's `exit` is `__builtin_trap()`, because a module
