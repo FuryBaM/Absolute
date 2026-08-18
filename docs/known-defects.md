@@ -692,6 +692,14 @@ pointer". `copy` of an array whose elements own something is refused now
 owner should mean is not a decision this builtin gets to make. Arrays of
 ordinary values copy exactly as before.
 
+Three more shapes afterwards -- strings, conversions between integer widths,
+slices of slices -- found nothing across 224 generated programs. Worth stating
+as a result rather than leaving unsaid: those three areas are clean under this
+oracle. The string shape is the only one that declares its leaks expected, so
+the leak check is turned off for it and the sanitizer's other answers still
+count; without that, the bytes a string leaks by design would drown everything
+else the shape is asked.
+
 `tests/array-element-ownership.abs` counts live objects through a `destroy()`
 hook across 64 rounds, so a release that ran twice or not at all shows as a
 count that does not return to zero; it is built at `-O0` under the sanitizer

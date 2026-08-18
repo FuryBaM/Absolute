@@ -3270,7 +3270,8 @@ if(BUILD_TESTING)
                     "${PROJECT_SOURCE_DIR}/tools/testing/codegen_fuzz.py"
                     --compiler "$<TARGET_FILE:Absolute-Compiler>"
                     --work-dir "${CMAKE_BINARY_DIR}/differential/codegen-fuzz/$<CONFIG>"
-                    --cases 12
+                    --std-dir "${PROJECT_SOURCE_DIR}/std"
+                    --cases 14
                     --detect-leaks ${ABSOLUTE_SANITIZER_DETECT_LEAKS}
                     --configuration "$<CONFIG>")
             set_tests_properties(absolute.codegen-fuzz PROPERTIES
