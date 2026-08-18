@@ -58,6 +58,13 @@ class Holder {
     }
 }
 
+// Two references to one of these are two names for the same storage, which is
+// what makes the field check below able to fail.
+class OverlapProbe {
+    public int32 slot;
+    public OverlapProbe(int32 initial) { slot = initial; }
+}
+
 int32 main() {
     // An array field and the fields beside it, written in the same loop.
     Holder* holder = new Holder(64);
@@ -146,6 +153,46 @@ int32 main() {
     }
     assert(narrowSum == 136, "the int32 array kept its own values");
     assert(wideSum == 120000, "and the int64 array kept its own");
+
+    // The other direction of the same promise: two accesses that DO overlap.
+    // Everything above checks that a true claim stays true; these check that no
+    // false claim is being made, and they are the only shape in the suite where
+    // that is observable. A tag saying an element access cannot reach another
+    // element of the same array lets the optimizer keep `elements[0]` in a
+    // register across a store that really does write element 0, and the answer
+    // comes out 0 instead of 800 -- at -O2 and above only, which is why
+    // `tools/testing/alias_differential.py` compares a build that carries the
+    // information against one that does not.
+    int32[] elements = new int32[8];
+    int32 fill = 0;
+    while (fill < 8) {
+        elements[fill] = fill;
+        fill += 1;
+    }
+    int32 folded = 0;
+    int32 pass = 0;
+    while (pass < 8) {
+        elements[pass] = elements[pass] + 100;
+        folded += elements[0];
+        pass += 1;
+    }
+    assert(folded == 800,
+        "a store through one element is visible to a load of another");
+
+    // The same question for a field: two names for one object, written through
+    // the first and read back through the second.
+    OverlapProbe* probeOwner = new OverlapProbe(1);
+    OverlapProbe* probeAlias = probeOwner;
+    int32 observed = 0;
+    int32 step = 0;
+    while (step < 4) {
+        probeOwner.slot = step + 1;
+        probeAlias.slot = probeAlias.slot * 2;
+        observed += probeOwner.slot;
+        step += 1;
+    }
+    assert(observed == 20, "two names for one object read each other's writes");
+    delete probeOwner;
 
     println("aliasing-guarantees=ok");
     return 0;

@@ -706,7 +706,66 @@ type itself was usable everywhere else. The star is consumed now, and only when
 an array suffix actually follows, so nothing that could be a multiplication
 changes meaning: `new Point() * 2` still multiplies.
 
-## 16. The method that worked
+## 16. Beyond the list: what is left for undefined behaviour
+
+The open TODO asked for UBSan over generated code. Before building anything,
+the question worth answering is what UBSan would find, so the emitted IR was
+read for the constructs it exists to catch:
+
+| Construct | Emitted by code generation | Why |
+|---|---|---|
+| `nsw` / `nuw` | none | arithmetic wraps, and wrapping is defined |
+| `sdiv` / `srem` unguarded | none | the divisor is checked at runtime |
+| shift past the width | none | checked at runtime, refused by the analyzer where it is constant |
+| `fptosi` / `fptoui` | none | conversion saturates |
+| `!tbaa` | yes | **the one thing code generation adds** |
+
+The only `nsw` in the sample was LLVM's own inference on a `snprintf` size, and
+the only `noalias` was on libc declarations. So the checks a frontend would have
+to emit for UBSan mostly duplicate checks the language already performs.
+
+What is left is type-based alias information, and it is the dangerous kind. A
+tag is a promise to the optimizer that an access through one type cannot reach
+storage of another, and the optimizer believes it. A wrong promise is not a slow
+program: it is a load hoisted out of a loop that a store inside the loop really
+did change. **Neither `-O0` nor a sanitizer can see it** — at `-O0` the metadata
+is present and unused, so the program is right, and AddressSanitizer answers a
+different question, since a hoisted load reads memory it is perfectly entitled
+to read.
+
+The only thing that shows a false tag is the same program built twice at the
+same optimization level, one told what may alias and one told nothing, because
+telling nothing is always safe. `--no-type-alias-info` is that switch and
+`tools/testing/alias_differential.py` is the comparison, over the suite at `-O2`
+and `-O3`: 304 programs, zero disagreements.
+
+**That number meant nothing until the check was shown to have teeth**, so the
+tags were deliberately falsified -- a distinct node per access site, which
+claims that no two accesses anywhere can overlap -- and the differential run
+again. It found nothing. Two probes explained why: a managed dereference goes
+through an opaque runtime call that clobbers memory on its own, so the tag has
+no leverage there at all, and no program in the suite had the shape where it
+does. The shape that does is two accesses to *elements of the same array* in a
+loop:
+
+```absolute
+elements[pass] = elements[pass] + 100;
+folded += elements[0];
+```
+
+With the tags falsified this answers 0 instead of 800, at `-O2` and above only:
+the optimizer keeps `elements[0]` in a register across a store that really does
+write it. That shape is now in `tests/aliasing-guarantees.abs`, along with the
+same question for a field written through one name and read through another,
+and with it the differential reports the falsified build as a mismatch on both
+levels. The sabotage was reverted and the clean build agrees again.
+
+The rest of the file was already checking the opposite direction -- that a true
+claim stays true. These two are the only place in the suite where a *false*
+claim is observable, which is what gives the differential its power; a change
+that removes them would leave the check green and empty.
+
+## 17. The method that worked
 
 Worth repeating, because reading code did not find any of this.
 
@@ -724,7 +783,7 @@ by another route. The compound-assignment defect was found that way, not by
 sweeping again: `a = a / b` had been fixed while `a /= b` still used an untyped
 overload.
 
-## 17. Environment note
+## 18. Environment note
 
 During this work the container repeatedly reverted the working tree to an older
 commit and deleted the build directory. Pushed commits were never affected, but
