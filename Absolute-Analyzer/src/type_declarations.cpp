@@ -67,7 +67,8 @@ namespace Absolute {
                 }
                 if (defaults.empty()) {
                     Report("class '" + className + "' does not implement interface method '" +
-                        first.contract + "." + first.methodName + "'");
+                        first.contract + "." + first.methodName + "'",
+                            "E_INTERFACE_METHOD_MISSING");
                 }
                 else if (defaults.size() > 1) {
                     Report("class '" + className + "' inherits multiple default implementations of '" +
@@ -92,11 +93,12 @@ namespace Absolute {
                 if (implementation->type != requirement.type) {
                     Report("class method '" + className + "." + contract.methodName +
                         "' returns '" + implementation->type + "', but interface '" + contract.contract +
-                        "' requires '" + requirement.type + "'");
+                        "' requires '" + requirement.type + "'", "E_INTERFACE_RETURN_MISMATCH");
                 }
                 else if (implementation->isConst != requirement.isConst) {
                     Report("class method '" + className + "." + contract.methodName +
-                        "' does not match the const contract of interface '" + contract.contract + "'");
+                        "' does not match the const contract of interface '" + contract.contract + "'",
+                            "E_INTERFACE_CONST_MISMATCH");
                 }
                 else if (implementation->access != AccessLevel::Public) {
                     Report("class method '" + className + "." + contract.methodName +
@@ -193,13 +195,16 @@ namespace Absolute {
             if (ParseGenericTypeName(resolvedParent, genericBase, genericArguments))
                 parentDefinition = genericBase;
             if (!types.contains(parentDefinition))
-                Report("unknown parent type '" + parent + "' of class '" + typeName + "'");
+                Report("unknown parent type '" + parent + "' of class '" + typeName + "'",
+                    "E_UNKNOWN_PARENT_TYPE");
             else if (types[parentDefinition].kind == TypeKind::Class) ++classParentCount;
             else if (types[parentDefinition].kind != TypeKind::Interface)
-                Report("class '" + typeName + "' cannot inherit non-class type '" + resolvedParent + "'");
+                Report("class '" + typeName + "' cannot inherit non-class type '" + resolvedParent + "'",
+                    "E_INVALID_CLASS_PARENT");
         }
         if (classParentCount > 1)
-            Report("class '" + typeName + "' cannot inherit more than one class");
+            Report("class '" + typeName + "' cannot inherit more than one class",
+                "E_MULTIPLE_CLASS_INHERITANCE");
         const std::string old = currentType;
         currentType = typeName;
         table.EnterScope();
@@ -276,9 +281,11 @@ namespace Absolute {
                 parentDefinition = genericBase;
             const auto found = types.find(parentDefinition);
             if (found == types.end())
-                Report("unknown parent interface '" + parent + "' of interface '" + typeName + "'");
+                Report("unknown parent interface '" + parent + "' of interface '" + typeName + "'",
+                    "E_UNKNOWN_PARENT_INTERFACE");
             else if (found->second.kind != TypeKind::Interface)
-                Report("interface '" + typeName + "' can only inherit another interface");
+                Report("interface '" + typeName + "' can only inherit another interface",
+                    "E_INVALID_INTERFACE_PARENT");
         }
         const std::string old = currentType;
         currentType = typeName;
@@ -420,7 +427,7 @@ namespace Absolute {
 
     void Analyzer::Visit(ConstructorDeclStmt* stmt) {
         if (currentType.empty()) {
-            Report("constructor declaration is outside a type");
+            Report("constructor declaration is outside a type", "E_CONSTRUCTOR_OUTSIDE_TYPE");
             return;
         }
         if (phase == Phase::CollectDeclarations) {
@@ -465,7 +472,8 @@ namespace Absolute {
         if (HasModifier(*stmt, "static"))
             Report("constructors cannot be static", "E_STATIC_CONSTRUCTOR");
         if (stmt->name && Qualify(stmt->name->value) != currentType)
-            Report("constructor '" + stmt->name->value + "' must match type '" + currentType + "'");
+            Report("constructor '" + stmt->name->value + "' must match type '" + currentType + "'",
+                "E_CONSTRUCTOR_NAME_MISMATCH");
         ++functionDepth;
         const bool oldConstructor = currentConstructor;
         const SymbolId oldCallable = currentCallable;
@@ -524,7 +532,8 @@ namespace Absolute {
                         ? *declared : InvalidSymbolId,
                     IsTaskType(type) ? TaskState::Unknown : TaskState::NotTask});
             }
-            else Report("parameter '" + name + "' is already declared");
+            else Report("parameter '" + name + "' is already declared",
+                "E_DUPLICATE_PARAMETER");
         }
         const std::string baseClass = DirectBaseClass(currentType);
         if (stmt->hasExplicitBaseCall && baseClass.empty()) {

@@ -124,7 +124,11 @@ namespace Absolute {
                 output << diagnostic.sourceFile << ':' << diagnostic.line
                     << ':' << std::max(diagnostic.column, 1) << ": ";
             }
-            output << "Semantic error: " << diagnostic.message << '\n';
+            output << "Semantic error: " << diagnostic.message;
+            // The code is what a reader looks up and what a tool matches on. It
+            // was recorded on most diagnostics and printed on none of them.
+            if (!diagnostic.code.empty()) output << " [" << diagnostic.code << ']';
+            output << '\n';
         }
     }
 
@@ -184,9 +188,42 @@ namespace Absolute {
 
     void Analyzer::AnalyzeProgram(Program& program) { AcceptAll(program.statements, *this); }
 
+    std::string Analyzer::EnclosingSourceFile() const {
+        for (auto entry = diagnosticNodeStack.rbegin();
+            entry != diagnosticNodeStack.rend(); ++entry) {
+            if (*entry && !(*entry)->sourceFile.empty()) return (*entry)->sourceFile;
+        }
+        return {};
+    }
+
+    void Analyzer::ReportAtLocation(std::string sourceFile, int line, int column,
+        std::string message, std::string code, SymbolId symbol) {
+        Diagnostic diagnostic;
+        diagnostic.message = std::move(message);
+        diagnostic.code = std::move(code);
+        diagnostic.symbol = symbol;
+        diagnostic.sourceFile = std::move(sourceFile);
+        diagnostic.line = line;
+        diagnostic.column = column;
+        diagnostics.push_back(std::move(diagnostic));
+    }
+
     void Analyzer::Report(std::string message, std::string code, SymbolId symbol) {
-        const ASTNode* node = diagnosticNodeStack.empty()
-            ? nullptr : diagnosticNodeStack.back();
+        // The innermost node that knows where it is. Only the top of an
+        // expression and the top of a statement are stamped with a line by the
+        // parser, so a diagnostic about a nested node -- an argument, an
+        // operand, a member access -- used to carry no location at all: 87 of
+        // the 361 diagnostics the error tests produce printed a bare "Semantic
+        // error:" with nothing to open in an editor. The enclosing construct is
+        // not the exact token, but it is the right line, and it is always
+        // there.
+        const ASTNode* node = nullptr;
+        for (auto entry = diagnosticNodeStack.rbegin();
+            entry != diagnosticNodeStack.rend(); ++entry) {
+            if (!*entry) continue;
+            if (!node) node = *entry;
+            if ((*entry)->line > 0) { node = *entry; break; }
+        }
         ReportAt(node, std::move(message), std::move(code), symbol);
     }
 
@@ -201,6 +238,10 @@ namespace Absolute {
             diagnostic.line = node->line;
             diagnostic.column = node->column;
         }
+        // A node may carry a line but no file, or the other way round, because
+        // only some of them are stamped. Whatever is missing is taken from the
+        // nearest enclosing node that has it.
+        if (diagnostic.sourceFile.empty()) diagnostic.sourceFile = EnclosingSourceFile();
         diagnostics.push_back(std::move(diagnostic));
     }
 
@@ -210,8 +251,7 @@ namespace Absolute {
         diagnostic.message = std::move(message);
         diagnostic.code = std::move(code);
         diagnostic.symbol = symbol;
-        if (!diagnosticNodeStack.empty() && diagnosticNodeStack.back())
-            diagnostic.sourceFile = diagnosticNodeStack.back()->sourceFile;
+        diagnostic.sourceFile = EnclosingSourceFile();
         if (token) {
             diagnostic.line = token->line;
             diagnostic.column = token->column;
@@ -508,6 +548,15 @@ namespace Absolute {
                 TransfersOwnership(arguments[index], parameterType));
             call.argumentSymbols.push_back(arguments[index].symbol);
         }
+        for (auto entry = diagnosticNodeStack.rbegin();
+            entry != diagnosticNodeStack.rend(); ++entry) {
+            if (!*entry || (*entry)->line <= 0) continue;
+            call.sourceFile = (*entry)->sourceFile.empty()
+                ? EnclosingSourceFile() : (*entry)->sourceFile;
+            call.line = (*entry)->line;
+            call.column = (*entry)->column;
+            break;
+        }
         deferredOwnershipCalls.push_back(std::move(call));
     }
 
@@ -520,7 +569,8 @@ namespace Absolute {
                 index < call.ownerArguments.size(); ++index) {
                 if (!callable->parameterRequiresOwner[index] ||
                     call.ownerArguments[index]) continue;
-                Report(call.context + " argument " + std::to_string(index + 1) +
+                ReportAtLocation(call.sourceFile, call.line, call.column,
+                    call.context + " argument " + std::to_string(index + 1) +
                     " is borrowed, but the function moves or stores this parameter; "
                     "pass move(owner)",
                     "E_PARAMETER_REQUIRES_OWNER",
@@ -1122,7 +1172,8 @@ namespace Absolute {
             Report("export function '" + name + "' cannot be overloaded", "E_EXPORT_OVERLOAD");
         const auto declared = table.Declare(SymbolKind::Function, name,
             returnType, ResolveParameterTypes(statement.parameters));
-        if (!declared) Report("function '" + name + "' already has an overload with this signature");
+        if (!declared) Report("function '" + name + "' already has an overload with this signature",
+            "E_DUPLICATE_OVERLOAD");
         else if (Symbol* symbol = table.Get(*declared)) {
             symbol->asyncFunction = HasModifier(statement, "async");
             symbol->extensionFunction = HasModifier(statement, "extension");
@@ -1224,7 +1275,8 @@ namespace Absolute {
             Report("static members of generic types are not implemented yet",
                 "E_STATIC_GENERIC_UNSUPPORTED");
         if (!IsKnownType(returnType))
-            Report("unknown return type '" + returnType + "' of function '" + statement.name->value + "'");
+            Report("unknown return type '" + returnType + "' of function '" + statement.name->value + "'",
+                "E_UNKNOWN_RETURN_TYPE");
         if (asyncFunction && !IsAsyncTaskValueType(returnType))
             ReportAt(statement.name.get(),
                 "async function '" + statement.name->value + "' cannot return '" +
@@ -1232,7 +1284,7 @@ namespace Absolute {
                 "E_ASYNC_RESULT_LIFETIME");
 
         if (statement.IsExternal() && kind == SymbolKind::Method)
-            Report("extern functions cannot be class or struct members");
+            Report("extern functions cannot be class or struct members", "E_EXTERN_MEMBER");
         if (statement.IsExported() && kind == SymbolKind::Method)
             Report("export functions cannot be class or struct members", "E_EXPORT_MEMBER");
         if (HasModifier(statement, "extension") && kind != SymbolKind::Function)
@@ -1353,7 +1405,8 @@ namespace Absolute {
             if (statement.UsesCAbi())
                 ValidateCAbiType(type, "C ABI parameter '" + name + "'", false);
             SymbolId parameterId = InvalidSymbolId;
-            if (name.empty()) Report("function parameter requires an identifier");
+            if (name.empty()) Report("function parameter requires an identifier",
+                "E_PARAMETER_REQUIRES_IDENTIFIER");
             else if (const auto declared = table.Declare(SymbolKind::Parameter, name, type)) {
                 parameterId = *declared;
                 if (Symbol* symbol = table.Get(parameterId)) {
@@ -1374,7 +1427,8 @@ namespace Absolute {
                         symbol->ownsArrayStorage = symbol->rolePolymorphic;
                 }
             }
-            else Report("parameter '" + name + "' is already declared");
+            else Report("parameter '" + name + "' is already declared",
+                "E_DUPLICATE_PARAMETER");
             // Record the declaration so code generation can map the parameter
             // back to its symbol. A lambda capture names that symbol, and
             // without this the capture cannot be resolved to its storage.
@@ -1389,7 +1443,8 @@ namespace Absolute {
             if (parameter->value) {
                 const Result value = Evaluate(parameter->value.get());
                 if (!IsAssignable(type, value.type))
-                    Report("default value of parameter '" + name + "' has type '" + value.type + "', expected '" + type + "'");
+                    Report("default value of parameter '" + name + "' has type '" + value.type + "', expected '" + type + "'",
+                        "E_DEFAULT_VALUE_TYPE");
             }
             PopDiagnosticNode();
         }
@@ -1418,14 +1473,15 @@ namespace Absolute {
     void Analyzer::DeclareType(const std::string& name, TypeKind kind) {
         const std::string qualifiedName = Qualify(name);
         if (types.contains(qualifiedName)) {
-            Report("type '" + qualifiedName + "' is already declared");
+            Report("type '" + qualifiedName + "' is already declared", "E_DUPLICATE_TYPE");
             return;
         }
         TypeDefinition definition;
         definition.kind = kind;
         types.emplace(qualifiedName, std::move(definition));
         if (!table.Declare(SymbolKind::Type, qualifiedName, qualifiedName))
-            Report("object '" + qualifiedName + "' is already declared in this scope");
+            Report("object '" + qualifiedName + "' is already declared in this scope",
+                "E_DUPLICATE_DECLARATION");
     }
 
     void Analyzer::DeclareMember(const std::string& owner, std::string name, MemberSignature signature) {
@@ -1438,13 +1494,15 @@ namespace Absolute {
                 existing.parameterTypes == signature.parameterTypes;
         });
         if (collision) {
-            Report("member '" + owner + "." + name + "' already has this signature");
+            Report("member '" + owner + "." + name + "' already has this signature",
+                "E_DUPLICATE_MEMBER_SIGNATURE");
             return;
         }
         const auto declared = table.Declare(signature.kind, owner + "." + name,
             signature.type, signature.parameterTypes);
         if (!declared) {
-            Report("member '" + owner + "." + name + "' already has this signature");
+            Report("member '" + owner + "." + name + "' already has this signature",
+                "E_DUPLICATE_MEMBER_SIGNATURE");
             return;
         }
         signature.symbol = *declared;

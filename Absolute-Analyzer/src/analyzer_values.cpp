@@ -15,15 +15,18 @@ namespace Absolute {
         }
         const Result value = EvaluateExpected(expr->value.get(), target.type);
         const Symbol* targetSymbol = table.Get(target.symbol);
-        if (!target.isLValue) Report("assignment target is not assignable");
+        if (!target.isLValue) Report("assignment target is not assignable",
+            "E_TARGET_NOT_ASSIGNABLE");
         CheckMutableTarget(expr->target.get(), target, "assignment");
         if (ArrayRank(target.type) > 0 &&
             dynamic_cast<MemberAccessExpr*>(expr->target.get()) == nullptr &&
             (!targetSymbol || (targetSymbol->kind != SymbolKind::Field &&
                 targetSymbol->kind != SymbolKind::Property)))
-            Report("array variables cannot be reassigned; assign an element or declare a new array view");
+            Report("array variables cannot be reassigned; assign an element or declare a new array view",
+                "E_ARRAY_VARIABLE_REASSIGNED");
         if (ArrayRank(target.type) > 0 && expr->op != "=")
-            Report("array fields only support direct '=' assignment");
+            Report("array fields only support direct '=' assignment",
+                "E_ARRAY_FIELD_COMPOUND_ASSIGNMENT");
         // A compound assignment stores the result of `target op value`, not
         // the value itself, and for a raw pointer those differ: `p += 2` adds
         // two elements and stores a pointer. Checking the value against the
@@ -39,10 +42,11 @@ namespace Absolute {
             if (!pointerStep)
                 Report("a raw pointer supports only '+=' and '-=' with an integer step, "
                     "but the operator is '" + expr->op + "' and the step has type '" +
-                    value.type + "'");
+                    value.type + "'", "E_RAW_POINTER_COMPOUND_ASSIGNMENT");
         }
         else if (!IsAssignable(target.type, value.type))
-            Report("cannot assign '" + value.type + "' to '" + target.type + "'");
+            Report("cannot assign '" + value.type + "' to '" + target.type + "'",
+                "E_ASSIGNMENT_TYPE_MISMATCH");
         // The compound form lowers through the same shift as `a = a << n`, so
         // it has the same undefined case and gets the same answer here.
         if ((expr->op == "<<=" || expr->op == ">>=") &&
@@ -202,7 +206,8 @@ namespace Absolute {
             if (currentType.empty()) {
                 const auto declared = table.Declare(SymbolKind::Variable, declarationName, type);
                 if (!declared)
-                    Report("object '" + declarationName + "' is already declared in this scope");
+                    Report("object '" + declarationName + "' is already declared in this scope",
+                        "E_DUPLICATE_DECLARATION");
                 else table.Get(*declared)->isConst = expr->isConst;
             }
             else DeclareMember(currentType, name,
@@ -234,39 +239,46 @@ namespace Absolute {
             !types[currentType].genericParameters.empty())
             Report("static members of generic types are not implemented yet",
                 "E_STATIC_GENERIC_UNSUPPORTED");
-        if (!IsKnownType(type)) Report("unknown type '" + type + "' of variable '" + name + "'");
+        if (!IsKnownType(type)) Report("unknown type '" + type + "' of variable '" + name + "'",
+            "E_UNKNOWN_TYPE");
         std::optional<std::vector<size_t>> initializerShape;
         if (arrayRank > 0) {
             for (Expression* size : declaratorIndexes) {
                 if (!size) continue;
                 const Result resolved = Evaluate(size);
                 if (!IsInteger(resolved.type) && resolved.type != "error")
-                    Report("array size must be an integer, got '" + resolved.type + "'");
+                    Report("array size must be an integer, got '" + resolved.type + "'",
+                        "E_ARRAY_SIZE_TYPE");
                 if (currentType.empty() && functionDepth == 0 &&
                     !dynamic_cast<const NumberLiteralExpr*>(size))
-                    Report("global array dimensions must be constant integer literals");
+                    Report("global array dimensions must be constant integer literals",
+                        "E_GLOBAL_ARRAY_SIZE_NOT_CONSTANT");
                 if (const auto* literal = dynamic_cast<const NumberLiteralExpr*>(size)) {
                     try {
-                        if (std::stoll(literal->value) <= 0) Report("array size must be greater than zero");
+                        if (std::stoll(literal->value) <= 0) Report("array size must be greater than zero",
+                            "E_ARRAY_SIZE_NOT_POSITIVE");
                     }
                     catch (const std::exception&) {
-                        Report("array size is outside the supported integer range");
+                        Report("array size is outside the supported integer range",
+                            "E_ARRAY_SIZE_OUT_OF_RANGE");
                     }
                 }
             }
             if (const auto* literal = dynamic_cast<const ArrayExpr*>(expr->value.get())) {
                 initializerShape = InferArrayStorageShape(*literal, arrayRank);
-                if (!initializerShape) Report("array initializer must be rectangular");
+                if (!initializerShape) Report("array initializer must be rectangular",
+                    "E_ARRAY_INITIALIZER_NOT_RECTANGULAR");
                 else if (initializerShape->size() != arrayRank)
                     Report("array initializer has " + std::to_string(initializerShape->size()) +
-                        " dimension(s), expected " + std::to_string(arrayRank));
+                        " dimension(s), expected " + std::to_string(arrayRank),
+                            "E_ARRAY_INITIALIZER_RANK");
             }
             for (size_t dimension = 0; dimension < declaratorIndexes.size(); ++dimension) {
                 Expression* size = declaratorIndexes[dimension];
                 if (!size) {
                     if (!initializerShape || dimension >= initializerShape->size())
                         Report("array dimension " + std::to_string(dimension + 1) +
-                            " requires a size or an initializer");
+                            " requires a size or an initializer", "E_ARRAY_DIMENSION_MISSING");
                     continue;
                 }
                 if (initializerShape && dimension < initializerShape->size()) {
@@ -274,7 +286,7 @@ namespace Absolute {
                         try {
                             if (static_cast<size_t>(std::stoull(literal->value)) != (*initializerShape)[dimension])
                                 Report("array initializer size does not match dimension " +
-                                    std::to_string(dimension + 1));
+                                    std::to_string(dimension + 1), "E_ARRAY_INITIALIZER_SIZE");
                         }
                         catch (const std::exception&) {
                         }
@@ -282,16 +294,19 @@ namespace Absolute {
                 }
             }
             if (expr->value && !dynamic_cast<ArrayExpr*>(expr->value.get()))
-                Report("array variable '" + name + "' requires an array literal initializer");
+                Report("array variable '" + name + "' requires an array literal initializer",
+                    "E_ARRAY_REQUIRES_LITERAL");
         }
         Result value;
         if (expr->value) value = EvaluateExpected(expr->value.get(), type == "auto" ? std::string{} : type);
         if (type == "auto") {
-            if (!expr->value) Report("auto variable '" + name + "' requires an initializer");
+            if (!expr->value) Report("auto variable '" + name + "' requires an initializer",
+                "E_AUTO_REQUIRES_INITIALIZER");
             else type = value.type;
         }
         else if (expr->value && !IsAssignable(type, value.type))
-            Report("initializer of '" + name + "' has type '" + value.type + "', expected '" + type + "'");
+            Report("initializer of '" + name + "' has type '" + value.type + "', expected '" + type + "'",
+                "E_INITIALIZER_TYPE_MISMATCH");
         if (expr->isStatic) {
             const auto definition = types.find(type);
             const bool enumType = definition != types.end() && definition->second.kind == TypeKind::Enum;
@@ -334,7 +349,8 @@ namespace Absolute {
             (globalDeclaration ? table.Lookup(declarationName) : table.LookupCurrent(name));
         if (!fieldDeclaration && !globalDeclaration) {
             const auto declared = table.Declare(SymbolKind::Variable, name, type);
-            if (!declared) Report("object '" + name + "' is already declared in this scope");
+            if (!declared) Report("object '" + name + "' is already declared in this scope",
+                "E_DUPLICATE_DECLARATION");
             else id = *declared;
         }
         if (Symbol* symbol = table.Get(id)) {
@@ -393,7 +409,8 @@ namespace Absolute {
         const std::string qualifiedName = ExtractQualifiedName(expr);
         if (typeContextDepth > 0) {
             const std::string type = ResolveTypeReference(qualifiedName);
-            if (phase == Phase::ResolveBodies && !IsKnownType(type)) Report("unknown type '" + qualifiedName + "'");
+            if (phase == Phase::ResolveBodies && !IsKnownType(type)) Report("unknown type '" + qualifiedName + "'",
+                "E_UNKNOWN_TYPE");
             Save(expr, {InvalidSymbolId, type, false});
             return;
         }
@@ -404,7 +421,7 @@ namespace Absolute {
             const bool isValue = symbol->kind == SymbolKind::Variable ||
                 symbol->kind == SymbolKind::Parameter;
             if (!isValue && symbol->kind != SymbolKind::Function && symbol->kind != SymbolKind::Method)
-                Report("object '" + qualifiedName + "' is not a value");
+                Report("object '" + qualifiedName + "' is not a value", "E_OBJECT_NOT_A_VALUE");
             callable = symbol->kind == SymbolKind::Function || symbol->kind == SymbolKind::Method;
             callableParameters = symbol->parameterTypes;
             Save(expr, {nonFieldQualifiedId, symbol->type, isValue});
@@ -433,7 +450,8 @@ namespace Absolute {
                 Report("instance member '" + expr->member + "' requires an object",
                     "E_INSTANCE_MEMBER_ON_TYPE");
             else
-                Report("type '" + typeReceiverName + "' has no static field '" + expr->member + "'");
+                Report("type '" + typeReceiverName + "' has no static field '" + expr->member + "'",
+                    "E_UNKNOWN_STATIC_FIELD");
             Save(expr, {InvalidSymbolId, "error", false});
             return;
         }
@@ -443,7 +461,7 @@ namespace Absolute {
             const bool isValue = symbol->kind == SymbolKind::Variable || symbol->kind == SymbolKind::Parameter ||
                 symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Property;
             if (!isValue && symbol->kind != SymbolKind::Function && symbol->kind != SymbolKind::Method)
-                Report("object '" + qualifiedName + "' is not a value");
+                Report("object '" + qualifiedName + "' is not a value", "E_OBJECT_NOT_A_VALUE");
             callable = symbol->kind == SymbolKind::Function || symbol->kind == SymbolKind::Method;
             callableParameters = symbol->parameterTypes;
             if (symbol->kind == SymbolKind::Property) {
@@ -552,7 +570,8 @@ namespace Absolute {
             }))
                 Report("static field '" + expr->member + "' requires a type receiver",
                     "E_STATIC_MEMBER_ON_OBJECT");
-            else Report("type '" + base.type + "' has no member '" + expr->member + "'");
+            else Report("type '" + base.type + "' has no member '" + expr->member + "'",
+                "E_UNKNOWN_MEMBER");
             Save(expr, {InvalidSymbolId, "error", false});
             return;
         }
@@ -629,7 +648,7 @@ namespace Absolute {
         if (!IsAssignable(target, base.type) &&
             !(IsNumeric(target) && IsNumeric(base.type)) &&
             !pointerToInt && !intToPointer && !enumToInt)
-            Report("cannot cast '" + base.type + "' to '" + target + "'");
+            Report("cannot cast '" + base.type + "' to '" + target + "'", "E_INVALID_CAST");
         Save(expr, {InvalidSymbolId, target, false});
     }
 
@@ -650,7 +669,7 @@ namespace Absolute {
             (IsRawPointerType(expectedType) && PointerPointee(expectedType) == constructedType);
         if (!IsKnownType(constructedType) || constructedType == "void" || constructedType == "auto" ||
             constructedType == "dynamic")
-            Report("cannot allocate type '" + constructedType + "'");
+            Report("cannot allocate type '" + constructedType + "'", "E_UNALLOCATABLE_TYPE");
         const bool primitive = PrimitiveStringToEnum(constructedType).has_value();
         std::string definitionName = constructedType;
         std::unordered_map<std::string, std::string> substitutions;
@@ -667,9 +686,11 @@ namespace Absolute {
         }
         if (const auto found = types.find(definitionName);
             found != types.end() && found->second.kind == TypeKind::Interface)
-            Report("cannot instantiate interface '" + constructedType + "'");
+            Report("cannot instantiate interface '" + constructedType + "'",
+                "E_INTERFACE_INSTANTIATION");
         if (expr->arguments.size() > 1 && primitive)
-            Report("primitive allocation accepts at most one initializer");
+            Report("primitive allocation accepts at most one initializer",
+                "E_PRIMITIVE_ALLOCATION_ARGUMENTS");
         std::vector<std::string> parameters;
         if (!primitive) {
             std::vector<Result> evaluated;
@@ -694,7 +715,8 @@ namespace Absolute {
                 const Result& value = evaluated[index];
                 if (!expected.empty() && !IsAssignable(expected, value.type))
                     Report("constructor argument " + std::to_string(index + 1) + " has type '" +
-                        value.type + "', expected '" + expected + "'");
+                        value.type + "', expected '" + expected + "'",
+                            "E_CONSTRUCTOR_ARGUMENT_TYPE");
                 CheckManagedMoveArgument(value, declaredExpected, index, "constructor");
             }
             if (selected)
@@ -715,7 +737,8 @@ namespace Absolute {
             const Result value = EvaluateExpected(expr->arguments[index].get(), expected);
             if (!expected.empty() && !IsAssignable(expected, value.type))
                 Report("constructor argument " + std::to_string(index + 1) + " has type '" +
-                    value.type + "', expected '" + expected + "'");
+                    value.type + "', expected '" + expected + "'",
+                        "E_CONSTRUCTOR_ARGUMENT_TYPE");
             CheckManagedMoveArgument(value, expected, index, "constructor");
         }
         Result allocation{InvalidSymbolId,
@@ -733,8 +756,10 @@ namespace Absolute {
         accessMode = previousAccess;
         CheckMutableTarget(expr->target.get(), target, "delete");
         if (!IsPointerType(target.type) && target.type != "error")
-            Report("delete requires a pointer, got '" + target.type + "'");
-        if (!target.isLValue) Report("delete target must be an assignable pointer variable");
+            Report("delete requires a pointer, got '" + target.type + "'",
+                "E_DELETE_REQUIRES_POINTER");
+        if (!target.isLValue) Report("delete target must be an assignable pointer variable",
+            "E_DELETE_REQUIRES_VARIABLE");
         for (const auto& scope : deferredKeepScopes) {
             if (scope.contains(target.symbol)) {
                 Report("pointer is already scheduled for deletion by defer",
@@ -808,7 +833,8 @@ namespace Absolute {
             if (currentType.empty()) {
                 const auto declared = table.Declare(SymbolKind::Variable, declarationName, type);
                 if (!declared)
-                    Report("object '" + declarationName + "' is already declared in this scope");
+                    Report("object '" + declarationName + "' is already declared in this scope",
+                        "E_DUPLICATE_DECLARATION");
                 else table.Get(*declared)->isConst = expr->isConst;
             }
             else DeclareMember(currentType, name,
@@ -832,10 +858,11 @@ namespace Absolute {
         std::string genericBase;
         std::vector<std::string> genericArguments;
         if (ParseGenericTypeName(type, genericBase, genericArguments)) definitionName = genericBase;
-        if (!IsKnownType(type)) Report("unknown object type '" + type + "'");
+        if (!IsKnownType(type)) Report("unknown object type '" + type + "'", "E_UNKNOWN_TYPE");
         else if (const auto definition = types.find(definitionName);
             definition != types.end() && definition->second.kind == TypeKind::Interface)
-            Report("interface '" + type + "' must be used through raw or managed pointer");
+            Report("interface '" + type + "' must be used through raw or managed pointer",
+                "E_INTERFACE_REQUIRES_POINTER");
         else if (!expr->value) {
             // Default stack construction uses the zero-argument constructor.
             if (const auto definition = types.find(definitionName);
@@ -851,7 +878,8 @@ namespace Absolute {
         Result value;
         if (expr->value) value = Evaluate(expr->value.get());
         if (expr->value && !IsAssignable(type, value.type))
-            Report("initializer of '" + name + "' has type '" + value.type + "', expected '" + type + "'");
+            Report("initializer of '" + name + "' has type '" + value.type + "', expected '" + type + "'",
+                "E_INITIALIZER_TYPE_MISMATCH");
         bool transfersAggregateOwner = value.isMoveResult;
         if (const Symbol* source = table.Get(value.symbol)) {
             transfersAggregateOwner = transfersAggregateOwner ||
@@ -872,7 +900,8 @@ namespace Absolute {
             (existingDeclaration ? table.Lookup(declarationName) : table.LookupCurrent(name));
         if (!existingDeclaration) {
             const auto declared = table.Declare(SymbolKind::Variable, name, type);
-            if (!declared) Report("object '" + name + "' is already declared in this scope");
+            if (!declared) Report("object '" + name + "' is already declared in this scope",
+                "E_DUPLICATE_DECLARATION");
             else id = *declared;
         }
         if (Symbol* symbol = table.Get(id)) symbol->isConst = expr->isConst;
@@ -937,7 +966,8 @@ namespace Absolute {
         literalSign = previousSign;
         accessMode = previousAccess;
         if (expr->op == "&") {
-            if (!operand.isLValue) Report("operator '&' requires an assignable value");
+            if (!operand.isLValue) Report("operator '&' requires an assignable value",
+                "E_ADDRESS_REQUIRES_LVALUE");
             Expression* root = expr->operand.get();
             while (root) {
                 if (auto* member = dynamic_cast<MemberAccessExpr*>(root)) {
@@ -962,7 +992,7 @@ namespace Absolute {
         }
         if (expr->op == "*") {
             if (!IsPointerType(operand.type)) {
-                Report("operator '*' requires a pointer");
+                Report("operator '*' requires a pointer", "E_DEREFERENCE_REQUIRES_POINTER");
                 Save(expr, {InvalidSymbolId, "error", false});
             }
             else {
@@ -987,7 +1017,8 @@ namespace Absolute {
             if (!operand.isLValue ||
                 (!IsNumeric(operand.type) && !IsRawPointerType(operand.type)))
                 Report("operator '" + expr->op +
-                    "' requires an assignable numeric or raw pointer operand");
+                    "' requires an assignable numeric or raw pointer operand",
+                        "E_INCREMENT_OPERAND");
             const Symbol* symbol = table.Get(operand.symbol);
             if (symbol && (symbol->kind == SymbolKind::Property ||
                 symbol->kind == SymbolKind::Indexer) && !symbol->canRead)
@@ -995,9 +1026,12 @@ namespace Absolute {
                     "E_PROPERTY_COMPOUND_REQUIRES_GETTER", operand.symbol);
             CheckMutableTarget(expr->operand.get(), operand, "operator '" + expr->op + "'");
         }
-        else if (expr->op == "!" && !IsConditionType(operand.type)) Report("operator '!' requires a boolean-compatible operand");
-        else if ((expr->op == "+" || expr->op == "-") && !IsNumeric(operand.type)) Report("unary numeric operator requires a number");
-        else if (expr->op == "~" && !IsInteger(operand.type)) Report("operator '~' requires an integer");
+        else if (expr->op == "!" && !IsConditionType(operand.type)) Report("operator '!' requires a boolean-compatible operand",
+            "E_LOGICAL_NOT_OPERAND");
+        else if ((expr->op == "+" || expr->op == "-") && !IsNumeric(operand.type)) Report("unary numeric operator requires a number",
+            "E_UNARY_NUMERIC_OPERAND");
+        else if (expr->op == "~" && !IsInteger(operand.type)) Report("operator '~' requires an integer",
+            "E_COMPLEMENT_OPERAND");
         Save(expr, {operand.symbol, expr->op == "!" ? "bool" : operand.type, false});
     }
 
@@ -1009,7 +1043,8 @@ namespace Absolute {
         if (!operand.isLValue ||
             (!IsNumeric(operand.type) && !IsRawPointerType(operand.type)))
             Report("operator '" + expr->op +
-                "' requires an assignable numeric or raw pointer operand");
+                "' requires an assignable numeric or raw pointer operand",
+                    "E_INCREMENT_OPERAND");
         const Symbol* symbol = table.Get(operand.symbol);
         if (symbol && (symbol->kind == SymbolKind::Property ||
             symbol->kind == SymbolKind::Indexer) && !symbol->canRead)

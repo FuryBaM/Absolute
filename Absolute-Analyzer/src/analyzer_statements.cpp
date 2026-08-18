@@ -119,23 +119,25 @@ namespace Absolute {
             const std::string returnType = ResolveType(stmt->returnType.get());
             if (!IsKnownType(returnType))
                 Report("unknown return type '" + returnType + "' of interface method '" +
-                    currentType + "." + stmt->name->value + "'");
+                    currentType + "." + stmt->name->value + "'", "E_UNKNOWN_RETURN_TYPE");
             for (const auto& parameter : stmt->parameters) {
                 const std::string parameterType = ResolveDeclaredType(*parameter);
                 ValidateValueReferenceParameter(*parameter, parameterType,
                     currentType + "." + stmt->name->value);
                 if (!IsKnownType(parameterType))
                     Report("unknown parameter type '" + parameterType + "' of interface method '" +
-                        currentType + "." + stmt->name->value + "'");
+                        currentType + "." + stmt->name->value + "'",
+                            "E_UNKNOWN_PARAMETER_TYPE");
                 if (parameter->value)
-                    Report("interface methods cannot declare default parameter values");
+                    Report("interface methods cannot declare default parameter values",
+                        "E_INTERFACE_DEFAULT_ARGUMENT");
             }
             const bool staticMethod = HasModifier(*stmt, "static");
             if (HasModifier(*stmt, "extension") || HasModifier(*stmt, "async") ||
                 HasModifier(*stmt, "override") ||
                 HasModifier(*stmt, "sealed"))
                 Report("interface method '" + currentType + "." + stmt->name->value +
-                    "' has an unsupported modifier");
+                    "' has an unsupported modifier", "E_INTERFACE_METHOD_MODIFIER");
             if (staticMethod && !stmt->body)
                 Report("static interface method '" + currentType + "." +
                     stmt->name->value + "' requires a body",
@@ -162,7 +164,8 @@ namespace Absolute {
             Report("return is not allowed inside finally", "E_FINALLY_CONTROL_TRANSFER");
         if (deferDepth > 0)
             Report("return is not allowed inside defer", "E_DEFER_CONTROL_TRANSFER");
-        if (functionDepth == 0) Report("return statement is outside a function");
+        if (functionDepth == 0) Report("return statement is outside a function",
+            "E_RETURN_OUTSIDE_FUNCTION");
         const Result value = EvaluateExpected(stmt->expr.get(), currentReturnType);
         if (Symbol* source = table.Get(value.symbol);
             source && source->rolePolymorphic &&
@@ -179,7 +182,8 @@ namespace Absolute {
             }
         }
         if (!IsAssignable(currentReturnType, value.type))
-            Report("return type '" + value.type + "' does not match '" + currentReturnType + "'");
+            Report("return type '" + value.type + "' does not match '" + currentReturnType + "'",
+                "E_RETURN_TYPE_MISMATCH");
         bool transfersAggregateOwner = value.isMoveResult;
         if (const Symbol* source = table.Get(value.symbol)) {
             transfersAggregateOwner = transfersAggregateOwner ||
@@ -285,7 +289,8 @@ namespace Absolute {
             valueFlow = baseValues;
             flowTerminated = false;
             const Result condition = Evaluate(branch.condition.get());
-            if (!IsConditionType(condition.type)) Report("if condition must be boolean-compatible");
+            if (!IsConditionType(condition.type)) Report("if condition must be boolean-compatible",
+                "E_CONDITION_TYPE");
             const SymbolId guardedOwner =
                 OwnerGuardParameter(branch.condition.get());
             if (guardedOwner != InvalidSymbolId)
@@ -545,7 +550,8 @@ namespace Absolute {
                 RegisterFlowSymbol(id, {InitializationState::Initialized,
                     PointerValidity::Live, id, TaskState::NotTask});
             }
-            else Report("catch parameter '" + name + "' is already declared");
+            else Report("catch parameter '" + name + "' is already declared",
+                "E_DUPLICATE_DECLARATION");
             if (clause.parameter)
                 Save(clause.parameter.get(), {id, type, true, false, true,
                     InitializationState::Initialized, PointerValidity::Live, id});
@@ -642,7 +648,8 @@ namespace Absolute {
         AcceptAll(stmt->init, *this);
         if (stmt->condition) {
             const Result condition = Evaluate(stmt->condition.get());
-            if (!IsConditionType(condition.type)) Report("for condition must be boolean-compatible");
+            if (!IsConditionType(condition.type)) Report("for condition must be boolean-compatible",
+                "E_CONDITION_TYPE");
         }
         const KeepLifetimeMap beforeLoop = keepLifetimes;
         const ValueFlowMap beforeLoopValues = valueFlow;
@@ -677,7 +684,8 @@ namespace Absolute {
     void Analyzer::Visit(WhileStmt* stmt) {
         if (phase == Phase::CollectDeclarations) return;
         const Result condition = Evaluate(stmt->condition.get());
-        if (!IsConditionType(condition.type)) Report("while condition must be boolean-compatible");
+        if (!IsConditionType(condition.type)) Report("while condition must be boolean-compatible",
+            "E_CONDITION_TYPE");
         const KeepLifetimeMap beforeLoop = keepLifetimes;
         const ValueFlowMap beforeLoopValues = valueFlow;
         loopKeepDepths.push_back(keepScopes.size());
@@ -719,7 +727,8 @@ namespace Absolute {
         const ValueFlowMap afterBodyValues = valueFlow;
         --loopDepth;
         const Result condition = Evaluate(stmt->condition.get());
-        if (!IsConditionType(condition.type)) Report("do-while condition must be boolean-compatible");
+        if (!IsConditionType(condition.type)) Report("do-while condition must be boolean-compatible",
+            "E_CONDITION_TYPE");
         std::vector<KeepLifetimeMap> exits;
         if (bodyContinues) exits.push_back(afterBody);
         exits.insert(exits.end(), loopBreakStates.back().begin(), loopBreakStates.back().end());
@@ -747,7 +756,8 @@ namespace Absolute {
         
         if (isArray) {
             if (ArrayRank(iterable.type) != 1 && iterable.type != "error")
-                Report("for-each currently requires a one-dimensional array or slice");
+                Report("for-each currently requires a one-dimensional array or slice",
+                    "E_FOREACH_SOURCE_RANK");
             else if (iterable.type != "error") elementType = ArrayElementType(iterable.type);
         } else if (iterable.type != "error") {
             const auto iterateMembers = FindMembers(iterable.type, "iterate");
@@ -755,21 +765,26 @@ namespace Absolute {
                 [](const MemberSignature& m) { return m.kind == SymbolKind::Method; });
             
             if (iterateMethod == iterateMembers.end()) {
-                Report("for-each source '" + iterable.type + "' requires an 'iterate()' method or must be an array");
+                Report("for-each source '" + iterable.type + "' requires an 'iterate()' method or must be an array",
+                    "E_FOREACH_SOURCE_NOT_ITERABLE");
             } else {
                 if (iterateMethod->parameterTypes.size() > 0)
-                    Report("'iterate' method on '" + iterable.type + "' must take 0 arguments");
+                    Report("'iterate' method on '" + iterable.type + "' must take 0 arguments",
+                        "E_ITERATE_SIGNATURE");
                 std::string iteratorType = iterateMethod->type;
                 
                 const auto nextMembers = FindMembers(iteratorType, "next");
                 const auto nextMethod = std::find_if(nextMembers.begin(), nextMembers.end(),
                     [](const MemberSignature& m) { return m.kind == SymbolKind::Method; });
                 if (nextMethod == nextMembers.end())
-                    Report("iterator '" + iteratorType + "' requires a 'next()' method");
+                    Report("iterator '" + iteratorType + "' requires a 'next()' method",
+                        "E_ITERATOR_MISSING_NEXT");
                 else if (nextMethod->type != "bool")
-                    Report("'next()' method on '" + iteratorType + "' must return bool");
+                    Report("'next()' method on '" + iteratorType + "' must return bool",
+                        "E_ITERATOR_NEXT_RESULT");
                 else if (nextMethod->parameterTypes.size() > 0)
-                    Report("'next()' method on '" + iteratorType + "' must take 0 arguments");
+                    Report("'next()' method on '" + iteratorType + "' must take 0 arguments",
+                        "E_ITERATOR_NEXT_SIGNATURE");
                 
                 const auto valueMembers = FindMembers(iteratorType, "value");
                 const auto valueProperty = std::find_if(valueMembers.begin(), valueMembers.end(),
@@ -781,10 +796,12 @@ namespace Absolute {
                     elementType = valueProperty->type;
                 } else if (valueMethod != valueMembers.end()) {
                     if (valueMethod->parameterTypes.size() > 0)
-                        Report("'value()' method on '" + iteratorType + "' must take 0 arguments");
+                        Report("'value()' method on '" + iteratorType + "' must take 0 arguments",
+                            "E_ITERATOR_VALUE_SIGNATURE");
                     elementType = valueMethod->type;
                 } else {
-                    Report("iterator '" + iteratorType + "' requires a 'value' property or 'value()' method");
+                    Report("iterator '" + iteratorType + "' requires a 'value' property or 'value()' method",
+                        "E_ITERATOR_MISSING_VALUE");
                 }
             }
         }
@@ -794,7 +811,7 @@ namespace Absolute {
             if (const ExpressionInfo* variable = GetExpressionInfo(*stmt->var)) {
                 if (!IsAssignable(variable->type, elementType))
                     Report("for-each variable has type '" + variable->type +
-                        "', expected '" + elementType + "'");
+                        "', expected '" + elementType + "'", "E_FOREACH_VARIABLE_TYPE");
                 if (auto flow = valueFlow.find(variable->symbol); flow != valueFlow.end())
                     flow->second.initialization = InitializationState::Initialized;
             }
@@ -835,7 +852,8 @@ namespace Absolute {
             Report("continue is not allowed inside finally", "E_FINALLY_CONTROL_TRANSFER");
         if (deferDepth > 0)
             Report("continue is not allowed inside defer", "E_DEFER_CONTROL_TRANSFER");
-        if (loopDepth == 0) Report("continue statement is outside a loop");
+        if (loopDepth == 0) Report("continue statement is outside a loop",
+            "E_CONTINUE_OUTSIDE_LOOP");
         else {
             CheckKeepScopesFrom(loopKeepDepths.back(), "continue");
             CheckTaskScopesFrom(loopKeepDepths.back(), "continue");
@@ -857,7 +875,7 @@ namespace Absolute {
             Report(switchDepth > 0
                 ? std::string("break statement is outside a loop; switch and match cases "
                     "do not fall through, so break is unnecessary")
-                : std::string("break statement is outside a loop"));
+                : std::string("break statement is outside a loop"), "E_BREAK_OUTSIDE_LOOP");
         else {
             CheckKeepScopesFrom(loopKeepDepths.back(), "break");
             CheckTaskScopesFrom(loopKeepDepths.back(), "break");
@@ -929,7 +947,8 @@ namespace Absolute {
                 }
             }
             if (!foundAny) {
-                Report("unknown imported namespace '" + stmt->target + "'");
+                Report("unknown imported namespace '" + stmt->target + "'",
+                    "E_UNKNOWN_NAMESPACE");
             }
         }
     }
@@ -941,7 +960,8 @@ namespace Absolute {
         const std::string namespaceName = Qualify(stmt->name);
         if (phase == Phase::CollectTypeNames && namespaces.insert(namespaceName).second) {
             if (!table.Declare(SymbolKind::Namespace, namespaceName, namespaceName))
-                Report("object '" + namespaceName + "' is already declared in this scope");
+                Report("object '" + namespaceName + "' is already declared in this scope",
+                    "E_DUPLICATE_DECLARATION");
         }
         currentNamespace = namespaceName;
         if (stmt->body) {

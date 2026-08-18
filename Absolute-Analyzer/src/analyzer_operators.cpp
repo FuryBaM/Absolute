@@ -87,7 +87,8 @@ namespace Absolute {
         const bool rightPointer = IsPointerType(right.type);
         if ((leftPointer || rightPointer) && (op == "+" || op == "-")) {
             if (IsManagedPointerType(left.type) || IsManagedPointerType(right.type)) {
-                Report("managed pointers do not support arithmetic; use raw T* when address arithmetic is required");
+                Report("managed pointers do not support arithmetic; use raw T* when address arithmetic is required",
+                    "E_MANAGED_POINTER_ARITHMETIC");
                 Save(expr, {InvalidSymbolId, "error", false});
             }
             else if (op == "+" && IsRawPointerType(left.type) && IsInteger(right.type))
@@ -102,24 +103,29 @@ namespace Absolute {
             else if (op == "-" && IsRawPointerType(left.type) && left.type == right.type)
                 Save(expr, {InvalidSymbolId, "int64", false});
             else {
-                Report("invalid pointer arithmetic between '" + left.type + "' and '" + right.type + "'");
+                Report("invalid pointer arithmetic between '" + left.type + "' and '" + right.type + "'",
+                    "E_INVALID_POINTER_ARITHMETIC");
                 Save(expr, {InvalidSymbolId, "error", false});
             }
         }
         else if (op == "&&" || op == "||") {
-            if (!IsConditionType(left.type) || !IsConditionType(right.type)) Report("logical operands must be boolean-compatible");
+            if (!IsConditionType(left.type) || !IsConditionType(right.type)) Report("logical operands must be boolean-compatible",
+                "E_LOGICAL_OPERAND_TYPE");
             Save(expr, {InvalidSymbolId, "bool", false});
         }
         else if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
             if (op != "==" && op != "!=" &&
                 (IsManagedPointerType(left.type) || IsManagedPointerType(right.type)))
-                Report("managed pointers only support equality and null comparisons");
+                Report("managed pointers only support equality and null comparisons",
+                    "E_MANAGED_POINTER_COMPARISON");
             if (!IsAssignable(left.type, right.type) && !IsAssignable(right.type, left.type))
-                Report("cannot compare '" + left.type + "' with '" + right.type + "'");
+                Report("cannot compare '" + left.type + "' with '" + right.type + "'",
+                    "E_INCOMPARABLE_TYPES");
             Save(expr, {InvalidSymbolId, "bool", false});
         }
         else if (op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>") {
-            if (!IsInteger(left.type) || !IsInteger(right.type)) Report("bitwise operands must be integers");
+            if (!IsInteger(left.type) || !IsInteger(right.type)) Report("bitwise operands must be integers",
+                "E_BITWISE_OPERAND_TYPE");
             const std::string resultType = CommonType(left.type, right.type);
             if (op == "<<" || op == ">>")
                 CheckShiftAmount(expr->right.get(), resultType, op);
@@ -127,14 +133,16 @@ namespace Absolute {
         }
         else {
             if (!IsNumeric(left.type) || !IsNumeric(right.type))
-                Report("operator '" + op + "' requires numeric operands");
+                Report("operator '" + op + "' requires numeric operands",
+                    "E_NUMERIC_OPERAND_REQUIRED");
             Save(expr, {InvalidSymbolId, CommonType(left.type, right.type), false});
         }
     }
 
     void Analyzer::Visit(TernaryExpr* expr) {
         const Result condition = Evaluate(expr->condition.get());
-        if (!IsConditionType(condition.type)) Report("ternary condition must be boolean-compatible");
+        if (!IsConditionType(condition.type)) Report("ternary condition must be boolean-compatible",
+            "E_TERNARY_CONDITION_TYPE");
         const ValueFlowMap baseValues = valueFlow;
         const Result trueResult = Evaluate(expr->trueExpr.get());
         const ValueFlowMap trueValues = valueFlow;
@@ -146,7 +154,8 @@ namespace Absolute {
         if (type == "error" && IsPointerType(trueResult.type) && falseResult.type == "null") type = trueResult.type;
         if (type == "error" && IsPointerType(falseResult.type) && trueResult.type == "null") type = falseResult.type;
         if (type == "error" && trueResult.type != "error" && falseResult.type != "error")
-            Report("ternary branches have incompatible types '" + trueResult.type + "' and '" + falseResult.type + "'");
+            Report("ternary branches have incompatible types '" + trueResult.type + "' and '" + falseResult.type + "'",
+                "E_TERNARY_BRANCH_TYPES");
         PointerValidity pointerValidity = PointerValidity::NotPointer;
         if (IsPointerType(type)) {
             if (trueResult.pointerValidity == falseResult.pointerValidity)
@@ -274,14 +283,16 @@ namespace Absolute {
         for (const auto& size : expr->sizes) {
             if (!size) continue;
             const Result resolved = Evaluate(size.get());
-            if (!IsInteger(resolved.type)) Report("array size must be an integer");
+            if (!IsInteger(resolved.type)) Report("array size must be an integer",
+                "E_ARRAY_SIZE_TYPE");
         }
         const bool hasExpectedArrayType = expectedType.ends_with("[]");
         const size_t expectedRank = hasExpectedArrayType ? ArrayRank(expectedType) : 0;
         const std::string expectedElementType = hasExpectedArrayType
             ? ArrayElementType(expectedType) : std::string{};
         const auto literalShape = InferArrayShape(*expr);
-        if (!literalShape) Report("array literal must be rectangular");
+        if (!literalShape) Report("array literal must be rectangular",
+            "E_ARRAY_LITERAL_NOT_RECTANGULAR");
         const bool groupedFlatLiteral = expectedRank == 1 && literalShape &&
             literalShape->size() > 1;
         std::string elementType;
@@ -290,13 +301,14 @@ namespace Absolute {
                 ? EvaluateExpected(value, expectedElementType)
                 : Evaluate(value);
             if (hasExpectedArrayType && !IsAssignable(expectedElementType, resolved.type))
-                Report("array element has type '" + resolved.type + "', expected '" + expectedElementType + "'");
+                Report("array element has type '" + resolved.type + "', expected '" + expectedElementType + "'",
+                    "E_ARRAY_ELEMENT_TYPE");
             const std::string common = elementType.empty()
                 ? resolved.type : CommonType(elementType, resolved.type);
             if (!elementType.empty() && common == "error" &&
                 elementType != "error" && resolved.type != "error")
                 Report("array literal mixes incompatible element types '" + elementType +
-                    "' and '" + resolved.type + "'");
+                    "' and '" + resolved.type + "'", "E_ARRAY_LITERAL_MIXED_TYPES");
             elementType = common;
         };
         if (groupedFlatLiteral) {

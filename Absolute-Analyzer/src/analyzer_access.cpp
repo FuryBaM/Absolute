@@ -2,7 +2,8 @@
 
 namespace Absolute {
     void Analyzer::Visit(PrimitiveTypeExpr* expr) {
-        if (typeContextDepth == 0) Report("type '" + expr->type + "' cannot be used as a value");
+        if (typeContextDepth == 0) Report("type '" + expr->type + "' cannot be used as a value",
+            "E_TYPE_USED_AS_VALUE");
         Save(expr, {InvalidSymbolId, expr->type, false});
     }
 
@@ -13,7 +14,8 @@ namespace Absolute {
 
     void Analyzer::Visit(PointerTypeExpr* expr) {
         const std::string pointee = ResolveType(expr->pointee.get());
-        if (pointee == "void" && !expr->raw) Report("managed pointers cannot point to void");
+        if (pointee == "void" && !expr->raw) Report("managed pointers cannot point to void",
+            "E_MANAGED_POINTER_TO_VOID");
         if (expr->shared) {
             Report("shared pointers are not available in Absolute's deterministic "
                 "unique-ownership model; use T*, weak T*, and move(...)",
@@ -26,7 +28,8 @@ namespace Absolute {
 
     void Analyzer::Visit(ArrayTypeExpr* expr) {
         const std::string element = ResolveType(expr->element.get());
-        if (element == "void") Report("array element type cannot be void");
+        if (element == "void") Report("array element type cannot be void",
+            "E_VOID_ARRAY_ELEMENT");
         Save(expr, {InvalidSymbolId, element + "[]", false});
     }
 
@@ -42,7 +45,7 @@ namespace Absolute {
             }
             else {
                 if (phase == Phase::ResolveBodies && !IsKnownType(type))
-                    Report("unknown type '" + expr->name + "'");
+                    Report("unknown type '" + expr->name + "'", "E_UNKNOWN_TYPE");
                 Save(expr, {InvalidSymbolId, type, false});
             }
             return;
@@ -84,7 +87,7 @@ namespace Absolute {
             }
         }
         if (!symbol) {
-            Report("unknown object '" + expr->name + "'");
+            Report("unknown object '" + expr->name + "'", "E_UNKNOWN_OBJECT");
             Save(expr, {InvalidSymbolId, "error", false});
             return;
         }
@@ -185,7 +188,8 @@ namespace Absolute {
         const bool value = functionValue || cFunctionValue ||
             symbol->kind == SymbolKind::Variable || symbol->kind == SymbolKind::Parameter ||
             symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Property;
-        if (!value) Report("object '" + expr->name + "' is not a value");
+        if (!value) Report("object '" + expr->name + "' is not a value",
+            "E_OBJECT_NOT_A_VALUE");
         ValueFlowState flow;
         if (const auto found = valueFlow.find(id); found != valueFlow.end()) flow = found->second;
         if (value && symbol->kind != SymbolKind::Property && accessMode == AccessMode::Read) {
@@ -220,7 +224,8 @@ namespace Absolute {
         if (constructorContextDepth > 0) {
             const std::string typeName = ExtractIdentifier(expr->base.get());
             if (!IsKnownType(typeName) || !types.contains(typeName))
-                Report("unknown constructible type '" + typeName + "'");
+                Report("unknown constructible type '" + typeName + "'",
+                    "E_UNKNOWN_CONSTRUCTIBLE_TYPE");
             std::vector<Result> evaluated;
             evaluated.reserve(expr->arguments.size());
             for (const auto& argument : expr->arguments)
@@ -240,7 +245,8 @@ namespace Absolute {
                 const Result& argument = evaluated[i];
                 if (i < expected.size() && !IsAssignable(expectedValueType, argument.type))
                     Report("constructor argument " + std::to_string(i + 1) + " has type '" + argument.type +
-                        "', expected '" + expectedValueType + "'");
+                        "', expected '" + expectedValueType + "'",
+                            "E_CONSTRUCTOR_ARGUMENT_TYPE");
                 CheckManagedMoveArgument(argument, expectedType, i, "constructor");
                 if (IsValueReferenceType(expectedType) &&
                     !IsConstValueReferenceType(expectedType)) {
@@ -364,27 +370,32 @@ namespace Absolute {
                 for (size_t index = 0; index < arguments.size(); ++index) {
                     if (!IsPrintableType(arguments[index].type))
                         Report(callName + " argument " + std::to_string(index + 1) +
-                            " has unsupported type '" + arguments[index].type + "'");
+                            " has unsupported type '" + arguments[index].type + "'",
+                                "E_UNSUPPORTED_ARGUMENT_TYPE");
                 }
                 Save(expr, {table.Lookup(callName), "void", false});
                 return;
             }
 
             if (callName == "toString") {
-                if (arguments.size() != 1) Report("toString expects exactly one argument");
+                if (arguments.size() != 1) Report("toString expects exactly one argument",
+                    "E_TOSTRING_ARGUMENTS");
                 else if (!IsPrintableType(arguments.front().type))
-                    Report("toString cannot convert type '" + arguments.front().type + "'");
+                    Report("toString cannot convert type '" + arguments.front().type + "'",
+                        "E_TOSTRING_UNSUPPORTED_TYPE");
                 Save(expr, {table.Lookup(callName), "string", false});
                 return;
             }
 
             if (callName == "assert") {
                 if (arguments.empty() || arguments.size() > 2)
-                    Report("assert expects a condition and an optional message");
+                    Report("assert expects a condition and an optional message",
+                        "E_ASSERT_ARGUMENTS");
                 else if (!IsConditionType(arguments.front().type))
-                    Report("assert condition must be boolean-compatible");
+                    Report("assert condition must be boolean-compatible",
+                        "E_ASSERT_CONDITION_TYPE");
                 if (arguments.size() == 2 && arguments[1].type != "string" && arguments[1].type != "error")
-                    Report("assert message must be a string");
+                    Report("assert message must be a string", "E_ASSERT_MESSAGE_TYPE");
                 Save(expr, {table.Lookup(callName), "void", false});
                 return;
             }
@@ -500,13 +511,13 @@ namespace Absolute {
 
             if (callName == "move") {
                 if (arguments.size() != 1) {
-                    Report("move expects exactly one argument");
+                    Report("move expects exactly one argument", "E_MOVE_ARGUMENTS");
                     Save(expr, {table.Lookup(callName), "error", false});
                     return;
                 }
                 const Result& argument = arguments.front();
                 if (!argument.isLValue && argument.type != "error") {
-                    Report("move expects an lvalue argument");
+                    Report("move expects an lvalue argument", "E_MOVE_REQUIRES_LVALUE");
                 }
                 const bool constSource = argument.isLValue &&
                     IsConstMutationTarget(expr->arguments.front().get(), argument);
@@ -826,25 +837,28 @@ namespace Absolute {
             }
 
             if (arguments.empty()) {
-                Report("format expects a string literal template");
+                Report("format expects a string literal template", "E_FORMAT_TEMPLATE_LITERAL");
             }
             else {
                 if (arguments.front().type != "string" && arguments.front().type != "error")
-                    Report("format template must be a string");
+                    Report("format template must be a string", "E_FORMAT_TEMPLATE_TYPE");
                 StringLiteralProbe literalProbe;
                 expr->arguments.front()->Accept(literalProbe);
-                if (!literalProbe.literal) Report("format template must be a string literal");
+                if (!literalProbe.literal) Report("format template must be a string literal",
+                    "E_FORMAT_TEMPLATE_LITERAL");
                 else {
                     const std::optional<size_t> placeholders = CountFormatPlaceholders(literalProbe.literal->value);
-                    if (!placeholders) Report("format template contains an unmatched brace");
+                    if (!placeholders) Report("format template contains an unmatched brace",
+                        "E_FORMAT_TEMPLATE_BRACES");
                     else if (*placeholders != arguments.size() - 1)
                         Report("format template expects " + std::to_string(*placeholders) +
-                            " value(s), got " + std::to_string(arguments.size() - 1));
+                            " value(s), got " + std::to_string(arguments.size() - 1),
+                                "E_FORMAT_VALUE_COUNT");
                 }
                 for (size_t index = 1; index < arguments.size(); ++index) {
                     if (!IsPrintableType(arguments[index].type))
                         Report("format value " + std::to_string(index) + " has unsupported type '" +
-                            arguments[index].type + "'");
+                            arguments[index].type + "'", "E_FORMAT_VALUE_TYPE");
                 }
             }
             Save(expr, {table.Lookup(callName), "string", false});
@@ -909,7 +923,7 @@ namespace Absolute {
                 }
                 else {
                     Report("type '" + (typeReceiver ? ownerName : receiver.type) +
-                        "' has no method '" + memberCall->member + "'");
+                        "' has no method '" + memberCall->member + "'", "E_UNKNOWN_METHOD");
                 }
             }
         }
@@ -921,7 +935,8 @@ namespace Absolute {
                     if (member.kind == SymbolKind::Method && (member.isStatic || !currentMethodStatic))
                         candidates.push_back(member.symbol);
             }
-            if (candidates.empty()) Report("unknown function '" + callName + "'");
+            if (candidates.empty()) Report("unknown function '" + callName + "'",
+                "E_UNKNOWN_FUNCTION");
             else symbolId = SelectOverload(candidates, arguments, callName, explicitTypeArguments);
         }
 
@@ -1122,14 +1137,15 @@ namespace Absolute {
         indexes.reserve(expr->indexes.size());
         for (const auto& index : expr->indexes) {
             if (!index) {
-                Report("array access requires an index");
+                Report("array access requires an index", "E_ARRAY_INDEX_MISSING");
                 continue;
             }
             const Result indexResult = Evaluate(index.get());
             indexes.push_back(indexResult);
             if (rank == 0) continue;
             if (!IsInteger(indexResult.type) && indexResult.type != "error")
-                Report("array index must be an integer, got '" + indexResult.type + "'");
+                Report("array index must be an integer, got '" + indexResult.type + "'",
+                    "E_ARRAY_INDEX_TYPE");
         }
         if (rank == 0) {
             const auto members = FindMembers(base.type, IndexerMemberName());
@@ -1168,11 +1184,11 @@ namespace Absolute {
                 // arithmetic, and one index into it would walk off its own
                 // allocation.
                 if (expr->indexes.size() != 1)
-                    Report("a raw pointer takes exactly one index");
+                    Report("a raw pointer takes exactly one index", "E_POINTER_INDEX_COUNT");
                 else if (!indexes.empty() && !IsInteger(indexes.front().type) &&
                     indexes.front().type != "error")
                     Report("pointer index must be an integer, got '" +
-                        indexes.front().type + "'");
+                        indexes.front().type + "'", "E_POINTER_INDEX_TYPE");
                 if (base.pointerValidity == PointerValidity::Null)
                     Report("null pointer is dereferenced", "E_NULL_DEREFERENCE", base.symbol);
                 else if (base.pointerValidity == PointerValidity::Deleted)
@@ -1213,7 +1229,8 @@ namespace Absolute {
         }
         else if (expr->indexes.size() > rank) {
             Report("array access provides " + std::to_string(expr->indexes.size()) +
-                " index(es), but the array has " + std::to_string(rank) + " dimension(s)");
+                " index(es), but the array has " + std::to_string(rank) + " dimension(s)",
+                    "E_ARRAY_INDEX_COUNT");
             Save(expr, {base.symbol, "error", false});
         }
         else {
@@ -1225,18 +1242,18 @@ namespace Absolute {
         const Result base = Evaluate(expr->base.get());
         const size_t rank = ArrayRank(base.type);
         if (rank == 0 && base.type != "error") {
-            Report("slice operation requires an array type");
+            Report("slice operation requires an array type", "E_SLICE_REQUIRES_ARRAY");
         }
         if (expr->ranges.size() > rank && base.type != "error") {
             Report("slice specifies " + std::to_string(expr->ranges.size()) +
-                " range(s), but array has rank " + std::to_string(rank));
+                " range(s), but array has rank " + std::to_string(rank), "E_SLICE_RANGE_COUNT");
         }
         for (const auto& range : expr->ranges) {
             for (Expression* bound : {range.begin.get(), range.end.get()}) {
                 if (!bound) continue;
                 const Result resolved = Evaluate(bound);
                 if (!IsInteger(resolved.type) && resolved.type != "error")
-                    Report("slice bounds must be integers");
+                    Report("slice bounds must be integers", "E_SLICE_BOUND_TYPE");
             }
         }
         Save(expr, {base.symbol, rank > 0 ? base.type : "error", false});

@@ -375,6 +375,11 @@ namespace Absolute {
             std::vector<bool> ownerArguments;
             std::vector<SymbolId> argumentSymbols;
             std::string context;
+            // Kept because the check runs after the walk, when nothing is left
+            // on the diagnostic stack to say where the call was written.
+            std::string sourceFile;
+            int line = 0;
+            int column = 0;
         };
         std::vector<DeferredOwnershipCall> deferredOwnershipCalls;
 
@@ -472,6 +477,10 @@ namespace Absolute {
         void CollectProgramTypeNames(Program& program);
         void CollectTypeName(Statement& statement);
         void AnalyzeProgram(Program& program);
+        std::string EnclosingSourceFile() const;
+        void ReportAtLocation(std::string sourceFile, int line, int column,
+            std::string message, std::string code = {},
+            SymbolId symbol = InvalidSymbolId);
         void Report(std::string message, std::string code = {}, SymbolId symbol = InvalidSymbolId);
         void ReportAt(const ASTNode* node, std::string message,
             std::string code = {}, SymbolId symbol = InvalidSymbolId);

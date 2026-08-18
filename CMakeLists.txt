@@ -188,6 +188,33 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "optimization-differential=ok"
             TIMEOUT 180)
         add_test(
+            NAME absolute.diagnostic-audit
+            COMMAND "${Python3_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tools/testing/diagnostic_audit.py"
+                --compiler "$<TARGET_FILE:Absolute-Compiler>"
+                --tests "${PROJECT_SOURCE_DIR}/tests"
+                --require-codes)
+        set_tests_properties(absolute.diagnostic-audit PROPERTIES
+            PASS_REGULAR_EXPRESSION "diagnostic-audit=ok"
+            TIMEOUT 300)
+        # The suite itself as a differential corpus: every runnable test built at
+        # -O0 and -O3 must answer the same. The generated corpora cover one
+        # program shape each; this one covers everything the language has a test
+        # for, which is where a shim that parsed a number differently was hiding.
+        add_test(
+            NAME absolute.suite-differential
+            COMMAND "${Python3_EXECUTABLE}"
+                "${PROJECT_SOURCE_DIR}/tools/testing/suite_differential.py"
+                --compiler "$<TARGET_FILE:Absolute-Compiler>"
+                --tests "${PROJECT_SOURCE_DIR}/tests"
+                --levels O0,O3
+                --work-dir "${CMAKE_BINARY_DIR}/differential/suite/$<CONFIG>"
+                --configuration "$<CONFIG>")
+        set_tests_properties(absolute.suite-differential PROPERTIES
+            PASS_REGULAR_EXPRESSION "suite-differential=ok"
+            LABELS differential
+            TIMEOUT 2400)
+        add_test(
             NAME absolute.metamorphic-differential
             COMMAND "${Python3_EXECUTABLE}"
                 "${PROJECT_SOURCE_DIR}/tools/testing/metamorphic_differential.py"
