@@ -116,8 +116,18 @@ namespace Absolute {
             }
             const bool transfersThisOwner = transferredOwner != InvalidSymbolId &&
                 variable.symbol == transferredOwner;
-            if (variable.ownsArrayStorage && !transfersThisOwner) {
+            if ((variable.ownsArrayStorage || variable.ownsArrayElements) &&
+                !transfersThisOwner) {
                 emitWhenOwner([&] {
+                    // Elements first: freeing the buffer would take the handles
+                    // with it, and each of those still owns an object.
+                    if (variable.ownsArrayElements) {
+                        EmitArrayElementsCleanup(variable.address,
+                            variable.arrayDimensions,
+                            ArrayElementTypeName(variable.typeName,
+                                ArrayRankName(variable.typeName)));
+                    }
+                    if (!variable.ownsArrayStorage) return;
                     llvm::Value* owner = variable.arrayOwnerStorage
                         ? builder.CreateLoad(
                             builder.getPtrTy(), variable.arrayOwnerStorage,
@@ -636,6 +646,50 @@ namespace Absolute {
             "__absolute.closure.value." + EncodeLinkComponent(FunctionLinkName(symbol)));
         functionClosures.emplace(symbol.id, closure);
         return closure;
+    }
+
+    void CodeGenerator::Impl::EmitArrayElementsCleanup(llvm::Value* data,
+        const std::vector<llvm::Value*>& dimensions,
+        const std::string& elementTypeName) {
+        if (!data || dimensions.empty()) return;
+        if (!TypeNeedsCleanup(elementTypeName)) return;
+        llvm::Function* function = CurrentFunction();
+        if (!function || !builder.GetInsertBlock() ||
+            builder.GetInsertBlock()->getTerminator()) return;
+
+        llvm::Type* elementType = TypeFromName(elementTypeName);
+        // One linear count over every dimension: the storage is one buffer
+        // however many dimensions describe it.
+        llvm::Value* count = builder.getInt64(1);
+        for (llvm::Value* dimension : dimensions)
+            count = builder.CreateMul(count, dimension, "array.cleanup.count");
+
+        llvm::AllocaInst* cursor = CreateEntryAlloca(
+            *function, builder.getInt64Ty(), "array.cleanup.index");
+        builder.CreateStore(builder.getInt64(0), cursor);
+        llvm::BasicBlock* head = llvm::BasicBlock::Create(
+            context, "array.cleanup.head", function);
+        llvm::BasicBlock* body = llvm::BasicBlock::Create(
+            context, "array.cleanup.body", function);
+        llvm::BasicBlock* done = llvm::BasicBlock::Create(
+            context, "array.cleanup.done", function);
+        builder.CreateBr(head);
+
+        builder.SetInsertPoint(head);
+        llvm::Value* index = builder.CreateLoad(
+            builder.getInt64Ty(), cursor, "array.cleanup.at");
+        builder.CreateCondBr(
+            builder.CreateICmpULT(index, count, "array.cleanup.more"), body, done);
+
+        builder.SetInsertPoint(body);
+        llvm::Value* element = builder.CreateInBoundsGEP(
+            elementType, data, index, "array.cleanup.element");
+        EmitValueCleanup(element, elementTypeName);
+        builder.CreateStore(
+            builder.CreateAdd(index, builder.getInt64(1), "array.cleanup.next"), cursor);
+        BranchIfNeeded(head);
+
+        builder.SetInsertPoint(done);
     }
 
     llvm::Value* CodeGenerator::Impl::BuildArrayDescriptor(const ArrayView& view) {

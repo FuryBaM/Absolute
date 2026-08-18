@@ -1,0 +1,96 @@
+// An array owns its elements, the way an object owns its fields.
+//
+// It did not, and there was no way to make up for it. An owner put into an
+// array was never released: the scope freed the array's buffer and nothing
+// walked the elements, `delete a[i]` was refused because the element is a
+// subscriber of the array, and the same thing as a *field* was refused
+// outright. So the construct compiled, ran, leaked every element, and the
+// runtime aborted at exit with "managed pointer(s) leaked" -- the language
+// already called it a bug, it just could not be avoided.
+//
+// Releasing an array now releases each element first. Only the owner of an
+// array does it: a slice and a borrowed view share the buffer, and releasing
+// the same elements twice would be a double free.
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+}
+
+class Counted {
+    public static int32 live = 0;
+    public int32 value;
+
+    public Counted(int32 initial) {
+        value = initial;
+        live += 1;
+    }
+
+    // Runs when the owner of this object is released, which is how the count
+    // below can say whether the elements were reached at all.
+    public void destroy() { live -= 1; }
+}
+
+struct Boxed {
+    public Cell* held;
+}
+
+void borrows(Cell*[] view) {
+    // A borrowed view must not release what it did not create; if it did, the
+    // caller's own release would be the second one.
+    assert(view[0].value == 1, "a borrowed view reads the caller's elements");
+}
+
+int32 main() {
+    // A literal array of owners. Stack storage, so there is no buffer to free,
+    // and the elements are still this scope's to release.
+    {
+        Cell*[] owners = { new Cell(1), new Cell(2), new Cell(3) };
+        assert(owners[2].value == 3, "the literal kept what was put in it");
+        borrows(owners);
+    }
+
+    // An allocated array, filled in a loop, with a destroy() hook counting.
+    {
+        Counted*[] tracked = { new Counted(1), new Counted(2) };
+        assert(Counted.live == 2, "both elements exist while the array does");
+        assert(tracked[1].value == 2, "and hold what was put in them");
+    }
+    assert(Counted.live == 0, "both were released with the array");
+
+    // Elements reached through a struct: the array releases the struct, which
+    // releases the owner inside it.
+    {
+        Boxed[] boxes = new Boxed[3];
+        boxes[0].held = new Cell(7);
+        boxes[2].held = new Cell(9);
+        assert(boxes[2].held.value == 9, "the struct element kept its owner");
+        // boxes[1] was never assigned: zero-initialized storage means a null
+        // handle, and releasing it is a no-op rather than a crash.
+    }
+
+    // A slice does not own, so the array it came from is still the one that
+    // releases -- and it must still be alive to be read through the slice.
+    {
+        Counted*[] source = { new Counted(10), new Counted(20), new Counted(30) };
+        Counted*[] window = source[1:3];
+        assert(window.length == 2, "the slice sees two elements");
+        assert(window[0].value == 20, "and reads through to the array");
+        assert(Counted.live == 3, "a slice creates nothing to release");
+    }
+    assert(Counted.live == 0, "the array released all three, once each");
+
+    // Many rounds, so a release that ran twice or not at all would show as a
+    // count that does not return to zero.
+    int32 round = 0;
+    while (round < 64) {
+        Counted*[] perRound = { new Counted(round), new Counted(round + 1) };
+        assert(Counted.live == 2, "each round has exactly its own two");
+        assert(perRound[0].value == round, "and they are this round's");
+        round += 1;
+    }
+    assert(Counted.live == 0, "every round released what it made");
+
+    println("array-element-ownership=ok");
+    return 0;
+}

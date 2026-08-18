@@ -646,7 +646,64 @@ comparison the corpus was added for had never actually run outside a hand
 invocation. With it on: 151 programs, `-O0` against `-O3` against WebAssembly,
 one nondeterministic program excluded by name, zero disagreements.
 
-## 15. The method that worked
+## 15. Beyond the list: an array that never released what it held
+
+Found by giving the generated corpus a shape with a generic type inside a
+generic type, whose natural spelling is an array of owners.
+
+An owner stored in an array was never released, and nothing could make up for
+it. The scope freed the array's buffer and no one walked the elements;
+`delete a[i]` was refused because the element is a subscriber of the array; the
+same thing written as a *field* was refused outright with
+`E_ARRAY_FIELD_REQUIRES_OWNER`. So as a local it compiled, ran, leaked every
+element, and the runtime aborted at exit reporting the leak. The construct
+could not be written correctly at all:
+
+```absolute
+Cell*[] owners = { new Cell(1), new Cell(2) };   // leaks both
+delete owners[0];                                // E_DELETE_SUBSCRIBER
+
+Boxed[] boxes = new Boxed[2];                    // struct with a Cell* field
+boxes[0].held = new Cell(7);                     // leaks
+delete boxes[0].held;                            // E_DELETE_SUBSCRIBER
+```
+
+The mechanism was one branch of `EmitValueCleanup`, which released an array by
+calling `free` on its buffer and returning. A stack literal never reached even
+that: its owner is null, so the scope had nothing to do and the elements it had
+just constructed went with the frame.
+
+**An array now owns its elements**, the way an object owns its fields:
+releasing one releases each element first, and `delete a[i]` stays refused
+because the array is the owner. Two things make that safe. Only the owner of an
+array does it -- a slice and a borrowed view share the buffer, and releasing
+the same elements twice would be a double free -- and element ownership is
+tracked separately from storage ownership, because a literal array has no
+buffer to free while its elements are still the scope's to release.
+
+That exposed a second question the old behaviour had hidden. `copy` duplicates
+the buffer, not what the bytes in it refer to, so a shallow copy of an array of
+owners produces two arrays holding the same handles; whichever is released
+first destroys the objects the other still names. It was reachable -- a
+function returning `copy(localArrayOfOwners)` handed back handles its own scope
+had just expired, and the caller's first read hit "null or expired managed
+pointer". `copy` of an array whose elements own something is refused now
+(`E_COPY_OWNING_ELEMENTS`). Deep-copying was not chosen: what a deep copy of an
+owner should mean is not a decision this builtin gets to make. Arrays of
+ordinary values copy exactly as before.
+
+`tests/array-element-ownership.abs` counts live objects through a `destroy()`
+hook across 64 rounds, so a release that ran twice or not at all shows as a
+count that does not return to zero; it is built at `-O0` under the sanitizer
+for the same reason the storage-release case is.
+
+**Still open, and smaller:** `new T*[n]` does not parse for any pointer element
+type, so an array of owners can only be made from a literal with a fixed
+element count. The type is otherwise fully usable -- declared, initialized from
+a literal, indexed, passed -- which makes this a gap in the parser rather than
+a rule.
+
+## 16. The method that worked
 
 Worth repeating, because reading code did not find any of this.
 
@@ -664,7 +721,7 @@ by another route. The compound-assignment defect was found that way, not by
 sweeping again: `a = a / b` had been fixed while `a /= b` still used an untyped
 overload.
 
-## 16. Environment note
+## 17. Environment note
 
 During this work the container repeatedly reverted the working tree to an older
 commit and deleted the build directory. Pushed commits were never affected, but

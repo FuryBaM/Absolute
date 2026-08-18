@@ -715,6 +715,21 @@ namespace Absolute {
 
                 const Result& source = arguments.front();
                 if (ArrayRank(source.type) > 0) {
+                    // `copy` duplicates the buffer, not what the bytes in it
+                    // refer to. For elements that own something that makes two
+                    // arrays holding the same handles, and since an array owns
+                    // its elements, whichever is released first destroys the
+                    // objects the other still names. Refused rather than
+                    // deep-copied: what a deep copy of an owner means is a
+                    // decision this builtin does not get to make.
+                    std::string element = source.type;
+                    while (ArrayRank(element) > 0) element = ArrayElementType(element);
+                    if (TypeOwnsResources(element)) {
+                        Report("copy of an array whose elements own something would "
+                            "duplicate that ownership; copy the elements one at a time "
+                            "into an array you build yourself",
+                            "E_COPY_OWNING_ELEMENTS", source.symbol);
+                    }
                     Result copied{table.Lookup(callName), source.type, false};
                     copied.createsArrayOwner = true;
                     Save(expr, std::move(copied));

@@ -266,6 +266,11 @@ namespace Absolute {
             variable.symbol = impl->SemanticSymbol(expr);
             variable.arrayOwner = view.owner;
             variable.ownsArrayStorage = ownsStorage;
+            // The elements are this variable's when the initializer made the
+            // array, which is either a fresh allocation or a literal. A literal
+            // has no buffer to free but its elements were still created here.
+            variable.ownsArrayElements = ownsStorage ||
+                dynamic_cast<ArrayExpr*>(expr->value.get()) != nullptr;
             variable.arrayOwnerStorage = impl->CreateEntryAlloca(
                 *function, impl->builder.getPtrTy(), name + ".array.owner");
             impl->builder.CreateStore(
@@ -757,6 +762,8 @@ namespace Absolute {
                 variable.symbol = impl->SemanticSymbol(expr);
                 variable.arrayOwner = view.owner;
                 variable.ownsArrayStorage = ownsStorage;
+                variable.ownsArrayElements = ownsStorage ||
+                    dynamic_cast<ArrayExpr*>(expr->value.get()) != nullptr;
                 variable.arrayOwnerStorage = impl->CreateEntryAlloca(
                     *function, impl->builder.getPtrTy(), name + ".array.owner");
                 impl->builder.CreateStore(

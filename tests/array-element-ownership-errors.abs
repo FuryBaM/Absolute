@@ -1,0 +1,38 @@
+// `copy` duplicates a buffer, not what the bytes in it refer to.
+//
+// Since an array owns its elements, a shallow copy of an array of owners makes
+// two arrays holding the same handles, and whichever is released first
+// destroys the objects the other still names. That was reachable: a function
+// returning `copy(localArrayOfOwners)` handed back handles its own scope had
+// just expired, and the caller's first read hit "null or expired managed
+// pointer" at runtime. Refused now, rather than deep-copied -- what a deep
+// copy of an owner should mean is not a decision this builtin gets to make.
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+}
+
+struct Boxed {
+    public Cell* held;
+}
+
+Cell*[] escaping() {
+    Cell*[] source = { new Cell(1), new Cell(2) };
+    return copy(source);
+}
+
+int32 main() {
+    Cell*[] owners = { new Cell(1) };
+    Cell*[] shallow = copy(owners);
+
+    Boxed[] boxes = new Boxed[2];
+    Boxed[] copiedBoxes = copy(boxes);
+
+    // Elements that own nothing are unaffected: this is the ordinary copy the
+    // rest of the language relies on, and it must keep working.
+    int32[] numbers = { 1, 2, 3 };
+    int32[] duplicate = copy(numbers);
+    println(duplicate[0]);
+    return 0;
+}
