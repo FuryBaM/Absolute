@@ -32,6 +32,17 @@ SKIP_MARKERS = (
     "conflict", "legacy", "removed", "sanitizer", "plugin", "desktop",
 )
 
+# Programs that answer to something outside themselves. They are compared
+# across optimization levels like everything else -- the same binary, run the
+# same way -- but not against WebAssembly, where the facility is absent by
+# construction rather than by defect. `concurrency-stress` is the documented
+# one: a wasm instance cannot wait on another worker, so a full channel drops
+# messages (docs/wasm-target.md).
+NEEDS_HOST_FACILITIES = frozenset({
+    "std-env", "std-fs", "std-http", "std-net", "std-net-udp", "std-process",
+    "concurrency-stress",
+})
+
 
 WASM_RUNNER = """'use strict';
 const fs = require('fs');
@@ -103,7 +114,12 @@ def measure_wasm(compiler: Path, source: Path, work: Path, node: Path,
     if build.returncode != 0:
         return None
     result = run([str(node), str(runner), str(wasm_host), str(module)], timeout)
-    return Outcome("wasm", result.returncode, result.stdout + result.stderr)
+    # The JavaScript that starts the module prints its own stack trace when the
+    # program exits through a runtime check. That is the harness talking, not
+    # the program, and it has no counterpart on the native side.
+    trace = [line for line in (result.stdout + result.stderr).splitlines()
+             if not line.startswith("    at ") and not line.startswith("Error: ")]
+    return Outcome("wasm", result.returncode, "\n".join(trace) + "\n")
 
 
 def main() -> int:
@@ -151,7 +167,7 @@ def main() -> int:
                 outcome = None
             if outcome:
                 outcomes.append(outcome)
-        if runner:
+        if runner and source.stem not in NEEDS_HOST_FACILITIES:
             try:
                 wasm = measure_wasm(args.compiler.resolve(), source, work,
                                     args.node.resolve(), args.wasm_host.resolve(),

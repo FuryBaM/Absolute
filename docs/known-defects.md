@@ -16,9 +16,49 @@ build/Release/absolutec file.abs --build-exe -o app && ./app
 
 ## 1. Open defects
 
-Nothing open. Every entry this section held has been closed, and each one
-records what the fix was, so a regression is recognizable rather than
-rediscovered.
+One, below, and it wants a design decision rather than a patch. Everything
+else this section held has been closed, and each entry records what the fix
+was, so a regression is recognizable rather than rediscovered.
+
+### Open: a string has no lifetime, so every string a program builds is lost
+
+`format`, `concat`, `substring`, `toUpper` and the rest allocate a buffer and
+nothing ever frees it. `TypeNeedsCleanup` does not name `string`, so a string
+is a `char*` that no scope owns:
+
+```absolute
+int32 i = 0;
+while (i < 2000000) {
+    string text = format("value {}", i);   // 32 bytes gone, every iteration
+    i += 1;
+}
+```
+
+Two million `format` calls end at **64.7 MB** of resident memory; 500000
+iterations of `concat` + `toUpper` + `substring` reach 49.6 MB. A program that
+runs for a while and formats anything grows without bound. Found by putting the
+rest of the ownership corpus under AddressSanitizer, where the two tests that
+print with `format` were the only ones that failed.
+
+The fix is a decision about what a string is, which is why it is recorded
+rather than guessed at:
+
+- **Give strings the ownership the language already has.** The machinery is
+  there -- `TypeNeedsCleanup`, scope cleanup, and the statement-level release
+  built for owning temporaries -- and a string would be freed at the end of the
+  scope that holds it. Every place a string can go (a field, an array, a
+  return, a C-ABI boundary that documents the caller as the owner) has to be
+  accounted for, and a wrong claim frees a pointer someone still holds.
+- **Reference-count the buffer**, with a header behind the pointer so a
+  `char*` still crosses the C boundary. Copies stay cheap to reason about, at
+  the cost of a retain and release on every assignment.
+- **Leave it as it is and say so.** Defensible for a compiler that runs and
+  exits; not defensible for the servers and games the roadmap describes.
+
+Until it is decided, `tests/temporary-owners.abs` and
+`tests/aliasing-guarantees.abs` run under AddressSanitizer with the leak check
+off -- they exist to catch a use-after-free and a double free, and these bytes
+would drown that.
 
 ### Fixed: an owner produced inside a larger expression was lost
 

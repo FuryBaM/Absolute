@@ -1088,6 +1088,16 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   `NDEBUG` превращает их в no-op, поэтому новая проверка сделана явными throw.
   Остальные `assert` в файле оставлены как есть — это отдельная задача.
 - [ ] Запускать ownership corpus под ASan, UBSan, LSan и TSan, где применимо.
+  Корпус ASan расширен с пяти программ до тринадцати: под санитайзер добавлены
+  `managed-object-graphs`, `managed-pointer-move`, `ownership-model-execution`,
+  `ownership-semantics-matrix`, `ownership-torture-capsule`, `resource-fields`,
+  `temporary-owners` и `aliasing-guarantees` — регистрация сделана циклом, а не
+  восемью копиями блока. Расширение сразу нашло дефект: строки не освобождаются
+  никогда (`format` на два миллиона вызовов — 64,7 МБ), см. раздел «Open
+  defects» в `docs/known-defects.md`. Два теста, которые печатают через
+  `format`, пока идут с выключенной проверкой утечек, чтобы эти байты не
+  заслоняли use-after-free и double-free, ради которых список и существует.
+  `tests/run-sanitizer-clean.cmake` теперь принимает явный `DETECT_LEAKS`.
   ASan подключён для torture-тестов и зелёный на Linux и macOS; LSan на Darwin
   недоступен. Добавлен job `runtime-undefined-sanitizer`: рантайм собирается с
   `-fsanitize=undefined -fno-sanitize-recover=all`, и под ним прогоняются

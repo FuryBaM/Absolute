@@ -3124,6 +3124,56 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-sanitizer-ownership-stability PROPERTIES
             FIXTURES_REQUIRED absolute-sanitizer-ownership-stability-executable
             TIMEOUT 45)
+        # The rest of the ownership corpus, under the same AddressSanitizer the
+        # torture tests already run under. They were left out one at a time,
+        # which is how the corpus ended up covering five programs out of
+        # thirteen: the ones that exercise a managed graph, a move, the role
+        # matrix, resource fields, and -- since this is where a double free
+        # would show -- the temporaries an expression produces and the aliasing
+        # the backend promises the optimizer.
+        foreach(ownership_case IN ITEMS
+            "managed-object-graphs=managed-graphs=ok"
+            "managed-pointer-move=managed-move=ok"
+            "ownership-model-execution=ownership-model-execution=ok"
+            "ownership-semantics-matrix=ownership-semantics-matrix=ok"
+            "ownership-torture-capsule=ownership-torture-capsule=ok"
+            "resource-fields=resource-fields=ok"
+            "temporary-owners=temporary-owners=ok"
+            "aliasing-guarantees=aliasing-guarantees=ok")
+            # These two print with `format`, and a string has no lifetime in
+            # this language: every string a program builds is allocated and
+            # never released (docs/known-defects.md). LeakSanitizer reports
+            # those bytes, which would drown the use-after-free and double-free
+            # this list exists to catch, so the two that format ask for
+            # everything except the leak check.
+            set(ownership_detect_leaks ${ABSOLUTE_SANITIZER_DETECT_LEAKS})
+            if(ownership_case MATCHES "^(temporary-owners|aliasing-guarantees)=")
+                set(ownership_detect_leaks OFF)
+            endif()
+            string(REGEX MATCH "^[^=]+" ownership_name "${ownership_case}")
+            string(REGEX REPLACE "^[^=]+=" "" ownership_marker "${ownership_case}")
+            add_test(
+                NAME absolute.build-sanitizer-${ownership_name}
+                COMMAND Absolute-Compiler
+                    "${PROJECT_SOURCE_DIR}/tests/${ownership_name}.abs"
+                    --sanitize=address --build-exe -O1
+                    -o "${CMAKE_BINARY_DIR}/sanitizer-${ownership_name}-app${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.build-sanitizer-${ownership_name} PROPERTIES
+                FIXTURES_SETUP absolute-sanitizer-${ownership_name}-executable)
+            add_test(
+                NAME absolute.run-sanitizer-${ownership_name}
+                COMMAND "${CMAKE_COMMAND}"
+                    -DEXECUTABLE=${CMAKE_BINARY_DIR}/sanitizer-${ownership_name}-app${CMAKE_EXECUTABLE_SUFFIX}
+                    -DEXPECT=${ownership_marker}
+                    -DDETECT_LEAKS=${ownership_detect_leaks}
+                    -P "${PROJECT_SOURCE_DIR}/tests/run-sanitizer-clean.cmake"
+            )
+            set_tests_properties(absolute.run-sanitizer-${ownership_name} PROPERTIES
+                FIXTURES_REQUIRED absolute-sanitizer-${ownership_name}-executable
+                TIMEOUT 120)
+        endforeach()
+
         add_test(
             NAME absolute.build-sanitizer-ownership-torture-graph
             COMMAND Absolute-Compiler
