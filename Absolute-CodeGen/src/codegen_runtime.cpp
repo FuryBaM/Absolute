@@ -123,6 +123,15 @@ namespace Absolute {
                             builder.getPtrTy(), variable.arrayOwnerStorage,
                             "cleanup.array.owner")
                         : variable.arrayOwner;
+                    // What the elements own is released first, and only if the
+                    // element type says there is anything there to release.
+                    // Guarded by the same owner pointer the free is: `move`
+                    // clears that slot, and a moved-from local must not release
+                    // what the destination now holds.
+                    EmitArrayElementCleanup(variable.address, variable.arrayElementType,
+                        variable.arrayDimensions,
+                        ArrayElementTypeName(variable.typeName,
+                            ArrayRankName(variable.typeName)), owner);
                     builder.CreateCall(Free(), {owner});
                 });
                 continue;

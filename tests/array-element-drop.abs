@@ -1,0 +1,125 @@
+// An array releases what its elements own.
+//
+// This is section 15 closed, and it is the second attempt at it. The first
+// asked each element whether it looked managed and released it if so; that
+// produced a container which handed an element to a caller and then destroyed
+// it, and had to be withdrawn. The question was wrong. An array does not ask
+// what it is holding -- the element type says whether releasing one means
+// anything, the same way it says so for a field or a local:
+//
+//   Node*[]       every element released
+//   sub Node*[]   none of them; a subscriber never owned anything
+//   int32[]       no loop emitted at all
+//
+// And only when the array owns its storage. A view into someone else's
+// allocation has a null owner -- the same bit that already decided whether the
+// storage itself is freed -- so dropping through it would release elements the
+// real owner still holds.
+//
+// Run under AddressSanitizer with the leak check on: every claim here is about
+// something being released or not released, and none of it can be seen from
+// inside the program.
+//
+// One shape is missing and stays missing: an array *literal* of owners --
+// `Cell*[] made = { new Cell(1) };` -- still leaks its elements. The owner
+// pointer is what says an array owns anything, `move` clears it to hand the
+// elements on, and a literal small enough to live on the stack never had one.
+// Making the drop unconditional there instead makes a moved-from local release
+// what the destination now holds, which is worse. The literal wants a real
+// owner, not a different guard. Recorded in docs/known-defects.md; a literal
+// is also the only way to write a two-dimensional array of owners, so that
+// shape waits on the same thing.
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+}
+
+class Box {
+    // An array field, released with the object that holds it.
+    private Cell*[] held;
+
+    public Box(int32 count) {
+        held = new Cell*[count];
+        int32 i = 0;
+        while (i < count) {
+            unsafeArraySet(held, i, new Cell(i));
+            i = i + 1;
+        }
+    }
+
+    public nothrow sub Cell* this[int32 index] {
+        get { return unsafeArrayGet(held, index); }
+    }
+}
+
+Cell*[] make(int32 count) {
+    Cell*[] fresh = new Cell*[count];
+    int32 i = 0;
+    while (i < count) {
+        unsafeArraySet(fresh, i, new Cell(i * 2));
+        i = i + 1;
+    }
+    return fresh;
+}
+
+int32 main() {
+    // A local array of owners, released where it goes out of scope. Nothing in
+    // this program deletes these three.
+    {
+        Cell*[] owners = new Cell*[3];
+        unsafeArraySet(owners, 0, new Cell(1));
+        unsafeArraySet(owners, 1, new Cell(2));
+        unsafeArraySet(owners, 2, new Cell(3));
+        assert(owners[1].value == 2, "the elements are there while it is");
+    }
+
+    // A slot that owns nothing is skipped rather than released: storage is
+    // zero-initialized, and a take leaves a zero behind.
+    {
+        Cell*[] partial = new Cell*[4];
+        unsafeArraySet(partial, 0, new Cell(7));
+        Cell* taken = unsafeArrayTake(partial, 0);
+        assert(taken.value == 7, "a take hands the element out");
+        delete taken;
+        // Every slot in `partial` now owns nothing, and releasing it is a walk
+        // over four zeros.
+    }
+
+    // A returned array carries its elements to the caller, and is released
+    // there instead.
+    {
+        Cell*[] moved = make(3);
+        assert(moved[2].value == 4, "a returned array still holds them");
+    }
+
+    // An array field: released when its object is.
+    {
+        Box* box = new Box(4);
+        assert(box[3].value == 3, "a field array holds its elements");
+        delete box;
+    }
+
+    // A borrowed view over an owner's storage releases nothing. If it did, the
+    // owner below would be releasing what was already gone.
+    {
+        Cell*[] owners = new Cell*[2];
+        unsafeArraySet(owners, 0, new Cell(11));
+        unsafeArraySet(owners, 1, new Cell(12));
+        {
+            sub Cell*[] view = owners;
+            assert(view[0].value == 11, "a subscriber array reads through");
+        }
+        assert(owners[0].value == 11, "and left the elements alone");
+    }
+
+    // Elements that own nothing: unchanged, and no loop is emitted for them.
+    {
+        int32[] numbers = new int32[4];
+        unsafeArraySet(numbers, 0, 9);
+        assert(numbers[0] == 9, "a plain array is what it always was");
+    }
+
+    println("array-element-drop=ok");
+    return 0;
+}

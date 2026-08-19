@@ -19,10 +19,9 @@
 // dropped is the difference between this passing and twenty objects reported
 // at exit.
 //
-// What is still missing is the drop itself -- deleting a container without
-// clearing it still leaks, because an array does not yet release what its
-// elements own. That is section 15 of docs/known-defects.md, and it is why
-// this program clears before it deletes.
+// The container is also deleted without being cleared at the end, which used
+// to leak everything still in it: the array field releases what its elements
+// own now, so the last seventeen go with it.
 
 class Cell {
     public int32 value;
@@ -131,7 +130,9 @@ int32 main() {
     owners.push(new Cell(99));
     assert(owners.count == 1, "a cleared container is an ordinary empty one");
     assert(owners[0].value == 99, "with the new element where it belongs");
-    owners.clear();
+    // Left holding an element on purpose. Deleting the container releases the
+    // array field, and the array releases what its elements own.
+    owners.push(new Cell(100));
     delete owners;
 
     // The identical code over elements that own nothing.

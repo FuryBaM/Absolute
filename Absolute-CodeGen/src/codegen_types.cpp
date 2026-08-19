@@ -1347,6 +1347,68 @@ namespace Absolute {
         builder.SetInsertPoint(complete);
     }
 
+
+    // An array releases what its elements own, and the element type is what
+    // says whether there is anything to release: `Node*[]` drops every element,
+    // `sub Node*[]` drops none, and `int32[]` emits no loop at all. The array
+    // never asks what it is holding.
+    //
+    // Only when it owns its storage. A view into someone else's allocation has
+    // a null owner -- the same bit that decides whether the storage itself is
+    // freed -- and dropping through it would release elements the real owner
+    // still holds.
+    void CodeGenerator::Impl::EmitArrayElementCleanup(
+        llvm::Value* data, llvm::Type* elementType,
+        const std::vector<llvm::Value*>& dimensions,
+        const std::string& elementTypeName, llvm::Value* owner) {
+        if (!data || !elementType || dimensions.empty()) return;
+        if (!SemanticsOfTypeName(elementTypeName).needsDrop) return;
+
+        llvm::Value* count = builder.getInt64(1);
+        for (llvm::Value* dimension : dimensions) {
+            llvm::Value* extent = dimension;
+            if (!extent->getType()->isIntegerTy(64))
+                extent = builder.CreateIntCast(
+                    extent, builder.getInt64Ty(), true, "array.cleanup.extent");
+            count = builder.CreateMul(count, extent, "array.cleanup.count");
+        }
+        llvm::Function* function = builder.GetInsertBlock()->getParent();
+        llvm::BasicBlock* owned = llvm::BasicBlock::Create(
+            context, "array.cleanup.owned", function);
+        llvm::BasicBlock* test = llvm::BasicBlock::Create(
+            context, "array.cleanup.test", function);
+        llvm::BasicBlock* body = llvm::BasicBlock::Create(
+            context, "array.cleanup.body", function);
+        llvm::BasicBlock* done = llvm::BasicBlock::Create(
+            context, "array.cleanup.done", function);
+        // The owner pointer is what says this array owns anything at all: a
+        // view into someone else's allocation has none, and `move` clears the
+        // slot so a moved-from local does not release what the destination now
+        // holds. A caller that has already settled the question passes none.
+        if (owner)
+            builder.CreateCondBr(builder.CreateICmpNE(owner,
+                llvm::ConstantPointerNull::get(builder.getPtrTy()),
+                "array.cleanup.owns"), owned, done);
+        else builder.CreateBr(owned);
+        builder.SetInsertPoint(owned);
+        builder.CreateBr(test);
+        builder.SetInsertPoint(test);
+        llvm::PHINode* index = builder.CreatePHI(
+            builder.getInt64Ty(), 2, "array.cleanup.index");
+        index->addIncoming(builder.getInt64(0), owned);
+        builder.CreateCondBr(
+            builder.CreateICmpSLT(index, count, "array.cleanup.more"), body, done);
+        builder.SetInsertPoint(body);
+        llvm::Value* element = builder.CreateInBoundsGEP(
+            elementType, data, index, "array.cleanup.element");
+        EmitValueCleanup(element, elementTypeName);
+        llvm::Value* next = builder.CreateAdd(
+            index, builder.getInt64(1), "array.cleanup.next");
+        index->addIncoming(next, builder.GetInsertBlock());
+        builder.CreateBr(test);
+        builder.SetInsertPoint(done);
+    }
+
     // Releasing a value is a switch on what the type says releasing it means,
     // not a walk down the shapes a type name can have. The chain this replaced
     // asked "is it a closure, is it a strong managed pointer, is it an array,
@@ -1379,6 +1441,15 @@ namespace Absolute {
                 ArrayDescriptorType(typeName), address, "field.cleanup.array");
             llvm::Value* owner = builder.CreateExtractValue(
                 descriptor, {1}, "field.cleanup.array.owner");
+            const size_t rank = ArrayRankName(typeName);
+            std::vector<llvm::Value*> dimensions;
+            for (size_t dimension = 0; dimension < rank; ++dimension)
+                dimensions.push_back(builder.CreateExtractValue(
+                    descriptor, {unsigned(2 + dimension)}, "array.cleanup.dimension"));
+            EmitArrayElementCleanup(
+                builder.CreateExtractValue(descriptor, {0}, "array.cleanup.data"),
+                TypeFromName(ArrayElementTypeName(typeName, rank)), dimensions,
+                ArrayElementTypeName(typeName, rank), owner);
             builder.CreateCall(Free(), {owner});
             builder.CreateStore(llvm::Constant::getNullValue(
                 ArrayDescriptorType(typeName)), address);

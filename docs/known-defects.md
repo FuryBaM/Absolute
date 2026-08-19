@@ -16,25 +16,27 @@ build/Release/absolutec file.abs --build-exe -o app && ./app
 
 ## 1. Open defects
 
-Two, below, and both want a design decision rather than a patch. Everything
+One, below, and it wants a design decision rather than a patch. Everything
 else this section held has been closed, and each entry records what the fix
 was, so a regression is recognizable rather than rediscovered.
 
-The second is recorded in full in section 15, because the obvious fix for it
-was written, merged and withdrawn in one session and what that cost is the
-useful part: **an array never releases what its elements own**, and giving the
-array that ownership breaks `Vector<T*>` in three places, because a copied
-managed pointer is a subscriber rather than a second owner and the type cannot
-say which an array holds.
+The one that was here beside it -- **an array never releases what its elements
+own** -- is closed, and section 15 keeps the record because the obvious fix for
+it was written, merged and withdrawn in one session, and what that cost is the
+useful part. The second attempt worked because the two defects were treated as
+one: ownership is part of the type now rather than something the analyzer
+reconstructs per symbol, so a container drops its elements by asking what
+destroying one means rather than whether it looks like a pointer. What is left
+of it is an array *literal*, which never gets the owner pointer the drop is
+guarded by.
 
-**Both are the same defect seen from two sides**, and they are being fixed as
-one: ownership becomes part of the type rather than something the analyzer
-reconstructs per symbol, containers drop their elements by asking what
-destroying the element means rather than whether it is a pointer, and a string
-becomes an ordinary value whose storage is shared-owned. The model, the order of
-work and what proves each step are in `docs/ownership-kinds.md`; the first five
-steps are done and pinned by `tests/ownership-qualifier-generics.abs`,
-`tests/subscriber-pointers.abs` and `tests/generic-body-ownership.abs`.
+The string is the same defect from the other side, and the same model closes
+it: a string becomes an ordinary value whose storage is shared-owned. The
+model, the order of work and what proves each step are in
+`docs/ownership-kinds.md`; steps one through six are done and pinned by
+`tests/ownership-qualifier-generics.abs`, `tests/subscriber-pointers.abs`,
+`tests/generic-body-ownership.abs`, `tests/open-ownership-qualifier.abs` and
+`tests/array-element-drop.abs`.
 
 ### Open: a string has no lifetime, so every string a program builds is lost
 
@@ -662,28 +664,44 @@ comparison the corpus was added for had never actually run outside a hand
 invocation. With it on: 151 programs, `-O0` against `-O3` against WebAssembly,
 one nondeterministic program excluded by name, zero disagreements.
 
-## 15. Beyond the list: an array that never releases what it holds
+## 15. Fixed: an array that never released what it holds
 
 Found by giving the generated corpus a shape with a generic type inside a
-generic type, whose natural spelling is an array of owners. **Still open**, and
-the record below is mostly about why the obvious fix is wrong -- it was written,
-merged, and withdrawn within the same session.
+generic type, whose natural spelling is an array of owners. **Fixed on the
+second attempt**; the record below is mostly about why the first one was
+wrong -- it was written, merged, and withdrawn within the same session -- and
+what had to exist before the right version could be written.
 
-An owner stored in an array is never released, and nothing can make up for it.
-The scope frees the array's buffer and no one walks the elements; `delete a[i]`
-is refused because the element is a subscriber of the array; the same thing
-written as a *field* is refused outright with `E_ARRAY_FIELD_REQUIRES_OWNER`.
-So as a local it compiles, runs, leaks every element, and the runtime aborts at
-exit reporting the leak:
+An owner stored in an array was never released, and nothing could make up for
+it. The scope freed the array's buffer and no one walked the elements;
+`delete a[i]` is refused because the element is a subscriber of the array; the
+same thing written as a *field* is refused outright with
+`E_ARRAY_FIELD_REQUIRES_OWNER`. So as a local it compiled, ran, leaked every
+element, and the runtime aborted at exit reporting the leak.
+
+An array releases what its elements own now, and the element type is what says
+whether releasing one means anything -- `Node*[]` drops every element,
+`sub Node*[]` drops none, `int32[]` emits no loop at all. The array never asks
+what it is holding. Guarded by the owner pointer, which is the same bit that
+already decided whether the storage itself is freed: a view into someone else's
+allocation has none, and `move` clears the slot so a moved-from local does not
+release what the destination now holds. Pinned by
+`tests/array-element-drop.abs`, under AddressSanitizer with the leak check on.
+
+### What is still open: an array literal
 
 ```absolute
-Cell*[] owners = { new Cell(1), new Cell(2) };   // leaks both
-delete owners[0];                                // E_DELETE_SUBSCRIBER
+Cell*[] made = { new Cell(1), new Cell(2) };   // still leaks both
 ```
 
-`std.collections.Vector<Cell*>` has the same shape and the same ending: it
-computes the right answers and then aborts at exit with one leaked handle per
-element.
+A literal small enough to live on the stack never gets an owner pointer, and
+the owner pointer is what the drop is guarded by. Making the drop unconditional
+there instead was tried and is worse: `move` signals a transfer by clearing
+that slot, so an unconditional drop makes a moved-from local release what the
+destination now holds -- which is the withdrawn attempt's failure again, in a
+new place. The literal wants a real owner, not a different guard. A literal is
+also the only way to write a two-dimensional array of owners, so that shape
+waits on the same thing.
 
 ### Why "an array owns its elements" is not the fix
 

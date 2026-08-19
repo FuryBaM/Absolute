@@ -117,5 +117,10 @@
         void EmitStructDestructor(StructInfo& info);
 
         void EmitValueCleanup(llvm::Value* address, const std::string& typeName);
+        // Releasing what an array's elements own, guarded by the same owner
+        // bit that decides whether its storage is freed at all.
+        void EmitArrayElementCleanup(llvm::Value* data, llvm::Type* elementType,
+            const std::vector<llvm::Value*>& dimensions,
+            const std::string& elementTypeName, llvm::Value* owner);
 
         void EmitPointeeCleanup(llvm::Value* pointer, const std::string& pointerTypeName);
