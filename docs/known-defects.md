@@ -686,20 +686,49 @@ allocation has none, and `move` clears the slot so a moved-from local does not
 release what the destination now holds. Pinned by
 `tests/array-element-drop.abs`, under AddressSanitizer with the leak check on.
 
-### What is still open: an array literal
+### The literal needed an owner, not a different guard
 
 ```absolute
-Cell*[] made = { new Cell(1), new Cell(2) };   // still leaks both
+Cell*[] made = { new Cell(1), new Cell(2) };   // released, both
 ```
 
-A literal small enough to live on the stack never gets an owner pointer, and
-the owner pointer is what the drop is guarded by. Making the drop unconditional
-there instead was tried and is worse: `move` signals a transfer by clearing
-that slot, so an unconditional drop makes a moved-from local release what the
-destination now holds -- which is the withdrawn attempt's failure again, in a
-new place. The literal wants a real owner, not a different guard. A literal is
-also the only way to write a two-dimensional array of owners, so that shape
-waits on the same thing.
+A literal small enough to live on the stack never got an owner pointer, and the
+owner pointer is what the drop is guarded by -- so a literal's elements were
+never released. Making the drop unconditional there instead was tried and is
+worse: `move` signals a transfer by clearing that slot, so an unconditional
+drop makes a moved-from local release what the destination now holds, which is
+the withdrawn attempt's failure again in a new place. What the literal was
+missing is an owner, so a literal whose elements own something is allocated
+rather than left on the stack. A literal of numbers is the stack allocation it
+has always been, and a literal is also the only way to write a two-dimensional
+array of owners, so that shape is covered by the same change.
+
+### What that condition leaves: one place the two halves disagree
+
+Allocated when the elements own something, on the stack when they do not, is
+now the one place where the analyzer and the backend do not say the same thing
+about what a literal is:
+
+```absolute
+Cell*[] made = { new Cell(1) };
+Cell*[] moved = move(made);      // E_ARRAY_MOVE_REQUIRES_OWNER
+```
+
+The backend allocates that literal and it does own its storage; the analyzer
+sets `createsArrayOwner` only for `new T[n]` and `copy(...)`, so it refuses the
+move. Nothing is unsound -- the refusal is the conservative direction, and it
+is doing real work while the split exists, because a stack literal the analyzer
+let escape into a field or out of a return would leave a pointer into a dead
+frame.
+
+Making the two agree costs something either way, which is why it is recorded
+rather than picked: teaching the analyzer the backend's condition gives the
+language a rule nobody can predict (`move` works on a literal of owners and not
+on a literal of numbers), and allocating every literal removes the split at the
+price of a heap allocation for `int32[] a = { 1, 2, 3 }`, a shape the
+benchmarks are full of. The third answer is to keep the split but put it
+somewhere the author can see, which is a language question rather than a
+backend one.
 
 ### Why "an array owns its elements" is not the fix
 
@@ -745,14 +774,27 @@ decided.
   written as a literal with a fixed element count. The star is consumed only
   when an array suffix follows, so `new Point() * 2` still multiplies.
 
-### What deciding it would take
+### What deciding it took
+
+Both of the answers written down here were wrong about the size of the thing.
 
 - **A type-level distinction** between an array that owns its elements and an
   array of subscribers, so `toArray` can return the second and `push` can move
-  into the first. This is the real fix and it is a language change.
-- **Or: refuse owning element types outright**, the way the field case is
-  already refused, and make containers of owners impossible until there is a
-  type for them. Small, safe, and it makes a normal pattern unwriteable.
+  into the first. This was the real fix, and it is `sub T*[]` -- but a type for
+  it was not enough on its own. `toArray` also had to be able to *say* it in a
+  generic body, which is `sub T`, and the rules had to run there at all, which
+  is §16. And `push` moving into the first needed operations that transfer an
+  element rather than read it: `unsafeArrayTake`, `unsafeArrayMove`,
+  `unsafeArrayDrop`.
+- **Or: refuse owning element types outright.** Not needed, and it would have
+  made `Vector<Node*>` unwriteable for the sake of a defect that turned out to
+  be closable.
+
+What actually closed it, in the order it had to happen: ownership became part
+of the type (`OwnershipKind` in the canonical name), no qualifier was lost in
+substitution, `Copy`/`Move`/`Drop` became type-driven (`TypeSemantics`), `sub
+T*` became spellable, the rules started running inside generic bodies, and only
+then could an array drop its elements without a container getting it wrong.
 
 ## 16. Fixed: ownership rules were not enforced inside a generic body
 
