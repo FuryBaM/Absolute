@@ -737,7 +737,32 @@ decided.
   already refused, and make containers of owners impossible until there is a
   type for them. Small, safe, and it makes a normal pattern unwriteable.
 
-## 16. Beyond the list: what is left for undefined behaviour
+## 16. Open: a generic field loses an owner it was given
+
+`Cell<T>` with a field of type `T`, instantiated at `Node*`, accepts an owner
+moved into it and destroys the object during construction:
+
+```absolute
+class Cell<T> { public T item; public Cell(T given) { item = given; } }
+
+Node* owned = new Node(1);
+Cell<Node*>* cell = new Cell<Node*>(move(owned));
+println(Node.live);   // 0 -- already gone
+```
+
+Written without the generic, the same program is **refused**:
+`E_RESOURCE_FIELD_REQUIRES_OWNER`, "managed resource fields require a fresh
+owner or null". The rule exists; it just never runs here, because the analyzer
+checks the generic body, where the field's type is `T` and owns nothing as far
+as it can see, and does not check the specialization.
+
+That is the substitution hole the ownership work is about, seen from a third
+side: the first was an array that could not tell an owner from a view, the
+second a string with no lifetime at all. Recorded rather than fixed because the
+fix belongs to the same design -- `docs/ownership-kinds.md` -- and a local patch
+here would be the third special case.
+
+## 17. Beyond the list: what is left for undefined behaviour
 
 The open TODO asked for UBSan over generated code. Before building anything,
 the question worth answering is what UBSan would find, so the emitted IR was
@@ -796,7 +821,7 @@ claim stays true. These two are the only place in the suite where a *false*
 claim is observable, which is what gives the differential its power; a change
 that removes them would leave the check green and empty.
 
-## 17. The method that worked
+## 18. The method that worked
 
 Worth repeating, because reading code did not find any of this.
 
@@ -814,7 +839,7 @@ by another route. The compound-assignment defect was found that way, not by
 sweeping again: `a = a / b` had been fixed while `a /= b` still used an untyped
 overload.
 
-## 18. Environment note
+## 19. Environment note
 
 During this work the container repeatedly reverted the working tree to an older
 commit and deleted the build directory. Pushed commits were never affected, but

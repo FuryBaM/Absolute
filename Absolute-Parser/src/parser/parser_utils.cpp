@@ -69,6 +69,13 @@ namespace Absolute {
                 continue;
             }
 
+            // A qualifier stands in front of the type it qualifies, so the
+            // list is still expecting one afterwards. Without this no
+            // qualified type could be a template argument at all -- not
+            // `Vector<sub Node*>`, and not `Vector<raw int32*>` either, which
+            // had simply never been written.
+            if (expectType && SkipOwnershipQualifier(index) != index) continue;
+
             const bool isTypeName = token.type == TokenType::IDENTIFIER ||
                 (token.type == TokenType::KEYWORD && IsPrimitiveType(token.value));
             if (!isTypeName || !expectType) return false;

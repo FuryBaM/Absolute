@@ -17,6 +17,11 @@ class Node {
     public Node(int32 initial) { value = initial; }
 }
 
+class Cell<T> {
+    public T item;
+    public Cell(T given) { item = given; }
+}
+
 class Holder {
     public sub Node* watched;
     public Holder(sub Node* target) { watched = target; }
@@ -51,6 +56,19 @@ int32 main() {
     int32 subtotal = sub + 1;
     assert(sub == 3, "sub is an ordinary name where no type is expected");
     assert(subtotal == 4, "and reads like any other");
+
+    // The same generic body, instantiated with a view: it releases nothing.
+    // Qualified template arguments did not parse at all before -- not
+    // `Cell<sub Node*>`, and not `Cell<raw int32*>` either, which had simply
+    // never been written -- and the argument's qualifier was then dropped a
+    // second time while the specialization name was built.
+    Node* watched = new Node(9);
+    sub Node* watcher = watched;
+    Cell<sub Node*>* cell = new Cell<sub Node*>(watcher);
+    assert(cell.item.value == 9, "a view stored in a generic reads its object");
+    delete cell;
+    assert(watched.value == 9, "and releasing the generic left the object alone");
+    delete watched;
 
     delete owner;
     delete holder;

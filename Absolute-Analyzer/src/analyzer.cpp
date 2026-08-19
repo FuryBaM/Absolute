@@ -2159,10 +2159,10 @@ namespace Absolute {
     std::string Analyzer::ResolveTypeReference(const std::string& name) {
         if (name.ends_with("[]"))
             return ResolveTypeReference(name.substr(0, name.size() - 2)) + "[]";
-        if (IsPointerType(name)) {
-            const std::string prefix = IsRawPointerType(name) ? "raw " :
-                (IsWeakPointerType(name) ? "weak " : "");
-            return prefix + ResolveTypeReference(PointerPointee(name)) + "*";
+        if (const OwnershipKind kind = CanonicalOwnership(name);
+            kind != OwnershipKind::None) {
+            return CanonicalPointerName(
+                ResolveTypeReference(CanonicalPointeeName(name)), kind);
         }
         for (auto scope = genericTypeScopes.rbegin(); scope != genericTypeScopes.rend(); ++scope)
             if (const auto found = scope->find(name); found != scope->end()) return found->second;
