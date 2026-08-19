@@ -97,8 +97,32 @@ counted.
    each of those was a second place that had to agree with `TypeNeedsCleanup`
    about the answer. `copyable` and `movable` are computed but not yet
    enforced -- that is step 4, and it is the step that changes programs.
-4. **`sub T*` becomes spellable**, and copying a `T*` without `move` is refused.
-   This is the step that changes existing programs.
+4. **`sub T*` becomes spellable**, and copying a `T*` without `move` is
+   refused. This is the step that changes existing programs, and it splits in
+   two: making the type expressible and correct, then making the old spelling
+   an error.
+
+   Two things were measured before starting it, and both change how it should
+   be done:
+
+   - **`sub` cannot be an ordinary keyword.** It is already used as an
+     identifier -- `int32 sub = 3;` in `tests/ownership-semantics-matrix.abs`,
+     which asserts in so many words that "consume, owner, and sub are ordinary
+     identifiers", and a local named `sub` in `std/form.abs`. It has to be
+     contextual: a qualifier only where a type is expected and the next token
+     begins a type. The rule that makes it unambiguous is that the qualifier
+     only means anything in front of a pointer.
+   - **The blast radius of the refusal is 35 sites, all in `tests/`.** The
+     standard library never binds an owner to another owner-typed variable;
+     the tests do it deliberately, because subscriber semantics is what they
+     are testing. So the refusal is affordable in one change, and the sites
+     that must be rewritten are the ones that document the behaviour being
+     formalised.
+
+   The audit to redo after any change here, since it decides which existing
+   checks mean "is a handle" and which mean "is an owner":
+   `IsStrongManagedPointerType` is currently both, and with `Sub` in the model
+   those two readings come apart.
 5. **Arrays drop their elements** through `TypeSemantics`, which is §15 closed.
 6. **`Vector<T>` follows** — the same generic code must produce a different drop
    for `Vector<T*>` than for `Vector<sub T*>`. That is the check that says the
