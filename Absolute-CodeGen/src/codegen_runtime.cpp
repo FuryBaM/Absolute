@@ -271,10 +271,13 @@ namespace Absolute {
             return temporary;
         }
         llvm::Value* argument = Evaluate(expression);
-        // A string the caller made only in order to pass it in. The callee
-        // borrows it for the length of the call, so it is released with the
-        // statement rather than by whoever received it.
-        RegisterIfFreshString(expression, argument);
+        // An argument arrives holding one count, which the parameter gives
+        // back at the end of the call. A string the expression made itself
+        // already holds one; anything else is another name for storage
+        // something already holds and has to say so.
+        if (!parameterType.empty() &&
+            ValueReferenceBaseTypeName(parameterType) == "string")
+            argument = RetainStoredString(expression, argument);
         const bool transfersArrayOwner =
             valueCreatesArrayOwner && llvm::cast<llvm::ConstantInt>(
                 ArgumentOwnershipFlag(expression, parameterType))->isOne();

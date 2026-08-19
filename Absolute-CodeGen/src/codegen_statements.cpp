@@ -253,24 +253,25 @@ namespace Absolute {
                 if (returned.managedOwner) transferredOwner = returned.symbol;
             }
         }
-        // A struct or class value returned by name is copied out and the local
-        // is then torn down -- which, now that a string field has something to
-        // release, took the copy's fields with it. The local hands its parts
-        // to the copy instead of releasing them, the same way a returned owner
-        // and a returned array do.
-        else if (!IsPointerTypeName(impl->currentReturnTypeName) &&
-            impl->TypeNeedsCleanup(impl->currentReturnTypeName)) {
-            if (Impl::Variable* returned = impl->FindVariable(
-                impl->SemanticSymbol(stmt->expr.get()));
-                returned && returned->ownsAggregateResources)
-                transferredOwner = returned->symbol;
-        }
         else if (ArrayRankName(impl->currentReturnTypeName) > 0) {
             if (Impl::Variable* returned = impl->FindVariable(
                 impl->SemanticSymbol(stmt->expr.get()))) {
                 transferredOwner = returned->ownsArrayStorage
                     ? returned->symbol : returned->arrayOwnerSymbol;
             }
+        }
+        // A struct or class value returned by name is copied out and the local
+        // is then torn down, which took the copy's parts with it. The local
+        // hands them to the copy instead, the same way a returned owner and a
+        // returned array do. After the array case, not before it: an array
+        // type is not a pointer type and does have something to release, so
+        // this test would otherwise answer for it and answer wrongly.
+        else if (!IsPointerTypeName(impl->currentReturnTypeName) &&
+            impl->TypeNeedsCleanup(impl->currentReturnTypeName)) {
+            if (Impl::Variable* returned = impl->FindVariable(
+                impl->SemanticSymbol(stmt->expr.get()));
+                returned && returned->ownsAggregateResources)
+                transferredOwner = returned->symbol;
         }
         impl->EmitTransferCleanups(0, true, transferredOwner);
         if (impl->builder.GetInsertBlock()->getTerminator()) return;

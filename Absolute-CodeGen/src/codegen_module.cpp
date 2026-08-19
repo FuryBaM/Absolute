@@ -733,7 +733,7 @@ namespace Absolute {
             Variable variable{&argument, TypeFromName(typeName), typeName, false, false,
                 nullptr, {}, nullptr, SemanticSymbol(&parameter)};
             variable.ownsAggregateResources =
-                staticallyOwns && typeName != "string" && TypeNeedsCleanup(typeName);
+                staticallyOwns && TypeNeedsCleanup(typeName);
             bindOwnershipFlag(variable);
             if (!scopes.back().emplace(name, std::move(variable)).second)
                 Fail("duplicate parameter '" + name + "'");
@@ -750,12 +750,13 @@ namespace Absolute {
             nullptr, SemanticSymbol(&parameter)};
         variable.managedOwner =
             staticallyOwns && IsStrongManagedPointerTypeName(typeName);
-        // A string parameter is borrowed, not taken: the caller holds the
-        // bytes for the length of the call and releases them itself. Releasing
-        // here as well would free what the caller still names -- which is what
-        // an argument passed straight into a field did.
+        // A string parameter owns its value: the caller hands over a count
+        // and the parameter gives it back at the end of the call. Borrowing
+        // instead was tried and does not compose -- a parameter with no count
+        // of its own has nothing to hand on when it is moved into storage,
+        // which is exactly what a container's push does.
         variable.ownsAggregateResources =
-            staticallyOwns && typeName != "string" && TypeNeedsCleanup(typeName);
+            staticallyOwns && TypeNeedsCleanup(typeName);
         bindOwnershipFlag(variable);
         if (!scopes.back().emplace(name, std::move(variable)).second)
             Fail("duplicate parameter '" + name + "'");

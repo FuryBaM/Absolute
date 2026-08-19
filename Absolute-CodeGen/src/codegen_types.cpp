@@ -1295,6 +1295,16 @@ namespace Absolute {
                 result.needsDrop = true;
             for (const ClassField& field : info.fields) {
                 const TypeSemantics part = SemanticsOfTypeName(field.typeName, visiting);
+                // A string field is the one part an aggregate does not yet
+                // release. Copying an aggregate copies the pointer without
+                // saying so, and there is no copy that retains -- the
+                // `copyable` half of the model is named and not implemented.
+                // Releasing on the strength of a shallow copy is the
+                // withdrawn array attempt again: `entries[i]` read into a
+                // local would kill the string the container still holds.
+                // Recorded in docs/known-defects.md; until there is a copy,
+                // there is no drop.
+                if (part.dropKind == DropKind::StringStorage) continue;
                 if (part.needsDrop) result.needsDrop = true;
                 if (!part.copyable) result.copyable = false;
             }
@@ -1565,7 +1575,11 @@ namespace Absolute {
         }
 
         for (auto field = info.fields.rbegin(); field != info.fields.rend(); ++field) {
-            if (!TypeNeedsCleanup(field->typeName)) continue;
+            // A string field is left alone: an aggregate is copied shallowly
+            // and there is no copy that retains, so releasing here would kill
+            // what the copy still names. See SemanticsOfTypeName.
+            const TypeSemantics part = SemanticsOfTypeName(field->typeName);
+            if (!part.needsDrop || part.dropKind == DropKind::StringStorage) continue;
             EmitValueCleanup(FieldAddress(object, info, *field), field->typeName);
         }
         if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(info.name)) {
@@ -1596,7 +1610,11 @@ namespace Absolute {
         }
 
         for (auto field = info.fields.rbegin(); field != info.fields.rend(); ++field) {
-            if (!TypeNeedsCleanup(field->typeName)) continue;
+            // A string field is left alone: an aggregate is copied shallowly
+            // and there is no copy that retains, so releasing here would kill
+            // what the copy still names. See SemanticsOfTypeName.
+            const TypeSemantics part = SemanticsOfTypeName(field->typeName);
+            if (!part.needsDrop || part.dropKind == DropKind::StringStorage) continue;
             EmitValueCleanup(FieldAddress(object, info, *field), field->typeName);
         }
         if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(info.name)) {
