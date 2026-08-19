@@ -1062,6 +1062,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-qualifier-generics.abs"
     )
     add_test(
+        NAME absolute.string-lifetime-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/string-lifetime.abs"
+    )
+    add_test(
         NAME absolute.array-element-drop-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-element-drop.abs"
     )
@@ -3439,7 +3443,8 @@ if(BUILD_TESTING)
             "aliasing-guarantees=aliasing-guarantees=ok"
             "vector-owner-elements=vector-owner-elements=ok"
             "open-ownership-qualifier=open-ownership-qualifier=ok"
-            "array-element-drop=array-element-drop=ok")
+            "array-element-drop=array-element-drop=ok"
+            "string-lifetime=string-lifetime=ok")
             # These two print with `format`, and a string has no lifetime in
             # this language: every string a program builds is allocated and
             # never released (docs/known-defects.md). LeakSanitizer reports

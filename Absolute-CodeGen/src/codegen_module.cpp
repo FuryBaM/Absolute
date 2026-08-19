@@ -680,7 +680,13 @@ namespace Absolute {
         const std::string typeName = ValueReferenceBaseTypeName(declaredTypeName);
         const bool rolePolymorphic =
             ParameterSupportsOwnershipName(declaredTypeName, external);
-        const bool staticallyOwns = rolePolymorphic;
+        // A string parameter always owns the count it was handed, without a
+        // role to say so: the caller passes one and the parameter gives it
+        // back. It carries no role argument precisely because there is nothing
+        // to decide -- a string is shared, so the answer is the same every
+        // call, which is what `staticallyOwns` means.
+        const bool staticallyOwns = rolePolymorphic ||
+            (!external && !valueReference && typeName == "string");
         auto bindOwnershipFlag = [&](Variable& variable) {
             if (!rolePolymorphic) return;
             if (!ownershipArgument)
@@ -745,7 +751,15 @@ namespace Absolute {
         // C ABI may pass bool as i8; store Absolute locals as the language type (i1).
         llvm::Type* storageType = TypeFromName(typeName);
         llvm::AllocaInst* address = CreateEntryAlloca(*argument.getParent(), storageType, name);
-        builder.CreateStore(Coerce(&argument, storageType), address);
+        // A string parameter takes a count of its own on the way in and gives
+        // it back at the end of the call, so the value cannot go out from
+        // under it -- whatever the caller does with its own name for the same
+        // bytes. Emitted here, in the body, which is why an external function
+        // needs nothing: it has no body, and its caller releases what it made.
+        llvm::Value* stored = Coerce(&argument, storageType);
+        if (!external && !valueReference && typeName == "string")
+            stored = builder.CreateCall(StringRetain(), {stored}, "parameter.retained");
+        builder.CreateStore(stored, address);
         Variable variable{address, storageType, typeName, false, false, nullptr, {},
             nullptr, SemanticSymbol(&parameter)};
         variable.managedOwner =

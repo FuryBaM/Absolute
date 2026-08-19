@@ -271,13 +271,13 @@ namespace Absolute {
             return temporary;
         }
         llvm::Value* argument = Evaluate(expression);
-        // An argument arrives holding one count, which the parameter gives
-        // back at the end of the call. A string the expression made itself
-        // already holds one; anything else is another name for storage
-        // something already holds and has to say so.
-        if (!parameterType.empty() &&
-            ValueReferenceBaseTypeName(parameterType) == "string")
-            argument = RetainStoredString(expression, argument);
+        // A string the caller made only in order to pass it in: released with
+        // the statement, once the call it was made for is over. The parameter
+        // takes its own count on the way in and gives it back on the way out,
+        // so the callee never depends on the caller's. That split is what lets
+        // an external C function take a string at all -- there is no body to
+        // emit a release into, and none is needed.
+        RegisterIfFreshString(expression, argument);
         const bool transfersArrayOwner =
             valueCreatesArrayOwner && llvm::cast<llvm::ConstantInt>(
                 ArgumentOwnershipFlag(expression, parameterType))->isOne();

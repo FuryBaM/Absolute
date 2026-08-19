@@ -1,0 +1,125 @@
+// A string has a lifetime now, and a loop that builds them plateaus.
+//
+// `format`, `concat`, `substring` and the rest allocate a buffer, and nothing
+// used to free it: a string was a `char*` no scope owned, so two million
+// `format` calls ended at 64.7 MB of resident memory and a program that ran
+// for a while and formatted anything grew without bound. That is section 1 of
+// docs/known-defects.md.
+//
+// A string is still a bare `const char*` -- it crosses the C boundary and
+// `printf` takes it. What changed is what sits behind it: a header holding a
+// count of how many names are holding the bytes. Shared rather than unique,
+// because a string is a value; assigning one copies the pointer, and two names
+// for the same bytes is the ordinary case rather than an error.
+//
+// One rule, in four places:
+//
+//   a store      one more name, so it says so
+//   an argument  arrives holding a count, which the parameter gives back
+//   a return     hands its count to the caller
+//   a scope      gives back what it was holding
+//
+// A string the expression made itself already holds one count and is not
+// counted again. A literal's count is a sentinel meaning never released, so
+// retaining and releasing one are both nothing.
+//
+// Run under AddressSanitizer with the leak check on, which is the whole point:
+// every loop here runs enough times that one leaked allocation per iteration
+// would be thousands of reported leaks. What it cannot see is a premature
+// release, so every value is also read back after the loops that build it.
+//
+// What is deliberately not here: a string held by a *field*. An aggregate is
+// copied shallowly and there is no copy that retains -- the `copyable` half of
+// the model is named and not implemented -- so releasing a field on the
+// strength of a shallow copy would kill what the copy still names. Until there
+// is a copy, there is no drop. Recorded in docs/known-defects.md.
+
+import "../std/string.abs";
+
+string label(int32 value) {
+    // Returned by name: the local hands its count to the caller rather than
+    // releasing it on the way out.
+    string built = format("item-{}", value);
+    return built;
+}
+
+string passthrough(string text) {
+    // A parameter holds a count for the length of the call and gives it back.
+    // Returning it hands one on, so the caller is not left with a name for
+    // storage that has already gone.
+    return text;
+}
+
+int32 main() {
+    // The reproducer from the defect report, at a size where a per-iteration
+    // leak is unmistakable.
+    int32 i = 0;
+    while (i < 20000) {
+        string text = format("value {}", i);
+        i = i + 1;
+    }
+
+    // The same, thrown away rather than kept: printing borrows the bytes, so
+    // the statement that made them releases them.
+    int32 printed = 0;
+    while (printed < 200) {
+        println(format("printed {}", printed));
+        printed = printed + 1;
+    }
+
+    // Built, handed out of a function, and dropped.
+    int32 made = 0;
+    while (made < 20000) {
+        string name = label(made);
+        made = made + 1;
+    }
+
+    // Passed in and handed straight back.
+    int32 forwarded = 0;
+    while (forwarded < 20000) {
+        string echoed = passthrough(format("echo-{}", forwarded));
+        forwarded = forwarded + 1;
+    }
+
+    // Reassigned: the variable releases what it held before taking the next.
+    string rolling = "start";
+    int32 rounds = 0;
+    while (rounds < 20000) {
+        rolling = format("round-{}", rounds);
+        rounds = rounds + 1;
+    }
+    assert(rolling == "round-19999", "the last value assigned is the one held");
+
+    // The standard library's own producers, which allocate the same way.
+    int32 text = 0;
+    while (text < 5000) {
+        string upper = std.text.toUpper("absolute");
+        string part = std.text.substring("absolute compiler", 0, 8);
+        string joined = std.text.concat(upper, part);
+        assert(std.text.codePointCount(joined) == 16, "concat keeps both halves");
+        text = text + 1;
+    }
+
+    // Split allocates an array of them; the array releases its elements.
+    int32 splits = 0;
+    while (splits < 5000) {
+        string[] parts = std.text.split("a,b,c", ",");
+        assert(parts.length == 3, "split found three parts");
+        splits = splits + 1;
+    }
+
+    // Two names for one string, and neither is confused about the other.
+    string original = format("shared-{}", 7);
+    string alias = original;
+    assert(alias == "shared-7", "a copy names the same bytes");
+    assert(original == alias, "and the original still does too");
+
+    // A literal is held by nobody and by everybody: retaining and releasing it
+    // are both nothing at all, so this is not a double free.
+    string literal = "constant";
+    string sameLiteral = literal;
+    assert(sameLiteral == "constant", "a literal survives being copied around");
+
+    println("string-lifetime=ok");
+    return 0;
+}

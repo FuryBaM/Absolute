@@ -266,7 +266,11 @@ namespace Absolute {
         // returned array do. After the array case, not before it: an array
         // type is not a pointer type and does have something to release, so
         // this test would otherwise answer for it and answer wrongly.
-        else if (!IsPointerTypeName(impl->currentReturnTypeName) &&
+        // Not a string: that one hands its count on by retaining above, and
+        // taking the local's cleanup away as well would leave two counts and
+        // one release.
+        else if (impl->currentReturnTypeName != "string" &&
+            !IsPointerTypeName(impl->currentReturnTypeName) &&
             impl->TypeNeedsCleanup(impl->currentReturnTypeName)) {
             if (Impl::Variable* returned = impl->FindVariable(
                 impl->SemanticSymbol(stmt->expr.get()));
