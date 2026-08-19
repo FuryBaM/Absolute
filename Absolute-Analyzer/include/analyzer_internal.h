@@ -51,36 +51,43 @@ namespace Absolute {
                 type.starts_with("int") || type.starts_with("uint") || type.ends_with("*");
         }
 
+        // All of these read the one ownership answer rather than testing
+        // prefixes again; the second set of prefix tests is where `shared` was
+        // understood in one place and dropped in another.
         inline bool IsRawPointerType(const std::string& type) {
-            return type.starts_with("raw ") && type.ends_with("*");
+            return CanonicalOwnership(type) == OwnershipKind::Raw;
         }
 
         inline bool IsWeakPointerType(const std::string& type) {
-            return type.starts_with("weak ") && type.ends_with("*");
+            return CanonicalOwnership(type) == OwnershipKind::Weak;
         }
 
         inline bool IsSharedPointerType(const std::string& type) {
-            return type.starts_with("shared ") && type.ends_with("*");
+            return CanonicalOwnership(type) == OwnershipKind::Shared;
+        }
+
+        inline bool IsSubscriberPointerType(const std::string& type) {
+            return CanonicalOwnership(type) == OwnershipKind::Sub;
         }
 
         inline bool IsManagedPointerType(const std::string& type) {
-            return !IsRawPointerType(type) && type.ends_with("*");
+            const OwnershipKind kind = CanonicalOwnership(type);
+            return kind != OwnershipKind::None && kind != OwnershipKind::Raw;
         }
 
+        // "Strong" here means it holds the object up: an owner, alone or with
+        // others. A subscriber and a weak observer do not.
         inline bool IsStrongManagedPointerType(const std::string& type) {
-            return IsManagedPointerType(type) && !IsWeakPointerType(type);
+            const OwnershipKind kind = CanonicalOwnership(type);
+            return kind == OwnershipKind::Unique || kind == OwnershipKind::Shared;
         }
 
         inline bool IsPointerType(const std::string& type) {
-            return IsRawPointerType(type) || IsManagedPointerType(type) || IsSharedPointerType(type);
+            return CanonicalOwnership(type) != OwnershipKind::None;
         }
 
         inline std::string PointerPointee(std::string type) {
-            if (IsRawPointerType(type)) type.erase(0, 4);
-            else if (IsWeakPointerType(type)) type.erase(0, 5);
-            else if (IsSharedPointerType(type)) type.erase(0, 7);
-            if (!type.empty() && type.back() == '*') type.pop_back();
-            return type;
+            return CanonicalPointeeName(type);
         }
 
         inline bool IsTaskType(const std::string& type) {
@@ -177,10 +184,13 @@ namespace Absolute {
                 return found->second;
             if (type.ends_with("[]"))
                 return SubstituteGenericType(type.substr(0, type.size() - 2), substitutions) + "[]";
-            if (IsPointerType(type)) {
-                const std::string prefix = IsRawPointerType(type) ? "raw " :
-                    (IsWeakPointerType(type) ? "weak " : "");
-                return prefix + SubstituteGenericType(PointerPointee(type), substitutions) + "*";
+            // The qualifier survives substitution; see the same fix in
+            // SubstituteCodegenType.
+            if (const OwnershipKind kind = CanonicalOwnership(type);
+                kind != OwnershipKind::None) {
+                return CanonicalPointerName(
+                    SubstituteGenericType(CanonicalPointeeName(type), substitutions),
+                    kind);
             }
             std::string base;
             std::vector<std::string> arguments;
@@ -273,11 +283,15 @@ namespace Absolute {
             if (pattern.ends_with("[]") && actual.ends_with("[]"))
                 return UnifyGenericType(pattern.substr(0, pattern.size() - 2),
                     actual.substr(0, actual.size() - 2), parameters, substitutions);
-            if (IsPointerType(pattern) && IsPointerType(actual) &&
-                IsRawPointerType(pattern) == IsRawPointerType(actual) &&
-                IsWeakPointerType(pattern) == IsWeakPointerType(actual))
-                return UnifyGenericType(PointerPointee(pattern), PointerPointee(actual),
-                    parameters, substitutions);
+            // Two handles unify only when they are the same kind of handle.
+            // Comparing raw-ness and weak-ness separately let a `shared T*`
+            // unify with a plain `T*`, which is the qualifier going missing by
+            // another route.
+            if (const OwnershipKind patternKind = CanonicalOwnership(pattern);
+                patternKind != OwnershipKind::None &&
+                patternKind == CanonicalOwnership(actual))
+                return UnifyGenericType(CanonicalPointeeName(pattern),
+                    CanonicalPointeeName(actual), parameters, substitutions);
             std::string patternBase;
             std::string actualBase;
             std::vector<std::string> patternArguments;

@@ -1,8 +1,89 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 
 namespace Absolute {
+    // The lifetime relation a handle value has to what it points at.
+    //
+    // It belongs to the type rather than to the variable. Two handles reaching
+    // the same object with different relations are two different things, and a
+    // container that stores one must not quietly store the other: that is the
+    // hole an array of `T*` fell into -- it could not tell whether it held the
+    // owner or a copy of it, so it could neither release the elements nor leave
+    // them alone without being wrong in the other case.
+    //
+    // This is the one definition. The analyzer and the backend each had their
+    // own set of prefix tests, which is how `shared` came to be understood by
+    // one and dropped by the other.
+    enum class OwnershipKind {
+        None,    // not a handle at all
+        Unique,  // T*         the one owner; releasing it destroys the object
+        Shared,  // shared T*  one of several owners; the last one releases
+        Sub,     // sub T*     borrowed, bound to an owner's lifetime
+        Weak,    // weak T*    observer that outlives the object and says so
+        Raw      // raw T*     unmanaged; the explicit unsafe escape
+    };
+
+    inline std::string_view CanonicalOwnershipPrefix(OwnershipKind kind) {
+        switch (kind) {
+        case OwnershipKind::Raw: return "raw ";
+        case OwnershipKind::Weak: return "weak ";
+        case OwnershipKind::Shared: return "shared ";
+        case OwnershipKind::Sub: return "sub ";
+        case OwnershipKind::Unique:
+        case OwnershipKind::None: break;
+        }
+        return "";
+    }
+
+    inline OwnershipKind CanonicalOwnership(const std::string& type) {
+        if (type.empty() || !type.ends_with("*")) return OwnershipKind::None;
+        if (type.starts_with("raw ")) return OwnershipKind::Raw;
+        if (type.starts_with("weak ")) return OwnershipKind::Weak;
+        if (type.starts_with("shared ")) return OwnershipKind::Shared;
+        if (type.starts_with("sub ")) return OwnershipKind::Sub;
+        return OwnershipKind::Unique;
+    }
+
+    inline std::string CanonicalPointeeName(const std::string& type) {
+        const OwnershipKind kind = CanonicalOwnership(type);
+        if (kind == OwnershipKind::None) return type;
+        std::string pointee = type.substr(CanonicalOwnershipPrefix(kind).size());
+        pointee.pop_back();
+        return pointee;
+    }
+
+    inline std::string CanonicalPointerName(
+        const std::string& pointee, OwnershipKind kind) {
+        return std::string(CanonicalOwnershipPrefix(kind)) + pointee + "*";
+    }
+
+    // What copying, moving and destroying a handle of each kind mean. Pure: it
+    // depends on the kind and nothing else, which is what lets an aggregate or
+    // an array work out its own answer by asking its parts.
+    struct HandleSemantics {
+        bool copyable = true;
+        bool movable = true;
+        bool needsDrop = false;
+    };
+
+    inline HandleSemantics CanonicalHandleSemantics(OwnershipKind kind) {
+        switch (kind) {
+        // Copying an owner would make two of them; that is what `move` is for.
+        case OwnershipKind::Unique: return {false, true, true};
+        // Copying is the point; the count is what decides when it is released.
+        case OwnershipKind::Shared: return {true, true, true};
+        // Neither of these releases anything: a subscriber's owner does, and a
+        // weak observer holds a generation rather than the object.
+        case OwnershipKind::Sub:
+        case OwnershipKind::Weak:
+        case OwnershipKind::Raw:
+        case OwnershipKind::None: break;
+        }
+        return {true, true, false};
+    }
+
     inline bool IsCanonicalValueReferenceType(const std::string& type) {
         return !type.empty() && type.ends_with("&");
     }

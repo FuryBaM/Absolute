@@ -1054,6 +1054,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-zero-initialization.abs"
     )
     add_test(
+        NAME absolute.ownership-qualifier-generics-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-qualifier-generics.abs"
+    )
+    add_test(
         NAME absolute.array-element-ownership-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-element-ownership-errors.abs"
     )
@@ -4922,6 +4926,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-text-number-parsing PROPERTIES
             FIXTURES_REQUIRED absolute-text-number-parsing-executable
             PASS_REGULAR_EXPRESSION "text-number-parsing=ok"
+        )
+        add_test(
+            NAME absolute.build-ownership-qualifier-generics
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-qualifier-generics.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/ownership-qualifier-generics-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-ownership-qualifier-generics PROPERTIES
+            FIXTURES_SETUP absolute-ownership-qualifier-generics-executable
+        )
+        add_test(NAME absolute.run-ownership-qualifier-generics
+            COMMAND "${CMAKE_BINARY_DIR}/ownership-qualifier-generics-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-ownership-qualifier-generics PROPERTIES
+            FIXTURES_REQUIRED absolute-ownership-qualifier-generics-executable
+            PASS_REGULAR_EXPRESSION "ownership-qualifier-generics=ok"
         )
         add_test(
             NAME absolute.build-array-zero-initialization

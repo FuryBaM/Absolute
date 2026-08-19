@@ -27,6 +27,14 @@ array that ownership breaks `Vector<T*>` in three places, because a copied
 managed pointer is a subscriber rather than a second owner and the type cannot
 say which an array holds.
 
+**Both are the same defect seen from two sides**, and they are being fixed as
+one: ownership becomes part of the type rather than something the analyzer
+reconstructs per symbol, containers drop their elements by asking what
+destroying the element means rather than whether it is a pointer, and a string
+becomes an ordinary value whose storage is shared-owned. The model, the order of
+work and what proves each step are in `docs/ownership-kinds.md`; the first two
+steps are done and pinned by `tests/ownership-qualifier-generics.abs`.
+
 ### Open: a string has no lifetime, so every string a program builds is lost
 
 `format`, `concat`, `substring`, `toUpper` and the rest allocate a buffer and
