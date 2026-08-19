@@ -36,8 +36,21 @@ namespace Absolute {
     }
 
     llvm::FunctionCallee CodeGenerator::Impl::ErrorPending() {
-        return module->getOrInsertFunction("absolute_error_pending",
+        llvm::FunctionCallee callee = module->getOrInsertFunction(
+            "absolute_error_pending",
             llvm::FunctionType::get(builder.getInt1Ty(), {}, false));
+        // It reads one thread-local flag and returns. Saying so is what lets a
+        // field stay in a register across it: this call sits after every call
+        // to a function that can throw, and undescribed it reads and writes all
+        // memory, so every such call was a barrier that forced everything
+        // reachable back to memory and reloaded it afterwards. No other thread
+        // can change what it reads, which is what makes the claim safe.
+        if (auto* function = llvm::dyn_cast<llvm::Function>(callee.getCallee())) {
+            function->setOnlyReadsMemory();
+            function->setDoesNotThrow();
+            function->setWillReturn();
+        }
+        return callee;
     }
 
     llvm::FunctionCallee CodeGenerator::Impl::ErrorType() {

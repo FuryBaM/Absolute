@@ -15,11 +15,6 @@
             SymbolId symbol = InvalidSymbolId;
             llvm::Value* arrayOwner = nullptr;
             bool ownsArrayStorage = false;
-            // Separate from ownsArrayStorage because a literal array is stack
-            // storage -- there is no buffer to free -- while the owners its
-            // elements hold were still created here and are still this
-            // variable's to release.
-            bool ownsArrayElements = false;
             SymbolId arrayOwnerSymbol = InvalidSymbolId;
             bool ownsAggregateResources = false;
             llvm::AllocaInst* arrayOwnerStorage = nullptr;

@@ -1,12 +1,14 @@
 // `copy` duplicates a buffer, not what the bytes in it refer to.
 //
-// Since an array owns its elements, a shallow copy of an array of owners makes
-// two arrays holding the same handles, and whichever is released first
-// destroys the objects the other still names. That was reachable: a function
-// returning `copy(localArrayOfOwners)` handed back handles its own scope had
-// just expired, and the caller's first read hit "null or expired managed
-// pointer" at runtime. Refused now, rather than deep-copied -- what a deep
-// copy of an owner should mean is not a decision this builtin gets to make.
+// A shallow copy of an array whose elements own something produces two arrays
+// holding the same handles. There is no reading of that which is right: under
+// any rule about who releases them, one of the two arrays is wrong. Refused
+// rather than deep-copied -- what a deep copy of an owner should mean is not a
+// decision this builtin gets to make.
+//
+// The wider question of whether an array owns its elements at all is open and
+// recorded in docs/known-defects.md; this refusal is the part that holds
+// either way.
 
 class Cell {
     public int32 value;

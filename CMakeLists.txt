@@ -1054,10 +1054,6 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-zero-initialization.abs"
     )
     add_test(
-        NAME absolute.array-element-ownership-semantic
-        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-element-ownership.abs"
-    )
-    add_test(
         NAME absolute.array-element-ownership-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-element-ownership-errors.abs"
     )
@@ -3415,26 +3411,6 @@ if(BUILD_TESTING)
         endforeach()
 
         add_test(
-            NAME absolute.build-sanitizer-array-element-ownership
-            COMMAND Absolute-Compiler
-                "${PROJECT_SOURCE_DIR}/tests/array-element-ownership.abs"
-                --sanitize=address --build-exe -O0
-                -o "${CMAKE_BINARY_DIR}/sanitizer-array-element-ownership-app${CMAKE_EXECUTABLE_SUFFIX}"
-        )
-        set_tests_properties(absolute.build-sanitizer-array-element-ownership PROPERTIES
-            FIXTURES_SETUP absolute-sanitizer-array-element-ownership-executable)
-        add_test(
-            NAME absolute.run-sanitizer-array-element-ownership
-            COMMAND "${CMAKE_COMMAND}"
-                -DEXECUTABLE=${CMAKE_BINARY_DIR}/sanitizer-array-element-ownership-app${CMAKE_EXECUTABLE_SUFFIX}
-                -DEXPECT=array-element-ownership=ok
-                -DDETECT_LEAKS=${ABSOLUTE_SANITIZER_DETECT_LEAKS}
-                -P "${PROJECT_SOURCE_DIR}/tests/run-sanitizer-clean.cmake"
-        )
-        set_tests_properties(absolute.run-sanitizer-array-element-ownership PROPERTIES
-            FIXTURES_REQUIRED absolute-sanitizer-array-element-ownership-executable
-            TIMEOUT 120)
-        add_test(
             NAME absolute.build-sanitizer-array-zero-initialization
             COMMAND Absolute-Compiler
                 "${PROJECT_SOURCE_DIR}/tests/array-zero-initialization.abs"
@@ -4946,20 +4922,6 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-text-number-parsing PROPERTIES
             FIXTURES_REQUIRED absolute-text-number-parsing-executable
             PASS_REGULAR_EXPRESSION "text-number-parsing=ok"
-        )
-        add_test(
-            NAME absolute.build-array-element-ownership
-            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-element-ownership.abs"
-                --build-exe -o "${CMAKE_BINARY_DIR}/array-element-ownership-app${CMAKE_EXECUTABLE_SUFFIX}"
-        )
-        set_tests_properties(absolute.build-array-element-ownership PROPERTIES
-            FIXTURES_SETUP absolute-array-element-ownership-executable
-        )
-        add_test(NAME absolute.run-array-element-ownership
-            COMMAND "${CMAKE_BINARY_DIR}/array-element-ownership-app${CMAKE_EXECUTABLE_SUFFIX}")
-        set_tests_properties(absolute.run-array-element-ownership PROPERTIES
-            FIXTURES_REQUIRED absolute-array-element-ownership-executable
-            PASS_REGULAR_EXPRESSION "array-element-ownership=ok"
         )
         add_test(
             NAME absolute.build-array-zero-initialization

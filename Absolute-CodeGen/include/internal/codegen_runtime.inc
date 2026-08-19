@@ -128,20 +128,6 @@
 
         llvm::Value* FunctionClosure(const Symbol& symbol);
 
-        // Releases what each element of an array owns, before the storage
-        // itself goes. An array owns its elements the way an object owns its
-        // fields: nothing else can release them -- `delete a[i]` is refused
-        // because the element is a subscriber of the array -- so without this
-        // every owner put into an array was lost and the runtime aborted at
-        // exit reporting the leak.
-        //
-        // Only the owner of an array does this. A slice and a borrowed view
-        // share the buffer, and releasing the same elements twice would be a
-        // double free.
-        void EmitArrayElementsCleanup(llvm::Value* data,
-            const std::vector<llvm::Value*>& dimensions,
-            const std::string& elementTypeName);
-
         llvm::Value* BuildArrayDescriptor(const ArrayView& view);
 
         ArrayView ArrayViewFromValue(llvm::Value* descriptor, const std::string& typeName);

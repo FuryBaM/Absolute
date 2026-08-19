@@ -16,9 +16,16 @@ build/Release/absolutec file.abs --build-exe -o app && ./app
 
 ## 1. Open defects
 
-One, below, and it wants a design decision rather than a patch. Everything
+Two, below, and both want a design decision rather than a patch. Everything
 else this section held has been closed, and each entry records what the fix
 was, so a regression is recognizable rather than rediscovered.
+
+The second is recorded in full in section 15, because the obvious fix for it
+was written, merged and withdrawn in one session and what that cost is the
+useful part: **an array never releases what its elements own**, and giving the
+array that ownership breaks `Vector<T*>` in three places, because a copied
+managed pointer is a subscriber rather than a second owner and the type cannot
+say which an array holds.
 
 ### Open: a string has no lifetime, so every string a program builds is lost
 
@@ -646,73 +653,81 @@ comparison the corpus was added for had never actually run outside a hand
 invocation. With it on: 151 programs, `-O0` against `-O3` against WebAssembly,
 one nondeterministic program excluded by name, zero disagreements.
 
-## 15. Beyond the list: an array that never released what it held
+## 15. Beyond the list: an array that never releases what it holds
 
 Found by giving the generated corpus a shape with a generic type inside a
-generic type, whose natural spelling is an array of owners.
+generic type, whose natural spelling is an array of owners. **Still open**, and
+the record below is mostly about why the obvious fix is wrong -- it was written,
+merged, and withdrawn within the same session.
 
-An owner stored in an array was never released, and nothing could make up for
-it. The scope freed the array's buffer and no one walked the elements;
-`delete a[i]` was refused because the element is a subscriber of the array; the
-same thing written as a *field* was refused outright with
-`E_ARRAY_FIELD_REQUIRES_OWNER`. So as a local it compiled, ran, leaked every
-element, and the runtime aborted at exit reporting the leak. The construct
-could not be written correctly at all:
+An owner stored in an array is never released, and nothing can make up for it.
+The scope frees the array's buffer and no one walks the elements; `delete a[i]`
+is refused because the element is a subscriber of the array; the same thing
+written as a *field* is refused outright with `E_ARRAY_FIELD_REQUIRES_OWNER`.
+So as a local it compiles, runs, leaks every element, and the runtime aborts at
+exit reporting the leak:
 
 ```absolute
 Cell*[] owners = { new Cell(1), new Cell(2) };   // leaks both
 delete owners[0];                                // E_DELETE_SUBSCRIBER
-
-Boxed[] boxes = new Boxed[2];                    // struct with a Cell* field
-boxes[0].held = new Cell(7);                     // leaks
-delete boxes[0].held;                            // E_DELETE_SUBSCRIBER
 ```
 
-The mechanism was one branch of `EmitValueCleanup`, which released an array by
-calling `free` on its buffer and returning. A stack literal never reached even
-that: its owner is null, so the scope had nothing to do and the elements it had
-just constructed went with the frame.
+`std.collections.Vector<Cell*>` has the same shape and the same ending: it
+computes the right answers and then aborts at exit with one leaked handle per
+element.
 
-**An array now owns its elements**, the way an object owns its fields:
-releasing one releases each element first, and `delete a[i]` stays refused
-because the array is the owner. Two things make that safe. Only the owner of an
-array does it -- a slice and a borrowed view share the buffer, and releasing
-the same elements twice would be a double free -- and element ownership is
-tracked separately from storage ownership, because a literal array has no
-buffer to free while its elements are still the scope's to release.
+### Why "an array owns its elements" is not the fix
 
-That exposed a second question the old behaviour had hidden. `copy` duplicates
-the buffer, not what the bytes in it refer to, so a shallow copy of an array of
-owners produces two arrays holding the same handles; whichever is released
-first destroys the objects the other still names. It was reachable -- a
-function returning `copy(localArrayOfOwners)` handed back handles its own scope
-had just expired, and the caller's first read hit "null or expired managed
-pointer". `copy` of an array whose elements own something is refused now
-(`E_COPY_OWNING_ELEMENTS`). Deep-copying was not chosen: what a deep copy of an
-owner should mean is not a decision this builtin gets to make. Arrays of
-ordinary values copy exactly as before.
+It was implemented -- releasing an array releases each element first, the way
+releasing an object releases its fields, with element ownership tracked
+separately from storage ownership so a stack literal still releases what it
+built. Every probe in this document passed. `Vector<Cell*>` broke in three
+places, none of which the test suite covers:
 
-Three more shapes afterwards -- strings, conversions between integer widths,
-slices of slices -- found nothing across 224 generated programs. Worth stating
-as a result rather than leaving unsaid: those three areas are clean under this
-oracle. The string shape is the only one that declares its leaks expected, so
-the leak check is turned off for it and the sanitizer's other answers still
-count; without that, the bytes a string leaks by design would drown everything
-else the shape is asked.
+- **Growth.** `push` allocates a larger array, copies the handles, and replaces
+  the field. Releasing the old array then destroyed the very objects the new
+  one now holds: pushing twenty elements left four alive, and the program went
+  on using the other sixteen.
+- **`pop`.** It hands the element to the caller and leaves the handle in the
+  array, so releasing the vector destroyed what the caller was holding.
+- **`toArray`.** The snapshot and the vector end up holding the same handles,
+  so whichever is released first destroys the other's elements.
 
-`tests/array-element-ownership.abs` counts live objects through a `destroy()`
-hook across 64 rounds, so a release that ran twice or not at all shows as a
-count that does not return to zero; it is built at `-O0` under the sanitizer
-for the same reason the storage-release case is.
+Each could be fixed with an explicit transfer -- an intrinsic that moves
+elements out and empties the source. What cannot be fixed that way is the
+reason they all happen: **in this language a copied managed pointer is a
+subscriber, not a second owner**, and an array of managed pointers has no way
+to say which of the two it holds. `toArray` is the clearest case: it must
+return subscribers, and the type it returns is the same `T[]` that would own.
+Without a type-level distinction between an array of owners and an array of
+subscribers, "an array owns its elements" is a rule the type system cannot
+carry.
 
-**And the spelling that made it worse.** `new T*[n]` did not parse for any
-pointer element type: the constructor parser built its type by hand and never
-consumed a `*`, so the star was read as multiplication and the `[` after it as
-the start of an expression. An array of owners could only be written as a
-literal with a fixed element count -- exactly the case that leaked -- while the
-type itself was usable everywhere else. The star is consumed now, and only when
-an array suffix actually follows, so nothing that could be a multiplication
-changes meaning: `new Point() * 2` still multiplies.
+So the change was withdrawn. What it replaced -- a leak the runtime reports
+loudly at exit -- is worse than a leak and better than what the fix produced: a
+silent premature destroy in the standard collection, correct-looking output and
+all. A loud leak is the safer of the two to live with while the design is
+decided.
+
+### What was kept
+
+- **`copy` of an array whose elements own something is refused**
+  (`E_COPY_OWNING_ELEMENTS`). Two arrays holding the same handles is wrong under
+  any rule about who releases them, so this holds either way.
+- **`new T*[n]` parses.** The constructor parser built its type by hand and
+  never consumed a `*`, so the star was read as multiplication and the bracket
+  after it as the start of an expression. An array of pointers could only be
+  written as a literal with a fixed element count. The star is consumed only
+  when an array suffix follows, so `new Point() * 2` still multiplies.
+
+### What deciding it would take
+
+- **A type-level distinction** between an array that owns its elements and an
+  array of subscribers, so `toArray` can return the second and `push` can move
+  into the first. This is the real fix and it is a language change.
+- **Or: refuse owning element types outright**, the way the field case is
+  already refused, and make containers of owners impossible until there is a
+  type for them. Small, safe, and it makes a normal pattern unwriteable.
 
 ## 16. Beyond the list: what is left for undefined behaviour
 

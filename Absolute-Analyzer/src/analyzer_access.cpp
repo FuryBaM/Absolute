@@ -435,6 +435,46 @@ namespace Absolute {
                 return;
             }
 
+            // A bulk element copy. It exists because the alternative -- a
+            // loop of unsafeArraySet/unsafeArrayGet -- is what a growing
+            // collection does on every reallocation, and a scalar loop is not
+            // what copying a block of memory should cost.
+            if (callName == "unsafeArrayCopy") {
+                if (arguments.size() != 3) {
+                    Report("unsafeArrayCopy expects a destination, a source and "
+                        "an element count", "E_UNSAFE_ARRAY_COPY_ARGUMENT_COUNT");
+                    Save(expr, {table.Lookup(callName), "void", false});
+                    return;
+                }
+                for (size_t index = 0; index < 2; ++index) {
+                    if (ArrayRank(arguments[index].type) != 1 &&
+                        arguments[index].type != "error")
+                        Report("unsafeArrayCopy requires one-dimensional arrays",
+                            "E_UNSAFE_ARRAY_COPY_TYPE", arguments[index].symbol);
+                }
+                const std::string destination = ArrayRank(arguments[0].type) == 1
+                    ? ArrayElementType(arguments[0].type) : std::string("error");
+                const std::string source = ArrayRank(arguments[1].type) == 1
+                    ? ArrayElementType(arguments[1].type) : std::string("error");
+                if (destination != "error" && source != "error" &&
+                    destination != source)
+                    Report("unsafeArrayCopy requires the same element type on "
+                        "both sides, got '" + destination + "' and '" + source +
+                        "'", "E_UNSAFE_ARRAY_COPY_ELEMENT", arguments[1].symbol);
+                // Elements that own something are refused: copying the bytes
+                // would duplicate that ownership, the same reason `copy` of
+                // such an array is refused.
+                if (destination != "error" && TypeOwnsResources(destination))
+                    Report("unsafeArrayCopy cannot copy elements that own "
+                        "something; that would duplicate the ownership",
+                        "E_UNSAFE_ARRAY_COPY_OWNING", arguments[0].symbol);
+                if (!IsInteger(arguments[2].type) && arguments[2].type != "error")
+                    Report("unsafeArrayCopy count must be an integer",
+                        "E_UNSAFE_ARRAY_COPY_COUNT", arguments[2].symbol);
+                Save(expr, {table.Lookup(callName), "void", false});
+                return;
+            }
+
             if (callName == "unsafeArrayData") {
                 if (arguments.size() != 1) {
                     Report("unsafeArrayData expects exactly one argument",

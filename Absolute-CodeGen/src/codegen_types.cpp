@@ -1328,23 +1328,8 @@ namespace Absolute {
             return;
         }
         if (ArrayRankName(typeName) > 0) {
-            const size_t rank = ArrayRankName(typeName);
             llvm::Value* descriptor = builder.CreateLoad(
                 ArrayDescriptorType(typeName), address, "field.cleanup.array");
-            // Elements before storage: an element that owns something is the
-            // only holder of it, and freeing the buffer would lose the handle.
-            const std::string elementTypeName = ArrayElementTypeName(typeName, rank);
-            if (TypeNeedsCleanup(elementTypeName)) {
-                std::vector<llvm::Value*> dimensions;
-                dimensions.reserve(rank);
-                for (unsigned dimension = 0; dimension < rank; ++dimension)
-                    dimensions.push_back(builder.CreateExtractValue(descriptor,
-                        {2 + dimension}, "field.cleanup.array.dimension"));
-                EmitArrayElementsCleanup(
-                    builder.CreateExtractValue(descriptor, {0},
-                        "field.cleanup.array.data"),
-                    dimensions, elementTypeName);
-            }
             llvm::Value* owner = builder.CreateExtractValue(
                 descriptor, {1}, "field.cleanup.array.owner");
             builder.CreateCall(Free(), {owner});

@@ -151,6 +151,40 @@ namespace Absolute {
             return;
         }
 
+        // Lowered to a memcpy rather than a loop. The destination is freshly
+        // allocated storage the caller has not published yet and the source is
+        // a different allocation, so the two cannot overlap -- which is what
+        // makes the non-overlapping form correct here.
+        if (name == "unsafeArrayCopy") {
+            if (expression.arguments.size() != 3)
+                Fail("unsafeArrayCopy expects a destination, a source and a count");
+            ArrayView destination = ViewOfArray(expression.arguments[0].get());
+            ArrayView source = ViewOfArray(expression.arguments[1].get());
+            if (destination.dimensions.size() != 1 || source.dimensions.size() != 1)
+                Fail("unsafeArrayCopy requires one-dimensional arrays");
+            llvm::Value* count = Evaluate(expression.arguments[2].get());
+            if (!count->getType()->isIntegerTy())
+                Fail("unsafeArrayCopy count must be an integer");
+            const std::string countTypeName = SemanticType(expression.arguments[2].get());
+            const bool unsignedCount = countTypeName.starts_with("uint") ||
+                countTypeName == "char";
+            if (!count->getType()->isIntegerTy(64))
+                count = builder.CreateIntCast(count, builder.getInt64Ty(),
+                    !unsignedCount, "unsafe.array.copy.count");
+            const std::string elementTypeName = ArrayElementTypeName(
+                SemanticType(expression.arguments[0].get()));
+            llvm::Value* bytes = builder.CreateMul(count,
+                builder.getInt64(SizeOfTypeName(elementTypeName)),
+                "unsafe.array.copy.bytes");
+            builder.CreateMemCpy(destination.address, llvm::MaybeAlign(),
+                source.address, llvm::MaybeAlign(), bytes);
+            value = nullptr;
+            valueCreatesManagedOwner = false;
+            valueCreatesArrayOwner = false;
+            valueCreatesClosureOwner = false;
+            return;
+        }
+
         if (name == "unsafeArrayData") {
             if (expression.arguments.size() != 1)
                 Fail("unsafeArrayData expects exactly one argument");
