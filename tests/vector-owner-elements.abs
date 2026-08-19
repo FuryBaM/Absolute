@@ -1,58 +1,121 @@
-// A vector of owners, and what each of its operations has to mean.
+// One generic container, two element types, two behaviours -- and no line in
+// the container that asks which.
 //
-// Nothing in `Vector<T>` mentions ownership. Instantiated over `Cell*` every
-// slot holds the one handle to an object, and the three operations that move
-// elements around have to say so:
+// This is the readiness check for the whole ownership model: `Slots<T>` is
+// written once and never mentions ownership. Over `Cell*` every slot holds the
+// one handle to an object, and the operations that move elements around have
+// to say so; over `int32` the identical lines are a read, a shift, and a count
+// set to zero, with no released anything and no emitted drop.
 //
-//   pop        the element leaves, so the slot must stop holding it
-//   removeAt   the removed element is released, and the survivors shift by
-//              being taken rather than read
-//   clear      whatever the elements were holding is released
+// The three operations are what a container actually needs, and each is the
+// element type's answer rather than the container's:
+//
+//   unsafeArrayTake   read a slot and clear it -- a transfer, not a second handle
+//   unsafeArrayMove   carry a block across and leave the source owning nothing
+//   unsafeArrayDrop   release a run of elements and clear it
 //
 // Run under AddressSanitizer with the leak check on, because that is the half
 // that cannot be asserted from inside the program: `clear` releasing what it
-// dropped is the difference between this test passing and twenty objects being
-// reported at exit.
+// dropped is the difference between this passing and twenty objects reported
+// at exit.
 //
-// What is still missing is the drop itself -- a vector deleted without being
-// cleared still leaks its elements, because an array does not yet release what
-// its elements own. That is section 15 of docs/known-defects.md, and it is why
+// What is still missing is the drop itself -- deleting a container without
+// clearing it still leaks, because an array does not yet release what its
+// elements own. That is section 15 of docs/known-defects.md, and it is why
 // this program clears before it deletes.
-
-import "../std/collections/vector.abs";
 
 class Cell {
     public int32 value;
     public Cell(int32 initial) { value = initial; }
 }
 
+class Slots<T> {
+    private T[] items;
+    private int32 _count;
+    private int32 _capacity;
+
+    public Slots() {
+        _count = 0;
+        _capacity = 4;
+        items = new T[4];
+    }
+
+    public int32 count { get { return _count; } }
+
+    public void push(T element) {
+        if (_count == _capacity) {
+            int32 grown = _capacity * 2;
+            T[] larger = new T[grown];
+            // A move rather than a copy: the old storage is dropped on the next
+            // line, and for an element that owns something a copy would leave
+            // it holding what the new storage now owns.
+            unsafeArrayMove(larger, items, _count);
+            items = move(larger);
+            _capacity = grown;
+        }
+        unsafeArraySet(items, _count, move(element));
+        _count = _count + 1;
+    }
+
+    // An indexer rather than a method returning `T`: a read of a slot is a
+    // subscriber, and a managed pointer handed back from a call is a transfer.
+    // Reading through the container is not the container giving the element up.
+    public nothrow T this[int32 index] {
+        get {
+            assert((index as uint32) < (_count as uint32), "Index out of bounds");
+            return unsafeArrayGet(items, index);
+        }
+    }
+
+    // The element is leaving, so the slot has to stop holding it. A read would
+    // hand the caller a second handle to what the container still has in a slot
+    // past `_count` -- and a slot past `_count` is still inside the storage the
+    // container drops.
+    public T pop() {
+        assert(_count > 0, "empty");
+        _count = _count - 1;
+        return unsafeArrayTake(items, _count);
+    }
+
+    // The removed element is released first; the survivors shift by being
+    // taken, which leaves each vacated slot empty -- including the last one.
+    public void removeAt(int32 index) {
+        assert(index >= 0 && index < _count, "Index out of bounds");
+        unsafeArrayDrop(items, index, 1);
+        int32 i = index;
+        while (i < _count - 1) {
+            unsafeArraySet(items, i, unsafeArrayTake(items, i + 1));
+            i = i + 1;
+        }
+        _count = _count - 1;
+    }
+
+    // Whatever the elements were holding is released here. For an element that
+    // owns nothing this is not a loop, it is nothing.
+    public void clear() {
+        unsafeArrayDrop(items, 0, _count);
+        _count = 0;
+    }
+}
+
 int32 main() {
-    Vector<Cell*>* owners = new Vector<Cell*>();
+    Slots<Cell*>* owners = new Slots<Cell*>();
     int32 i = 0;
     while (i < 20) {
         owners.push(new Cell(i));
         i = i + 1;
     }
     assert(owners.count == 20, "twenty elements in");
+    assert(owners[0].value == 0, "growth carried them across");
+    assert(owners[19].value == 19, "all of them");
 
-    // A pop hands the caller an owner. The slot it came from is past `_count`
-    // but still inside the storage the vector holds, so a read that left the
-    // handle behind would be a second handle to what the caller now owns.
     Cell* last = owners.pop();
     assert(last.value == 19, "pop hands out the last element");
     delete last;
-    assert(owners.count == 19, "and the vector is one shorter");
+    assert(owners.count == 19, "and the container is one shorter");
 
-    // Growth carries the elements across and leaves the old storage owning
-    // nothing, so the block that is dropped on the next line releases nothing
-    // the vector still uses.
-    owners.reserve(256);
-    assert(owners[0].value == 0, "growth carries the elements across");
-    assert(owners[18].value == 18, "all of them");
-
-    // The removed element is released here; nothing else is.
     owners.removeAt(0);
-    assert(owners.count == 18, "removeAt shortens the vector");
+    assert(owners.count == 18, "removeAt shortens it");
     assert(owners[0].value == 1, "and shifts the survivors down");
     assert(owners[17].value == 18, "including the last one");
 
@@ -60,22 +123,19 @@ int32 main() {
     assert(owners.count == 17, "removing the last element is the empty shift");
     assert(owners[16].value == 17, "and leaves the rest alone");
 
-    // Everything still held is released here. If it were not, the leak check
-    // would report seventeen objects at exit.
+    // If this released nothing, the leak check would report seventeen objects
+    // at exit.
     owners.clear();
-    assert(owners.count == 0, "clear empties the vector");
+    assert(owners.count == 0, "clear empties it");
 
-    // A cleared vector is an ordinary empty one.
     owners.push(new Cell(99));
-    assert(owners.count == 1, "and can be pushed into again");
+    assert(owners.count == 1, "a cleared container is an ordinary empty one");
     assert(owners[0].value == 99, "with the new element where it belongs");
     owners.clear();
-
     delete owners;
 
-    // The same operations over elements that own nothing, which must be
-    // untouched by any of this.
-    Vector<int32>* numbers = new Vector<int32>();
+    // The identical code over elements that own nothing.
+    Slots<int32>* numbers = new Slots<int32>();
     int32 n = 0;
     while (n < 8) {
         numbers.push(n * 10);

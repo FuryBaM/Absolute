@@ -221,13 +221,20 @@ sort of owner in front of every reader of every type.
    whole set over `Cell*` under AddressSanitizer with the leak check on, which
    is the half that cannot be asserted from inside the program.
 
-   What is left is `toArray`, which duplicates every handle element by element,
-   and the same audit over `VectorIterator`, `VectorBuilder` and the other
-   collections -- all of which do the same thing -- and only then the drop
-   itself. The rule those all want is the one that already governs fields,
+   The rule the rest of them want is the one that already governs fields,
    extended to array slots: **storing into a slot requires a fresh owner or
-   null.** `unsafeArrayTake` satisfies it and a plain read does not, which is
-   exactly the distinction each of these places is currently missing.
+   null.** `unsafeArrayTake` satisfies it and a plain read does not. That rule
+   is in, inside generic bodies as well as outside them, and what it says about
+   the standard collections is that they are not written for elements that own
+   anything -- `Vector<Cell*>` reports fourteen diagnostics across three
+   classes. Recorded in `docs/known-defects.md` §16 and pinned by
+   `tests/std-collections-owner-elements-errors.abs`.
+
+   Fixing them needs something the language cannot spell: **`sub T` where `T`
+   is already a complete type.** A snapshot cannot own the elements it
+   snapshots and a builder filled from a live vector cannot own what that
+   vector still holds, so both want the subscriber form of their parameter.
+   That is the next piece of the model, and it is what step 7 rests on.
 
    Two things already in place are what make this affordable: array storage is
    zero-initialized (`tests/array-zero-initialization.abs`), so a null slot is

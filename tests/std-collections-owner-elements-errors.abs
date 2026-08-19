@@ -1,0 +1,35 @@
+// The standard collections are not written for elements that own something.
+//
+// Nothing in `Vector<T>` mentions ownership, which is the point -- but three
+// of the classes behind it move elements by reading a slot and storing what
+// they read, and a handle read out of a slot is a second handle to one object.
+// While the rules did not run inside a generic body that was invisible; now
+// that each instantiation is judged, `Vector<Cell*>` says so in full.
+//
+// This is recorded as a test rather than fixed because what `iterate()` and
+// `builder()` should mean for an element that owns something is a design
+// decision and not a patch: a snapshot cannot own the elements it snapshots,
+// and a builder filled from a live vector cannot own what that vector still
+// holds. Both want a way to say "the subscriber form of `T`" -- `sub T` where
+// `T` is already a complete type -- which the language cannot spell yet.
+//
+// `Vector<int32>` is unaffected, and the rest of the suite uses exactly that.
+// The corresponding container written the way the model requires is
+// tests/vector-owner-elements.abs.
+
+import "../std/collections/vector.abs";
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+}
+
+int32 main() {
+    Vector<int32>* counted = new Vector<int32>();
+    counted.push(1);
+    delete counted;
+
+    Vector<Cell*>* owning = new Vector<Cell*>();
+    delete owning;
+    return 0;
+}

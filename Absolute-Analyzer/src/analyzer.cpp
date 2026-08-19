@@ -97,6 +97,25 @@ namespace Absolute {
             }
             addedNew = instantiatedGenericTypes.size() > beforeCount;
         }
+        // Every instantiation the program reaches, against every fact its body
+        // left behind. This runs last because neither side can be trusted to
+        // come first: a generic may be instantiated above its own declaration,
+        // and the closure loop above discovers instantiations that no line of
+        // source mentions.
+        for (const std::string& genericType : instantiatedGenericTypes) {
+            std::string genericBase;
+            std::vector<std::string> genericArguments;
+            if (!ParseGenericTypeName(genericType, genericBase, genericArguments)) continue;
+            const auto definition = types.find(genericBase);
+            if (definition == types.end() ||
+                definition->second.genericParameters.size() != genericArguments.size())
+                continue;
+            std::unordered_map<std::string, std::string> substitutions;
+            for (size_t index = 0; index < genericArguments.size(); ++index)
+                substitutions.emplace(
+                    definition->second.genericParameters[index], genericArguments[index]);
+            CheckGenericBodyFacts(genericBase, substitutions);
+        }
         return !HasErrors();
     }
 
@@ -317,6 +336,13 @@ namespace Absolute {
                     base + "<" + actual + ">' the field '" + fact.detail +
                     "' is stored from a subscriber",
                     "E_RESOURCE_FIELD_REQUIRES_OWNER", InvalidSymbolId);
+                break;
+            case GenericBodyFact::Shape::ElementFromNonOwner:
+                ReportAtLocation(fact.file, fact.line, fact.column,
+                    "managed array elements require a fresh owner or null; at '" +
+                    base + "<" + actual + ">' a slot of '" + fact.detail +
+                    "' is filled by reading another slot rather than taking it",
+                    "E_RESOURCE_ELEMENT_REQUIRES_OWNER", InvalidSymbolId);
                 break;
             case GenericBodyFact::Shape::ReturnsField:
                 ReportAtLocation(fact.file, fact.line, fact.column,
@@ -2349,7 +2375,11 @@ namespace Absolute {
                 for (size_t index = 0; index < genericArguments.size(); ++index)
                     substitutions.emplace(
                         definition->second.genericParameters[index], genericArguments[index]);
-                CheckGenericBodyFacts(resolvedBase, substitutions);
+                // The facts are checked once the whole program has been
+                // analyzed, not here: a body declared after the instantiation
+                // that reaches it -- in a later file, or lower in this one --
+                // has not been seen yet, and checking now would silently find
+                // nothing to say about it.
                 for (const std::string& parent : definition->second.parents)
                     ResolveTypeReference(SubstituteGenericType(parent, substitutions));
                 for (const auto& [memberName, overloads] : definition->second.members) {

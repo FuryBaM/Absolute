@@ -820,7 +820,35 @@ owner outliving it).
 What this does not do is analyze the body per specialization. A rule that has
 no fact recorded for it still does not run inside a generic. The three that
 mattered here do; adding a fourth is adding one recording site, not another
-mechanism.
+mechanism -- which is what the array-slot rule below turned out to be.
+
+### The check was order-dependent, and that hid the size of it
+
+Checking each instantiation where the type was first resolved was wrong in a
+way that passed every test: a generic instantiated **above** its own
+declaration -- in a later file, or lower in the same one -- had no facts
+recorded yet, so the check found nothing to say and said nothing. Every
+`import` was in that position. The check runs once, after the whole program is
+analyzed, over every instantiation the program reaches, and is now independent
+of the order the source happens to be in.
+
+Closing it made the real size of the finding visible: **the standard
+collections are not written for elements that own something.** `Vector<Cell*>`
+reports fourteen diagnostics across three classes -- `Vector` itself, plus
+`VectorIterator` and `VectorBuilder`, which the closure over member signatures
+reaches whether or not the program calls `iterate()` or `builder()`. Each of
+them moves elements by reading a slot and storing what it read.
+
+Nothing in the suite instantiated a collection over an owning element, which is
+why none of this had ever been seen. It is recorded as a test --
+`tests/std-collections-owner-elements-errors.abs` -- rather than fixed, because
+what `iterate()` and `builder()` should mean for an element that owns something
+is a decision and not a patch: a snapshot cannot own the elements it snapshots,
+and a builder filled from a live vector cannot own what that vector still
+holds. Both want a way to say *the subscriber form of `T`* -- `sub T` where `T`
+is already a complete type -- which the language cannot spell yet. The
+container written the way the model requires, over the same element type, is
+`tests/vector-owner-elements.abs`.
 
 ## 17. Beyond the list: what is left for undefined behaviour
 

@@ -1062,6 +1062,13 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-qualifier-generics.abs"
     )
     add_test(
+        NAME absolute.std-collections-owner-elements-errors
+        COMMAND "${CMAKE_COMMAND}"
+            -DCOMPILER=$<TARGET_FILE:Absolute-Compiler>
+            -DSOURCE=${PROJECT_SOURCE_DIR}/tests/std-collections-owner-elements-errors.abs
+            -P "${PROJECT_SOURCE_DIR}/tests/check-std-collections-owner-elements.cmake"
+    )
+    add_test(
         NAME absolute.vector-owner-elements-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/vector-owner-elements.abs"
     )

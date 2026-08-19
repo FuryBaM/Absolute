@@ -91,6 +91,27 @@ namespace Absolute {
                     "E_RESOURCE_FIELD_REQUIRES_OWNER", target.symbol);
             }
         }
+        // A slot of an array is a place like a field, and the same rule
+        // governs it. A handle read out of somewhere else is a second handle
+        // to one object, and an array that owns its elements cannot hold one:
+        // whichever of the two is released first, the other is wrong.
+        // `unsafeArrayTake` is how an element leaves a slot, and it reports a
+        // fresh owner, so it satisfies this the way `copy` and `move` do.
+        const bool owningSlot =
+            dynamic_cast<ArrayAccessExpr*>(expr->target.get()) != nullptr;
+        if (owningSlot && !value.createsManagedOwner && value.type != "null" &&
+            !IsStrongManagedPointerType(target.type)) {
+            const Symbol* array = table.Get(target.symbol);
+            RecordGenericBodyFact(GenericBodyFact::Shape::ElementFromNonOwner,
+                target.type, array ? array->name : target.type, expr);
+        }
+        if (owningSlot && IsStrongManagedPointerType(target.type) &&
+            value.type != "null" && !value.createsManagedOwner) {
+            Report("managed array elements require a fresh owner or null; "
+                "store a copy/owner or take the element out of its slot "
+                "instead of reading it",
+                "E_RESOURCE_ELEMENT_REQUIRES_OWNER", target.symbol);
+        }
         if (IsWeakPointerType(target.type) && value.createsManagedOwner) {
             Report("weak pointer cannot take ownership of a fresh managed allocation; "
                 "bind the allocation to a managed owner first",
