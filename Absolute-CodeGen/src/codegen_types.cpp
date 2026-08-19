@@ -1269,8 +1269,13 @@ namespace Absolute {
         // An array always has storage to free. Whether its elements need
         // dropping too is a separate question, and the answer to it is what
         // section 15 of docs/known-defects.md is about.
+        // Not copyable: the descriptor names storage with one owner, and
+        // copying it would make two. `copy(...)` is how a second array is
+        // asked for, and it allocates. This is what tells an aggregate holding
+        // an array that it travels with a role, the way one holding only a
+        // string does not -- a string is shared, an array's storage is not.
         if (ArrayRankName(typeName) > 0)
-            return {true, true, true, DropKind::ArrayStorage};
+            return {false, true, true, DropKind::ArrayStorage};
 
         // A cycle in the field graph is not a reason to keep looking.
         if (!visiting.insert(typeName).second) return {};
