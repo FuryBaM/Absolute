@@ -1,0 +1,67 @@
+// Handing an element out of an array, and moving a block of them.
+//
+// `unsafeArrayGet` reads a slot without changing it, which for an element that
+// owns something leaves two handles to one object: the one still in the array
+// and the one the caller now holds. Whichever of them is released first, the
+// other is wrong. That is the shape of the bug that made the first attempt at
+// arrays-own-their-elements have to be withdrawn -- a `pop` that handed out an
+// object the container then destroyed.
+//
+// The three operations here are what a container actually needs, and each is
+// the element type's answer rather than the array's:
+//
+//   unsafeArrayTake   read a slot and clear it -- a transfer, not a second handle
+//   unsafeArrayMove   carry a block across and leave the source owning nothing
+//   unsafeArrayDrop   release a run of elements and clear it
+//
+// For an element that owns nothing all three are what they always were: a
+// read, a memcpy, and nothing at all. Nothing here asks whether the element is
+// a pointer; it asks the type what releasing one means, and for `int32` the
+// answer is that there is nothing to do.
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+}
+
+int32 main() {
+    Cell*[] slots = new Cell*[4];
+    unsafeArraySet(slots, 0, new Cell(1));
+    unsafeArraySet(slots, 1, new Cell(2));
+
+    // A take is a transfer: the caller owns it and the slot does not.
+    Cell* taken = unsafeArrayTake(slots, 0);
+    assert(taken.value == 1, "a take reads the slot it clears");
+    assert(!slots[0], "and the array is left owning nothing there");
+    delete taken;
+
+    // A move carries the block and leaves the source empty, which is what makes
+    // it safe to drop the storage a growing container has just grown out of.
+    Cell*[] moved = new Cell*[4];
+    unsafeArrayMove(moved, slots, 4);
+    assert(!slots[1], "a move leaves the source owning nothing");
+    assert(moved[1].value == 2, "and the destination holding it");
+
+    // A drop releases the run and clears it, so a second drop over the same
+    // range is a walk over slots that own nothing rather than a double free.
+    unsafeArrayDrop(moved, 0, 4);
+    assert(!moved[1], "a drop clears what it released");
+    unsafeArrayDrop(moved, 0, 4);
+
+    // The same three over elements that own nothing. A take is a read, a move
+    // is a memcpy with no clearing to do, and a drop is not emitted at all.
+    int32[] numbers = new int32[3];
+    unsafeArraySet(numbers, 0, 7);
+    unsafeArraySet(numbers, 1, 8);
+    assert(unsafeArrayTake(numbers, 0) == 7, "a take of a plain element reads it");
+    assert(numbers[1] == 8, "and the rest of the block is untouched");
+
+    int32[] target = new int32[3];
+    unsafeArrayMove(target, numbers, 3);
+    assert(target[1] == 8, "a move carries plain elements too");
+    unsafeArrayDrop(target, 0, 3);
+    assert(target[1] == 8, "and dropping them is nothing at all");
+
+    println("array-element-transfer=ok");
+    return 0;
+}

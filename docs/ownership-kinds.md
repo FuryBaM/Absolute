@@ -206,6 +206,18 @@ sort of owner in front of every reader of every type.
      owning the same objects -- already refused for `copy` by
      `E_COPY_OWNING_ELEMENTS`, and the same refusal has to reach here.
 
+   The three operations a container needs are in place, each of them the
+   element type's answer rather than the array's -- `unsafeArrayTake` reads a
+   slot and clears it, `unsafeArrayMove` carries a block and leaves the source
+   owning nothing, `unsafeArrayDrop` releases a run and clears it. For an
+   element that owns nothing they are a read, a memcpy, and no emitted code at
+   all. `tests/array-element-transfer.abs` pins both sides. `Vector`'s growth
+   already uses the move, and `unsafeArrayCopy` over elements that own
+   something is refused inside a generic body as well as outside it.
+
+   What is left is the rest of `Vector` -- pop, clear, removeAt, toArray -- and
+   the same audit over the other collections, and only then the drop itself.
+
    Two things already in place are what make this affordable: array storage is
    zero-initialized (`tests/array-zero-initialization.abs`), so a null slot is
    a slot that owns nothing and drop can skip it, and the rules now run inside

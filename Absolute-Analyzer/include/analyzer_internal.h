@@ -382,6 +382,8 @@ namespace Absolute {
                 name == "adoptRaw" || name == "retainRaw" || name == "borrowRaw" || name == "share" ||
                 name == "unsafeArrayGet" || name == "unsafeArraySet" ||
                 name == "unsafeArrayData" || name == "unsafeArrayCopy" ||
+                name == "unsafeArrayMove" || name == "unsafeArrayTake" ||
+                name == "unsafeArrayDrop" ||
                 name == "seal" || name == "unseal" ||
                 name == "load" || name == "isLoaded" || name == "loadError" ||
                 name == "taskGroupAdd" || name == "tuple";

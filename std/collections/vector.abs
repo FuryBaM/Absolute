@@ -156,10 +156,14 @@ namespace std.collections {
                 int32 newCap = _capacity * 2;
                 T[] newItems = new T[newCap];
                 // One block move rather than a loop of element stores. Growth
-                // copies every element the vector holds, so at a million
+                // carries every element the vector holds, so at a million
                 // elements the scalar loop was a measurable share of the cost
                 // of filling it.
-                unsafeArrayCopy(newItems, items, _count);
+                //
+                // A move rather than a copy: the old storage is dropped on the
+                // next line, and for an element that owns something a copy
+                // would leave it holding what the new storage now owns.
+                unsafeArrayMove(newItems, items, _count);
                 items = move(newItems);
                 _capacity = newCap;
             }
@@ -174,7 +178,7 @@ namespace std.collections {
                 return;
             }
             T[] newItems = new T[requestedCapacity];
-            unsafeArrayCopy(newItems, items, _count);
+            unsafeArrayMove(newItems, items, _count);
             items = move(newItems);
             _capacity = requestedCapacity;
         }

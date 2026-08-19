@@ -102,8 +102,10 @@ namespace Absolute {
             return;
         }
 
-        if (name == "unsafeArrayGet" || name == "unsafeArraySet") {
+        if (name == "unsafeArrayGet" || name == "unsafeArraySet" ||
+            name == "unsafeArrayTake") {
             const bool isSet = name == "unsafeArraySet";
+            const bool isTake = name == "unsafeArrayTake";
             const size_t expectedCount = isSet ? 3 : 2;
             if (expression.arguments.size() != expectedCount)
                 Fail(name + " received an invalid argument count");
@@ -125,6 +127,13 @@ namespace Absolute {
                 ArrayElementTypeName(SemanticType(expression.arguments[0].get()));
             if (!isSet) {
                 value = builder.CreateLoad(view.elementType, address, "unsafe.array.element");
+                // A take clears the slot it read. The array is left holding a
+                // zero, which is what "owns nothing" is spelled as everywhere
+                // else -- so the drop that walks it later skips this element
+                // instead of releasing what the caller now holds.
+                if (isTake && SemanticsOfTypeName(accessedElementType).needsDrop)
+                    builder.CreateStore(
+                        llvm::Constant::getNullValue(view.elementType), address);
                 // Described as an element like any other: the check in front of
                 // it is the caller's, not a reason for the access to alias more
                 // than it does. Without this the indexer of a collection
@@ -155,16 +164,17 @@ namespace Absolute {
         // allocated storage the caller has not published yet and the source is
         // a different allocation, so the two cannot overlap -- which is what
         // makes the non-overlapping form correct here.
-        if (name == "unsafeArrayCopy") {
+        if (name == "unsafeArrayCopy" || name == "unsafeArrayMove") {
+            const bool transfers = name == "unsafeArrayMove";
             if (expression.arguments.size() != 3)
-                Fail("unsafeArrayCopy expects a destination, a source and a count");
+                Fail(name + " expects a destination, a source and a count");
             ArrayView destination = ViewOfArray(expression.arguments[0].get());
             ArrayView source = ViewOfArray(expression.arguments[1].get());
             if (destination.dimensions.size() != 1 || source.dimensions.size() != 1)
-                Fail("unsafeArrayCopy requires one-dimensional arrays");
+                Fail(name + " requires one-dimensional arrays");
             llvm::Value* count = Evaluate(expression.arguments[2].get());
             if (!count->getType()->isIntegerTy())
-                Fail("unsafeArrayCopy count must be an integer");
+                Fail(name + " count must be an integer");
             const std::string countTypeName = SemanticType(expression.arguments[2].get());
             const bool unsignedCount = countTypeName.starts_with("uint") ||
                 countTypeName == "char";
@@ -178,6 +188,71 @@ namespace Absolute {
                 "unsafe.array.copy.bytes");
             builder.CreateMemCpy(destination.address, llvm::MaybeAlign(),
                 source.address, llvm::MaybeAlign(), bytes);
+            // What makes it a move: the source range is left owning nothing.
+            // Without this the block that was copied out of is still holding
+            // every handle that was copied, and dropping it releases what the
+            // destination now owns. For elements that own nothing there is
+            // nothing to transfer and the clear is not emitted.
+            if (transfers && SemanticsOfTypeName(elementTypeName).needsDrop)
+                builder.CreateMemSet(source.address, builder.getInt8(0), bytes,
+                    llvm::MaybeAlign());
+            value = nullptr;
+            valueCreatesManagedOwner = false;
+            valueCreatesArrayOwner = false;
+            valueCreatesClosureOwner = false;
+            return;
+        }
+
+        // Releasing a run of elements. What releasing one means is the
+        // element type's answer -- so this is a loop for a run of owners and
+        // nothing at all for a run of numbers.
+        if (name == "unsafeArrayDrop") {
+            if (expression.arguments.size() != 3)
+                Fail("unsafeArrayDrop expects an array, a first index and a count");
+            ArrayView view = ViewOfArray(expression.arguments[0].get());
+            if (view.dimensions.size() != 1)
+                Fail("unsafeArrayDrop requires a one-dimensional array");
+            const std::string elementTypeName = ArrayElementTypeName(
+                SemanticType(expression.arguments[0].get()));
+            const auto toIndex = [&](size_t argument, const char* label) {
+                llvm::Value* raw = Evaluate(expression.arguments[argument].get());
+                if (!raw->getType()->isIntegerTy())
+                    Fail("unsafeArrayDrop range must be integers");
+                const std::string typeName = SemanticType(expression.arguments[argument].get());
+                const bool isUnsigned = typeName.starts_with("uint") || typeName == "char";
+                if (!raw->getType()->isIntegerTy(64))
+                    raw = builder.CreateIntCast(raw, builder.getInt64Ty(), !isUnsigned, label);
+                return raw;
+            };
+            llvm::Value* first = toIndex(1, "unsafe.array.drop.first");
+            llvm::Value* count = toIndex(2, "unsafe.array.drop.count");
+            if (SemanticsOfTypeName(elementTypeName).needsDrop) {
+                llvm::Function* function = builder.GetInsertBlock()->getParent();
+                llvm::BasicBlock* test = llvm::BasicBlock::Create(
+                    context, "unsafe.array.drop.test", function);
+                llvm::BasicBlock* body = llvm::BasicBlock::Create(
+                    context, "unsafe.array.drop.body", function);
+                llvm::BasicBlock* done = llvm::BasicBlock::Create(
+                    context, "unsafe.array.drop.done", function);
+                llvm::Value* limit = builder.CreateAdd(first, count, "unsafe.array.drop.limit");
+                llvm::BasicBlock* entry = builder.GetInsertBlock();
+                builder.CreateBr(test);
+                builder.SetInsertPoint(test);
+                llvm::PHINode* index = builder.CreatePHI(
+                    builder.getInt64Ty(), 2, "unsafe.array.drop.index");
+                index->addIncoming(first, entry);
+                builder.CreateCondBr(
+                    builder.CreateICmpSLT(index, limit, "unsafe.array.drop.more"), body, done);
+                builder.SetInsertPoint(body);
+                llvm::Value* address = builder.CreateInBoundsGEP(
+                    view.elementType, view.address, index, "unsafe.array.drop.address");
+                EmitValueCleanup(address, elementTypeName);
+                llvm::Value* next = builder.CreateAdd(
+                    index, builder.getInt64(1), "unsafe.array.drop.next");
+                index->addIncoming(next, builder.GetInsertBlock());
+                builder.CreateBr(test);
+                builder.SetInsertPoint(done);
+            }
             value = nullptr;
             valueCreatesManagedOwner = false;
             valueCreatesArrayOwner = false;

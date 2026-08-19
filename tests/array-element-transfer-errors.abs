@@ -1,0 +1,40 @@
+// A block copy of elements that own something is refused, inside a generic too.
+//
+// `unsafeArrayCopy` is a memcpy. Over elements that own something it produces
+// two blocks holding the same handles, and there is no reading of that which is
+// right -- the same reason `copy` of such an array is refused. What a growing
+// container wants there is `unsafeArrayMove`, which carries the block and
+// leaves the source owning nothing.
+//
+// The refusal could not see through a generic parameter: inside `Bag<T>` the
+// element type is `T`, which owns nothing, so the memcpy went through and
+// `Bag<Cell*>` grew by duplicating every handle it held. The element type is
+// recorded and asked again at each instantiation, so it is refused for
+// `Bag<Cell*>` and allowed for `Bag<int32>` -- one line, two answers.
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+}
+
+class Bag<T> {
+    public T[] items;
+
+    public void grow(int32 size) {
+        T[] larger = new T[size];
+        unsafeArrayCopy(larger, items, size);
+        items = move(larger);
+    }
+}
+
+int32 main() {
+    Cell*[] owners = new Cell*[2];
+    Cell*[] second = new Cell*[2];
+    unsafeArrayCopy(second, owners, 2);
+
+    Bag<Cell*>* owning = new Bag<Cell*>();
+    Bag<int32>* counted = new Bag<int32>();
+    delete owning;
+    delete counted;
+    return 0;
+}

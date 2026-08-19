@@ -1062,6 +1062,17 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-qualifier-generics.abs"
     )
     add_test(
+        NAME absolute.array-element-transfer-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-element-transfer.abs"
+    )
+    add_test(
+        NAME absolute.array-element-transfer-errors
+        COMMAND "${CMAKE_COMMAND}"
+            -DCOMPILER=$<TARGET_FILE:Absolute-Compiler>
+            -DSOURCE=${PROJECT_SOURCE_DIR}/tests/array-element-transfer-errors.abs
+            -P "${PROJECT_SOURCE_DIR}/tests/check-array-element-transfer.cmake"
+    )
+    add_test(
         NAME absolute.generic-body-ownership-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-body-ownership.abs"
     )
@@ -4969,6 +4980,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-ownership-qualifier-generics PROPERTIES
             FIXTURES_REQUIRED absolute-ownership-qualifier-generics-executable
             PASS_REGULAR_EXPRESSION "ownership-qualifier-generics=ok"
+        )
+        add_test(
+            NAME absolute.build-array-element-transfer
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-element-transfer.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/array-element-transfer-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-array-element-transfer PROPERTIES
+            FIXTURES_SETUP absolute-array-element-transfer-executable
+        )
+        add_test(NAME absolute.run-array-element-transfer
+            COMMAND "${CMAKE_BINARY_DIR}/array-element-transfer-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-array-element-transfer PROPERTIES
+            FIXTURES_REQUIRED absolute-array-element-transfer-executable
+            PASS_REGULAR_EXPRESSION "array-element-transfer=ok"
         )
         add_test(
             NAME absolute.build-generic-body-ownership

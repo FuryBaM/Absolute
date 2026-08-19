@@ -298,6 +298,17 @@ namespace Absolute {
                 }
                 continue;
             }
+            if (fact.shape == GenericBodyFact::Shape::CopiesElements) {
+                // Not only an owner: anything with a drop is duplicated by a
+                // block copy, and two of them then release the same thing.
+                if (SemanticsOfType(actual).needsDrop)
+                    ReportAtLocation(fact.file, fact.line, fact.column,
+                        std::string(fact.detail) + " cannot copy elements that own "
+                        "something; at '" + base + "<" + actual + ">' that would "
+                        "duplicate the ownership -- unsafeArrayMove transfers "
+                        "them instead", "E_UNSAFE_ARRAY_COPY_OWNING", InvalidSymbolId);
+                continue;
+            }
             if (!owner) continue;
             switch (fact.shape) {
             case GenericBodyFact::Shape::FieldFromNonOwner:
@@ -316,6 +327,7 @@ namespace Absolute {
                 break;
             case GenericBodyFact::Shape::DeletesField:
             case GenericBodyFact::Shape::DeletesValue:
+            case GenericBodyFact::Shape::CopiesElements:
                 break;
             }
         }

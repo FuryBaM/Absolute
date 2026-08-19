@@ -321,7 +321,8 @@ namespace Absolute {
                 FieldFromNonOwner,   // a field assigned from something not fresh
                 ReturnsField,        // a field handed back to the caller
                 DeletesField,        // a field released from inside the body
-                DeletesValue         // anything released through a parameter type
+                DeletesValue,        // anything released through a parameter type
+                CopiesElements       // array elements duplicated as bytes
             };
             Shape shape = Shape::FieldFromNonOwner;
             std::string parameterType;   // as written in the body, e.g. "T"

@@ -429,13 +429,69 @@ namespace Absolute {
                 return;
             }
 
+            // Reading a slot and clearing it in one step. `unsafeArrayGet`
+            // reads without clearing, which for an element that owns something
+            // leaves two handles to one object -- the one in the array and the
+            // one the caller now holds. A take is what handing an element out
+            // of a container actually means.
+            if (callName == "unsafeArrayTake") {
+                if (arguments.size() != 2) {
+                    Report("unsafeArrayTake expects an array and an index",
+                        "E_UNSAFE_ARRAY_ARGUMENT_COUNT");
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                const std::string& arrayType = arguments[0].type;
+                if (ArrayRank(arrayType) != 1 && arrayType != "error")
+                    Report("unsafeArrayTake requires a one-dimensional array",
+                        "E_UNSAFE_ARRAY_TYPE", arguments[0].symbol);
+                if (!IsInteger(arguments[1].type) && arguments[1].type != "error")
+                    Report("unsafeArrayTake index must be an integer",
+                        "E_UNSAFE_ARRAY_INDEX_TYPE", arguments[1].symbol);
+                const std::string elementType = ArrayRank(arrayType) == 1
+                    ? ArrayElementType(arrayType) : std::string("error");
+                Result taken{table.Lookup(callName), elementType, false};
+                // The slot no longer holds it, so what comes back is the owner
+                // rather than another handle to the same object.
+                taken.createsManagedOwner = IsStrongManagedPointerType(elementType);
+                Save(expr, std::move(taken));
+                return;
+            }
+
+            // Releasing a run of elements and clearing them. What releasing one
+            // means is the element type's answer, so for elements that own
+            // nothing this is nothing at all.
+            if (callName == "unsafeArrayDrop") {
+                if (arguments.size() != 3) {
+                    Report("unsafeArrayDrop expects an array, a first index and "
+                        "an element count", "E_UNSAFE_ARRAY_ARGUMENT_COUNT");
+                    Save(expr, {table.Lookup(callName), "void", false});
+                    return;
+                }
+                if (ArrayRank(arguments[0].type) != 1 && arguments[0].type != "error")
+                    Report("unsafeArrayDrop requires a one-dimensional array",
+                        "E_UNSAFE_ARRAY_TYPE", arguments[0].symbol);
+                for (size_t index = 1; index < 3; ++index) {
+                    if (!IsInteger(arguments[index].type) && arguments[index].type != "error")
+                        Report("unsafeArrayDrop range must be integers",
+                            "E_UNSAFE_ARRAY_INDEX_TYPE", arguments[index].symbol);
+                }
+                Save(expr, {table.Lookup(callName), "void", false});
+                return;
+            }
+
             // A bulk element copy. It exists because the alternative -- a
             // loop of unsafeArraySet/unsafeArrayGet -- is what a growing
             // collection does on every reallocation, and a scalar loop is not
             // what copying a block of memory should cost.
-            if (callName == "unsafeArrayCopy") {
+            if (callName == "unsafeArrayCopy" || callName == "unsafeArrayMove") {
+                // The two differ in one place, and it is the place ownership
+                // lives: a copy leaves the source holding what it held, a move
+                // does not. Everything else about them is the same block of
+                // memory going the same distance.
+                const bool transfers = callName == "unsafeArrayMove";
                 if (arguments.size() != 3) {
-                    Report("unsafeArrayCopy expects a destination, a source and "
+                    Report(callName + " expects a destination, a source and "
                         "an element count", "E_UNSAFE_ARRAY_COPY_ARGUMENT_COUNT");
                     Save(expr, {table.Lookup(callName), "void", false});
                     return;
@@ -443,7 +499,7 @@ namespace Absolute {
                 for (size_t index = 0; index < 2; ++index) {
                     if (ArrayRank(arguments[index].type) != 1 &&
                         arguments[index].type != "error")
-                        Report("unsafeArrayCopy requires one-dimensional arrays",
+                        Report(callName + " requires one-dimensional arrays",
                             "E_UNSAFE_ARRAY_COPY_TYPE", arguments[index].symbol);
                 }
                 const std::string destination = ArrayRank(arguments[0].type) == 1
@@ -452,18 +508,24 @@ namespace Absolute {
                     ? ArrayElementType(arguments[1].type) : std::string("error");
                 if (destination != "error" && source != "error" &&
                     destination != source)
-                    Report("unsafeArrayCopy requires the same element type on "
+                    Report(callName + " requires the same element type on "
                         "both sides, got '" + destination + "' and '" + source +
                         "'", "E_UNSAFE_ARRAY_COPY_ELEMENT", arguments[1].symbol);
                 // Elements that own something are refused: copying the bytes
                 // would duplicate that ownership, the same reason `copy` of
                 // such an array is refused.
-                if (destination != "error" && TypeOwnsResources(destination))
+                if (!transfers && destination != "error" && TypeOwnsResources(destination))
                     Report("unsafeArrayCopy cannot copy elements that own "
-                        "something; that would duplicate the ownership",
+                        "something; that would duplicate the ownership -- "
+                        "unsafeArrayMove transfers them instead",
                         "E_UNSAFE_ARRAY_COPY_OWNING", arguments[0].symbol);
+                // The refusal above cannot see through a generic parameter, so
+                // the element type is recorded and asked again per instantiation.
+                if (!transfers && ArrayRank(arguments[0].type) == 1)
+                    RecordGenericBodyFact(GenericBodyFact::Shape::CopiesElements,
+                        destination, callName, expr);
                 if (!IsInteger(arguments[2].type) && arguments[2].type != "error")
-                    Report("unsafeArrayCopy count must be an integer",
+                    Report(callName + " count must be an integer",
                         "E_UNSAFE_ARRAY_COPY_COUNT", arguments[2].symbol);
                 Save(expr, {table.Lookup(callName), "void", false});
                 return;
