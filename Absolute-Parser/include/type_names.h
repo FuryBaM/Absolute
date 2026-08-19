@@ -68,6 +68,32 @@ namespace Absolute {
         bool needsDrop = false;
     };
 
+    // How a value of some type is released. The kind is worked out once, from
+    // the type, and everything that releases anything obeys it -- instead of
+    // each site asking the type's shape again and arriving at its own answer.
+    enum class DropKind {
+        None,
+        Closure,         // release the closure environment
+        ManagedOwner,    // destroy what it points at, then the handle
+        SharedOwner,     // drop one reference; the last one destroys
+        ArrayStorage,    // free the buffer
+        ClassObject,     // run the class destructor
+        StructObject,    // run the struct destructor
+        PluginResource   // hand it back to the plugin that made it
+    };
+
+    // What copying, moving and destroying a value of a type mean.
+    //
+    // A container asks this and nothing else. It must not ask "is this a
+    // managed pointer?", because `T*`, `sub T*` and `weak T*` all are, and
+    // destroying them means three different things.
+    struct TypeSemantics {
+        bool copyable = true;
+        bool movable = true;
+        bool needsDrop = false;
+        DropKind dropKind = DropKind::None;
+    };
+
     inline HandleSemantics CanonicalHandleSemantics(OwnershipKind kind) {
         switch (kind) {
         // Copying an owner would make two of them; that is what `move` is for.

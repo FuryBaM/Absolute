@@ -830,8 +830,47 @@ namespace Absolute {
     }
 
     bool Analyzer::TypeOwnsResources(const std::string& name) const {
+        return SemanticsOfType(name).needsDrop;
+    }
+
+    // The analyzer's half of the one answer; see docs/ownership-kinds.md and
+    // CodeGenerator::Impl::SemanticsOfTypeName, which decides the same thing
+    // from the backend's own type tables. Both read the ownership kind rather
+    // than asking what a pointer looks like, because `T*`, `sub T*` and
+    // `weak T*` are all managed pointers and releasing them means three
+    // different things.
+    TypeSemantics Analyzer::SemanticsOfType(const std::string& name) const {
         if (IsValueReferenceType(name))
-            return TypeOwnsResources(ValueReferenceBaseType(name));
+            return SemanticsOfType(ValueReferenceBaseType(name));
+
+        if (const OwnershipKind kind = CanonicalOwnership(name);
+            kind != OwnershipKind::None) {
+            const HandleSemantics handle = CanonicalHandleSemantics(kind);
+            const DropKind drop = kind == OwnershipKind::Shared
+                ? DropKind::SharedOwner
+                : (handle.needsDrop ? DropKind::ManagedOwner : DropKind::None);
+            return {handle.copyable, handle.movable, handle.needsDrop, drop};
+        }
+        // An array always has storage to free; whether its elements need
+        // dropping as well is docs/known-defects.md section 15.
+        if (ArrayRank(name) > 0)
+            return {true, true, true, DropKind::ArrayStorage};
+
+        if (const PluginResourceDescriptor* descriptor =
+                GetPluginResourceDescriptor(name); descriptor && descriptor->isResource)
+            return {true, true, true, DropKind::PluginResource};
+
+        TypeSemantics result{true, true, OwnsResourcesByParts(name), DropKind::None};
+        if (!result.needsDrop) return result;
+        if (const auto found = types.find(name); found != types.end()) {
+            result.dropKind = found->second.kind == TypeKind::Class
+                ? DropKind::ClassObject : DropKind::StructObject;
+        }
+        else result.dropKind = DropKind::StructObject;
+        return result;
+    }
+
+    bool Analyzer::OwnsResourcesByParts(const std::string& name) const {
         std::unordered_set<std::string> visiting;
         const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
             if (IsStrongManagedPointerType(candidate) || ArrayRank(candidate) > 0) return true;

@@ -6,6 +6,7 @@
 
 #include "expression_visitor.h"
 #include "statement_visitor.h"
+#include "type_names.h"
 
 #include <cstdint>
 #include <iostream>
@@ -494,6 +495,15 @@ namespace Absolute {
         void Save(Expression* expression, Result value);
         bool IsKnownType(const std::string& name) const;
         bool TypeOwnsResources(const std::string& name) const;
+
+        // What copying, moving and releasing a value of this type mean.
+        // TypeOwnsResources is the one question of it that had a name before.
+        TypeSemantics SemanticsOfType(const std::string& name) const;
+
+    private:
+        bool OwnsResourcesByParts(const std::string& name) const;
+
+    public:
         bool IsAsyncTaskValueType(const std::string& name) const;
         bool IsNumeric(const std::string& name) const;
         bool IsInteger(const std::string& name) const;

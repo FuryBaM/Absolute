@@ -87,8 +87,16 @@ counted.
    generic; unification compared raw-ness and weak-ness separately, so the two
    also unified with each other. Pinned by
    `tests/ownership-qualifier-generics.abs`.
-3. **Copy / move / drop become type-driven** rather than pointer-driven: one
-   `TypeSemantics` per type, built recursively from its parts.
+3. **Copy / move / drop become type-driven** rather than pointer-driven.
+   *(done)* One `TypeSemantics` per type -- `copyable`, `movable`, `needsDrop`
+   and a `DropKind` -- built recursively from the type's parts, answered by
+   `Analyzer::SemanticsOfType` and `CodeGenerator::Impl::SemanticsOfTypeName`
+   from their own type tables. Releasing a value is now a switch on the drop
+   kind; it used to be a chain of questions about the shape of the type name
+   ("is it a closure, is it a strong managed pointer, is it an array..."), and
+   each of those was a second place that had to agree with `TypeNeedsCleanup`
+   about the answer. `copyable` and `movable` are computed but not yet
+   enforced -- that is step 4, and it is the step that changes programs.
 4. **`sub T*` becomes spellable**, and copying a `T*` without `move` is refused.
    This is the step that changes existing programs.
 5. **Arrays drop their elements** through `TypeSemantics`, which is §15 closed.

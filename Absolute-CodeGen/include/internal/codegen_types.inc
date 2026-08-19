@@ -100,6 +100,12 @@
 
         void InitializeObject(llvm::Value* object, StructInfo& info);
 
+        // What copying, moving and releasing a value of this type mean. The one
+        // answer every release site obeys; see docs/ownership-kinds.md.
+        TypeSemantics SemanticsOfTypeName(const std::string& typeName);
+        TypeSemantics SemanticsOfTypeName(const std::string& typeName,
+            std::unordered_set<std::string>& visiting);
+
         bool TypeNeedsCleanup(const std::string& typeName);
 
         llvm::Function* DeclareClassDestructor(ClassInfo& info);

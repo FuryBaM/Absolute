@@ -1226,52 +1226,84 @@ namespace Absolute {
         builder.CreateMemSet(object, builder.getInt8(0), ObjectSize(info), llvm::MaybeAlign(8));
     }
 
-    bool CodeGenerator::Impl::TypeNeedsCleanup(const std::string& typeName) {
+    TypeSemantics CodeGenerator::Impl::SemanticsOfTypeName(const std::string& typeName) {
+        std::unordered_set<std::string> visiting;
+        return SemanticsOfTypeName(typeName, visiting);
+    }
+
+    // One place decides what a type is, for every question about copying,
+    // moving and releasing it. Everything that used to read the shape of a type
+    // name for itself now reads this, which is what lets an array or an
+    // aggregate work out its own answer by asking its parts rather than by
+    // knowing what a pointer looks like.
+    TypeSemantics CodeGenerator::Impl::SemanticsOfTypeName(
+        const std::string& typeName, std::unordered_set<std::string>& visiting) {
         std::string closureReturn;
         std::vector<std::string> closureParameters;
-        if (ParseCodegenFunctionType(typeName, closureReturn, closureParameters)) return true;
-        std::unordered_set<std::string> visiting;
-        const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
-            if (IsStrongManagedPointerTypeName(candidate) || ArrayRankName(candidate) > 0) return true;
-            if (IsRawPointerTypeName(candidate) || !visiting.insert(candidate).second) return false;
-            
-            if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(candidate)) {
-                if (descriptor->isResource) return true;
+        if (ParseCodegenFunctionType(typeName, closureReturn, closureParameters))
+            return {true, true, true, DropKind::Closure};
+
+        if (const OwnershipKind kind = CanonicalOwnership(typeName);
+            kind != OwnershipKind::None) {
+            const HandleSemantics handle = CanonicalHandleSemantics(kind);
+            const DropKind drop = kind == OwnershipKind::Shared
+                ? DropKind::SharedOwner
+                : (handle.needsDrop ? DropKind::ManagedOwner : DropKind::None);
+            return {handle.copyable, handle.movable, handle.needsDrop, drop};
+        }
+
+        // An array always has storage to free. Whether its elements need
+        // dropping too is a separate question, and the answer to it is what
+        // section 15 of docs/known-defects.md is about.
+        if (ArrayRankName(typeName) > 0)
+            return {true, true, true, DropKind::ArrayStorage};
+
+        // A cycle in the field graph is not a reason to keep looking.
+        if (!visiting.insert(typeName).second) return {};
+        const auto release = [&] { visiting.erase(typeName); };
+
+        if (const PluginResourceDescriptor* descriptor =
+                GetPluginResourceDescriptor(typeName)) {
+            if (descriptor->isResource) {
+                release();
+                return {true, true, true, DropKind::PluginResource};
             }
-            
-            const auto release = [&] { visiting.erase(candidate); };
-            if (const auto found = classes.find(candidate); found != classes.end()) {
-                // `methods` is keyed by CallableKey, which appends "$"-joined
-                // parameter types to the bare name. A literal "destroy()" is not
-                // a key this map can hold, so matching it here silently skipped
-                // cleanup for every type whose only resource is its own destroy().
-                if (found->second.methods.contains(CallableKey("destroy", {}))) {
-                    release();
-                    return true;
-                }
-                for (const ClassField& field : found->second.fields) {
-                    if (self(self, field.typeName)) {
-                        release();
-                        return true;
-                    }
-                }
+        }
+
+        // A hand-written destroy() hook, or any part that needs releasing.
+        // `methods` is keyed by CallableKey, which appends "$"-joined parameter
+        // types to the bare name, so a literal "destroy()" is not a key it can
+        // hold -- matching that silently skipped cleanup for every type whose
+        // only resource was its own hook.
+        const auto aggregate = [&](const auto& info, DropKind drop) {
+            TypeSemantics result{true, true, false, drop};
+            if (info.methods.contains(CallableKey("destroy", {})))
+                result.needsDrop = true;
+            for (const ClassField& field : info.fields) {
+                const TypeSemantics part = SemanticsOfTypeName(field.typeName, visiting);
+                if (part.needsDrop) result.needsDrop = true;
+                if (!part.copyable) result.copyable = false;
             }
-            else if (const auto found = structs.find(candidate); found != structs.end()) {
-                if (found->second.methods.contains(CallableKey("destroy", {}))) {
-                    release();
-                    return true;
-                }
-                for (const ClassField& field : found->second.fields) {
-                    if (self(self, field.typeName)) {
-                        release();
-                        return true;
-                    }
-                }
-            }
-            release();
-            return false;
+            if (!result.needsDrop) result.dropKind = DropKind::None;
+            return result;
         };
-        return inspect(inspect, typeName);
+
+        if (const auto found = classes.find(typeName); found != classes.end()) {
+            const TypeSemantics result = aggregate(found->second, DropKind::ClassObject);
+            release();
+            return result;
+        }
+        if (const auto found = structs.find(typeName); found != structs.end()) {
+            const TypeSemantics result = aggregate(found->second, DropKind::StructObject);
+            release();
+            return result;
+        }
+        release();
+        return {};
+    }
+
+    bool CodeGenerator::Impl::TypeNeedsCleanup(const std::string& typeName) {
+        return SemanticsOfTypeName(typeName).needsDrop;
     }
 
     void CodeGenerator::Impl::EmitPointeeCleanup(
@@ -1306,11 +1338,17 @@ namespace Absolute {
         builder.SetInsertPoint(complete);
     }
 
+    // Releasing a value is a switch on what the type says releasing it means,
+    // not a walk down the shapes a type name can have. The chain this replaced
+    // asked "is it a closure, is it a strong managed pointer, is it an array,
+    // is it a class..." and each question was a second place that had to agree
+    // with TypeNeedsCleanup about the answer.
     void CodeGenerator::Impl::EmitValueCleanup(
         llvm::Value* address, const std::string& typeName) {
-        std::string closureReturn;
-        std::vector<std::string> closureParameters;
-        if (ParseCodegenFunctionType(typeName, closureReturn, closureParameters)) {
+        const TypeSemantics semantics = SemanticsOfTypeName(typeName);
+        if (!semantics.needsDrop) return;
+        switch (semantics.dropKind) {
+        case DropKind::Closure: {
             llvm::Value* closure = builder.CreateLoad(
                 builder.getPtrTy(), address, "closure.cleanup.value");
             builder.CreateCall(ClosureRelease(), {closure});
@@ -1318,7 +1356,8 @@ namespace Absolute {
                 llvm::ConstantPointerNull::get(builder.getPtrTy()), address);
             return;
         }
-        if (IsStrongManagedPointerTypeName(typeName)) {
+        case DropKind::ManagedOwner:
+        case DropKind::SharedOwner: {
             llvm::Value* handle = builder.CreateLoad(
                 builder.getInt64Ty(), address, "field.cleanup.handle");
             llvm::Value* pointee = EmitManagedGet(handle, false);
@@ -1327,7 +1366,7 @@ namespace Absolute {
             builder.CreateStore(builder.getInt64(0), address);
             return;
         }
-        if (ArrayRankName(typeName) > 0) {
+        case DropKind::ArrayStorage: {
             llvm::Value* descriptor = builder.CreateLoad(
                 ArrayDescriptorType(typeName), address, "field.cleanup.array");
             llvm::Value* owner = builder.CreateExtractValue(
@@ -1337,22 +1376,27 @@ namespace Absolute {
                 ArrayDescriptorType(typeName)), address);
             return;
         }
-        if (const auto found = classes.find(typeName); found != classes.end()) {
-            if (TypeNeedsCleanup(typeName))
-                builder.CreateCall(DeclareClassDestructor(found->second), {address});
+        case DropKind::ClassObject:
+            builder.CreateCall(
+                DeclareClassDestructor(classes.at(typeName)), {address});
             return;
-        }
-        if (const auto found = structs.find(typeName); found != structs.end()) {
-            if (TypeNeedsCleanup(typeName))
-                builder.CreateCall(DeclareStructDestructor(found->second), {address});
+        case DropKind::StructObject:
+            builder.CreateCall(
+                DeclareStructDestructor(structs.at(typeName)), {address});
             return;
-        }
-        if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(typeName)) {
-            if (!descriptor->destroyFunction.empty()) {
-                llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), {builder.getPtrTy()}, false);
-                llvm::FunctionCallee callee = module->getOrInsertFunction(descriptor->destroyFunction, type);
-                builder.CreateCall(callee, {address});
+        case DropKind::PluginResource:
+            if (const PluginResourceDescriptor* descriptor =
+                    GetPluginResourceDescriptor(typeName);
+                descriptor && !descriptor->destroyFunction.empty()) {
+                llvm::FunctionType* type = llvm::FunctionType::get(
+                    builder.getVoidTy(), {builder.getPtrTy()}, false);
+                builder.CreateCall(
+                    module->getOrInsertFunction(descriptor->destroyFunction, type),
+                    {address});
             }
+            return;
+        case DropKind::None:
+            return;
         }
     }
 
