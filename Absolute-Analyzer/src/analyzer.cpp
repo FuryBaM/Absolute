@@ -851,9 +851,8 @@ namespace Absolute {
         if (const OwnershipKind kind = CanonicalOwnership(name);
             kind != OwnershipKind::None) {
             const HandleSemantics handle = CanonicalHandleSemantics(kind);
-            const DropKind drop = kind == OwnershipKind::Shared
-                ? DropKind::SharedOwner
-                : (handle.needsDrop ? DropKind::ManagedOwner : DropKind::None);
+            const DropKind drop = handle.needsDrop
+                ? DropKind::ManagedOwner : DropKind::None;
             return {handle.copyable, handle.movable, handle.needsDrop, drop};
         }
         // An array always has storage to free; whether its elements need

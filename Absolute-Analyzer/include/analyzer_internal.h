@@ -62,10 +62,6 @@ namespace Absolute {
             return CanonicalOwnership(type) == OwnershipKind::Weak;
         }
 
-        inline bool IsSharedPointerType(const std::string& type) {
-            return CanonicalOwnership(type) == OwnershipKind::Shared;
-        }
-
         inline bool IsSubscriberPointerType(const std::string& type) {
             return CanonicalOwnership(type) == OwnershipKind::Sub;
         }
@@ -75,11 +71,10 @@ namespace Absolute {
             return kind != OwnershipKind::None && kind != OwnershipKind::Raw;
         }
 
-        // "Strong" here means it holds the object up: an owner, alone or with
-        // others. A subscriber and a weak observer do not.
+        // "Strong" here means it holds the object up. A subscriber and a weak
+        // observer do not.
         inline bool IsStrongManagedPointerType(const std::string& type) {
-            const OwnershipKind kind = CanonicalOwnership(type);
-            return kind == OwnershipKind::Unique || kind == OwnershipKind::Shared;
+            return CanonicalOwnership(type) == OwnershipKind::Unique;
         }
 
         inline bool IsPointerType(const std::string& type) {

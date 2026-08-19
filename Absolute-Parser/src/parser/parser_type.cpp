@@ -6,11 +6,9 @@ namespace Absolute{
     {
         OwnershipKind ownership = OwnershipKind::Unique;
         if (CurrentToken() && CurrentToken()->type == TokenType::KEYWORD &&
-            (CurrentToken()->value == "raw" || CurrentToken()->value == "weak" ||
-                CurrentToken()->value == "shared")) {
-            ownership = CurrentToken()->value == "raw" ? OwnershipKind::Raw :
-                (CurrentToken()->value == "weak" ? OwnershipKind::Weak
-                                                 : OwnershipKind::Shared);
+            (CurrentToken()->value == "raw" || CurrentToken()->value == "weak")) {
+            ownership = CurrentToken()->value == "raw" ? OwnershipKind::Raw
+                                                       : OwnershipKind::Weak;
             Consume(TokenType::KEYWORD, CurrentToken()->value);
         }
         // `sub` is contextual rather than a keyword: it is already an ordinary

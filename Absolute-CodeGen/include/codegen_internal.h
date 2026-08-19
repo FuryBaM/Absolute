@@ -84,8 +84,7 @@ namespace Absolute {
         }
 
         inline bool IsStrongManagedPointerTypeName(const std::string& name) {
-            const OwnershipKind kind = CanonicalOwnership(name);
-            return kind == OwnershipKind::Unique || kind == OwnershipKind::Shared;
+            return CanonicalOwnership(name) == OwnershipKind::Unique;
         }
 
         inline bool IsPointerTypeName(const std::string& name) {

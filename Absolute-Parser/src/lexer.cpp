@@ -17,7 +17,7 @@ namespace Absolute {
             R"(|0[bB][01](_?[01])*)"
             R"(|0[oO][0-7](_?[0-7])*)"
             R"(|\d(_?\d)*(\.\d(_?\d)*)?([eE][+-]?\d(_?\d)*)?)"},
-        {TokenType::KEYWORD, R"(\b(int8|int16|int32|int64|uint8|uint16|uint32|uint64|float|double|char|bool|string|void|dynamic|auto|if|else|switch|match|case|default|for|while|foreach|in|do|break|continue|new|delete|raw|weak|shared|ref|params|using|import|namespace|extern|export|return|true|false|null|class|struct|interface|enum|group|this|public|private|protected|sealed|internal|virtual|override|const|static|extension|async|nothrow|await|spawn|catch|finally|try|throw|defer|yield|get|set|operator|is|as|fn)\b)"},
+        {TokenType::KEYWORD, R"(\b(int8|int16|int32|int64|uint8|uint16|uint32|uint64|float|double|char|bool|string|void|dynamic|auto|if|else|switch|match|case|default|for|while|foreach|in|do|break|continue|new|delete|raw|weak|ref|params|using|import|namespace|extern|export|return|true|false|null|class|struct|interface|enum|group|this|public|private|protected|sealed|internal|virtual|override|const|static|extension|async|nothrow|await|spawn|catch|finally|try|throw|defer|yield|get|set|operator|is|as|fn)\b)"},
         {TokenType::IDENTIFIER, R"([_a-zA-Z][_a-zA-Z0-9]*)"},
         {TokenType::COMMENT, R"(\/\*[\s\S]*?\*\/|\/\/.*)"},
         {TokenType::OPERATOR, R"(=>|->|==|!=|<<=|>>=|<=|>=|&&|\|\||!|~|<<|>>|\+=|-=|\*=|/=|%=|&=|\|=|\^=|\+\+|--|\?|[+\-*/=<>&%|^:@])"},

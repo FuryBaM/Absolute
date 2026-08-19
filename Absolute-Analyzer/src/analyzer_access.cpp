@@ -16,11 +16,6 @@ namespace Absolute {
         const std::string pointee = ResolveType(expr->pointee.get());
         if (pointee == "void" && !expr->IsRaw())
             Report("managed pointers cannot point to void", "E_MANAGED_POINTER_TO_VOID");
-        if (expr->IsShared()) {
-            Report("shared pointers are not available in Absolute's deterministic "
-                "unique-ownership model; use T*, weak T*, and move(...)",
-                "E_SHARED_POINTER_UNSUPPORTED");
-        }
         Save(expr, {InvalidSymbolId,
             CanonicalPointerName(pointee, expr->ownership), false});
     }

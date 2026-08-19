@@ -52,7 +52,6 @@ namespace Absolute {
 
         bool IsRaw() const { return ownership == OwnershipKind::Raw; }
         bool IsWeak() const { return ownership == OwnershipKind::Weak; }
-        bool IsShared() const { return ownership == OwnershipKind::Shared; }
         bool IsSubscriber() const { return ownership == OwnershipKind::Sub; }
 
         std::string ToString(int indent = 0) const override {
@@ -60,7 +59,6 @@ namespace Absolute {
             switch (ownership) {
             case OwnershipKind::Raw: kind = "Raw pointer type:\n"; break;
             case OwnershipKind::Weak: kind = "Weak managed pointer type:\n"; break;
-            case OwnershipKind::Shared: kind = "Shared managed pointer type:\n"; break;
             case OwnershipKind::Sub: kind = "Subscriber pointer type:\n"; break;
             default: kind = "Managed pointer type:\n"; break;
             }

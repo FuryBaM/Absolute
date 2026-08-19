@@ -167,8 +167,7 @@ namespace Absolute {
             if (index >= tokens.size()) return index;
             const Token& token = tokens[index];
             if (token.type == TokenType::KEYWORD &&
-                (token.value == "raw" || token.value == "weak" ||
-                    token.value == "shared"))
+                (token.value == "raw" || token.value == "weak"))
                 return index + 1;
             if (token.type == TokenType::IDENTIFIER && token.value == "sub" &&
                 index + 1 < tokens.size() &&

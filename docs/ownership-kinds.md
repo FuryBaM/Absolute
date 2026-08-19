@@ -29,11 +29,18 @@ already has:
 
 | Written | Kind | Copyable | Releases |
 |---|---|---|---|
-| `T*` | Unique | no — use `move` | yes, destroys the object |
-| `shared T*` | Shared | yes | yes, the last one destroys |
+| `T*` | Unique | yes, as a subscriber | yes, destroys the object |
 | `sub T*` | Sub | yes | no — its owner does |
 | `weak T*` | Weak | yes | no — it holds a generation |
 | `raw T*` | Raw | yes | no — unmanaged |
+
+There is deliberately no shared kind. A second sort of owner buys nothing that
+those four do not already say, and one was tried: `shared T*` was added in July
+and walked back the same day, leaving a spelling the lexer reserved, the parser
+accepted and the analyzer refused. It has now been removed outright rather than
+left refused, so the word is an ordinary identifier again. Reference counting,
+if some type needs it, belongs inside that type rather than in the handle
+vocabulary.
 
 The rule the whole thing rests on:
 
@@ -64,17 +71,19 @@ work for the same reason, without any of them being special-cased.
 
 ## Where strings fit
 
-A string stops being an exception. Its storage becomes a shared owner:
+A string stops being an exception. It becomes an ordinary value type whose
+storage is counted:
 
 ```
-string        ->  shared StringStorage*
+string        ->  a value holding a handle to its storage
 StringStorage ->  reference count, capacity, characters
 ```
 
 `string b = a;` stays an ordinary copy — making it a move would be unpleasant in
-a general-purpose language — and the count decides when the storage goes. That
-is one type using shared ownership, not the memory model becoming reference
-counted.
+a general-purpose language — and the count decides when the storage goes. The
+counting lives inside `string`, not in the handle vocabulary: the type system
+does not need a shared kind to express it, and adding one would put a second
+sort of owner in front of every reader of every type.
 
 ## Order of work
 

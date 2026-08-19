@@ -331,7 +331,6 @@ namespace Absolute{
                 return ParseExportFunctionDeclaration();
             case Hash("raw"):
             case Hash("weak"):
-            case Hash("shared"):
                 return ParseVarDeclaration();
             default:
                 break;

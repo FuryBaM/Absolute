@@ -14,12 +14,11 @@ namespace Absolute {
     // them alone without being wrong in the other case.
     //
     // This is the one definition. The analyzer and the backend each had their
-    // own set of prefix tests, which is how `shared` came to be understood by
-    // one and dropped by the other.
+    // own set of prefix tests, and a qualifier one of them did not know about
+    // was silently dropped rather than refused.
     enum class OwnershipKind {
         None,    // not a handle at all
         Unique,  // T*         the one owner; releasing it destroys the object
-        Shared,  // shared T*  one of several owners; the last one releases
         Sub,     // sub T*     borrowed, bound to an owner's lifetime
         Weak,    // weak T*    observer that outlives the object and says so
         Raw      // raw T*     unmanaged; the explicit unsafe escape
@@ -29,7 +28,6 @@ namespace Absolute {
         switch (kind) {
         case OwnershipKind::Raw: return "raw ";
         case OwnershipKind::Weak: return "weak ";
-        case OwnershipKind::Shared: return "shared ";
         case OwnershipKind::Sub: return "sub ";
         case OwnershipKind::Unique:
         case OwnershipKind::None: break;
@@ -41,7 +39,6 @@ namespace Absolute {
         if (type.empty() || !type.ends_with("*")) return OwnershipKind::None;
         if (type.starts_with("raw ")) return OwnershipKind::Raw;
         if (type.starts_with("weak ")) return OwnershipKind::Weak;
-        if (type.starts_with("shared ")) return OwnershipKind::Shared;
         if (type.starts_with("sub ")) return OwnershipKind::Sub;
         return OwnershipKind::Unique;
     }
@@ -75,7 +72,6 @@ namespace Absolute {
         None,
         Closure,         // release the closure environment
         ManagedOwner,    // destroy what it points at, then the handle
-        SharedOwner,     // drop one reference; the last one destroys
         ArrayStorage,    // free the buffer
         ClassObject,     // run the class destructor
         StructObject,    // run the struct destructor
@@ -98,8 +94,6 @@ namespace Absolute {
         switch (kind) {
         // Copying an owner would make two of them; that is what `move` is for.
         case OwnershipKind::Unique: return {false, true, true};
-        // Copying is the point; the count is what decides when it is released.
-        case OwnershipKind::Shared: return {true, true, true};
         // Neither of these releases anything: a subscriber's owner does, and a
         // weak observer holds a generation rather than the object.
         case OwnershipKind::Sub:

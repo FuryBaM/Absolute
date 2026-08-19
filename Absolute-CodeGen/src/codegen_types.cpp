@@ -1246,9 +1246,8 @@ namespace Absolute {
         if (const OwnershipKind kind = CanonicalOwnership(typeName);
             kind != OwnershipKind::None) {
             const HandleSemantics handle = CanonicalHandleSemantics(kind);
-            const DropKind drop = kind == OwnershipKind::Shared
-                ? DropKind::SharedOwner
-                : (handle.needsDrop ? DropKind::ManagedOwner : DropKind::None);
+            const DropKind drop = handle.needsDrop
+                ? DropKind::ManagedOwner : DropKind::None;
             return {handle.copyable, handle.movable, handle.needsDrop, drop};
         }
 
@@ -1356,8 +1355,7 @@ namespace Absolute {
                 llvm::ConstantPointerNull::get(builder.getPtrTy()), address);
             return;
         }
-        case DropKind::ManagedOwner:
-        case DropKind::SharedOwner: {
+        case DropKind::ManagedOwner: {
             llvm::Value* handle = builder.CreateLoad(
                 builder.getInt64Ty(), address, "field.cleanup.handle");
             llvm::Value* pointee = EmitManagedGet(handle, false);

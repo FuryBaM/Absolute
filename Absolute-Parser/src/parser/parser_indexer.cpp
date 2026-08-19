@@ -72,8 +72,8 @@ namespace Absolute {
             // The same qualifier step as everywhere else; kept here rather than
             // calling the member because this helper is free-standing.
             if (index < tokens.size() && tokens[index].type == TokenType::KEYWORD &&
-                (tokens[index].value == "raw" || tokens[index].value == "weak" ||
-                    tokens[index].value == "shared")) ++index;
+                (tokens[index].value == "raw" ||
+                    tokens[index].value == "weak")) ++index;
             else if (index + 1 < tokens.size() &&
                 tokens[index].type == TokenType::IDENTIFIER &&
                 tokens[index].value == "sub" &&
