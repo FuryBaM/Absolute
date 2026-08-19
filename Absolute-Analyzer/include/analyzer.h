@@ -338,6 +338,9 @@ namespace Absolute {
         // type is being analyzed with -- a name that stands for itself here and
         // will be something concrete at every instantiation.
         bool IsCurrentGenericParameter(const std::string& type) const;
+        // A name that still stands for itself: a generic parameter of the type
+        // or the callable being analyzed, not yet substituted for anything.
+        bool IsOpenGenericParameter(const std::string& name) const;
         void RecordGenericBodyFact(GenericBodyFact::Shape shape,
             const std::string& parameterType, const std::string& detail,
             const ASTNode* node);

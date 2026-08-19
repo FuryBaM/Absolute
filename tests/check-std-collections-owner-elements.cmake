@@ -15,19 +15,24 @@ endif()
 
 set(diagnostics "${compiler_stdout}${compiler_stderr}")
 
-# One instantiation of each of the three classes behind Vector, and each of the
-# three ways they duplicate a handle. Anchored to the class rather than to the
-# line, because these lines belong to the standard library and are expected to
-# move; what must not change quietly is that the instantiation is named and
-# that all three classes are reached.
+# What remains is VectorBuilder, and each of the three ways it duplicates a
+# handle. Anchored to the class rather than to the line, because these lines
+# belong to the standard library and are expected to move; what must not change
+# quietly is that the instantiation is named.
 foreach(pattern IN ITEMS
-        "at 'std[.]collections[.]Vector<Cell[*]>' a slot of 'res' is filled by reading another slot rather than taking it [[]E_RESOURCE_ELEMENT_REQUIRES_OWNER[]]"
-        "at 'std[.]collections[.]Vector<Cell[*]>' 'items' hands back a field its object still owns [[]E_MANAGED_RETURN_REQUIRES_OWNER[]]"
-        "at 'std[.]collections[.]VectorIterator<Cell[*]>' 'snapshot' hands back a field its object still owns [[]E_MANAGED_RETURN_REQUIRES_OWNER[]]"
         "at 'std[.]collections[.]VectorBuilder<Cell[*]>' the field 'buffer' is stored from a subscriber [[]E_RESOURCE_FIELD_REQUIRES_OWNER[]]"
-        "at 'std[.]collections[.]VectorBuilder<Cell[*]>' a slot of 'buffer' is filled by reading another slot rather than taking it [[]E_RESOURCE_ELEMENT_REQUIRES_OWNER[]]")
+        "at 'std[.]collections[.]VectorBuilder<Cell[*]>' a slot of 'buffer' is filled by reading another slot rather than taking it [[]E_RESOURCE_ELEMENT_REQUIRES_OWNER[]]"
+        "at 'std[.]collections[.]VectorBuilder<Cell[*]>' 'buffer' hands back a field its object still owns [[]E_MANAGED_RETURN_REQUIRES_OWNER[]]")
     if(NOT diagnostics MATCHES "${pattern}")
         message(FATAL_ERROR "missing diagnostic: ${pattern}\n${diagnostics}")
+    endif()
+endforeach()
+
+# Vector and VectorIterator say the weaker thing now, and must stay quiet.
+foreach(fixed IN ITEMS "Vector<Cell[*]>" "VectorIterator<Cell[*]>")
+    if(diagnostics MATCHES "at 'std[.]collections[.]${fixed}'")
+        message(FATAL_ERROR
+            "a class that was fixed is reporting again: ${fixed}\n${diagnostics}")
     endif()
 endforeach()
 

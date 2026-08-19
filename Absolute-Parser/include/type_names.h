@@ -56,6 +56,38 @@ namespace Absolute {
         return std::string(CanonicalOwnershipPrefix(kind)) + pointee + "*";
     }
 
+    // A qualifier written in front of a name that is not a pointer yet --
+    // `sub T`, where `T` is a generic parameter. It is not a type on its own:
+    // it is an instruction about whatever `T` turns out to be, carried until
+    // there is something to apply it to.
+    inline OwnershipKind CanonicalOpenOwnership(const std::string& type) {
+        if (type.empty() || type.ends_with("*")) return OwnershipKind::None;
+        if (type.starts_with("raw ")) return OwnershipKind::Raw;
+        if (type.starts_with("weak ")) return OwnershipKind::Weak;
+        if (type.starts_with("sub ")) return OwnershipKind::Sub;
+        return OwnershipKind::None;
+    }
+
+    inline std::string CanonicalOpenBaseName(const std::string& type) {
+        const OwnershipKind kind = CanonicalOpenOwnership(type);
+        if (kind == OwnershipKind::None) return type;
+        return type.substr(CanonicalOwnershipPrefix(kind).size());
+    }
+
+    // Applying a qualifier to a complete type. On a handle it replaces the
+    // kind, which is the whole point -- `sub T` at `T = Node*` is `sub Node*`.
+    // On anything else it is nothing: a qualifier says what a value's relation
+    // to an object's lifetime is, and a value with no object has no relation
+    // to weaken.
+    inline std::string CanonicalWithOwnership(
+        const std::string& type, OwnershipKind kind) {
+        if (type.ends_with("[]"))
+            return CanonicalWithOwnership(
+                type.substr(0, type.size() - 2), kind) + "[]";
+        if (CanonicalOwnership(type) == OwnershipKind::None) return type;
+        return CanonicalPointerName(CanonicalPointeeName(type), kind);
+    }
+
     // What copying, moving and destroying a handle of each kind mean. Pure: it
     // depends on the kind and nothing else, which is what lets an aggregate or
     // an array work out its own answer by asking its parts.

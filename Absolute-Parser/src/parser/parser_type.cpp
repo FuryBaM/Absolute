@@ -67,6 +67,15 @@ namespace Absolute{
             foundPointer = true;
         }
         if (ownership != OwnershipKind::Unique && !foundPointer) {
+            // `sub T` with no star: the name may be a generic parameter, and
+            // whether there is a pointer there at all is not something this
+            // file can know. The node carries the qualifier and the analyzer
+            // decides -- it is the one that knows which names stand for
+            // themselves. A qualifier on anything else is still refused, just
+            // with a message that can say what the name turned out to be.
+            if (dynamic_cast<UserTypeExpr*>(base.get()))
+                return std::make_unique<PointerTypeExpr>(
+                    std::move(base), ownership, true);
             std::string written(CanonicalOwnershipPrefix(ownership));
             if (!written.empty()) written.pop_back();
             ReportSyntaxError(CurrentToken(),

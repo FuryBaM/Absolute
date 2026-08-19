@@ -1,6 +1,13 @@
 namespace std.collections {
     class VectorIterator<T> {
-        private T[] snapshot;
+        // A snapshot borrows what it snapshots. Over an element that owns
+        // something a plain `T[]` here would be a second array of owners over
+        // the same objects, and whichever of the two released them first, the
+        // other would be wrong. `sub T` says the weaker thing: at `T = Node*`
+        // this is `sub Node*[]` and releasing the iterator releases nothing,
+        // and at `T = int32` the qualifier is not there at all, because a value
+        // with no object has no relation to an object's lifetime to weaken.
+        private sub T[] snapshot;
         private int32 length;
         private int32 index;
 
@@ -15,7 +22,7 @@ namespace std.collections {
             return index < length;
         }
 
-        public T value {
+        public sub T value {
             get { return snapshot[index]; }
         }
     }
@@ -137,14 +144,17 @@ namespace std.collections {
             get { return _count == 0; }
         }
 
-        public T first {
+        // Reading an element is not the vector giving it up, so what comes
+        // back is the weaker relation to the same object. At `T = int32` the
+        // qualifier is not there at all.
+        public sub T first {
             get {
                 if (_count == 0) { throw new Error("Vector is empty"); }
                 return items[0];
             }
         }
 
-        public T last {
+        public sub T last {
             get {
                 if (_count == 0) { throw new Error("Vector is empty"); }
                 return items[_count - 1];
@@ -247,8 +257,11 @@ namespace std.collections {
             return new std.collections.VectorBuilder<T>(items, _count);
         }
 
-        public T[] toArray() {
-            T[] res = new T[_count];
+        // A second array over the same elements, and only one of the two can
+        // own them -- this one does not. At `T = int32` this is the ordinary
+        // `int32[]` copy it has always been.
+        public sub T[] toArray() {
+            sub T[] res = new T[_count];
             int32 i = 0;
             while (i < _count) {
                 res[i] = items[i];
@@ -257,7 +270,7 @@ namespace std.collections {
             return res;
         }
 
-        public T[] unsafeCopyRaw() {
+        public sub T[] unsafeCopyRaw() {
             return toArray();
         }
     }

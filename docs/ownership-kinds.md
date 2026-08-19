@@ -230,11 +230,34 @@ sort of owner in front of every reader of every type.
    classes. Recorded in `docs/known-defects.md` §16 and pinned by
    `tests/std-collections-owner-elements-errors.abs`.
 
-   Fixing them needs something the language cannot spell: **`sub T` where `T`
-   is already a complete type.** A snapshot cannot own the elements it
-   snapshots and a builder filled from a live vector cannot own what that
-   vector still holds, so both want the subscriber form of their parameter.
-   That is the next piece of the model, and it is what step 7 rests on.
+   Fixing them needed something the language could not spell: **`sub T`, a
+   qualifier written in front of a name that is not a pointer yet.** It is not
+   a type -- it is an instruction about whatever `T` turns out to be, carried
+   until there is something to apply it to and answered at substitution:
+
+   | written | at `T = Node*` | at `T = sub Node*` | at `T = int32` |
+   |---|---|---|---|
+   | `sub T` | `sub Node*` | `sub Node*` | `int32` |
+
+   The last column is what makes it usable in a container: a value with no
+   object has no relation to an object's lifetime to weaken, so `Vector<int32>`
+   does not grow a qualifier it has no use for. Pinned by
+   `tests/open-ownership-qualifier.abs`; `sub Node`, where the name is a class
+   and will never be a handle, is refused rather than quietly meaning `Node`.
+
+   With it, `VectorIterator`'s snapshot is `sub T[]` and `Vector`'s `first`,
+   `last` and `toArray` hand back the subscriber form -- reading an element is
+   not the vector giving it up. Both classes are clean over `Cell*` now.
+
+   `VectorBuilder` is the one saying something weaker cannot fix. It is a
+   staging owner: `add(T)` gives it an element and `finish()` hands every
+   element to a new `Vector<T>` that owns them -- but it is constructed from a
+   live vector's storage, so over an owning element its first act duplicates
+   what that vector still holds, and borrowing instead would have `finish()`
+   give a vector of owners handles it never owned. Whether `builder()` should
+   drain the vector, be refused for owning elements, or not exist is a decision
+   about what the method means. It is reached without being called, because a
+   generic instantiates the return types of members no line uses.
 
    Two things already in place are what make this affordable: array storage is
    zero-initialized (`tests/array-zero-initialization.abs`), so a null slot is

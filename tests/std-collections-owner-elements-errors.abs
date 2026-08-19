@@ -1,17 +1,24 @@
-// The standard collections are not written for elements that own something.
+// What is left of the standard collections over an element that owns something.
 //
-// Nothing in `Vector<T>` mentions ownership, which is the point -- but three
-// of the classes behind it move elements by reading a slot and storing what
-// they read, and a handle read out of a slot is a second handle to one object.
-// While the rules did not run inside a generic body that was invisible; now
-// that each instantiation is judged, `Vector<Cell*>` says so in full.
+// Three classes stand behind `Vector<T>`, and all three used to move elements
+// by reading a slot and storing what they read -- and a handle read out of a
+// slot is a second handle to one object. `Vector` and `VectorIterator` say the
+// weaker thing now: a snapshot is `sub T[]`, `first`, `last` and `toArray`
+// hand back the subscriber form, and at `T = int32` none of those qualifiers
+// are there at all.
 //
-// This is recorded as a test rather than fixed because what `iterate()` and
-// `builder()` should mean for an element that owns something is a design
-// decision and not a patch: a snapshot cannot own the elements it snapshots,
-// and a builder filled from a live vector cannot own what that vector still
-// holds. Both want a way to say "the subscriber form of `T`" -- `sub T` where
-// `T` is already a complete type -- which the language cannot spell yet.
+// `VectorBuilder` is the one that cannot be fixed by saying something weaker,
+// which is why it is recorded here rather than patched. It is a staging owner:
+// `add(T)` gives it an element and `finish()` hands every element to a new
+// `Vector<T>` that owns them. But it is constructed from a live vector's
+// storage, so for an owning element type its first act is to duplicate what
+// that vector still holds. Borrowing instead does not help -- `finish()` would
+// then give a vector of owners a set of handles it never owned. Whether
+// `builder()` should drain the vector, be refused for owning elements, or not
+// exist is a decision about what the method means, not a patch.
+//
+// It is reached here without being called: `Vector<Cell*>` instantiates the
+// return type of `builder()` whether or not any line uses it.
 //
 // `Vector<int32>` is unaffected, and the rest of the suite uses exactly that.
 // The corresponding container written the way the model requires is

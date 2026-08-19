@@ -129,7 +129,17 @@ namespace Absolute {
 
 
 
-    llvm::StructType* CodeGenerator::Impl::ArrayDescriptorType(const std::string& name) {
+    llvm::StructType* CodeGenerator::Impl::ArrayDescriptorType(const std::string& rawName) {
+        // Ownership does not change representation: a subscriber handle is the
+        // same machine word an owner is, and the difference between them is
+        // what releasing one means -- which is decided from the type name at
+        // the point of release, not from the LLVM type. Giving the two arrays
+        // separate descriptor types would make them refuse to convert into
+        // each other for a difference that is not there in the layout.
+        const std::string name = ArrayRankName(rawName) > 0 &&
+            CanonicalOwnership(ArrayElementTypeName(rawName, ArrayRankName(rawName))) ==
+                OwnershipKind::Sub
+            ? CanonicalWithOwnership(rawName, OwnershipKind::Unique) : rawName;
         if (const auto found = arrayDescriptorTypes.find(name); found != arrayDescriptorTypes.end())
             return found->second;
         const size_t rank = ArrayRankName(name);

@@ -224,6 +224,16 @@ namespace Absolute {
             parameters.end();
     }
 
+    bool Analyzer::IsOpenGenericParameter(const std::string& name) const {
+        if (name.empty()) return false;
+        if (IsCurrentGenericParameter(name)) return true;
+        return std::any_of(genericTypeScopes.begin(), genericTypeScopes.end(),
+            [&](const auto& scope) {
+                const auto parameter = scope.find(name);
+                return parameter != scope.end() && parameter->second == name;
+            });
+    }
+
     // Noticed here, judged at each instantiation. The type is kept as written --
     // `T` -- because that is the only thing that can be substituted later.
     void Analyzer::RecordGenericBodyFact(GenericBodyFact::Shape shape,
@@ -917,6 +927,10 @@ namespace Absolute {
         if (IsValueReferenceType(name))
             return IsKnownType(ValueReferenceBaseType(name));
         if (IsPointerType(name)) return IsKnownType(PointerPointee(name));
+        // `sub T` is known exactly when `T` is; the qualifier adds nothing to
+        // recognize, it only says what to do once `T` is something.
+        if (CanonicalOpenOwnership(name) != OwnershipKind::None)
+            return IsKnownType(CanonicalOpenBaseName(name));
         if (IsTaskType(name)) return IsKnownType(TaskValueType(name));
         for (auto scope = genericTypeScopes.rbegin(); scope != genericTypeScopes.rend(); ++scope)
             if (scope->contains(name)) return true;
@@ -979,6 +993,17 @@ namespace Absolute {
         }
         if (target.ends_with("[]") && source.ends_with("[]"))
             return IsAssignable(ArrayElementType(target), ArrayElementType(source));
+        // `sub T` takes a `T`, for the same reason `sub Node*` takes a `Node*`:
+        // it is the weaker relation to the same object, and the arrow runs one
+        // way. Which of the two it turns out to be is settled at substitution;
+        // that it is the weaker one is settled here.
+        if (const OwnershipKind openTarget = CanonicalOpenOwnership(target);
+            openTarget != OwnershipKind::None) {
+            const std::string base = CanonicalOpenBaseName(target);
+            if (source == base) return true;
+            if (CanonicalOpenOwnership(source) != OwnershipKind::None)
+                return CanonicalOpenBaseName(source) == base;
+        }
         if (IsPointerType(target) && source == "null") return true;
         if (IsPointerType(target) && IsPointerType(source)) {
             const bool compatibleMode =

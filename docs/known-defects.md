@@ -840,15 +840,26 @@ reaches whether or not the program calls `iterate()` or `builder()`. Each of
 them moves elements by reading a slot and storing what it read.
 
 Nothing in the suite instantiated a collection over an owning element, which is
-why none of this had ever been seen. It is recorded as a test --
-`tests/std-collections-owner-elements-errors.abs` -- rather than fixed, because
-what `iterate()` and `builder()` should mean for an element that owns something
-is a decision and not a patch: a snapshot cannot own the elements it snapshots,
-and a builder filled from a live vector cannot own what that vector still
-holds. Both want a way to say *the subscriber form of `T`* -- `sub T` where `T`
-is already a complete type -- which the language cannot spell yet. The
-container written the way the model requires, over the same element type, is
-`tests/vector-owner-elements.abs`.
+why none of this had ever been seen. Two of the three are fixed by giving the language a way to say *the subscriber
+form of `T`* -- `sub T`, a qualifier in front of a name that is not a pointer
+yet, applied when `T` becomes something and nothing at all when `T` owns
+nothing. `VectorIterator`'s snapshot is `sub T[]`, and `Vector`'s `first`,
+`last` and `toArray` hand back the subscriber form, because reading an element
+is not the vector giving it up.
+
+`VectorBuilder` is the one that saying something weaker cannot fix, and it is
+what `tests/std-collections-owner-elements-errors.abs` now pins. It is a
+staging owner: `add(T)` gives it an element and `finish()` hands every element
+to a new `Vector<T>` that owns them -- but it is constructed from a live
+vector's storage, so over an owning element its first act duplicates what that
+vector still holds, and borrowing instead would have `finish()` give a vector
+of owners handles it never owned. Whether `builder()` should drain the vector,
+be refused for owning elements, or not exist is a decision about what the
+method means, not a patch. It is reached without being called: a generic
+instantiates the return types of members no line uses.
+
+The container written the way the model requires, over the same element type,
+is `tests/vector-owner-elements.abs`.
 
 ## 17. Beyond the list: what is left for undefined behaviour
 

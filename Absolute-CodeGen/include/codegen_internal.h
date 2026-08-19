@@ -240,6 +240,14 @@ namespace Absolute {
 
             if (type.ends_with("[]"))
                 return SubstituteCodegenType(type.substr(0, type.size() - 2), substitutions) + "[]";
+            // `sub T`: written with nothing to apply it to yet, and this is
+            // where there is something -- whatever `T` became.
+            if (const OwnershipKind openKind = CanonicalOpenOwnership(type);
+                openKind != OwnershipKind::None) {
+                return CanonicalWithOwnership(
+                    SubstituteCodegenType(CanonicalOpenBaseName(type), substitutions),
+                    openKind);
+            }
             // The qualifier survives substitution. Spelling the two it knew
             // about by hand is what silently turned `shared T*` into `T*` on
             // the way through a generic, which is the whole class of failure

@@ -1062,6 +1062,17 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-qualifier-generics.abs"
     )
     add_test(
+        NAME absolute.open-ownership-qualifier-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/open-ownership-qualifier.abs"
+    )
+    add_test(
+        NAME absolute.open-ownership-qualifier-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/open-ownership-qualifier-errors.abs"
+    )
+    set_tests_properties(absolute.open-ownership-qualifier-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_QUALIFIER_REQUIRES_POINTER"
+    )
+    add_test(
         NAME absolute.std-collections-owner-elements-errors
         COMMAND "${CMAKE_COMMAND}"
             -DCOMPILER=$<TARGET_FILE:Absolute-Compiler>
@@ -3417,7 +3428,8 @@ if(BUILD_TESTING)
             "resource-fields=resource-fields=ok"
             "temporary-owners=temporary-owners=ok"
             "aliasing-guarantees=aliasing-guarantees=ok"
-            "vector-owner-elements=vector-owner-elements=ok")
+            "vector-owner-elements=vector-owner-elements=ok"
+            "open-ownership-qualifier=open-ownership-qualifier=ok")
             # These two print with `format`, and a string has no lifetime in
             # this language: every string a program builds is allocated and
             # never released (docs/known-defects.md). LeakSanitizer reports

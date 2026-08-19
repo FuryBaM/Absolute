@@ -14,6 +14,25 @@ namespace Absolute {
 
     void Analyzer::Visit(PointerTypeExpr* expr) {
         const std::string pointee = ResolveType(expr->pointee.get());
+        // `sub T` -- a qualifier with nothing to apply it to yet. It is kept as
+        // written and applied when `T` becomes something, which is the only
+        // moment it can be answered: `sub T` at `T = Node*` is `sub Node*`, and
+        // at `T = int32` it is `int32`, because a value with no object has no
+        // relation to an object's lifetime to weaken.
+        if (expr->qualifiesBase) {
+            if (phase == Phase::ResolveBodies && !IsOpenGenericParameter(pointee)) {
+                std::string written(CanonicalOwnershipPrefix(expr->ownership));
+                if (!written.empty()) written.pop_back();
+                Report("'" + written + "' must qualify a pointer type or a generic "
+                    "parameter, and '" + pointee + "' is neither",
+                    "E_QUALIFIER_REQUIRES_POINTER");
+                Save(expr, {InvalidSymbolId, pointee, false});
+                return;
+            }
+            Save(expr, {InvalidSymbolId,
+                std::string(CanonicalOwnershipPrefix(expr->ownership)) + pointee, false});
+            return;
+        }
         if (pointee == "void" && !expr->IsRaw())
             Report("managed pointers cannot point to void", "E_MANAGED_POINTER_TO_VOID");
         Save(expr, {InvalidSymbolId,

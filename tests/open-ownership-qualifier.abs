@@ -1,0 +1,110 @@
+// `sub T` -- a qualifier written in front of a name that is not a pointer yet.
+//
+// The ownership kind is part of the type, and a container that hands an
+// element back has to be able to say it is handing back the weaker relation to
+// the same object. `sub Node*` says that when the element type is written out.
+// Inside a generic there is nothing to qualify: the element type is `T`, and
+// whether there is a handle there at all is not known until `T` is something.
+//
+// So the qualifier is carried rather than applied. `sub T` is not a type; it is
+// an instruction about whatever `T` turns out to be, and it is answered at
+// substitution:
+//
+//   sub T   at T = Node*        sub Node*    a subscriber, releasing it releases nothing
+//   sub T   at T = sub Node*    sub Node*    already the weaker one
+//   sub T   at T = int32        int32        nothing to weaken, so nothing at all
+//
+// That last line is what makes it usable in a container: `Vector<int32>` must
+// not grow a qualifier it has no use for. A value with no object has no
+// relation to an object's lifetime.
+
+class Node {
+    public int32 value;
+    public Node(int32 initial) { value = initial; }
+}
+
+class View<T> {
+    // A field whose ownership is decided by the instantiation, not written
+    // here and not inherited from the argument.
+    public sub T held;
+
+    public View(T incoming) { held = incoming; }
+
+    // And a return that says the same thing.
+    public sub T borrow() { return held; }
+}
+
+class Snapshot<T> {
+    private sub T[] view;
+    private int32 length;
+
+    public Snapshot(T[] source, int32 count) {
+        view = new T[count];
+        int32 i = 0;
+        while (i < count) {
+            unsafeArraySet(view, i, unsafeArrayGet(source, i));
+            i = i + 1;
+        }
+        length = count;
+    }
+
+    public int32 count { get { return length; } }
+
+    public nothrow sub T this[int32 index] {
+        get {
+            assert((index as uint32) < (length as uint32), "Index out of bounds");
+            return unsafeArrayGet(view, index);
+        }
+    }
+}
+
+int32 main() {
+    Node* owner = new Node(7);
+
+    // The container borrows. Releasing it releases nothing, and the owner is
+    // still here afterwards -- which is the whole claim.
+    View<Node*>* borrowed = new View<Node*>(owner);
+    assert(borrowed.held.value == 7, "a borrowed handle reads through");
+    assert(borrowed.borrow().value == 7, "and can be handed back out");
+    delete borrowed;
+    assert(owner.value == 7, "the owner outlived the container that borrowed it");
+
+    // Applying the qualifier to something that already has it changes nothing.
+    sub Node* already = owner;
+    View<sub Node*>* twice = new View<sub Node*>(already);
+    assert(twice.held.value == 7, "the weaker of the weaker is the weaker");
+    delete twice;
+    assert(owner.value == 7, "and it still owns nothing");
+
+    // An array of them, which is what a snapshot is.
+    Node*[] owners = new Node*[2];
+    unsafeArraySet(owners, 0, new Node(3));
+    unsafeArraySet(owners, 1, new Node(4));
+
+    Snapshot<Node*>* view = new Snapshot<Node*>(owners, 2);
+    assert(view[0].value == 3, "a snapshot reads through to the objects");
+    assert(view[1].value == 4, "all of them");
+    delete view;
+    assert(owners[0].value == 3, "and owned nothing it snapshotted");
+
+    unsafeArrayDrop(owners, 0, 2);
+    delete owner;
+
+    // The same code over a type that owns nothing. `sub int32` is `int32`:
+    // there is no qualifier in the resulting type and nothing is released.
+    View<int32>* counted = new View<int32>(5);
+    assert(counted.held == 5, "a qualifier on a value type is nothing at all");
+    assert(counted.borrow() == 5, "in the return type too");
+    delete counted;
+
+    int32[] numbers = new int32[3];
+    unsafeArraySet(numbers, 0, 11);
+    unsafeArraySet(numbers, 1, 22);
+    Snapshot<int32>* plain = new Snapshot<int32>(numbers, 2);
+    assert(plain[0] == 11, "and in an array of them");
+    assert(plain.count == 2, "which is an ordinary array");
+    delete plain;
+
+    println("open-ownership-qualifier=ok");
+    return 0;
+}

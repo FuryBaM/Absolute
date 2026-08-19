@@ -179,6 +179,14 @@ namespace Absolute {
                 return found->second;
             if (type.ends_with("[]"))
                 return SubstituteGenericType(type.substr(0, type.size() - 2), substitutions) + "[]";
+            // `sub T`: the qualifier was written with nothing to apply it to
+            // yet. This is where there is something -- whatever `T` became.
+            if (const OwnershipKind open = CanonicalOpenOwnership(type);
+                open != OwnershipKind::None) {
+                return CanonicalWithOwnership(
+                    SubstituteGenericType(CanonicalOpenBaseName(type), substitutions),
+                    open);
+            }
             // The qualifier survives substitution; see the same fix in
             // SubstituteCodegenType.
             if (const OwnershipKind kind = CanonicalOwnership(type);

@@ -46,9 +46,17 @@ namespace Absolute {
         // are what let a qualifier go missing: two of them said what the
         // pointer was and every reader had to combine them the same way.
         OwnershipKind ownership = OwnershipKind::Unique;
+        // True when the qualifier was written in front of a name with nothing
+        // after it -- `sub T`. There is no pointer level to add here: what the
+        // qualifier applies to is whatever `T` turns out to be, which is known
+        // at substitution and not before. `sub Node*` is the ordinary case and
+        // leaves this false.
+        bool qualifiesBase = false;
 
-        PointerTypeExpr(std::unique_ptr<TypeExpr> pointee, OwnershipKind ownership)
-            : pointee(std::move(pointee)), ownership(ownership) {}
+        PointerTypeExpr(std::unique_ptr<TypeExpr> pointee, OwnershipKind ownership,
+            bool qualifiesBase = false)
+            : pointee(std::move(pointee)), ownership(ownership),
+              qualifiesBase(qualifiesBase) {}
 
         bool IsRaw() const { return ownership == OwnershipKind::Raw; }
         bool IsWeak() const { return ownership == OwnershipKind::Weak; }
@@ -62,6 +70,7 @@ namespace Absolute {
             case OwnershipKind::Sub: kind = "Subscriber pointer type:\n"; break;
             default: kind = "Managed pointer type:\n"; break;
             }
+            if (qualifiesBase) kind.insert(0, "Qualified ");
             return std::string(indent, ' ') + kind +
                 (pointee ? pointee->ToString(indent + 1) : std::string(indent + 1, ' ') + "<missing>");
         }
