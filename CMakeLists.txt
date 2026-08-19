@@ -1062,6 +1062,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-qualifier-generics.abs"
     )
     add_test(
+        NAME absolute.vector-owner-elements-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/vector-owner-elements.abs"
+    )
+    add_test(
         NAME absolute.array-element-transfer-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-element-transfer.abs"
     )
@@ -3405,7 +3409,8 @@ if(BUILD_TESTING)
             "ownership-torture-capsule=ownership-torture-capsule=ok"
             "resource-fields=resource-fields=ok"
             "temporary-owners=temporary-owners=ok"
-            "aliasing-guarantees=aliasing-guarantees=ok")
+            "aliasing-guarantees=aliasing-guarantees=ok"
+            "vector-owner-elements=vector-owner-elements=ok")
             # These two print with `format`, and a string has no lifetime in
             # this language: every string a program builds is allocated and
             # never released (docs/known-defects.md). LeakSanitizer reports

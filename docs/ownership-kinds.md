@@ -215,8 +215,19 @@ sort of owner in front of every reader of every type.
    already uses the move, and `unsafeArrayCopy` over elements that own
    something is refused inside a generic body as well as outside it.
 
-   What is left is the rest of `Vector` -- pop, clear, removeAt, toArray -- and
-   the same audit over the other collections, and only then the drop itself.
+   `Vector`'s three element-moving operations follow: `pop` takes rather than
+   reads, `removeAt` releases what it removes and shifts by taking, `clear`
+   releases the run it discards. `tests/vector-owner-elements.abs` runs the
+   whole set over `Cell*` under AddressSanitizer with the leak check on, which
+   is the half that cannot be asserted from inside the program.
+
+   What is left is `toArray`, which duplicates every handle element by element,
+   and the same audit over `VectorIterator`, `VectorBuilder` and the other
+   collections -- all of which do the same thing -- and only then the drop
+   itself. The rule those all want is the one that already governs fields,
+   extended to array slots: **storing into a slot requires a fresh owner or
+   null.** `unsafeArrayTake` satisfies it and a plain read does not, which is
+   exactly the distinction each of these places is currently missing.
 
    Two things already in place are what make this affordable: array storage is
    zero-initialized (`tests/array-zero-initialization.abs`), so a null slot is

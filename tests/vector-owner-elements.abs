@@ -1,0 +1,94 @@
+// A vector of owners, and what each of its operations has to mean.
+//
+// Nothing in `Vector<T>` mentions ownership. Instantiated over `Cell*` every
+// slot holds the one handle to an object, and the three operations that move
+// elements around have to say so:
+//
+//   pop        the element leaves, so the slot must stop holding it
+//   removeAt   the removed element is released, and the survivors shift by
+//              being taken rather than read
+//   clear      whatever the elements were holding is released
+//
+// Run under AddressSanitizer with the leak check on, because that is the half
+// that cannot be asserted from inside the program: `clear` releasing what it
+// dropped is the difference between this test passing and twenty objects being
+// reported at exit.
+//
+// What is still missing is the drop itself -- a vector deleted without being
+// cleared still leaks its elements, because an array does not yet release what
+// its elements own. That is section 15 of docs/known-defects.md, and it is why
+// this program clears before it deletes.
+
+import "../std/collections/vector.abs";
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+}
+
+int32 main() {
+    Vector<Cell*>* owners = new Vector<Cell*>();
+    int32 i = 0;
+    while (i < 20) {
+        owners.push(new Cell(i));
+        i = i + 1;
+    }
+    assert(owners.count == 20, "twenty elements in");
+
+    // A pop hands the caller an owner. The slot it came from is past `_count`
+    // but still inside the storage the vector holds, so a read that left the
+    // handle behind would be a second handle to what the caller now owns.
+    Cell* last = owners.pop();
+    assert(last.value == 19, "pop hands out the last element");
+    delete last;
+    assert(owners.count == 19, "and the vector is one shorter");
+
+    // Growth carries the elements across and leaves the old storage owning
+    // nothing, so the block that is dropped on the next line releases nothing
+    // the vector still uses.
+    owners.reserve(256);
+    assert(owners[0].value == 0, "growth carries the elements across");
+    assert(owners[18].value == 18, "all of them");
+
+    // The removed element is released here; nothing else is.
+    owners.removeAt(0);
+    assert(owners.count == 18, "removeAt shortens the vector");
+    assert(owners[0].value == 1, "and shifts the survivors down");
+    assert(owners[17].value == 18, "including the last one");
+
+    owners.removeAt(17);
+    assert(owners.count == 17, "removing the last element is the empty shift");
+    assert(owners[16].value == 17, "and leaves the rest alone");
+
+    // Everything still held is released here. If it were not, the leak check
+    // would report seventeen objects at exit.
+    owners.clear();
+    assert(owners.count == 0, "clear empties the vector");
+
+    // A cleared vector is an ordinary empty one.
+    owners.push(new Cell(99));
+    assert(owners.count == 1, "and can be pushed into again");
+    assert(owners[0].value == 99, "with the new element where it belongs");
+    owners.clear();
+
+    delete owners;
+
+    // The same operations over elements that own nothing, which must be
+    // untouched by any of this.
+    Vector<int32>* numbers = new Vector<int32>();
+    int32 n = 0;
+    while (n < 8) {
+        numbers.push(n * 10);
+        n = n + 1;
+    }
+    assert(numbers.pop() == 70, "pop of a plain element reads it");
+    numbers.removeAt(0);
+    assert(numbers[0] == 10, "removeAt shifts plain elements too");
+    assert(numbers.count == 6, "and shortens the same way");
+    numbers.clear();
+    assert(numbers.count == 0, "clear of plain elements is nothing at all");
+    delete numbers;
+
+    println("vector-owner-elements=ok");
+    return 0;
+}

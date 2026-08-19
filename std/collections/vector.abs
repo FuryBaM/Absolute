@@ -188,10 +188,18 @@ namespace std.collections {
                 throw new Error("Vector is empty");
             }
             _count = _count - 1;
-            return unsafeArrayGet(items, _count);
+            // A take rather than a get: the element is leaving the vector, so
+            // the slot must stop holding it. A get would hand the caller a
+            // second handle to what the vector still has in a slot past
+            // `_count` -- and a slot past `_count` is still inside the storage
+            // the vector drops.
+            return unsafeArrayTake(items, _count);
         }
 
         public void clear() {
+            // Whatever the elements were holding is released here. For an
+            // element that owns nothing this is not a loop, it is nothing.
+            unsafeArrayDrop(items, 0, _count);
             _count = 0;
         }
 
@@ -199,9 +207,14 @@ namespace std.collections {
             if (index < 0 || index >= _count) {
                 throw new Error("Index out of bounds");
             }
+            // The element being removed is released first; the shift then moves
+            // each survivor down by taking it, which leaves the slot it came
+            // from empty -- including the last one, so the tail past the new
+            // `_count` owns nothing.
+            unsafeArrayDrop(items, index, 1);
             int32 i = index;
             while (i < _count - 1) {
-                items[i] = items[i + 1];
+                unsafeArraySet(items, i, unsafeArrayTake(items, i + 1));
                 i = i + 1;
             }
             _count = _count - 1;
