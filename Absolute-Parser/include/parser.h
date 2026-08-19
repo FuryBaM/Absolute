@@ -157,9 +157,31 @@ namespace Absolute {
         std::unique_ptr<ImportStmt> ParseImport();
         std::unique_ptr<NamespaceDeclStmt> ParseNamespace();
         std::string ParseQualifiedName();
+        // Steps over an ownership qualifier at `index`, if one is written
+        // there. Each lookahead used to spell out its own list, so a qualifier
+        // was understood in some positions and not in others -- `sub` in a
+        // parameter, a field or a return type, for instance, while it worked
+        // for a local. `sub` is contextual: it only counts when something that
+        // can begin a type follows it.
+        size_t SkipOwnershipQualifier(size_t index) const {
+            if (index >= tokens.size()) return index;
+            const Token& token = tokens[index];
+            if (token.type == TokenType::KEYWORD &&
+                (token.value == "raw" || token.value == "weak" ||
+                    token.value == "shared"))
+                return index + 1;
+            if (token.type == TokenType::IDENTIFIER && token.value == "sub" &&
+                index + 1 < tokens.size() &&
+                (tokens[index + 1].type == TokenType::IDENTIFIER ||
+                    (tokens[index + 1].type == TokenType::KEYWORD &&
+                        IsPrimitiveType(tokens[index + 1].value))))
+                return index + 1;
+            return index;
+        }
+
         std::unique_ptr<TypeExpr> ParsePointerSuffix(
-            std::unique_ptr<TypeExpr> base, bool raw, bool weak = false,
-            bool shared = false);
+            std::unique_ptr<TypeExpr> base,
+            OwnershipKind ownership = OwnershipKind::Unique);
         std::string ParseParentTypeName();
     };
 }

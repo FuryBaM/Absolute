@@ -25,8 +25,10 @@ namespace Absolute {
             void Visit(PointerTypeExpr* expr) override {
                 name.clear();
                 if (expr->pointee) expr->pointee->Accept(*this);
-                if (!name.empty()) name = (expr->raw ? "raw " :
-                    (expr->weak ? "weak " : "")) + name + "*";
+                // A third place that spelled out the two qualifiers it knew and
+                // silently dropped the rest.
+                if (!name.empty())
+                    name = CanonicalPointerName(name, expr->ownership);
             }
 
             void Visit(ArrayTypeExpr* expr) override {

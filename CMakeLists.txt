@@ -1054,6 +1054,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-zero-initialization.abs"
     )
     add_test(
+        NAME absolute.subscriber-pointers-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/subscriber-pointers.abs"
+    )
+    add_test(
         NAME absolute.ownership-qualifier-generics-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-qualifier-generics.abs"
     )
@@ -4926,6 +4930,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-text-number-parsing PROPERTIES
             FIXTURES_REQUIRED absolute-text-number-parsing-executable
             PASS_REGULAR_EXPRESSION "text-number-parsing=ok"
+        )
+        add_test(
+            NAME absolute.build-subscriber-pointers
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/subscriber-pointers.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/subscriber-pointers-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-subscriber-pointers PROPERTIES
+            FIXTURES_SETUP absolute-subscriber-pointers-executable
+        )
+        add_test(NAME absolute.run-subscriber-pointers
+            COMMAND "${CMAKE_BINARY_DIR}/subscriber-pointers-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-subscriber-pointers PROPERTIES
+            FIXTURES_REQUIRED absolute-subscriber-pointers-executable
+            PASS_REGULAR_EXPRESSION "subscriber-pointers=ok"
         )
         add_test(
             NAME absolute.build-ownership-qualifier-generics

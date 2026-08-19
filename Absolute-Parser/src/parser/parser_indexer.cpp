@@ -12,7 +12,7 @@ namespace Absolute {
                 return std::make_unique<UserTypeExpr>(CloneIndexerTypeExpression(*user->typeExpr));
             if (const auto* pointer = dynamic_cast<const PointerTypeExpr*>(&type))
                 return std::make_unique<PointerTypeExpr>(
-                    CloneIndexerType(*pointer->pointee), pointer->raw, pointer->weak);
+                    CloneIndexerType(*pointer->pointee), pointer->ownership);
             if (const auto* array = dynamic_cast<const ArrayTypeExpr*>(&type))
                 return std::make_unique<ArrayTypeExpr>(CloneIndexerType(*array->element));
             throw std::runtime_error("Unsupported indexer type expression");
@@ -69,8 +69,17 @@ namespace Absolute {
         }
 
         size_t SkipIndexerType(const std::vector<Token>& tokens, size_t index) {
+            // The same qualifier step as everywhere else; kept here rather than
+            // calling the member because this helper is free-standing.
             if (index < tokens.size() && tokens[index].type == TokenType::KEYWORD &&
-                tokens[index].value == "raw") ++index;
+                (tokens[index].value == "raw" || tokens[index].value == "weak" ||
+                    tokens[index].value == "shared")) ++index;
+            else if (index + 1 < tokens.size() &&
+                tokens[index].type == TokenType::IDENTIFIER &&
+                tokens[index].value == "sub" &&
+                (tokens[index + 1].type == TokenType::IDENTIFIER ||
+                    (tokens[index + 1].type == TokenType::KEYWORD &&
+                        IsPrimitiveType(tokens[index + 1].value)))) ++index;
             if (index >= tokens.size()) return tokens.size();
             if (tokens[index].type == TokenType::KEYWORD && IsPrimitiveType(tokens[index].value)) {
                 ++index;

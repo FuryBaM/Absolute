@@ -52,8 +52,8 @@ namespace Absolute {
                 Consume(TokenType::OPERATOR, "*");
                 auto pointee = std::unique_ptr<TypeExpr>(
                     static_cast<TypeExpr*>(type.release()));
-                type = std::make_unique<PointerTypeExpr>(
-                    std::move(pointee), raw, false, false);
+                type = std::make_unique<PointerTypeExpr>(std::move(pointee),
+                    raw ? OwnershipKind::Raw : OwnershipKind::Unique);
                 raw = false;
             }
         }

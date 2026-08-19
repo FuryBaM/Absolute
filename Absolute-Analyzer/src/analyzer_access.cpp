@@ -14,16 +14,15 @@ namespace Absolute {
 
     void Analyzer::Visit(PointerTypeExpr* expr) {
         const std::string pointee = ResolveType(expr->pointee.get());
-        if (pointee == "void" && !expr->raw) Report("managed pointers cannot point to void",
-            "E_MANAGED_POINTER_TO_VOID");
-        if (expr->shared) {
+        if (pointee == "void" && !expr->IsRaw())
+            Report("managed pointers cannot point to void", "E_MANAGED_POINTER_TO_VOID");
+        if (expr->IsShared()) {
             Report("shared pointers are not available in Absolute's deterministic "
                 "unique-ownership model; use T*, weak T*, and move(...)",
                 "E_SHARED_POINTER_UNSUPPORTED");
         }
-        const std::string prefix = expr->raw ? "raw " : (expr->weak ? "weak " :
-            (expr->shared ? "shared " : ""));
-        Save(expr, {InvalidSymbolId, prefix + pointee + "*", false});
+        Save(expr, {InvalidSymbolId,
+            CanonicalPointerName(pointee, expr->ownership), false});
     }
 
     void Analyzer::Visit(ArrayTypeExpr* expr) {

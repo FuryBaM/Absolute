@@ -821,6 +821,11 @@ namespace Absolute {
             const bool compatibleMode =
                 (IsRawPointerType(target) && IsRawPointerType(source)) ||
                 (IsWeakPointerType(target) && IsManagedPointerType(source)) ||
+                // A subscriber can be taken of any managed handle, including
+                // another subscriber. It never becomes an owner, which is the
+                // whole point: the arrow runs one way.
+                (IsSubscriberPointerType(target) && IsManagedPointerType(source) &&
+                    !IsWeakPointerType(source)) ||
                 (IsStrongManagedPointerType(target) && IsStrongManagedPointerType(source));
             if (compatibleMode)
                 return IsDerivedFrom(PointerPointee(source), PointerPointee(target));

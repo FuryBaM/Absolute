@@ -99,8 +99,20 @@ counted.
    enforced -- that is step 4, and it is the step that changes programs.
 4. **`sub T*` becomes spellable**, and copying a `T*` without `move` is
    refused. This is the step that changes existing programs, and it splits in
-   two: making the type expressible and correct, then making the old spelling
-   an error.
+   two: making the type expressible and correct *(done)*, then making the old
+   spelling an error *(next)*.
+
+   `sub T*` now works as a local, a field, a parameter, a return type and
+   through a generic, and a subscriber cannot be assigned back to an owner --
+   the arrow runs one way. Nothing existing changed: 688 green. Getting there
+   replaced the three independent flags on the pointer AST node with the single
+   ownership kind, which immediately turned up two more places that had been
+   dropping a qualifier -- cloning a property's type and cloning an indexer's
+   type both kept raw-ness and weak-ness and let the rest fall off -- and one
+   more that spelled out two prefixes when building a backend type name. Each
+   lookahead that had to step over a qualifier also had its own list, which is
+   why `sub` worked for a local before it worked for a parameter; they share
+   one step now.
 
    Two things were measured before starting it, and both change how it should
    be done:

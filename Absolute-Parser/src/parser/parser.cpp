@@ -342,6 +342,15 @@ namespace Absolute{
         {
             if (token->value == "task" && PeekToken() && PeekToken()->value == "<")
                 return ParseVarDeclaration();
+            // `sub Node* view = owner;` is a declaration. `sub` is contextual
+            // rather than a keyword -- it is an ordinary identifier in existing
+            // programs -- so it only reads as a qualifier when a type follows
+            // it, which is the only position where it means anything.
+            if (token->value == "sub" && PeekToken() &&
+                (PeekToken()->type == TokenType::IDENTIFIER ||
+                    (PeekToken()->type == TokenType::KEYWORD &&
+                        IsPrimitiveType(PeekToken()->value))))
+                return ParseVarDeclaration();
             Token* afterIdentifiers = PeekTokenAfterIdentifiers();
             const auto isDeclaratorPrefix = [](const Token* candidate) {
                 return candidate && candidate->type == TokenType::OPERATOR &&
