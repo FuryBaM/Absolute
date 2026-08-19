@@ -269,7 +269,41 @@ sort of owner in front of every reader of every type.
    for `Vector<T*>` than for `Vector<sub T*>`. That is the check that says the
    model is really in place.
 8. **`StringStorage` and shared ownership**, then `format` returning an ordinary
-   string, which is §1 closed.
+   string, which is §1 closed. *(done)*
+
+   A string stays a bare `const char*` -- `printf` takes it, the C ABI takes it
+   -- with a header immediately in front of its first byte holding a magic word
+   and a count of how many names hold the bytes. Shared rather than unique,
+   because a string is a value: two names for the same bytes is the ordinary
+   case, not an error. A literal is laid out the same way with the count set to
+   a sentinel meaning never released, which is what lets release work from a
+   pointer alone.
+
+   Four rules, none of them an exception -- a store is one more name, a
+   parameter takes a count on the way in and gives it back on the way out, a
+   return hands its count to the caller, a scope gives back what it held. A
+   value the expression made itself already holds one and is released by the
+   statement that made it.
+
+   The caller/callee split is the part that took three attempts, and both
+   failures were instructive. Having the caller retain each argument breaks at
+   the external C boundary, where there is no body to release in. Having the
+   callee borrow breaks at `Vector<string>.push`, which moves its parameter
+   into a slot: a parameter owning nothing has nothing to hand on. Each side
+   holding its own count is what makes both work.
+
+   Two million `format` calls: 64.7 MB before, 3.6 MB after.
+   `tests/string-lifetime.abs` pins it under AddressSanitizer with the leak
+   check on, and `tests/temporary-owners.abs` and `tests/aliasing-guarantees.abs`
+   -- the two that had to run with the leak check off because they format --
+   run with it on again.
+
+   What is left is the same remainder §15 has: **there is no copy that retains
+   what its parts hold**, so an aggregate does not release its string fields.
+   Releasing on the strength of a shallow copy is the withdrawn array attempt,
+   and it showed up the same way -- a struct read out of a container killing
+   the string the container still held. `copyable` decides how a value travels;
+   the copy itself is the piece that does not exist.
 
 ## What proves each step
 
@@ -277,9 +311,12 @@ Step 7 is the one that matters: if `Vector<T*>` and `Vector<sub T*>` go through
 the same generic body and come out with different drops, the distinction is
 genuinely carried by the type rather than reconstructed by a special case.
 
-For step 8, the test is a plateau: a loop building a string per iteration must
+For step 8 the test was a plateau: a loop building a string per iteration must
 reach a stable resident size instead of growing without bound, which is what
-two million `format` calls reaching 64.7 MB currently does.
+two million `format` calls reaching 64.7 MB did. They reach 3.6 MB now, and the
+leak check under AddressSanitizer is the finer instrument -- a loop of 20000
+iterations turns one leaked allocation per iteration into 20000 reported ones,
+where resident size would have shrugged it off.
 
 Nested shapes to keep honest at every step:
 

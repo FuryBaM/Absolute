@@ -16,31 +16,39 @@ build/Release/absolutec file.abs --build-exe -o app && ./app
 
 ## 1. Open defects
 
-One, below, and it wants a design decision rather than a patch. Everything
-else this section held has been closed, and each entry records what the fix
-was, so a regression is recognizable rather than rediscovered.
+None. Everything this section held has been closed, and each entry records what
+the fix was, so a regression is recognizable rather than rediscovered.
 
-The one that was here beside it -- **an array never releases what its elements
-own** -- is closed, and section 15 keeps the record because the obvious fix for
-it was written, merged and withdrawn in one session, and what that cost is the
-useful part. The second attempt worked because the two defects were treated as
-one: ownership is part of the type now rather than something the analyzer
-reconstructs per symbol, so a container drops its elements by asking what
-destroying one means rather than whether it looks like a pointer.
+The two were one defect seen from two sides -- **an array never releases what
+its elements own** and **a string has no lifetime** -- and they were fixed as
+one, which is why neither entry reads as a patch. Ownership is part of the type
+now rather than something the analyzer reconstructs per symbol, so a container
+drops its elements by asking what destroying one means rather than whether it
+looks like a pointer, and a string is an ordinary value whose storage is
+shared-owned. Section 15 keeps the record of the array, because the obvious fix
+for it was written, merged and withdrawn in one session and what that cost is
+the useful part.
 
-The string is the same defect from the other side, and the same model closes
-it: a string becomes an ordinary value whose storage is shared-owned. The
-model, the order of work and what proves each step are in
-`docs/ownership-kinds.md`; steps one through six are done and pinned by
+One remainder is shared by both and written down in each place: **there is no
+copy that retains what its parts hold.** An aggregate is copied shallowly, so a
+string held by a field is not released -- releasing it would kill what the copy
+still names, which is the withdrawn attempt again. It is bounded by how much a
+program keeps rather than by how long it runs, which is what separates it from
+the defect it came out of. The model already names the missing piece:
+`TypeSemantics` says whether a type is `copyable`, and that answer decides how
+a value travels -- but nothing anywhere *performs* a copy that takes a count.
+
+The model, the order of work and what proves each step are in
+`docs/ownership-kinds.md`; every step is done, pinned by
 `tests/ownership-qualifier-generics.abs`, `tests/subscriber-pointers.abs`,
-`tests/generic-body-ownership.abs`, `tests/open-ownership-qualifier.abs` and
-`tests/array-element-drop.abs`.
+`tests/generic-body-ownership.abs`, `tests/open-ownership-qualifier.abs`,
+`tests/array-element-drop.abs` and `tests/string-lifetime.abs`.
 
-### Open: a string has no lifetime, so every string a program builds is lost
+### Fixed: a string had no lifetime, so every string a program built was lost
 
 `format`, `concat`, `substring`, `toUpper` and the rest allocate a buffer and
-nothing ever frees it. `TypeNeedsCleanup` does not name `string`, so a string
-is a `char*` that no scope owns:
+nothing ever freed it. `TypeNeedsCleanup` did not name `string`, so a string
+was a `char*` that no scope owned:
 
 ```absolute
 int32 i = 0;
@@ -50,31 +58,80 @@ while (i < 2000000) {
 }
 ```
 
-Two million `format` calls end at **64.7 MB** of resident memory; 500000
-iterations of `concat` + `toUpper` + `substring` reach 49.6 MB. A program that
-runs for a while and formats anything grows without bound. Found by putting the
-rest of the ownership corpus under AddressSanitizer, where the two tests that
-print with `format` were the only ones that failed.
+Two million `format` calls ended at **64.7 MB** of resident memory; 500000
+iterations of `concat` + `toUpper` + `substring` reached 49.6 MB. A program
+that ran for a while and formatted anything grew without bound. Found by
+putting the rest of the ownership corpus under AddressSanitizer, where the two
+tests that print with `format` were the only ones that failed.
 
-The fix is a decision about what a string is, which is why it is recorded
-rather than guessed at:
+The same loop now plateaus at **3.6 MB**, and so does the form that throws the
+string away rather than keeping it.
 
-- **Give strings the ownership the language already has.** The machinery is
-  there -- `TypeNeedsCleanup`, scope cleanup, and the statement-level release
-  built for owning temporaries -- and a string would be freed at the end of the
-  scope that holds it. Every place a string can go (a field, an array, a
-  return, a C-ABI boundary that documents the caller as the owner) has to be
-  accounted for, and a wrong claim frees a pointer someone still holds.
-- **Reference-count the buffer**, with a header behind the pointer so a
-  `char*` still crosses the C boundary. Copies stay cheap to reason about, at
-  the cost of a retain and release on every assignment.
-- **Leave it as it is and say so.** Defensible for a compiler that runs and
-  exits; not defensible for the servers and games the roadmap describes.
+#### What a string is
 
-Until it is decided, `tests/temporary-owners.abs` and
-`tests/aliasing-guarantees.abs` run under AddressSanitizer with the leak check
-off -- they exist to catch a use-after-free and a double free, and these bytes
-would drown that.
+The second of the three options recorded here: **reference-count the buffer**,
+with a header behind the pointer so a `char*` still crosses the C boundary.
+A string is still a bare `const char*` -- `printf` takes it, the C ABI takes
+it -- and immediately in front of its first byte sits a magic word and a count
+of how many names are holding the bytes.
+
+Shared rather than unique, because a string is a value: assigning one copies
+the pointer, and two names for the same bytes is the ordinary case rather than
+an error. That is the difference between a string and an owner, and it is why
+`TypeSemantics` has a `copyable` as well as a `needsDrop`.
+
+A literal is laid out the same way by the compiler, with the count set to a
+sentinel meaning never released. That is what lets release work from a pointer
+alone without guessing whether what it was given has a header at all; the magic
+word remains as a backstop for a `const char*` that arrives from a plugin.
+
+#### Four rules, none of them an exception
+
+| | |
+|---|---|
+| a store | one more name, so it says so |
+| a parameter | takes a count on the way in, gives it back on the way out |
+| a return | hands its count to the caller |
+| a scope | gives back what it was holding |
+
+A string the expression made itself already holds one count and is not counted
+again; the caller releases those at the end of the statement it made them for.
+
+The split between the caller and the callee is the part that took three
+attempts. Having the *caller* retain each argument breaks at the one boundary
+that cannot play along: an external C function has no body to emit a release
+into, so every call to `absolute_string_substring` and its neighbours leaked
+the retain -- which is why `split` leaked four counts per call while the
+pure-Absolute shapes were clean. Having the callee *borrow* instead fails the
+other way: `Vector<string>.push` moves its parameter into a slot, and a
+parameter owning nothing has nothing to hand on, so the array held a pointer
+nobody counted. Each side holding its own count is what makes both work.
+
+Pinned by `tests/string-lifetime.abs`, under AddressSanitizer with the leak
+check on: 20000 iterations each of the reproducer above, a string returned from
+a function, one passed in and handed back, a variable reassigned in a loop,
+plus the standard library's own producers and `split`. One leaked allocation
+per iteration would be thousands of reported leaks.
+
+#### What is not released: a string held by a field
+
+An aggregate does not release its string fields, and that is deliberate.
+Copying a struct copies the pointer without saying so -- there is no copy that
+retains, because the `copyable` half of the model is named and not implemented
+-- so releasing a field on the strength of a shallow copy kills what the copy
+still names. It surfaced as a use-after-free reached through `Headers`: a
+`FormEntry` read out of a vector released the string the vector still held.
+
+That is the withdrawn array attempt again (section 15), in a new place, and it
+has the same answer: until there is a copy, there is no drop. A string held by
+an object leaks, bounded by the number of objects rather than by the number of
+iterations -- which is the difference between this remainder and the defect it
+came out of.
+
+Closing it means a copy that retains what its parts hold: a per-type walk
+emitted wherever an aggregate value is stored, the same shape as the destructor
+walk that already exists. `copyable` decides how a value travels today; what is
+missing is the copy itself.
 
 ### Fixed: an owner produced inside a larger expression was lost
 

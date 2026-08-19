@@ -3445,16 +3445,14 @@ if(BUILD_TESTING)
             "open-ownership-qualifier=open-ownership-qualifier=ok"
             "array-element-drop=array-element-drop=ok"
             "string-lifetime=string-lifetime=ok")
-            # These two print with `format`, and a string has no lifetime in
-            # this language: every string a program builds is allocated and
-            # never released (docs/known-defects.md). LeakSanitizer reports
-            # those bytes, which would drown the use-after-free and double-free
-            # this list exists to catch, so the two that format ask for
-            # everything except the leak check.
+            # These two print with `format`. A string had no lifetime when
+            # this list was written -- every string a program built was
+            # allocated and never released -- and LeakSanitizer reported those
+            # bytes, which would have drowned the use-after-free and
+            # double-free this list exists to catch. A string is released now
+            # (docs/known-defects.md section 1), so the leak check is on for
+            # every case, and these two are where it says so.
             set(ownership_detect_leaks ${ABSOLUTE_SANITIZER_DETECT_LEAKS})
-            if(ownership_case MATCHES "^(temporary-owners|aliasing-guarantees)=")
-                set(ownership_detect_leaks OFF)
-            endif()
             string(REGEX MATCH "^[^=]+" ownership_name "${ownership_case}")
             string(REGEX REPLACE "^[^=]+=" "" ownership_marker "${ownership_case}")
             add_test(
