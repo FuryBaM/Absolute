@@ -173,6 +173,44 @@ sort of owner in front of every reader of every type.
    still has two readings. Whatever `T*[]` is defined to mean, it has to be one
    thing -- that is what the withdrawn attempt got wrong by leaving it to be
    inferred per element.
+
+   **The decision: `T*[]` owns its elements, `sub T*[]` does not, and the
+   array never asks.** It is the element type that answers, the same way it
+   answers for a field or a local. This follows from the rule the whole model
+   rests on -- the container does not change the semantics of the element --
+   and it is the only reading under which `Vector<Node*>` and
+   `Vector<sub Node*>` can share a body and still be right.
+
+   What it costs is not in the array. It is in every place that currently
+   treats a slot as a value that can be read twice, and `std/collections/vector.abs`
+   has one of each -- which is why step 7 is a separate step rather than a
+   consequence:
+
+   - **Growth copies the handles and then drops the source.** `push` does
+     `unsafeArrayCopy(newItems, items, _count)` and `items = move(newItems)`;
+     the old array still holds every handle that was just memcpy'd, so dropping
+     it releases every element the vector still uses. Either the copy is a move
+     that clears the source, or growth releases the old storage without
+     dropping through it.
+   - **`pop` hands out a slot it does not clear.** `_count` is decremented and
+     `unsafeArrayGet` reads the handle; the array's length is its capacity, not
+     `_count`, so the array still drops what was handed to the caller. This is
+     exactly what the withdrawn attempt turned into a silent premature destroy.
+     It wants a take -- read and null in one step -- not a get.
+   - **`clear` sets `_count = 0`** and releases nothing, which leaks every
+     element for as long as the vector lives.
+   - **`removeAt` shifts with `items[i] = items[i + 1]`**, which under this
+     reading writes an owner over an owner and leaves the last slot holding a
+     duplicate. It wants per-slot moves and a cleared tail.
+   - **`toArray` copies every handle into a second array**, which is two arrays
+     owning the same objects -- already refused for `copy` by
+     `E_COPY_OWNING_ELEMENTS`, and the same refusal has to reach here.
+
+   Two things already in place are what make this affordable: array storage is
+   zero-initialized (`tests/array-zero-initialization.abs`), so a null slot is
+   a slot that owns nothing and drop can skip it, and the rules now run inside
+   a generic body (step 5), so `Vector<T>`'s own code is checked against each
+   `T` rather than never.
 7. **`Vector<T>` follows** — the same generic code must produce a different drop
    for `Vector<T*>` than for `Vector<sub T*>`. That is the check that says the
    model is really in place.
