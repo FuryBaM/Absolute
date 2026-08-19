@@ -105,6 +105,7 @@ namespace Absolute {
         Closure,         // release the closure environment
         ManagedOwner,    // destroy what it points at, then the handle
         ArrayStorage,    // free the buffer
+        StringStorage,   // one name fewer holds the bytes
         ClassObject,     // run the class destructor
         StructObject,    // run the struct destructor
         PluginResource   // hand it back to the plugin that made it

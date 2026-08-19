@@ -899,6 +899,20 @@ namespace Absolute {
             value.pointerRole = (value.createsManagedOwner ||
                 (symbol && symbol->managedOwner))
                 ? PointerRole::ManagedOwner : PointerRole::ManagedSub;
+        // A string expression that produced storage of its own, rather than
+        // naming storage something else already holds. Only a call can: a
+        // literal is static, and reading a variable, a field or an element
+        // hands back the pointer that is already there. A getter is a call
+        // however it is written, which is why the kind is asked for rather
+        // than the shape of the expression alone.
+        if (value.type == "string" && expression) {
+            if (dynamic_cast<FunctionCallExpr*>(expression))
+                value.createsStringStorage = true;
+            else if (symbol)
+                value.createsStringStorage =
+                    symbol->kind == SymbolKind::Property ||
+                    symbol->kind == SymbolKind::Indexer;
+        }
         result = std::move(value);
         if (expression) {
             ExpressionInfo info;
@@ -919,6 +933,7 @@ namespace Absolute {
             info.createsRawOwner = result.createsRawOwner;
             info.isMoveResult = result.isMoveResult;
             info.createsArrayOwner = result.createsArrayOwner;
+            info.createsStringStorage = result.createsStringStorage;
             expressionInfo[expression] = std::move(info);
         }
     }

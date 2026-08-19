@@ -30,6 +30,12 @@ set(ABSOLUTE_RUNTIME_SOURCES
 
 add_library(Absolute-Runtime STATIC ${ABSOLUTE_RUNTIME_SOURCES})
 target_compile_features(Absolute-Runtime PUBLIC cxx_std_20)
+# The archive is linked into shared libraries as well as executables: a program
+# built with --build-library pulls in whatever of the runtime it uses, and a
+# string's storage is reference counted by the runtime now, so string.cpp is
+# part of that for any library that holds one. Without position-independent
+# code its thread-local accesses cannot be relocated into a shared object.
+set_target_properties(Absolute-Runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(Absolute-Runtime PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
 # lli JITs a module by itself, so a test that touches a managed pointer only
 # resolves `absolute_managed_*` if the runtime is handed to it. The static

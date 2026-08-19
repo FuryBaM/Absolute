@@ -141,6 +141,11 @@ namespace Absolute {
         PointerRole pointerRole = PointerRole::None;
         std::vector<std::string> parameterTypes;
         bool createsArrayOwner = false;
+        // A string expression that produced storage of its own, rather than
+        // naming storage something else already holds. Only a call can: a
+        // literal is static, and reading a variable, a field or an element
+        // hands back the pointer that is already there.
+        bool createsStringStorage = false;
     };
 
     struct ANALYZER_API Diagnostic {
@@ -264,6 +269,7 @@ namespace Absolute {
             PlaceInfo placeInfo;
             PointerRole pointerRole = PointerRole::None;
             bool createsArrayOwner = false;
+            bool createsStringStorage = false;
         };
 
         enum class KeepState {

@@ -119,9 +119,27 @@ namespace Absolute {
                 }
             }
         }
+        // A string being stored is one more name for the bytes -- unless the
+        // value made them, in which case it is already counted once. Retained
+        // before the old value is released, because the two can be the same
+        // storage: `text = text` must not free what it is about to store.
+        if (targetTypeName == "string")
+            assigned = impl->RetainStoredString(expr->value.get(), assigned);
         if (targetSymbol && targetSymbol->kind == SymbolKind::Field &&
             impl->TypeNeedsCleanup(targetTypeName) && !functionValue) {
             impl->EmitValueCleanup(targetAddress, targetTypeName);
+        }
+        // A local or a parameter holding a string releases what it held before
+        // taking the new one, the same way a field does.
+        else if (targetTypeName == "string" && targetSymbol &&
+            (targetSymbol->kind == SymbolKind::Variable ||
+             targetSymbol->kind == SymbolKind::Parameter)) {
+            if (const std::string name = IdentifierName(expr->target.get());
+                !name.empty()) {
+                if (Impl::Variable* variable = impl->FindVariable(name);
+                    variable && variable->ownsAggregateResources)
+                    impl->EmitValueCleanup(targetAddress, targetTypeName);
+            }
         }
         if (functionValue) {
             if (!createsClosureOwner)
@@ -319,12 +337,18 @@ namespace Absolute {
             typeName, closureReturn, closureParameters);
         if (functionValue && !createsClosureOwner)
             impl->builder.CreateCall(impl->ClosureRetain(), {initial});
+        // The same for a string, for the same reason: the variable is one more
+        // name holding the bytes, and it says so again when it goes out of
+        // scope. A fresh one already counts as held once.
+        const bool stringValue = typeName == "string";
+        if (stringValue && expr->value)
+            initial = impl->RetainStoredString(expr->value.get(), initial);
         initial = impl->Coerce(initial, type,
             expr->value ? impl->SemanticType(expr->value.get()) : typeName, typeName);
         impl->builder.CreateStore(initial, address);
         impl->DeclareDebugVariable(
             name, typeName, address, expr);
-        if (functionValue)
+        if (functionValue || stringValue)
             impl->RequireVariable(name).ownsAggregateResources = true;
         if (staticOwner && createsOwner && managedPointee) {
             Impl::Variable& variable = impl->RequireVariable(name);
@@ -803,6 +827,12 @@ namespace Absolute {
                 typeName, closureReturn, closureParameters);
             if (functionValue && !createsClosureOwner)
                 impl->builder.CreateCall(impl->ClosureRetain(), {initial});
+            // The same for a string, for the same reason: the variable is one
+            // more name holding the bytes, and it will say so again when it
+            // goes out of scope.
+            const bool stringValue = typeName == "string";
+            if (stringValue && expr->value)
+                initial = impl->RetainStoredString(expr->value.get(), initial);
             initial = impl->Coerce(initial, type);
             const bool createsOwner = impl->valueCreatesManagedOwner;
             llvm::Value* managedPointee = impl->valueManagedPointee;
@@ -813,7 +843,7 @@ namespace Absolute {
                 impl->Fail("duplicate variable '" + name + "'");
             impl->DeclareDebugVariable(
                 name, typeName, address, expr);
-            if (functionValue)
+            if (functionValue || stringValue)
                 impl->RequireVariable(name).ownsAggregateResources = true;
             if (staticOwner && createsOwner && managedPointee) {
                 Impl::Variable& variable = impl->RequireVariable(name);

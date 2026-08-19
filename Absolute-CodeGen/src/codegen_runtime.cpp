@@ -136,7 +136,7 @@ namespace Absolute {
                 });
                 continue;
             }
-            if (variable.ownsAggregateResources) {
+            if (variable.ownsAggregateResources && !transfersThisOwner) {
                 emitWhenOwner([&] {
                     EmitValueCleanup(variable.address, variable.typeName);
                 });
@@ -271,6 +271,10 @@ namespace Absolute {
             return temporary;
         }
         llvm::Value* argument = Evaluate(expression);
+        // A string the caller made only in order to pass it in. The callee
+        // borrows it for the length of the call, so it is released with the
+        // statement rather than by whoever received it.
+        RegisterIfFreshString(expression, argument);
         const bool transfersArrayOwner =
             valueCreatesArrayOwner && llvm::cast<llvm::ConstantInt>(
                 ArgumentOwnershipFlag(expression, parameterType))->isOne();
@@ -403,6 +407,7 @@ namespace Absolute {
         // and read one field of it.
         if (valueCreatesArrayOwner && valueArrayOwner)
             RegisterTemporaryArrayOwner(valueArrayOwner);
+        RegisterIfFreshString(expression, value);
         return value;
     }
 
@@ -471,9 +476,44 @@ namespace Absolute {
 
     void CodeGenerator::Impl::RegisterTemporaryArrayOwner(llvm::Value* owner) {
         if (!owner) return;
-        temporaryManagedOwners.push_back({owner, {}, true});
+        temporaryManagedOwners.push_back(
+            {owner, {}, TemporaryOwner::Kind::ArrayBuffer});
         valueCreatesArrayOwner = false;
         valueArrayOwner = nullptr;
+    }
+
+    // A string an expression produced and nothing kept. `println(format(...))`
+    // in a loop is the shape this exists for: the bytes are formatted, printed,
+    // and then nobody holds them.
+    void CodeGenerator::Impl::RegisterTemporaryStringOwner(llvm::Value* text) {
+        if (!text) return;
+        temporaryManagedOwners.push_back(
+            {text, "string", TemporaryOwner::Kind::StringStorage});
+    }
+
+    // Whether this expression made the storage it handed back. The analyzer
+    // decides: a call allocates, a literal is static, and reading a name gives
+    // back storage something else already holds.
+    bool CodeGenerator::Impl::CreatesFreshString(Expression* expression) const {
+        if (!expression || !analyzer) return false;
+        const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
+        return info && info->createsStringStorage;
+    }
+
+    void CodeGenerator::Impl::RegisterIfFreshString(
+        Expression* expression, llvm::Value* value) {
+        if (!value) return;
+        if (CreatesFreshString(expression)) RegisterTemporaryStringOwner(value);
+    }
+
+    // Storing a string into a place that will release it later. A fresh one
+    // already counts as held once -- the call that made it said so -- and
+    // anything else is another name for storage something already holds, so it
+    // has to say so.
+    llvm::Value* CodeGenerator::Impl::RetainStoredString(
+        Expression* source, llvm::Value* value) {
+        if (!value || CreatesFreshString(source)) return value;
+        return builder.CreateCall(StringRetain(), {value}, "string.retained");
     }
 
     void CodeGenerator::Impl::ReleaseTemporaryOwners(size_t mark) {
@@ -490,8 +530,12 @@ namespace Absolute {
             // a quieter leak than the one this replaced.
             for (size_t index = temporaryManagedOwners.size(); index > mark; --index) {
                 const TemporaryOwner& temporary = temporaryManagedOwners[index - 1];
-                if (temporary.isArrayBuffer) {
+                if (temporary.kind == TemporaryOwner::Kind::ArrayBuffer) {
                     builder.CreateCall(Free(), {temporary.handle});
+                    continue;
+                }
+                if (temporary.kind == TemporaryOwner::Kind::StringStorage) {
+                    builder.CreateCall(StringRelease(), {temporary.handle});
                     continue;
                 }
                 llvm::Value* pointee = EmitManagedGet(temporary.handle, false);
@@ -1480,6 +1524,10 @@ namespace Absolute {
     }
 
     CodeGenerator::Impl::PrintableValue CodeGenerator::Impl::PreparePrintable(llvm::Value* source, Expression* expression) {
+        // The same rule as a call argument: printing borrows the bytes, it does
+        // not take them, so a string made only to be printed is released with
+        // the statement.
+        RegisterIfFreshString(expression, source);
         if (!source) Fail("cannot print an empty value");
         llvm::Type* type = source->getType();
         const std::string semanticType = SemanticType(expression);

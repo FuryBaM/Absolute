@@ -1261,6 +1261,11 @@ namespace Absolute {
             return {handle.copyable, handle.movable, handle.needsDrop, drop};
         }
 
+        // A string is shared: copying one is copying the pointer, and what
+        // releasing it means is one name fewer holding the bytes. Copyable and
+        // movable, unlike an owner, and still with something to drop.
+        if (typeName == "string") return {true, true, true, DropKind::StringStorage};
+
         // An array always has storage to free. Whether its elements need
         // dropping too is a separate question, and the answer to it is what
         // section 15 of docs/known-defects.md is about.
@@ -1467,6 +1472,14 @@ namespace Absolute {
             EmitPointeeCleanup(pointee, typeName);
             builder.CreateCall(ManagedDestroy(), {handle});
             builder.CreateStore(builder.getInt64(0), address);
+            return;
+        }
+        case DropKind::StringStorage: {
+            llvm::Value* text = builder.CreateLoad(
+                builder.getPtrTy(), address, "string.cleanup.text");
+            builder.CreateCall(StringRelease(), {text});
+            builder.CreateStore(
+                llvm::ConstantPointerNull::get(builder.getPtrTy()), address);
             return;
         }
         case DropKind::ArrayStorage: {

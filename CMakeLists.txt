@@ -2370,6 +2370,7 @@ if(BUILD_TESTING)
                     -DLLI=${ABSOLUTE_LLI_EXECUTABLE}
                     -DIR_FILE=${CMAKE_BINARY_DIR}/chess-example.ll
                     -DINPUT_FILE=${PROJECT_SOURCE_DIR}/tests/chess-mate-input.txt
+                    "-DRUNTIME_LIB=$<IF:$<TARGET_EXISTS:Absolute-Runtime-Shared>,$<TARGET_FILE:Absolute-Runtime-Shared>,>"
                     -P "${PROJECT_SOURCE_DIR}/tests/run-chess-checkmate.cmake"
             )
             set_tests_properties(absolute.run-chess-checkmate PROPERTIES
@@ -3177,6 +3178,10 @@ if(BUILD_TESTING)
             tests/native/export_consumer.cpp
             "${ABSOLUTE_EXPORT_TEST_OBJECT}"
         )
+        # A string's storage is reference counted by the runtime, so an object
+        # that holds or releases one depends on it the same way it depends on
+        # the managed pointer table. Exported code is code.
+        target_link_libraries(absolute-export-consumer PRIVATE Absolute-Runtime)
         add_test(NAME absolute.run-native-export-consumer
             COMMAND $<TARGET_FILE:absolute-export-consumer>)
         set_tests_properties(absolute.run-native-export-consumer PROPERTIES

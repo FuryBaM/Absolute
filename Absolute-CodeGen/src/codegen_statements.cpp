@@ -236,6 +236,14 @@ namespace Absolute {
         llvm::Value* result = impl->Coerce(
             impl->Evaluate(stmt->expr.get()), expectedReturn,
             impl->SemanticType(stmt->expr.get()), impl->currentReturnTypeName);
+        // A returned string is handed to the caller, who releases it. What is
+        // returned is usually a local or a field -- storage something here
+        // still names -- and the cleanup below is about to let that name go,
+        // so the value has to be held once more on its way out. A string the
+        // return expression made itself is already held once and needs no
+        // second count.
+        if (impl->currentReturnTypeName == "string")
+            result = impl->RetainStoredString(stmt->expr.get(), result);
         impl->ReleaseTemporaryOwners(temporaryMark);
         SymbolId transferredOwner = InvalidSymbolId;
         if (IsStrongManagedPointerTypeName(impl->currentReturnTypeName)) {
@@ -244,6 +252,18 @@ namespace Absolute {
                 Impl::Variable& returned = impl->RequireVariable(returnedIdentifier->name);
                 if (returned.managedOwner) transferredOwner = returned.symbol;
             }
+        }
+        // A struct or class value returned by name is copied out and the local
+        // is then torn down -- which, now that a string field has something to
+        // release, took the copy's fields with it. The local hands its parts
+        // to the copy instead of releasing them, the same way a returned owner
+        // and a returned array do.
+        else if (!IsPointerTypeName(impl->currentReturnTypeName) &&
+            impl->TypeNeedsCleanup(impl->currentReturnTypeName)) {
+            if (Impl::Variable* returned = impl->FindVariable(
+                impl->SemanticSymbol(stmt->expr.get()));
+                returned && returned->ownsAggregateResources)
+                transferredOwner = returned->symbol;
         }
         else if (ArrayRankName(impl->currentReturnTypeName) > 0) {
             if (Impl::Variable* returned = impl->FindVariable(

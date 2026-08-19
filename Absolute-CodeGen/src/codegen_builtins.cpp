@@ -508,6 +508,42 @@ namespace Absolute {
                 llvm::Value* copiedData = builder.CreateCall(Malloc(), {byteCount}, "copy.data");
                 builder.CreateMemCpy(copiedData, llvm::MaybeAlign(16),
                     source.address, llvm::MaybeAlign(1), byteCount);
+                // The bytes are copied; what they refer to is not. For an
+                // element that owns something shared, the copy is one more
+                // name holding it and has to say so -- otherwise the two
+                // arrays release the same storage. An element that owns
+                // something *uniquely* cannot be copied at all, which is what
+                // E_COPY_OWNING_ELEMENTS refuses before reaching here.
+                const std::string copiedElement = ArrayElementTypeName(typeName, rank);
+                if (SemanticsOfTypeName(copiedElement).dropKind ==
+                    DropKind::StringStorage) {
+                    llvm::Function* function = builder.GetInsertBlock()->getParent();
+                    llvm::BasicBlock* entry = builder.GetInsertBlock();
+                    llvm::BasicBlock* test = llvm::BasicBlock::Create(
+                        context, "copy.retain.test", function);
+                    llvm::BasicBlock* body = llvm::BasicBlock::Create(
+                        context, "copy.retain.body", function);
+                    llvm::BasicBlock* done = llvm::BasicBlock::Create(
+                        context, "copy.retain.done", function);
+                    builder.CreateBr(test);
+                    builder.SetInsertPoint(test);
+                    llvm::PHINode* index = builder.CreatePHI(
+                        builder.getInt64Ty(), 2, "copy.retain.index");
+                    index->addIncoming(builder.getInt64(0), entry);
+                    builder.CreateCondBr(
+                        builder.CreateICmpSLT(index, elementCount, "copy.retain.more"),
+                        body, done);
+                    builder.SetInsertPoint(body);
+                    llvm::Value* slot = builder.CreateInBoundsGEP(
+                        builder.getPtrTy(), copiedData, index, "copy.retain.slot");
+                    builder.CreateCall(StringRetain(),
+                        {builder.CreateLoad(builder.getPtrTy(), slot, "copy.retain.text")});
+                    llvm::Value* next = builder.CreateAdd(
+                        index, builder.getInt64(1), "copy.retain.next");
+                    index->addIncoming(next, builder.GetInsertBlock());
+                    builder.CreateBr(test);
+                    builder.SetInsertPoint(done);
+                }
                 if (releaseTemporarySource)
                     builder.CreateCall(Free(), {temporarySourceOwner});
                 source.address = copiedData;

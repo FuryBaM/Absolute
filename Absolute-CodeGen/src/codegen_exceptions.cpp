@@ -180,8 +180,12 @@ namespace Absolute {
         // ordinary path still has its own release to emit.
         for (size_t index = temporaryManagedOwners.size(); index > 0; --index) {
             const TemporaryOwner& temporary = temporaryManagedOwners[index - 1];
-            if (temporary.isArrayBuffer) {
+            if (temporary.kind == TemporaryOwner::Kind::ArrayBuffer) {
                 builder.CreateCall(Free(), {temporary.handle});
+                continue;
+            }
+            if (temporary.kind == TemporaryOwner::Kind::StringStorage) {
+                builder.CreateCall(StringRelease(), {temporary.handle});
                 continue;
             }
             llvm::Value* pointee = EmitManagedGet(temporary.handle, false);

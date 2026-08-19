@@ -201,11 +201,14 @@
         // with the handle because releasing an owner means releasing what it
         // owns first, which needs to know what it is.
         struct TemporaryOwner {
+            // What releasing it means. One kind rather than a flag per shape:
+            // an array owner is a plain buffer released with free(), a managed
+            // owner needs the two steps delete takes, and a string is a count
+            // behind its first byte.
+            enum class Kind { ManagedObject, ArrayBuffer, StringStorage };
             llvm::Value* handle = nullptr;
             std::string typeName;
-            // An array owner is a plain buffer: it is released with free(),
-            // while a managed owner needs the two steps delete takes.
-            bool isArrayBuffer = false;
+            Kind kind = Kind::ManagedObject;
         };
         std::vector<TemporaryOwner> temporaryManagedOwners;
         // Type-based alias information can be turned off, which is only ever

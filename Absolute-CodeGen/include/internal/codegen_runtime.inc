@@ -63,6 +63,14 @@
 
         void RegisterTemporaryArrayOwner(llvm::Value* owner);
 
+        void RegisterTemporaryStringOwner(llvm::Value* text);
+
+        void RegisterIfFreshString(Expression* expression, llvm::Value* value);
+
+        bool CreatesFreshString(Expression* expression) const;
+
+        llvm::Value* RetainStoredString(Expression* source, llvm::Value* value);
+
         void ReleaseTemporaryOwners(size_t mark);
 
         // Destroys, at the end of the statement it was opened for, every owner
