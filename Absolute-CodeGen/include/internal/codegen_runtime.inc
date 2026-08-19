@@ -192,6 +192,15 @@
         llvm::FunctionCallee Snprintf();
 
         llvm::FunctionCallee Malloc();
+        // A string is its bytes plus a header in front of them saying how many
+        // names hold it. These three are the only way that count changes.
+        // `size_t` for the target being emitted: 64 bits natively, 32 on
+        // wasm32. A declaration that disagrees with the runtime's definition
+        // links to a trapping stub rather than to the function.
+        llvm::IntegerType* SizeType();
+        llvm::FunctionCallee StringAlloc();
+        llvm::FunctionCallee StringRetain();
+        llvm::FunctionCallee StringRelease();
 
         // Array storage is zero-initialized, which is what the language
         // promises and what `malloc` does not do. calloc rather than a memset

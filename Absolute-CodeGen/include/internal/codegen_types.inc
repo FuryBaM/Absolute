@@ -117,6 +117,11 @@
         void EmitStructDestructor(StructInfo& info);
 
         void EmitValueCleanup(llvm::Value* address, const std::string& typeName);
+        // A string constant, laid out the way every other string is: a
+        // reference-counted header, then the bytes. The pointer handed back is
+        // the first byte, and the count says static so nothing ever frees it.
+        llvm::Constant* EmitStringConstant(
+            const std::string& text, const std::string& name);
         // Releasing what an array's elements own, guarded by the same owner
         // bit that decides whether its storage is freed at all.
         void EmitArrayElementCleanup(llvm::Value* data, llvm::Type* elementType,

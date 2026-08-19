@@ -268,7 +268,7 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(StringLiteralExpr* expr) {
-        impl->value = impl->builder.CreateGlobalStringPtr(expr->value, "string.literal");
+        impl->value = impl->EmitStringConstant(expr->value, "string.literal");
     }
 
     void CodeGenerator::Visit(CharLiteralExpr* expr) {

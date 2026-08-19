@@ -167,6 +167,9 @@
         std::vector<std::unordered_map<std::string, Variable>> scopes;
         std::unordered_map<std::string, Variable> globals;
         std::unordered_map<std::string, llvm::StructType*> arrayDescriptorTypes;
+        // One constant per distinct literal: two occurrences of the same text
+        // are the same storage, which is what they always were.
+        std::unordered_map<std::string, llvm::Constant*> stringConstants;
         llvm::StructType* closureObjectType = nullptr;
         std::unordered_map<SymbolId, llvm::GlobalVariable*> functionClosures;
         std::unordered_map<std::string, ClassInfo> classes;

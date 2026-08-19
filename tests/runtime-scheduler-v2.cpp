@@ -12,6 +12,11 @@
 #include <unistd.h>
 
 #include "socket_reactor.h"
+
+// A string the runtime handed out is reference counted behind its first
+// byte, so it is released rather than freed; see
+// Absolute-Runtime/src/string.cpp.
+extern "C" void absolute_string_release(const char* text);
 #endif
 
 extern "C" {
@@ -204,7 +209,7 @@ void networkServer(void* opaque) {
     if (!context->ok)
         std::cerr << "network server exchange failed: "
             << absolute_net_error() << '\n';
-    std::free(const_cast<char*>(request));
+    absolute_string_release((request));
     absolute_net_tcp_close(socket);
 }
 
@@ -227,7 +232,7 @@ void networkClient(void* opaque) {
     if (!context->ok)
         std::cerr << "network client receive failed: "
             << absolute_net_error() << '\n';
-    std::free(const_cast<char*>(response));
+    absolute_string_release((response));
     absolute_net_tcp_close(socket);
 }
 
@@ -245,7 +250,7 @@ void udpServer(void* opaque) {
     if (!context->ok)
         std::cerr << "udp server receive failed: "
             << absolute_net_error() << '\n';
-    std::free(const_cast<char*>(request));
+    absolute_string_release((request));
 }
 
 void udpClient(void* opaque) {
@@ -273,7 +278,7 @@ void sharedReceive(void* opaque) {
     if (!context->ok)
         std::cerr << "shared socket receive failed: "
             << absolute_net_error() << '\n';
-    std::free(const_cast<char*>(text));
+    absolute_string_release((text));
 }
 
 struct SharedSendContext {
@@ -306,7 +311,7 @@ void timedReceive(void* opaque) {
     const char* error = absolute_net_error();
     context->timedOut = !text && error &&
         std::strstr(error, "timed out") != nullptr;
-    std::free(const_cast<char*>(text));
+    absolute_string_release((text));
 }
 
 void inheritedDeadlineReceive(void* opaque) {

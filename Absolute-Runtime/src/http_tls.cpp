@@ -16,6 +16,10 @@
 #include <winhttp.h>
 #else
 #include <dlfcn.h>
+
+// Allocated behind a reference-counted header, like every other string the
+// language hands out; see Absolute-Runtime/src/string.cpp.
+extern "C" char* absolute_string_alloc(std::size_t bytes);
 #endif
 
 namespace {
@@ -542,9 +546,8 @@ extern "C" const char* absolute_http_tls_receive(
             state->body.data() + state->offset, count);
         state->offset += count;
 #endif
-        const std::size_t durableSize = receivedText.size() + 1;
-        char* durable =
-            static_cast<char*>(std::malloc(durableSize));
+        const std::size_t durableSize = receivedText.size();
+        char* durable = absolute_string_alloc(durableSize);
         if (!durable) {
             lastTlsError = "HTTPS receive allocation failed";
             return nullptr;

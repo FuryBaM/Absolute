@@ -1357,6 +1357,39 @@ namespace Absolute {
     // a null owner -- the same bit that decides whether the storage itself is
     // freed -- and dropping through it would release elements the real owner
     // still holds.
+    // Every string in the language points at the first byte of a block whose
+    // header says how many names are holding it. A literal is held by nobody
+    // and by everybody: its count is the static sentinel, so retaining it does
+    // nothing and releasing it does nothing. Laying it out this way rather than
+    // leaving literals headerless means release never has to guess whether the
+    // pointer it was given has a header at all.
+    llvm::Constant* CodeGenerator::Impl::EmitStringConstant(
+        const std::string& text, const std::string& name) {
+        const auto found = stringConstants.find(text);
+        if (found != stringConstants.end()) return found->second;
+
+        // { i32 magic, i32 refs } then the bytes and their terminator, in one
+        // constant, so the bytes are at a known offset from the header.
+        llvm::StructType* layout = llvm::StructType::get(context, {
+            builder.getInt32Ty(), builder.getInt32Ty(),
+            llvm::ArrayType::get(builder.getInt8Ty(), text.size() + 1)});
+        llvm::Constant* initializer = llvm::ConstantStruct::get(layout, {
+            builder.getInt32(0x41425331u),   // "ABS1", the same word the runtime writes
+            builder.getInt32(0xFFFFFFFFu),   // static: never released
+            llvm::ConstantDataArray::getString(context, text, true)});
+        auto* global = new llvm::GlobalVariable(
+            *module, layout, true, llvm::GlobalValue::PrivateLinkage,
+            initializer, name);
+        global->setAlignment(llvm::Align(8));
+        global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::None);
+        llvm::Constant* bytes = llvm::ConstantExpr::getInBoundsGetElementPtr(
+            layout, global,
+            llvm::ArrayRef<llvm::Constant*>{
+                builder.getInt32(0), builder.getInt32(2), builder.getInt32(0)});
+        stringConstants.emplace(text, bytes);
+        return bytes;
+    }
+
     void CodeGenerator::Impl::EmitArrayElementCleanup(
         llvm::Value* data, llvm::Type* elementType,
         const std::vector<llvm::Value*>& dimensions,

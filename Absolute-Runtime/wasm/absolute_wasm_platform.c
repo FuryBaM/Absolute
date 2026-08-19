@@ -11,13 +11,66 @@ typedef struct WasmStringBuilder {
     size_t capacity;
 } WasmStringBuilder;
 
+/* A string is its bytes and, immediately in front of them, a header saying how
+ * many names are holding it -- the same layout the native runtime uses and the
+ * same one the compiler lays a literal out in. The pointer handed out is the
+ * first byte, so everything downstream still sees a bare `const char*`.
+ *
+ * The count is a plain word here rather than an atomic one. A wasm instance
+ * cannot wait on another worker (docs/wasm-target.md), and strings do not
+ * cross instances: what crosses is copied. */
+#define ABSOLUTE_STRING_MAGIC 0x41425331u   /* "ABS1" */
+#define ABSOLUTE_STRING_STATIC 0xFFFFFFFFu  /* never released */
+
+typedef struct {
+    uint32_t magic;
+    uint32_t refs;
+} AbsoluteStringHeader;
+
+static AbsoluteStringHeader* wasm_string_header(const char* text) {
+    AbsoluteStringHeader* header;
+    if (!text)
+        return NULL;
+    header = (AbsoluteStringHeader*)((char*)text - sizeof(AbsoluteStringHeader));
+    return header->magic == ABSOLUTE_STRING_MAGIC ? header : NULL;
+}
+
+char* absolute_string_alloc(size_t bytes) {
+    AbsoluteStringHeader* header =
+        (AbsoluteStringHeader*)heap_alloc(sizeof(AbsoluteStringHeader) + bytes + 1);
+    char* text;
+    if (!header)
+        return NULL;
+    header->magic = ABSOLUTE_STRING_MAGIC;
+    header->refs = 1;
+    text = (char*)(header + 1);
+    text[bytes] = '\0';
+    return text;
+}
+
+const char* absolute_string_retain(const char* text) {
+    AbsoluteStringHeader* header = wasm_string_header(text);
+    if (header && header->refs != ABSOLUTE_STRING_STATIC)
+        ++header->refs;
+    return text;
+}
+
+void absolute_string_release(const char* text) {
+    AbsoluteStringHeader* header = wasm_string_header(text);
+    if (!header || header->refs == ABSOLUTE_STRING_STATIC)
+        return;
+    if (--header->refs)
+        return;
+    header->magic = 0;
+    free(header);
+}
+
 static const char* wasm_string_copy_range(const char* text, size_t length) {
-    char* result = (char*)heap_alloc(length + 1);
+    char* result = absolute_string_alloc(length);
     if (!result)
         return "";
     if (text && length)
         memcpy(result, text, length);
-    result[length] = '\0';
     return result;
 }
 
@@ -317,14 +370,13 @@ int32_t absolute_string_ends_with(const char* text, const char* suffix) {
 const char* absolute_string_concat(const char* left, const char* right) {
     size_t left_length = left ? strlen(left) : 0;
     size_t right_length = right ? strlen(right) : 0;
-    char* result = (char*)heap_alloc(left_length + right_length + 1);
+    char* result = absolute_string_alloc(left_length + right_length);
     if (!result)
         return "";
     if (left_length)
         memcpy(result, left, left_length);
     if (right_length)
         memcpy(result + left_length, right, right_length);
-    result[left_length + right_length] = '\0';
     return result;
 }
 
@@ -400,7 +452,7 @@ const char* absolute_string_replace(const char* text, const char* from, const ch
         result_length += matches * (to_length - from_length);
     else
         result_length -= matches * (from_length - to_length);
-    char* result = (char*)heap_alloc(result_length + 1);
+    char* result = absolute_string_alloc(result_length);
     if (!result)
         return "";
     cursor = text;

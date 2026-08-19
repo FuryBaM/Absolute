@@ -1,3 +1,4 @@
+#include <atomic>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
@@ -6,34 +7,70 @@
 #include <string>
 #include <vector>
 
+// Allocating `bytes` of text plus its terminator, behind a header that says
+// how many names are holding it. The pointer handed back is the first byte of
+// the text, so every consumer -- including `printf` and the C ABI -- sees the
+// same bare `const char*` it always saw.
+extern "C" char* absolute_string_alloc(std::size_t bytes);
+extern "C" const char* absolute_string_retain(const char* text);
+extern "C" void absolute_string_release(const char* text);
+
 namespace {
     thread_local std::string lastStringError;
     thread_local std::string lastStringResult;
 
-    // Absolute `string` is a bare `const char*`. Runtime helpers must return
-    // durable storage: a single thread-local buffer is invalidated by the next
-    // string-producing call (breaks uri/http parse pipelines that keep fields).
-    // Matches the builtin format() path, which also mallocs the result.
+    // Absolute `string` is a bare `const char*` and stays one: it crosses the C
+    // boundary and `printf` takes it. What changes is what sits behind it.
+    // Every string the language allocates carries a header immediately before
+    // its first byte, so the pointer alone is enough to retain or release the
+    // storage -- which is what a value with no lifetime was missing.
+    //
+    // Shared rather than unique, because a string is a value: assigning one
+    // copies the pointer, and two names for the same bytes is the ordinary
+    // case rather than an error. The count says how many of them there are.
+    //
+    // The magic word is not decoration. A `const char*` can also arrive from
+    // outside -- a plugin, a C function, a literal in a library built before
+    // this -- and releasing one of those would free storage the language never
+    // allocated. A header that does not say so is not ours and nothing
+    // happens.
+    constexpr std::uint32_t StringMagic = 0x41425331u;   // "ABS1"
+    constexpr std::uint32_t StringStatic = 0xFFFFFFFFu;  // never released
+
+    struct StringHeader {
+        std::uint32_t magic;
+        std::atomic<std::uint32_t> refs;
+    };
+
+    StringHeader* HeaderOf(const char* text) {
+        if (!text) return nullptr;
+        auto* header = reinterpret_cast<StringHeader*>(
+            const_cast<char*>(text) - sizeof(StringHeader));
+        return header->magic == StringMagic ? header : nullptr;
+    }
+
+    // Runtime helpers must return durable storage: a single thread-local buffer
+    // is invalidated by the next string-producing call (breaks uri/http parse
+    // pipelines that keep fields).
     const char* DurableCopy(const std::string& value) {
-        const std::size_t size = value.size() + 1;
-        char* copy = static_cast<char*>(std::malloc(size));
+        char* copy = absolute_string_alloc(value.size());
         if (!copy) {
             lastStringError = "string allocation failed";
             return "";
         }
-        std::memcpy(copy, value.c_str(), size);
+        std::memcpy(copy, value.c_str(), value.size());
         return copy;
     }
 
     const char* DurableCString(const char* value) {
         if (!value) value = "";
-        const std::size_t size = std::strlen(value) + 1;
-        char* copy = static_cast<char*>(std::malloc(size));
+        const std::size_t length = std::strlen(value);
+        char* copy = absolute_string_alloc(length);
         if (!copy) {
             lastStringError = "string allocation failed";
             return "";
         }
-        std::memcpy(copy, value, size);
+        std::memcpy(copy, value, length);
         return copy;
     }
 
@@ -391,4 +428,47 @@ extern "C" int32_t absolute_string_parse_int(const char* text) {
     } catch (...) {
         return 0;
     }
+}
+
+extern "C" char* absolute_string_alloc(std::size_t bytes) {
+    void* block = std::malloc(sizeof(StringHeader) + bytes + 1);
+    if (!block) return nullptr;
+    auto* header = static_cast<StringHeader*>(block);
+    header->magic = StringMagic;
+    header->refs.store(1, std::memory_order_relaxed);
+    char* text = reinterpret_cast<char*>(header + 1);
+    text[bytes] = '\0';
+    return text;
+}
+
+extern "C" const char* absolute_string_retain(const char* text) {
+    if (StringHeader* header = HeaderOf(text)) {
+        // A static string is written once and never released; incrementing its
+        // count would eventually wrap it into an ordinary one.
+        if (header->refs.load(std::memory_order_relaxed) != StringStatic)
+            header->refs.fetch_add(1, std::memory_order_relaxed);
+    }
+    return text;
+}
+
+extern "C" void absolute_string_release(const char* text) {
+    StringHeader* header = HeaderOf(text);
+    if (!header) return;
+    if (header->refs.load(std::memory_order_relaxed) == StringStatic) return;
+    // Release-acquire around the last decrement: whatever the other holders
+    // wrote to the text has to be visible to whoever frees it.
+    if (header->refs.fetch_sub(1, std::memory_order_release) != 1) return;
+    std::atomic_thread_fence(std::memory_order_acquire);
+    header->magic = 0;
+    std::free(header);
+}
+
+// A string that the language did not allocate -- a literal, a plugin's buffer,
+// anything static -- can still be handed to code that retains and releases,
+// as long as it says it is not to be freed. Copying it is the alternative and
+// it is not always available: the pointer may be the only thing there is.
+extern "C" const char* absolute_string_adopt_static(const char* text) {
+    if (StringHeader* header = HeaderOf(text))
+        header->refs.store(StringStatic, std::memory_order_relaxed);
+    return text;
 }

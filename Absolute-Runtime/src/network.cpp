@@ -26,6 +26,10 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
+
+// Allocated behind a reference-counted header, like every other string the
+// language hands out; see Absolute-Runtime/src/string.cpp.
+extern "C" char* absolute_string_alloc(std::size_t bytes);
 #endif
 
 namespace {
@@ -811,8 +815,8 @@ extern "C" const char* absolute_net_tcp_receive(
         lastNetworkError.clear();
         // Durable copy: callers may keep the string after the next
         // receive/close and after the I/O worker processes another request.
-        const std::size_t size = receiveBuffer.size() + 1;
-        char* durable = static_cast<char*>(std::malloc(size));
+        const std::size_t size = receiveBuffer.size();
+        char* durable = absolute_string_alloc(size);
         if (!durable) {
             lastNetworkError = "receive allocation failed";
             return nullptr;
@@ -921,8 +925,8 @@ extern "C" const char* absolute_net_resolve_host(const char* hostname) {
         freeaddrinfo(result);
         // Durable copy: Absolute string is a bare pointer and must outlive later
         // resolve/send calls on both the scheduler and I/O threads.
-        const std::size_t size = std::strlen(ipBuffer) + 1;
-        char* durable = static_cast<char*>(std::malloc(size));
+        const std::size_t size = std::strlen(ipBuffer);
+        char* durable = absolute_string_alloc(size);
         if (!durable) {
             lastNetworkError = "resolve host allocation failed";
             return "";
@@ -1099,8 +1103,8 @@ extern "C" const char* absolute_net_udp_receive_from(void* handle, std::int32_t 
         }
         receiveBuffer.resize(static_cast<std::size_t>(count));
         lastNetworkError.clear();
-        const std::size_t size = receiveBuffer.size() + 1;
-        char* durable = static_cast<char*>(std::malloc(size));
+        const std::size_t size = receiveBuffer.size();
+        char* durable = absolute_string_alloc(size);
         if (!durable) {
             lastNetworkError = "udp receive allocation failed";
             return nullptr;

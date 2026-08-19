@@ -1114,6 +1114,32 @@ namespace Absolute {
         return module->getOrInsertFunction("snprintf", type);
     }
 
+    llvm::FunctionCallee CodeGenerator::Impl::StringAlloc() {
+        // The size is a `size_t`, which is the target's pointer width and not
+        // always 64 bits: on wasm32 it is 32, and a declaration that disagrees
+        // with the runtime's definition links to a trapping stub rather than to
+        // the function.
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getPtrTy(), {SizeType()}, false);
+        return module->getOrInsertFunction("absolute_string_alloc", type);
+    }
+
+    llvm::FunctionCallee CodeGenerator::Impl::StringRetain() {
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getPtrTy(), {builder.getPtrTy()}, false);
+        return module->getOrInsertFunction("absolute_string_retain", type);
+    }
+
+    llvm::FunctionCallee CodeGenerator::Impl::StringRelease() {
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getVoidTy(), {builder.getPtrTy()}, false);
+        return module->getOrInsertFunction("absolute_string_release", type);
+    }
+
+    llvm::IntegerType* CodeGenerator::Impl::SizeType() {
+        return builder.getIntNTy(module->getDataLayout().getPointerSizeInBits());
+    }
+
     llvm::FunctionCallee CodeGenerator::Impl::Malloc() {
         llvm::FunctionType* type = llvm::FunctionType::get(
             builder.getPtrTy(), {builder.getInt64Ty()}, false);
@@ -1458,8 +1484,8 @@ namespace Absolute {
         llvm::Type* type = source->getType();
         const std::string semanticType = SemanticType(expression);
         if (semanticType == "bool" || type->isIntegerTy(1)) {
-            llvm::Value* trueText = builder.CreateGlobalStringPtr("true", "bool.true");
-            llvm::Value* falseText = builder.CreateGlobalStringPtr("false", "bool.false");
+            llvm::Value* trueText = EmitStringConstant("true", "bool.true");
+            llvm::Value* falseText = EmitStringConstant("false", "bool.false");
             return {"%s", builder.CreateSelect(source, trueText, falseText, "bool.text")};
         }
         if (semanticType == "char") {
@@ -1481,7 +1507,7 @@ namespace Absolute {
         }
         if (type->isDoubleTy()) return {"%g", source};
         if (type->isPointerTy()) {
-            llvm::Value* nullText = builder.CreateGlobalStringPtr("<null>", "null.text");
+            llvm::Value* nullText = EmitStringConstant("<null>", "null.text");
             llvm::Value* safeText = builder.CreateSelect(
                 builder.CreateIsNull(source, "string.is.null"), nullText, source, "safe.string");
             return {"%s", safeText};
@@ -1539,10 +1565,18 @@ namespace Absolute {
         };
         for (const PrintableValue& printable : values) sizeArguments.push_back(printable.value);
         llvm::Value* length = builder.CreateCall(Snprintf(), sizeArguments, "format.length");
+        llvm::Value* textLength =
+            builder.CreateSExt(length, builder.getInt64Ty(), "format.length64");
         llvm::Value* allocationSize = builder.CreateAdd(
-            builder.CreateSExt(length, builder.getInt64Ty(), "format.length64"),
-            builder.getInt64(1), "format.allocation.size");
-        llvm::Value* buffer = builder.CreateCall(Malloc(), {allocationSize}, "format.buffer");
+            textLength, builder.getInt64(1), "format.allocation.size");
+        // Through the string allocator rather than malloc: the result is a
+        // string like any other, and a string is the bytes plus the header in
+        // front of them that says how many names are holding it. Formatting
+        // was the loudest of the leaks precisely because this buffer had no
+        // way of being released.
+        llvm::Value* buffer = builder.CreateCall(StringAlloc(),
+            {builder.CreateIntCast(textLength, SizeType(), false, "format.size")},
+            "format.buffer");
 
         std::vector<llvm::Value*> writeArguments = {buffer, allocationSize, formatValue};
         for (const PrintableValue& printable : values) writeArguments.push_back(printable.value);

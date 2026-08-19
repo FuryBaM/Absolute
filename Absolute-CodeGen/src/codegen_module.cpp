@@ -369,8 +369,7 @@ namespace Absolute {
             return llvm::ConstantInt::get(type, static_cast<unsigned char>(character->value));
         if (auto* string = dynamic_cast<StringLiteralExpr*>(expression)) {
             if (!type->isPointerTy()) Fail("string constant requires pointer storage");
-            return llvm::cast<llvm::Constant>(builder.CreateGlobalStringPtr(
-                string->value, "static.string", 0, module.get()));
+            return EmitStringConstant(string->value, "static.string");
         }
         if (dynamic_cast<NullExpr*>(expression)) {
             if (!type->isPointerTy()) Fail("null constant requires pointer storage");
