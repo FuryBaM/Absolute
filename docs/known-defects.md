@@ -32,8 +32,9 @@ one: ownership becomes part of the type rather than something the analyzer
 reconstructs per symbol, containers drop their elements by asking what
 destroying the element means rather than whether it is a pointer, and a string
 becomes an ordinary value whose storage is shared-owned. The model, the order of
-work and what proves each step are in `docs/ownership-kinds.md`; the first two
-steps are done and pinned by `tests/ownership-qualifier-generics.abs`.
+work and what proves each step are in `docs/ownership-kinds.md`; the first five
+steps are done and pinned by `tests/ownership-qualifier-generics.abs`,
+`tests/subscriber-pointers.abs` and `tests/generic-body-ownership.abs`.
 
 ### Open: a string has no lifetime, so every string a program builds is lost
 
@@ -737,7 +738,7 @@ decided.
   already refused, and make containers of owners impossible until there is a
   type for them. Small, safe, and it makes a normal pattern unwriteable.
 
-## 16. Open: ownership rules are not enforced inside a generic body
+## 16. Fixed: ownership rules were not enforced inside a generic body
 
 A generic body is analyzed **once, with its parameters unsubstituted**, and
 never again against any instantiation. That is not a gap in one check; it is
@@ -758,41 +759,68 @@ Three symptoms, all from the same three-line class:
 ```absolute
 class Sieve<T> {
     public T held;
-    public Sieve(T given) { held = given; }
+    public void keep(T given) { held = given; }
     public T leak() { return held; }
     public void wipe() { delete held; }
 }
 ```
 
-| Written | Without the generic | Inside `Sieve<T>` at `T = Node*` |
+| Written | Without the generic | Inside `Sieve<T>` at `T = Node*`, before |
 |---|---|---|
 | `held = given;` | `E_RESOURCE_FIELD_REQUIRES_OWNER` | accepted, and **the object is destroyed during construction** |
 | `return held;` | `E_MANAGED_RETURN_REQUIRES_OWNER` | accepted, and the backend then fails with an internal "unknown variable" message |
 | `delete held;` | `E_DELETE_SUBSCRIBER` | only a complaint about the shape of `T`, not the rule |
 
-The first is silent corruption: `new Sieve<Node*>(move(owner))` leaves the
+The first was silent corruption: `new Sieve<Node*>(move(owner))` left the
 object already gone, because the constructor's parameter has the substituted
 type, the backend releases it at the end of the constructor, and the field it
-was stored into is not a transfer. The second is worse in a different way -- a
-program the analyzer accepts and the backend cannot compile, reported as an
+was stored into is not a transfer. The second was worse in a different way -- a
+program the analyzer accepted and the backend could not compile, reported as an
 internal condition rather than as anything the author can act on.
 
-This is why the array and the string are being fixed as one model rather than
-one at a time. A container of owners is a generic body holding a `T` that may
-own, and no rule the language has about owners currently runs there.
+### How it was closed
 
-### What closing it takes
+Not by analyzing every body again for every instantiation -- the direct answer,
+and a large piece of work. The single pass keeps analyzing the body once, but
+where a rule would have run and could not, it now **records what it saw**: the
+shape (`a field stored from something that is not a fresh owner`, `a field
+handed back to the caller`, `a value released`), the type as written -- `T`,
+the only thing that can be substituted later -- and the location. Each
+instantiation substitutes its own arguments into those facts and asks the rule
+then, reporting at the body's own line and naming the instantiation that was
+judged.
 
-Either the bodies are analyzed per specialization -- the direct answer, and a
-large piece of work -- or the single analysis records what it needs about each
-body ("this field is assigned from a parameter", "this method returns a field")
-and those recorded facts are checked against each instantiation's substituted
-types. The second is smaller and gets the same answers for these three cases.
+`Analyzer::RecordGenericBodyFact` records; `Analyzer::CheckGenericBodyFacts`,
+called where a generic type is first resolved, judges. Facts are recorded only
+for a bare parameter of the type being analyzed -- anything concrete was
+already judged by the rules themselves -- and deduplicated by location, because
+a class can be re-entered.
 
-Until then, `docs/ownership-kinds.md` step 6 -- the same generic body producing
-different drops for `Vector<T*>` and `Vector<sub T*>` -- cannot be more than
-half true: the drop already differs, and the rules that should govern either
-side do not run.
+The shape rule moved the same way, in the other direction. `delete held` inside
+the body used to be refused outright, on the grounds that `T` is not a pointer.
+That refused it for every `T`, including the ones it is written for. A bare
+parameter is not a non-pointer; it is a name that is not a type yet, so the
+question is now asked one level up, where the answer is known.
+
+The result is the whole point of the model, on one body:
+
+| Instantiation | `delete held` |
+|---|---|
+| `Sieve<Node*>` | `E_DELETE_SUBSCRIBER` -- released by its own object, not by its owner |
+| `Sieve<sub Node*>` | `E_DELETE_SUBSCRIBER` -- borrows an object it does not own |
+| `Sieve<weak Node*>` | `E_WEAK_DELETE` -- observes an object it does not own |
+| `Sieve<int32>` | `E_DELETE_REQUIRES_POINTER` |
+| `Sieve<raw Node*>` | accepted |
+
+Pinned by `tests/generic-body-ownership-errors.abs` (five diagnostics, one
+body, each naming its instantiation) and `tests/generic-body-ownership.abs`
+(the accepted side: a container over `sub Node*` that releases nothing, and the
+owner outliving it).
+
+What this does not do is analyze the body per specialization. A rule that has
+no fact recorded for it still does not run inside a generic. The three that
+mattered here do; adding a fourth is adding one recording site, not another
+mechanism.
 
 ## 17. Beyond the list: what is left for undefined behaviour
 

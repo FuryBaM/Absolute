@@ -307,6 +307,40 @@ namespace Absolute {
         std::unordered_map<std::string, SymbolId> genericFunctionSpecializations;
         std::vector<SymbolId> genericFunctionSpecializationOrder;
         std::unordered_set<std::string> instantiatedGenericTypes;
+
+        // What the single pass over a generic body noticed but could not judge.
+        //
+        // A body is analyzed once with its parameters unsubstituted, so every
+        // ownership rule -- all of which ask whether a type is a pointer --
+        // silently does not run inside one: the type is `T`. Rather than
+        // analyze every body again for every instantiation, the pass records
+        // the shape it saw and the type it saw it on, and each instantiation
+        // substitutes that type and asks the rule then.
+        struct GenericBodyFact {
+            enum class Shape {
+                FieldFromNonOwner,   // a field assigned from something not fresh
+                ReturnsField,        // a field handed back to the caller
+                DeletesField,        // a field released from inside the body
+                DeletesValue         // anything released through a parameter type
+            };
+            Shape shape = Shape::FieldFromNonOwner;
+            std::string parameterType;   // as written in the body, e.g. "T"
+            std::string detail;          // the name to put in the message
+            std::string file;
+            int line = 0;
+            int column = 0;
+        };
+        std::unordered_map<std::string, std::vector<GenericBodyFact>> genericBodyFacts;
+
+        // Whether a written type is one of the generic parameters the current
+        // type is being analyzed with -- a name that stands for itself here and
+        // will be something concrete at every instantiation.
+        bool IsCurrentGenericParameter(const std::string& type) const;
+        void RecordGenericBodyFact(GenericBodyFact::Shape shape,
+            const std::string& parameterType, const std::string& detail,
+            const ASTNode* node);
+        void CheckGenericBodyFacts(const std::string& base,
+            const std::unordered_map<std::string, std::string>& substitutions);
         std::vector<std::unordered_map<std::string, std::string>> genericTypeScopes;
         std::unordered_set<std::string> namespaces;
         std::unordered_set<std::string> importedNamespaces;

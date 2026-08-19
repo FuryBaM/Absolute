@@ -1062,6 +1062,17 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-qualifier-generics.abs"
     )
     add_test(
+        NAME absolute.generic-body-ownership-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-body-ownership.abs"
+    )
+    add_test(
+        NAME absolute.generic-body-ownership-errors
+        COMMAND "${CMAKE_COMMAND}"
+            -DCOMPILER=$<TARGET_FILE:Absolute-Compiler>
+            -DSOURCE=${PROJECT_SOURCE_DIR}/tests/generic-body-ownership-errors.abs
+            -P "${PROJECT_SOURCE_DIR}/tests/check-generic-body-ownership.cmake"
+    )
+    add_test(
         NAME absolute.array-element-ownership-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-element-ownership-errors.abs"
     )
@@ -4958,6 +4969,20 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-ownership-qualifier-generics PROPERTIES
             FIXTURES_REQUIRED absolute-ownership-qualifier-generics-executable
             PASS_REGULAR_EXPRESSION "ownership-qualifier-generics=ok"
+        )
+        add_test(
+            NAME absolute.build-generic-body-ownership
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-body-ownership.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/generic-body-ownership-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-generic-body-ownership PROPERTIES
+            FIXTURES_SETUP absolute-generic-body-ownership-executable
+        )
+        add_test(NAME absolute.run-generic-body-ownership
+            COMMAND "${CMAKE_BINARY_DIR}/generic-body-ownership-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-generic-body-ownership PROPERTIES
+            FIXTURES_REQUIRED absolute-generic-body-ownership-executable
+            PASS_REGULAR_EXPRESSION "generic-body-ownership=ok"
         )
         add_test(
             NAME absolute.build-array-zero-initialization

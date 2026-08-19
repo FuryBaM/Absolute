@@ -216,6 +216,15 @@ namespace Absolute {
             !value.createsManagedOwner && !value.referencesManagedOwner)
             Report("a managed pointer return must transfer an owner; subscribers and aggregate fields cannot escape their owner",
                 "E_MANAGED_RETURN_REQUIRES_OWNER", value.symbol);
+        // The same rule, for a return type that is still a generic parameter.
+        else if (!IsStrongManagedPointerType(currentReturnType) &&
+            value.type != "error" && value.type != "null" &&
+            !value.createsManagedOwner && !value.referencesManagedOwner) {
+            if (const Symbol* returned = table.Get(value.symbol);
+                returned && returned->kind == SymbolKind::Field)
+                RecordGenericBodyFact(GenericBodyFact::Shape::ReturnsField,
+                    currentReturnType, returned->name, stmt);
+        }
         if (IsWeakPointerType(currentReturnType) && value.type != "error" &&
             value.type != "null") {
             const Symbol* owner = table.Get(value.pointerOwner);

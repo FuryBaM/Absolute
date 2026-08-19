@@ -196,6 +196,131 @@ namespace Absolute {
         return {};
     }
 
+    bool Analyzer::IsCurrentGenericParameter(const std::string& type) const {
+        if (currentType.empty() || type.empty()) return false;
+        const auto found = types.find(currentType);
+        if (found == types.end()) return false;
+        const std::vector<std::string>& parameters = found->second.genericParameters;
+        return std::find(parameters.begin(), parameters.end(), type) !=
+            parameters.end();
+    }
+
+    // Noticed here, judged at each instantiation. The type is kept as written --
+    // `T` -- because that is the only thing that can be substituted later.
+    void Analyzer::RecordGenericBodyFact(GenericBodyFact::Shape shape,
+        const std::string& parameterType, const std::string& detail,
+        const ASTNode* node) {
+        // Only a bare parameter of the type being analyzed is worth recording;
+        // anything concrete was already judged by the rules themselves.
+        if (!IsCurrentGenericParameter(parameterType)) return;
+
+        // Not every node carries a location -- a destructor call does not --
+        // so the nearest enclosing one that does is used, the same way an
+        // ordinary diagnostic finds its line.
+        if (!node || node->line <= 0) {
+            for (auto entry = diagnosticNodeStack.rbegin();
+                entry != diagnosticNodeStack.rend(); ++entry) {
+                if (!*entry) continue;
+                if (!node) node = *entry;
+                if ((*entry)->line > 0) { node = *entry; break; }
+            }
+        }
+
+        GenericBodyFact fact;
+        fact.shape = shape;
+        fact.parameterType = parameterType;
+        fact.detail = detail;
+        fact.file = node && !node->sourceFile.empty()
+            ? node->sourceFile : EnclosingSourceFile();
+        fact.line = node ? node->line : 0;
+        fact.column = node ? node->column : 0;
+        std::vector<GenericBodyFact>& recorded = genericBodyFacts[currentType];
+        // The same line is analyzed once, but a class can be re-entered.
+        for (const GenericBodyFact& existing : recorded) {
+            if (existing.shape == fact.shape && existing.line == fact.line &&
+                existing.column == fact.column && existing.file == fact.file)
+                return;
+        }
+        recorded.push_back(std::move(fact));
+    }
+
+    // One instantiation, every fact the body left behind. The parameter is
+    // substituted and the rule that could not run inside the body runs now.
+    void Analyzer::CheckGenericBodyFacts(const std::string& base,
+        const std::unordered_map<std::string, std::string>& substitutions) {
+        const auto found = genericBodyFacts.find(base);
+        if (found == genericBodyFacts.end()) return;
+        for (const GenericBodyFact& fact : found->second) {
+            const std::string actual =
+                SubstituteGenericType(fact.parameterType, substitutions);
+            // Each shape asks its own question of the substituted type. The
+            // ownership rules only have something to say about an owner; the
+            // shape rule has something to say about everything that is not a
+            // pointer at all.
+            const bool owner = IsStrongManagedPointerType(actual);
+            if (fact.shape == GenericBodyFact::Shape::DeletesValue) {
+                if (!IsPointerType(actual))
+                    ReportAtLocation(fact.file, fact.line, fact.column,
+                        "delete requires a pointer; at '" + base + "<" + actual +
+                        ">' '" + fact.detail + "' is '" + actual + "'",
+                        "E_DELETE_REQUIRES_POINTER", InvalidSymbolId);
+                continue;
+            }
+            if (fact.shape == GenericBodyFact::Shape::DeletesField) {
+                // Delete is about who owns the object, and every kind but the
+                // unmanaged one answers no here: an owner field is released by
+                // the object that owns the field, a subscriber and an observer
+                // never owned anything to release.
+                switch (CanonicalOwnership(actual)) {
+                case OwnershipKind::Weak:
+                    ReportAtLocation(fact.file, fact.line, fact.column,
+                        "weak managed pointer cannot be deleted; at '" + base +
+                        "<" + actual + ">' the field '" + fact.detail +
+                        "' observes an object it does not own",
+                        "E_WEAK_DELETE", InvalidSymbolId);
+                    break;
+                case OwnershipKind::Sub:
+                    ReportAtLocation(fact.file, fact.line, fact.column,
+                        "managed subscriber cannot be deleted; at '" + base +
+                        "<" + actual + ">' the field '" + fact.detail +
+                        "' borrows an object it does not own",
+                        "E_DELETE_SUBSCRIBER", InvalidSymbolId);
+                    break;
+                case OwnershipKind::Unique:
+                    ReportAtLocation(fact.file, fact.line, fact.column,
+                        "managed subscriber cannot be deleted; at '" + base +
+                        "<" + actual + ">' the field '" + fact.detail +
+                        "' is released by its own object, not by its owner",
+                        "E_DELETE_SUBSCRIBER", InvalidSymbolId);
+                    break;
+                default:
+                    break;
+                }
+                continue;
+            }
+            if (!owner) continue;
+            switch (fact.shape) {
+            case GenericBodyFact::Shape::FieldFromNonOwner:
+                ReportAtLocation(fact.file, fact.line, fact.column,
+                    "managed resource fields require a fresh owner or null; at '" +
+                    base + "<" + actual + ">' the field '" + fact.detail +
+                    "' is stored from a subscriber",
+                    "E_RESOURCE_FIELD_REQUIRES_OWNER", InvalidSymbolId);
+                break;
+            case GenericBodyFact::Shape::ReturnsField:
+                ReportAtLocation(fact.file, fact.line, fact.column,
+                    "a managed pointer return must transfer an owner; at '" +
+                    base + "<" + actual + ">' '" + fact.detail +
+                    "' hands back a field its object still owns",
+                    "E_MANAGED_RETURN_REQUIRES_OWNER", InvalidSymbolId);
+                break;
+            case GenericBodyFact::Shape::DeletesField:
+            case GenericBodyFact::Shape::DeletesValue:
+                break;
+            }
+        }
+    }
+
     void Analyzer::ReportAtLocation(std::string sourceFile, int line, int column,
         std::string message, std::string code, SymbolId symbol) {
         Diagnostic diagnostic;
@@ -2212,6 +2337,7 @@ namespace Absolute {
                 for (size_t index = 0; index < genericArguments.size(); ++index)
                     substitutions.emplace(
                         definition->second.genericParameters[index], genericArguments[index]);
+                CheckGenericBodyFacts(resolvedBase, substitutions);
                 for (const std::string& parent : definition->second.parents)
                     ResolveTypeReference(SubstituteGenericType(parent, substitutions));
                 for (const auto& [memberName, overloads] : definition->second.members) {

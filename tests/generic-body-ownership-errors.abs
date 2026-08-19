@@ -1,0 +1,57 @@
+// A generic body is judged against what it was instantiated with.
+//
+// A generic class is analyzed once, with its parameters still standing for
+// themselves: inside `Sieve<T>` the field `held` has type `T`, and `T` is not a
+// managed pointer, so every ownership rule reads as inapplicable and says
+// nothing. Written out by hand for `Node*` the same three lines are all
+// refused. The rules were not absent, they were skipped -- and a generic was a
+// way past them without writing anything unusual.
+//
+// The body is still analyzed once. What it records is what the rules need to
+// know about it: this field is stored from something that is not a fresh
+// owner, this method hands a field back, this method releases a field. Each
+// instantiation substitutes its own arguments into those facts and asks the
+// rule then, so the same body is refused for `Node*`, refused differently for
+// `sub Node*`, and accepted for what owns nothing.
+//
+// The shape rule moves the same way. `delete held` inside the body used to be
+// refused outright -- `T` is not a pointer -- which refused it for every `T`
+// including the ones it is written for. What `T` became is known one level up,
+// so that is where the question is asked.
+
+class Node {
+    public int32 value;
+    public Node(int32 initial) { value = initial; }
+}
+
+class Sieve<T> {
+    public T held;
+
+    public void keep(T incoming) { held = incoming; }
+
+    public T release() { return held; }
+
+    public void discard() { delete held; }
+}
+
+int32 main() {
+    Node* owner = new Node(1);
+
+    // An owner: the field cannot be stored from a subscriber, cannot be handed
+    // back, and cannot be released by the object holding it.
+    Sieve<Node*>* owned = new Sieve<Node*>();
+    owned.keep(owner);
+
+    // A subscriber: it borrows the object, so releasing it is refused for the
+    // other reason -- there is nothing here that owns anything to release.
+    Sieve<sub Node*>* borrowed = new Sieve<sub Node*>();
+
+    // Not a pointer at all: the shape rule, asked where the answer is known.
+    Sieve<int32>* counted = new Sieve<int32>();
+
+    delete owned;
+    delete borrowed;
+    delete counted;
+    delete owner;
+    return 0;
+}

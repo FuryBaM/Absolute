@@ -149,26 +149,43 @@ sort of owner in front of every reader of every type.
    checks mean "is a handle" and which mean "is an owner":
    `IsStrongManagedPointerType` is currently both, and with `Sub` in the model
    those two readings come apart.
-5. **Arrays drop their elements** through `TypeSemantics`, which is §15 closed.
+5. **The rules run inside a generic body.** *(done)* A generic body is analyzed
+   once, with its parameters standing for themselves, and never again against
+   any instantiation -- so inside `Container<T>` every ownership rule asked
+   whether `T` is a pointer, got no, and said nothing. That is not one missing
+   check, it is all of them, and it is exactly where a container of owners
+   lives.
+
+   The body is still analyzed once. Where a rule could not run, the pass now
+   records what it saw -- the shape, the type as written, the location -- and
+   each instantiation substitutes and asks the rule then. `Sieve<Node*>`,
+   `Sieve<sub Node*>` and `Sieve<int32>` get three different answers on the
+   same line of the same body. Recorded in full in `docs/known-defects.md`
+   §16; pinned by `tests/generic-body-ownership-errors.abs` and
+   `tests/generic-body-ownership.abs`.
+
+   Without this, step 7 could not be more than half true: the drop would
+   differ while the rules that govern either side did not run at all.
+6. **Arrays drop their elements** through `TypeSemantics`, which is §15 closed.
 
    With step 4 as decided, this is where the remaining design question lands:
    `sub T*[]` plainly does not own its elements, and `T*[]` is the case that
    still has two readings. Whatever `T*[]` is defined to mean, it has to be one
    thing -- that is what the withdrawn attempt got wrong by leaving it to be
    inferred per element.
-6. **`Vector<T>` follows** — the same generic code must produce a different drop
+7. **`Vector<T>` follows** — the same generic code must produce a different drop
    for `Vector<T*>` than for `Vector<sub T*>`. That is the check that says the
    model is really in place.
-7. **`StringStorage` and shared ownership**, then `format` returning an ordinary
+8. **`StringStorage` and shared ownership**, then `format` returning an ordinary
    string, which is §1 closed.
 
 ## What proves each step
 
-Step 6 is the one that matters: if `Vector<T*>` and `Vector<sub T*>` go through
+Step 7 is the one that matters: if `Vector<T*>` and `Vector<sub T*>` go through
 the same generic body and come out with different drops, the distinction is
 genuinely carried by the type rather than reconstructed by a special case.
 
-For step 7, the test is a plateau: a loop building a string per iteration must
+For step 8, the test is a plateau: a loop building a string per iteration must
 reach a stable resident size instead of growing without bound, which is what
 two million `format` calls reaching 64.7 MB currently does.
 

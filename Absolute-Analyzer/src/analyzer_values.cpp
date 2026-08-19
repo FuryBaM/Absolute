@@ -57,6 +57,14 @@ namespace Absolute {
         const bool owningField = targetSymbol &&
             (targetSymbol->kind == SymbolKind::Field ||
              targetSymbol->kind == SymbolKind::Property);
+        // Inside a generic body the field's type is `T`, so the rule below
+        // cannot see a pointer and does not run. Record what was seen; each
+        // instantiation substitutes the type and asks the rule then.
+        if (owningField && !value.createsManagedOwner && value.type != "null" &&
+            !IsStrongManagedPointerType(target.type)) {
+            RecordGenericBodyFact(GenericBodyFact::Shape::FieldFromNonOwner,
+                target.type, targetSymbol->name, expr);
+        }
         if (owningField && IsStrongManagedPointerType(target.type) && value.type != "null") {
             bool createsOwnershipCycle = false;
             if (auto* member = dynamic_cast<MemberAccessExpr*>(expr->target.get())) {
@@ -760,7 +768,16 @@ namespace Absolute {
         const Result target = Evaluate(expr->target.get());
         accessMode = previousAccess;
         CheckMutableTarget(expr->target.get(), target, "delete");
-        if (!IsPointerType(target.type) && target.type != "error")
+        // A bare generic parameter is not a non-pointer, it is a name that is
+        // not a type yet. Judging its shape here would refuse `delete held`
+        // for every `T` including the ones it is written for; the instantiation
+        // knows what `T` became and answers there instead.
+        const bool parameterTarget = IsCurrentGenericParameter(target.type);
+        if (parameterTarget) {
+            const Symbol* named = table.Get(target.symbol);
+            RecordGenericBodyFact(GenericBodyFact::Shape::DeletesValue,
+                target.type, named ? named->name : target.type, expr);
+        } else if (!IsPointerType(target.type) && target.type != "error")
             Report("delete requires a pointer, got '" + target.type + "'",
                 "E_DELETE_REQUIRES_POINTER");
         if (!target.isLValue) Report("delete target must be an assignable pointer variable",
@@ -807,6 +824,13 @@ namespace Absolute {
             target.pointerOwner != target.symbol)
             Report("managed subscriber cannot be deleted; delete its owner instead",
                 "E_DELETE_SUBSCRIBER", target.symbol);
+        // The same rule, for a field whose type is still a generic parameter.
+        else if (!IsManagedPointerType(target.type)) {
+            if (const Symbol* deleted = table.Get(target.symbol);
+                deleted && deleted->kind == SymbolKind::Field)
+                RecordGenericBodyFact(GenericBodyFact::Shape::DeletesField,
+                    target.type, deleted->name, expr);
+        }
 
         if (keep != keepLifetimes.end()) {
             if (keep->second.state == KeepState::Deleted)
