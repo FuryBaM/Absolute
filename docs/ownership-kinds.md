@@ -167,7 +167,7 @@ sort of owner in front of every reader of every type.
    Without this, step 7 could not be more than half true: the drop would
    differ while the rules that govern either side did not run at all.
 6. **Arrays drop their elements** through `TypeSemantics`, which is §15 closed.
-   *(done, except for literals)*
+   *(done)*
 
    With step 4 as decided, this is where the remaining design question lands:
    `sub T*[]` plainly does not own its elements, and `T*[]` is the case that

@@ -26,9 +26,7 @@ it was written, merged and withdrawn in one session, and what that cost is the
 useful part. The second attempt worked because the two defects were treated as
 one: ownership is part of the type now rather than something the analyzer
 reconstructs per symbol, so a container drops its elements by asking what
-destroying one means rather than whether it looks like a pointer. What is left
-of it is an array *literal*, which never gets the owner pointer the drop is
-guarded by.
+destroying one means rather than whether it looks like a pointer.
 
 The string is the same defect from the other side, and the same model closes
 it: a string becomes an ordinary value whose storage is shared-owned. The

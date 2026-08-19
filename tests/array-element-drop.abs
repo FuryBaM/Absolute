@@ -20,15 +20,14 @@
 // something being released or not released, and none of it can be seen from
 // inside the program.
 //
-// One shape is missing and stays missing: an array *literal* of owners --
-// `Cell*[] made = { new Cell(1) };` -- still leaks its elements. The owner
-// pointer is what says an array owns anything, `move` clears it to hand the
-// elements on, and a literal small enough to live on the stack never had one.
-// Making the drop unconditional there instead makes a moved-from local release
-// what the destination now holds, which is worse. The literal wants a real
-// owner, not a different guard. Recorded in docs/known-defects.md; a literal
-// is also the only way to write a two-dimensional array of owners, so that
-// shape waits on the same thing.
+// A literal needed one more thing. The owner pointer is what says an array owns
+// anything, and a literal small enough to live on the stack never had one, so
+// its elements were never released. Giving the drop a different guard instead
+// was tried and is worse -- `move` signals a transfer by clearing that slot, so
+// an unconditional drop makes a moved-from array release what the destination
+// now holds. What the literal was missing is an owner, so a literal whose
+// elements own something is allocated rather than left on the stack. A literal
+// of numbers is the stack allocation it has always been.
 
 class Cell {
     public int32 value;
@@ -113,11 +112,29 @@ int32 main() {
         assert(owners[0].value == 11, "and left the elements alone");
     }
 
+    // A literal, which owns its elements the same way -- and is allocated
+    // rather than left on the stack so that it can say so.
+    {
+        Cell*[] made = { new Cell(20), new Cell(21) };
+        assert(made[1].value == 21, "a literal holds what was written into it");
+    }
+
+    // Two dimensions: the count is the whole block, not the first row. A
+    // literal is the only way to write one of these.
+    {
+        Cell*[][] grid = {{new Cell(0), new Cell(1)},
+                          {new Cell(10), new Cell(11)}};
+        assert(grid[1][1].value == 11, "every cell is filled");
+    }
+
     // Elements that own nothing: unchanged, and no loop is emitted for them.
     {
         int32[] numbers = new int32[4];
         unsafeArraySet(numbers, 0, 9);
         assert(numbers[0] == 9, "a plain array is what it always was");
+
+        int32[] literal = { 1, 2, 3 };
+        assert(literal[2] == 3, "and a literal of them stays on the stack");
     }
 
     println("array-element-drop=ok");
