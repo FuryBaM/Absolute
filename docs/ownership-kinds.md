@@ -97,10 +97,15 @@ counted.
    each of those was a second place that had to agree with `TypeNeedsCleanup`
    about the answer. `copyable` and `movable` are computed but not yet
    enforced -- that is step 4, and it is the step that changes programs.
-4. **`sub T*` becomes spellable**, and copying a `T*` without `move` is
-   refused. This is the step that changes existing programs, and it splits in
-   two: making the type expressible and correct *(done)*, then making the old
-   spelling an error *(next)*.
+4. **`sub T*` becomes spellable.** *(done)* It is there to let the distinction
+   be written down where it matters -- a container element, a field, a generic
+   argument -- **not** to forbid the short form.
+
+   `T* b = a;` stays legal and keeps taking a subscriber, and `isOwner()`
+   answers which of the two a value is at runtime. Refusing it was tried and
+   reverted: it is a convenience worth keeping, and the model does not need it
+   gone. What the model needs is that where the answer must survive being
+   stored, passed or substituted, it can be *said* -- and now it can.
 
    `sub T*` now works as a local, a field, a parameter, a return type and
    through a generic, and a subscriber cannot be assigned back to an owner --
@@ -136,6 +141,12 @@ counted.
    `IsStrongManagedPointerType` is currently both, and with `Sub` in the model
    those two readings come apart.
 5. **Arrays drop their elements** through `TypeSemantics`, which is §15 closed.
+
+   With step 4 as decided, this is where the remaining design question lands:
+   `sub T*[]` plainly does not own its elements, and `T*[]` is the case that
+   still has two readings. Whatever `T*[]` is defined to mean, it has to be one
+   thing -- that is what the withdrawn attempt got wrong by leaving it to be
+   inferred per element.
 6. **`Vector<T>` follows** — the same generic code must produce a different drop
    for `Vector<T*>` than for `Vector<sub T*>`. That is the check that says the
    model is really in place.

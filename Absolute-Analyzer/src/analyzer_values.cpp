@@ -372,12 +372,17 @@ namespace Absolute {
                 "' cannot own a fresh managed allocation; declare a managed owner first",
                 "E_WEAK_REQUIRES_EXISTING_OWNER", id);
         }
+        // `T* b = a;` stays legal: it takes a subscriber, and `isOwner()`
+        // answers which of the two a value is. `sub T*` is there to let the
+        // distinction be written down where it matters -- a container element,
+        // a field, a generic argument -- not to forbid the short form.
+        const bool borrowsExistingOwner = expr->value && value.type != "null" &&
+            !value.createsManagedOwner && value.pointerOwner != InvalidSymbolId;
         if (IsManagedPointerType(type)) {
             if (Symbol* symbol = table.Get(id)) {
                 symbol->managedOwner = IsStrongManagedPointerType(type) && value.createsManagedOwner;
                 symbol->managedBorrower = IsWeakPointerType(type) ||
-                    (expr->value && value.type != "null" &&
-                        !value.createsManagedOwner && value.pointerOwner != InvalidSymbolId);
+                    IsSubscriberPointerType(type) || borrowsExistingOwner;
             }
         }
         else if (Symbol* symbol = table.Get(id)) symbol->type = type;
