@@ -737,30 +737,62 @@ decided.
   already refused, and make containers of owners impossible until there is a
   type for them. Small, safe, and it makes a normal pattern unwriteable.
 
-## 16. Open: a generic field loses an owner it was given
+## 16. Open: ownership rules are not enforced inside a generic body
 
-`Cell<T>` with a field of type `T`, instantiated at `Node*`, accepts an owner
-moved into it and destroys the object during construction:
+A generic body is analyzed **once, with its parameters unsubstituted**, and
+never again against any instantiation. That is not a gap in one check; it is
+every ownership rule at once, because all of them ask whether a type is a
+pointer and inside the body the type is `T`.
+
+The proof that no per-specialization analysis exists is one probe:
 
 ```absolute
-class Cell<T> { public T item; public Cell(T given) { item = given; } }
-
-Node* owned = new Node(1);
-Cell<Node*>* cell = new Cell<Node*>(move(owned));
-println(Node.live);   // 0 -- already gone
+class C<T> { public T item; public int32 narrow() { int32 y = item; return y; } }
 ```
 
-Written without the generic, the same program is **refused**:
-`E_RESOURCE_FIELD_REQUIRES_OWNER`, "managed resource fields require a fresh
-owner or null". The rule exists; it just never runs here, because the analyzer
-checks the generic body, where the field's type is `T` and owns nothing as far
-as it can see, and does not check the specialization.
+`C<int32>` and `C<string>` report the identical error at the identical place, in
+terms of `T`. Nothing is ever re-checked.
 
-That is the substitution hole the ownership work is about, seen from a third
-side: the first was an array that could not tell an owner from a view, the
-second a string with no lifetime at all. Recorded rather than fixed because the
-fix belongs to the same design -- `docs/ownership-kinds.md` -- and a local patch
-here would be the third special case.
+Three symptoms, all from the same three-line class:
+
+```absolute
+class Sieve<T> {
+    public T held;
+    public Sieve(T given) { held = given; }
+    public T leak() { return held; }
+    public void wipe() { delete held; }
+}
+```
+
+| Written | Without the generic | Inside `Sieve<T>` at `T = Node*` |
+|---|---|---|
+| `held = given;` | `E_RESOURCE_FIELD_REQUIRES_OWNER` | accepted, and **the object is destroyed during construction** |
+| `return held;` | `E_MANAGED_RETURN_REQUIRES_OWNER` | accepted, and the backend then fails with an internal "unknown variable" message |
+| `delete held;` | `E_DELETE_SUBSCRIBER` | only a complaint about the shape of `T`, not the rule |
+
+The first is silent corruption: `new Sieve<Node*>(move(owner))` leaves the
+object already gone, because the constructor's parameter has the substituted
+type, the backend releases it at the end of the constructor, and the field it
+was stored into is not a transfer. The second is worse in a different way -- a
+program the analyzer accepts and the backend cannot compile, reported as an
+internal condition rather than as anything the author can act on.
+
+This is why the array and the string are being fixed as one model rather than
+one at a time. A container of owners is a generic body holding a `T` that may
+own, and no rule the language has about owners currently runs there.
+
+### What closing it takes
+
+Either the bodies are analyzed per specialization -- the direct answer, and a
+large piece of work -- or the single analysis records what it needs about each
+body ("this field is assigned from a parameter", "this method returns a field")
+and those recorded facts are checked against each instantiation's substituted
+types. The second is smaller and gets the same answers for these three cases.
+
+Until then, `docs/ownership-kinds.md` step 6 -- the same generic body producing
+different drops for `Vector<T*>` and `Vector<sub T*>` -- cannot be more than
+half true: the drop already differs, and the rules that should govern either
+side do not run.
 
 ## 17. Beyond the list: what is left for undefined behaviour
 
