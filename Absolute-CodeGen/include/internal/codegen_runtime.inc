@@ -65,7 +65,14 @@
 
         void RegisterTemporaryStringOwner(llvm::Value* text);
 
+        void RegisterTemporaryAggregate(
+            llvm::Value* address, const std::string& typeName);
+
+        void RegisterAggregateTemporaryBase(
+            Expression* base, llvm::Value* object, const std::string& typeName);
+
         void RegisterIfFreshString(Expression* expression, llvm::Value* value);
+        void RegisterFreshValueArgument(Expression* expression, llvm::Value* value);
 
         bool CreatesFreshString(Expression* expression) const;
 

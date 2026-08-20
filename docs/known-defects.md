@@ -116,25 +116,67 @@ a function, one passed in and handed back, a variable reassigned in a loop,
 plus the standard library's own producers and `split`. One leaked allocation
 per iteration would be thousands of reported leaks.
 
-#### What is not released: a string held by a field
+#### A string held by a field: the copy that was missing
 
-An aggregate does not release its string fields, and that is deliberate.
-Copying a struct copies the pointer without saying so -- there is no copy that
-retains, because the `copyable` half of the model is named and not implemented
--- so releasing a field on the strength of a shallow copy kills what the copy
-still names. It surfaced as a use-after-free reached through `Headers`: a
-`FormEntry` read out of a vector released the string the vector still held.
+An aggregate could not release its string fields, because copying one copies
+the pointer without duplicating the count. Releasing a field on the strength of
+a shallow copy kills what the copy still names -- the withdrawn array attempt
+(section 15) in a new place -- so until there was a copy that says so, there was
+no drop.
 
-That is the withdrawn array attempt again (section 15), in a new place, and it
-has the same answer: until there is a copy, there is no drop. A string held by
-an object leaks, bounded by the number of objects rather than by the number of
-iterations -- which is the difference between this remainder and the defect it
-came out of.
+There is one now: `EmitValueRetain`, the mirror of the destructor walk. A copy
+counts the parts it now names; a drop gives those counts back. It runs in five
+places, which are the string rules plus the one an aggregate adds:
 
-Closing it means a copy that retains what its parts hold: a per-type walk
-emitted wherever an aggregate value is stored, the same shape as the destructor
-walk that already exists. `copyable` decides how a value travels today; what is
-missing is the copy itself.
+| | |
+|---|---|
+| a store into a slot | one more name for the bytes |
+| a declaration | the copy counts the parts |
+| a return | counted on the way to the caller |
+| a temporary | a value made only to read one field of, released with the statement |
+| a scope | gives back what it held |
+
+Two things had to stop counting as producers for any of it to work.
+`unsafeArrayGet` hands back what the array already holds, and `move` of a
+shared value hands back what the source still names; both are calls, so the
+syntactic rule said they made their value. Every container's indexer is written
+on top of the first, so an indexer's result was never counted and the caller's
+copy released storage the container still had. `unsafeArrayTake` is
+deliberately still a producer: it clears the slot, and that is what makes it
+one.
+
+The one that took longest to see was the smallest: an indexer read resolves to
+the *container*, not to the indexer, so the analyzer's freshness flag answered
+for the wrong symbol. Indexing something that is not an array is a call, and
+that is how it is recognized now.
+
+Two aggregates were still outside all of it, and both were found by asking
+the same question the class case answered.
+
+A **tuple** has no declaration to look up. `SemanticsOfTypeName` answered from
+`classes` and `structs`, and a `tuple<int64, string>` is in neither, so it
+answered "nothing to release" and the string in it was lost -- the struct-field
+hole reached by a different spelling. A tuple now asks its elements directly
+(`DropKind::TupleValue`), and the walk is a `getelementptr` per element rather
+than a field list. The local that holds one had to be told as well: a tuple
+declaration takes the plain-value path, where only a string and a closure had
+ever said they owned what they held.
+
+A **value made only in order to pass it in** -- `take(make(1))`, `push(createHeader(...))`
+-- was released by nobody. A parameter of an aggregate type borrows: it takes
+no count and gives none back, so the count the value arrived with belongs to
+the statement that made it, and the statement was not releasing it. Registering
+it there exposed the other half immediately: `unsafeArraySet` retained a stored
+*string* but not a stored aggregate, so the container that had been living off
+the caller's uncollected count now held a slot nobody counted. A slot that is
+released is a name that counts, whatever the element type is; both sides of
+that are now the same rule, and `tests/aggregate-copy.abs` fails without either.
+
+Pinned by `tests/aggregate-copy.abs` -- a `Headers` class over a
+`Vector<Header>`, cloned two thousand times, with a field read out of a
+temporary, a tuple copied and borrowed two thousand more, and a fresh struct
+handed straight to a call -- under AddressSanitizer with the leak check on,
+where a use-after-free and a leak are both answers.
 
 ### Fixed: an owner produced inside a larger expression was lost
 

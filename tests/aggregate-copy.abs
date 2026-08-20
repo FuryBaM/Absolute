@@ -1,0 +1,161 @@
+// A copy of an aggregate is a second name for whatever its parts hold.
+//
+// A string is shared: two names for the same bytes is the ordinary case, and
+// the count behind the pointer says how many there are. An aggregate holding
+// one is copied by copying its bytes -- which duplicates the pointer without
+// duplicating the count -- so until there was a copy that says so, an
+// aggregate could not release its string fields at all. Releasing them on the
+// strength of a shallow copy is the withdrawn array attempt in a new place: a
+// struct read out of a container would take the container's string with it.
+//
+// So the copy has two halves, and both are here:
+//
+//   a copy   counts the parts it now names
+//   a drop   gives those counts back
+//
+// The four places a copy happens are the same four the string rules already
+// had -- a store, a parameter, a return, a scope -- plus the one an aggregate
+// adds: a value made only to read one field of.
+//
+// Run under AddressSanitizer with the leak check on. A use-after-free and a
+// leak are both answers here, and the loops are long enough that one missed
+// count per iteration is thousands of either.
+
+import "../std/collections/vector.abs";
+
+struct Header {
+    public string name;
+    public string value;
+}
+
+Header createHeader(string name, string value) {
+    Header made;
+    made.name = name;
+    made.value = value;
+    return made;
+}
+
+tuple<int64, string> labelled(int64 seed) {
+    return (seed, format("label{}", seed));
+}
+
+int64 readLabel(tuple<int64, string> pair) {
+    assert(pair.item1 != "", "the tuple arrived with its string");
+    return pair.item0;
+}
+
+bool named(Header header) {
+    return header.name != "";
+}
+
+class Headers {
+    private Vector<Header>* entries;
+
+    public Headers() { entries = new Vector<Header>(); }
+
+    public int32 count { get { return entries.count; } }
+
+    public void add(string name, string value) {
+        entries.push(createHeader(name, value));
+    }
+
+    // Reading a struct out of the container and handing back one of its
+    // fields: the indexer produced the struct, the local counts what it names,
+    // and the returned field is counted once more on its way to the caller.
+    public string value(int32 index) {
+        Header entry = entries[index];
+        return entry.value;
+    }
+
+    public Headers* clone() {
+        Headers* result = new Headers();
+        int32 index = 0;
+        while (index < entries.count) {
+            Header entry = entries[index];
+            result.add(entry.name, entry.value);
+            index = index + 1;
+        }
+        return result;
+    }
+}
+
+int32 main() {
+    Headers* original = new Headers();
+    original.add("Content-Type", format("text/{}", 1));
+    original.add("Accept", format("*/{}", 2));
+
+    // A clone reads every entry out and puts a copy in. Neither container may
+    // release what the other still names.
+    int32 round = 0;
+    while (round < 2000) {
+        Headers* copy = original.clone();
+        assert(copy.count == 2, "the clone has both entries");
+        assert(copy.value(0) == "text/1", "and their values");
+        delete copy;
+        assert(original.value(0) == "text/1", "the original is untouched");
+        round = round + 1;
+    }
+
+    // One field of a value nobody keeps: the struct is built to read `name`
+    // and released with the statement.
+    int32 reads = 0;
+    while (reads < 2000) {
+        Headers* short_lived = original.clone();
+        assert(short_lived.value(1) == "*/2", "a field of a temporary reads");
+        delete short_lived;
+        reads = reads + 1;
+    }
+
+    delete original;
+
+    // The same shapes over a bare vector, without the class around it.
+    Vector<Header>* bare = new Vector<Header>();
+    int32 filled = 0;
+    while (filled < 200) {
+        bare.push(createHeader(format("n{}", filled), format("v{}", filled)));
+        filled = filled + 1;
+    }
+    int32 seen = 0;
+    while (seen < 200) {
+        Header entry = bare[seen];
+        assert(entry.name != "", "every entry kept its name");
+        seen = seen + 1;
+    }
+    delete bare;
+
+    // An aggregate with nothing to count is unaffected: no walk is emitted for
+    // it at all.
+    Vector<int64>* plain = new Vector<int64>();
+    int32 numbers = 0;
+    while (numbers < 200) {
+        plain.push(numbers);
+        numbers = numbers + 1;
+    }
+    assert(plain[199] == 199, "a plain element is what it always was");
+    delete plain;
+
+    // A tuple is an aggregate with no declaration to look up, so it answers
+    // for itself by asking its elements. Before it did, the string in a
+    // `tuple<int64, string>` was dropped on the floor.
+    int64 pairs = 0;
+    while (pairs < 2000) {
+        tuple<int64, string> made = labelled(pairs);
+        tuple<int64, string> second = made;
+        assert(second.item1 != "", "a copied tuple still names its string");
+        assert(readLabel(made) == pairs, "and a borrowed one reads");
+        assert(readLabel(labelled(pairs)) == pairs, "so does a temporary");
+        pairs = pairs + 1;
+    }
+
+    // A value made only in order to pass it in: the parameter borrows it, so
+    // the statement that made it is what releases it.
+    int32 borrowed = 0;
+    while (borrowed < 2000) {
+        assert(named(createHeader(format("h{}", borrowed), "v")),
+            "a fresh aggregate argument is read and then released");
+        borrowed = borrowed + 1;
+    }
+
+    println("aggregate-copy=ok");
+    return 0;
+}

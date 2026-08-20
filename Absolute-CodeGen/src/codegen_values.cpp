@@ -348,7 +348,21 @@ namespace Absolute {
         impl->builder.CreateStore(initial, address);
         impl->DeclareDebugVariable(
             name, typeName, address, expr);
-        if (functionValue || stringValue)
+        // A value that is not a handle releases what its parts hold when its
+        // name goes out of scope, and says so on the way in when the parts
+        // arrived already held by someone else. A managed pointer is excluded:
+        // whether a local owns the object it names is a question about the
+        // symbol, not the type, and `staticOwner` answers it.
+        // A tuple reaches here and nowhere else -- it is in neither `classes`
+        // nor `structs` -- so before this a `tuple<int64, string>` local
+        // dropped the string it carried.
+        const TypeSemantics semantics = impl->SemanticsOfTypeName(typeName);
+        const bool ownsParts = semantics.needsDrop &&
+            semantics.dropKind != DropKind::ManagedOwner;
+        if (semantics.dropKind == DropKind::TupleValue && expr->value &&
+            !impl->CreatesFreshString(expr->value.get()))
+            impl->EmitValueRetain(address, typeName);
+        if (ownsParts)
             impl->RequireVariable(name).ownsAggregateResources = true;
         if (staticOwner && createsOwner && managedPointee) {
             Impl::Variable& variable = impl->RequireVariable(name);
@@ -462,6 +476,7 @@ namespace Absolute {
             if (field == found->second.fieldByName.end())
                 impl->Fail("class '" + found->second.name + "' has no field '" + expr->member + "'");
             llvm::Value* object = impl->ObjectPointer(expr->base.get(), baseType);
+            impl->RegisterAggregateTemporaryBase(expr->base.get(), object, baseType);
             fieldAddress = impl->FieldAddress(object, found->second, field->second);
             fieldTypeName = field->second.typeName;
         }
@@ -470,6 +485,7 @@ namespace Absolute {
             if (field == found->second.fieldByName.end())
                 impl->Fail("struct '" + found->second.name + "' has no field '" + expr->member + "'");
             llvm::Value* object = impl->ObjectPointer(expr->base.get(), baseType);
+            impl->RegisterAggregateTemporaryBase(expr->base.get(), object, baseType);
             fieldAddress = impl->FieldAddress(object, found->second, field->second);
             fieldTypeName = field->second.typeName;
         }
@@ -837,13 +853,27 @@ namespace Absolute {
             const bool createsOwner = impl->valueCreatesManagedOwner;
             llvm::Value* managedPointee = impl->valueManagedPointee;
             impl->builder.CreateStore(initial, address);
+            // A value that is not a handle releases what its parts hold when
+            // its name goes out of scope, and says so on the way in if the
+            // parts arrived already held by someone else. A managed pointer is
+            // excluded because whether a local owns the object it names is a
+            // question about the symbol, not the type, and `staticOwner`
+            // answers it. A tuple reaches here and nowhere else: it is not in
+            // `classes` or `structs`, so before this a `tuple<int64, string>`
+            // local dropped its string on the floor.
+            const TypeSemantics semantics = impl->SemanticsOfTypeName(typeName);
+            const bool ownsParts = semantics.needsDrop &&
+                semantics.dropKind != DropKind::ManagedOwner;
+            if (semantics.dropKind == DropKind::TupleValue && expr->value &&
+                !impl->CreatesFreshString(expr->value.get()))
+                impl->EmitValueRetain(address, typeName);
             if (!impl->scopes.back().emplace(name,
                 Impl::Variable{address, type, typeName, staticOwner, false, nullptr, {},
                     nullptr, symbol}).second)
                 impl->Fail("duplicate variable '" + name + "'");
             impl->DeclareDebugVariable(
                 name, typeName, address, expr);
-            if (functionValue || stringValue)
+            if (ownsParts)
                 impl->RequireVariable(name).ownsAggregateResources = true;
             if (staticOwner && createsOwner && managedPointee) {
                 Impl::Variable& variable = impl->RequireVariable(name);

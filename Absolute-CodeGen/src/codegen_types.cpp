@@ -1266,6 +1266,25 @@ namespace Absolute {
         // movable, unlike an owner, and still with something to drop.
         if (typeName == "string") return {true, true, true, DropKind::StringStorage};
 
+        // A tuple is an aggregate that has no declaration to look up, so it
+        // asks its elements directly. Without this it answered "nothing to
+        // release" for `tuple<int64, string>` and the string in it was lost --
+        // the same hole a struct field had, reached by a different spelling.
+        {
+            std::string base;
+            std::vector<std::string> elements;
+            if (ParseCodegenGenericType(typeName, base, elements) && base == "tuple") {
+                TypeSemantics result{true, true, false, DropKind::TupleValue};
+                for (const std::string& element : elements) {
+                    const TypeSemantics part = SemanticsOfTypeName(element, visiting);
+                    if (part.needsDrop) result.needsDrop = true;
+                    if (!part.copyable) result.copyable = false;
+                }
+                if (!result.needsDrop) result.dropKind = DropKind::None;
+                return result;
+            }
+        }
+
         // An array always has storage to free. Whether its elements need
         // dropping too is a separate question, and the answer to it is what
         // section 15 of docs/known-defects.md is about.
@@ -1474,6 +1493,18 @@ namespace Absolute {
                 {builder.CreateLoad(builder.getPtrTy(), address, "copy.retain.text")});
             return;
         }
+        if (semantics.dropKind == DropKind::TupleValue) {
+            std::string base;
+            std::vector<std::string> elements;
+            if (!ParseCodegenGenericType(typeName, base, elements)) return;
+            auto* layout = llvm::cast<llvm::StructType>(TypeFromName(typeName));
+            for (size_t index = 0; index < elements.size(); ++index)
+                EmitValueRetain(
+                    builder.CreateStructGEP(layout, address, unsigned(index),
+                        "tuple.retain.element"),
+                    elements[index]);
+            return;
+        }
         const auto walk = [&](auto& info) {
             for (const ClassField& field : info.fields)
                 EmitValueRetain(FieldAddress(address, info, field), field.typeName);
@@ -1513,6 +1544,18 @@ namespace Absolute {
             builder.CreateCall(StringRelease(), {text});
             builder.CreateStore(
                 llvm::ConstantPointerNull::get(builder.getPtrTy()), address);
+            return;
+        }
+        case DropKind::TupleValue: {
+            std::string base;
+            std::vector<std::string> elements;
+            if (!ParseCodegenGenericType(typeName, base, elements)) return;
+            auto* layout = llvm::cast<llvm::StructType>(TypeFromName(typeName));
+            for (size_t index = elements.size(); index > 0; --index)
+                EmitValueCleanup(
+                    builder.CreateStructGEP(layout, address, unsigned(index - 1),
+                        "tuple.cleanup.element"),
+                    elements[index - 1]);
             return;
         }
         case DropKind::ArrayStorage: {

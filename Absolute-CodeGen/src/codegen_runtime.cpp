@@ -278,6 +278,7 @@ namespace Absolute {
         // an external C function take a string at all -- there is no body to
         // emit a release into, and none is needed.
         RegisterIfFreshString(expression, argument);
+        RegisterFreshValueArgument(expression, argument);
         const bool transfersArrayOwner =
             valueCreatesArrayOwner && llvm::cast<llvm::ConstantInt>(
                 ArgumentOwnershipFlag(expression, parameterType))->isOne();
@@ -521,6 +522,62 @@ namespace Absolute {
         return info && info->producesFreshValue;
     }
 
+    // A value an expression made and nobody kept, whose parts are counted:
+    // `headers[0].name` builds a struct to read one field of. The struct is
+    // spilled so there is an address to release, and released with the
+    // statement, the same way a string temporary is.
+    void CodeGenerator::Impl::RegisterTemporaryAggregate(
+        llvm::Value* address, const std::string& typeName) {
+        if (!address) return;
+        temporaryManagedOwners.push_back(
+            {address, typeName, TemporaryOwner::Kind::AggregateValue});
+    }
+
+    // Reading one field of a value the expression made -- `entries[0].name` --
+    // builds the whole aggregate to get at it, and the aggregate counted its
+    // parts on the way out of whatever produced it. Nobody keeps it, so it is
+    // released with the statement.
+    //
+    // Indexing something that is not an array is an indexer call, and a call
+    // produces its value. The analyzer's flag answers for a method or a
+    // property; it is keyed to the symbol the access resolved to, and an
+    // indexer read resolves to the container rather than to the indexer.
+    void CodeGenerator::Impl::RegisterAggregateTemporaryBase(
+        Expression* base, llvm::Value* object, const std::string& typeName) {
+        if (!base || !object) return;
+        auto* indexed = dynamic_cast<ArrayAccessExpr*>(base);
+        const bool indexerRead = indexed && indexed->base &&
+            ArrayRankName(SemanticType(indexed->base.get())) == 0;
+        if (!indexerRead && !CreatesFreshString(base)) return;
+        const TypeSemantics semantics = SemanticsOfTypeName(typeName);
+        if (semantics.needsDrop && semantics.copyable)
+            RegisterTemporaryAggregate(object, typeName);
+    }
+
+    // The same rule for a value with parts rather than one pointer:
+    // `take(make(1))` built a struct only in order to pass it in, and the
+    // parameter borrows it -- so nobody but the statement that made it will
+    // release what its parts hold. It is spilled to give the walk an address.
+    // Only a shared value is registered. One that is not copyable travels with
+    // a role instead, and the ownership flag says who releases it.
+    void CodeGenerator::Impl::RegisterFreshValueArgument(
+        Expression* expression, llvm::Value* value) {
+        if (!value || !expression || !CurrentFunction()) return;
+        const std::string typeName = SemanticType(expression);
+        // A string is one pointer and was registered as it stands.
+        if (typeName.empty() || typeName == "string") return;
+        if (!CreatesFreshString(expression)) return;
+        const TypeSemantics semantics = SemanticsOfTypeName(typeName);
+        if (!semantics.needsDrop || !semantics.copyable) return;
+        // An indirect value arrives as an address the callee reads through,
+        // and whoever made that address is who releases it.
+        if (value->getType()->isPointerTy()) return;
+        llvm::AllocaInst* spill = CreateEntryAlloca(
+            *CurrentFunction(), value->getType(), "argument.temporary");
+        builder.CreateStore(value, spill);
+        RegisterTemporaryAggregate(spill, typeName);
+    }
+
     void CodeGenerator::Impl::RegisterIfFreshString(
         Expression* expression, llvm::Value* value) {
         if (!value || !expression) return;
@@ -560,6 +617,10 @@ namespace Absolute {
                 }
                 if (temporary.kind == TemporaryOwner::Kind::StringStorage) {
                     builder.CreateCall(StringRelease(), {temporary.handle});
+                    continue;
+                }
+                if (temporary.kind == TemporaryOwner::Kind::AggregateValue) {
+                    EmitValueCleanup(temporary.handle, temporary.typeName);
                     continue;
                 }
                 llvm::Value* pointee = EmitManagedGet(temporary.handle, false);
