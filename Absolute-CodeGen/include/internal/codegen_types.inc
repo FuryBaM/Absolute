@@ -108,6 +108,14 @@
 
         bool TypeNeedsCleanup(const std::string& typeName);
 
+        // Whether copying a value of this type takes a count of its own --
+        // whether EmitValueRetain has anything to emit for it. That is the
+        // question `move` has to ask: a value whose copy counts is read by a
+        // move, and one whose copy counts nothing is transferred by it.
+        bool ValueCountsOnCopy(const std::string& typeName);
+        bool ValueCountsOnCopy(const std::string& typeName,
+            std::unordered_set<std::string>& visiting);
+
         llvm::Function* DeclareClassDestructor(ClassInfo& info);
 
         llvm::Function* DeclareStructDestructor(StructInfo& info);

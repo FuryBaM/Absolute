@@ -1,0 +1,105 @@
+// Handing a shared value from one name to another.
+//
+// A string is shared: the count behind the pointer says how many names hold
+// the bytes. Two places were handing one over without the counts agreeing, and
+// both were found by pushing strings into the standard library's own
+// containers, where the shapes meet.
+//
+// `move` cleared the source. Clearing is what makes a move a transfer, and a
+// move is a transfer only where the destination cannot take a count of its
+// own. For a shared value it is a read -- it hands back what the source still
+// names, which is why the store that takes it counts it -- so clearing as well
+// dropped the source's count on the floor. `unsafeArraySet(items, n,
+// move(element))` is how every container stores what it is given, and every
+// one of them leaked a string per element.
+//
+// The other was the foreach loop's own variable, which is a name like any
+// other and was neither half of one. It never took a count, and it released
+// one when the loop ended, so iterating a `string[]` twice was a
+// use-after-free. Over a collection it was the other way round: the iterator's
+// getter hands its count over, the variable kept it, and the loop leaked a
+// string per iteration.
+//
+// Run under AddressSanitizer with the leak check on. Every loop here runs
+// twice over the same container, because one missing count is only visible on
+// the second pass.
+
+import "../std/collections/vector.abs";
+
+class Holder {
+    private string[] slots;
+    private int32 filled;
+
+    public Holder(int32 capacity) {
+        slots = new string[capacity];
+        filled = 0;
+    }
+
+    // The store a container makes: a move into a slot.
+    public void put(string text) {
+        unsafeArraySet(slots, filled, move(text));
+        filled = filled + 1;
+    }
+
+    public string at(int32 index) { return unsafeArrayGet(slots, index); }
+    public int32 count { get { return filled; } }
+}
+
+int32 main() {
+    // A move into a slot, twice over, and read back after both.
+    int32 round = 0;
+    while (round < 2000) {
+        Holder* holder = new Holder(4);
+        holder.put(format("h{}", round));
+        holder.put("literal");
+        string first = holder.at(0);
+        assert(first != "", "the slot kept what was moved into it");
+        assert(holder.at(1) == "literal", "and a literal is unaffected");
+        delete holder;
+        assert(first != "", "and the name that read it out still holds it");
+        round = round + 1;
+    }
+
+    // The same through the standard library, which is where it was found.
+    std.collections.Vector<string>* items = new std.collections.Vector<string>();
+    int32 pushed = 0;
+    while (pushed < 2000) {
+        items.push(format("v{}", pushed));
+        pushed = pushed + 1;
+    }
+    assert(items.count == 2000, "every push landed");
+
+    // Twice, because one missing count is only visible on the second pass.
+    int32 seen = 0;
+    foreach (string text in items) {
+        assert(text != "", "the collection's element survives the loop");
+        seen = seen + 1;
+    }
+    foreach (string text in items) {
+        assert(text != "", "and the loop after it");
+        seen = seen + 1;
+    }
+    assert(seen == 4000, "both passes ran");
+    delete items;
+
+    // And over a bare array, which is the other branch of the same loop.
+    string[] plain = new string[8];
+    int32 filled = 0;
+    while (filled < 8) {
+        unsafeArraySet(plain, filled, format("p{}", filled));
+        filled = filled + 1;
+    }
+    int32 walked = 0;
+    foreach (string text in plain) {
+        assert(text != "", "an element read out of an array");
+        walked = walked + 1;
+    }
+    foreach (string text in plain) {
+        assert(text != "", "is still there for the next loop");
+        walked = walked + 1;
+    }
+    assert(walked == 16, "both passes ran over the array too");
+
+    println("shared-value-handoff=ok");
+    return 0;
+}

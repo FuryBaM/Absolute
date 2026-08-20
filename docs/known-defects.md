@@ -384,6 +384,37 @@ line and column instead of a number followed by a stray identifier.
 
 Covered by `tests/literal-notation.abs` and `tests/literal-notation-errors.abs`.
 
+### Fixed: handing a shared value from one name to another
+
+Found by pushing strings into the standard library's own containers, where
+these shapes meet. `Vector<string>` leaked one string per element, and
+iterating one leaked another per pass.
+
+**`move` cleared the source.** Clearing is what makes a move a transfer, and a
+move is a transfer only where the destination cannot take a count of its own.
+For a shared value it is a read -- it hands back what the source still names,
+which is why the store that takes it counts it -- so clearing as well dropped
+the source's own count on the floor. `unsafeArraySet(items, n, move(element))`
+is how every container stores what it is given, so every container leaked a
+string per element.
+
+The condition is not `copyable` and not `needsDrop`: a struct wrapping a
+`raw void*` with a `destroy()` hook is both, and copying it counts nothing --
+there is one handle and the hook closes it -- so a move of one has to keep
+clearing. What decides it is whether the copy takes a count, which is the same
+question `EmitValueRetain` answers by walking the parts.
+
+**The foreach loop's own variable was neither half of a name.** It never took a
+count and it released one when the loop ended, so iterating a `string[]` twice
+was a use-after-free -- the first loop released a count the array still needed.
+Over a collection it was the other way round: the iterator's getter hands its
+count over, the variable kept it, and the loop leaked a string per iteration.
+The variable gives back what it held before taking the next element now, and
+takes a count when the element is one the container still names.
+
+Pinned by `tests/shared-value-handoff.abs`, whose loops all run twice over the
+same container, because one missing count is only visible on the second pass.
+
 ### Fixed: a foreach loop kept nothing of what it iterated over
 
 Three things, all in the same statement, and all invisible while an array
