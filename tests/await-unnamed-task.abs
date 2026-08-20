@@ -1,0 +1,67 @@
+// `await spawn f(x)` -- a task nobody named.
+//
+// Awaiting a task held in a variable consumes it, so the variable is cleared
+// and the scope that holds it does not destroy the handle a second time. The
+// test for "is this a variable" walked the expression down to the identifier
+// it was built on, which for `spawn inner(2)` is the callee. The lookup then
+// failed on a name that was never a variable, and the compiler reported an
+// internal condition for a line an author has every reason to write:
+//
+//   Error: LLVM codegen: unknown variable 'inner'
+//
+// Written across two statements it always worked, which is why nothing caught
+// it: `task<int64> job = spawn inner(2); await job;` names the task.
+//
+// A task nobody named has nobody to clear, so the answer is to ask whether the
+// operand *is* an identifier rather than whether one can be found underneath
+// it. The two spellings must agree, and both must release what the task's
+// frame held while it was suspended.
+
+import "../std/string.abs";
+
+class Node {
+    public int64 value;
+    public Node(int64 initial) { value = initial; }
+}
+
+async int64 step(int64 seed) { return seed + 1; }
+
+// An owner and a string live across the suspension point, which is the shape
+// where a frame that is not on the stack has to release what it holds.
+async int64 held(int64 seed) {
+    Node* node = new Node(seed);
+    defer delete node;
+    string label = format("job-{}", seed);
+    int64 stepped = await spawn step(seed);
+    return node.value + stepped + std.text.codePointCount(label);
+}
+
+async int32 main() {
+    int64 inline = 0;
+    int64 named = 0;
+
+    int32 round = 0;
+    while (round < 40) {
+        // The spelling that used to fail to compile.
+        inline = inline + await spawn step(round);
+
+        // And the one that always worked, on the same values.
+        task<int64> job = spawn step(round);
+        named = named + await job;
+
+        round = round + 1;
+    }
+    assert(inline == named, "a task named and a task not named await the same");
+    assert(inline == 820, "each round stepped its own number");
+
+    int64 carried = 0;
+    int32 pass = 0;
+    while (pass < 20) {
+        carried = carried + await spawn held(pass);
+        pass = pass + 1;
+    }
+    assert(carried > 0, "the frame kept its owner and its string across a suspend");
+
+    println("await-unnamed-task=ok");
+    return 0;
+}

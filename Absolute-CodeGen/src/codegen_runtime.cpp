@@ -1400,10 +1400,18 @@ namespace Absolute {
     llvm::Value* CodeGenerator::Impl::EmitAwait(PrefixUnaryExpr& expression) {
         llvm::Value* handle = Evaluate(expression.operand.get());
         llvm::Value* contextPointer = builder.CreateCall(TaskAwait(), {handle}, "task.completed.context");
-        const std::string taskName = IdentifierName(expression.operand.get());
-        if (!taskName.empty()) {
-            Variable& task = RequireVariable(taskName);
-            builder.CreateStore(llvm::ConstantPointerNull::get(builder.getPtrTy()), task.address);
+        // Awaiting a task held in a variable consumes it, so the variable is
+        // cleared and its scope does not destroy the handle a second time.
+        // Only a variable: `IdentifierName` walks an expression down to the
+        // identifier it is built on, so `await spawn inner(2)` answered
+        // "inner" -- the callee -- and the lookup failed on a name that was
+        // never a variable, reporting an internal condition for a line the
+        // author had every reason to write. A task nobody named has nobody to
+        // clear.
+        if (auto* named = dynamic_cast<IdentifierExpr*>(expression.operand.get())) {
+            if (Variable* task = FindVariable(named->name))
+                builder.CreateStore(
+                    llvm::ConstantPointerNull::get(builder.getPtrTy()), task->address);
         }
 
         llvm::Function* function = CurrentFunction();

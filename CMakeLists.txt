@@ -1062,6 +1062,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-qualifier-generics.abs"
     )
     add_test(
+        NAME absolute.await-unnamed-task-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/await-unnamed-task.abs"
+    )
+    add_test(
         NAME absolute.main-signatures-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/main-signatures.abs"
     )
@@ -3458,7 +3462,8 @@ if(BUILD_TESTING)
             "open-ownership-qualifier=open-ownership-qualifier=ok"
             "array-element-drop=array-element-drop=ok"
             "string-lifetime=string-lifetime=ok"
-            "main-signatures=main-signatures=ok")
+            "main-signatures=main-signatures=ok"
+            "await-unnamed-task=await-unnamed-task=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those
