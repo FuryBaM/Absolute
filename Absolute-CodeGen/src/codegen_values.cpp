@@ -125,13 +125,36 @@ namespace Absolute {
         // storage: `text = text` must not free what it is about to store.
         if (targetTypeName == "string")
             assigned = impl->RetainStoredString(expr->value.get(), assigned);
+        // The same one level up: an aggregate is assigned by copying its
+        // bytes, which duplicates the pointers its parts hold without
+        // duplicating their counts. The target is one more name for them, and
+        // it gives back what it held. Counted through a spill because the
+        // walk needs an address, and counted before the old value is released
+        // for the reason the string comment above gives.
+        const TypeSemantics targetSemantics =
+            impl->SemanticsOfTypeName(targetTypeName);
+        const bool countsParts = targetSemantics.copyable &&
+            (targetSemantics.dropKind == DropKind::TupleValue ||
+             targetSemantics.dropKind == DropKind::ClassObject ||
+             targetSemantics.dropKind == DropKind::StructObject);
+        if (countsParts && assigned && !functionValue &&
+            !impl->CreatesFreshString(expr->value.get())) {
+            llvm::AllocaInst* counted = impl->CreateEntryAlloca(
+                *impl->CurrentFunction(), assigned->getType(), "assignment.counted");
+            impl->builder.CreateStore(assigned, counted);
+            impl->EmitValueRetain(counted, targetTypeName);
+            assigned = impl->builder.CreateLoad(
+                assigned->getType(), counted, "assignment.counted.value");
+        }
         if (targetSymbol && targetSymbol->kind == SymbolKind::Field &&
             impl->TypeNeedsCleanup(targetTypeName) && !functionValue) {
             impl->EmitValueCleanup(targetAddress, targetTypeName);
         }
         // A local or a parameter holding a string releases what it held before
-        // taking the new one, the same way a field does.
-        else if (targetTypeName == "string" && targetSymbol &&
+        // taking the new one, the same way a field does -- and so does one
+        // holding an aggregate whose parts are counted, which is the same
+        // rule read one level up.
+        else if ((targetTypeName == "string" || countsParts) && targetSymbol &&
             (targetSymbol->kind == SymbolKind::Variable ||
              targetSymbol->kind == SymbolKind::Parameter)) {
             if (const std::string name = IdentifierName(expr->target.get());

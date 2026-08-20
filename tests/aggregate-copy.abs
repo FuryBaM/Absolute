@@ -156,6 +156,26 @@ int32 main() {
         borrowed = borrowed + 1;
     }
 
+    // Assignment is a store like any other: the target is one more name for
+    // what the value's parts hold, and it gives back what it held. Neither
+    // half was emitted for an aggregate, so `a = b` leaked what `a` had and
+    // left two names holding one count of what `b` had.
+    int32 assigned = 0;
+    while (assigned < 2000) {
+        Header first = createHeader(format("f{}", assigned), "one");
+        Header second = createHeader(format("s{}", assigned), "two");
+        first = second;
+        assert(first.name == second.name, "an assigned struct names the same bytes");
+        first = first;
+        assert(first.name != "", "and assigning it to itself keeps them");
+
+        tuple<int64, string> left = labelled(assigned);
+        tuple<int64, string> right = labelled(assigned + 1);
+        left = right;
+        assert(left.item0 == assigned + 1, "a tuple is assigned the same way");
+        assigned = assigned + 1;
+    }
+
     println("aggregate-copy=ok");
     return 0;
 }

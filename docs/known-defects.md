@@ -37,8 +37,8 @@ what the copy still names, which is the withdrawn attempt again. `TypeSemantics`
 already said whether a type is `copyable`; what was missing was something that
 *performs* the copy. `EmitValueRetain` is the mirror of the destructor walk --
 a copy counts the parts it now names, a drop gives those counts back -- and it
-runs in the five places a copy happens: a store, a declaration, a return, a
-temporary read out of a container, a scope. A tuple asks its elements rather
+runs in the six places a copy happens: a store, an assignment, a declaration, a
+return, a temporary read out of a container, a scope. A tuple asks its elements rather
 than a declaration it does not have; a value made only in order to pass in is
 released by the statement that made it, because an aggregate parameter borrows.
 
@@ -127,12 +127,13 @@ a shallow copy kills what the copy still names -- the withdrawn array attempt
 no drop.
 
 There is one now: `EmitValueRetain`, the mirror of the destructor walk. A copy
-counts the parts it now names; a drop gives those counts back. It runs in five
+counts the parts it now names; a drop gives those counts back. It runs in six
 places, which are the string rules plus the one an aggregate adds:
 
 | | |
 |---|---|
 | a store into a slot | one more name for the bytes |
+| an assignment | one more name, and the target gives back what it held |
 | a declaration | the copy counts the parts |
 | a return | counted on the way to the caller |
 | a temporary | a value made only to read one field of, released with the statement |
@@ -152,8 +153,8 @@ the *container*, not to the indexer, so the analyzer's freshness flag answered
 for the wrong symbol. Indexing something that is not an array is a call, and
 that is how it is recognized now.
 
-Two aggregates were still outside all of it, and both were found by asking
-the same question the class case answered.
+Three shapes were still outside all of it, and each was found by asking the
+same question the class case answered.
 
 A **tuple** has no declaration to look up. `SemanticsOfTypeName` answered from
 `classes` and `structs`, and a `tuple<int64, string>` is in neither, so it
@@ -174,10 +175,17 @@ the caller's uncollected count now held a slot nobody counted. A slot that is
 released is a name that counts, whatever the element type is; both sides of
 that are now the same rule, and `tests/aggregate-copy.abs` fails without either.
 
+And **assignment** was neither half: `a = b` for a struct or a tuple copied the
+bytes without counting what they hold and without releasing what `a` held, so
+one name leaked and two names shared one count. A field assignment released the
+old value but still did not count the new one. Assignment is a store; it now
+reads as one.
+
 Pinned by `tests/aggregate-copy.abs` -- a `Headers` class over a
 `Vector<Header>`, cloned two thousand times, with a field read out of a
-temporary, a tuple copied and borrowed two thousand more, and a fresh struct
-handed straight to a call -- under AddressSanitizer with the leak check on,
+temporary, a tuple copied and borrowed two thousand more, a fresh struct handed
+straight to a call, and two thousand rounds of assignment including a struct
+assigned to itself -- under AddressSanitizer with the leak check on,
 where a use-after-free and a leak are both answers.
 
 ### Fixed: an owner produced inside a larger expression was lost
