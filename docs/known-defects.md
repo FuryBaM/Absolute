@@ -29,23 +29,25 @@ shared-owned. Section 15 keeps the record of the array, because the obvious fix
 for it was written, merged and withdrawn in one session and what that cost is
 the useful part.
 
-One remainder is shared by both and written down in each place: **there is no
-copy that retains what its parts hold.** An aggregate is copied shallowly, so a
-string held by a field -- or by a tuple element, which is the same aggregate
-reached by a different spelling -- is not released; releasing it would kill what
-the copy still names, which is the withdrawn attempt again. A tuple element that
-owns something *uniquely* is refused outright (`E_TUPLE_RESOURCE_ELEMENT`); a
-string passes that refusal because a string is copyable, and then leaks. It is bounded by how much a
-program keeps rather than by how long it runs, which is what separates it from
-the defect it came out of. The model already names the missing piece:
-`TypeSemantics` says whether a type is `copyable`, and that answer decides how
-a value travels -- but nothing anywhere *performs* a copy that takes a count.
+The remainder both of them left -- **there is no copy that retains what its
+parts hold** -- is closed too. An aggregate was copied shallowly, so a string
+held by a field, or by a tuple element, which is the same aggregate reached by
+a different spelling, could not be released at all: releasing it would kill
+what the copy still names, which is the withdrawn attempt again. `TypeSemantics`
+already said whether a type is `copyable`; what was missing was something that
+*performs* the copy. `EmitValueRetain` is the mirror of the destructor walk --
+a copy counts the parts it now names, a drop gives those counts back -- and it
+runs in the five places a copy happens: a store, a declaration, a return, a
+temporary read out of a container, a scope. A tuple asks its elements rather
+than a declaration it does not have; a value made only in order to pass in is
+released by the statement that made it, because an aggregate parameter borrows.
 
 The model, the order of work and what proves each step are in
 `docs/ownership-kinds.md`; every step is done, pinned by
 `tests/ownership-qualifier-generics.abs`, `tests/subscriber-pointers.abs`,
 `tests/generic-body-ownership.abs`, `tests/open-ownership-qualifier.abs`,
-`tests/array-element-drop.abs` and `tests/string-lifetime.abs`.
+`tests/array-element-drop.abs`, `tests/string-lifetime.abs`,
+`tests/aggregate-copy.abs` and `tests/array-literal-owner.abs`.
 
 ### Fixed: a string had no lifetime, so every string a program built was lost
 
