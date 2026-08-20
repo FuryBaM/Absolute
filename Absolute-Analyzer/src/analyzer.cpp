@@ -1131,26 +1131,39 @@ namespace Absolute {
                 definitionName = genericBase;
             }
             // A cycle in the field graph is not a reason to keep looking.
-            if (!visiting.insert(definitionName).second) return true;
-            const auto release = [&] { visiting.erase(definitionName); };
+            if (!visiting.insert(candidate).second) return true;
+            const auto release = [&] { visiting.erase(candidate); };
             const auto found = types.find(definitionName);
             if (found == types.end() || (found->second.kind != TypeKind::Class &&
                 found->second.kind != TypeKind::Struct)) {
                 release();
                 return true;
             }
+            // Substituted, for the reason OwnsResourcesByParts gives: a
+            // generic's fields are written in terms of its parameters, and `T`
+            // on its own answers for nothing.
+            std::unordered_map<std::string, std::string> substitutions;
+            if (!genericArguments.empty() &&
+                found->second.genericParameters.size() == genericArguments.size())
+                for (size_t index = 0; index < genericArguments.size(); ++index)
+                    substitutions.emplace(
+                        found->second.genericParameters[index], genericArguments[index]);
+            const auto asWritten = [&](const std::string& type) {
+                return substitutions.empty()
+                    ? type : SubstituteGenericType(type, substitutions);
+            };
             for (const auto& [memberName, overloads] : found->second.members) {
                 (void)memberName;
                 for (const MemberSignature& member : overloads) {
                     if (member.isStatic || member.kind != SymbolKind::Field) continue;
-                    if (!self(self, member.type)) {
+                    if (!self(self, asWritten(member.type))) {
                         release();
                         return false;
                     }
                 }
             }
             for (const std::string& parent : found->second.parents) {
-                if (!self(self, parent)) {
+                if (!self(self, asWritten(parent))) {
                     release();
                     return false;
                 }
@@ -1184,14 +1197,33 @@ namespace Absolute {
                 }
                 definitionName = genericBase;
             }
-            if (!visiting.insert(definitionName).second) return false;
-            const auto release = [&] { visiting.erase(definitionName); };
+            // Keyed on the full name rather than the bare base, so
+            // `Cell<Cell<Node*>>` is not mistaken for a cycle in itself.
+            if (!visiting.insert(candidate).second) return false;
+            const auto release = [&] { visiting.erase(candidate); };
             const auto found = types.find(definitionName);
             if (found == types.end() || (found->second.kind != TypeKind::Class &&
                 found->second.kind != TypeKind::Struct)) {
                 release();
                 return false;
             }
+            // A generic's members are declared in terms of its parameters, so
+            // walking them unsubstituted asks about `T` and gets the answer for
+            // a name nothing is known about. That made `Cell<Node*>` a type
+            // that owns nothing, invisible to every ownership rule here --
+            // while the backend, which substitutes, destroyed its owner. The
+            // two disagreeing that way is not a leak: the callee destroyed
+            // what it returned and the caller read a handle to it.
+            std::unordered_map<std::string, std::string> substitutions;
+            if (!genericArguments.empty() &&
+                found->second.genericParameters.size() == genericArguments.size())
+                for (size_t index = 0; index < genericArguments.size(); ++index)
+                    substitutions.emplace(
+                        found->second.genericParameters[index], genericArguments[index]);
+            const auto asWritten = [&](const std::string& type) {
+                return substitutions.empty()
+                    ? type : SubstituteGenericType(type, substitutions);
+            };
             for (const auto& [memberName, overloads] : found->second.members) {
                 // Members are keyed by their bare name, so "destroy()" never
                 // matched and a type whose only resource was its own destroy()
@@ -1203,14 +1235,14 @@ namespace Absolute {
                 for (const MemberSignature& member : overloads) {
                     if (member.isStatic || (member.kind != SymbolKind::Field &&
                         member.kind != SymbolKind::Property)) continue;
-                    if (self(self, member.type)) {
+                    if (self(self, asWritten(member.type))) {
                         release();
                         return true;
                     }
                 }
             }
             for (const std::string& parent : found->second.parents) {
-                if (self(self, parent)) {
+                if (self(self, asWritten(parent))) {
                     release();
                     return true;
                 }

@@ -1,0 +1,104 @@
+// A generic aggregate owns what its argument owns.
+//
+// The analyzer worked out whether a type owns a resource by walking the
+// members of its declaration -- and a generic's members are written in terms
+// of its parameters, so the walk asked about `T` and got the answer for a name
+// nothing is known about. `Cell<Node*>` was a type that owns nothing: not
+// refused when copied, not refused when returned by value, invisible to every
+// ownership rule there is.
+//
+// The backend substitutes, so it knew better and destroyed the owner. The two
+// halves disagreeing that way is worse than a leak:
+//
+//     Cell<Node*> made(int64 n) { Cell<Node*> cell; cell.held = new Node(n); return cell; }
+//     Cell<Node*> taken = made(1);
+//     taken.held.value                 // null or expired managed pointer
+//
+// The callee destroyed what it returned, because its local owned it, and the
+// caller read a handle to the object that was just torn down. The walk
+// substitutes now, so `Cell<Node*>` answers what `struct { Node* held; }`
+// answers, and the rules that were reaching past it apply.
+//
+// Run under AddressSanitizer with the leak check on, and with the runtime's
+// managed-pointer leak report.
+
+class Node {
+    public int64 value;
+    public Node(int64 initial) { value = initial; }
+}
+
+struct Cell<T> {
+    public T held;
+    public int64 tag;
+}
+
+struct Pair<A, B> {
+    public A first;
+    public B second;
+}
+
+Cell<Node*> owningCell(int64 n) {
+    Cell<Node*> made;
+    made.held = new Node(n);
+    made.tag = n;
+    return move(made);
+}
+
+Cell<string> textCell(int64 n) {
+    Cell<string> made;
+    made.held = format("t{}", n);
+    made.tag = n;
+    return made;
+}
+
+Pair<string, Node*> mixed(int64 n) {
+    Pair<string, Node*> made;
+    made.first = format("p{}", n);
+    made.second = new Node(n);
+    return move(made);
+}
+
+int64 readCell(Cell<Node*> cell) { return cell.held.value; }
+
+int32 main() {
+    // What the disagreement produced: the value survives the return now, and
+    // the object it names is torn down once, where the name ends.
+    int32 round = 0;
+    while (round < 2000) {
+        Cell<Node*> taken = owningCell(round);
+        assert(taken.held.value == round, "a returned generic cell still owns it");
+        assert(readCell(taken) == round, "and a parameter borrows it");
+
+        Cell<Node*> moved = move(taken);
+        assert(moved.held.value == round, "move hands the owner on");
+
+        // Assigning a fresh one destroys what the name held.
+        moved = owningCell(round + 1);
+        assert(moved.held.value == round + 1, "and assignment takes the new one");
+        round = round + 1;
+    }
+
+    // A parameter that owns nothing unique is copied like any other value:
+    // a string is shared, so two names for it is the ordinary case.
+    int32 texts = 0;
+    while (texts < 2000) {
+        Cell<string> first = textCell(texts);
+        Cell<string> second = first;
+        assert(second.held != "", "a generic cell of strings is copied");
+        assert(first.held == second.held, "and both name the same bytes");
+        texts = texts + 1;
+    }
+
+    // Two parameters, one of each kind: the aggregate owns because one of them
+    // does, and the string in it is counted all the same.
+    int32 pairs = 0;
+    while (pairs < 2000) {
+        Pair<string, Node*> pair = mixed(pairs);
+        assert(pair.first != "", "the shared half arrived");
+        assert(pair.second.value == pairs, "and the owned half");
+        pairs = pairs + 1;
+    }
+
+    println("generic-resource-aggregates=ok");
+    return 0;
+}

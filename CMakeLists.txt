@@ -1081,6 +1081,17 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "E_MAIN_RETURN_TYPE"
     )
     add_test(
+        NAME absolute.generic-resource-aggregates-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-resource-aggregates.abs"
+    )
+    add_test(
+        NAME absolute.generic-resource-aggregates-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-resource-aggregates-errors.abs"
+    )
+    set_tests_properties(absolute.generic-resource-aggregates-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_RESOURCE_AGGREGATE_COPY"
+    )
+    add_test(
         NAME absolute.field-initializer-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/field-initializer.abs"
     )
@@ -3509,7 +3520,8 @@ if(BUILD_TESTING)
             "array-literal-owner=array-literal-owner=ok"
             "conditional-values=conditional-values=ok"
             "owned-aggregates=owned-aggregates=ok"
-            "field-initializer=field-initializer=ok")
+            "field-initializer=field-initializer=ok"
+            "generic-resource-aggregates=generic-resource-aggregates=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those

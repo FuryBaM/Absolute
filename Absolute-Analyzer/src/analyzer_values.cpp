@@ -389,6 +389,26 @@ namespace Absolute {
                 Report("const static field '" + name + "' requires an initializer",
                     "E_CONST_REQUIRES_INITIALIZER");
         }
+        // The same refusal an instance declaration carries. A declaration whose
+        // type is written with generic arguments parses as this one instead,
+        // so `Cell<Node*> second = first;` was two names for one owner and
+        // nothing said so -- while the same thing spelled without the angle
+        // brackets was refused.
+        {
+            bool transfersAggregateOwner =
+                value.isMoveResult || value.producesFreshValue;
+            if (const Symbol* source = table.Get(value.symbol)) {
+                transfersAggregateOwner = transfersAggregateOwner ||
+                    source->kind == SymbolKind::Function ||
+                    source->kind == SymbolKind::Method;
+            }
+            if (expr->value && ArrayRank(type) == 0 && !IsPointerType(type) &&
+                TypeOwnsResources(type) && !transfersAggregateOwner)
+                Report("resource-owning aggregate '" + type +
+                    "' cannot be copied into '" + name +
+                    "'; use move(...) for lvalues",
+                    "E_RESOURCE_AGGREGATE_COPY", value.symbol);
+        }
         if (IsTaskType(type) && expr->value && !value.createsTask)
             Report("task variable '" + name + "' requires a spawn initializer",
                 "E_TASK_SPAWN_REQUIRED");
