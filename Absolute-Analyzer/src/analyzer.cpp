@@ -911,14 +911,29 @@ namespace Absolute {
         // arrives already counted once when it is fresh, and needs counting
         // when it is not.
         if (expression) {
-            // A conditional is the one shape that is not a call and still
-            // produces its value: its two arms need not agree about who holds
-            // what they hand back, so the backend makes each arm take a count
-            // and the result arrives counted once, whichever path ran.
             if (dynamic_cast<FunctionCallExpr*>(expression) ||
-                dynamic_cast<ConstructorCallExpr*>(expression) ||
-                dynamic_cast<TernaryExpr*>(expression))
+                dynamic_cast<ConstructorCallExpr*>(expression))
                 value.producesFreshValue = true;
+            // A conditional is the one shape that is not a call and can still
+            // produce its value -- when the backend can make both arms produce
+            // it. For a value whose parts are counted it always can: the arm
+            // that only named the bytes takes a count of its own, and the
+            // result arrives counted once whichever path ran. For one that
+            // travels with a role there is no such thing as a second name, so
+            // the conditional produces its value only if both arms already do.
+            else if (auto* conditional = dynamic_cast<TernaryExpr*>(expression)) {
+                const auto produced = [&](Expression* side) {
+                    const ExpressionInfo* arm = side ? GetExpressionInfo(*side) : nullptr;
+                    if (!arm) return false;
+                    if (arm->producesFreshValue || arm->isMoveResult) return true;
+                    const Symbol* named = GetSymbol(arm->symbol);
+                    return named && (named->kind == SymbolKind::Function ||
+                        named->kind == SymbolKind::Method);
+                };
+                value.producesFreshValue = SemanticsOfType(value.type).copyable ||
+                    (produced(conditional->trueExpr.get()) &&
+                     produced(conditional->falseExpr.get()));
+            }
             else if (symbol)
                 value.producesFreshValue =
                     symbol->kind == SymbolKind::Property ||
@@ -1071,14 +1086,17 @@ namespace Absolute {
         }
         // An array always has storage to free; whether its elements need
         // dropping as well is docs/known-defects.md section 15.
+        // Not copyable: the descriptor names storage with one owner, and
+        // copying it would make two.
         if (ArrayRank(name) > 0)
-            return {true, true, true, DropKind::ArrayStorage};
+            return {false, true, true, DropKind::ArrayStorage};
 
         if (const PluginResourceDescriptor* descriptor =
                 GetPluginResourceDescriptor(name); descriptor && descriptor->isResource)
             return {true, true, true, DropKind::PluginResource};
 
-        TypeSemantics result{true, true, OwnsResourcesByParts(name), DropKind::None};
+        TypeSemantics result{CopiesByParts(name), true,
+            OwnsResourcesByParts(name), DropKind::None};
         if (!result.needsDrop) return result;
         if (const auto found = types.find(name); found != types.end()) {
             result.dropKind = found->second.kind == TypeKind::Class
@@ -1086,6 +1104,61 @@ namespace Absolute {
         }
         else result.dropKind = DropKind::StructObject;
         return result;
+    }
+
+    bool Analyzer::CopiesByParts(const std::string& name) const {
+        std::unordered_set<std::string> visiting;
+        const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
+            if (IsValueReferenceType(candidate))
+                return self(self, ValueReferenceBaseType(candidate));
+            if (const OwnershipKind kind = CanonicalOwnership(candidate);
+                kind != OwnershipKind::None)
+                return CanonicalHandleSemantics(kind).copyable;
+            // An array descriptor names storage with one owner, and copying it
+            // would make two. `copy(...)` is how a second array is asked for.
+            if (ArrayRank(candidate) > 0) return false;
+
+            std::string definitionName = candidate;
+            std::string genericBase;
+            std::vector<std::string> genericArguments;
+            if (ParseGenericTypeName(candidate, genericBase, genericArguments)) {
+                if (genericBase == "tuple") {
+                    return std::all_of(genericArguments.begin(),
+                        genericArguments.end(), [&](const std::string& argument) {
+                            return self(self, argument);
+                        });
+                }
+                definitionName = genericBase;
+            }
+            // A cycle in the field graph is not a reason to keep looking.
+            if (!visiting.insert(definitionName).second) return true;
+            const auto release = [&] { visiting.erase(definitionName); };
+            const auto found = types.find(definitionName);
+            if (found == types.end() || (found->second.kind != TypeKind::Class &&
+                found->second.kind != TypeKind::Struct)) {
+                release();
+                return true;
+            }
+            for (const auto& [memberName, overloads] : found->second.members) {
+                (void)memberName;
+                for (const MemberSignature& member : overloads) {
+                    if (member.isStatic || member.kind != SymbolKind::Field) continue;
+                    if (!self(self, member.type)) {
+                        release();
+                        return false;
+                    }
+                }
+            }
+            for (const std::string& parent : found->second.parents) {
+                if (!self(self, parent)) {
+                    release();
+                    return false;
+                }
+            }
+            release();
+            return true;
+        };
+        return inspect(inspect, name);
     }
 
     bool Analyzer::OwnsResourcesByParts(const std::string& name) const {

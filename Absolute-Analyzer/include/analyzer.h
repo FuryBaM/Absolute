@@ -548,6 +548,15 @@ namespace Absolute {
     private:
         bool OwnsResourcesByParts(const std::string& name) const;
 
+        // Whether a value of this type can be a second name for what the first
+        // one holds. A unique owner cannot -- there is one of it -- and
+        // neither can an array, whose storage has one owner; a subscriber, a
+        // weak reference and a string can, because sharing is what they are
+        // for. An aggregate answers by asking its parts, the same walk
+        // CodeGenerator::Impl::SemanticsOfTypeName does from the backend's own
+        // tables.
+        bool CopiesByParts(const std::string& name) const;
+
     public:
         bool IsAsyncTaskValueType(const std::string& name) const;
         bool IsNumeric(const std::string& name) const;

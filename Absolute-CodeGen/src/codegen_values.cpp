@@ -17,6 +17,13 @@ namespace Absolute {
                 targetSymbol->name.rfind('.') == std::string::npos
                     ? 0 : targetSymbol->name.rfind('.') + 1);
             llvm::Value* assigned = impl->Evaluate(expr->value.get());
+            // A setter is a call, and its parameter borrows like any other, so
+            // a value made only in order to hand it over is released by the
+            // statement that made it. This path builds its own call rather
+            // than going through EvaluateCallArgument, which is where every
+            // other argument is told that.
+            impl->RegisterIfFreshString(expr->value.get(), assigned);
+            impl->RegisterFreshValueArgument(expr->value.get(), assigned);
             if (expr->op != "=") {
                 llvm::Value* current = impl->EmitPropertyAccessor(receiver, receiverType,
                     CallableKey(PropertyGetterName(propertyName), {}), {});
@@ -41,6 +48,10 @@ namespace Absolute {
             for (const auto& index : indexer->indexes)
                 arguments.push_back(impl->Evaluate(index.get()));
             llvm::Value* assigned = impl->Evaluate(expr->value.get());
+            // The same for an indexer's setter, which is the same kind of call
+            // written with brackets.
+            impl->RegisterIfFreshString(expr->value.get(), assigned);
+            impl->RegisterFreshValueArgument(expr->value.get(), assigned);
             if (expr->op != "=") {
                 llvm::Value* current = impl->EmitPropertyAccessor(
                     indexer->base.get(), receiverType,
@@ -133,10 +144,17 @@ namespace Absolute {
         // for the reason the string comment above gives.
         const TypeSemantics targetSemantics =
             impl->SemanticsOfTypeName(targetTypeName);
-        const bool countsParts = targetSemantics.copyable &&
-            (targetSemantics.dropKind == DropKind::TupleValue ||
-             targetSemantics.dropKind == DropKind::ClassObject ||
-             targetSemantics.dropKind == DropKind::StructObject);
+        // A value whose parts are counted: the target is one more name for
+        // them. A value that travels with a role instead cannot be a second
+        // name at all, so nothing is counted -- but it is still overwritten,
+        // and what it held has to go somewhere. Without the second of these an
+        // `owner = make();` in a loop leaked every object but the last, and
+        // the runtime said so at exit.
+        const bool releasesTarget =
+            targetSemantics.dropKind == DropKind::TupleValue ||
+            targetSemantics.dropKind == DropKind::ClassObject ||
+            targetSemantics.dropKind == DropKind::StructObject;
+        const bool countsParts = targetSemantics.copyable && releasesTarget;
         if (countsParts && assigned && !functionValue &&
             !impl->CreatesFreshString(expr->value.get())) {
             llvm::AllocaInst* counted = impl->CreateEntryAlloca(
@@ -154,7 +172,7 @@ namespace Absolute {
         // taking the new one, the same way a field does -- and so does one
         // holding an aggregate whose parts are counted, which is the same
         // rule read one level up.
-        else if ((targetTypeName == "string" || countsParts) && targetSymbol &&
+        else if ((targetTypeName == "string" || releasesTarget) && targetSymbol &&
             (targetSymbol->kind == SymbolKind::Variable ||
              targetSymbol->kind == SymbolKind::Parameter)) {
             if (const std::string name = IdentifierName(expr->target.get());

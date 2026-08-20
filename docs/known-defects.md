@@ -175,6 +175,13 @@ the caller's uncollected count now held a slot nobody counted. A slot that is
 released is a name that counts, whatever the element type is; both sides of
 that are now the same rule, and `tests/aggregate-copy.abs` fails without either.
 
+A **property's setter** was the one argument nobody released. A setter is a
+call and its parameter borrows like any other, so `slot.entry = make()` leaves
+the count with the statement that made it -- but the assignment path builds
+that call itself rather than going through the one place every other argument
+is told so, and an indexer's setter is written the same way. A named value was
+fine; only one made on the spot was lost.
+
 And **assignment** was neither half: `a = b` for a struct or a tuple copied the
 bytes without counting what they hold and without releasing what `a` held, so
 one name leaked and two names shared one count. A field assignment released the
@@ -184,9 +191,65 @@ reads as one.
 Pinned by `tests/aggregate-copy.abs` -- a `Headers` class over a
 `Vector<Header>`, cloned two thousand times, with a field read out of a
 temporary, a tuple copied and borrowed two thousand more, a fresh struct handed
-straight to a call, and two thousand rounds of assignment including a struct
-assigned to itself -- under AddressSanitizer with the leak check on,
+straight to a call, two thousand rounds of assignment including a struct
+assigned to itself, and a property and an indexer taking one made on the
+spot -- under AddressSanitizer with the leak check on,
 where a use-after-free and a leak are both answers.
+
+### Fixed: a value holding an owner was overwritten without being destroyed
+
+The rules above are about values whose parts are *shared*, and they say nothing
+about a struct holding a `Node*`: there is no such thing as a second name for a
+unique owner, so such a value is not copyable at all. It moves, and
+`E_RESOURCE_AGGREGATE_COPY` refuses everything else. What that leaves is the
+other half of the same question -- where such a value may be handed on, and who
+destroys what a name held before it took another -- and two of the answers were
+wrong. Both were found by probing the shapes around the shared-value fixes,
+which is also how the fuzzer shape for them came to be written.
+
+**Assignment overwrote without destroying.**
+
+```absolute
+Owner target = makeOwner(0);
+while (round < 2000) { target = makeOwner(round); }   // 1999 objects, nobody's
+```
+
+A field assignment released what the field held; a local's did not, because the
+release was written for a value whose parts are counted and asked `copyable`
+before emitting it. Overwriting is not copying: what the name held has to go
+somewhere whether or not the new value is a second name for anything. The
+runtime reported every one of them at exit, by handle -- but only if a program
+wrote that loop, and none did.
+
+**A conditional could not produce one.**
+
+```absolute
+Owner picked = left ? makeOwner(a) : makeOwner(b);    // E_RESOURCE_AGGREGATE_COPY
+```
+
+Whether an expression may hand on a resource-owning aggregate was decided by
+asking whether the value's *symbol* is a callable. That answers for a direct
+call and loses the fact for everything else, so a conditional of two calls --
+two values, each produced by the arm that ran, neither of them named by
+anything -- was refused with "use move(...)" about a value there was nothing to
+move.
+
+It is decided by whether the expression produced the value, and for a
+conditional by whether both arms did. That distinction is the whole of it: for
+a value whose parts are counted the backend can always make both arms produce
+one, because the arm that only named the bytes can take a count of its own; for
+one that travels with a role it cannot, because a second name is exactly what
+does not exist. So `left ? first : second` over two named owners is still
+refused, and correctly.
+
+Making that judgement needed `TypeSemantics::copyable` to be true of the
+analyzer as well. It was hard-coded `true` for every aggregate there while the
+backend worked it out by walking the parts, and nothing had read it yet, so the
+two halves had drifted without anything noticing. The analyzer walks the parts
+now, the same way.
+
+Pinned by `tests/owned-aggregates.abs` and `tests/owned-aggregates-errors.abs`,
+and by the `owned` shape in the fuzzer.
 
 ### Fixed: an owner produced inside a larger expression was lost
 

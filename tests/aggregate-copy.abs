@@ -48,6 +48,25 @@ bool named(Header header) {
     return header.name != "";
 }
 
+// A property and an indexer over the same field: both are calls whose
+// parameter borrows, and both are written without going through the argument
+// path every other call uses.
+class Slot {
+    private Header held;
+
+    public Slot() { held = createHeader("start", "value"); }
+
+    public Header entry {
+        get { return held; }
+        set { held = value; }
+    }
+
+    public Header this[int32 index] {
+        get { return held; }
+        set { held = value; }
+    }
+}
+
 class Headers {
     private Vector<Header>* entries;
 
@@ -200,6 +219,23 @@ int32 main() {
         assert(held.name != "", "the local still holds its bytes");
         stored = stored + 1;
     }
+
+    // A setter is a call, and its parameter borrows like any other, so a
+    // value made only in order to hand it over is released by the statement
+    // that made it. The property path builds its own call rather than going
+    // through the one place every other argument is told that, so it was the
+    // one argument nobody released.
+    Slot* slot = new Slot();
+    int32 handed = 0;
+    while (handed < 2000) {
+        slot.entry = createHeader(format("p{}", handed), "one");
+        Header taken = slot.entry;
+        assert(taken.name != "", "a property round trip keeps its bytes");
+        slot[0] = createHeader(format("i{}", handed), "two");
+        assert(slot[0].name != "", "and so does an indexer's");
+        handed = handed + 1;
+    }
+    delete slot;
 
     println("aggregate-copy=ok");
     return 0;

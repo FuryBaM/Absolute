@@ -133,7 +133,14 @@ namespace Absolute {
                 symbol->ownsArrayStorage = symbol->ownsArrayStorage ||
                     value.createsArrayOwner;
         }
-        bool transfersAggregateOwner = value.isMoveResult;
+        // An expression that produced the value can hand it on: nothing is
+        // copied, because there is no other name for it. Asking whether the
+        // value's symbol is a callable answers that for a direct call and
+        // loses it for everything else -- a conditional of two calls is two
+        // values, each produced by the arm that ran, and refusing it said
+        // "use move(...)" about a value no name holds.
+        bool transfersAggregateOwner =
+            value.isMoveResult || value.producesFreshValue;
         if (const Symbol* source = table.Get(value.symbol)) {
             transfersAggregateOwner = transfersAggregateOwner ||
                 source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;
@@ -938,7 +945,14 @@ namespace Absolute {
         if (expr->value && !IsAssignable(type, value.type))
             Report("initializer of '" + name + "' has type '" + value.type + "', expected '" + type + "'",
                 "E_INITIALIZER_TYPE_MISMATCH");
-        bool transfersAggregateOwner = value.isMoveResult;
+        // An expression that produced the value can hand it on: nothing is
+        // copied, because there is no other name for it. Asking whether the
+        // value's symbol is a callable answers that for a direct call and
+        // loses it for everything else -- a conditional of two calls is two
+        // values, each produced by the arm that ran, and refusing it said
+        // "use move(...)" about a value no name holds.
+        bool transfersAggregateOwner =
+            value.isMoveResult || value.producesFreshValue;
         if (const Symbol* source = table.Get(value.symbol)) {
             transfersAggregateOwner = transfersAggregateOwner ||
                 source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;

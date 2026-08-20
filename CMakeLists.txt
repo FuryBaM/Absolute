@@ -1081,6 +1081,17 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "E_MAIN_RETURN_TYPE"
     )
     add_test(
+        NAME absolute.owned-aggregates-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/owned-aggregates.abs"
+    )
+    add_test(
+        NAME absolute.owned-aggregates-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/owned-aggregates-errors.abs"
+    )
+    set_tests_properties(absolute.owned-aggregates-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_RESOURCE_AGGREGATE_COPY"
+    )
+    add_test(
         NAME absolute.conditional-values-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/conditional-values.abs"
     )
@@ -3368,7 +3379,7 @@ if(BUILD_TESTING)
                     --std-dir "${PROJECT_SOURCE_DIR}/std"
                     # One case per shape, so a run covers all of them rather
                     # than repeating a few.
-                    --cases 17
+                    --cases 18
                     --detect-leaks ${ABSOLUTE_SANITIZER_DETECT_LEAKS}
                     --configuration "$<CONFIG>")
             set_tests_properties(absolute.codegen-fuzz PROPERTIES
@@ -3485,7 +3496,8 @@ if(BUILD_TESTING)
             "await-unnamed-task=await-unnamed-task=ok"
             "aggregate-copy=aggregate-copy=ok"
             "array-literal-owner=array-literal-owner=ok"
-            "conditional-values=conditional-values=ok")
+            "conditional-values=conditional-values=ok"
+            "owned-aggregates=owned-aggregates=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those
