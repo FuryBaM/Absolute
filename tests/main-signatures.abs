@@ -1,0 +1,65 @@
+// `main` returns a process exit status, whatever it says it returns.
+//
+// An unhandled exception has to leave the process with a failing status, and
+// the code that arranged that returned 1 from `main` -- which is right only if
+// `main` was declared `int32`. Written `void main()`, the same path emitted a
+// value from a function that returns none; written `int64` or `double`, it
+// emitted one of the wrong width. Either way the module failed to verify and
+// the compiler reported an internal LLVM condition rather than anything the
+// author could act on:
+//
+//   invalid function 'main': Found return instr that returns non-void
+//   in Function of void return type!    ret i32 1
+//
+// The path only appears when a function can throw, so a program needed both a
+// `main` that was not `int32` and a `try` in it. Five programs in tests/ are
+// written `void main()` and none of them had the second half.
+//
+// Exiting says what was meant and says it the same way for every signature.
+// This file is the `void` half, because that is the spelling the corpus
+// actually uses; tests/main-signatures-wide.abs is the `int64` half.
+
+int64 risky(int64 round) {
+    if (round % 3 == 0) {
+        throw new Error("thrown from a program whose main returns nothing");
+    }
+    return round;
+}
+
+class Node {
+    public int64 value;
+    public Node(int64 initial) { value = initial; }
+}
+
+void main() {
+    int64 total = 0;
+    int64 round = 0;
+    while (round < 9) {
+        try {
+            total = total + risky(round);
+        } catch (Error* e) {
+            total = total + 100;
+        }
+        round = round + 1;
+    }
+    assert(total == 327, "every round was either counted or caught");
+
+    // An owner in flight while the frame unwinds, which is the shape that
+    // brings the exception path and the ownership model together.
+    int64 released = 0;
+    int64 pass = 0;
+    while (pass < 4) {
+        try {
+            Node* node = new Node(pass);
+            defer delete node;
+            if (pass % 2 == 0) { throw new Error("unwound with an owner held"); }
+            released = released + node.value;
+        } catch (Error* e) {
+            released = released + 10;
+        }
+        pass = pass + 1;
+    }
+    assert(released == 24, "deferred releases ran on both ways out");
+
+    println("main-signatures=ok");
+}

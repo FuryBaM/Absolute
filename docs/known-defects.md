@@ -31,8 +31,11 @@ the useful part.
 
 One remainder is shared by both and written down in each place: **there is no
 copy that retains what its parts hold.** An aggregate is copied shallowly, so a
-string held by a field is not released -- releasing it would kill what the copy
-still names, which is the withdrawn attempt again. It is bounded by how much a
+string held by a field -- or by a tuple element, which is the same aggregate
+reached by a different spelling -- is not released; releasing it would kill what
+the copy still names, which is the withdrawn attempt again. A tuple element that
+owns something *uniquely* is refused outright (`E_TUPLE_RESOURCE_ELEMENT`); a
+string passes that refusal because a string is copyable, and then leaks. It is bounded by how much a
 program keeps rather than by how long it runs, which is what separates it from
 the defect it came out of. The model already names the missing piece:
 `TypeSemantics` says whether a type is `copyable`, and that answer decides how

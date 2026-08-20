@@ -154,7 +154,15 @@ namespace Absolute {
 
         if (function->getName() == "main") {
             builder.CreateCall(ErrorReport());
-            builder.CreateRet(builder.getInt32(1));
+            // An unhandled exception leaves the process with a failing status,
+            // and the status is an int32 whatever `main` was declared to
+            // return. Returning the 1 was right only for `int32 main()`: a
+            // `void main()` with a `try` in it -- five of them are in tests/ --
+            // emitted a value from a function that returns none, and any other
+            // width emitted the wrong one. Exiting says what was meant and
+            // says it the same way for every signature.
+            builder.CreateCall(ExitFailure(), {builder.getInt32(1)});
+            builder.CreateUnreachable();
         }
         else if (function->getReturnType()->isVoidTy()) builder.CreateRetVoid();
         else builder.CreateRet(llvm::Constant::getNullValue(function->getReturnType()));

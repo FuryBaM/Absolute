@@ -1062,6 +1062,14 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/ownership-qualifier-generics.abs"
     )
     add_test(
+        NAME absolute.main-signatures-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/main-signatures.abs"
+    )
+    add_test(
+        NAME absolute.main-signatures-wide-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/main-signatures-wide.abs"
+    )
+    add_test(
         NAME absolute.string-lifetime-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/string-lifetime.abs"
     )
@@ -3446,7 +3454,8 @@ if(BUILD_TESTING)
             "vector-owner-elements=vector-owner-elements=ok"
             "open-ownership-qualifier=open-ownership-qualifier=ok"
             "array-element-drop=array-element-drop=ok"
-            "string-lifetime=string-lifetime=ok")
+            "string-lifetime=string-lifetime=ok"
+            "main-signatures=main-signatures=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those
@@ -5019,6 +5028,24 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-ownership-qualifier-generics PROPERTIES
             FIXTURES_REQUIRED absolute-ownership-qualifier-generics-executable
             PASS_REGULAR_EXPRESSION "ownership-qualifier-generics=ok"
+        )
+        # The exit status is the point, so the program is run directly rather
+        # than through the marker script: `void main()` used to leave whatever
+        # the register held, and a wrapper that only greps stdout would not
+        # have noticed.
+        add_test(
+            NAME absolute.build-main-signatures-wide
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/main-signatures-wide.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/main-signatures-wide-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-main-signatures-wide PROPERTIES
+            FIXTURES_SETUP absolute-main-signatures-wide-executable
+        )
+        add_test(NAME absolute.run-main-signatures-wide
+            COMMAND "${CMAKE_BINARY_DIR}/main-signatures-wide-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-main-signatures-wide PROPERTIES
+            FIXTURES_REQUIRED absolute-main-signatures-wide-executable
+            PASS_REGULAR_EXPRESSION "main-signatures-wide=ok"
         )
         add_test(
             NAME absolute.build-array-element-transfer

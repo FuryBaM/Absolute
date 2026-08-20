@@ -213,6 +213,16 @@ namespace Absolute {
             impl->builder.CreateRetVoid();
             return;
         }
+        // A `void main()` is emitted returning an int, because the C `main`
+        // returns one and the process exit status is it. A bare `return;`
+        // inside it is a successful exit rather than a value.
+        if (impl->currentReturnTypeName == "void" && !stmt->expr) {
+            impl->EmitTransferCleanups(0, true);
+            if (impl->builder.GetInsertBlock()->getTerminator()) return;
+            impl->builder.CreateRet(
+                llvm::Constant::getNullValue(function->getReturnType()));
+            return;
+        }
         // C ABI bool returns i8 while Absolute evaluation produces i1.
         llvm::Type* expectedReturn = impl->currentReturnStorage
             ? impl->TypeFromName(impl->currentReturnTypeName)

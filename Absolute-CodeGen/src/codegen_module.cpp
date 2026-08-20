@@ -531,8 +531,16 @@ namespace Absolute {
         if (!symbol || (analyzer && analyzer->FunctionOverloadCount(sourceName) <= 1))
             functionLinkNames[sourceName] = functionName;
 
+        // The entry point is the C `main`, and the C `main` returns an int.
+        // A `void main()` -- five programs in tests/ are written that way --
+        // was emitted returning nothing, so the process exit status was
+        // whatever the register happened to hold: 2, from a program that did
+        // everything it was asked to. The same reasoning the analyzer uses to
+        // refuse `main(string[] args)`, one step further out.
+        const bool voidEntryPoint = functionName == "main" && returnTypeName == "void";
         llvm::FunctionType* functionType = llvm::FunctionType::get(
-            AbiReturnType(returnTypeName, external),
+            voidEntryPoint ? builder.getInt32Ty()
+                : AbiReturnType(returnTypeName, external),
             parameterTypes, false);
         if (llvm::Function* existing = module->getFunction(functionName)) {
             if (existing->getFunctionType() != functionType)
