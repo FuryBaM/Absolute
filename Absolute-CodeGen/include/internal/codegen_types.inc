@@ -117,6 +117,11 @@
         void EmitStructDestructor(StructInfo& info);
 
         void EmitValueCleanup(llvm::Value* address, const std::string& typeName);
+        // The other half of a copy: what a value's parts hold, held once more
+        // because there is now a second name for them. Only shared parts have
+        // anything to count -- an owner and an array cannot be copied at all,
+        // which is what `copyable` says and what the role machinery enforces.
+        void EmitValueRetain(llvm::Value* address, const std::string& typeName);
         // A string constant, laid out the way every other string is: a
         // reference-counted header, then the bytes. The pointer handed back is
         // the first byte, and the count says static so nothing ever frees it.

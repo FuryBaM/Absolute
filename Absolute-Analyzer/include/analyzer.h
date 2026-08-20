@@ -145,7 +145,7 @@ namespace Absolute {
         // naming storage something else already holds. Only a call can: a
         // literal is static, and reading a variable, a field or an element
         // hands back the pointer that is already there.
-        bool createsStringStorage = false;
+        bool producesFreshValue = false;
     };
 
     struct ANALYZER_API Diagnostic {
@@ -269,7 +269,7 @@ namespace Absolute {
             PlaceInfo placeInfo;
             PointerRole pointerRole = PointerRole::None;
             bool createsArrayOwner = false;
-            bool createsStringStorage = false;
+            bool producesFreshValue = false;
         };
 
         enum class KeepState {

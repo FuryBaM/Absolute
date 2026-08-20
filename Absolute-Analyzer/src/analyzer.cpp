@@ -899,17 +899,23 @@ namespace Absolute {
             value.pointerRole = (value.createsManagedOwner ||
                 (symbol && symbol->managedOwner))
                 ? PointerRole::ManagedOwner : PointerRole::ManagedSub;
-        // A string expression that produced storage of its own, rather than
+        // An expression that produced the value it handed back, rather than
         // naming storage something else already holds. Only a call can: a
         // literal is static, and reading a variable, a field or an element
-        // hands back the pointer that is already there. A getter is a call
-        // however it is written, which is why the kind is asked for rather
-        // than the shape of the expression alone.
-        if (value.type == "string" && expression) {
-            if (dynamic_cast<FunctionCallExpr*>(expression))
-                value.createsStringStorage = true;
+        // hands back what is already there. A getter is a call however it is
+        // written, which is why the kind is asked for rather than the shape of
+        // the expression alone.
+        //
+        // What the backend does with the answer depends on the type. A value
+        // whose parts are counted -- a string, or an aggregate holding one --
+        // arrives already counted once when it is fresh, and needs counting
+        // when it is not.
+        if (expression) {
+            if (dynamic_cast<FunctionCallExpr*>(expression) ||
+                dynamic_cast<ConstructorCallExpr*>(expression))
+                value.producesFreshValue = true;
             else if (symbol)
-                value.createsStringStorage =
+                value.producesFreshValue =
                     symbol->kind == SymbolKind::Property ||
                     symbol->kind == SymbolKind::Indexer;
         }
@@ -933,7 +939,7 @@ namespace Absolute {
             info.createsRawOwner = result.createsRawOwner;
             info.isMoveResult = result.isMoveResult;
             info.createsArrayOwner = result.createsArrayOwner;
-            info.createsStringStorage = result.createsStringStorage;
+            info.producesFreshValue = result.producesFreshValue;
             expressionInfo[expression] = std::move(info);
         }
     }

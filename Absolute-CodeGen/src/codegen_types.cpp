@@ -1300,16 +1300,6 @@ namespace Absolute {
                 result.needsDrop = true;
             for (const ClassField& field : info.fields) {
                 const TypeSemantics part = SemanticsOfTypeName(field.typeName, visiting);
-                // A string field is the one part an aggregate does not yet
-                // release. Copying an aggregate copies the pointer without
-                // saying so, and there is no copy that retains -- the
-                // `copyable` half of the model is named and not implemented.
-                // Releasing on the strength of a shallow copy is the
-                // withdrawn array attempt again: `entries[i]` read into a
-                // local would kill the string the container still holds.
-                // Recorded in docs/known-defects.md; until there is a copy,
-                // there is no drop.
-                if (part.dropKind == DropKind::StringStorage) continue;
                 if (part.needsDrop) result.needsDrop = true;
                 if (!part.copyable) result.copyable = false;
             }
@@ -1467,6 +1457,34 @@ namespace Absolute {
     // asked "is it a closure, is it a strong managed pointer, is it an array,
     // is it a class..." and each question was a second place that had to agree
     // with TypeNeedsCleanup about the answer.
+    // A copy of a value is a second name for whatever its parts hold, and the
+    // parts have to be told. Releasing without this is the withdrawn array
+    // attempt in a new place: a struct read out of a container would take the
+    // container's string with it when the local went out of scope.
+    //
+    // Only shared parts are walked. An owner or an array cannot be copied at
+    // all -- `copyable` says so, and a value holding one travels with a role
+    // rather than being duplicated -- so there is nothing here for them to do.
+    void CodeGenerator::Impl::EmitValueRetain(
+        llvm::Value* address, const std::string& typeName) {
+        const TypeSemantics semantics = SemanticsOfTypeName(typeName);
+        if (!semantics.needsDrop || !semantics.copyable) return;
+        if (semantics.dropKind == DropKind::StringStorage) {
+            builder.CreateCall(StringRetain(),
+                {builder.CreateLoad(builder.getPtrTy(), address, "copy.retain.text")});
+            return;
+        }
+        const auto walk = [&](auto& info) {
+            for (const ClassField& field : info.fields)
+                EmitValueRetain(FieldAddress(address, info, field), field.typeName);
+        };
+        if (auto found = classes.find(typeName); found != classes.end()) {
+            walk(found->second);
+            return;
+        }
+        if (auto found = structs.find(typeName); found != structs.end()) walk(found->second);
+    }
+
     void CodeGenerator::Impl::EmitValueCleanup(
         llvm::Value* address, const std::string& typeName) {
         const TypeSemantics semantics = SemanticsOfTypeName(typeName);
@@ -1580,11 +1598,7 @@ namespace Absolute {
         }
 
         for (auto field = info.fields.rbegin(); field != info.fields.rend(); ++field) {
-            // A string field is left alone: an aggregate is copied shallowly
-            // and there is no copy that retains, so releasing here would kill
-            // what the copy still names. See SemanticsOfTypeName.
-            const TypeSemantics part = SemanticsOfTypeName(field->typeName);
-            if (!part.needsDrop || part.dropKind == DropKind::StringStorage) continue;
+            if (!SemanticsOfTypeName(field->typeName).needsDrop) continue;
             EmitValueCleanup(FieldAddress(object, info, *field), field->typeName);
         }
         if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(info.name)) {
@@ -1615,11 +1629,7 @@ namespace Absolute {
         }
 
         for (auto field = info.fields.rbegin(); field != info.fields.rend(); ++field) {
-            // A string field is left alone: an aggregate is copied shallowly
-            // and there is no copy that retains, so releasing here would kill
-            // what the copy still names. See SemanticsOfTypeName.
-            const TypeSemantics part = SemanticsOfTypeName(field->typeName);
-            if (!part.needsDrop || part.dropKind == DropKind::StringStorage) continue;
+            if (!SemanticsOfTypeName(field->typeName).needsDrop) continue;
             EmitValueCleanup(FieldAddress(object, info, *field), field->typeName);
         }
         if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(info.name)) {

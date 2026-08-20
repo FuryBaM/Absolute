@@ -500,13 +500,16 @@ namespace Absolute {
     bool CodeGenerator::Impl::CreatesFreshString(Expression* expression) const {
         if (!expression || !analyzer) return false;
         const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
-        return info && info->createsStringStorage;
+        return info && info->producesFreshValue;
     }
 
     void CodeGenerator::Impl::RegisterIfFreshString(
         Expression* expression, llvm::Value* value) {
-        if (!value) return;
-        if (CreatesFreshString(expression)) RegisterTemporaryStringOwner(value);
+        if (!value || !expression) return;
+        // The flag says the expression made its value; only a string is
+        // released this way, so the type has to agree as well.
+        if (SemanticType(expression) == "string" && CreatesFreshString(expression))
+            RegisterTemporaryStringOwner(value);
     }
 
     // Storing a string into a place that will release it later. A fresh one
