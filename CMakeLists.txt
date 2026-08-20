@@ -1081,6 +1081,17 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "E_MAIN_RETURN_TYPE"
     )
     add_test(
+        NAME absolute.field-initializer-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/field-initializer.abs"
+    )
+    add_test(
+        NAME absolute.field-initializer-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/field-initializer-errors.abs"
+    )
+    set_tests_properties(absolute.field-initializer-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_FIELD_INITIALIZER_UNSUPPORTED"
+    )
+    add_test(
         NAME absolute.owned-aggregates-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/owned-aggregates.abs"
     )
@@ -3497,7 +3508,8 @@ if(BUILD_TESTING)
             "aggregate-copy=aggregate-copy=ok"
             "array-literal-owner=array-literal-owner=ok"
             "conditional-values=conditional-values=ok"
-            "owned-aggregates=owned-aggregates=ok")
+            "owned-aggregates=owned-aggregates=ok"
+            "field-initializer=field-initializer=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those

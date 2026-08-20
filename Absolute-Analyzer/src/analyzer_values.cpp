@@ -238,6 +238,25 @@ namespace Absolute {
         const size_t arrayRank = declaratorIndexes.size();
         if (arrayRank > 0) type = ArrayType(std::move(type), arrayRank);
         const bool fieldDeclaration = !currentType.empty() && functionDepth == 0;
+        // An instance field's initializer was parsed, collected, and then
+        // dropped on the floor: the backend zero-initializes an object's
+        // storage and nothing ever ran what was written here, so
+        // `private int64 n = 5;` read back 0 and a string field read back
+        // null. A missing feature that fails loudly is not the same problem as
+        // a wrong answer nobody notices, so it says so. Reported while
+        // declarations are collected, which is the phase a field's declaration
+        // is visited in.
+        //
+        // Not implemented rather than unwanted: what it would mean for a
+        // struct is an open question -- a struct's storage is made without a
+        // constructor, and an element of `new S[n]` is zeroed with nothing to
+        // run -- and answering it is a language decision rather than a backend
+        // one. See section 2 of docs/known-defects.md.
+        if (fieldDeclaration && !expr->isStatic && expr->value &&
+            phase == Phase::CollectDeclarations)
+            Report("field '" + name + "' cannot have an initializer here; "
+                "assign it in a constructor",
+                "E_FIELD_INITIALIZER_UNSUPPORTED");
         if (phase == Phase::CollectDeclarations) {
             if (currentType.empty()) {
                 const auto declared = table.Declare(SymbolKind::Variable, declarationName, type);
@@ -894,6 +913,11 @@ namespace Absolute {
         const std::string declarationName = currentType.empty() && functionDepth == 0 ? Qualify(name) : name;
         const std::string type = ResolveType(expr->constructType.get());
         const bool fieldDeclaration = !currentType.empty() && functionDepth == 0;
+        if (fieldDeclaration && !expr->isStatic && expr->value &&
+            phase == Phase::CollectDeclarations)
+            Report("field '" + name + "' cannot have an initializer here; "
+                "assign it in a constructor",
+                "E_FIELD_INITIALIZER_UNSUPPORTED");
         if (phase == Phase::CollectDeclarations) {
             if (currentType.empty()) {
                 const auto declared = table.Declare(SymbolKind::Variable, declarationName, type);

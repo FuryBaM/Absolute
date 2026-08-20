@@ -384,6 +384,37 @@ line and column instead of a number followed by a stray identifier.
 
 Covered by `tests/literal-notation.abs` and `tests/literal-notation-errors.abs`.
 
+### A field's initializer is refused rather than ignored
+
+```absolute
+class Counter {
+    private int64 seen = 5;      // E_FIELD_INITIALIZER_UNSUPPORTED
+}
+```
+
+It was parsed, collected, and then dropped: an object's storage is
+zero-initialized and nothing ever ran what was written there, so `seen` read
+back 0 and a string field read back null. A wrong answer with no diagnostic, on
+notation anybody would write -- and a static field's initializer has always
+worked, which is exactly what would lead someone to write the instance one.
+
+Refused rather than implemented, because the part that is missing is a language
+decision rather than a backend one. For a class it is clear enough: run the
+initializers at the top of every constructor, after the base call, in
+declaration order. For a struct there is no constructor to run them in -- a
+struct's storage is made by declaring it, and an element of `new S[n]` is zeroed
+with nothing to run at all -- and picking an answer there quietly is worse than
+saying it is not there. `tests/field-initializer.abs` keeps the two forms that
+do work; `tests/field-initializer-errors.abs` is the refusal.
+
+Found while writing the test for that refusal: **comparing a string field of a
+zeroed value was a segmentation fault.** `strcmp` reads through what it is
+given and a zeroed string field holds a null, so `point.tag == ""` on a fresh
+struct crashed. A name holding no bytes is the empty string, and it is compared
+as one now. Printing had had the same guard for longer -- it substitutes
+`<null>` there, which is a debugging affordance rather than an answer about the
+value.
+
 ## 3. Behaviour that contradicts the documentation
 
 Resolved in favour of the traversal: the document was incomplete, not wrong.

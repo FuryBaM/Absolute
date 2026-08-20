@@ -788,6 +788,11 @@ namespace Absolute {
     }
 
     void CodeGenerator::Impl::FinishClassCallable(llvm::Function& function) {
+        // The same guard a plain function body gets. Without it here, a
+        // constructor or a method that registered a temporary and opened no
+        // scope for it leaked in silence -- which is how a base call's
+        // argument went unreleased.
+        RequireNoPendingTemporaries("'" + function.getName().str() + "'");
         if (!builder.GetInsertBlock()->getTerminator()) {
             EmitScopeCleanup(scopes.size() - 1);
             if (!builder.GetInsertBlock() ||
@@ -975,24 +980,35 @@ namespace Absolute {
                 std::vector<llvm::Value*> arguments;
                 std::vector<llvm::Value*> ownershipFlags;
                 std::vector<std::string> parameterTypes = baseParameterTypes;
-                if (constructor && constructor->hasExplicitBaseCall) {
-                    for (size_t index = 0;
-                        index < constructor->baseArguments.size(); ++index) {
-                        const std::string parameterType = index < parameterTypes.size()
-                            ? parameterTypes[index] : std::string{};
-                        std::vector<llvm::Value*> temporaryArrays;
-                        std::vector<llvm::Value*> temporaryClosures;
-                        arguments.push_back(EvaluateCallArgument(
-                            constructor->baseArguments[index].get(),
-                            temporaryArrays, temporaryClosures, parameterType));
-                        ownershipFlags.push_back(ArgumentOwnershipFlag(
-                            constructor->baseArguments[index].get(),
-                            parameterType));
+                std::vector<llvm::Value*> temporaryArrays;
+                std::vector<llvm::Value*> temporaryClosures;
+                {
+                    // A base call is a call, and a value made only in order to
+                    // pass into it is released once the call it was made for is
+                    // over. Nothing opened a scope for those temporaries here,
+                    // so `base(makeHeader(n))` registered one and nobody ever
+                    // released it -- and the guard that exists to catch exactly
+                    // that did not reach a constructor.
+                    TemporaryOwnerScope temporaries(*this);
+                    if (constructor && constructor->hasExplicitBaseCall) {
+                        for (size_t index = 0;
+                            index < constructor->baseArguments.size(); ++index) {
+                            const std::string parameterType = index < parameterTypes.size()
+                                ? parameterTypes[index] : std::string{};
+                            arguments.push_back(EvaluateCallArgument(
+                                constructor->baseArguments[index].get(),
+                                temporaryArrays, temporaryClosures, parameterType));
+                            ownershipFlags.push_back(ArgumentOwnershipFlag(
+                                constructor->baseArguments[index].get(),
+                                parameterType));
+                        }
                     }
+                    EmitAbiCall(baseConstructor->getFunctionType(), baseConstructor, "void",
+                        {currentThis}, parameterTypes, arguments, "base.constructor.result",
+                        false, ownershipFlags);
+                    ReleaseArrayTemporaries(temporaryArrays);
+                    ReleaseClosureTemporaries(temporaryClosures);
                 }
-                EmitAbiCall(baseConstructor->getFunctionType(), baseConstructor, "void",
-                    {currentThis}, parameterTypes, arguments, "base.constructor.result",
-                    false, ownershipFlags);
                 EmitExceptionCheck();
             }
         }
