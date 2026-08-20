@@ -911,7 +911,7 @@ Both of the answers written down here were wrong about the size of the thing.
   into the first. This was the real fix, and it is `sub T*[]` -- but a type for
   it was not enough on its own. `toArray` also had to be able to *say* it in a
   generic body, which is `sub T`, and the rules had to run there at all, which
-  is §16. And `push` moving into the first needed operations that transfer an
+  is §17. And `push` moving into the first needed operations that transfer an
   element rather than read it: `unsafeArrayTake`, `unsafeArrayMove`,
   `unsafeArrayDrop`.
 - **Or: refuse owning element types outright.** Not needed, and it would have
@@ -924,7 +924,45 @@ substitution, `Copy`/`Move`/`Drop` became type-driven (`TypeSemantics`), `sub
 T*` became spellable, the rules started running inside generic bodies, and only
 then could an array drop its elements without a container getting it wrong.
 
-## 16. Fixed: ownership rules were not enforced inside a generic body
+## 16. Fixed: a conditional only worked on numbers and handles
+
+Found while probing the shapes the aggregate copy had just been taught, by
+writing one of them behind a `?:`.
+
+```absolute
+string chosen = cond ? "yes" : "no";   // Error: binary operator requires numeric operands
+```
+
+The backend merged a conditional's two arms at a type it got from
+`CommonNumericType`, which answers for two numbers and fails for anything
+else. A handle survived because a managed pointer is an `i64` and looks like a
+number; a string, a struct and a tuple did not. The message named binary
+operators, and it arrived with no line and no column, because the analyzer had
+already accepted the program -- so what an author saw was the backend refusing
+something the language allows.
+
+The type of the merge is the type of the expression, which the analyzer works
+out from both arms and which every other consumer already reads.
+
+That leaves the question the numbers never raised: **who is holding the value.**
+
+```absolute
+string mixed = cond ? format("n{}", i) : kept;
+```
+
+One arm produced the bytes and holds a count; the other named bytes something
+else holds. Nothing downstream can ask which path ran, so the two are made to
+agree at the merge -- an arm that borrowed takes a count of its own -- and the
+conditional then reports that it produced its value, the way a call does. Every
+rule about storing, passing and releasing one applies unchanged after that.
+
+Pinned by `tests/conditional-values.abs`: literals, names and calls in both
+positions, an aggregate, a tuple, and the borrowed name checked at the end to
+show it still holds its bytes -- two thousand rounds under AddressSanitizer
+with the leak check on, where one arm counted and the other not is a leak on
+one path and a use-after-free on the other.
+
+## 17. Fixed: ownership rules were not enforced inside a generic body
 
 A generic body is analyzed **once, with its parameters unsubstituted**, and
 never again against any instantiation. That is not a gap in one check; it is
@@ -1047,7 +1085,7 @@ instantiates the return types of members no line uses.
 The container written the way the model requires, over the same element type,
 is `tests/vector-owner-elements.abs`.
 
-## 17. Beyond the list: what is left for undefined behaviour
+## 18. Beyond the list: what is left for undefined behaviour
 
 The open TODO asked for UBSan over generated code. Before building anything,
 the question worth answering is what UBSan would find, so the emitted IR was
@@ -1106,7 +1144,7 @@ claim stays true. These two are the only place in the suite where a *false*
 claim is observable, which is what gives the differential its power; a change
 that removes them would leave the check green and empty.
 
-## 18. The method that worked
+## 19. The method that worked
 
 Worth repeating, because reading code did not find any of this.
 
@@ -1124,7 +1162,7 @@ by another route. The compound-assignment defect was found that way, not by
 sweeping again: `a = a / b` had been fixed while `a /= b` still used an untyped
 overload.
 
-## 19. Environment note
+## 20. Environment note
 
 During this work the container repeatedly reverted the working tree to an older
 commit and deleted the build directory. Pushed commits were never affected, but

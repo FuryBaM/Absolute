@@ -911,8 +911,13 @@ namespace Absolute {
         // arrives already counted once when it is fresh, and needs counting
         // when it is not.
         if (expression) {
+            // A conditional is the one shape that is not a call and still
+            // produces its value: its two arms need not agree about who holds
+            // what they hand back, so the backend makes each arm take a count
+            // and the result arrives counted once, whichever path ran.
             if (dynamic_cast<FunctionCallExpr*>(expression) ||
-                dynamic_cast<ConstructorCallExpr*>(expression))
+                dynamic_cast<ConstructorCallExpr*>(expression) ||
+                dynamic_cast<TernaryExpr*>(expression))
                 value.producesFreshValue = true;
             else if (symbol)
                 value.producesFreshValue =

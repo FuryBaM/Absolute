@@ -74,6 +74,11 @@
         void RegisterIfFreshString(Expression* expression, llvm::Value* value);
         void RegisterFreshValueArgument(Expression* expression, llvm::Value* value);
 
+        // One arm of a conditional, made to hold a count of its own so that
+        // both arms hand the same thing to the merge.
+        llvm::Value* CountedArmValue(
+            Expression* arm, llvm::Value* value, const std::string& typeName);
+
         bool CreatesFreshString(Expression* expression) const;
 
         llvm::Value* RetainStoredString(Expression* source, llvm::Value* value);

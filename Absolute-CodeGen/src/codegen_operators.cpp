@@ -194,14 +194,18 @@ namespace Absolute {
         llvm::BasicBlock* mergeBlock = llvm::BasicBlock::Create(impl->context, "ternary.end", function);
         impl->builder.CreateCondBr(condition, trueBlock, falseBlock);
 
+        const std::string resultTypeName = impl->SemanticType(expr);
+
         // Each arm runs on its own path, so an owner borrowed inside one is
         // released inside it. The arm's own result is not touched: it may be
-        // the owner the ternary yields.
+        // the owner the ternary yields. What it is made to do is hold a count
+        // of its own, so that both paths hand the merge the same thing.
         impl->builder.SetInsertPoint(trueBlock);
         llvm::Value* trueValue = nullptr;
         {
             Impl::TemporaryOwnerScope arm(*impl);
-            trueValue = impl->Evaluate(expr->trueExpr.get());
+            trueValue = impl->CountedArmValue(expr->trueExpr.get(),
+                impl->Evaluate(expr->trueExpr.get()), resultTypeName);
         }
         trueBlock = impl->builder.GetInsertBlock();
         impl->BranchIfNeeded(mergeBlock);
@@ -210,15 +214,22 @@ namespace Absolute {
         llvm::Value* falseValue = nullptr;
         {
             Impl::TemporaryOwnerScope arm(*impl);
-            falseValue = impl->Evaluate(expr->falseExpr.get());
+            falseValue = impl->CountedArmValue(expr->falseExpr.get(),
+                impl->Evaluate(expr->falseExpr.get()), resultTypeName);
         }
         falseBlock = impl->builder.GetInsertBlock();
         impl->BranchIfNeeded(mergeBlock);
 
         const std::string trueType = impl->SemanticType(expr->trueExpr.get());
         const std::string falseType = impl->SemanticType(expr->falseExpr.get());
-        const std::string resultTypeName = impl->SemanticType(expr);
-        llvm::Type* resultType = impl->CommonNumericType(trueValue->getType(), falseValue->getType());
+        // The type of the merge is the type of the expression, which the
+        // analyzer has already worked out from both arms. Asking for a common
+        // *numeric* type instead refused everything that is not a number or a
+        // handle: `cond ? "a" : "b"` and every struct and tuple failed in the
+        // backend, with a message about binary operators.
+        llvm::Type* resultType = resultTypeName.empty()
+            ? impl->CommonNumericType(trueValue->getType(), falseValue->getType())
+            : impl->TypeFromName(resultTypeName);
         impl->builder.SetInsertPoint(trueBlock->getTerminator());
         trueValue = impl->Coerce(trueValue, resultType, trueType, resultTypeName);
         impl->builder.SetInsertPoint(falseBlock->getTerminator());

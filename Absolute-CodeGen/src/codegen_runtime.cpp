@@ -578,6 +578,27 @@ namespace Absolute {
         RegisterTemporaryAggregate(spill, typeName);
     }
 
+    // A conditional hands back one value from two paths, and the two paths
+    // need not agree about who is holding it: `cond ? format(...) : name` is a
+    // count on one side and a borrow on the other. Nothing downstream can ask
+    // which path ran, so the arms are made to agree here -- an arm that
+    // borrowed takes a count of its own -- and the conditional as a whole
+    // reports that it produced its value, which is what the analyzer says
+    // about it too.
+    llvm::Value* CodeGenerator::Impl::CountedArmValue(
+        Expression* arm, llvm::Value* value, const std::string& typeName) {
+        if (!arm || !value || CreatesFreshString(arm)) return value;
+        const TypeSemantics semantics = SemanticsOfTypeName(typeName);
+        if (!semantics.needsDrop || !semantics.copyable) return value;
+        if (semantics.dropKind == DropKind::StringStorage)
+            return builder.CreateCall(StringRetain(), {value}, "arm.retained");
+        llvm::AllocaInst* counted = CreateEntryAlloca(
+            *CurrentFunction(), value->getType(), "arm.counted");
+        builder.CreateStore(value, counted);
+        EmitValueRetain(counted, typeName);
+        return builder.CreateLoad(value->getType(), counted, "arm.counted.value");
+    }
+
     void CodeGenerator::Impl::RegisterIfFreshString(
         Expression* expression, llvm::Value* value) {
         if (!value || !expression) return;

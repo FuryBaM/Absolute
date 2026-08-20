@@ -1081,6 +1081,10 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "E_MAIN_RETURN_TYPE"
     )
     add_test(
+        NAME absolute.conditional-values-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/conditional-values.abs"
+    )
+    add_test(
         NAME absolute.array-literal-owner-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-literal-owner.abs"
     )
@@ -3480,7 +3484,8 @@ if(BUILD_TESTING)
             "main-signatures=main-signatures=ok"
             "await-unnamed-task=await-unnamed-task=ok"
             "aggregate-copy=aggregate-copy=ok"
-            "array-literal-owner=array-literal-owner=ok")
+            "array-literal-owner=array-literal-owner=ok"
+            "conditional-values=conditional-values=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those
