@@ -14,6 +14,7 @@ namespace Absolute {
             // The left operand always runs, so it can wait for the end of the
             // statement; the right one cannot, and is handled below.
             if (leftCreatesManagedOwner) impl->RegisterTemporaryOwner(left, leftType);
+            impl->RegisterIfFreshString(expr->left.get(), left);
             left = impl->AsCondition(left);
             llvm::BasicBlock* leftBlock = impl->builder.GetInsertBlock();
             llvm::BasicBlock* rightBlock =
@@ -86,6 +87,11 @@ namespace Absolute {
         // unchanged: it destroys its operands as soon as the call returns.
         if (leftCreatesManagedOwner) impl->RegisterTemporaryOwner(left, leftType);
         if (rightCreatesManagedOwner) impl->RegisterTemporaryOwner(right, rightType);
+        // The same for a string an operand made: `made == build(n)` compares
+        // the bytes and keeps neither side, so the one that was allocated for
+        // the comparison is released with the statement.
+        impl->RegisterIfFreshString(expr->left.get(), left);
+        impl->RegisterIfFreshString(expr->right.get(), right);
 
         const bool leftRaw = IsRawPointerTypeName(leftType);
         const bool rightRaw = IsRawPointerTypeName(rightType);

@@ -944,8 +944,10 @@ int32 main() {{
 
 
 def generate_text(seed: int, std: Path) -> str:
-    """Strings: built, joined, sliced, compared, searched. The one shape whose
-    leaks are expected, because a string has no lifetime yet."""
+    """Strings: built, joined, sliced, compared, searched. Under the leak check
+    like every other shape now that a string has a lifetime: a generated
+    program builds hundreds of them, so one that is not released shows up as
+    hundreds of reported leaks."""
     rng = random.Random(seed)
     rounds = rng.randint(3, 20)
     width = rng.randint(1, 6)
@@ -1161,11 +1163,10 @@ int32 main() {{
 # Each shape exercises a different part of the backend, and the seed picks
 # which one, so a run with N cases covers all of them rather than N variations
 # of the same program.
-# The third entry says whether the shape's leaks are expected. Only one is:
-# a string has no lifetime yet (docs/known-defects.md), so every string a
-# program builds is reported, and those bytes would drown the two questions the
-# shape is actually asked -- did it touch memory it should not have, and do the
-# two builds agree.
+# The third entry says whether the shape's leaks are expected. None are: the
+# text shape needed it while a string had no lifetime, and does not now
+# (docs/known-defects.md section 1). It is kept because the next shape that
+# needs it should say so here rather than turning the check off for everything.
 SHAPES = (
     ("board", generate_board, False),
     ("dispatch", generate_dispatch, False),
@@ -1178,7 +1179,7 @@ SHAPES = (
     ("weak", generate_weak, False),
     ("aggregates", generate_aggregates, False),
     ("nested", generate_nested_generics, False),
-    ("text", generate_text, True),
+    ("text", generate_text, False),
     ("widths", generate_widths, False),
     ("slices", generate_slices, False),
 )
