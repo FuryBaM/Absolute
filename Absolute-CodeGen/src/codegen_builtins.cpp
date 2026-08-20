@@ -151,8 +151,22 @@ namespace Absolute {
             llvm::Value* assigned = Coerce(
                 Evaluate(source), view.elementType,
                 SemanticType(source), elementTypeName);
+            // A slot is a place the array releases, so what goes into it is
+            // one more name for the bytes unless the expression made them.
+            // Without this a container that stores its parameter -- which is
+            // what every `add` does -- left the slot holding what the
+            // parameter was about to give back.
+            if (elementTypeName == "string")
+                assigned = RetainStoredString(source, assigned);
             TagAccess(builder.CreateStore(assigned, address),
                 TbaaElementAccess(elementTypeName));
+            // The same rule one level up: an aggregate is stored by copying
+            // its bytes, which duplicates the pointers its parts hold without
+            // duplicating their counts. The slot is a second name for them, so
+            // it says so -- unless the expression made the value, in which
+            // case the count it arrived with is the one the slot keeps.
+            if (elementTypeName != "string" && !CreatesFreshString(source))
+                EmitValueRetain(address, elementTypeName);
             value = nullptr;
             valueCreatesManagedOwner = false;
             valueCreatesArrayOwner = false;

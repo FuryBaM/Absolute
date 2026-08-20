@@ -106,6 +106,7 @@ namespace Absolute {
         ManagedOwner,    // destroy what it points at, then the handle
         ArrayStorage,    // free the buffer
         StringStorage,   // one name fewer holds the bytes
+        TupleValue,      // walk the elements; a tuple has no destructor to call
         ClassObject,     // run the class destructor
         StructObject,    // run the struct destructor
         PluginResource   // hand it back to the plugin that made it

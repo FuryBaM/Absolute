@@ -205,7 +205,7 @@
             // an array owner is a plain buffer released with free(), a managed
             // owner needs the two steps delete takes, and a string is a count
             // behind its first byte.
-            enum class Kind { ManagedObject, ArrayBuffer, StringStorage };
+            enum class Kind { ManagedObject, ArrayBuffer, StringStorage, AggregateValue };
             llvm::Value* handle = nullptr;
             std::string typeName;
             Kind kind = Kind::ManagedObject;

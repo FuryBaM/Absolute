@@ -125,13 +125,36 @@ namespace Absolute {
         // storage: `text = text` must not free what it is about to store.
         if (targetTypeName == "string")
             assigned = impl->RetainStoredString(expr->value.get(), assigned);
+        // The same one level up: an aggregate is assigned by copying its
+        // bytes, which duplicates the pointers its parts hold without
+        // duplicating their counts. The target is one more name for them, and
+        // it gives back what it held. Counted through a spill because the
+        // walk needs an address, and counted before the old value is released
+        // for the reason the string comment above gives.
+        const TypeSemantics targetSemantics =
+            impl->SemanticsOfTypeName(targetTypeName);
+        const bool countsParts = targetSemantics.copyable &&
+            (targetSemantics.dropKind == DropKind::TupleValue ||
+             targetSemantics.dropKind == DropKind::ClassObject ||
+             targetSemantics.dropKind == DropKind::StructObject);
+        if (countsParts && assigned && !functionValue &&
+            !impl->CreatesFreshString(expr->value.get())) {
+            llvm::AllocaInst* counted = impl->CreateEntryAlloca(
+                *impl->CurrentFunction(), assigned->getType(), "assignment.counted");
+            impl->builder.CreateStore(assigned, counted);
+            impl->EmitValueRetain(counted, targetTypeName);
+            assigned = impl->builder.CreateLoad(
+                assigned->getType(), counted, "assignment.counted.value");
+        }
         if (targetSymbol && targetSymbol->kind == SymbolKind::Field &&
             impl->TypeNeedsCleanup(targetTypeName) && !functionValue) {
             impl->EmitValueCleanup(targetAddress, targetTypeName);
         }
         // A local or a parameter holding a string releases what it held before
-        // taking the new one, the same way a field does.
-        else if (targetTypeName == "string" && targetSymbol &&
+        // taking the new one, the same way a field does -- and so does one
+        // holding an aggregate whose parts are counted, which is the same
+        // rule read one level up.
+        else if ((targetTypeName == "string" || countsParts) && targetSymbol &&
             (targetSymbol->kind == SymbolKind::Variable ||
              targetSymbol->kind == SymbolKind::Parameter)) {
             if (const std::string name = IdentifierName(expr->target.get());
@@ -348,7 +371,21 @@ namespace Absolute {
         impl->builder.CreateStore(initial, address);
         impl->DeclareDebugVariable(
             name, typeName, address, expr);
-        if (functionValue || stringValue)
+        // A value that is not a handle releases what its parts hold when its
+        // name goes out of scope, and says so on the way in when the parts
+        // arrived already held by someone else. A managed pointer is excluded:
+        // whether a local owns the object it names is a question about the
+        // symbol, not the type, and `staticOwner` answers it.
+        // A tuple reaches here and nowhere else -- it is in neither `classes`
+        // nor `structs` -- so before this a `tuple<int64, string>` local
+        // dropped the string it carried.
+        const TypeSemantics semantics = impl->SemanticsOfTypeName(typeName);
+        const bool ownsParts = semantics.needsDrop &&
+            semantics.dropKind != DropKind::ManagedOwner;
+        if (semantics.dropKind == DropKind::TupleValue && expr->value &&
+            !impl->CreatesFreshString(expr->value.get()))
+            impl->EmitValueRetain(address, typeName);
+        if (ownsParts)
             impl->RequireVariable(name).ownsAggregateResources = true;
         if (staticOwner && createsOwner && managedPointee) {
             Impl::Variable& variable = impl->RequireVariable(name);
@@ -462,6 +499,7 @@ namespace Absolute {
             if (field == found->second.fieldByName.end())
                 impl->Fail("class '" + found->second.name + "' has no field '" + expr->member + "'");
             llvm::Value* object = impl->ObjectPointer(expr->base.get(), baseType);
+            impl->RegisterAggregateTemporaryBase(expr->base.get(), object, baseType);
             fieldAddress = impl->FieldAddress(object, found->second, field->second);
             fieldTypeName = field->second.typeName;
         }
@@ -470,6 +508,7 @@ namespace Absolute {
             if (field == found->second.fieldByName.end())
                 impl->Fail("struct '" + found->second.name + "' has no field '" + expr->member + "'");
             llvm::Value* object = impl->ObjectPointer(expr->base.get(), baseType);
+            impl->RegisterAggregateTemporaryBase(expr->base.get(), object, baseType);
             fieldAddress = impl->FieldAddress(object, found->second, field->second);
             fieldTypeName = field->second.typeName;
         }
@@ -837,13 +876,27 @@ namespace Absolute {
             const bool createsOwner = impl->valueCreatesManagedOwner;
             llvm::Value* managedPointee = impl->valueManagedPointee;
             impl->builder.CreateStore(initial, address);
+            // A value that is not a handle releases what its parts hold when
+            // its name goes out of scope, and says so on the way in if the
+            // parts arrived already held by someone else. A managed pointer is
+            // excluded because whether a local owns the object it names is a
+            // question about the symbol, not the type, and `staticOwner`
+            // answers it. A tuple reaches here and nowhere else: it is not in
+            // `classes` or `structs`, so before this a `tuple<int64, string>`
+            // local dropped its string on the floor.
+            const TypeSemantics semantics = impl->SemanticsOfTypeName(typeName);
+            const bool ownsParts = semantics.needsDrop &&
+                semantics.dropKind != DropKind::ManagedOwner;
+            if (semantics.dropKind == DropKind::TupleValue && expr->value &&
+                !impl->CreatesFreshString(expr->value.get()))
+                impl->EmitValueRetain(address, typeName);
             if (!impl->scopes.back().emplace(name,
                 Impl::Variable{address, type, typeName, staticOwner, false, nullptr, {},
                     nullptr, symbol}).second)
                 impl->Fail("duplicate variable '" + name + "'");
             impl->DeclareDebugVariable(
                 name, typeName, address, expr);
-            if (functionValue || stringValue)
+            if (ownsParts)
                 impl->RequireVariable(name).ownsAggregateResources = true;
             if (staticOwner && createsOwner && managedPointee) {
                 Impl::Variable& variable = impl->RequireVariable(name);
@@ -871,6 +924,13 @@ namespace Absolute {
         if (expr->value) {
             llvm::Value* initial = impl->Coerce(impl->Evaluate(expr->value.get()), llvmType);
             impl->builder.CreateStore(initial, address);
+            // The bytes of the aggregate are copied; what its parts hold is
+            // not, so the parts are told there is a second name. Without this
+            // a `Header entry = entries[index];` released the vector's strings
+            // when the local went out of scope. A value the expression made
+            // itself arrives already counted.
+            if (!impl->CreatesFreshString(expr->value.get()))
+                impl->EmitValueRetain(address, typeName);
         }
         else if (llvm::Function* constructor =
             impl->module->getFunction(impl->ConstructorLinkName(typeName, {}));

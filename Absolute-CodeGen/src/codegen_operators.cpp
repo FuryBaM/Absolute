@@ -194,14 +194,18 @@ namespace Absolute {
         llvm::BasicBlock* mergeBlock = llvm::BasicBlock::Create(impl->context, "ternary.end", function);
         impl->builder.CreateCondBr(condition, trueBlock, falseBlock);
 
+        const std::string resultTypeName = impl->SemanticType(expr);
+
         // Each arm runs on its own path, so an owner borrowed inside one is
         // released inside it. The arm's own result is not touched: it may be
-        // the owner the ternary yields.
+        // the owner the ternary yields. What it is made to do is hold a count
+        // of its own, so that both paths hand the merge the same thing.
         impl->builder.SetInsertPoint(trueBlock);
         llvm::Value* trueValue = nullptr;
         {
             Impl::TemporaryOwnerScope arm(*impl);
-            trueValue = impl->Evaluate(expr->trueExpr.get());
+            trueValue = impl->CountedArmValue(expr->trueExpr.get(),
+                impl->Evaluate(expr->trueExpr.get()), resultTypeName);
         }
         trueBlock = impl->builder.GetInsertBlock();
         impl->BranchIfNeeded(mergeBlock);
@@ -210,15 +214,22 @@ namespace Absolute {
         llvm::Value* falseValue = nullptr;
         {
             Impl::TemporaryOwnerScope arm(*impl);
-            falseValue = impl->Evaluate(expr->falseExpr.get());
+            falseValue = impl->CountedArmValue(expr->falseExpr.get(),
+                impl->Evaluate(expr->falseExpr.get()), resultTypeName);
         }
         falseBlock = impl->builder.GetInsertBlock();
         impl->BranchIfNeeded(mergeBlock);
 
         const std::string trueType = impl->SemanticType(expr->trueExpr.get());
         const std::string falseType = impl->SemanticType(expr->falseExpr.get());
-        const std::string resultTypeName = impl->SemanticType(expr);
-        llvm::Type* resultType = impl->CommonNumericType(trueValue->getType(), falseValue->getType());
+        // The type of the merge is the type of the expression, which the
+        // analyzer has already worked out from both arms. Asking for a common
+        // *numeric* type instead refused everything that is not a number or a
+        // handle: `cond ? "a" : "b"` and every struct and tuple failed in the
+        // backend, with a message about binary operators.
+        llvm::Type* resultType = resultTypeName.empty()
+            ? impl->CommonNumericType(trueValue->getType(), falseValue->getType())
+            : impl->TypeFromName(resultTypeName);
         impl->builder.SetInsertPoint(trueBlock->getTerminator());
         trueValue = impl->Coerce(trueValue, resultType, trueType, resultTypeName);
         impl->builder.SetInsertPoint(falseBlock->getTerminator());
@@ -301,30 +312,24 @@ namespace Absolute {
         llvm::Value* byteCount = impl->builder.getInt64(
             static_cast<std::uint64_t>(values.size()) * impl->SizeOfTypeName(elementTypeName));
 
-        // A literal whose elements own something is allocated rather than left
-        // on the stack. The owner pointer is what says an array owns anything:
-        // the drop is guarded by it, and `move` clears it to hand the elements
-        // on. A stack literal has no owner pointer, so its elements were never
-        // released -- and giving the drop a different guard instead makes a
-        // moved-from array release what the destination now holds. What the
-        // literal was missing is an owner, so it gets one.
+        // A literal is an owner. The owner pointer is what says an array owns
+        // anything: the drop is guarded by it, and `move` clears it to hand
+        // the elements on. A stack literal has no owner pointer, so its
+        // elements were never released -- and giving the drop a different
+        // guard instead makes a moved-from array release what the destination
+        // now holds.
         //
-        // Only when there is something to release. A literal of numbers is the
-        // stack allocation it has always been.
-        llvm::Value* address = nullptr;
-        llvm::Value* owner = nullptr;
-        if (impl->SemanticsOfTypeName(elementTypeName).needsDrop) {
-            address = impl->builder.CreateCall(
-                impl->Malloc(), {byteCount}, "array.literal.allocation");
-            owner = address;
-        }
-        else {
-            llvm::Value* elementCount = impl->builder.getInt64(values.size());
-            llvm::AllocaInst* stack = impl->builder.CreateAlloca(
-                elementType, elementCount, "array.literal.storage");
-            stack->setAlignment(llvm::Align(16));
-            address = stack;
-        }
+        // It was allocated only when its elements owned something, which left
+        // the analyzer and the backend disagreeing about what a literal is:
+        // the backend handed out an owner for `Cell*[]` and a pointer into the
+        // frame for `int32[]`, so `move` worked on one and not the other for a
+        // reason nobody could read off the source. Storage that belongs to the
+        // frame is now written as such -- `int32[3] a = { ... }` is the
+        // declaration that says the frame holds it -- and every literal that
+        // is an expression makes storage of its own.
+        llvm::Value* address = impl->builder.CreateCall(
+            impl->Malloc(), {byteCount}, "array.literal.allocation");
+        llvm::Value* owner = address;
         impl->builder.CreateMemSet(address, impl->builder.getInt8(0),
             byteCount, llvm::MaybeAlign(16));
 
@@ -342,7 +347,12 @@ namespace Absolute {
         for (size_t size : *shape) dimensions.push_back(impl->builder.getInt64(size));
         impl->value = impl->BuildArrayDescriptor(
             {address, elementType, typeName, std::move(dimensions), owner});
-        impl->valueCreatesArrayOwner = owner != nullptr;
+        impl->valueCreatesArrayOwner = true;
+        // Named as well as reported: whoever takes the literal over -- a
+        // declaration, an argument, `copy` -- frees it through this pointer,
+        // and while a literal was sometimes the frame's storage nobody ever
+        // asked for it.
+        impl->valueArrayOwner = owner;
         impl->valueCreatesManagedOwner = false;
         impl->valueManagedPointee = nullptr;
     }

@@ -29,23 +29,25 @@ shared-owned. Section 15 keeps the record of the array, because the obvious fix
 for it was written, merged and withdrawn in one session and what that cost is
 the useful part.
 
-One remainder is shared by both and written down in each place: **there is no
-copy that retains what its parts hold.** An aggregate is copied shallowly, so a
-string held by a field -- or by a tuple element, which is the same aggregate
-reached by a different spelling -- is not released; releasing it would kill what
-the copy still names, which is the withdrawn attempt again. A tuple element that
-owns something *uniquely* is refused outright (`E_TUPLE_RESOURCE_ELEMENT`); a
-string passes that refusal because a string is copyable, and then leaks. It is bounded by how much a
-program keeps rather than by how long it runs, which is what separates it from
-the defect it came out of. The model already names the missing piece:
-`TypeSemantics` says whether a type is `copyable`, and that answer decides how
-a value travels -- but nothing anywhere *performs* a copy that takes a count.
+The remainder both of them left -- **there is no copy that retains what its
+parts hold** -- is closed too. An aggregate was copied shallowly, so a string
+held by a field, or by a tuple element, which is the same aggregate reached by
+a different spelling, could not be released at all: releasing it would kill
+what the copy still names, which is the withdrawn attempt again. `TypeSemantics`
+already said whether a type is `copyable`; what was missing was something that
+*performs* the copy. `EmitValueRetain` is the mirror of the destructor walk --
+a copy counts the parts it now names, a drop gives those counts back -- and it
+runs in the six places a copy happens: a store, an assignment, a declaration, a
+return, a temporary read out of a container, a scope. A tuple asks its elements rather
+than a declaration it does not have; a value made only in order to pass in is
+released by the statement that made it, because an aggregate parameter borrows.
 
 The model, the order of work and what proves each step are in
 `docs/ownership-kinds.md`; every step is done, pinned by
 `tests/ownership-qualifier-generics.abs`, `tests/subscriber-pointers.abs`,
 `tests/generic-body-ownership.abs`, `tests/open-ownership-qualifier.abs`,
-`tests/array-element-drop.abs` and `tests/string-lifetime.abs`.
+`tests/array-element-drop.abs`, `tests/string-lifetime.abs`,
+`tests/aggregate-copy.abs` and `tests/array-literal-owner.abs`.
 
 ### Fixed: a string had no lifetime, so every string a program built was lost
 
@@ -116,25 +118,75 @@ a function, one passed in and handed back, a variable reassigned in a loop,
 plus the standard library's own producers and `split`. One leaked allocation
 per iteration would be thousands of reported leaks.
 
-#### What is not released: a string held by a field
+#### A string held by a field: the copy that was missing
 
-An aggregate does not release its string fields, and that is deliberate.
-Copying a struct copies the pointer without saying so -- there is no copy that
-retains, because the `copyable` half of the model is named and not implemented
--- so releasing a field on the strength of a shallow copy kills what the copy
-still names. It surfaced as a use-after-free reached through `Headers`: a
-`FormEntry` read out of a vector released the string the vector still held.
+An aggregate could not release its string fields, because copying one copies
+the pointer without duplicating the count. Releasing a field on the strength of
+a shallow copy kills what the copy still names -- the withdrawn array attempt
+(section 15) in a new place -- so until there was a copy that says so, there was
+no drop.
 
-That is the withdrawn array attempt again (section 15), in a new place, and it
-has the same answer: until there is a copy, there is no drop. A string held by
-an object leaks, bounded by the number of objects rather than by the number of
-iterations -- which is the difference between this remainder and the defect it
-came out of.
+There is one now: `EmitValueRetain`, the mirror of the destructor walk. A copy
+counts the parts it now names; a drop gives those counts back. It runs in six
+places, which are the string rules plus the one an aggregate adds:
 
-Closing it means a copy that retains what its parts hold: a per-type walk
-emitted wherever an aggregate value is stored, the same shape as the destructor
-walk that already exists. `copyable` decides how a value travels today; what is
-missing is the copy itself.
+| | |
+|---|---|
+| a store into a slot | one more name for the bytes |
+| an assignment | one more name, and the target gives back what it held |
+| a declaration | the copy counts the parts |
+| a return | counted on the way to the caller |
+| a temporary | a value made only to read one field of, released with the statement |
+| a scope | gives back what it held |
+
+Two things had to stop counting as producers for any of it to work.
+`unsafeArrayGet` hands back what the array already holds, and `move` of a
+shared value hands back what the source still names; both are calls, so the
+syntactic rule said they made their value. Every container's indexer is written
+on top of the first, so an indexer's result was never counted and the caller's
+copy released storage the container still had. `unsafeArrayTake` is
+deliberately still a producer: it clears the slot, and that is what makes it
+one.
+
+The one that took longest to see was the smallest: an indexer read resolves to
+the *container*, not to the indexer, so the analyzer's freshness flag answered
+for the wrong symbol. Indexing something that is not an array is a call, and
+that is how it is recognized now.
+
+Three shapes were still outside all of it, and each was found by asking the
+same question the class case answered.
+
+A **tuple** has no declaration to look up. `SemanticsOfTypeName` answered from
+`classes` and `structs`, and a `tuple<int64, string>` is in neither, so it
+answered "nothing to release" and the string in it was lost -- the struct-field
+hole reached by a different spelling. A tuple now asks its elements directly
+(`DropKind::TupleValue`), and the walk is a `getelementptr` per element rather
+than a field list. The local that holds one had to be told as well: a tuple
+declaration takes the plain-value path, where only a string and a closure had
+ever said they owned what they held.
+
+A **value made only in order to pass it in** -- `take(make(1))`, `push(createHeader(...))`
+-- was released by nobody. A parameter of an aggregate type borrows: it takes
+no count and gives none back, so the count the value arrived with belongs to
+the statement that made it, and the statement was not releasing it. Registering
+it there exposed the other half immediately: `unsafeArraySet` retained a stored
+*string* but not a stored aggregate, so the container that had been living off
+the caller's uncollected count now held a slot nobody counted. A slot that is
+released is a name that counts, whatever the element type is; both sides of
+that are now the same rule, and `tests/aggregate-copy.abs` fails without either.
+
+And **assignment** was neither half: `a = b` for a struct or a tuple copied the
+bytes without counting what they hold and without releasing what `a` held, so
+one name leaked and two names shared one count. A field assignment released the
+old value but still did not count the new one. Assignment is a store; it now
+reads as one.
+
+Pinned by `tests/aggregate-copy.abs` -- a `Headers` class over a
+`Vector<Header>`, cloned two thousand times, with a field read out of a
+temporary, a tuple copied and borrowed two thousand more, a fresh struct handed
+straight to a call, and two thousand rounds of assignment including a struct
+assigned to itself -- under AddressSanitizer with the leak check on,
+where a use-after-free and a leak are both answers.
 
 ### Fixed: an owner produced inside a larger expression was lost
 
@@ -758,37 +810,53 @@ never released. Making the drop unconditional there instead was tried and is
 worse: `move` signals a transfer by clearing that slot, so an unconditional
 drop makes a moved-from local release what the destination now holds, which is
 the withdrawn attempt's failure again in a new place. What the literal was
-missing is an owner, so a literal whose elements own something is allocated
-rather than left on the stack. A literal of numbers is the stack allocation it
-has always been, and a literal is also the only way to write a two-dimensional
-array of owners, so that shape is covered by the same change.
+missing is an owner, so a literal is allocated rather than left on the stack.
+A literal is also the only way to write a two-dimensional array of owners, so
+that shape is covered by the same change.
 
-### What that condition leaves: one place the two halves disagree
+It was allocated only when its elements owned something, which is the condition
+the next section is about; every literal that is an expression is allocated
+now.
 
-Allocated when the elements own something, on the stack when they do not, is
-now the one place where the analyzer and the backend do not say the same thing
-about what a literal is:
+### Fixed: the one place the two halves disagreed
+
+Allocating a literal only when its elements own something left the analyzer and
+the backend saying different things about what a literal is:
 
 ```absolute
 Cell*[] made = { new Cell(1) };
 Cell*[] moved = move(made);      // E_ARRAY_MOVE_REQUIRES_OWNER
 ```
 
-The backend allocates that literal and it does own its storage; the analyzer
-sets `createsArrayOwner` only for `new T[n]` and `copy(...)`, so it refuses the
-move. Nothing is unsound -- the refusal is the conservative direction, and it
-is doing real work while the split exists, because a stack literal the analyzer
-let escape into a field or out of a return would leave a pointer into a dead
-frame.
+The backend allocated that literal and it did own its storage; the analyzer set
+`createsArrayOwner` only for `new T[n]` and `copy(...)`, so it refused the move.
+Nothing was unsound -- the refusal is the conservative direction -- but the rule
+underneath it could not be read off the source: whether a literal owned its
+storage depended on its element type, so `move` would have worked on a literal
+of owners and not on a literal of numbers.
 
-Making the two agree costs something either way, which is why it is recorded
-rather than picked: teaching the analyzer the backend's condition gives the
-language a rule nobody can predict (`move` works on a literal of owners and not
-on a literal of numbers), and allocating every literal removes the split at the
-price of a heap allocation for `int32[] a = { 1, 2, 3 }`, a shape the
-benchmarks are full of. The third answer is to keep the split but put it
-somewhere the author can see, which is a language question rather than a
-backend one.
+**A literal is an owner.** Every literal that is an expression makes storage of
+its own, and the analyzer says so, which is what lets one be moved, returned,
+or put in a field. Storage that belongs to the frame is written as such:
+
+```absolute
+int32[] made  = { 1, 2, 3 };   // an owner; move, return, store it in a field
+int32 fixed[3] = { 1, 2, 3 };  // the frame's, and the frame keeps it
+```
+
+That is the third of the three answers recorded here -- keep the distinction
+but put it where the author can see it -- and it costs a `malloc` for the
+view-form declaration. The shape the cost was recorded against,
+`int32[] a = { 1, 2, 3 }`, does not appear once in the benchmark corpus or the
+standard library; the sized form that does is untouched, because the
+declaration provides the storage and never evaluates the literal as a value at
+all. The same exception covers a global, whose storage is the module's.
+
+Pinned by `tests/array-literal-owner.abs` (moved, returned, written into a
+field, passed as an argument, two thousand rounds of each under
+AddressSanitizer with the leak check on) and
+`tests/array-literal-owner-errors.abs`, which is the sized declarator still
+refusing to be moved.
 
 ### Why "an array owns its elements" is not the fix
 
@@ -843,7 +911,7 @@ Both of the answers written down here were wrong about the size of the thing.
   into the first. This was the real fix, and it is `sub T*[]` -- but a type for
   it was not enough on its own. `toArray` also had to be able to *say* it in a
   generic body, which is `sub T`, and the rules had to run there at all, which
-  is §16. And `push` moving into the first needed operations that transfer an
+  is §17. And `push` moving into the first needed operations that transfer an
   element rather than read it: `unsafeArrayTake`, `unsafeArrayMove`,
   `unsafeArrayDrop`.
 - **Or: refuse owning element types outright.** Not needed, and it would have
@@ -856,7 +924,45 @@ substitution, `Copy`/`Move`/`Drop` became type-driven (`TypeSemantics`), `sub
 T*` became spellable, the rules started running inside generic bodies, and only
 then could an array drop its elements without a container getting it wrong.
 
-## 16. Fixed: ownership rules were not enforced inside a generic body
+## 16. Fixed: a conditional only worked on numbers and handles
+
+Found while probing the shapes the aggregate copy had just been taught, by
+writing one of them behind a `?:`.
+
+```absolute
+string chosen = cond ? "yes" : "no";   // Error: binary operator requires numeric operands
+```
+
+The backend merged a conditional's two arms at a type it got from
+`CommonNumericType`, which answers for two numbers and fails for anything
+else. A handle survived because a managed pointer is an `i64` and looks like a
+number; a string, a struct and a tuple did not. The message named binary
+operators, and it arrived with no line and no column, because the analyzer had
+already accepted the program -- so what an author saw was the backend refusing
+something the language allows.
+
+The type of the merge is the type of the expression, which the analyzer works
+out from both arms and which every other consumer already reads.
+
+That leaves the question the numbers never raised: **who is holding the value.**
+
+```absolute
+string mixed = cond ? format("n{}", i) : kept;
+```
+
+One arm produced the bytes and holds a count; the other named bytes something
+else holds. Nothing downstream can ask which path ran, so the two are made to
+agree at the merge -- an arm that borrowed takes a count of its own -- and the
+conditional then reports that it produced its value, the way a call does. Every
+rule about storing, passing and releasing one applies unchanged after that.
+
+Pinned by `tests/conditional-values.abs`: literals, names and calls in both
+positions, an aggregate, a tuple, and the borrowed name checked at the end to
+show it still holds its bytes -- two thousand rounds under AddressSanitizer
+with the leak check on, where one arm counted and the other not is a leak on
+one path and a use-after-free on the other.
+
+## 17. Fixed: ownership rules were not enforced inside a generic body
 
 A generic body is analyzed **once, with its parameters unsubstituted**, and
 never again against any instantiation. That is not a gap in one check; it is
@@ -979,7 +1085,7 @@ instantiates the return types of members no line uses.
 The container written the way the model requires, over the same element type,
 is `tests/vector-owner-elements.abs`.
 
-## 17. Beyond the list: what is left for undefined behaviour
+## 18. Beyond the list: what is left for undefined behaviour
 
 The open TODO asked for UBSan over generated code. Before building anything,
 the question worth answering is what UBSan would find, so the emitted IR was
@@ -1038,7 +1144,7 @@ claim stays true. These two are the only place in the suite where a *false*
 claim is observable, which is what gives the differential its power; a change
 that removes them would leave the check green and empty.
 
-## 18. The method that worked
+## 19. The method that worked
 
 Worth repeating, because reading code did not find any of this.
 
@@ -1056,7 +1162,7 @@ by another route. The compound-assignment defect was found that way, not by
 sweeping again: `a = a / b` had been fixed while `a /= b` still used an untyped
 overload.
 
-## 19. Environment note
+## 20. Environment note
 
 During this work the container repeatedly reverted the working tree to an older
 commit and deleted the build directory. Pushed commits were never affected, but

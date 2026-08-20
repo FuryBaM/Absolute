@@ -278,6 +278,7 @@ namespace Absolute {
         // an external C function take a string at all -- there is no body to
         // emit a release into, and none is needed.
         RegisterIfFreshString(expression, argument);
+        RegisterFreshValueArgument(expression, argument);
         const bool transfersArrayOwner =
             valueCreatesArrayOwner && llvm::cast<llvm::ConstantInt>(
                 ArgumentOwnershipFlag(expression, parameterType))->isOne();
@@ -499,14 +500,112 @@ namespace Absolute {
     // back storage something else already holds.
     bool CodeGenerator::Impl::CreatesFreshString(Expression* expression) const {
         if (!expression || !analyzer) return false;
+        // `move(x)` is a call, so it says it made its value -- but for a string
+        // it hands back the one `x` still names. Counting it as fresh would
+        // leave the destination holding a count the source is about to give
+        // back. What `move` means for an owner is a transfer; for a shared
+        // value it is a read, and a read is not fresh.
+        if (auto* call = dynamic_cast<FunctionCallExpr*>(expression)) {
+            const std::string callee = IdentifierName(call->base.get());
+            // These read rather than produce. Syntactically they are calls, so
+            // the analyzer's answer is that they made their value -- but
+            // `unsafeArrayGet` hands back what the array already holds, and
+            // `move` of a shared value hands back what the source still names.
+            // A container's indexer is written on top of the first of them, so
+            // treating it as fresh meant the value it returned was never
+            // counted and the caller's copy released storage the container
+            // still had. `unsafeArrayTake` is not here: it clears the slot,
+            // which is exactly what makes it a producer.
+            if (callee == "move" || callee == "unsafeArrayGet") return false;
+        }
         const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
-        return info && info->createsStringStorage;
+        return info && info->producesFreshValue;
+    }
+
+    // A value an expression made and nobody kept, whose parts are counted:
+    // `headers[0].name` builds a struct to read one field of. The struct is
+    // spilled so there is an address to release, and released with the
+    // statement, the same way a string temporary is.
+    void CodeGenerator::Impl::RegisterTemporaryAggregate(
+        llvm::Value* address, const std::string& typeName) {
+        if (!address) return;
+        temporaryManagedOwners.push_back(
+            {address, typeName, TemporaryOwner::Kind::AggregateValue});
+    }
+
+    // Reading one field of a value the expression made -- `entries[0].name` --
+    // builds the whole aggregate to get at it, and the aggregate counted its
+    // parts on the way out of whatever produced it. Nobody keeps it, so it is
+    // released with the statement.
+    //
+    // Indexing something that is not an array is an indexer call, and a call
+    // produces its value. The analyzer's flag answers for a method or a
+    // property; it is keyed to the symbol the access resolved to, and an
+    // indexer read resolves to the container rather than to the indexer.
+    void CodeGenerator::Impl::RegisterAggregateTemporaryBase(
+        Expression* base, llvm::Value* object, const std::string& typeName) {
+        if (!base || !object) return;
+        auto* indexed = dynamic_cast<ArrayAccessExpr*>(base);
+        const bool indexerRead = indexed && indexed->base &&
+            ArrayRankName(SemanticType(indexed->base.get())) == 0;
+        if (!indexerRead && !CreatesFreshString(base)) return;
+        const TypeSemantics semantics = SemanticsOfTypeName(typeName);
+        if (semantics.needsDrop && semantics.copyable)
+            RegisterTemporaryAggregate(object, typeName);
+    }
+
+    // The same rule for a value with parts rather than one pointer:
+    // `take(make(1))` built a struct only in order to pass it in, and the
+    // parameter borrows it -- so nobody but the statement that made it will
+    // release what its parts hold. It is spilled to give the walk an address.
+    // Only a shared value is registered. One that is not copyable travels with
+    // a role instead, and the ownership flag says who releases it.
+    void CodeGenerator::Impl::RegisterFreshValueArgument(
+        Expression* expression, llvm::Value* value) {
+        if (!value || !expression || !CurrentFunction()) return;
+        const std::string typeName = SemanticType(expression);
+        // A string is one pointer and was registered as it stands.
+        if (typeName.empty() || typeName == "string") return;
+        if (!CreatesFreshString(expression)) return;
+        const TypeSemantics semantics = SemanticsOfTypeName(typeName);
+        if (!semantics.needsDrop || !semantics.copyable) return;
+        // An indirect value arrives as an address the callee reads through,
+        // and whoever made that address is who releases it.
+        if (value->getType()->isPointerTy()) return;
+        llvm::AllocaInst* spill = CreateEntryAlloca(
+            *CurrentFunction(), value->getType(), "argument.temporary");
+        builder.CreateStore(value, spill);
+        RegisterTemporaryAggregate(spill, typeName);
+    }
+
+    // A conditional hands back one value from two paths, and the two paths
+    // need not agree about who is holding it: `cond ? format(...) : name` is a
+    // count on one side and a borrow on the other. Nothing downstream can ask
+    // which path ran, so the arms are made to agree here -- an arm that
+    // borrowed takes a count of its own -- and the conditional as a whole
+    // reports that it produced its value, which is what the analyzer says
+    // about it too.
+    llvm::Value* CodeGenerator::Impl::CountedArmValue(
+        Expression* arm, llvm::Value* value, const std::string& typeName) {
+        if (!arm || !value || CreatesFreshString(arm)) return value;
+        const TypeSemantics semantics = SemanticsOfTypeName(typeName);
+        if (!semantics.needsDrop || !semantics.copyable) return value;
+        if (semantics.dropKind == DropKind::StringStorage)
+            return builder.CreateCall(StringRetain(), {value}, "arm.retained");
+        llvm::AllocaInst* counted = CreateEntryAlloca(
+            *CurrentFunction(), value->getType(), "arm.counted");
+        builder.CreateStore(value, counted);
+        EmitValueRetain(counted, typeName);
+        return builder.CreateLoad(value->getType(), counted, "arm.counted.value");
     }
 
     void CodeGenerator::Impl::RegisterIfFreshString(
         Expression* expression, llvm::Value* value) {
-        if (!value) return;
-        if (CreatesFreshString(expression)) RegisterTemporaryStringOwner(value);
+        if (!value || !expression) return;
+        // The flag says the expression made its value; only a string is
+        // released this way, so the type has to agree as well.
+        if (SemanticType(expression) == "string" && CreatesFreshString(expression))
+            RegisterTemporaryStringOwner(value);
     }
 
     // Storing a string into a place that will release it later. A fresh one
@@ -539,6 +638,10 @@ namespace Absolute {
                 }
                 if (temporary.kind == TemporaryOwner::Kind::StringStorage) {
                     builder.CreateCall(StringRelease(), {temporary.handle});
+                    continue;
+                }
+                if (temporary.kind == TemporaryOwner::Kind::AggregateValue) {
+                    EmitValueCleanup(temporary.handle, temporary.typeName);
                     continue;
                 }
                 llvm::Value* pointee = EmitManagedGet(temporary.handle, false);

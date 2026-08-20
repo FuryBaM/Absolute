@@ -196,6 +196,10 @@ namespace Absolute {
                 builder.CreateCall(StringRelease(), {temporary.handle});
                 continue;
             }
+            if (temporary.kind == TemporaryOwner::Kind::AggregateValue) {
+                EmitValueCleanup(temporary.handle, temporary.typeName);
+                continue;
+            }
             llvm::Value* pointee = EmitManagedGet(temporary.handle, false);
             EmitPointeeCleanup(pointee, temporary.typeName);
             builder.CreateCall(ManagedDestroy(), {temporary.handle});

@@ -161,7 +161,7 @@ sort of owner in front of every reader of every type.
    each instantiation substitutes and asks the rule then. `Sieve<Node*>`,
    `Sieve<sub Node*>` and `Sieve<int32>` get three different answers on the
    same line of the same body. Recorded in full in `docs/known-defects.md`
-   §16; pinned by `tests/generic-body-ownership-errors.abs` and
+   §17; pinned by `tests/generic-body-ownership-errors.abs` and
    `tests/generic-body-ownership.abs`.
 
    Without this, step 7 could not be more than half true: the drop would
@@ -228,7 +228,7 @@ sort of owner in front of every reader of every type.
    is in, inside generic bodies as well as outside them, and what it says about
    the standard collections is that they are not written for elements that own
    anything -- `Vector<Cell*>` reports fourteen diagnostics across three
-   classes. Recorded in `docs/known-defects.md` §16 and pinned by
+   classes. Recorded in `docs/known-defects.md` §17 and pinned by
    `tests/std-collections-owner-elements-errors.abs`.
 
    Fixing them needed something the language could not spell: **`sub T`, a
@@ -298,12 +298,17 @@ sort of owner in front of every reader of every type.
    -- the two that had to run with the leak check off because they format --
    run with it on again.
 
-   What is left is the same remainder §15 has: **there is no copy that retains
-   what its parts hold**, so an aggregate does not release its string fields.
-   Releasing on the strength of a shallow copy is the withdrawn array attempt,
-   and it showed up the same way -- a struct read out of a container killing
-   the string the container still held. `copyable` decides how a value travels;
-   the copy itself is the piece that does not exist.
+   The remainder this left -- **there is no copy that retains what its parts
+   hold** -- is closed as well. Releasing on the strength of a shallow copy is
+   the withdrawn array attempt, and it showed up the same way: a struct read
+   out of a container killing the string the container still held. `copyable`
+   decides how a value travels; `EmitValueRetain` is the piece that was
+   missing, the mirror of the destructor walk, running wherever a copy happens
+   -- a store, an assignment, a declaration, a return, a temporary read out of
+   a container, a scope. A tuple asks its elements rather than a declaration it
+   does not have, and a conditional makes its two arms agree about who is
+   holding the value before they merge. Pinned by `tests/aggregate-copy.abs`
+   and `tests/conditional-values.abs`.
 
 ## What proves each step
 

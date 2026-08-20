@@ -1,0 +1,118 @@
+// A literal is an owner.
+//
+// This closes the one place the analyzer and the backend did not say the same
+// thing about what an array literal is. The backend allocated a literal whose
+// elements owned something and left a literal of numbers on the stack; the
+// analyzer called neither of them an owner. So `move` was refused on both, a
+// literal could not be returned or put in a field, and the refusal was the
+// conservative direction of a rule the author could not read off the source:
+// whether a literal owned its storage depended on its element type.
+//
+// It does not any more. A literal that is an expression makes storage of its
+// own, and storage that belongs to the frame is written as such -- a sized
+// declarator, `int32 fixed[3] = { ... }`, says the frame holds it. Which one
+// an author gets is in the declaration rather than in the element type.
+//
+// Run under AddressSanitizer with the leak check on: every claim here is about
+// storage being freed once, by whoever ends up holding it.
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+}
+
+// A literal returned from a function: the storage outlives the frame that made
+// it, which is exactly what an owner is for. This was E_ARRAY_RETURN_REQUIRES_COPY.
+int32[] threeNumbers() {
+    int32[] made = { 1, 2, 3 };
+    return made;
+}
+
+// A literal written straight into the return: no local to hold it at all.
+int32[] direct() {
+    return { 4, 5, 6 };
+}
+
+class Holder {
+    // A literal into a field, released with the object. This was
+    // E_ARRAY_FIELD_REQUIRES_OWNER.
+    private int32[] kept;
+    private Cell*[] owners;
+
+    public Holder() {
+        kept = { 7, 8, 9 };
+        owners = { new Cell(1), new Cell(2) };
+    }
+
+    public int32 at(int32 index) { return kept[index]; }
+    public int32 cell(int32 index) { return owners[index].value; }
+}
+
+int32 total(int32[] values) {
+    int32 sum = 0;
+    int32 index = 0;
+    while (index < values.length) {
+        sum = sum + values[index];
+        index = index + 1;
+    }
+    return sum;
+}
+
+int32 main() {
+    // The shape the split was recorded as: a literal of numbers, moved.
+    int32 round = 0;
+    while (round < 2000) {
+        int32[] made = { 1, 2, 3 };
+        int32[] moved = move(made);
+        assert(moved[2] == 3, "a moved literal carries its storage");
+        round = round + 1;
+    }
+
+    // The same for a literal of owners: one array frees the cells, and it is
+    // the one that ends up holding them.
+    int32 owners = 0;
+    while (owners < 2000) {
+        Cell*[] made = { new Cell(20), new Cell(21) };
+        Cell*[] moved = move(made);
+        assert(moved[1].value == 21, "and its elements");
+        owners = owners + 1;
+    }
+
+    int32 returns = 0;
+    while (returns < 2000) {
+        int32[] carried = threeNumbers();
+        assert(carried[0] == 1, "a returned literal is the caller's");
+        int32[] straight = direct();
+        assert(straight[2] == 6, "written into the return or not");
+        returns = returns + 1;
+    }
+
+    int32 fields = 0;
+    while (fields < 2000) {
+        Holder* holder = new Holder();
+        assert(holder.at(1) == 8, "a field holds what the literal made");
+        assert(holder.cell(0) == 1, "including elements that own something");
+        delete holder;
+        fields = fields + 1;
+    }
+
+    // A literal made only in order to pass it in: the parameter reads it and
+    // the statement that made it releases it.
+    int32 arguments = 0;
+    while (arguments < 2000) {
+        assert(total({ 1, 2, 3, 4 }) == 10, "a literal argument reads");
+        arguments = arguments + 1;
+    }
+
+    // And the frame's own storage is still the frame's. A sized declarator
+    // says so, and nothing frees it.
+    int32 frames = 0;
+    while (frames < 2000) {
+        int32 fixed[3] = { 7, 8, 9 };
+        assert(fixed[0] == 7, "a sized declarator is the frame's storage");
+        frames = frames + 1;
+    }
+
+    println("array-literal-owner=ok");
+    return 0;
+}

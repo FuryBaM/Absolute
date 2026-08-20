@@ -25,9 +25,9 @@
 // its elements were never released. Giving the drop a different guard instead
 // was tried and is worse -- `move` signals a transfer by clearing that slot, so
 // an unconditional drop makes a moved-from array release what the destination
-// now holds. What the literal was missing is an owner, so a literal whose
-// elements own something is allocated rather than left on the stack. A literal
-// of numbers is the stack allocation it has always been.
+// now holds. What the literal was missing is an owner, so a literal is
+// allocated rather than left on the stack; storage that belongs to the frame is
+// written as a sized declarator instead. See tests/array-literal-owner.abs.
 
 class Cell {
     public int32 value;
@@ -134,7 +134,10 @@ int32 main() {
         assert(numbers[0] == 9, "a plain array is what it always was");
 
         int32[] literal = { 1, 2, 3 };
-        assert(literal[2] == 3, "and a literal of them stays on the stack");
+        assert(literal[2] == 3, "and a literal of them owns its storage");
+
+        int32 framed[3] = { 4, 5, 6 };
+        assert(framed[2] == 6, "while a sized declarator is the frame's");
     }
 
     println("array-element-drop=ok");
