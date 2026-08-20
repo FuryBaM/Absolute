@@ -1,0 +1,25 @@
+// There is no second name for a unique owner, and writing the type with
+// generic arguments does not change that. Both of these were accepted while
+// the analyzer walked a generic's members without substituting them.
+
+class Node {
+    public int64 value;
+    public Node(int64 initial) { value = initial; }
+}
+
+struct Cell<T> {
+    public T held;
+}
+
+Cell<Node*> owningCell(int64 n) {
+    Cell<Node*> made;
+    made.held = new Node(n);
+    return made;
+}
+
+int32 main() {
+    Cell<Node*> first = owningCell(1);
+    Cell<Node*> second = first;
+    println(format("{}", second.held.value));
+    return 0;
+}

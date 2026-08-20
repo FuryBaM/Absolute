@@ -384,6 +384,35 @@ line and column instead of a number followed by a stray identifier.
 
 Covered by `tests/literal-notation.abs` and `tests/literal-notation-errors.abs`.
 
+### Fixed: a generic aggregate owned nothing, as far as the analyzer knew
+
+```absolute
+Cell<Node*> made(int64 n) { Cell<Node*> cell; cell.held = new Node(n); return cell; }
+Cell<Node*> taken = made(1);
+taken.held.value          // Absolute runtime error: null or expired managed pointer
+```
+
+Whether a type owns a resource was answered by walking the members of its
+declaration -- and a generic's members are written in terms of its parameters,
+so the walk asked about `T` and got the answer for a name nothing is known
+about. `Cell<Node*>` was a type that owns nothing: not refused when copied, not
+refused when returned by value, invisible to every ownership rule the analyzer
+has. The same struct written without the angle brackets was refused by all of
+them.
+
+The backend substitutes, so it knew better and destroyed the owner where the
+callee's local ended. Two halves disagreeing that way is worse than a leak --
+the callee tore down what it was handing back, and the caller read a handle to
+it. The walk substitutes now, and so does the one that answers `copyable`.
+
+A second hole was underneath it: a declaration whose type is written with
+generic arguments parses as a *variable* declaration rather than an instance
+declaration, and only the second of those carried the copy refusal. So
+`Cell<Node*> second = first;` was two names for one owner even once the walk
+was right. Both paths carry it now.
+
+Pinned by `tests/generic-resource-aggregates.abs` and its errors file.
+
 ### A field's initializer is refused rather than ignored
 
 ```absolute
