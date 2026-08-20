@@ -3368,7 +3368,7 @@ if(BUILD_TESTING)
                     --std-dir "${PROJECT_SOURCE_DIR}/std"
                     # One case per shape, so a run covers all of them rather
                     # than repeating a few.
-                    --cases 16
+                    --cases 17
                     --detect-leaks ${ABSOLUTE_SANITIZER_DETECT_LEAKS}
                     --configuration "$<CONFIG>")
             set_tests_properties(absolute.codegen-fuzz PROPERTIES

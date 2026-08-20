@@ -911,7 +911,7 @@ Both of the answers written down here were wrong about the size of the thing.
   into the first. This was the real fix, and it is `sub T*[]` -- but a type for
   it was not enough on its own. `toArray` also had to be able to *say* it in a
   generic body, which is `sub T`, and the rules had to run there at all, which
-  is §17. And `push` moving into the first needed operations that transfer an
+  is §18. And `push` moving into the first needed operations that transfer an
   element rather than read it: `unsafeArrayTake`, `unsafeArrayMove`,
   `unsafeArrayDrop`.
 - **Or: refuse owning element types outright.** Not needed, and it would have
@@ -962,7 +962,53 @@ show it still holds its bytes -- two thousand rounds under AddressSanitizer
 with the leak check on, where one arm counted and the other not is a leak on
 one path and a use-after-free on the other.
 
-## 17. Fixed: ownership rules were not enforced inside a generic body
+## 17. Fixed: two array slots that never counted what they were given
+
+Found by the fuzzer, and by the half of it that is not the sanitizer.
+
+A new shape -- `counted` -- carries a value whose parts are counted through
+every place a copy happens, because the shapes that existed went nowhere near
+it: `aggregates` builds tuples of numbers, `text` builds strings with no
+aggregate around them, `handles` owns objects rather than sharing anything. It
+found two more slots that took a name without counting it.
+
+```absolute
+Entry kept = entryOf(2);
+Entry[] literal = { entryOf(1), kept };   // kept's strings, uncounted
+Entry framed[2] = { entryOf(1), kept };   // and nothing walked these at all
+```
+
+A store into an array slot had been taught to count what it stores, but only
+where `unsafeArraySet` writes it. Both array *initializers* have their own
+store loop, and neither said anything -- so releasing the literal took the
+strings the local still named.
+
+The sized declarator was missing the other half too. Element cleanup was
+guarded by the owner pointer, which is the right question for a *view*: a view
+into someone else's allocation has none, and releasing through it would drop
+what the real owner still holds. A frame array is not a view. Its storage
+belongs to the frame and is not freed, and what its elements hold is still the
+name's to give back -- so `Entry fixed[2] = { ... }` in a loop lost one string
+an iteration.
+
+**What caught the first one was not the sanitizer.** The bytes were freed and
+handed straight back out by the next allocation, so every read landed in valid
+memory and AddressSanitizer had nothing to say. `-O0` and `-O3` printed
+different text, which is the check the fuzzer runs alongside the sanitizer and
+the reason it runs both:
+
+```
+DISAGREEMENT seed=771017 shape=counted: {'O0': '313591', 'O3': '67069'}
+```
+
+Every optimization level gave a different answer, which is what reading storage
+that has been handed to someone else looks like when nothing traps.
+
+Pinned by the `counted` shape and by `tests/aggregate-copy.abs`, which now
+writes a name into a literal's slot, a sized declarator's slot and a string
+slot two thousand times and checks the name still holds its bytes.
+
+## 18. Fixed: ownership rules were not enforced inside a generic body
 
 A generic body is analyzed **once, with its parameters unsubstituted**, and
 never again against any instantiation. That is not a gap in one check; it is
@@ -1085,7 +1131,7 @@ instantiates the return types of members no line uses.
 The container written the way the model requires, over the same element type,
 is `tests/vector-owner-elements.abs`.
 
-## 18. Beyond the list: what is left for undefined behaviour
+## 19. Beyond the list: what is left for undefined behaviour
 
 The open TODO asked for UBSan over generated code. Before building anything,
 the question worth answering is what UBSan would find, so the emitted IR was
@@ -1144,7 +1190,7 @@ claim stays true. These two are the only place in the suite where a *false*
 claim is observable, which is what gives the differential its power; a change
 that removes them would leave the check green and empty.
 
-## 19. The method that worked
+## 20. The method that worked
 
 Worth repeating, because reading code did not find any of this.
 
@@ -1162,7 +1208,7 @@ by another route. The compound-assignment defect was found that way, not by
 sweeping again: `a = a / b` had been fixed while `a /= b` still used an untyped
 overload.
 
-## 20. Environment note
+## 21. Environment note
 
 During this work the container repeatedly reverted the working tree to an older
 commit and deleted the build directory. Pushed commits were never affected, but

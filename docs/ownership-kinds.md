@@ -161,7 +161,7 @@ sort of owner in front of every reader of every type.
    each instantiation substitutes and asks the rule then. `Sieve<Node*>`,
    `Sieve<sub Node*>` and `Sieve<int32>` get three different answers on the
    same line of the same body. Recorded in full in `docs/known-defects.md`
-   §17; pinned by `tests/generic-body-ownership-errors.abs` and
+   §18; pinned by `tests/generic-body-ownership-errors.abs` and
    `tests/generic-body-ownership.abs`.
 
    Without this, step 7 could not be more than half true: the drop would
@@ -228,7 +228,7 @@ sort of owner in front of every reader of every type.
    is in, inside generic bodies as well as outside them, and what it says about
    the standard collections is that they are not written for elements that own
    anything -- `Vector<Cell*>` reports fourteen diagnostics across three
-   classes. Recorded in `docs/known-defects.md` §17 and pinned by
+   classes. Recorded in `docs/known-defects.md` §18 and pinned by
    `tests/std-collections-owner-elements-errors.abs`.
 
    Fixing them needed something the language could not spell: **`sub T`, a

@@ -252,6 +252,14 @@ namespace Absolute {
             impl->builder.CreateStore(
                 llvm::ConstantPointerNull::get(impl->builder.getPtrTy()),
                 variable.arrayOwnerStorage);
+            // The frame provides the storage and keeps it, but what the
+            // elements hold is still this name's to give back. Without this an
+            // `Entry fixed[2] = { ... }` in a loop lost one string an
+            // iteration: the owner pointer is null, and the release walk was
+            // guarded by it, because for a *view* a null owner means someone
+            // else holds the elements. A frame array is not a view.
+            variable.ownsArrayElements =
+                impl->SemanticsOfTypeName(baseTypeName).needsDrop;
             if (!impl->scopes.back().emplace(name, std::move(variable)).second)
                 impl->Fail("duplicate variable '" + name + "'");
 
@@ -283,7 +291,14 @@ namespace Absolute {
                         impl->SemanticType(values[index]), baseTypeName);
                     llvm::Value* destination = impl->builder.CreateInBoundsGEP(
                         elementType, address, impl->builder.getInt64(index), "array.initializer.element");
+                    // A slot this array releases is a name that counts, the
+                    // same as a literal's or one `unsafeArraySet` writes.
+                    if (baseTypeName == "string")
+                        initial = impl->RetainStoredString(values[index], initial);
                     impl->builder.CreateStore(initial, destination);
+                    if (baseTypeName != "string" &&
+                        !impl->CreatesFreshString(values[index]))
+                        impl->EmitValueRetain(destination, baseTypeName);
                 }
             }
             else if (expr->value) impl->Fail("array variable requires an array literal initializer");

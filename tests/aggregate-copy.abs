@@ -176,6 +176,31 @@ int32 main() {
         assigned = assigned + 1;
     }
 
+    // An array literal's slots, and a sized declarator's, are slots like any
+    // other: the array releases them, so writing a name into one puts a second
+    // name on what it holds. Neither said so. The literal took the local's
+    // string with it when it went out of scope, and the sanitizer did not see
+    // it -- the bytes were freed and handed straight back out by the next
+    // allocation -- so what caught it was -O0 and -O3 printing different text.
+    // The sized declarator had the other half missing as well: the frame keeps
+    // the storage, so nothing walked the elements at all.
+    int32 stored = 0;
+    while (stored < 2000) {
+        Header held = createHeader(format("k{}", stored), "held");
+
+        Header[] literal = { createHeader(format("l{}", stored), "one"), held };
+        assert(literal[1].name == held.name, "a literal names what it was given");
+
+        Header framed[2] = { createHeader(format("f{}", stored), "two"), held };
+        assert(framed[1].name == held.name, "and so does the frame's own array");
+
+        string words[2] = { format("w{}", stored), held.value };
+        assert(words[1] == "held", "a string slot is the same rule");
+
+        assert(held.name != "", "the local still holds its bytes");
+        stored = stored + 1;
+    }
+
     println("aggregate-copy=ok");
     return 0;
 }
