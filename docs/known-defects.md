@@ -16,8 +16,11 @@ build/Release/absolutec file.abs --build-exe -o app && ./app
 
 ## 1. Open defects
 
-None. Everything this section held has been closed, and each entry records what
-the fix was, so a regression is recognizable rather than rediscovered.
+None of this section's own. Everything it held has been closed, and each entry
+records what the fix was, so a regression is recognizable rather than
+rediscovered. One *missing feature* is open and lives in section 2, where a
+thing that fails loudly belongs: a default parameter value is parsed and then
+ignored.
 
 The two were one defect seen from two sides -- **an array never releases what
 its elements own** and **a string has no lifetime** -- and they were fixed as
@@ -363,7 +366,8 @@ The two follow-ups this entry left behind are done:
 
 ## 2. Missing features that fail loudly
 
-All four now lex. They were honest syntax errors rather than wrong answers, but
+One is open, below: a default parameter value. The four notations this section
+was written for all now lex. They were honest syntax errors rather than wrong answers, but
 they are ordinary notation, and a language with `double` and no way to write
 `1e-9` was missing something people reach for immediately.
 
@@ -501,6 +505,37 @@ struct crashed. A name holding no bytes is the empty string, and it is compared
 as one now. Printing had had the same guard for longer -- it substitutes
 `<null>` there, which is a debugging affordance rather than an answer about the
 value.
+
+### Open: a default parameter value is parsed and then ignored
+
+```absolute
+int32 twice(int32 v = 3) { return v * 2; }
+twice();       // E_NO_MATCHING_OVERLOAD: no overload of 'twice' accepts ()
+```
+
+The default is parsed, stored on the parameter, and never used: nothing fills
+it in at a call site, so a call that omits the argument is refused as having no
+matching overload -- which names the wrong thing, because the overload the
+author wrote is right there. The same for a method and for a constructor,
+where the message is `E_NO_MATCHING_CONSTRUCTOR`.
+
+The standard library declares seven of them -- `Deque`, `Queue` and `Stack`
+take `int32 initialCapacity = 8`, `std.fs` has four, and
+`std.collections.channels` has one per element type -- so
+`new Deque<string>()` does not compile although its own signature says it
+should. Nothing depends on it today only because every call site in the
+library and the corpus passes the argument explicitly.
+
+**Not fixed here, and deliberately.** Refusing the declaration was written and
+withdrawn: it is one line in the analyzer and it fails 28 tests, which is the
+signal that the feature is expected rather than unwanted. Implementing it is a
+language change of a size that deserves its own pass: the analyzer's overload
+matching has to accept an arity shorter than the parameter list, `Symbol` has
+to carry which parameters have defaults, and every call path in the backend
+that builds its own argument list -- an ordinary call, a constructor call, a
+base call -- has to fill the missing ones in. Restricting defaults to constant
+expressions, the way a static field's initializer already is, would bound it:
+every one in the standard library is a literal.
 
 ## 3. Behaviour that contradicts the documentation
 
