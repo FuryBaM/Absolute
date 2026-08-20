@@ -732,6 +732,42 @@ namespace Absolute {
         const std::string variableName = IdentifierName(stmt->var->name.get());
         Impl::Variable& iterationVariable = impl->RequireVariable(variableName);
 
+        // The iteration variable is a name like any other: it gives back what
+        // it held before taking the next element, and it takes a count of its
+        // own when the element is one the container still names. Without the
+        // first half a loop over a `string[]` released a count it never took,
+        // and iterating the same array twice was a use-after-free; without the
+        // second, a loop over a collection kept the count its iterator handed
+        // over and leaked one string per iteration.
+        //
+        // Only for a value whose copy counts something. An owner has its own
+        // path and a number has nothing to say.
+        const bool countedElement =
+            impl->ValueCountsOnCopy(iterationVariable.typeName);
+        const auto storeIterationValue =
+            [&](llvm::Value* element, bool handedOver) {
+                if (!countedElement) {
+                    impl->builder.CreateStore(
+                        impl->Coerce(element, iterationVariable.type),
+                        iterationVariable.address);
+                    return;
+                }
+                // Counted before the previous value is released, because the
+                // two can be the same bytes.
+                llvm::AllocaInst* incoming = impl->CreateEntryAlloca(
+                    *function, iterationVariable.type, "foreach.incoming");
+                impl->builder.CreateStore(
+                    impl->Coerce(element, iterationVariable.type), incoming);
+                if (!handedOver)
+                    impl->EmitValueRetain(incoming, iterationVariable.typeName);
+                impl->EmitValueCleanup(
+                    iterationVariable.address, iterationVariable.typeName);
+                impl->builder.CreateStore(
+                    impl->builder.CreateLoad(iterationVariable.type, incoming,
+                        "foreach.incoming.value"),
+                    iterationVariable.address);
+            };
+
         llvm::BasicBlock* conditionBlock = llvm::BasicBlock::Create(
             impl->context, "foreach.condition", function);
         llvm::BasicBlock* bodyBlock = llvm::BasicBlock::Create(
@@ -776,7 +812,8 @@ namespace Absolute {
                 source.elementType, source.address, current, "foreach.element.address");
             llvm::Value* element = impl->builder.CreateLoad(
                 source.elementType, elementAddress, "foreach.element");
-            impl->builder.CreateStore(impl->Coerce(element, iterationVariable.type), iterationVariable.address);
+            // An element read out of the array: the array still names it.
+            storeIterationValue(element, false);
             if (stmt->body) stmt->body->Accept(*this);
             impl->BranchIfNeeded(updateBlock);
 
@@ -893,7 +930,9 @@ namespace Absolute {
             if (!elementResult.first) elementResult = callMethod(iteratorObjPtr, iteratorType, "", "value");
             if (!elementResult.first) impl->Fail("missing value method or property on iterator " + iteratorType);
             
-            impl->builder.CreateStore(impl->Coerce(elementResult.first, iterationVariable.type), iterationVariable.address);
+            // What a getter hands back is already counted for whoever takes
+            // it, the way a call's result is anywhere else.
+            storeIterationValue(elementResult.first, true);
             
             if (stmt->body) stmt->body->Accept(*this);
             impl->BranchIfNeeded(updateBlock);

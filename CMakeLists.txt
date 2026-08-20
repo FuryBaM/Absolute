@@ -1081,6 +1081,10 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "E_MAIN_RETURN_TYPE"
     )
     add_test(
+        NAME absolute.shared-value-handoff-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/shared-value-handoff.abs"
+    )
+    add_test(
         NAME absolute.foreach-temporary-source-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/foreach-temporary-source.abs"
     )
@@ -3526,7 +3530,8 @@ if(BUILD_TESTING)
             "owned-aggregates=owned-aggregates=ok"
             "field-initializer=field-initializer=ok"
             "generic-resource-aggregates=generic-resource-aggregates=ok"
-            "foreach-temporary-source=foreach-temporary-source=ok")
+            "foreach-temporary-source=foreach-temporary-source=ok"
+            "shared-value-handoff=shared-value-handoff=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those

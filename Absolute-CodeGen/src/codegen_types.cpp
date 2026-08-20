@@ -1344,6 +1344,56 @@ namespace Absolute {
         return SemanticsOfTypeName(typeName).needsDrop;
     }
 
+    bool CodeGenerator::Impl::ValueCountsOnCopy(const std::string& typeName) {
+        std::unordered_set<std::string> visiting;
+        return ValueCountsOnCopy(typeName, visiting);
+    }
+
+    // The same walk EmitValueRetain does, asking only whether it would emit
+    // anything. `needsDrop` is not the question and neither is `copyable`: a
+    // struct wrapping a `raw void*` with a destroy() hook is both droppable and
+    // copyable, and copying it counts nothing -- there is one handle and the
+    // hook closes it -- so a move of one has to be a transfer.
+    bool CodeGenerator::Impl::ValueCountsOnCopy(
+        const std::string& typeName, std::unordered_set<std::string>& visiting) {
+        const TypeSemantics semantics = SemanticsOfTypeName(typeName);
+        if (!semantics.needsDrop || !semantics.copyable) return false;
+        if (semantics.dropKind == DropKind::StringStorage) return true;
+        if (!visiting.insert(typeName).second) return false;
+        const auto release = [&] { visiting.erase(typeName); };
+        if (semantics.dropKind == DropKind::TupleValue) {
+            std::string base;
+            std::vector<std::string> elements;
+            if (ParseCodegenGenericType(typeName, base, elements)) {
+                for (const std::string& element : elements) {
+                    if (ValueCountsOnCopy(element, visiting)) {
+                        release();
+                        return true;
+                    }
+                }
+            }
+            release();
+            return false;
+        }
+        const auto walk = [&](auto& info) {
+            for (const ClassField& field : info.fields)
+                if (ValueCountsOnCopy(field.typeName, visiting)) return true;
+            return false;
+        };
+        if (auto found = classes.find(typeName); found != classes.end()) {
+            const bool counts = walk(found->second);
+            release();
+            return counts;
+        }
+        if (auto found = structs.find(typeName); found != structs.end()) {
+            const bool counts = walk(found->second);
+            release();
+            return counts;
+        }
+        release();
+        return false;
+    }
+
     void CodeGenerator::Impl::EmitPointeeCleanup(
         llvm::Value* pointer, const std::string& pointerTypeName) {
         const std::string pointeeName = PointerPointeeName(pointerTypeName);

@@ -423,8 +423,17 @@ namespace Absolute {
                             builder.getFalse(),
                             variable->ownershipFlagStorage);
                 }
+                // Clearing the source is what makes a move a transfer, and it
+                // is a transfer only where the destination cannot take a count
+                // of its own. For a value whose copy counts -- a string, or an
+                // aggregate holding one -- a move is a read: it hands back what
+                // the source still names, and the store that takes it counts
+                // it. Clearing as well meant the source's own count was dropped
+                // on the floor, one leak per `unsafeArraySet(items, n,
+                // move(element))`, which is how every container stores what it
+                // is given.
                 const uint64_t size = SizeOfTypeName(argumentType);
-                if (size > 0) {
+                if (!ValueCountsOnCopy(argumentType) && size > 0) {
                     builder.CreateMemSet(
                         address, builder.getInt8(0), size,
                         llvm::MaybeAlign(8));
