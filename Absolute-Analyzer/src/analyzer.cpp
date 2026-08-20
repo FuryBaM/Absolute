@@ -1395,6 +1395,19 @@ namespace Absolute {
         if (name == "main" && !statement.parameters.empty())
             Report("entry function 'main' takes no parameters; read command-line "
                 "arguments with std.env.args()", "E_MAIN_PARAMETERS");
+        // What `main` returns is a process exit status, and a status is an
+        // int32 everywhere it goes: the C `main` returns one, the wasm host
+        // reads one back. Any other width was accepted and then had to be
+        // made to fit -- truncated natively, and handed to JavaScript as a
+        // BigInt that the host could not use as a status at all, so the same
+        // program exited 0 natively and 1 on wasm. `void` stays: it says the
+        // program has no status of its own to report, which is a real thing
+        // to say and is what most of the corpus says.
+        if (name == "main" && returnType != "int32" && returnType != "void" &&
+            returnType != "error")
+            Report("entry function 'main' returns a process exit status, which "
+                "is 'int32'; declare it 'int32' or 'void', not '" + returnType + "'",
+                "E_MAIN_RETURN_TYPE");
         if (statement.IsExternal() && functionOverloads.contains(name) &&
             std::any_of(functionOverloads[name].begin(), functionOverloads[name].end(), [&](SymbolId id) {
                 const Symbol* existing = table.Get(id);

@@ -16,8 +16,11 @@
 // written `void main()` and none of them had the second half.
 //
 // Exiting says what was meant and says it the same way for every signature.
+//
+// `void` and `int32` are the only two spellings left: a status is an int32, so
+// any other width is refused now, which tests/main-signatures-errors.abs pins.
 // This file is the `void` half, because that is the spelling the corpus
-// actually uses; tests/main-signatures-wide.abs is the `int64` half.
+// actually uses.
 
 int64 risky(int64 round) {
     if (round % 3 == 0) {
