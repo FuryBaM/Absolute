@@ -323,11 +323,21 @@ namespace Absolute {
         else {
             for (const auto& value : expr->values) evaluateElement(value.get());
         }
-        if (hasExpectedArrayType) Save(expr, {InvalidSymbolId, expectedType, false});
-        else {
-            if (elementType.empty()) elementType = "dynamic";
-            Save(expr, {InvalidSymbolId, elementType + "[]", false});
-        }
+        // A literal is an owner. It is the only array expression whose storage
+        // is made on the spot, and saying so here is what lets it be moved,
+        // returned, or put in a field -- which the backend was already
+        // prepared for and the analyzer refused, the one place the two halves
+        // did not say the same thing about what a literal is.
+        //
+        // Where the storage belongs to the declaration instead -- a sized
+        // declarator, a global -- the declaration says so and does not take
+        // this answer; see Analyzer::Visit(VarDeclExpr*).
+        Result literal{InvalidSymbolId,
+            hasExpectedArrayType ? expectedType
+                : (elementType.empty() ? std::string{"dynamic"} : elementType) + "[]",
+            false};
+        literal.createsArrayOwner = true;
+        Save(expr, std::move(literal));
     }
 
 }

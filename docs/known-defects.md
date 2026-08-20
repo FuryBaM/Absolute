@@ -800,37 +800,53 @@ never released. Making the drop unconditional there instead was tried and is
 worse: `move` signals a transfer by clearing that slot, so an unconditional
 drop makes a moved-from local release what the destination now holds, which is
 the withdrawn attempt's failure again in a new place. What the literal was
-missing is an owner, so a literal whose elements own something is allocated
-rather than left on the stack. A literal of numbers is the stack allocation it
-has always been, and a literal is also the only way to write a two-dimensional
-array of owners, so that shape is covered by the same change.
+missing is an owner, so a literal is allocated rather than left on the stack.
+A literal is also the only way to write a two-dimensional array of owners, so
+that shape is covered by the same change.
 
-### What that condition leaves: one place the two halves disagree
+It was allocated only when its elements owned something, which is the condition
+the next section is about; every literal that is an expression is allocated
+now.
 
-Allocated when the elements own something, on the stack when they do not, is
-now the one place where the analyzer and the backend do not say the same thing
-about what a literal is:
+### Fixed: the one place the two halves disagreed
+
+Allocating a literal only when its elements own something left the analyzer and
+the backend saying different things about what a literal is:
 
 ```absolute
 Cell*[] made = { new Cell(1) };
 Cell*[] moved = move(made);      // E_ARRAY_MOVE_REQUIRES_OWNER
 ```
 
-The backend allocates that literal and it does own its storage; the analyzer
-sets `createsArrayOwner` only for `new T[n]` and `copy(...)`, so it refuses the
-move. Nothing is unsound -- the refusal is the conservative direction, and it
-is doing real work while the split exists, because a stack literal the analyzer
-let escape into a field or out of a return would leave a pointer into a dead
-frame.
+The backend allocated that literal and it did own its storage; the analyzer set
+`createsArrayOwner` only for `new T[n]` and `copy(...)`, so it refused the move.
+Nothing was unsound -- the refusal is the conservative direction -- but the rule
+underneath it could not be read off the source: whether a literal owned its
+storage depended on its element type, so `move` would have worked on a literal
+of owners and not on a literal of numbers.
 
-Making the two agree costs something either way, which is why it is recorded
-rather than picked: teaching the analyzer the backend's condition gives the
-language a rule nobody can predict (`move` works on a literal of owners and not
-on a literal of numbers), and allocating every literal removes the split at the
-price of a heap allocation for `int32[] a = { 1, 2, 3 }`, a shape the
-benchmarks are full of. The third answer is to keep the split but put it
-somewhere the author can see, which is a language question rather than a
-backend one.
+**A literal is an owner.** Every literal that is an expression makes storage of
+its own, and the analyzer says so, which is what lets one be moved, returned,
+or put in a field. Storage that belongs to the frame is written as such:
+
+```absolute
+int32[] made  = { 1, 2, 3 };   // an owner; move, return, store it in a field
+int32 fixed[3] = { 1, 2, 3 };  // the frame's, and the frame keeps it
+```
+
+That is the third of the three answers recorded here -- keep the distinction
+but put it where the author can see it -- and it costs a `malloc` for the
+view-form declaration. The shape the cost was recorded against,
+`int32[] a = { 1, 2, 3 }`, does not appear once in the benchmark corpus or the
+standard library; the sized form that does is untouched, because the
+declaration provides the storage and never evaluates the literal as a value at
+all. The same exception covers a global, whose storage is the module's.
+
+Pinned by `tests/array-literal-owner.abs` (moved, returned, written into a
+field, passed as an argument, two thousand rounds of each under
+AddressSanitizer with the leak check on) and
+`tests/array-literal-owner-errors.abs`, which is the sized declarator still
+refusing to be moved.
 
 ### Why "an array owns its elements" is not the fix
 

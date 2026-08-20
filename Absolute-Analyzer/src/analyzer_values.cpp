@@ -385,15 +385,23 @@ namespace Absolute {
         if (Symbol* symbol = table.Get(id)) {
             symbol->isConst = expr->isConst;
             if (ArrayRank(type) > 0) {
-                bool storageEscapes = globalDeclaration || IsExplicitArrayCopy(expr->value.get());
+                // A declaration that provides the storage itself keeps it: a
+                // sized declarator is the frame's, a global is the module's,
+                // and neither is freed by whoever holds the name. So an
+                // initializer's answer -- that it made an owner -- counts only
+                // where the initializer is what made the storage.
+                const bool declarationOwnsStorage =
+                    !declaratorIndexes.empty() || globalDeclaration;
+                const bool initializerMadeStorage = !declarationOwnsStorage &&
+                    (value.createsArrayOwner || IsExplicitArrayCopy(expr->value.get()));
+                bool storageEscapes = globalDeclaration || initializerMadeStorage;
                 if (const Symbol* source = table.Get(value.symbol)) {
                     storageEscapes = storageEscapes || source->arrayStorageEscapes ||
                         source->scopeDepth == 0 || source->kind == SymbolKind::Function ||
                         source->kind == SymbolKind::Method;
                 }
                 symbol->arrayStorageEscapes = storageEscapes;
-                symbol->ownsArrayStorage = value.createsArrayOwner ||
-                    IsExplicitArrayCopy(expr->value.get());
+                symbol->ownsArrayStorage = initializerMadeStorage;
             }
         }
         if (IsWeakPointerType(type) && value.createsManagedOwner) {
