@@ -1,0 +1,82 @@
+// What a foreach loop iterates over, it also has to let go of.
+//
+// Three things were wrong with a source the loop header made rather than
+// named, and all three were invisible while an array literal lived on the
+// stack and a collection was always a variable.
+//
+//   - An array source was never released. The comment in the backend claimed
+//     it was -- "a temporary source has to outlive the loop and is released
+//     after it" -- but the registration every other borrowing position does
+//     was missing, so `foreach (x in makeArray())` leaked its array on every
+//     pass, and so did a loop over an array literal once a literal became
+//     storage of its own.
+//
+//   - A collection source was evaluated twice. The value of the first
+//     evaluation was never read; what it did was run the header a second
+//     time, so `foreach (x in makeList())` built two lists, iterated the
+//     second, and left the first with nobody holding it.
+//
+//   - Which is also why it leaked: only the second object was borrowed and
+//     registered, and the first was never named at all.
+//
+// Run under AddressSanitizer with the leak check on and with the runtime's
+// managed-pointer report, which is what catches the object nobody deleted.
+
+import "../std/collections/vector.abs";
+
+int32[] threeNumbers(int32 seed) {
+    int32[] made = new int32[3];
+    made[0] = seed;
+    made[1] = seed + 1;
+    made[2] = seed + 2;
+    return made;
+}
+
+class Built {
+    public static int64 made = 0;
+}
+
+std.collections.Vector<int32>* twoNumbers(int32 seed) {
+    Built.made = Built.made + 1;
+    std.collections.Vector<int32>* items = new std.collections.Vector<int32>();
+    items.push(seed);
+    items.push(seed + 1);
+    return items;
+}
+
+int32 main() {
+    // An array the header made, and an array literal, which is the same thing
+    // written differently.
+    int64 total = 0;
+    int32 round = 0;
+    while (round < 2000) {
+        foreach (int32 value in threeNumbers(round)) { total = total + value; }
+        foreach (int32 value in { 1, 2, 3 }) { total = total + value; }
+
+        // Leaving early is the path that skips the loop's own end, so it is
+        // the one worth walking twice.
+        foreach (int32 value in threeNumbers(round)) {
+            if (value > round) { break; }
+            total = total + value;
+        }
+        foreach (int32 value in { 1, 2, 3 }) {
+            if (value == 2) { continue; }
+            total = total + value;
+        }
+        round = round + 1;
+    }
+    assert(total > 0, "the loops ran");
+
+    // A collection the header made: built once, iterated once, deleted once.
+    int32 collections = 0;
+    while (collections < 2000) {
+        foreach (int32 value in twoNumbers(collections)) {
+            total = total + value;
+        }
+        collections = collections + 1;
+    }
+    assert(Built.made == 2000, "the source was evaluated once per loop");
+
+    println("foreach-temporary-source=ok");
+    return 0;
+}
