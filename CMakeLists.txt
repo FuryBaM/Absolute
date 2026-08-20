@@ -3332,7 +3332,9 @@ if(BUILD_TESTING)
                     --compiler "$<TARGET_FILE:Absolute-Compiler>"
                     --work-dir "${CMAKE_BINARY_DIR}/differential/codegen-fuzz/$<CONFIG>"
                     --std-dir "${PROJECT_SOURCE_DIR}/std"
-                    --cases 14
+                    # One case per shape, so a run covers all of them rather
+                    # than repeating a few.
+                    --cases 15
                     --detect-leaks ${ABSOLUTE_SANITIZER_DETECT_LEAKS}
                     --configuration "$<CONFIG>")
             set_tests_properties(absolute.codegen-fuzz PROPERTIES
