@@ -151,6 +151,13 @@ namespace Absolute {
             llvm::Value* assigned = Coerce(
                 Evaluate(source), view.elementType,
                 SemanticType(source), elementTypeName);
+            // A slot is a place the array releases, so what goes into it is
+            // one more name for the bytes unless the expression made them.
+            // Without this a container that stores its parameter -- which is
+            // what every `add` does -- left the slot holding what the
+            // parameter was about to give back.
+            if (elementTypeName == "string")
+                assigned = RetainStoredString(source, assigned);
             TagAccess(builder.CreateStore(assigned, address),
                 TbaaElementAccess(elementTypeName));
             value = nullptr;

@@ -254,6 +254,21 @@ namespace Absolute {
         // second count.
         if (impl->currentReturnTypeName == "string")
             result = impl->RetainStoredString(stmt->expr.get(), result);
+        // The same for an aggregate whose parts are counted. A getter that
+        // hands back a struct read out of a container -- `return
+        // unsafeArrayGet(items, index);` -- copies the bytes and not what they
+        // hold, so the caller's copy named the container's strings without
+        // saying so and released them when it went out of scope.
+        else if (const TypeSemantics returned =
+                impl->SemanticsOfTypeName(impl->currentReturnTypeName);
+            returned.needsDrop && returned.copyable && result &&
+            !impl->CreatesFreshString(stmt->expr.get())) {
+            llvm::AllocaInst* carried = impl->CreateEntryAlloca(
+                *function, result->getType(), "return.retained");
+            impl->builder.CreateStore(result, carried);
+            impl->EmitValueRetain(carried, impl->currentReturnTypeName);
+            result = impl->builder.CreateLoad(result->getType(), carried, "return.counted");
+        }
         impl->ReleaseTemporaryOwners(temporaryMark);
         SymbolId transferredOwner = InvalidSymbolId;
         if (IsStrongManagedPointerTypeName(impl->currentReturnTypeName)) {

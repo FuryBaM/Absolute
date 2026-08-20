@@ -499,6 +499,13 @@ namespace Absolute {
     // back storage something else already holds.
     bool CodeGenerator::Impl::CreatesFreshString(Expression* expression) const {
         if (!expression || !analyzer) return false;
+        // `move(x)` is a call, so it says it made its value -- but for a string
+        // it hands back the one `x` still names. Counting it as fresh would
+        // leave the destination holding a count the source is about to give
+        // back. What `move` means for an owner is a transfer; for a shared
+        // value it is a read, and a read is not fresh.
+        if (auto* call = dynamic_cast<FunctionCallExpr*>(expression))
+            if (IdentifierName(call->base.get()) == "move") return false;
         const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
         return info && info->producesFreshValue;
     }

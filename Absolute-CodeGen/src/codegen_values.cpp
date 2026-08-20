@@ -871,6 +871,13 @@ namespace Absolute {
         if (expr->value) {
             llvm::Value* initial = impl->Coerce(impl->Evaluate(expr->value.get()), llvmType);
             impl->builder.CreateStore(initial, address);
+            // The bytes of the aggregate are copied; what its parts hold is
+            // not, so the parts are told there is a second name. Without this
+            // a `Header entry = entries[index];` released the vector's strings
+            // when the local went out of scope. A value the expression made
+            // itself arrives already counted.
+            if (!impl->CreatesFreshString(expr->value.get()))
+                impl->EmitValueRetain(address, typeName);
         }
         else if (llvm::Function* constructor =
             impl->module->getFunction(impl->ConstructorLinkName(typeName, {}));

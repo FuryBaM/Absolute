@@ -288,8 +288,15 @@ namespace {
         // Name resolution remains the portable blocking part. The resulting
         // address list is consumed by the scheduler thread after this fiber is
         // resumed, while connect itself uses the native socket reactor.
-        return RunNetworkIo<addrinfo*>([&] {
-            return Resolve(host, port, false);
+        //
+        // The name is copied rather than borrowed. What runs here runs on
+        // another thread, and the caller's `const char*` belongs to a string
+        // whose lifetime the caller controls; borrowing it across that
+        // boundary was invisible only while a string was never released at
+        // all. A copy costs one allocation per connect and depends on nothing.
+        const std::string name = host ? host : "";
+        return RunNetworkIo<addrinfo*>([&name, port] {
+            return Resolve(name.c_str(), port, false);
         });
     }
 
@@ -587,8 +594,11 @@ extern "C" void* absolute_net_tcp_connect(const char* host, std::int32_t port) {
 
 extern "C" void* absolute_net_tcp_listen(
     const char* host, std::int32_t port, std::int32_t backlog) {
-    return RunNetworkIo<void*>([&]() -> void* {
-        addrinfo* addresses = Resolve(host, port, true);
+    // Copied for the same reason as in ResolveForConnect: the lambda runs on
+    // the I/O thread and the caller's string is the caller's to release.
+    const std::string name = host ? host : "";
+    return RunNetworkIo<void*>([&name, port, backlog]() -> void* {
+        addrinfo* addresses = Resolve(name.c_str(), port, true);
         if (!addresses) return nullptr;
         NativeSocket listener = InvalidSocket;
         for (addrinfo* address = addresses; address; address = address->ai_next) {
@@ -904,7 +914,9 @@ extern "C" void absolute_net_tcp_close(void* handle) {
 }
 
 extern "C" const char* absolute_net_resolve_host(const char* hostname) {
-    return RunNetworkIo<const char*>([&]() -> const char* {
+    const std::string name = hostname ? hostname : "";
+    return RunNetworkIo<const char*>([&name]() -> const char* {
+        const char* hostname = name.empty() ? nullptr : name.c_str();
         if (!EnsureSockets() || !hostname || !*hostname) {
             lastNetworkError = "hostname is empty";
             return "";
