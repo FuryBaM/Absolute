@@ -956,6 +956,18 @@ class Store {{
     public void keep(Entry entry) {{ held = entry; }}
     public void tag(tuple<int64,string> pair) {{ tagged = pair; }}
 
+    // The same call written as a property and as an indexer, which are the two
+    // that build their own call rather than going through the argument path.
+    public Entry entry {{
+        get {{ return held; }}
+        set {{ held = value; }}
+    }}
+
+    public Entry this[int32 index] {{
+        get {{ return held; }}
+        set {{ held = value; }}
+    }}
+
     public int64 reading() {{
         return (weigh(held) + weighPair(tagged)) % 1000003;
     }}
@@ -1025,6 +1037,10 @@ int32 main() {{
         store.keep(fresh);
         store.tag(labelled(n + 1));
         checksum += store.reading();
+        store.entry = entryOf(n + 10);
+        checksum += weigh(store.entry);
+        store[0] = entryOf(n + 11);
+        checksum += weigh(store[0]);
 
         checksum = checksum % 1000003;
         round += 1;

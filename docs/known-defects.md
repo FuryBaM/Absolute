@@ -175,6 +175,13 @@ the caller's uncollected count now held a slot nobody counted. A slot that is
 released is a name that counts, whatever the element type is; both sides of
 that are now the same rule, and `tests/aggregate-copy.abs` fails without either.
 
+A **property's setter** was the one argument nobody released. A setter is a
+call and its parameter borrows like any other, so `slot.entry = make()` leaves
+the count with the statement that made it -- but the assignment path builds
+that call itself rather than going through the one place every other argument
+is told so, and an indexer's setter is written the same way. A named value was
+fine; only one made on the spot was lost.
+
 And **assignment** was neither half: `a = b` for a struct or a tuple copied the
 bytes without counting what they hold and without releasing what `a` held, so
 one name leaked and two names shared one count. A field assignment released the
@@ -184,8 +191,9 @@ reads as one.
 Pinned by `tests/aggregate-copy.abs` -- a `Headers` class over a
 `Vector<Header>`, cloned two thousand times, with a field read out of a
 temporary, a tuple copied and borrowed two thousand more, a fresh struct handed
-straight to a call, and two thousand rounds of assignment including a struct
-assigned to itself -- under AddressSanitizer with the leak check on,
+straight to a call, two thousand rounds of assignment including a struct
+assigned to itself, and a property and an indexer taking one made on the
+spot -- under AddressSanitizer with the leak check on,
 where a use-after-free and a leak are both answers.
 
 ### Fixed: a value holding an owner was overwritten without being destroyed
