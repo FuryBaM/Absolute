@@ -285,23 +285,12 @@ namespace Absolute {
                     ? returned->symbol : returned->arrayOwnerSymbol;
             }
         }
-        // A struct or class value returned by name is copied out and the local
-        // is then torn down, which took the copy's parts with it. The local
-        // hands them to the copy instead, the same way a returned owner and a
-        // returned array do. After the array case, not before it: an array
-        // type is not a pointer type and does have something to release, so
-        // this test would otherwise answer for it and answer wrongly.
-        // Not a string: that one hands its count on by retaining above, and
-        // taking the local's cleanup away as well would leave two counts and
-        // one release.
-        else if (impl->currentReturnTypeName != "string" &&
-            !IsPointerTypeName(impl->currentReturnTypeName) &&
-            impl->TypeNeedsCleanup(impl->currentReturnTypeName)) {
-            if (Impl::Variable* returned = impl->FindVariable(
-                impl->SemanticSymbol(stmt->expr.get()));
-                returned && returned->ownsAggregateResources)
-                transferredOwner = returned->symbol;
-        }
+        // A returned aggregate is not transferred out of its local: it is
+        // copied, and the copy counts the parts it now names just above. The
+        // local keeps its own count and gives it back the ordinary way. Doing
+        // both -- suppressing the cleanup *and* counting -- leaves two counts
+        // and one release, which is a leak rather than the use-after-free the
+        // suppression was added to stop.
         impl->EmitTransferCleanups(0, true, transferredOwner);
         if (impl->builder.GetInsertBlock()->getTerminator()) return;
         if (impl->currentReturnStorage) {

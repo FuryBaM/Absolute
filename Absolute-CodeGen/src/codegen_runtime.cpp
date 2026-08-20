@@ -504,8 +504,19 @@ namespace Absolute {
         // leave the destination holding a count the source is about to give
         // back. What `move` means for an owner is a transfer; for a shared
         // value it is a read, and a read is not fresh.
-        if (auto* call = dynamic_cast<FunctionCallExpr*>(expression))
-            if (IdentifierName(call->base.get()) == "move") return false;
+        if (auto* call = dynamic_cast<FunctionCallExpr*>(expression)) {
+            const std::string callee = IdentifierName(call->base.get());
+            // These read rather than produce. Syntactically they are calls, so
+            // the analyzer's answer is that they made their value -- but
+            // `unsafeArrayGet` hands back what the array already holds, and
+            // `move` of a shared value hands back what the source still names.
+            // A container's indexer is written on top of the first of them, so
+            // treating it as fresh meant the value it returned was never
+            // counted and the caller's copy released storage the container
+            // still had. `unsafeArrayTake` is not here: it clears the slot,
+            // which is exactly what makes it a producer.
+            if (callee == "move" || callee == "unsafeArrayGet") return false;
+        }
         const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
         return info && info->producesFreshValue;
     }
