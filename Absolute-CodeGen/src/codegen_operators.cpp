@@ -119,6 +119,23 @@ namespace Absolute {
             llvm::FunctionType* compareType = llvm::FunctionType::get(
                 impl->builder.getInt32Ty(),
                 {impl->builder.getPtrTy(), impl->builder.getPtrTy()}, false);
+            // Zero-initialized storage holds a null rather than a pointer to
+            // any bytes: a struct's string field starts that way, and so does
+            // an element of `new S[n]`. `strcmp` reads through what it is
+            // given, so `point.tag == ""` on a fresh struct was a segmentation
+            // fault -- reading a field of a value the program had only just
+            // made. A name holding no bytes is the empty string, which is what
+            // it is compared as. Printing has had the same guard for longer;
+            // it substitutes `<null>` there because that is a debugging
+            // affordance rather than an answer about the value.
+            const auto orEmpty = [&](llvm::Value* text) {
+                return impl->builder.CreateSelect(
+                    impl->builder.CreateIsNull(text, "string.compare.is.null"),
+                    impl->EmitStringConstant("", "empty.text"), text,
+                    "string.compare.text");
+            };
+            left = orEmpty(left);
+            right = orEmpty(right);
             llvm::Value* comparison = impl->builder.CreateCall(
                 impl->module->getOrInsertFunction("strcmp", compareType),
                 {left, right}, "string.compare");

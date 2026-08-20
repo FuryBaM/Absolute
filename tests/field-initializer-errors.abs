@@ -1,0 +1,24 @@
+// A field's initializer was parsed, collected, and then dropped on the floor:
+// an object's storage is zero-initialized and nothing ever ran what was
+// written here, so `private int64 n = 5;` read back 0 and a string field read
+// back null. Wrong answers, no diagnostic, on notation anybody would write.
+//
+// Refused rather than implemented, because what it would mean for a struct is
+// a language question and not a backend one: a struct's storage is made
+// without a constructor, and an element of `new S[n]` is zeroed with nothing
+// to run. A static field's initializer is unaffected -- that one has always
+// worked.
+
+class Counter {
+    private int64 seen = 5;
+    private string label = "start";
+
+    public int64 reading() { return seen; }
+}
+
+int32 main() {
+    Counter* counter = new Counter();
+    println(format("{}", counter.reading()));
+    delete counter;
+    return 0;
+}

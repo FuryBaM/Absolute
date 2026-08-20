@@ -1,0 +1,55 @@
+// The two forms that do work, so the refusal next door cannot spread to them:
+// a static field's initializer, and a field assigned by a constructor.
+
+class Counter {
+    public static int64 seen = 5;
+    public const static int64 stride = 7;
+    public static string label = "static";
+
+    private int64 held;
+    private string text;
+
+    public Counter(int64 start) {
+        held = start;
+        text = format("c{}", start);
+    }
+
+    public int64 reading() { return held; }
+    public string reading_text() { return text; }
+}
+
+struct Point {
+    public int64 x;
+    public string tag;
+}
+
+int32 main() {
+    assert(Counter.seen == 5, "a static field takes its initializer");
+    assert(Counter.stride == 7, "and a constant one");
+    assert(Counter.label == "static", "including a string");
+
+    int32 round = 0;
+    while (round < 2000) {
+        Counter* counter = new Counter(round);
+        assert(counter.reading() == round, "a constructor assigns the field");
+        assert(counter.reading_text() != "", "and one that holds bytes");
+        delete counter;
+
+        // A struct without a constructor starts zeroed, which is what the
+        // refusal next door leaves in place. A string field zeroed that way
+        // holds a null rather than a pointer to any bytes, and comparing it
+        // read through that null until the comparison started guarding it --
+        // a segmentation fault on a value the program had only just made.
+        Point point;
+        assert(point.x == 0, "a struct field starts zeroed");
+        assert(point.tag == "", "and a name holding no bytes is the empty string");
+        assert(point.tag != "x", "which differs from one that has some");
+
+        Point[] block = new Point[2];
+        assert(block[1].tag == "", "an array element is zeroed the same way");
+        round = round + 1;
+    }
+
+    println("field-initializer=ok");
+    return 0;
+}
