@@ -384,6 +384,33 @@ line and column instead of a number followed by a stray identifier.
 
 Covered by `tests/literal-notation.abs` and `tests/literal-notation-errors.abs`.
 
+### Fixed: a foreach loop kept nothing of what it iterated over
+
+Three things, all in the same statement, and all invisible while an array
+literal lived on the stack and a collection was always a variable.
+
+**An array source was never released.** The comment in the backend claimed it
+was -- "a temporary source has to outlive the loop and is released after it" --
+and the scope for it was opened, but the registration every other borrowing
+position does was missing, so nothing was ever put in that scope.
+`foreach (x in makeArray())` leaked its array on every pass, and so did a loop
+over an array literal once a literal became storage of its own.
+
+**A collection source was evaluated twice.**
+
+```absolute
+foreach (int32 value in makeList()) { ... }   // two lists, one iterated
+```
+
+The value of the first evaluation was never read. What it did was run the
+header a second time: two lists were built, the second was iterated, and the
+first was left with nobody holding it -- which is also why it leaked, since
+only the second was borrowed and registered. A side effect in a loop header
+happening twice is the wrong answer underneath the leak.
+
+Pinned by `tests/foreach-temporary-source.abs`, which counts the header's own
+calls as well as running under AddressSanitizer.
+
 ### Fixed: a generic aggregate owned nothing, as far as the analyzer knew
 
 ```absolute

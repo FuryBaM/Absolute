@@ -742,7 +742,20 @@ namespace Absolute {
             impl->context, "foreach.end", function);
 
         if (isArray) {
+            // Cleared first, because a view of a *named* array is read from
+            // the variable without evaluating anything, and the flags would
+            // otherwise still be answering for whatever ran last.
+            impl->valueCreatesArrayOwner = false;
+            impl->valueArrayOwner = nullptr;
             Impl::ArrayView source = impl->ViewOfArray(stmt->iterable.get());
+            // A source the loop header made -- `foreach (x in makeList())`, or
+            // an array literal, which is storage of its own -- is nobody's
+            // otherwise: the scope opened above releases it once the loop is
+            // done with it. The comment there had claimed this for longer than
+            // it was true; the registration every other borrowing position
+            // does was missing here, so every such loop leaked its source.
+            if (impl->valueCreatesArrayOwner && impl->valueArrayOwner)
+                impl->RegisterTemporaryArrayOwner(impl->valueArrayOwner);
             if (source.dimensions.size() != 1)
                 impl->Fail("foreach requires a one-dimensional array or slice");
 
@@ -775,7 +788,14 @@ namespace Absolute {
             impl->BranchIfNeeded(conditionBlock);
             impl->loops.pop_back();
         } else {
-            llvm::Value* iterable = impl->Evaluate(stmt->iterable.get());
+            // Once. The value of this first evaluation was never read, and
+            // evaluating the source a second time ran whatever the header
+            // wrote a second time: `foreach (x in makeList())` built two
+            // lists, iterated the second, and left the first with nobody
+            // holding it -- which the runtime reported as a leaked handle per
+            // loop. ObjectPointer borrows what it evaluates and registers a
+            // fresh owner for the end of the statement, which is what releases
+            // the one list there now is.
             llvm::Value* iterablePtr = impl->ObjectPointer(stmt->iterable.get(), iterableType);
 
             auto callMethod = [&](llvm::Value* obj, const std::string& typeName, const std::string& methodName, const std::string& propertyName = "") -> std::pair<llvm::Value*, std::string> {
