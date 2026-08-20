@@ -1,0 +1,145 @@
+// A value that holds an owner travels with a role; a value that holds a
+// subscriber is copied like any other.
+//
+// The shared-value rules -- a copy counts what its parts hold -- say nothing
+// about a struct holding `Node*`, because there is no such thing as a second
+// name for a unique owner. Such a value is not copyable at all: it moves, and
+// `E_RESOURCE_AGGREGATE_COPY` refuses everything else. What that leaves is the
+// other half of the same question, and two of its answers were wrong.
+//
+// Assignment overwrote such a value without destroying what it held, so
+// `owner = make()` in a loop leaked every object but the last -- loudly, at
+// exit, but only if a program wrote that loop.
+//
+// And a conditional could not produce one at all. Whether an expression may
+// hand on a resource-owning aggregate was decided by asking whether its symbol
+// is a callable, which answers for a direct call and loses the fact for
+// everything else, so `cond ? make(a) : make(b)` was refused with "use
+// move(...)" about a value no name held. It is decided by whether the
+// expression produced the value now -- and for a conditional, by whether both
+// arms did, because an arm that only named its value cannot be made to produce
+// one when there is no second name to have.
+//
+// Run under AddressSanitizer with the leak check on, and with the runtime's
+// own managed-pointer leak report, which is what catches an object nobody
+// destroyed.
+
+class Node {
+    public int64 value;
+    public Node(int64 initial) { value = initial; }
+}
+
+struct Owner {
+    public Node* node;
+    public int64 tag;
+}
+
+struct Watcher {
+    public sub Node* node;
+    public int64 tag;
+}
+
+struct Weakly {
+    public weak Node* node;
+    public int64 tag;
+}
+
+Owner makeOwner(int64 n) {
+    Owner made;
+    made.node = new Node(n);
+    made.tag = n;
+    return move(made);
+}
+
+int64 readOwner(Owner held) { return held.node.value; }
+
+class Keeper {
+    private Owner held;
+    public Keeper(int64 n) { held = makeOwner(n); }
+    public void replace(int64 n) { held = makeOwner(n); }
+    public int64 reading() { return held.node.value; }
+}
+
+int32 main() {
+    // Assignment destroys what the target held. Every round but the last one
+    // would otherwise be an object nobody deletes.
+    Owner target = makeOwner(0);
+    int32 round = 0;
+    while (round < 2000) {
+        target = makeOwner(round);
+        assert(target.node.value == round, "the assignment took the new one");
+        round = round + 1;
+    }
+
+    // The same through a field, where it always worked, so the two agree.
+    Keeper* keeper = new Keeper(0);
+    int32 replaced = 0;
+    while (replaced < 2000) {
+        keeper.replace(replaced);
+        assert(keeper.reading() == replaced, "a field takes the new one too");
+        replaced = replaced + 1;
+    }
+    delete keeper;
+
+    // A conditional whose arms both produce a value: nothing is copied,
+    // because only the arm that ran made anything at all.
+    int32 chosen = 0;
+    while (chosen < 2000) {
+        Owner picked = chosen % 2 == 0
+            ? makeOwner(chosen) : makeOwner(chosen + 1);
+        assert(picked.node.value >= chosen, "a conditional produced one");
+
+        target = chosen % 2 == 0 ? makeOwner(chosen) : makeOwner(chosen + 1);
+        assert(target.node.value >= chosen, "and it can be assigned");
+        chosen = chosen + 1;
+    }
+
+    // Borrowed rather than taken: the parameter reads it and the caller keeps
+    // it, and a value made only in order to pass in is released by the
+    // statement that made it.
+    int32 borrowed = 0;
+    while (borrowed < 2000) {
+        assert(readOwner(target) == target.node.value, "a named one is read");
+        assert(readOwner(makeOwner(borrowed)) == borrowed, "and a fresh one");
+        borrowed = borrowed + 1;
+    }
+
+    // A subscriber is not an owner, so a struct holding one is an ordinary
+    // copyable value: it goes everywhere the shared-value rules go, and it
+    // releases nothing.
+    int32 watched = 0;
+    while (watched < 2000) {
+        Node* node = new Node(watched);
+        Watcher first;
+        first.node = node;
+        first.tag = watched;
+        Watcher second = first;
+        Watcher third = watched % 2 == 0 ? first : second;
+        Watcher[] slots = { first, second };
+        assert(second.node.value == watched, "a copy reads through");
+        assert(third.node.value == watched, "so does a conditional");
+        assert(slots[1].node.value == watched, "and a literal's slot");
+        delete node;
+        watched = watched + 1;
+    }
+
+    // A weak reference held by a struct is cleared when its target goes, and
+    // copying the struct does not change that.
+    int32 weakly = 0;
+    while (weakly < 2000) {
+        Weakly first;
+        {
+            Node* node = new Node(weakly);
+            first.node = node;
+            Weakly second = first;
+            assert(second.node.value == weakly, "a weak copy reads while it can");
+            delete node;
+            assert(second.node == null, "and is cleared with its target");
+        }
+        assert(first.node == null, "the one that outlived it too");
+        weakly = weakly + 1;
+    }
+
+    println("owned-aggregates=ok");
+    return 0;
+}

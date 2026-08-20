@@ -133,10 +133,17 @@ namespace Absolute {
         // for the reason the string comment above gives.
         const TypeSemantics targetSemantics =
             impl->SemanticsOfTypeName(targetTypeName);
-        const bool countsParts = targetSemantics.copyable &&
-            (targetSemantics.dropKind == DropKind::TupleValue ||
-             targetSemantics.dropKind == DropKind::ClassObject ||
-             targetSemantics.dropKind == DropKind::StructObject);
+        // A value whose parts are counted: the target is one more name for
+        // them. A value that travels with a role instead cannot be a second
+        // name at all, so nothing is counted -- but it is still overwritten,
+        // and what it held has to go somewhere. Without the second of these an
+        // `owner = make();` in a loop leaked every object but the last, and
+        // the runtime said so at exit.
+        const bool releasesTarget =
+            targetSemantics.dropKind == DropKind::TupleValue ||
+            targetSemantics.dropKind == DropKind::ClassObject ||
+            targetSemantics.dropKind == DropKind::StructObject;
+        const bool countsParts = targetSemantics.copyable && releasesTarget;
         if (countsParts && assigned && !functionValue &&
             !impl->CreatesFreshString(expr->value.get())) {
             llvm::AllocaInst* counted = impl->CreateEntryAlloca(
@@ -154,7 +161,7 @@ namespace Absolute {
         // taking the new one, the same way a field does -- and so does one
         // holding an aggregate whose parts are counted, which is the same
         // rule read one level up.
-        else if ((targetTypeName == "string" || countsParts) && targetSymbol &&
+        else if ((targetTypeName == "string" || releasesTarget) && targetSymbol &&
             (targetSymbol->kind == SymbolKind::Variable ||
              targetSymbol->kind == SymbolKind::Parameter)) {
             if (const std::string name = IdentifierName(expr->target.get());
