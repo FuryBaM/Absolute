@@ -136,6 +136,16 @@ namespace Absolute {
                 });
                 continue;
             }
+            // The frame's own array: no storage to free, and the elements
+            // released without the owner guard, which is the question a view
+            // answers the other way.
+            if (variable.ownsArrayElements && !transfersThisOwner) {
+                EmitArrayElementCleanup(variable.address, variable.arrayElementType,
+                    variable.arrayDimensions,
+                    ArrayElementTypeName(variable.typeName,
+                        ArrayRankName(variable.typeName)), nullptr);
+                continue;
+            }
             if (variable.ownsAggregateResources && !transfersThisOwner) {
                 emitWhenOwner([&] {
                     EmitValueCleanup(variable.address, variable.typeName);

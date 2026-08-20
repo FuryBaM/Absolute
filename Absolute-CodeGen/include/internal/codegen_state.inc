@@ -15,6 +15,10 @@
             SymbolId symbol = InvalidSymbolId;
             llvm::Value* arrayOwner = nullptr;
             bool ownsArrayStorage = false;
+            // The storage is the frame's and is not freed, but the elements
+            // are this name's to release: `Entry fixed[2] = { ... }` holds
+            // whatever its elements hold, the same as any other array.
+            bool ownsArrayElements = false;
             SymbolId arrayOwnerSymbol = InvalidSymbolId;
             bool ownsAggregateResources = false;
             llvm::AllocaInst* arrayOwnerStorage = nullptr;

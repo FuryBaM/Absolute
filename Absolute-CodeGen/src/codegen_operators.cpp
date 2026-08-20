@@ -339,7 +339,19 @@ namespace Absolute {
                 impl->SemanticType(values[index]), elementTypeName);
             llvm::Value* destination = impl->builder.CreateInBoundsGEP(
                 elementType, address, impl->builder.getInt64(index), "array.literal.element");
+            // A slot the array releases is a name that counts, and a literal's
+            // slots are no different from the ones `unsafeArraySet` writes:
+            // `{ made(), kept }` put a second name on whatever `kept` holds
+            // and said nothing, so releasing the literal took the strings the
+            // local still named. The sanitizer did not see it -- the bytes
+            // were freed and handed straight back out by the next allocation
+            // -- and what caught it was -O0 and -O3 printing different text.
+            if (elementTypeName == "string")
+                initial = impl->RetainStoredString(values[index], initial);
             impl->builder.CreateStore(initial, destination);
+            if (elementTypeName != "string" &&
+                !impl->CreatesFreshString(values[index]))
+                impl->EmitValueRetain(destination, elementTypeName);
         }
 
         std::vector<llvm::Value*> dimensions;
