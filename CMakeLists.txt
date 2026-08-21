@@ -1139,6 +1139,13 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/early-exit-temporaries.abs"
     )
     add_test(
+        NAME absolute.subscriber-fresh-owner-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/subscriber-fresh-owner-errors.abs"
+    )
+    set_tests_properties(absolute.subscriber-fresh-owner-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_SUBSCRIBER_REQUIRES_EXISTING_OWNER"
+    )
+    add_test(
         NAME absolute.default-arguments-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/default-arguments.abs"
     )

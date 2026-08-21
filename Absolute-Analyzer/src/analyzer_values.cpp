@@ -117,6 +117,17 @@ namespace Absolute {
                 "bind the allocation to a managed owner first",
                 "E_WEAK_REQUIRES_EXISTING_OWNER", target.symbol);
         }
+        // A subscriber says someone else owns what it names, and a fresh
+        // allocation is owned by nobody -- so nothing would ever release it.
+        // The same mistake `weak` refuses just above, refused for the other
+        // qualifier that means the same thing about ownership. `T* b = a;`
+        // stays legal: an unqualified name takes a subscriber when what it is
+        // given already has an owner, and this asks whether it does.
+        if (IsSubscriberPointerType(target.type) && value.createsManagedOwner) {
+            Report("subscriber cannot take ownership of a fresh managed allocation; "
+                "bind the allocation to a managed owner first",
+                "E_SUBSCRIBER_REQUIRES_EXISTING_OWNER", target.symbol);
+        }
         if (owningField && ArrayRank(target.type) > 0) {
             bool transfersOwner = value.createsArrayOwner ||
                 IsExplicitArrayCopy(expr->value.get());
@@ -454,6 +465,11 @@ namespace Absolute {
             Report("weak pointer '" + name +
                 "' cannot own a fresh managed allocation; declare a managed owner first",
                 "E_WEAK_REQUIRES_EXISTING_OWNER", id);
+        }
+        if (IsSubscriberPointerType(type) && value.createsManagedOwner) {
+            Report("subscriber '" + name +
+                "' cannot own a fresh managed allocation; declare a managed owner first",
+                "E_SUBSCRIBER_REQUIRES_EXISTING_OWNER", id);
         }
         // `T* b = a;` stays legal: it takes a subscriber, and `isOwner()`
         // answers which of the two a value is. `sub T*` is there to let the

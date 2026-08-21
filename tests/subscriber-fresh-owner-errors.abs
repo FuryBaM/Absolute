@@ -1,0 +1,40 @@
+// A subscriber names something someone else owns.
+//
+// `weak T*` already refused to be given a fresh allocation
+// (E_WEAK_REQUIRES_EXISTING_OWNER): nothing would ever release it, because a
+// weak name releases nothing by definition. `sub T*` says the same thing about
+// ownership and refused nothing, so
+//
+//     class Tree { public sub Node* root; }
+//     tree.root = new Node();
+//
+// compiled, ran, and printed "memory leak detected for handle N" at exit --
+// the runtime's own check, on a program the analyzer had accepted.
+//
+// The positive cases are in tests/subscriber-pointers.abs: binding a
+// subscriber to an owner that exists is what the qualifier is for, and `T* b =
+// a;` still takes a subscriber without saying so.
+
+class Node {
+    public int32 value;
+    public Node(int32 initial) { value = initial; }
+}
+
+class Tree {
+    public sub Node* root;
+    public Tree() { root = null; }
+}
+
+int32 main() {
+    // A declaration.
+    sub Node* fresh = new Node(1);
+
+    // A field.
+    Tree* tree = new Tree();
+    tree.root = new Node(2);
+
+    // The weak form, which has always been refused, so the two read alike.
+    weak Node* watched = new Node(3);
+
+    return fresh.value + tree.root.value + watched.value;
+}

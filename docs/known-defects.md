@@ -24,7 +24,7 @@ An empty list is not the same as no defects, and this file should not be read
 as one. Most of what is recorded below was found *after* the list first
 emptied, by running programs rather than by reading it -- the standard
 library's own containers under AddressSanitizer, with every string built at
-runtime. The last such sweep found seven, six of them in the same gap, and
+runtime. The last such sweep found eight, six of them in the same gap, and
 section 1's last entry is that sweep. The place to look next is section 5,
 which says where not to.
 
@@ -657,6 +657,23 @@ why this was only visible with a `return` or a `throw` in the body. The
 releases are emitted rather than popped off the list: a return is one path out
 of the statement, and the paths that do reach its end still have to release
 there. Pinned by `tests/early-exit-temporaries.abs`.
+
+And one the same probes turned up on the other side of the model. **A
+subscriber could be given a fresh allocation.** `weak T*` already refused it --
+nothing would ever release what a weak name holds -- but `sub T*` says the same
+thing about ownership and refused nothing, so
+
+```absolute
+class Tree { public sub Node* root; }
+tree.root = new Node();
+```
+
+compiled, ran, and printed "memory leak detected for handle N" at exit: the
+runtime's own check, on a program the analyzer had accepted. It is
+`E_SUBSCRIBER_REQUIRES_EXISTING_OWNER` now, the same rule with the same wording
+as the weak one. `T* b = a;` is unchanged -- an unqualified name takes a
+subscriber when what it is given already has an owner, and the rule asks
+whether it does. See `tests/subscriber-fresh-owner-errors.abs`.
 
 The shape of every fix is the same, and it is the shape the section above
 describes: the rule already existed and the list of places it applied was
