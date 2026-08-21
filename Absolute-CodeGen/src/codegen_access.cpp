@@ -588,10 +588,8 @@ namespace Absolute {
             const Symbol* symbol = info ? impl->analyzer->GetSymbol(info->symbol) : nullptr;
             if (symbol && symbol->kind == SymbolKind::Indexer) {
                 if (impl->addressMode) impl->Fail("an indexer is not addressable");
-                std::vector<llvm::Value*> arguments;
-                arguments.reserve(expr->indexes.size());
-                for (const auto& index : expr->indexes)
-                    arguments.push_back(impl->Evaluate(index.get()));
+                std::vector<llvm::Value*> arguments =
+                    impl->EvaluateIndexArguments(expr->indexes);
                 impl->value = impl->EmitPropertyAccessor(
                     expr->base.get(), impl->SemanticType(expr->base.get()),
                     CallableKey(IndexerGetterName(), info->parameterTypes), arguments);

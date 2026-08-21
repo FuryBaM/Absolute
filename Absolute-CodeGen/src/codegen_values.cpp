@@ -43,10 +43,9 @@ namespace Absolute {
             auto* indexer = dynamic_cast<ArrayAccessExpr*>(expr->target.get());
             if (!indexer) impl->Fail("indexer assignment requires an indexed target");
             const std::string receiverType = impl->SemanticType(indexer->base.get());
-            std::vector<llvm::Value*> arguments;
+            std::vector<llvm::Value*> arguments =
+                impl->EvaluateIndexArguments(indexer->indexes);
             arguments.reserve(indexer->indexes.size() + 1);
-            for (const auto& index : indexer->indexes)
-                arguments.push_back(impl->Evaluate(index.get()));
             llvm::Value* assigned = impl->Evaluate(expr->value.get());
             // The same for an indexer's setter, which is the same kind of call
             // written with brackets.
@@ -1092,9 +1091,8 @@ namespace Absolute {
             if (operandSymbol && operandSymbol->kind == SymbolKind::Indexer) {
                 auto* indexer = dynamic_cast<ArrayAccessExpr*>(expr->operand.get());
                 if (!indexer) impl->Fail("indexer increment requires an indexed operand");
-                std::vector<llvm::Value*> arguments;
-                for (const auto& index : indexer->indexes)
-                    arguments.push_back(impl->Evaluate(index.get()));
+                std::vector<llvm::Value*> arguments =
+                    impl->EvaluateIndexArguments(indexer->indexes);
                 const std::string receiverType = impl->SemanticType(indexer->base.get());
                 llvm::Value* current = impl->EmitPropertyAccessor(
                     indexer->base.get(), receiverType,
@@ -1163,9 +1161,8 @@ namespace Absolute {
         if (operandSymbol && operandSymbol->kind == SymbolKind::Indexer) {
             auto* indexer = dynamic_cast<ArrayAccessExpr*>(expr->operand.get());
             if (!indexer) impl->Fail("indexer increment requires an indexed operand");
-            std::vector<llvm::Value*> arguments;
-            for (const auto& index : indexer->indexes)
-                arguments.push_back(impl->Evaluate(index.get()));
+            std::vector<llvm::Value*> arguments =
+                impl->EvaluateIndexArguments(indexer->indexes);
             const std::string receiverType = impl->SemanticType(indexer->base.get());
             llvm::Value* current = impl->EmitPropertyAccessor(
                 indexer->base.get(), receiverType,

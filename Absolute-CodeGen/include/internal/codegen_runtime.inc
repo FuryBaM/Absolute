@@ -86,6 +86,14 @@
         void RegisterIfFreshString(Expression* expression, llvm::Value* value);
         void RegisterFreshValueArgument(Expression* expression, llvm::Value* value);
 
+        // An indexer is a call written with brackets, and its indexes are its
+        // arguments: a string made only in order to look something up is
+        // released with the statement, the same as one passed to a method.
+        // Every bracket form goes through here -- read, assign, compound
+        // assign, increment -- so there is one place that answers it.
+        std::vector<llvm::Value*> EvaluateIndexArguments(
+            const std::vector<std::unique_ptr<Expression>>& indexes);
+
         // One arm of a conditional, made to hold a count of its own so that
         // both arms hand the same thing to the merge.
         llvm::Value* CountedArmValue(

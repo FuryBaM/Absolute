@@ -672,6 +672,19 @@ namespace Absolute {
         RegisterTemporaryAggregate(spill, typeName);
     }
 
+    std::vector<llvm::Value*> CodeGenerator::Impl::EvaluateIndexArguments(
+        const std::vector<std::unique_ptr<Expression>>& indexes) {
+        std::vector<llvm::Value*> arguments;
+        arguments.reserve(indexes.size());
+        for (const auto& index : indexes) {
+            llvm::Value* argument = Evaluate(index.get());
+            RegisterIfFreshString(index.get(), argument);
+            RegisterFreshValueArgument(index.get(), argument);
+            arguments.push_back(argument);
+        }
+        return arguments;
+    }
+
     // A conditional hands back one value from two paths, and the two paths
     // need not agree about who is holding it: `cond ? format(...) : name` is a
     // count on one side and a borrow on the other. Nothing downstream can ask
