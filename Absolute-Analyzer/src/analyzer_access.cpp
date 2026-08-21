@@ -264,7 +264,7 @@ namespace Absolute {
                     Report("constructor argument " + std::to_string(i + 1) + " has type '" + argument.type +
                         "', expected '" + expectedValueType + "'",
                             "E_CONSTRUCTOR_ARGUMENT_TYPE");
-                CheckManagedMoveArgument(argument, expectedType, i, "constructor");
+                CheckManagedArgumentOwnership(argument, expectedType, i, "constructor");
                 if (IsValueReferenceType(expectedType) &&
                     !IsConstValueReferenceType(expectedType)) {
                     if (!argument.isLValue)
@@ -321,7 +321,7 @@ namespace Absolute {
                         " argument " + std::to_string(index + 1) +
                         " has type '" + argument.type + "', expected '" + expected + "'",
                         cFunctionValue ? "E_CFUNC_ARGUMENT" : "E_FUNCTION_VALUE_ARGUMENT");
-                CheckManagedMoveArgument(argument, expected, index, "function value");
+                CheckManagedArgumentOwnership(argument, expected, index, "function value");
                 if (IsTaskType(expected)) {
                     if (argument.taskState == TaskState::Awaited) {
                         Report("task argument " + std::to_string(index + 1) +
@@ -1172,7 +1172,7 @@ namespace Absolute {
                         }
                     }
                 }
-                CheckManagedMoveArgument(argument, parameterType, i, "function");
+                CheckManagedArgumentOwnership(argument, parameterType, i, "function");
                 if (IsTaskType(parameterValueType)) {
                     if (argument.taskState == TaskState::Awaited) {
                         Report("task argument " + std::to_string(i + 1) +

@@ -825,7 +825,7 @@ namespace Absolute {
                     Report("constructor argument " + std::to_string(index + 1) + " has type '" +
                         value.type + "', expected '" + expected + "'",
                             "E_CONSTRUCTOR_ARGUMENT_TYPE");
-                CheckManagedMoveArgument(value, declaredExpected, index, "constructor");
+                CheckManagedArgumentOwnership(value, declaredExpected, index, "constructor");
             }
             if (selected)
                 RecordOwnershipCall(selected->symbol, evaluated, parameters,
@@ -849,7 +849,7 @@ namespace Absolute {
                 Report("constructor argument " + std::to_string(index + 1) + " has type '" +
                     value.type + "', expected '" + expected + "'",
                         "E_CONSTRUCTOR_ARGUMENT_TYPE");
-            CheckManagedMoveArgument(value, expected, index, "constructor");
+            CheckManagedArgumentOwnership(value, expected, index, "constructor");
         }
         Result allocation{InvalidSymbolId,
             (rawAllocation ? "raw " : "") + constructedType + "*", false,

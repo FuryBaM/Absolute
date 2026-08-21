@@ -671,9 +671,18 @@ tree.root = new Node();
 compiled, ran, and printed "memory leak detected for handle N" at exit: the
 runtime's own check, on a program the analyzer had accepted. It is
 `E_SUBSCRIBER_REQUIRES_EXISTING_OWNER` now, the same rule with the same wording
-as the weak one. `T* b = a;` is unchanged -- an unqualified name takes a
-subscriber when what it is given already has an owner, and the rule asks
-whether it does. See `tests/subscriber-fresh-owner-errors.abs`.
+as the weak one.
+
+An argument is the third place a value is bound to a name, and it refused
+nothing for *either* qualifier: `takesSub(new Node())` and
+`takesWeak(new Node())` both compiled and both leaked. The hook for it was
+already there and empty -- `CheckManagedArgumentOwnership`, called from all six
+places a call binds arguments -- so the rule is written once and reaches a
+function, a method, a constructor, a base call and a function value.
+
+`T* b = a;` is unchanged: an unqualified name takes a subscriber when what it
+is given already has an owner and takes the owner when it does not, and the
+rule asks which. See `tests/subscriber-fresh-owner-errors.abs`.
 
 The shape of every fix is the same, and it is the shape the section above
 describes: the rule already existed and the list of places it applied was

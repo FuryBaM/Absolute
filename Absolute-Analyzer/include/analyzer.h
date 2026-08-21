@@ -684,7 +684,7 @@ namespace Absolute {
         void MergeValueFlowPaths(const ValueFlowMap& base, const std::vector<ValueFlowMap>& paths);
         void RegisterFlowSymbol(SymbolId id, ValueFlowState state);
         void TransferManagedAliases(SymbolId previousOwner, SymbolId nextOwner);
-        void CheckManagedMoveArgument(const Result& argument,
+        void CheckManagedArgumentOwnership(const Result& argument,
             const std::string& parameterType, size_t index,
             const std::string& context);
         bool ParameterSupportsOwnership(const std::string& type) const;

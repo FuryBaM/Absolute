@@ -674,13 +674,29 @@ namespace Absolute {
         }
     }
 
-    void Analyzer::CheckManagedMoveArgument(
+    // What a parameter's ownership qualifier says about the value it is given.
+    // A subscriber and a weak name both mean "someone else owns this", and
+    // neither releases anything -- so a fresh allocation handed to one is
+    // owned by nobody and released by nobody. A declaration and an assignment
+    // have refused that for `weak` all along; this is the third place a value
+    // is bound to a name, and it refused nothing, so `takesSub(new Node())`
+    // compiled and the runtime's own check printed the handle at exit.
+    //
+    // An unqualified `T*` parameter is untouched: it takes a subscriber when
+    // what it is given has an owner and takes the owner when it does not,
+    // which is the ordinary way an argument is passed.
+    void Analyzer::CheckManagedArgumentOwnership(
         const Result& argument, const std::string& parameterType,
         size_t index, const std::string& context) {
-        (void)argument;
-        (void)parameterType;
-        (void)index;
-        (void)context;
+        if (!argument.createsManagedOwner) return;
+        const std::string type = ValueReferenceBaseType(parameterType);
+        const bool weak = IsWeakPointerType(type);
+        if (!weak && !IsSubscriberPointerType(type)) return;
+        Report(context + " argument " + std::to_string(index + 1) + " gives a fresh "
+            "managed allocation to a " + (weak ? "weak pointer" : "subscriber") +
+            "; bind the allocation to a managed owner first",
+            weak ? "E_WEAK_REQUIRES_EXISTING_OWNER"
+                 : "E_SUBSCRIBER_REQUIRES_EXISTING_OWNER", argument.symbol);
     }
 
     bool Analyzer::ParameterSupportsOwnership(const std::string& declaredType) const {
