@@ -114,6 +114,14 @@ namespace Absolute {
     void CodeGenerator::Impl::EmitExceptionPropagation(SymbolId transferredOwner) {
         const size_t destinationScope = exceptionTargets.empty()
             ? 0 : exceptionTargets.back().scopeCount;
+        // The statements being left made temporaries, and a throw reaches the
+        // end of none of them: `foreach (Row row in source.all) { throw ... }`
+        // walks an array the loop made and nobody else names. Emitted rather
+        // than popped, because the paths that do reach the end of those
+        // statements still release them there.
+        EmitTemporaryOwnerCleanups(exceptionTargets.empty()
+            ? 0 : exceptionTargets.back().temporaryCount);
+        if (!builder.GetInsertBlock() || builder.GetInsertBlock()->getTerminator()) return;
         EmitTransferCleanups(destinationScope, exceptionTargets.empty(), transferredOwner);
         if (!builder.GetInsertBlock() || builder.GetInsertBlock()->getTerminator()) return;
         if (!exceptionTargets.empty()) {

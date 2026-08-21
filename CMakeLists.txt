@@ -1135,6 +1135,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/accessor-owner-transfer.abs"
     )
     add_test(
+        NAME absolute.early-exit-temporaries-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/early-exit-temporaries.abs"
+    )
+    add_test(
         NAME absolute.default-arguments-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/default-arguments.abs"
     )
@@ -3607,7 +3611,8 @@ if(BUILD_TESTING)
             "closure-capture-lifetime=closure-capture-lifetime=ok"
             "closure-value-lifetime=closure-value-lifetime=ok"
             "array-accessor-owner=array-accessor-owner=ok"
-            "accessor-owner-transfer=accessor-owner-transfer=ok")
+            "accessor-owner-transfer=accessor-owner-transfer=ok"
+            "early-exit-temporaries=early-exit-temporaries=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those

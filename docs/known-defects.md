@@ -20,6 +20,14 @@ None of this section's own. Everything it held has been closed, and each entry
 records what the fix was, so a regression is recognizable rather than
 rediscovered.
 
+An empty list is not the same as no defects, and this file should not be read
+as one. Most of what is recorded below was found *after* the list first
+emptied, by running programs rather than by reading it -- the standard
+library's own containers under AddressSanitizer, with every string built at
+runtime. The last such sweep found seven, six of them in the same gap, and
+section 1's last entry is that sweep. The place to look next is section 5,
+which says where not to.
+
 Nothing is open elsewhere either. The two things that were -- a name in the
 shared type model answering two questions, and what slicing a temporary array
 left behind -- are recorded as fixed in sections 2a and 15.
@@ -604,6 +612,66 @@ The two follow-ups this entry left behind are done:
   variable and its type, with a file, line and column.
 - **The limitation.** `docs/module-scope.md` states what module scope accepts,
   what it refuses and why, and where the rest belongs.
+
+### Fixed: an accessor is a call, and six places did not know it
+
+A property and an indexer are calls written without parentheses. Six defects
+lived in the gap between that fact and code that asked for the *shape* of an
+expression instead. They were found by running the standard library's own
+containers under AddressSanitizer with strings built at runtime -- a literal is
+never released, so a corpus of literals proves nothing -- and each one is now a
+test that fails when its fix is removed.
+
+| What was wrong | Where it showed |
+|---|---|
+| `copy` of an array counted an element that *was* a string, not one that *held* one | `Map<string, string>`: `ensureUnshared` copies the entry array, so iterating and then removing a key read a key the snapshot had already released |
+| an indexer's index argument was never released | `table[format("key-{}", i)]` leaked one string per lookup -- per use, not per program |
+| a closure's environment counted a captured closure and nothing else | a captured string was freed by the scope it came from; the environment held the freed bytes for as long as the closure lived |
+| a lambda written as one expression closed no scopes | every count its parameters took on the way in was kept for the life of the program |
+| an array from a property or an indexer transferred no owner | `holder.rows` handed back storage nobody was recorded as holding |
+| a `T*` from a property or an indexer was a subscriber | `delete` on it was refused, and the runtime's own leak check named the handle at exit |
+
+Two more came out of the same sweep and are part of the fixes above: a closure
+had no size, so `new func<int32, int32>[3]` failed to build at all while a
+field of the same type had always worked; and a closure read out of a container
+was counted twice, because "did this expression produce its value" had two
+answers for a closure -- the analyzer's and a backend flag's -- which disagreed
+exactly where `Vector<func<string, string>>` keeps its elements.
+
+And one that is next door rather than in the gap, found by the same probes.
+**A temporary belongs to the statement that made it, and two ways out of a
+statement never reached its end.** A `return` leaves every statement still open
+around it; a `throw` leaves every statement between itself and the handler.
+Neither released what those statements had made, so
+
+```absolute
+foreach (Row row in source.all) {
+    if (row.key != "") { return 1; }
+}
+```
+
+leaked the array the loop walked and every string in it, once per call.
+`break` and `continue` were always right, because both branch to a block
+*inside* the loop statement and the release at its end still runs -- which is
+why this was only visible with a `return` or a `throw` in the body. The
+releases are emitted rather than popped off the list: a return is one path out
+of the statement, and the paths that do reach its end still have to release
+there. Pinned by `tests/early-exit-temporaries.abs`.
+
+The shape of every fix is the same, and it is the shape the section above
+describes: the rule already existed and the list of places it applied was
+short. `EmitArrayElementRetain` is the mirror of `EmitArrayElementCleanup`;
+`EvaluateIndexArguments` is the one place all four bracket forms evaluate an
+index; `EmitCallableReturn` is what both bodies a callable can have end in;
+`AccessorValue` is what all four ways of reaching a property or an indexer
+produce. Each replaced two answers to one question with one.
+
+Pinned by `tests/array-copy-parts.abs`,
+`tests/indexer-argument-lifetime.abs`, `tests/closure-capture-lifetime.abs`,
+`tests/closure-value-lifetime.abs`, `tests/array-accessor-owner.abs`,
+`tests/accessor-owner-transfer.abs` and `tests/early-exit-temporaries.abs`, all
+seven under AddressSanitizer with the leak check on, plus the `handing` shape
+in `tools/testing/codegen_fuzz.py`.
 
 ## 2. Missing features that fail loudly
 

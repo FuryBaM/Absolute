@@ -1,0 +1,162 @@
+// What a statement made, when nothing reaches the end of that statement.
+//
+// A temporary belongs to the statement that made it and is released when the
+// statement ends: `foreach (Row row in source.all)` walks an array the loop
+// built and nobody else names, and the loop's last block gives it back. Two
+// ways out of a statement do not reach that block. A `return` leaves every
+// statement still open around it, and a `throw` leaves every statement between
+// itself and the handler. Neither released anything either had made, so a loop
+// over an accessor's array leaked the array and every string in it -- once per
+// call, which is what made it grow.
+//
+// `break` and `continue` were always right: both branch to a block inside the
+// loop statement, so the release at its end still runs. That is why this was
+// only visible with a `return` or a `throw` in the body.
+//
+// The releases are emitted rather than popped off the list. A return inside a
+// loop is one path out of that statement; the paths that do reach its end
+// still have to release there, and forgetting would trade a leak for a double
+// free.
+
+struct Row {
+    public string key;
+    public string value;
+}
+
+class Source {
+    private int32 seed;
+
+    public Source(int32 given) { seed = given; }
+
+    public Row[] all {
+        get {
+            Row[] made = new Row[3];
+            int32 index = 0;
+            while (index < 3) {
+                Row one;
+                one.key = format("k-{}-{}", seed, index);
+                one.value = format("v-{}-{}", seed, index);
+                made[index] = one;
+                index = index + 1;
+            }
+            return copy(made);
+        }
+    }
+
+    public string[] texts {
+        get {
+            string[] made = new string[3];
+            int32 index = 0;
+            while (index < 3) {
+                made[index] = format("t-{}-{}", seed, index);
+                index = index + 1;
+            }
+            return copy(made);
+        }
+    }
+}
+
+string[] texts(int32 seed) {
+    string[] made = new string[3];
+    int32 index = 0;
+    while (index < 3) {
+        made[index] = format("f-{}-{}", seed, index);
+        index = index + 1;
+    }
+    return made;
+}
+
+// A return out of a loop over an array the loop itself made.
+int32 firstOf(int32 seed) {
+    foreach (string text in texts(seed)) {
+        if (text != "") { return 1; }
+    }
+    return 0;
+}
+
+// The same, through an accessor rather than a call.
+int32 firstRow(Source* source) {
+    foreach (Row row in source.all) {
+        if (row.key != "") { return 2; }
+    }
+    return 0;
+}
+
+// A return out of two nested loops at once, each over its own temporary.
+int32 nested(Source* source, int32 seed) {
+    foreach (Row row in source.all) {
+        foreach (string text in texts(seed)) {
+            if (text != "" && row.value != "") { return 3; }
+        }
+    }
+    return 0;
+}
+
+// A return whose value is read out of the array being walked, so the count it
+// takes has to survive the release the return emits.
+string carried(int32 seed) {
+    foreach (string text in texts(seed)) {
+        return text;
+    }
+    return "";
+}
+
+// A throw out of a loop, caught outside the function.
+int32 thrower(Source* source) {
+    foreach (Row row in source.all) {
+        throw new Error("stop");
+    }
+    return 0;
+}
+
+// A throw out of a loop, caught in the same function, with the loop's
+// temporary made inside the try.
+int32 caught(Source* source, int32 seed) {
+    int32 total = 0;
+    try {
+        foreach (string text in source.texts) {
+            foreach (string other in texts(seed)) {
+                throw new Error("inner");
+            }
+        }
+    }
+    catch (Error* error) {
+        total = total + 4;
+    }
+    return total;
+}
+
+// break and continue, which always reached the end of the statement.
+int32 stopped(int32 seed) {
+    int32 total = 0;
+    foreach (string text in texts(seed)) {
+        if (text == "") { continue; }
+        total = total + 1;
+        break;
+    }
+    return total;
+}
+
+int32 main() {
+    int32 total = 0;
+
+    // Enough rounds that an array kept per call is a heap that grows.
+    int32 round = 0;
+    while (round < 1200) {
+        Source* source = new Source(round);
+        total = total + firstOf(round);
+        total = total + firstRow(source);
+        total = total + nested(source, round);
+        total = total + stopped(round);
+        total = total + caught(source, round);
+        try { total = total + thrower(source); }
+        catch (Error* error) { total = total + 5; }
+        assert(carried(round) != "", "the value returned out of the loop is intact");
+        delete source;
+        round = round + 1;
+    }
+    assert(total == 1200 * 16, "every round took the same path");
+
+    println("early-exit-temporaries=ok");
+    return 0;
+}

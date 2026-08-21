@@ -751,6 +751,13 @@ namespace Absolute {
         Expression* source, llvm::Value* result, size_t temporaryMark) {
         result = RetainReturnedValue(source, result);
         ReleaseTemporaryOwners(temporaryMark);
+        // And what every statement still open around this one made. A return
+        // leaves them all: `foreach (string t in texts()) { return 1; }` walks
+        // an array the loop made and nobody else names, and the loop's own
+        // release is on a path this return does not take. Emitted rather than
+        // popped, because the paths that do reach the end of that statement
+        // still release it there.
+        EmitTemporaryOwnerCleanups(0);
         SymbolId transferredOwner = InvalidSymbolId;
         if (IsStrongManagedPointerTypeName(currentReturnTypeName)) {
             if (dynamic_cast<IdentifierExpr*>(source)) {
@@ -780,6 +787,11 @@ namespace Absolute {
     }
 
     void CodeGenerator::Impl::ReleaseTemporaryOwners(size_t mark) {
+        EmitTemporaryOwnerCleanups(mark);
+        temporaryManagedOwners.resize(mark);
+    }
+
+    void CodeGenerator::Impl::EmitTemporaryOwnerCleanups(size_t mark) {
         if (temporaryManagedOwners.size() <= mark) return;
         // Nothing may be emitted into a block a terminator has already closed,
         // so a scope has to close before the return or branch its statement
@@ -810,7 +822,6 @@ namespace Absolute {
                 builder.CreateCall(ManagedDestroy(), {temporary.handle});
             }
         }
-        temporaryManagedOwners.resize(mark);
     }
 
     llvm::StructType* CodeGenerator::Impl::ClosureObjectType() {

@@ -123,6 +123,12 @@
         llvm::Value* RetainStoredString(Expression* source, llvm::Value* value);
 
         void ReleaseTemporaryOwners(size_t mark);
+        // The same releases, emitted without taking the temporaries off the
+        // list: a `return` inside a loop leaves the statement that made them
+        // on one path only, and the other paths still reach the end of that
+        // statement and release them there. Popping here would make the
+        // ordinary path forget.
+        void EmitTemporaryOwnerCleanups(size_t mark);
 
         // Destroys, at the end of the statement it was opened for, every owner
         // registered inside it. Statements nest, so each scope only releases

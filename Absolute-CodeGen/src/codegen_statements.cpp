@@ -471,7 +471,8 @@ namespace Absolute {
         const size_t tryScope = impl->scopes.size();
 
         if (stmt->finallyBody) impl->finallyTargets.push_back({stmt, tryScope});
-        impl->exceptionTargets.push_back({handlerBlock, tryScope});
+        impl->exceptionTargets.push_back({handlerBlock, tryScope,
+            impl->temporaryManagedOwners.size()});
         if (stmt->body) stmt->body->Accept(*this);
         impl->exceptionTargets.pop_back();
         impl->BranchIfNeeded(completionBlock);
