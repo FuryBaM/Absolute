@@ -248,58 +248,14 @@ namespace Absolute {
         llvm::Value* result = impl->Coerce(
             impl->Evaluate(stmt->expr.get()), expectedReturn,
             impl->SemanticType(stmt->expr.get()), impl->currentReturnTypeName);
-        // A returned string is handed to the caller, who releases it. What is
-        // returned is usually a local or a field -- storage something here
-        // still names -- and the cleanup below is about to let that name go,
-        // so the value has to be held once more on its way out. A string the
-        // return expression made itself is already held once and needs no
-        // second count.
-        if (impl->currentReturnTypeName == "string")
-            result = impl->RetainStoredString(stmt->expr.get(), result);
-        // The same for an aggregate whose parts are counted. A getter that
-        // hands back a struct read out of a container -- `return
-        // unsafeArrayGet(items, index);` -- copies the bytes and not what they
-        // hold, so the caller's copy named the container's strings without
-        // saying so and released them when it went out of scope.
-        else if (const TypeSemantics returned =
-                impl->SemanticsOfTypeName(impl->currentReturnTypeName);
-            returned.needsDrop && returned.copyable && result &&
-            !impl->CreatesFreshString(stmt->expr.get())) {
-            llvm::AllocaInst* carried = impl->CreateEntryAlloca(
-                *function, result->getType(), "return.retained");
-            impl->builder.CreateStore(result, carried);
-            impl->EmitValueRetain(carried, impl->currentReturnTypeName);
-            result = impl->builder.CreateLoad(result->getType(), carried, "return.counted");
-        }
-        impl->ReleaseTemporaryOwners(temporaryMark);
-        SymbolId transferredOwner = InvalidSymbolId;
-        if (IsStrongManagedPointerTypeName(impl->currentReturnTypeName)) {
-            const auto* returnedIdentifier = dynamic_cast<IdentifierExpr*>(stmt->expr.get());
-            if (returnedIdentifier) {
-                Impl::Variable& returned = impl->RequireVariable(returnedIdentifier->name);
-                if (returned.managedOwner) transferredOwner = returned.symbol;
-            }
-        }
-        else if (ArrayRankName(impl->currentReturnTypeName) > 0) {
-            if (Impl::Variable* returned = impl->FindVariable(
-                impl->SemanticSymbol(stmt->expr.get()))) {
-                transferredOwner = returned->ownsArrayStorage
-                    ? returned->symbol : returned->arrayOwnerSymbol;
-            }
-        }
-        // A returned aggregate is not transferred out of its local: it is
-        // copied, and the copy counts the parts it now names just above. The
-        // local keeps its own count and gives it back the ordinary way. Doing
-        // both -- suppressing the cleanup *and* counting -- leaves two counts
-        // and one release, which is a leak rather than the use-after-free the
-        // suppression was added to stop.
-        impl->EmitTransferCleanups(0, true, transferredOwner);
-        if (impl->builder.GetInsertBlock()->getTerminator()) return;
-        if (impl->currentReturnStorage) {
-            impl->builder.CreateStore(result, impl->currentReturnStorage);
-            impl->builder.CreateRetVoid();
-        }
-        else impl->builder.CreateRet(result);
+        // A returned string is handed to the caller, who releases it -- and so
+        // is an aggregate whose parts are counted. A getter that hands back a
+        // struct read out of a container (`return unsafeArrayGet(items,
+        // index);`) copies the bytes and not what they hold, so the caller's
+        // copy named the container's strings without saying so and released
+        // them when it went out of scope. Both are the one question asked in
+        // RetainReturnedValue, which a lambda's expression body asks too.
+        impl->EmitCallableReturn(stmt->expr.get(), result, temporaryMark);
     }
 
     void CodeGenerator::Visit(AssignmentStmt* stmt) {
@@ -515,7 +471,8 @@ namespace Absolute {
         const size_t tryScope = impl->scopes.size();
 
         if (stmt->finallyBody) impl->finallyTargets.push_back({stmt, tryScope});
-        impl->exceptionTargets.push_back({handlerBlock, tryScope});
+        impl->exceptionTargets.push_back({handlerBlock, tryScope,
+            impl->temporaryManagedOwners.size()});
         if (stmt->body) stmt->body->Accept(*this);
         impl->exceptionTargets.pop_back();
         impl->BranchIfNeeded(completionBlock);

@@ -1,0 +1,110 @@
+// An indexer is a call written with brackets.
+//
+// Every other call released the arguments the caller built only in order to
+// make it: `lookup(format(...))` gave the string back with the statement. The
+// bracket form did not -- four places evaluated an index and handed it
+// straight to the accessor, and none of them said the caller had made it. So
+// `table[format("key-{}", i)]` leaked one string per lookup, and the leak was
+// per *use* rather than per program, which is what made it grow.
+//
+// All four bracket forms go through one place now, and this file is each of
+// them: a read, a store, a compound store, and an increment. The counts are
+// what is under test -- the values returned are ordinary -- so every index is
+// built at runtime, because a literal is never released and would prove
+// nothing.
+
+class Counters {
+    private string[] keys;
+    private int32[] values;
+    private int32 used;
+
+    public Counters() {
+        keys = new string[8];
+        values = new int32[8];
+        used = 0;
+    }
+
+    private int32 slot(string key) {
+        int32 i = 0;
+        while (i < used) {
+            if (keys[i] == key) { return i; }
+            i = i + 1;
+        }
+        keys[used] = key;
+        values[used] = 0;
+        used = used + 1;
+        return used - 1;
+    }
+
+    public int32 count { get { return used; } }
+
+    public int32 this[string key] {
+        get { return values[slot(key)]; }
+        set { values[slot(key)] = value; }
+    }
+}
+
+// Two indexes, so the loop that walks them is walked more than once.
+class Grid {
+    private string[] labels;
+
+    public Grid() {
+        labels = new string[4];
+        int32 i = 0;
+        while (i < 4) { labels[i] = ""; i = i + 1; }
+    }
+
+    public string this[string row, int32 column] {
+        get { return labels[column]; }
+        set { labels[column] = format("{}:{}", row, value); }
+    }
+}
+
+string key(int32 index) {
+    return format("key-{}", index);
+}
+
+int32 main() {
+    Counters* counters = new Counters();
+
+    // A store through an index the statement built.
+    counters[key(0)] = 5;
+    counters[key(1)] = 7;
+    assert(counters.count == 2, "two keys were added");
+
+    // A read through one.
+    assert(counters[key(0)] == 5, "a read finds what the store left");
+    assert(counters[key(1)] == 7, "and so does the second");
+
+    // A compound store: the index is evaluated once for the getter and the
+    // setter both, and released once.
+    counters[key(0)] += 3;
+    assert(counters[key(0)] == 8, "a compound store reads and writes one slot");
+
+    // An increment, prefix and postfix.
+    ++counters[key(1)];
+    assert(counters[key(1)] == 8, "prefix increment stepped the slot");
+    int32 before = counters[key(1)]++;
+    assert(before == 8 && counters[key(1)] == 9, "postfix returns the old value");
+    assert(counters.count == 2, "and none of that added a key");
+
+    // Two indexes at once, one of them counted.
+    Grid* grid = new Grid();
+    grid[key(2), 0] = "north";
+    assert(grid[key(2), 0] == "key-2:north", "both indexes reached the setter");
+
+    // Enough repetitions that a string leaked per use is a heap that grows,
+    // rather than a handful of bytes at exit.
+    int32 round = 0;
+    while (round < 4000) {
+        counters[key(round % 2)] += 1;
+        assert(counters[key(round % 2)] > 0, "every round reads its own slot");
+        round = round + 1;
+    }
+    assert(counters.count == 2, "and the same two keys the whole way");
+    assert(counters[key(0)] + counters[key(1)] == 4017,
+        "every round counted once");
+
+    println("indexer-argument-lifetime=ok");
+    return 0;
+}

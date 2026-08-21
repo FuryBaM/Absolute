@@ -1,0 +1,117 @@
+// What a copy of an array covers.
+//
+// `copy` duplicated the storage and then took a count of every element that
+// was *itself* a counted value -- a `string[]` was covered, a `Pair[]` whose
+// elements each hold two strings was not. The copy's cleanup released those
+// strings anyway, because releasing has always walked the element type, so
+// the two arrays gave back one set of counts between them and whichever
+// outlived the other read freed bytes. std/collections/map.abs is where it
+// showed: `ensureUnshared` copies the entry array, and iterating a
+// `Map<string, string>` and then removing a key read a key the iterator's
+// snapshot had already released.
+//
+// The copy counts the same parts the drop releases, and it is the same walk
+// in both directions now -- EmitArrayElementRetain against
+// EmitArrayElementCleanup, both asking the element type rather than the
+// element's shape.
+//
+// Every string here is built at runtime. A literal is never released, so a
+// missed count in a corpus of literals is a corpus that proves nothing.
+
+struct Pair {
+    public string key;
+    public string value;
+}
+
+struct Nested {
+    public Pair inner;
+    public int32 tag;
+}
+
+string label(string prefix, int32 index) {
+    return format("{}-{}", prefix, index);
+}
+
+Pair[] pairs(int32 count) {
+    Pair[] made = new Pair[count];
+    int32 i = 0;
+    while (i < count) {
+        Pair one;
+        one.key = label("k", i);
+        one.value = label("v", i);
+        made[i] = one;
+        i = i + 1;
+    }
+    return made;
+}
+
+int32 main() {
+    // The copy dies first: the original still holds every part.
+    Pair[] source = pairs(4);
+    {
+        Pair[] snapshot = copy(source);
+        assert(snapshot[0].key == "k-0", "the copy names what the source holds");
+        snapshot[1].value = label("changed", 1);
+    }
+    assert(source[0].key == "k-0", "the source keeps its first key");
+    assert(source[1].value == "v-1", "and a store into the copy did not reach it");
+    assert(source[3].key == "k-3", "and the last element is intact");
+
+    // The original dies first: the copy still holds every part.
+    string carriedKey = "";
+    Pair[] outlives = copy(pairs(3));
+    carriedKey = outlives[2].key;
+    assert(carriedKey == "k-2", "a copy of a temporary outlives what it copied");
+    assert(outlives[0].value == "v-0", "all of it, not only the element read out");
+
+    // A slice copied out of a longer array: the elements the view does not
+    // name stay with the owner, and the ones it does are counted twice.
+    Pair[] whole = pairs(5);
+    {
+        Pair[] middle = copy(whole[1:4]);
+        assert(middle[0].key == "k-1", "a copied slice starts where the view does");
+        assert(middle[2].value == "v-3", "and ends where the view ends");
+    }
+    assert(whole[1].key == "k-1", "the owner keeps what the copied view named");
+    assert(whole[4].value == "v-4", "and what it did not");
+
+    // Two levels: the walk has to reach a string that is a field of a field.
+    Nested[] deep = new Nested[3];
+    int32 i = 0;
+    while (i < 3) {
+        Nested one;
+        one.inner.key = label("deep", i);
+        one.inner.value = label("part", i);
+        one.tag = i;
+        deep[i] = one;
+        i = i + 1;
+    }
+    {
+        Nested[] mirror = copy(deep);
+        assert(mirror[2].inner.key == "deep-2", "a nested part is copied too");
+        assert(mirror[2].tag == 2, "and so is a plain one");
+    }
+    assert(deep[2].inner.value == "part-2", "and the original still holds it");
+
+    // Copying repeatedly, so a count that is one short shows as a release of
+    // storage another name is still using rather than as a number nobody reads.
+    int32 round = 0;
+    while (round < 500) {
+        Pair[] again = copy(source);
+        assert(again[round % 4].key == source[round % 4].key,
+            "every round copies the same parts");
+        round = round + 1;
+    }
+    assert(source[2].key == "k-2", "and the source survived all of them");
+
+    // An array of plain values has nothing to count, and copying it is still
+    // a copy: the two names must not share storage.
+    int32[] numbers = new int32[3];
+    numbers[0] = 1; numbers[1] = 2; numbers[2] = 3;
+    int32[] mirrored = copy(numbers);
+    mirrored[0] = 9;
+    assert(numbers[0] == 1, "a copy of plain values is storage of its own");
+
+    println("array-copy-parts=ok");
+    return 0;
+}

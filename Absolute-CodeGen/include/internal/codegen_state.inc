@@ -137,6 +137,10 @@
         struct ExceptionTarget {
             llvm::BasicBlock* handlerBlock = nullptr;
             size_t scopeCount = 0;
+            // What the frame already held when the try began. Everything a
+            // statement inside the try made is above this, and a throw leaves
+            // those statements without reaching the end of any of them.
+            size_t temporaryCount = 0;
         };
 
         struct FinallyTarget {

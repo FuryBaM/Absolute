@@ -596,7 +596,7 @@ namespace Absolute {
                                     std::to_string(index + 1) + " cannot borrow a const value",
                                     "E_VALUE_REF_CONST_ARGUMENT", argument.symbol);
                         }
-                        CheckManagedMoveArgument(argument, expectedType, index,
+                        CheckManagedArgumentOwnership(argument, expectedType, index,
                             "base constructor");
                     }
                     RecordOwnershipCall(selected->symbol, baseArgs,

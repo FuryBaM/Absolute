@@ -1111,6 +1111,41 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/temporary-array-elements.abs"
     )
     add_test(
+        NAME absolute.array-copy-parts-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-copy-parts.abs"
+    )
+    add_test(
+        NAME absolute.indexer-argument-lifetime-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/indexer-argument-lifetime.abs"
+    )
+    add_test(
+        NAME absolute.closure-capture-lifetime-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/closure-capture-lifetime.abs"
+    )
+    add_test(
+        NAME absolute.closure-value-lifetime-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/closure-value-lifetime.abs"
+    )
+    add_test(
+        NAME absolute.array-accessor-owner-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-accessor-owner.abs"
+    )
+    add_test(
+        NAME absolute.accessor-owner-transfer-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/accessor-owner-transfer.abs"
+    )
+    add_test(
+        NAME absolute.early-exit-temporaries-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/early-exit-temporaries.abs"
+    )
+    add_test(
+        NAME absolute.subscriber-fresh-owner-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/subscriber-fresh-owner-errors.abs"
+    )
+    set_tests_properties(absolute.subscriber-fresh-owner-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_SUBSCRIBER_REQUIRES_EXISTING_OWNER"
+    )
+    add_test(
         NAME absolute.default-arguments-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/default-arguments.abs"
     )
@@ -3577,7 +3612,14 @@ if(BUILD_TESTING)
             "temporary-array-elements=temporary-array-elements=ok"
             "conditional-owners=conditional-owners=ok"
             "auto-property-storage=auto-property-storage=ok"
-            "conditional-type-inference=conditional-type-inference=ok")
+            "conditional-type-inference=conditional-type-inference=ok"
+            "array-copy-parts=array-copy-parts=ok"
+            "indexer-argument-lifetime=indexer-argument-lifetime=ok"
+            "closure-capture-lifetime=closure-capture-lifetime=ok"
+            "closure-value-lifetime=closure-value-lifetime=ok"
+            "array-accessor-owner=array-accessor-owner=ok"
+            "accessor-owner-transfer=accessor-owner-transfer=ok"
+            "early-exit-temporaries=early-exit-temporaries=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those

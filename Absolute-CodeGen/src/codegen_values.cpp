@@ -43,10 +43,9 @@ namespace Absolute {
             auto* indexer = dynamic_cast<ArrayAccessExpr*>(expr->target.get());
             if (!indexer) impl->Fail("indexer assignment requires an indexed target");
             const std::string receiverType = impl->SemanticType(indexer->base.get());
-            std::vector<llvm::Value*> arguments;
+            std::vector<llvm::Value*> arguments =
+                impl->EvaluateIndexArguments(indexer->indexes);
             arguments.reserve(indexer->indexes.size() + 1);
-            for (const auto& index : indexer->indexes)
-                arguments.push_back(impl->Evaluate(index.get()));
             llvm::Value* assigned = impl->Evaluate(expr->value.get());
             // The same for an indexer's setter, which is the same kind of call
             // written with brackets.
@@ -83,7 +82,6 @@ namespace Absolute {
         llvm::Value* assigned = impl->Evaluate(expr->value.get());
         const bool createsOwner = impl->valueCreatesManagedOwner;
         llvm::Value* assignedPointee = impl->valueManagedPointee;
-        const bool createsClosureOwner = impl->valueCreatesClosureOwner;
         std::string closureReturn;
         std::vector<std::string> closureParameters;
         const bool functionValue = ParseCodegenFunctionType(
@@ -192,7 +190,13 @@ namespace Absolute {
             }
         }
         if (functionValue) {
-            if (!createsClosureOwner)
+            // The same question a string is asked, from the same place: did
+            // the expression make this value, or is the name about to be a
+            // second holder of one that already exists? The codegen flag this
+            // used to read is set by a call and by a lambda and by nothing
+            // else, so a closure read out of a container -- `vector[i]`, whose
+            // getter hands back a counted one -- was counted twice.
+            if (!impl->CreatesFreshString(expr->value.get()))
                 impl->builder.CreateCall(impl->ClosureRetain(), {assigned});
             impl->EmitValueCleanup(targetAddress, targetTypeName);
         }
@@ -407,12 +411,12 @@ namespace Absolute {
         llvm::Value* initial = expr->value ? impl->Evaluate(expr->value.get()) : llvm::Constant::getNullValue(type);
         const bool createsOwner = impl->valueCreatesManagedOwner;
         llvm::Value* managedPointee = impl->valueManagedPointee;
-        const bool createsClosureOwner = impl->valueCreatesClosureOwner;
         std::string closureReturn;
         std::vector<std::string> closureParameters;
         const bool functionValue = ParseCodegenFunctionType(
             typeName, closureReturn, closureParameters);
-        if (functionValue && !createsClosureOwner)
+        if (functionValue && expr->value &&
+            !impl->CreatesFreshString(expr->value.get()))
             impl->builder.CreateCall(impl->ClosureRetain(), {initial});
         // The same for a string, for the same reason: the variable is one more
         // name holding the bytes, and it says so again when it goes out of
@@ -938,12 +942,12 @@ namespace Absolute {
             llvm::Value* initial = expr->value
                 ? impl->Evaluate(expr->value.get())
                 : llvm::Constant::getNullValue(type);
-            const bool createsClosureOwner = impl->valueCreatesClosureOwner;
-            std::string closureReturn;
+                std::string closureReturn;
             std::vector<std::string> closureParameters;
             const bool functionValue = ParseCodegenFunctionType(
                 typeName, closureReturn, closureParameters);
-            if (functionValue && !createsClosureOwner)
+            if (functionValue && expr->value &&
+                !impl->CreatesFreshString(expr->value.get()))
                 impl->builder.CreateCall(impl->ClosureRetain(), {initial});
             // The same for a string, for the same reason: the variable is one
             // more name holding the bytes, and it will say so again when it
@@ -1092,9 +1096,8 @@ namespace Absolute {
             if (operandSymbol && operandSymbol->kind == SymbolKind::Indexer) {
                 auto* indexer = dynamic_cast<ArrayAccessExpr*>(expr->operand.get());
                 if (!indexer) impl->Fail("indexer increment requires an indexed operand");
-                std::vector<llvm::Value*> arguments;
-                for (const auto& index : indexer->indexes)
-                    arguments.push_back(impl->Evaluate(index.get()));
+                std::vector<llvm::Value*> arguments =
+                    impl->EvaluateIndexArguments(indexer->indexes);
                 const std::string receiverType = impl->SemanticType(indexer->base.get());
                 llvm::Value* current = impl->EmitPropertyAccessor(
                     indexer->base.get(), receiverType,
@@ -1163,9 +1166,8 @@ namespace Absolute {
         if (operandSymbol && operandSymbol->kind == SymbolKind::Indexer) {
             auto* indexer = dynamic_cast<ArrayAccessExpr*>(expr->operand.get());
             if (!indexer) impl->Fail("indexer increment requires an indexed operand");
-            std::vector<llvm::Value*> arguments;
-            for (const auto& index : indexer->indexes)
-                arguments.push_back(impl->Evaluate(index.get()));
+            std::vector<llvm::Value*> arguments =
+                impl->EvaluateIndexArguments(indexer->indexes);
             const std::string receiverType = impl->SemanticType(indexer->base.get());
             llvm::Value* current = impl->EmitPropertyAccessor(
                 indexer->base.get(), receiverType,
@@ -1303,20 +1305,17 @@ namespace Absolute {
             // The body is one expression and the return terminates the block,
             // so what it borrowed is released by hand, before the terminator.
             const size_t temporaryMark = impl->temporaryManagedOwners.size();
-            llvm::Value* result = impl->Evaluate(expr->expressionBody.get());
-            const bool createsClosureOwner = impl->valueCreatesClosureOwner;
-            impl->ReleaseTemporaryOwners(temporaryMark);
-            std::string nestedReturn;
-            std::vector<std::string> nestedParameters;
-            if (ParseCodegenFunctionType(returnType, nestedReturn, nestedParameters) &&
-                !createsClosureOwner)
-                impl->builder.CreateCall(impl->ClosureRetain(), {result});
-            result = impl->Coerce(result, impl->TypeFromName(returnType));
-            if (impl->currentReturnStorage) {
-                impl->builder.CreateStore(result, impl->currentReturnStorage);
-                impl->builder.CreateRetVoid();
-            }
-            else impl->builder.CreateRet(result);
+            llvm::Value* result = impl->Coerce(
+                impl->Evaluate(expr->expressionBody.get()),
+                impl->TypeFromName(returnType));
+            // One expression is still a return: it takes the same count on the
+            // way out, releases the same temporaries, and closes the same
+            // scopes. Only a returned closure was counted here before, and no
+            // scope was closed at all -- so `fn() => captured` handed out
+            // storage the environment still held, and a `string` parameter
+            // kept the count it took on the way in for as long as the program
+            // ran.
+            impl->EmitCallableReturn(expr->expressionBody.get(), result, temporaryMark);
         }
         else if (expr->statementBody) {
             expr->statementBody->Accept(*this);
@@ -1372,15 +1371,22 @@ namespace Absolute {
                     impl->Fail("missing captured value '" + captures[index].name + "'");
                 llvm::Value* captured = impl->builder.CreateLoad(
                     source->type, source->address, captures[index].name + ".captured");
-                std::string capturedReturn;
-                std::vector<std::string> capturedParameters;
-                if (ParseCodegenFunctionType(captures[index].type,
-                    capturedReturn, capturedParameters))
-                    impl->builder.CreateCall(impl->ClosureRetain(), {captured});
                 llvm::Value* destination = impl->builder.CreateStructGEP(
                     environmentType, environmentValue, static_cast<unsigned>(index),
                     captures[index].name + ".environment.address");
                 impl->builder.CreateStore(captured, destination);
+                // The environment is a second name for what it captured, and
+                // it outlives the scope the value was read from -- which is
+                // the whole point of a closure. So it counts what it holds,
+                // the same walk any other copy does, and the destroy function
+                // below gives those counts back. Only a copyable value is
+                // counted: a unique owner cannot be duplicated at all, so a
+                // capture of one is a borrow and the environment neither
+                // counts it nor releases it. Before this only a captured
+                // closure was counted, and a captured string outlived nothing
+                // -- the scope it came from released it and the environment
+                // held the freed bytes.
+                impl->EmitValueRetain(destination, captures[index].type);
             }
 
             llvm::FunctionType* destroyType = llvm::FunctionType::get(
@@ -1397,16 +1403,16 @@ namespace Absolute {
             impl->builder.SetCurrentDebugLocation(llvm::DebugLoc());
             llvm::Value* destroyedEnvironment = destroyEnvironment->getArg(0);
             for (size_t index = 0; index < captures.size(); ++index) {
-                std::string capturedReturn;
-                std::vector<std::string> capturedParameters;
-                if (!ParseCodegenFunctionType(captures[index].type,
-                    capturedReturn, capturedParameters)) continue;
+                // Exactly what the capture above took, and nothing else: the
+                // same two questions in the same order, so the environment
+                // cannot release a borrow it never counted.
+                const TypeSemantics captured =
+                    impl->SemanticsOfTypeName(captures[index].type);
+                if (!captured.needsDrop || !captured.copyable) continue;
                 llvm::Value* address = impl->builder.CreateStructGEP(
                     environmentType, destroyedEnvironment, static_cast<unsigned>(index),
-                    "captured.closure.address");
-                llvm::Value* captured = impl->builder.CreateLoad(
-                    impl->builder.getPtrTy(), address, "captured.closure");
-                impl->builder.CreateCall(impl->ClosureRelease(), {captured});
+                    captures[index].name + ".captured.address");
+                impl->EmitValueCleanup(address, captures[index].type);
             }
             impl->builder.CreateCall(impl->Free(), {destroyedEnvironment});
             impl->builder.CreateRetVoid();

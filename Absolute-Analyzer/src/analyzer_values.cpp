@@ -117,6 +117,17 @@ namespace Absolute {
                 "bind the allocation to a managed owner first",
                 "E_WEAK_REQUIRES_EXISTING_OWNER", target.symbol);
         }
+        // A subscriber says someone else owns what it names, and a fresh
+        // allocation is owned by nobody -- so nothing would ever release it.
+        // The same mistake `weak` refuses just above, refused for the other
+        // qualifier that means the same thing about ownership. `T* b = a;`
+        // stays legal: an unqualified name takes a subscriber when what it is
+        // given already has an owner, and this asks whether it does.
+        if (IsSubscriberPointerType(target.type) && value.createsManagedOwner) {
+            Report("subscriber cannot take ownership of a fresh managed allocation; "
+                "bind the allocation to a managed owner first",
+                "E_SUBSCRIBER_REQUIRES_EXISTING_OWNER", target.symbol);
+        }
         if (owningField && ArrayRank(target.type) > 0) {
             bool transfersOwner = value.createsArrayOwner ||
                 IsExplicitArrayCopy(expr->value.get());
@@ -455,6 +466,11 @@ namespace Absolute {
                 "' cannot own a fresh managed allocation; declare a managed owner first",
                 "E_WEAK_REQUIRES_EXISTING_OWNER", id);
         }
+        if (IsSubscriberPointerType(type) && value.createsManagedOwner) {
+            Report("subscriber '" + name +
+                "' cannot own a fresh managed allocation; declare a managed owner first",
+                "E_SUBSCRIBER_REQUIRES_EXISTING_OWNER", id);
+        }
         // `T* b = a;` stays legal: it takes a subscriber, and `isOwner()`
         // answers which of the two a value is. `sub T*` is there to let the
         // distinction be written down where it matters -- a container element,
@@ -566,8 +582,11 @@ namespace Absolute {
                     Report("property '" + expr->member + "' has no addressable storage",
                         "E_PROPERTY_NOT_ADDRESSABLE", symbol->id);
             }
-            Save(expr, {qualifiedId, symbol->type,
-                symbol->kind == SymbolKind::Property ? symbol->canWrite : isValue});
+            if (symbol->kind == SymbolKind::Property) {
+                Save(expr, AccessorValue(qualifiedId, symbol->type, symbol->canWrite));
+                return;
+            }
+            Save(expr, {qualifiedId, symbol->type, isValue});
             return;
         }
 
@@ -646,7 +665,8 @@ namespace Absolute {
                     "E_PROPERTY_NOT_ADDRESSABLE", property->symbol);
             callable = false;
             callableParameters.clear();
-            Save(expr, {property->symbol, property->type, property->canWrite});
+            Save(expr, AccessorValue(
+                property->symbol, property->type, property->canWrite));
             return;
         }
         const auto field = std::find_if(members.begin(), members.end(), [](const MemberSignature& member) {
@@ -805,7 +825,7 @@ namespace Absolute {
                     Report("constructor argument " + std::to_string(index + 1) + " has type '" +
                         value.type + "', expected '" + expected + "'",
                             "E_CONSTRUCTOR_ARGUMENT_TYPE");
-                CheckManagedMoveArgument(value, declaredExpected, index, "constructor");
+                CheckManagedArgumentOwnership(value, declaredExpected, index, "constructor");
             }
             if (selected)
                 RecordOwnershipCall(selected->symbol, evaluated, parameters,
@@ -829,7 +849,7 @@ namespace Absolute {
                 Report("constructor argument " + std::to_string(index + 1) + " has type '" +
                     value.type + "', expected '" + expected + "'",
                         "E_CONSTRUCTOR_ARGUMENT_TYPE");
-            CheckManagedMoveArgument(value, expected, index, "constructor");
+            CheckManagedArgumentOwnership(value, expected, index, "constructor");
         }
         Result allocation{InvalidSymbolId,
             (rawAllocation ? "raw " : "") + constructedType + "*", false,

@@ -233,14 +233,28 @@ namespace Absolute {
                 RecordGenericBodyFact(GenericBodyFact::Shape::ReturnsField,
                     currentReturnType, returned->name, stmt);
         }
-        if (IsWeakPointerType(currentReturnType) && value.type != "error" &&
-            value.type != "null") {
+        // A return is the fourth place a value is bound to a name, and a
+        // subscriber means what a weak name means about ownership: someone
+        // else holds this. Handing back a fresh allocation leaves it owned by
+        // nobody -- `sub Node* f() { return new Node(); }` compiled and the
+        // runtime's own check printed the handle at exit -- and handing back a
+        // name for an owner that dies with the frame leaves the caller with a
+        // handle to nothing. A field of `this` is neither: its owner is the
+        // object, which is why `sub T* p { get { return field; } }` is the way
+        // a borrow is returned and stays legal.
+        if ((IsWeakPointerType(currentReturnType) ||
+                IsSubscriberPointerType(currentReturnType)) &&
+            value.type != "error" && value.type != "null") {
             const Symbol* owner = table.Get(value.pointerOwner);
+            const bool weak = IsWeakPointerType(currentReturnType);
             if (value.createsManagedOwner ||
                 (owner && owner->managedOwner && !owner->rolePolymorphic &&
                     owner->scopeDepth > 0))
-                Report("returning a weak reference to a local owner would produce an immediately expired handle",
-                    "E_WEAK_RETURN_LOCAL_OWNER", value.symbol);
+                Report(weak
+                    ? "returning a weak reference to a local owner would produce an immediately expired handle"
+                    : "returning a subscriber to a local owner would leave the caller naming storage that is already gone",
+                    weak ? "E_WEAK_RETURN_LOCAL_OWNER"
+                         : "E_SUBSCRIBER_RETURN_LOCAL_OWNER", value.symbol);
         }
         if (IsRawPointerType(currentReturnType) && value.type != "error" && value.type != "null") {
             if (const Symbol* owner = table.Get(value.pointerOwner)) {

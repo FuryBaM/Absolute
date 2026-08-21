@@ -86,6 +86,33 @@
         void RegisterIfFreshString(Expression* expression, llvm::Value* value);
         void RegisterFreshValueArgument(Expression* expression, llvm::Value* value);
 
+        // A value on its way out of a callable. What is returned is usually a
+        // local or a field -- storage something here still names -- and the
+        // scope cleanup is about to let that name go, so the value is held
+        // once more on the way out. One that the return expression made itself
+        // arrives held once already and needs no second count. Both bodies a
+        // callable can have ask it here: a `return` statement and a lambda's
+        // one expression.
+        llvm::Value* RetainReturnedValue(Expression* source, llvm::Value* result);
+
+        // Everything between a value and the caller holding it: the count it
+        // takes on the way out, the temporaries the expression made, the
+        // scopes this callable is leaving -- an owner it hands over is left
+        // alone -- and the return itself. Both bodies a callable can have end
+        // here, so a lambda written as one expression closes its scopes the
+        // way a `return` statement does. Before this it closed none, and every
+        // count its parameters took on the way in was kept forever.
+        void EmitCallableReturn(Expression* source, llvm::Value* result,
+            size_t temporaryMark);
+
+        // An indexer is a call written with brackets, and its indexes are its
+        // arguments: a string made only in order to look something up is
+        // released with the statement, the same as one passed to a method.
+        // Every bracket form goes through here -- read, assign, compound
+        // assign, increment -- so there is one place that answers it.
+        std::vector<llvm::Value*> EvaluateIndexArguments(
+            const std::vector<std::unique_ptr<Expression>>& indexes);
+
         // One arm of a conditional, made to hold a count of its own so that
         // both arms hand the same thing to the merge.
         llvm::Value* CountedArmValue(
@@ -96,6 +123,12 @@
         llvm::Value* RetainStoredString(Expression* source, llvm::Value* value);
 
         void ReleaseTemporaryOwners(size_t mark);
+        // The same releases, emitted without taking the temporaries off the
+        // list: a `return` inside a loop leaves the statement that made them
+        // on one path only, and the other paths still reach the end of that
+        // statement and release them there. Popping here would make the
+        // ordinary path forget.
+        void EmitTemporaryOwnerCleanups(size_t mark);
 
         // Destroys, at the end of the statement it was opened for, every owner
         // registered inside it. Statements nest, so each scope only releases

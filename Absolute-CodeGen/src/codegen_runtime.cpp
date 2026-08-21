@@ -20,8 +20,15 @@ namespace Absolute {
         }
         currentValueType = SemanticType(expression);
         if (ArrayRankName(currentValueType) > 0 && !valueCreatesArrayOwner) {
-            bool transfersOwner = dynamic_cast<FunctionCallExpr*>(expression) != nullptr;
-            if (transfersOwner) {
+            // An accessor is a call however it is written. Asking for the
+            // shape of the expression instead answered "no" for a property
+            // and an indexer, so `holder.tags` -- a getter that returns
+            // `copy(_tags)`, which the analyzer requires of it -- handed back
+            // an owner nobody was recorded as holding, and the storage and
+            // everything in it was never released. The analyzer already
+            // answers "did this expression produce its value", and `move`
+            // reaches here having settled the question itself.
+            if (CreatesFreshString(expression)) {
                 ArrayView returned = ArrayViewFromValue(value, currentValueType);
                 valueCreatesArrayOwner = true;
                 valueArrayOwner = returned.owner;
@@ -672,6 +679,19 @@ namespace Absolute {
         RegisterTemporaryAggregate(spill, typeName);
     }
 
+    std::vector<llvm::Value*> CodeGenerator::Impl::EvaluateIndexArguments(
+        const std::vector<std::unique_ptr<Expression>>& indexes) {
+        std::vector<llvm::Value*> arguments;
+        arguments.reserve(indexes.size());
+        for (const auto& index : indexes) {
+            llvm::Value* argument = Evaluate(index.get());
+            RegisterIfFreshString(index.get(), argument);
+            RegisterFreshValueArgument(index.get(), argument);
+            arguments.push_back(argument);
+        }
+        return arguments;
+    }
+
     // A conditional hands back one value from two paths, and the two paths
     // need not agree about who is holding it: `cond ? format(...) : name` is a
     // count on one side and a borrow on the other. Nothing downstream can ask
@@ -712,7 +732,66 @@ namespace Absolute {
         return builder.CreateCall(StringRetain(), {value}, "string.retained");
     }
 
+    llvm::Value* CodeGenerator::Impl::RetainReturnedValue(
+        Expression* source, llvm::Value* result) {
+        if (!result || !source || !CurrentFunction()) return result;
+        if (currentReturnTypeName == "string")
+            return RetainStoredString(source, result);
+        const TypeSemantics returned = SemanticsOfTypeName(currentReturnTypeName);
+        if (!returned.needsDrop || !returned.copyable) return result;
+        if (CreatesFreshString(source)) return result;
+        llvm::AllocaInst* carried = CreateEntryAlloca(
+            *CurrentFunction(), result->getType(), "return.retained");
+        builder.CreateStore(result, carried);
+        EmitValueRetain(carried, currentReturnTypeName);
+        return builder.CreateLoad(result->getType(), carried, "return.counted");
+    }
+
+    void CodeGenerator::Impl::EmitCallableReturn(
+        Expression* source, llvm::Value* result, size_t temporaryMark) {
+        result = RetainReturnedValue(source, result);
+        ReleaseTemporaryOwners(temporaryMark);
+        // And what every statement still open around this one made. A return
+        // leaves them all: `foreach (string t in texts()) { return 1; }` walks
+        // an array the loop made and nobody else names, and the loop's own
+        // release is on a path this return does not take. Emitted rather than
+        // popped, because the paths that do reach the end of that statement
+        // still release it there.
+        EmitTemporaryOwnerCleanups(0);
+        SymbolId transferredOwner = InvalidSymbolId;
+        if (IsStrongManagedPointerTypeName(currentReturnTypeName)) {
+            if (dynamic_cast<IdentifierExpr*>(source)) {
+                Impl::Variable& returned = RequireVariable(
+                    IdentifierName(source));
+                if (returned.managedOwner) transferredOwner = returned.symbol;
+            }
+        }
+        else if (ArrayRankName(currentReturnTypeName) > 0) {
+            if (Impl::Variable* returned = FindVariable(SemanticSymbol(source)))
+                transferredOwner = returned->ownsArrayStorage
+                    ? returned->symbol : returned->arrayOwnerSymbol;
+        }
+        // A returned aggregate is not transferred out of its local: it is
+        // copied, and the copy counts the parts it now names just above. The
+        // local keeps its own count and gives it back the ordinary way. Doing
+        // both -- suppressing the cleanup *and* counting -- leaves two counts
+        // and one release, which is a leak rather than the use-after-free the
+        // suppression was added to stop.
+        EmitTransferCleanups(0, true, transferredOwner);
+        if (builder.GetInsertBlock()->getTerminator()) return;
+        if (currentReturnStorage) {
+            builder.CreateStore(result, currentReturnStorage);
+            builder.CreateRetVoid();
+        }
+        else builder.CreateRet(result);
+    }
+
     void CodeGenerator::Impl::ReleaseTemporaryOwners(size_t mark) {
+        EmitTemporaryOwnerCleanups(mark);
+        temporaryManagedOwners.resize(mark);
+    }
+
+    void CodeGenerator::Impl::EmitTemporaryOwnerCleanups(size_t mark) {
         if (temporaryManagedOwners.size() <= mark) return;
         // Nothing may be emitted into a block a terminator has already closed,
         // so a scope has to close before the return or branch its statement
@@ -743,7 +822,6 @@ namespace Absolute {
                 builder.CreateCall(ManagedDestroy(), {temporary.handle});
             }
         }
-        temporaryManagedOwners.resize(mark);
     }
 
     llvm::StructType* CodeGenerator::Impl::ClosureObjectType() {
@@ -1686,6 +1764,14 @@ namespace Absolute {
         if (name == "int32" || name == "uint32" || name == "float") return 4;
         if (name == "int64" || name == "uint64" || name == "double" || name == "string" ||
             IsPointerTypeName(name)) return 8;
+        // A closure value is one pointer to the closure object, the same as
+        // every other handle here. It is asked for by name rather than left to
+        // the pointer test above, which reads type *names* and does not know
+        // that `func<...>` is one -- so an array of callbacks could not be
+        // allocated at all, while a field of the same type always could.
+        std::string closureReturn;
+        std::vector<std::string> closureParameters;
+        if (ParseCodegenFunctionType(name, closureReturn, closureParameters)) return 8;
         std::string genericBase;
         std::vector<std::string> genericArguments;
         if (ParseCodegenGenericType(name, genericBase, genericArguments) &&

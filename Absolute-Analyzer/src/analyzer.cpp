@@ -674,13 +674,29 @@ namespace Absolute {
         }
     }
 
-    void Analyzer::CheckManagedMoveArgument(
+    // What a parameter's ownership qualifier says about the value it is given.
+    // A subscriber and a weak name both mean "someone else owns this", and
+    // neither releases anything -- so a fresh allocation handed to one is
+    // owned by nobody and released by nobody. A declaration and an assignment
+    // have refused that for `weak` all along; this is the third place a value
+    // is bound to a name, and it refused nothing, so `takesSub(new Node())`
+    // compiled and the runtime's own check printed the handle at exit.
+    //
+    // An unqualified `T*` parameter is untouched: it takes a subscriber when
+    // what it is given has an owner and takes the owner when it does not,
+    // which is the ordinary way an argument is passed.
+    void Analyzer::CheckManagedArgumentOwnership(
         const Result& argument, const std::string& parameterType,
         size_t index, const std::string& context) {
-        (void)argument;
-        (void)parameterType;
-        (void)index;
-        (void)context;
+        if (!argument.createsManagedOwner) return;
+        const std::string type = ValueReferenceBaseType(parameterType);
+        const bool weak = IsWeakPointerType(type);
+        if (!weak && !IsSubscriberPointerType(type)) return;
+        Report(context + " argument " + std::to_string(index + 1) + " gives a fresh "
+            "managed allocation to a " + (weak ? "weak pointer" : "subscriber") +
+            "; bind the allocation to a managed owner first",
+            weak ? "E_WEAK_REQUIRES_EXISTING_OWNER"
+                 : "E_SUBSCRIBER_REQUIRES_EXISTING_OWNER", argument.symbol);
     }
 
     bool Analyzer::ParameterSupportsOwnership(const std::string& declaredType) const {
@@ -911,8 +927,12 @@ namespace Absolute {
         // arrives already counted once when it is fresh, and needs counting
         // when it is not.
         if (expression) {
+            // A lambda is the other producer that is not written as a call:
+            // it allocates the closure and its environment right here, so the
+            // value arrives held once, the same as a constructor's does.
             if (dynamic_cast<FunctionCallExpr*>(expression) ||
-                dynamic_cast<ConstructorCallExpr*>(expression))
+                dynamic_cast<ConstructorCallExpr*>(expression) ||
+                dynamic_cast<LambdaExpr*>(expression))
                 value.producesFreshValue = true;
             // A conditional is the one shape that is not a call and can still
             // produce its value -- when the backend can make both arms produce
@@ -1607,6 +1627,16 @@ namespace Absolute {
         if (cAbi)
             Report("C ABI callable '" + callable + "' cannot declare Absolute value references",
                 "E_VALUE_REF_C_ABI");
+    }
+
+    Analyzer::Result Analyzer::AccessorValue(
+        SymbolId symbol, const std::string& type, bool isLValue) const {
+        Result value{symbol, type, isLValue};
+        value.createsManagedOwner = IsStrongManagedPointerType(type);
+        value.initialization = InitializationState::Initialized;
+        value.pointerValidity = IsPointerType(type)
+            ? PointerValidity::Unknown : PointerValidity::NotPointer;
+        return value;
     }
 
     void Analyzer::ValidateCAbiType(const std::string& type, const std::string& where,
