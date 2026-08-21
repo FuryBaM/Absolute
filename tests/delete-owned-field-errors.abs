@@ -1,0 +1,27 @@
+// A field holding a managed pointer is released with the object that holds it,
+// so deleting it by hand would destroy the object twice. Refused -- and the
+// message says which of the two it is.
+//
+// It used to read "managed subscriber cannot be deleted; delete its owner
+// instead", which names the wrong thing twice: the field is not a subscriber,
+// and there is no other owner to look for. Deleting the object that holds it
+// is what releases it.
+
+class Leaf {
+    public int32 value;
+    public Leaf(int32 initial) { value = initial; }
+}
+
+class Holder {
+    private Leaf* child;
+
+    public Holder() { child = new Leaf(1); }
+
+    public void destroy() { delete child; }
+}
+
+int32 main() {
+    Holder* holder = new Holder();
+    delete holder;
+    return 0;
+}

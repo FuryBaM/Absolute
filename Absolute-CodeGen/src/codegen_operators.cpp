@@ -219,20 +219,28 @@ namespace Absolute {
         // of its own, so that both paths hand the merge the same thing.
         impl->builder.SetInsertPoint(trueBlock);
         llvm::Value* trueValue = nullptr;
+        bool trueMakesOwner = false;
+        bool trueMakesClosure = false;
         {
             Impl::TemporaryOwnerScope arm(*impl);
             trueValue = impl->CountedArmValue(expr->trueExpr.get(),
                 impl->Evaluate(expr->trueExpr.get()), resultTypeName);
+            trueMakesOwner = impl->valueCreatesManagedOwner;
+            trueMakesClosure = impl->valueCreatesClosureOwner;
         }
         trueBlock = impl->builder.GetInsertBlock();
         impl->BranchIfNeeded(mergeBlock);
 
         impl->builder.SetInsertPoint(falseBlock);
         llvm::Value* falseValue = nullptr;
+        bool falseMakesOwner = false;
+        bool falseMakesClosure = false;
         {
             Impl::TemporaryOwnerScope arm(*impl);
             falseValue = impl->CountedArmValue(expr->falseExpr.get(),
                 impl->Evaluate(expr->falseExpr.get()), resultTypeName);
+            falseMakesOwner = impl->valueCreatesManagedOwner;
+            falseMakesClosure = impl->valueCreatesClosureOwner;
         }
         falseBlock = impl->builder.GetInsertBlock();
         impl->BranchIfNeeded(mergeBlock);
@@ -256,6 +264,25 @@ namespace Absolute {
         result->addIncoming(trueValue, trueBlock);
         result->addIncoming(falseValue, falseBlock);
         impl->value = result;
+        // What the arms said about what they made has to be answered for the
+        // merge, not left over from whichever ran last. The result owns
+        // something only if both arms made one -- an arm that named its value
+        // did not -- and it owns nothing that is a value from one arm's block:
+        // caching the object behind a handle that way stored a value from one
+        // path in a place both paths reach, which is invalid IR rather than a
+        // wrong answer ("instruction does not dominate all uses").
+        impl->valueCreatesManagedOwner = trueMakesOwner && falseMakesOwner;
+        impl->valueManagedPointee = nullptr;
+        impl->valueCreatesClosureOwner = trueMakesClosure && falseMakesClosure;
+        // An array's owner is a field of the descriptor the merge produced, so
+        // it is read from there rather than from an arm.
+        if (impl->valueCreatesArrayOwner && ArrayRankName(resultTypeName) > 0)
+            impl->valueArrayOwner = impl->builder.CreateExtractValue(
+                result, {1}, "ternary.array.owner");
+        else {
+            impl->valueCreatesArrayOwner = false;
+            impl->valueArrayOwner = nullptr;
+        }
     }
 
     void CodeGenerator::Visit(NullExpr* expr) {

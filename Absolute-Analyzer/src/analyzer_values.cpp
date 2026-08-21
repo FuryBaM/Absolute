@@ -898,9 +898,20 @@ namespace Absolute {
             Report("reference parameter or alias cannot be deleted",
                 "E_REF_DELETE", target.symbol);
         if (IsManagedPointerType(target.type) && target.pointerValidity != PointerValidity::Null &&
-            target.pointerOwner != target.symbol)
-            Report("managed subscriber cannot be deleted; delete its owner instead",
-                "E_DELETE_SUBSCRIBER", target.symbol);
+            target.pointerOwner != target.symbol) {
+            // A field is the one shape where "delete its owner instead" names
+            // the wrong thing: the field *is* the owner, and what deletes it is
+            // deleting the object that holds it. Saying "subscriber" there
+            // sent the author looking for a second name that does not exist.
+            const Symbol* deleted = table.Get(target.symbol);
+            if (deleted && deleted->kind == SymbolKind::Field)
+                Report("field '" + deleted->name + "' is released with the object "
+                    "that holds it, so it cannot be deleted by hand",
+                    "E_DELETE_OWNED_FIELD", target.symbol);
+            else
+                Report("managed subscriber cannot be deleted; delete its owner instead",
+                    "E_DELETE_SUBSCRIBER", target.symbol);
+        }
         // The same rule, for a field whose type is still a generic parameter.
         else if (!IsManagedPointerType(target.type)) {
             if (const Symbol* deleted = table.Get(target.symbol);
