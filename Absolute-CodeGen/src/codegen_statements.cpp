@@ -248,29 +248,14 @@ namespace Absolute {
         llvm::Value* result = impl->Coerce(
             impl->Evaluate(stmt->expr.get()), expectedReturn,
             impl->SemanticType(stmt->expr.get()), impl->currentReturnTypeName);
-        // A returned string is handed to the caller, who releases it. What is
-        // returned is usually a local or a field -- storage something here
-        // still names -- and the cleanup below is about to let that name go,
-        // so the value has to be held once more on its way out. A string the
-        // return expression made itself is already held once and needs no
-        // second count.
-        if (impl->currentReturnTypeName == "string")
-            result = impl->RetainStoredString(stmt->expr.get(), result);
-        // The same for an aggregate whose parts are counted. A getter that
-        // hands back a struct read out of a container -- `return
-        // unsafeArrayGet(items, index);` -- copies the bytes and not what they
-        // hold, so the caller's copy named the container's strings without
-        // saying so and released them when it went out of scope.
-        else if (const TypeSemantics returned =
-                impl->SemanticsOfTypeName(impl->currentReturnTypeName);
-            returned.needsDrop && returned.copyable && result &&
-            !impl->CreatesFreshString(stmt->expr.get())) {
-            llvm::AllocaInst* carried = impl->CreateEntryAlloca(
-                *function, result->getType(), "return.retained");
-            impl->builder.CreateStore(result, carried);
-            impl->EmitValueRetain(carried, impl->currentReturnTypeName);
-            result = impl->builder.CreateLoad(result->getType(), carried, "return.counted");
-        }
+        // A returned string is handed to the caller, who releases it -- and so
+        // is an aggregate whose parts are counted. A getter that hands back a
+        // struct read out of a container (`return unsafeArrayGet(items,
+        // index);`) copies the bytes and not what they hold, so the caller's
+        // copy named the container's strings without saying so and released
+        // them when it went out of scope. Both are the one question asked in
+        // RetainReturnedValue, which a lambda's expression body asks too.
+        result = impl->RetainReturnedValue(stmt->expr.get(), result);
         impl->ReleaseTemporaryOwners(temporaryMark);
         SymbolId transferredOwner = InvalidSymbolId;
         if (IsStrongManagedPointerTypeName(impl->currentReturnTypeName)) {

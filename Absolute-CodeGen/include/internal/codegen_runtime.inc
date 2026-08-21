@@ -86,6 +86,15 @@
         void RegisterIfFreshString(Expression* expression, llvm::Value* value);
         void RegisterFreshValueArgument(Expression* expression, llvm::Value* value);
 
+        // A value on its way out of a callable. What is returned is usually a
+        // local or a field -- storage something here still names -- and the
+        // scope cleanup is about to let that name go, so the value is held
+        // once more on the way out. One that the return expression made itself
+        // arrives held once already and needs no second count. Both bodies a
+        // callable can have ask it here: a `return` statement and a lambda's
+        // one expression.
+        llvm::Value* RetainReturnedValue(Expression* source, llvm::Value* result);
+
         // An indexer is a call written with brackets, and its indexes are its
         // arguments: a string made only in order to look something up is
         // released with the statement, the same as one passed to a method.

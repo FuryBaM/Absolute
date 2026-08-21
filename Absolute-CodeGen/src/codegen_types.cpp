@@ -1359,6 +1359,7 @@ namespace Absolute {
         const TypeSemantics semantics = SemanticsOfTypeName(typeName);
         if (!semantics.needsDrop || !semantics.copyable) return false;
         if (semantics.dropKind == DropKind::StringStorage) return true;
+        if (semantics.dropKind == DropKind::Closure) return true;
         if (!visiting.insert(typeName).second) return false;
         const auto release = [&] { visiting.erase(typeName); };
         if (semantics.dropKind == DropKind::TupleValue) {
@@ -1580,6 +1581,16 @@ namespace Absolute {
         if (semantics.dropKind == DropKind::StringStorage) {
             builder.CreateCall(StringRetain(),
                 {builder.CreateLoad(builder.getPtrTy(), address, "copy.retain.text")});
+            return;
+        }
+        // A closure is counted the same way, and for the same reason: it is one
+        // pointer to storage that several names can hold. It is here so that a
+        // value *containing* one is covered -- a struct with a callback field
+        // read out of a container is a second name for that callback, and the
+        // walk that releases it already knew so.
+        if (semantics.dropKind == DropKind::Closure) {
+            builder.CreateCall(ClosureRetain(),
+                {builder.CreateLoad(builder.getPtrTy(), address, "copy.retain.closure")});
             return;
         }
         if (semantics.dropKind == DropKind::TupleValue) {

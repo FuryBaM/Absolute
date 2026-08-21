@@ -1119,6 +1119,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/indexer-argument-lifetime.abs"
     )
     add_test(
+        NAME absolute.closure-capture-lifetime-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/closure-capture-lifetime.abs"
+    )
+    add_test(
         NAME absolute.default-arguments-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/default-arguments.abs"
     )
@@ -3587,7 +3591,8 @@ if(BUILD_TESTING)
             "auto-property-storage=auto-property-storage=ok"
             "conditional-type-inference=conditional-type-inference=ok"
             "array-copy-parts=array-copy-parts=ok"
-            "indexer-argument-lifetime=indexer-argument-lifetime=ok")
+            "indexer-argument-lifetime=indexer-argument-lifetime=ok"
+            "closure-capture-lifetime=closure-capture-lifetime=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those

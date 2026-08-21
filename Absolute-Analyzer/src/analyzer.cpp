@@ -911,8 +911,12 @@ namespace Absolute {
         // arrives already counted once when it is fresh, and needs counting
         // when it is not.
         if (expression) {
+            // A lambda is the other producer that is not written as a call:
+            // it allocates the closure and its environment right here, so the
+            // value arrives held once, the same as a constructor's does.
             if (dynamic_cast<FunctionCallExpr*>(expression) ||
-                dynamic_cast<ConstructorCallExpr*>(expression))
+                dynamic_cast<ConstructorCallExpr*>(expression) ||
+                dynamic_cast<LambdaExpr*>(expression))
                 value.producesFreshValue = true;
             // A conditional is the one shape that is not a call and can still
             // produce its value -- when the backend can make both arms produce

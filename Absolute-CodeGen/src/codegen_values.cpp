@@ -1301,13 +1301,14 @@ namespace Absolute {
             // so what it borrowed is released by hand, before the terminator.
             const size_t temporaryMark = impl->temporaryManagedOwners.size();
             llvm::Value* result = impl->Evaluate(expr->expressionBody.get());
-            const bool createsClosureOwner = impl->valueCreatesClosureOwner;
+            // The same count a `return` statement takes, for the same reason:
+            // a lambda that hands back what it captured is handing out storage
+            // its environment still holds, and the caller releases what it is
+            // given. Only a closure was counted here before, so
+            // `fn() => captured` returned a string the environment would
+            // release out from under whoever kept it.
+            result = impl->RetainReturnedValue(expr->expressionBody.get(), result);
             impl->ReleaseTemporaryOwners(temporaryMark);
-            std::string nestedReturn;
-            std::vector<std::string> nestedParameters;
-            if (ParseCodegenFunctionType(returnType, nestedReturn, nestedParameters) &&
-                !createsClosureOwner)
-                impl->builder.CreateCall(impl->ClosureRetain(), {result});
             result = impl->Coerce(result, impl->TypeFromName(returnType));
             if (impl->currentReturnStorage) {
                 impl->builder.CreateStore(result, impl->currentReturnStorage);
@@ -1369,15 +1370,22 @@ namespace Absolute {
                     impl->Fail("missing captured value '" + captures[index].name + "'");
                 llvm::Value* captured = impl->builder.CreateLoad(
                     source->type, source->address, captures[index].name + ".captured");
-                std::string capturedReturn;
-                std::vector<std::string> capturedParameters;
-                if (ParseCodegenFunctionType(captures[index].type,
-                    capturedReturn, capturedParameters))
-                    impl->builder.CreateCall(impl->ClosureRetain(), {captured});
                 llvm::Value* destination = impl->builder.CreateStructGEP(
                     environmentType, environmentValue, static_cast<unsigned>(index),
                     captures[index].name + ".environment.address");
                 impl->builder.CreateStore(captured, destination);
+                // The environment is a second name for what it captured, and
+                // it outlives the scope the value was read from -- which is
+                // the whole point of a closure. So it counts what it holds,
+                // the same walk any other copy does, and the destroy function
+                // below gives those counts back. Only a copyable value is
+                // counted: a unique owner cannot be duplicated at all, so a
+                // capture of one is a borrow and the environment neither
+                // counts it nor releases it. Before this only a captured
+                // closure was counted, and a captured string outlived nothing
+                // -- the scope it came from released it and the environment
+                // held the freed bytes.
+                impl->EmitValueRetain(destination, captures[index].type);
             }
 
             llvm::FunctionType* destroyType = llvm::FunctionType::get(
@@ -1394,16 +1402,16 @@ namespace Absolute {
             impl->builder.SetCurrentDebugLocation(llvm::DebugLoc());
             llvm::Value* destroyedEnvironment = destroyEnvironment->getArg(0);
             for (size_t index = 0; index < captures.size(); ++index) {
-                std::string capturedReturn;
-                std::vector<std::string> capturedParameters;
-                if (!ParseCodegenFunctionType(captures[index].type,
-                    capturedReturn, capturedParameters)) continue;
+                // Exactly what the capture above took, and nothing else: the
+                // same two questions in the same order, so the environment
+                // cannot release a borrow it never counted.
+                const TypeSemantics captured =
+                    impl->SemanticsOfTypeName(captures[index].type);
+                if (!captured.needsDrop || !captured.copyable) continue;
                 llvm::Value* address = impl->builder.CreateStructGEP(
                     environmentType, destroyedEnvironment, static_cast<unsigned>(index),
-                    "captured.closure.address");
-                llvm::Value* captured = impl->builder.CreateLoad(
-                    impl->builder.getPtrTy(), address, "captured.closure");
-                impl->builder.CreateCall(impl->ClosureRelease(), {captured});
+                    captures[index].name + ".captured.address");
+                impl->EmitValueCleanup(address, captures[index].type);
             }
             impl->builder.CreateCall(impl->Free(), {destroyedEnvironment});
             impl->builder.CreateRetVoid();

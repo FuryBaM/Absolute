@@ -725,6 +725,21 @@ namespace Absolute {
         return builder.CreateCall(StringRetain(), {value}, "string.retained");
     }
 
+    llvm::Value* CodeGenerator::Impl::RetainReturnedValue(
+        Expression* source, llvm::Value* result) {
+        if (!result || !source || !CurrentFunction()) return result;
+        if (currentReturnTypeName == "string")
+            return RetainStoredString(source, result);
+        const TypeSemantics returned = SemanticsOfTypeName(currentReturnTypeName);
+        if (!returned.needsDrop || !returned.copyable) return result;
+        if (CreatesFreshString(source)) return result;
+        llvm::AllocaInst* carried = CreateEntryAlloca(
+            *CurrentFunction(), result->getType(), "return.retained");
+        builder.CreateStore(result, carried);
+        EmitValueRetain(carried, currentReturnTypeName);
+        return builder.CreateLoad(result->getType(), carried, "return.counted");
+    }
+
     void CodeGenerator::Impl::ReleaseTemporaryOwners(size_t mark) {
         if (temporaryManagedOwners.size() <= mark) return;
         // Nothing may be emitted into a block a terminator has already closed,
