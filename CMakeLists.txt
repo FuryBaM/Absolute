@@ -1081,6 +1081,13 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "E_MAIN_RETURN_TYPE"
     )
     add_test(
+        NAME absolute.delete-owned-field-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/delete-owned-field-errors.abs"
+    )
+    set_tests_properties(absolute.delete-owned-field-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_DELETE_OWNED_FIELD"
+    )
+    add_test(
         NAME absolute.conditional-owners-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/conditional-owners.abs"
     )

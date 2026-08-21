@@ -386,6 +386,26 @@ line and column instead of a number followed by a stray identifier.
 
 Covered by `tests/literal-notation.abs` and `tests/literal-notation-errors.abs`.
 
+### Fixed: a message that named the wrong thing twice
+
+```absolute
+class Holder {
+    private Leaf* child;
+    public Holder() { child = new Leaf(1); }
+    public void destroy() { delete child; }   // refused, rightly
+}
+```
+
+Refusing is correct: a field holding a managed pointer is released with the
+object that holds it, so deleting it by hand would destroy the object twice.
+The message was `managed subscriber cannot be deleted; delete its owner
+instead`, which names the wrong thing twice -- the field is not a subscriber,
+and there is no other owner to go looking for. It cost two probes here before
+the refusal was recognized as correct rather than as the defect.
+
+A field now gets its own message and code (`E_DELETE_OWNED_FIELD`) saying what
+releases it. Pinned by `tests/delete-owned-field-errors.abs`.
+
 ### Fixed: a conditional answered for whichever arm ran last
 
 The counting half of a conditional was made to answer for the merge -- each arm
