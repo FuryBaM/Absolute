@@ -1,0 +1,38 @@
+// What a compound assignment refuses, and what it refused before.
+//
+// `a += b` stores `a + b`. Only assignability was asked, so a target whose
+// type is assignable to itself passed the analyzer whatever the operator was,
+// and the backend failed with "binary operator requires numeric operands" --
+// its own mechanism, no file, no line. The spelled-out form of each of these
+// has always been refused properly, with both.
+//
+// Every case below has a twin in tests/compound-assignment-operands.abs that
+// still compiles and runs, so the rule cannot be tightened into refusing what
+// it is there to allow.
+
+struct Point { public int32 x; public int32 y; }
+
+int32 main() {
+    // A string is assignable to a string, which is what let this through.
+    string text = "a";
+    text += "b";
+
+    // So is a bool to a bool, and a struct to a struct.
+    bool flag = true;
+    flag += true;
+
+    Point point;
+    point.x = 1;
+    Point other;
+    other.x = 2;
+    point *= other;
+
+    // Bitwise operators want integers, the same as their spelled-out forms.
+    double scaled = 1.5;
+    scaled <<= 1;
+
+    bool masked = true;
+    masked &= false;
+
+    return text == "" ? 1 : 0;
+}

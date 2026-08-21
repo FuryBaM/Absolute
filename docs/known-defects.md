@@ -24,8 +24,8 @@ An empty list is not the same as no defects, and this file should not be read
 as one. Most of what is recorded below was found *after* the list first
 emptied, by running programs rather than by reading it -- the standard
 library's own containers under AddressSanitizer, with every string built at
-runtime. The last such sweep found ten, six of them in the same gap, and
-section 1's last entry is that sweep. The place to look next is section 5,
+runtime. The last such sweep found eleven, six of them in the same gap, and
+section 1's last two entries are that sweep. The place to look next is section 5,
 which says where not to.
 
 Nothing is open elsewhere either. The two things that were -- a name in the
@@ -706,6 +706,31 @@ Pinned by `tests/array-copy-parts.abs`,
 `tests/accessor-owner-transfer.abs` and `tests/early-exit-temporaries.abs`, all
 seven under AddressSanitizer with the leak check on, plus the `handing` shape
 in `tools/testing/codegen_fuzz.py`.
+
+### Fixed: a compound assignment never asked whether the operation exists
+
+```absolute
+string text = "a";
+text += "b";      // was: Error: LLVM codegen: binary operator requires numeric operands
+text = text + "b";  // E_NUMERIC_OPERAND_REQUIRED, with a file, a line and a column
+```
+
+`a += b` stores `a + b`, so `a + b` has to be an operation that exists. The
+compound path asked only whether the value was assignable to the target -- and
+a string is assignable to a string, a bool to a bool, a struct to a struct --
+so every one of those passed the analyzer and failed in the backend, which
+reported its own mechanism with no file and no line. The spelled-out form of
+each has always been refused properly.
+
+The compound form asks what the binary form asks now: numeric operands for the
+arithmetic operators, integers for the bitwise ones. A raw pointer is still
+exempt -- `p += n` steps by elements and has its own rule -- and a plugin
+operator is left alone, because whether the compound form should reach a plugin
+at all is a question about plugins rather than about this check. Pinned from
+both sides: `tests/compound-assignment-operands.abs` is every compound operator
+on the types that carry it, including the unsigned cases where the two forms
+once picked different instructions, and `tests/compound-assignment-errors.abs`
+is the refusals.
 
 ## 2. Missing features that fail loudly
 
