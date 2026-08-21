@@ -1147,6 +1147,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/compound-assignment-operands.abs"
     )
     add_test(
+        NAME absolute.open-qualifier-substitution-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/open-qualifier-substitution.abs"
+    )
+    add_test(
         NAME absolute.compound-assignment-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/compound-assignment-errors.abs"
     )
@@ -3631,7 +3635,8 @@ if(BUILD_TESTING)
             "array-accessor-owner=array-accessor-owner=ok"
             "accessor-owner-transfer=accessor-owner-transfer=ok"
             "early-exit-temporaries=early-exit-temporaries=ok"
-            "compound-assignment-operands=compound-assignment-operands=ok")
+            "compound-assignment-operands=compound-assignment-operands=ok"
+            "open-qualifier-substitution=open-qualifier-substitution=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those

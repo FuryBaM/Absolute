@@ -241,12 +241,18 @@ namespace Absolute {
             if (type.ends_with("[]"))
                 return SubstituteCodegenType(type.substr(0, type.size() - 2), substitutions) + "[]";
             // `sub T`: written with nothing to apply it to yet, and this is
-            // where there is something -- whatever `T` became.
+            // where there is something -- whatever `T` became. Unless `T`
+            // became `T`: substituting a type variable for itself leaves the
+            // qualifier with nothing to apply to, so it stays written down and
+            // waits, the same way the analyzer keeps it.
             if (const OwnershipKind openKind = CanonicalOpenOwnership(type);
                 openKind != OwnershipKind::None) {
-                return CanonicalWithOwnership(
-                    SubstituteCodegenType(CanonicalOpenBaseName(type), substitutions),
-                    openKind);
+                const std::string openBase = CanonicalOpenBaseName(type);
+                const std::string substituted =
+                    SubstituteCodegenType(openBase, substitutions);
+                if (substituted == openBase)
+                    return std::string(CanonicalOwnershipPrefix(openKind)) + substituted;
+                return CanonicalWithOwnership(substituted, openKind);
             }
             // The qualifier survives substitution. Spelling the two it knew
             // about by hand is what silently turned `shared T*` into `T*` on
