@@ -1174,6 +1174,35 @@ namespace Absolute {
         return inspect(inspect, name);
     }
 
+    bool Analyzer::IsConstantDefaultArgument(const Expression* expression) {
+        if (!expression) return false;
+        if (dynamic_cast<const NumberLiteralExpr*>(expression) ||
+            dynamic_cast<const BooleanLiteralExpr*>(expression) ||
+            dynamic_cast<const CharLiteralExpr*>(expression) ||
+            dynamic_cast<const StringLiteralExpr*>(expression) ||
+            dynamic_cast<const NullExpr*>(expression)) return true;
+        // A negative number is a unary expression rather than a literal.
+        const auto* unary = dynamic_cast<const PrefixUnaryExpr*>(expression);
+        return unary && unary->op == "-" &&
+            dynamic_cast<const NumberLiteralExpr*>(unary->operand.get());
+    }
+
+    void Analyzer::RecordParameterDefaults(Symbol& symbol,
+        const std::vector<std::unique_ptr<VarDeclExpr>>& parameters) {
+        symbol.parameterDefaults.assign(parameters.size(), nullptr);
+        for (size_t index = 0; index < parameters.size(); ++index)
+            if (parameters[index] && parameters[index]->value)
+                symbol.parameterDefaults[index] = parameters[index]->value.get();
+        // Only the trailing run can be left out of a call, because a call
+        // fills the missing arguments in from the end. A default anywhere
+        // else is refused where the parameter is analyzed.
+        symbol.defaultedParameters = 0;
+        for (size_t index = parameters.size(); index > 0; --index) {
+            if (!symbol.parameterDefaults[index - 1]) break;
+            symbol.defaultedParameters += 1;
+        }
+    }
+
     bool Analyzer::OwnsResourcesByParts(const std::string& name) const {
         std::unordered_set<std::string> visiting;
         const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
@@ -1559,6 +1588,7 @@ namespace Absolute {
                 statement.parameters.back()->isParams;
             for (const Token& parameter : statement.templateParams)
                 symbol->genericParameters.push_back(parameter.value);
+            RecordParameterDefaults(*symbol, statement.parameters);
             functionOverloads[name].push_back(*declared);
             functionDeclarations[*declared] = &statement;
             if (symbol->extensionFunction)
@@ -1763,6 +1793,7 @@ namespace Absolute {
                 });
             }
         }
+        bool sawDefaultParameter = false;
         for (size_t parameterIndex = 0;
             parameterIndex < statement.parameters.size(); ++parameterIndex) {
             const auto& parameter = statement.parameters[parameterIndex];
@@ -1779,6 +1810,27 @@ namespace Absolute {
                     "E_ASYNC_CAPTURE_LIFETIME");
             if (statement.UsesCAbi())
                 ValidateCAbiType(type, "C ABI parameter '" + name + "'", false);
+            // A default is a constant, the same restriction a static field's
+            // initializer already carries: evaluating it at a call site then
+            // means the same thing as evaluating it at the declaration, and
+            // nothing about the callee's frame can leak into the caller's.
+            if (parameter->value) {
+                if (!IsConstantDefaultArgument(parameter->value.get()))
+                    ReportAt(parameter->value.get(),
+                        "default value for '" + name + "' must be a constant",
+                        "E_DEFAULT_ARGUMENT_NOT_CONSTANT");
+                if (parameter->isReference)
+                    ReportAt(parameter->value.get(),
+                        "reference parameter '" + name + "' cannot have a default value",
+                        "E_DEFAULT_ARGUMENT_REFERENCE");
+                sawDefaultParameter = true;
+            }
+            // Trailing, because a call fills the missing ones in from the end.
+            else if (sawDefaultParameter)
+                ReportAt(parameter->name.get(),
+                    "parameter '" + name + "' has no default value but follows "
+                    "one that does",
+                    "E_DEFAULT_ARGUMENT_ORDER");
             SymbolId parameterId = InvalidSymbolId;
             if (name.empty()) Report("function parameter requires an identifier",
                 "E_PARAMETER_REQUIRES_IDENTIFIER");
@@ -2126,8 +2178,15 @@ namespace Absolute {
             std::vector<std::string> parameters = candidate.parameterTypes;
             for (std::string& parameter : parameters)
                 parameter = SubstituteGenericType(parameter, substitutions);
-            if (parameters.size() != arguments.size()) continue;
-            int cost = 0;
+            // The same rule a call gets: the trailing parameters that have
+            // defaults may be left out.
+            const Symbol* declared = table.Get(candidate.symbol);
+            const size_t defaulted = declared ? declared->defaultedParameters : 0;
+            if (arguments.size() > parameters.size() ||
+                arguments.size() + defaulted < parameters.size()) continue;
+            // One point per argument the call did not write, so a constructor
+            // that takes exactly what was passed wins.
+            int cost = static_cast<int>(parameters.size() - arguments.size());
             bool applicable = true;
             for (size_t index = 0; index < arguments.size(); ++index) {
                 const std::string expected = ValueReferenceBaseType(parameters[index]);
@@ -2336,7 +2395,12 @@ namespace Absolute {
             const bool variadic = candidate->variadicParameter;
             const size_t fixedCount = variadic && !candidate->parameterTypes.empty()
                 ? candidate->parameterTypes.size() - 1 : candidate->parameterTypes.size();
-            if ((!variadic && candidate->parameterTypes.size() != arguments.size()) ||
+            // A call may leave out the trailing parameters that have
+            // defaults; the backend fills them in from the declaration.
+            const size_t requiredCount =
+                candidate->parameterTypes.size() - candidate->defaultedParameters;
+            if ((!variadic && (arguments.size() < requiredCount ||
+                    arguments.size() > candidate->parameterTypes.size())) ||
                 (variadic && arguments.size() < fixedCount)) continue;
             std::vector<std::string> concreteParameters = candidate->parameterTypes;
             std::vector<std::string> inferredArguments;
@@ -2408,7 +2472,13 @@ namespace Absolute {
             if (variadic && TypeOwnsResources(ArrayElementType(
                 ValueReferenceBaseType(concreteParameters.back()))))
                 continue;
+            // One point per argument the call did not write, so an overload
+            // that takes exactly what was passed wins over one that fills the
+            // rest in.
             int cost = variadic ? 1 : 0;
+            if (!variadic)
+                cost += static_cast<int>(
+                    candidate->parameterTypes.size() - arguments.size());
             bool applicable = true;
             const bool directVariadicArray = variadic &&
                 arguments.size() == concreteParameters.size() &&

@@ -363,7 +363,9 @@ The two follow-ups this entry left behind are done:
 
 ## 2. Missing features that fail loudly
 
-All four now lex. They were honest syntax errors rather than wrong answers, but
+All of them are closed. The four notations this section was written for now
+lex, and the fifth thing it collected -- a default parameter value, which was
+parsed and then ignored -- works. They were honest syntax errors rather than wrong answers, but
 they are ordinary notation, and a language with `double` and no way to write
 `1e-9` was missing something people reach for immediately.
 
@@ -501,6 +503,46 @@ struct crashed. A name holding no bytes is the empty string, and it is compared
 as one now. Printing had had the same guard for longer -- it substitutes
 `<null>` there, which is a debugging affordance rather than an answer about the
 value.
+
+### Fixed: a default parameter value was parsed and then ignored
+
+```absolute
+int32 twice(int32 v = 3) { return v * 2; }
+twice();       // was E_NO_MATCHING_OVERLOAD: no overload of 'twice' accepts ()
+```
+
+The default was parsed, stored on the parameter, and never used: nothing filled
+it in at a call site, so a call that omitted the argument was refused as having
+no matching overload -- which named the wrong thing, because the overload the
+author wrote was right there. The standard library declares seven of them, so
+`new Deque<string>()` did not compile although its own signature said it
+should.
+
+**A default is a constant**, the same restriction a static field's initializer
+already carries. That is what makes filling it in at the call site mean the
+same thing as filling it in at the declaration -- there is nothing in it that
+could read the callee's frame -- and it is what bounded the change: every
+default in the standard library is a literal. It must also be trailing, because
+a call fills the missing arguments in from the end.
+
+Three pieces:
+
+| | |
+|---|---|
+| the declaration | records what to put there, in the collect phase, because a call may be analyzed before the declaration's body is |
+| overload matching | accepts an arity down to the last required parameter, and charges a point per argument the call did not write, so an exact overload still wins |
+| the call | appends the missing expressions before evaluating them, in the one place that already builds an argument list |
+
+A constructor call reaches its callee differently from a function or a method:
+it has no name to resolve, so the analyzer now records which constructor was
+selected on the call's own `ExpressionInfo`, and the backend fills in from
+there.
+
+Pinned by `tests/default-arguments.abs` -- a function, a method, a constructor,
+a method of a generic type, two defaults in a row, an exact overload beating a
+filled-in one, and a container from the standard library built the way its
+signature says -- and by `tests/default-arguments-errors.abs`, which is the
+non-constant and the non-trailing default.
 
 ## 3. Behaviour that contradicts the documentation
 

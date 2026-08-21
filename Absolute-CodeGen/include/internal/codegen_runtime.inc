@@ -35,6 +35,12 @@
             std::vector<llvm::Value*>& temporaryClosureOwners,
             const std::string& parameterType = {});
 
+        // A call may leave out the trailing arguments whose parameters have
+        // defaults. The default is a constant, so emitting it here means the
+        // same thing as emitting it at the declaration.
+        void AppendDefaultArguments(
+            std::vector<Expression*>& expressions, const Symbol* callee);
+
         std::vector<llvm::Value*> EvaluateCallArguments(
             const std::vector<Expression*>& expressions,
             std::vector<llvm::Value*>& temporaryArrayOwners,

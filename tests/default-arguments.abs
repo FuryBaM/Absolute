@@ -1,0 +1,102 @@
+// A parameter may carry a default, and a call may leave it out.
+//
+// The default was parsed and then dropped: nothing filled it in at a call
+// site, so `twice()` was refused as having no matching overload -- naming the
+// wrong thing, because the overload the author wrote was right there. The
+// standard library declares seven of them, so `new Deque<string>()` did not
+// compile although its own signature said it should.
+//
+// A default is a constant, the same restriction a static field's initializer
+// carries. That is what makes filling it in at the call site mean the same
+// thing as filling it in at the declaration: there is nothing in it that could
+// read the callee's frame. It is also what bounds the feature -- every default
+// in the standard library is a literal.
+//
+// Only a trailing run may be left out, because a call fills the missing
+// arguments in from the end. What that leaves out is refused in
+// tests/default-arguments-errors.abs.
+
+import "../std/collections/deque.abs";
+
+int32 twice(int32 value = 3) { return value * 2; }
+
+string tag(string prefix = "p", int32 number = 2) {
+    return format("{}{}", prefix, number);
+}
+
+int32 mixed(int32 required, int32 optional = 10) { return required + optional; }
+
+// An overload that takes exactly what was passed wins over one that would
+// have filled the rest in.
+int32 chosen(int32 a, int32 b = 1) { return 1; }
+int32 chosen(int32 a) { return 2; }
+
+class Counter {
+    private int64 total;
+
+    public Counter(int64 start = 100) { total = start; }
+
+    public int64 add(int64 amount, int64 times = 2) {
+        total = total + amount * times;
+        return total;
+    }
+
+    public int64 value { get { return total; } }
+}
+
+class Holder<T> {
+    private int32 seen;
+    public Holder() { seen = 0; }
+    public int32 keep(int32 amount = 5) { seen = seen + amount; return seen; }
+}
+
+int32 main() {
+    assert(twice() == 6, "a call may leave the argument out");
+    assert(twice(5) == 10, "and may write it");
+
+    assert(tag() == "p2", "two defaults, both left out");
+    assert(tag("q") == "q2", "the first written, the second not");
+    assert(tag("r", 9) == "r9", "both written");
+
+    assert(mixed(1) == 11, "a required argument and a defaulted one");
+    assert(mixed(1, 2) == 3, "or both");
+
+    assert(chosen(1) == 2, "an exact arity wins over a filled-in one");
+    assert(chosen(1, 1) == 1, "and the longer one is still reachable");
+
+    // A method and a constructor, which reach their callee differently and
+    // each had to be taught the same thing.
+    Counter* counter = new Counter();
+    assert(counter.value == 100, "a constructor's default");
+    assert(counter.add(1) == 102, "a method's default");
+    assert(counter.add(1, 3) == 105, "and the argument when written");
+    delete counter;
+
+    Counter* started = new Counter(5);
+    assert(started.value == 5, "a constructor argument when written");
+    delete started;
+
+    Holder<int32>* holder = new Holder<int32>();
+    assert(holder.keep() == 5, "a method of a generic type");
+    assert(holder.keep(1) == 6, "with the argument written");
+    delete holder;
+
+    // The standard library, which is where the defect was found: its own
+    // signature says these take no arguments.
+    std.collections.Deque<string>* queue = new std.collections.Deque<string>();
+    queue.pushBack("first");
+    assert(queue.count == 1, "a container built the way its signature says");
+    delete queue;
+
+    // A default is evaluated for each call, so one call cannot see another's.
+    int32 round = 0;
+    int64 total = 0;
+    while (round < 2000) {
+        total = total + twice() + mixed(round);
+        round = round + 1;
+    }
+    assert(total > 0, "the loop ran");
+
+    println("default-arguments=ok");
+    return 0;
+}

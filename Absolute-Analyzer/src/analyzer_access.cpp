@@ -272,7 +272,10 @@ namespace Absolute {
                 }
             }
             Save(expr, {InvalidSymbolId, typeName.empty() ? "error" : typeName, false});
-            if (selected) expressionInfo[expr].parameterTypes = expected;
+            if (selected) {
+                expressionInfo[expr].parameterTypes = expected;
+                expressionInfo[expr].calleeSymbol = selected->symbol;
+            }
             return;
         }
 

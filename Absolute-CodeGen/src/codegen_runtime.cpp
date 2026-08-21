@@ -263,6 +263,17 @@ namespace Absolute {
         return builder.getInt1(transfers);
     }
 
+    void CodeGenerator::Impl::AppendDefaultArguments(
+        std::vector<Expression*>& expressions, const Symbol* callee) {
+        if (!callee || callee->variadicParameter) return;
+        for (size_t index = expressions.size();
+            index < callee->parameterDefaults.size(); ++index) {
+            Expression* fallback = callee->parameterDefaults[index];
+            if (!fallback) return;
+            expressions.push_back(fallback);
+        }
+    }
+
     llvm::Value* CodeGenerator::Impl::EvaluateCallArgument(
         Expression* expression, std::vector<llvm::Value*>& temporaryArrayOwners,
         std::vector<llvm::Value*>& temporaryClosureOwners,

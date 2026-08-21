@@ -256,6 +256,7 @@ namespace Absolute {
             std::vector<Expression*> argumentExpressions;
             for (const auto& argument : expr->arguments)
                 argumentExpressions.push_back(argument.get());
+            impl->AppendDefaultArguments(argumentExpressions, selected);
             arguments = impl->EvaluateCallArguments(argumentExpressions,
                 temporaryArrayOwners, temporaryClosureOwners,
                 selected->parameterTypes, selected->variadicParameter,
@@ -341,6 +342,7 @@ namespace Absolute {
             std::vector<Expression*> argumentExpressions;
             for (const auto& argument : expr->arguments)
                 argumentExpressions.push_back(argument.get());
+            impl->AppendDefaultArguments(argumentExpressions, selected);
             arguments = impl->EvaluateCallArguments(argumentExpressions,
                 temporaryArrayOwners, temporaryClosureOwners,
                 method->parameterTypes, selected->variadicParameter,
@@ -371,6 +373,7 @@ namespace Absolute {
                 std::vector<Expression*> argumentExpressions{member->base.get()};
                 for (const auto& argument : expr->arguments)
                     argumentExpressions.push_back(argument.get());
+                impl->AppendDefaultArguments(argumentExpressions, selected);
                 arguments = impl->EvaluateCallArguments(argumentExpressions,
                     temporaryArrayOwners, temporaryClosureOwners,
                     selected->parameterTypes, selected->variadicParameter,
@@ -410,6 +413,7 @@ namespace Absolute {
                 std::vector<Expression*> argumentExpressions;
                 for (const auto& argument : expr->arguments)
                     argumentExpressions.push_back(argument.get());
+                impl->AppendDefaultArguments(argumentExpressions, selected);
                 arguments = impl->EvaluateCallArguments(argumentExpressions,
                     temporaryArrayOwners, temporaryClosureOwners,
                     method->second.parameterTypes,
@@ -464,6 +468,7 @@ namespace Absolute {
                 std::vector<Expression*> argumentExpressions;
                 for (const auto& argument : expr->arguments)
                     argumentExpressions.push_back(argument.get());
+                impl->AppendDefaultArguments(argumentExpressions, selected);
                 arguments = impl->EvaluateCallArguments(argumentExpressions,
                     temporaryArrayOwners, temporaryClosureOwners,
                     method->second.parameterTypes,
@@ -507,6 +512,7 @@ namespace Absolute {
                 std::vector<Expression*> argumentExpressions;
                 for (const auto& argument : expr->arguments)
                     argumentExpressions.push_back(argument.get());
+                impl->AppendDefaultArguments(argumentExpressions, selected);
                 arguments = impl->EvaluateCallArguments(argumentExpressions,
                     temporaryArrayOwners, temporaryClosureOwners,
                     method->second.parameterTypes,
@@ -548,6 +554,7 @@ namespace Absolute {
         }
         if (selected) {
             parameterTypes = selected->parameterTypes;
+            impl->AppendDefaultArguments(argumentExpressions, selected);
             arguments = impl->EvaluateCallArguments(argumentExpressions,
                 temporaryArrayOwners, temporaryClosureOwners,
                 parameterTypes, selected->variadicParameter,

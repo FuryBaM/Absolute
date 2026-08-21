@@ -816,8 +816,10 @@ namespace Absolute {
                 PointerValidity::Live, InvalidSymbolId};
             allocation.createsRawOwner = rawAllocation;
             Save(expr, std::move(allocation));
-            if (!parameters.empty() || selected)
+            if (!parameters.empty() || selected) {
                 expressionInfo[expr].parameterTypes = parameters;
+                if (selected) expressionInfo[expr].calleeSymbol = selected->symbol;
+            }
             return;
         }
         for (size_t index = 0; index < expr->arguments.size(); ++index) {
