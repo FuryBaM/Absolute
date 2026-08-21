@@ -1358,6 +1358,7 @@ namespace Absolute {
         valueManagedPointee = nullptr;
         valueCreatesArrayOwner = false;
         valueArrayOwner = nullptr;
+        valueArrayOwnedCount = nullptr;
         addressMode = false;
         addressValue = nullptr;
         taskThunkCounter = 0;

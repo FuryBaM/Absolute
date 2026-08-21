@@ -20,9 +20,9 @@ None of this section's own. Everything it held has been closed, and each entry
 records what the fix was, so a regression is recognizable rather than
 rediscovered.
 
-One thing is open elsewhere and it is not a defect in the sense this section
-uses: section 15 records what slicing a temporary array leaves behind, which is
-a decision about what an array descriptor carries rather than a patch.
+Nothing is open elsewhere either. The two things that were -- a name in the
+shared type model answering two questions, and what slicing a temporary array
+left behind -- are recorded as fixed in sections 2a and 15.
 
 The two were one defect seen from two sides -- **an array never releases what
 its elements own** and **a string has no lifetime** -- and they were fixed as
@@ -384,14 +384,27 @@ taking another -- the rule a local and a field already followed. The incoming
 value is counted first, through a spill, because `a[i] = a[i]` is the two being
 the same bytes.
 
-**What is left, and recorded rather than fixed:** slicing such an array loses
-the counts of the elements outside the slice. `copy(makeArray()[0:2])` releases
-the two elements the slice names and frees the whole buffer, so the third
-element's string is never given back. A slice keeps referring to the same
-storage but describes only part of it, and nothing carries the original length
-to release through. It is a leak of one count per element outside the view,
-bounded by what the program slices away, and closing it means the descriptor or
-the temporary record carrying the whole allocation rather than the view.
+#### And then slicing one, which was the same defect one level in
+
+Releasing it through the *view* is releasing part of it. `copy(makeArray()[0:2])`
+gave back the two elements the slice names and freed the whole buffer, so the
+third element's string was never given back -- one count per element the
+program sliced away.
+
+The information had to live somewhere, and there were two places it could:
+in the array descriptor, which would widen every array everywhere including
+the C ABI, or in the *ownership record* -- which is the set of places that
+release an array and nowhere else. The second was chosen and is what the code
+does now: what an owner covers travels beside the owner pointer, from wherever
+the array was made, through every slice and row that narrows the view, to
+whoever ends up releasing it. A temporary registers the extent it was given; a
+name that keeps a slice remembers it next to the owner it holds; `copy`
+releases its source through it. The descriptor is untouched, so nothing about
+how an array is passed changed.
+
+A slice of a *named* array is unaffected, and has to be: the name still owns
+the storage, the slice is a view into it, and neither the view nor anything
+made from it releases anything.
 
 Pinned by `tests/temporary-array-elements.abs` and by the `flowing` shape.
 

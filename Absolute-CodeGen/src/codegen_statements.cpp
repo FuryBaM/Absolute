@@ -157,6 +157,7 @@ namespace Absolute {
         Impl::TemporaryOwnerScope temporaries(*impl);
         impl->valueCreatesArrayOwner = false;
         impl->valueArrayOwner = nullptr;
+        impl->valueArrayOwnedCount = nullptr;
         if (impl->SemanticType(stmt->expr.get()) == "void") stmt->expr->Accept(*this);
         else impl->Evaluate(stmt->expr.get());
         if (impl->valueCreatesArrayOwner)
@@ -182,6 +183,7 @@ namespace Absolute {
         Impl::TemporaryOwnerScope temporaries(*impl);
         impl->valueCreatesArrayOwner = false;
         impl->valueArrayOwner = nullptr;
+        impl->valueArrayOwnedCount = nullptr;
         if (impl->SemanticType(stmt->value.get()) == "void") stmt->value->Accept(*this);
         else impl->Evaluate(stmt->value.get());
         if (impl->valueCreatesArrayOwner)
@@ -783,6 +785,7 @@ namespace Absolute {
             // otherwise still be answering for whatever ran last.
             impl->valueCreatesArrayOwner = false;
             impl->valueArrayOwner = nullptr;
+        impl->valueArrayOwnedCount = nullptr;
             Impl::ArrayView source = impl->ViewOfArray(stmt->iterable.get());
             // A source the loop header made -- `foreach (x in makeList())`, or
             // an array literal, which is storage of its own -- is nobody's
@@ -792,7 +795,8 @@ namespace Absolute {
             // does was missing here, so every such loop leaked its source.
             if (impl->valueCreatesArrayOwner && impl->valueArrayOwner)
                 impl->RegisterTemporaryArrayOwner(
-                    impl->BuildArrayDescriptor(source), source.typeName);
+                    impl->BuildArrayDescriptor(source), source.typeName,
+                    impl->valueArrayOwner, impl->valueArrayOwnedCount);
             if (source.dimensions.size() != 1)
                 impl->Fail("foreach requires a one-dimensional array or slice");
 

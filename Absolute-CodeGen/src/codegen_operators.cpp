@@ -276,12 +276,20 @@ namespace Absolute {
         impl->valueCreatesClosureOwner = trueMakesClosure && falseMakesClosure;
         // An array's owner is a field of the descriptor the merge produced, so
         // it is read from there rather than from an arm.
-        if (impl->valueCreatesArrayOwner && ArrayRankName(resultTypeName) > 0)
+        if (impl->valueCreatesArrayOwner && ArrayRankName(resultTypeName) > 0) {
             impl->valueArrayOwner = impl->builder.CreateExtractValue(
                 result, {1}, "ternary.array.owner");
+            // Both arms produced one, so both said what their owner covers.
+            // The merge cannot name one of the two values, and a conditional
+            // is not where a slice of a temporary is written, so the extent
+            // goes unrecorded and the view's own length is used -- which is
+            // what it was before any of this.
+            impl->valueArrayOwnedCount = nullptr;
+        }
         else {
             impl->valueCreatesArrayOwner = false;
             impl->valueArrayOwner = nullptr;
+            impl->valueArrayOwnedCount = nullptr;
         }
     }
 
@@ -409,6 +417,7 @@ namespace Absolute {
         // and while a literal was sometimes the frame's storage nobody ever
         // asked for it.
         impl->valueArrayOwner = owner;
+        impl->valueArrayOwnedCount = impl->builder.getInt64(values.size());
         impl->valueCreatesManagedOwner = false;
         impl->valueManagedPointee = nullptr;
     }

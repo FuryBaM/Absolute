@@ -152,6 +152,7 @@ namespace Absolute {
             impl->valueCreatesManagedOwner = false;
             impl->valueCreatesArrayOwner = false;
             impl->valueArrayOwner = nullptr;
+        impl->valueArrayOwnedCount = nullptr;
             return;
         }
         impl->value = impl->builder.CreateLoad(variable->type, variable->address, expr->name + ".value");
@@ -163,6 +164,7 @@ namespace Absolute {
         impl->valueManagedPointee = nullptr;
         impl->valueCreatesArrayOwner = false;
         impl->valueArrayOwner = nullptr;
+        impl->valueArrayOwnedCount = nullptr;
         impl->valueCreatesClosureOwner = false;
         const ExpressionInfo* callInfo = impl->analyzer ? impl->analyzer->GetExpressionInfo(*expr) : nullptr;
         const Symbol* selected = callInfo ? impl->analyzer->GetSymbol(callInfo->symbol) : nullptr;
@@ -625,10 +627,14 @@ namespace Absolute {
             Impl::ArrayView view = impl->ViewOfArray(expr->base.get());
             const bool createsOwner = impl->valueCreatesArrayOwner;
             llvm::Value* owner = impl->valueArrayOwner;
+            llvm::Value* ownedCount = impl->valueArrayOwnedCount;
             impl->value = impl->BuildArrayDescriptor(view);
             impl->valueCreatesManagedOwner = false;
             impl->valueCreatesArrayOwner = createsOwner;
             impl->valueArrayOwner = owner;
+            // A view of part of an allocation is still the whole allocation's
+            // to release, so what the owner covers travels unchanged.
+            impl->valueArrayOwnedCount = ownedCount;
             return;
         }
         Impl::ArrayView view = impl->ViewOfArray(expr->base.get());
@@ -636,6 +642,7 @@ namespace Absolute {
         // before an index is evaluated: evaluating one overwrites the answer.
         const bool borrowedArrayOwner = impl->valueCreatesArrayOwner;
         llvm::Value* borrowedArrayBuffer = impl->valueArrayOwner;
+        llvm::Value* borrowedArrayOwnedCount = impl->valueArrayOwnedCount;
         if (expr->indexes.size() < view.dimensions.size()) {
             if (impl->addressMode) impl->Fail("sub-array slice is not assignable");
             llvm::Value* address = impl->ArrayElementAddress(*expr, view);
@@ -655,6 +662,7 @@ namespace Absolute {
             // travels with it rather than ending here.
             impl->valueCreatesArrayOwner = borrowedArrayOwner;
             impl->valueArrayOwner = borrowedArrayBuffer;
+            impl->valueArrayOwnedCount = borrowedArrayOwnedCount;
             return;
         }
 
@@ -666,7 +674,8 @@ namespace Absolute {
         llvm::Value* address = impl->ArrayElementAddress(*expr, view);
         if (borrowedArrayOwner && borrowedArrayBuffer)
             impl->RegisterTemporaryArrayOwner(
-                impl->BuildArrayDescriptor(view), view.typeName);
+                impl->BuildArrayDescriptor(view), view.typeName,
+                borrowedArrayBuffer, borrowedArrayOwnedCount);
         if (impl->addressMode) {
             impl->addressValue = address;
             return;
@@ -682,7 +691,8 @@ namespace Absolute {
         if (impl->addressMode) impl->Fail("a slice is not assignable");
         Impl::ArrayView source = impl->ViewOfArray(expr->base.get());
         const bool createsOwner = impl->valueCreatesArrayOwner;
-        llvm::Value* owner = impl->valueArrayOwner;
+llvm::Value* owner = impl->valueArrayOwner;
+        llvm::Value* ownedCount = impl->valueArrayOwnedCount;
 
         const size_t sourceRank = source.dimensions.size();
         if (sourceRank == 0) impl->Fail("slice target is not an array");
@@ -751,6 +761,7 @@ namespace Absolute {
             impl->valueCreatesManagedOwner = false;
             impl->valueCreatesArrayOwner = createsOwner;
             impl->valueArrayOwner = owner;
+            impl->valueArrayOwnedCount = ownedCount;
             return;
         }
 
@@ -832,6 +843,7 @@ namespace Absolute {
         impl->valueCreatesManagedOwner = false;
         impl->valueCreatesArrayOwner = false;
         impl->valueArrayOwner = nullptr;
+        impl->valueArrayOwnedCount = nullptr;
     }
 
 }
