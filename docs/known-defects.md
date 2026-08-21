@@ -386,6 +386,40 @@ line and column instead of a number followed by a stray identifier.
 
 Covered by `tests/literal-notation.abs` and `tests/literal-notation-errors.abs`.
 
+### Fixed: a temporary array released its storage and nothing in it
+
+Found by the `flowing` shape the moment it was written -- a generated program
+that carries counted values across statement boundaries rather than through
+expressions.
+
+An array an expression made and nobody kept was registered as a bare buffer and
+released with `free`. That let go of the storage and of nothing in it, so every
+shape that reads something out of an array without keeping the array leaked one
+count per element that has one:
+
+```absolute
+makeArray().length            // a field of it
+makeArray()[0]                // an element of it
+foreach (x in makeArray())    // a loop over it
+copy(makeArray())             // a copy, which had just counted every element
+```
+
+It is registered as the value it is now, and the walk that releases it is the
+one the type already describes -- `DropKind::ArrayStorage`, elements first and
+then the buffer, the same walk a scope-owned array gets. `copy` releases its
+temporary source the same way rather than freeing it.
+
+**What is left, and recorded rather than fixed:** slicing such an array loses
+the counts of the elements outside the slice. `copy(makeArray()[0:2])` releases
+the two elements the slice names and frees the whole buffer, so the third
+element's string is never given back. A slice keeps referring to the same
+storage but describes only part of it, and nothing carries the original length
+to release through. It is a leak of one count per element outside the view,
+bounded by what the program slices away, and closing it means the descriptor or
+the temporary record carrying the whole allocation rather than the view.
+
+Pinned by `tests/temporary-array-elements.abs` and by the `flowing` shape.
+
 ### Fixed: handing a shared value from one name to another
 
 Found by pushing strings into the standard library's own containers, where

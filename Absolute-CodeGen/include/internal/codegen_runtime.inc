@@ -67,7 +67,12 @@
 
         void RegisterTemporaryOwner(llvm::Value* handle, const std::string& typeName);
 
-        void RegisterTemporaryArrayOwner(llvm::Value* owner);
+        // An array an expression made and nobody kept. The whole descriptor
+        // rather than its buffer alone: releasing one means releasing what its
+        // elements hold and then the storage, which is what the type already
+        // says and what a scope-owned array already does.
+        void RegisterTemporaryArrayOwner(
+            llvm::Value* descriptor, const std::string& typeName);
 
         void RegisterTemporaryStringOwner(llvm::Value* text);
 

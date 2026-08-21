@@ -791,7 +791,8 @@ namespace Absolute {
             // it was true; the registration every other borrowing position
             // does was missing here, so every such loop leaked its source.
             if (impl->valueCreatesArrayOwner && impl->valueArrayOwner)
-                impl->RegisterTemporaryArrayOwner(impl->valueArrayOwner);
+                impl->RegisterTemporaryArrayOwner(
+                    impl->BuildArrayDescriptor(source), source.typeName);
             if (source.dimensions.size() != 1)
                 impl->Fail("foreach requires a one-dimensional array or slice");
 

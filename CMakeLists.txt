@@ -1081,6 +1081,10 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "E_MAIN_RETURN_TYPE"
     )
     add_test(
+        NAME absolute.temporary-array-elements-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/temporary-array-elements.abs"
+    )
+    add_test(
         NAME absolute.default-arguments-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/default-arguments.abs"
     )
@@ -3420,7 +3424,7 @@ if(BUILD_TESTING)
                     --std-dir "${PROJECT_SOURCE_DIR}/std"
                     # One case per shape, so a run covers all of them rather
                     # than repeating a few.
-                    --cases 18
+                    --cases 19
                     --detect-leaks ${ABSOLUTE_SANITIZER_DETECT_LEAKS}
                     --configuration "$<CONFIG>")
             set_tests_properties(absolute.codegen-fuzz PROPERTIES
@@ -3543,7 +3547,8 @@ if(BUILD_TESTING)
             "generic-resource-aggregates=generic-resource-aggregates=ok"
             "foreach-temporary-source=foreach-temporary-source=ok"
             "shared-value-handoff=shared-value-handoff=ok"
-            "default-arguments=default-arguments=ok")
+            "default-arguments=default-arguments=ok"
+            "temporary-array-elements=temporary-array-elements=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those

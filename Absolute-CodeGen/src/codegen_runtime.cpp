@@ -431,7 +431,7 @@ namespace Absolute {
         // is dropped the same way: `map.toArray().length` allocated a snapshot
         // and read one field of it.
         if (valueCreatesArrayOwner && valueArrayOwner)
-            RegisterTemporaryArrayOwner(valueArrayOwner);
+            RegisterTemporaryArrayOwner(value, SemanticType(expression));
         RegisterIfFreshString(expression, value);
         return value;
     }
@@ -499,10 +499,25 @@ namespace Absolute {
             Fail("temporary owner left unreleased in " + where);
     }
 
-    void CodeGenerator::Impl::RegisterTemporaryArrayOwner(llvm::Value* owner) {
-        if (!owner) return;
-        temporaryManagedOwners.push_back(
-            {owner, {}, TemporaryOwner::Kind::ArrayBuffer});
+    // Registered as the value it is, so the walk that releases it is the one
+    // the type already describes. It used to be registered as a bare buffer
+    // and released with `free`, which let go of the storage and of nothing in
+    // it: `snapshot()[0]`, `makeList().length` and a `foreach` over an array
+    // its own header built all leaked every string the array held.
+    void CodeGenerator::Impl::RegisterTemporaryArrayOwner(
+        llvm::Value* descriptor, const std::string& typeName) {
+        if (!descriptor || !CurrentFunction()) return;
+        if (typeName.empty() || ArrayRankName(typeName) == 0) {
+            temporaryManagedOwners.push_back(
+                {descriptor, {}, TemporaryOwner::Kind::ArrayBuffer});
+        }
+        else {
+            llvm::AllocaInst* spill = CreateEntryAlloca(
+                *CurrentFunction(), descriptor->getType(), "array.temporary");
+            builder.CreateStore(descriptor, spill);
+            temporaryManagedOwners.push_back(
+                {spill, typeName, TemporaryOwner::Kind::AggregateValue});
+        }
         valueCreatesArrayOwner = false;
         valueArrayOwner = nullptr;
     }
