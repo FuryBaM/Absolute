@@ -105,6 +105,7 @@ namespace Absolute {
                         symbol->genericParameters = types[currentType].genericParameters;
                         for (const Token& parameter : stmt->templateParams)
                             symbol->genericParameters.push_back(parameter.value);
+                        RecordParameterDefaults(*symbol, stmt->parameters);
                         functionDeclarations[symbol->id] = stmt;
                     }
                 }

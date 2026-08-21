@@ -717,14 +717,22 @@ namespace Absolute {
                         info.constructors.front(), info.substitutions);
                 std::vector<llvm::Value*> temporaryArrays;
                 std::vector<llvm::Value*> temporaryClosures;
-                for (size_t index = 0; index < expr->arguments.size(); ++index) {
+                // Written arguments first, then the ones the call left out.
+                std::vector<Expression*> argumentExpressions;
+                for (const auto& argument : expr->arguments)
+                    argumentExpressions.push_back(argument.get());
+                if (const ExpressionInfo* callInfo = impl->analyzer
+                    ? impl->analyzer->GetExpressionInfo(*expr) : nullptr)
+                    impl->AppendDefaultArguments(argumentExpressions,
+                        impl->analyzer->GetSymbol(callInfo->calleeSymbol));
+                for (size_t index = 0; index < argumentExpressions.size(); ++index) {
                     const std::string parameterType =
                         index < parameterTypes.size()
                         ? parameterTypes[index] : std::string{};
                     ownershipFlags.push_back(impl->ArgumentOwnershipFlag(
-                        expr->arguments[index].get(), parameterType));
+                        argumentExpressions[index], parameterType));
                     arguments.push_back(impl->EvaluateCallArgument(
-                        expr->arguments[index].get(), temporaryArrays, temporaryClosures,
+                        argumentExpressions[index], temporaryArrays, temporaryClosures,
                         parameterType));
                 }
                 impl->EmitAbiCall(constructor->getFunctionType(), constructor, "void",
@@ -759,14 +767,22 @@ namespace Absolute {
                         info.constructors.front(), info.substitutions);
                 std::vector<llvm::Value*> temporaryArrays;
                 std::vector<llvm::Value*> temporaryClosures;
-                for (size_t index = 0; index < expr->arguments.size(); ++index) {
+                // Written arguments first, then the ones the call left out.
+                std::vector<Expression*> argumentExpressions;
+                for (const auto& argument : expr->arguments)
+                    argumentExpressions.push_back(argument.get());
+                if (const ExpressionInfo* callInfo = impl->analyzer
+                    ? impl->analyzer->GetExpressionInfo(*expr) : nullptr)
+                    impl->AppendDefaultArguments(argumentExpressions,
+                        impl->analyzer->GetSymbol(callInfo->calleeSymbol));
+                for (size_t index = 0; index < argumentExpressions.size(); ++index) {
                     const std::string parameterType =
                         index < parameterTypes.size()
                         ? parameterTypes[index] : std::string{};
                     ownershipFlags.push_back(impl->ArgumentOwnershipFlag(
-                        expr->arguments[index].get(), parameterType));
+                        argumentExpressions[index], parameterType));
                     arguments.push_back(impl->EvaluateCallArgument(
-                        expr->arguments[index].get(), temporaryArrays, temporaryClosures,
+                        argumentExpressions[index], temporaryArrays, temporaryClosures,
                         parameterType));
                 }
                 impl->EmitAbiCall(constructor->getFunctionType(), constructor, "void",

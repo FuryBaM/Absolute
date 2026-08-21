@@ -67,6 +67,14 @@ namespace Absolute {
         size_t parameterIndex = static_cast<size_t>(-1);
         SymbolId callableOwner = InvalidSymbolId;
         std::vector<bool> parameterRequiresOwner;
+        // The expression written after `=` for each parameter, or null. Only a
+        // constant is allowed there, so evaluating one at a call site is the
+        // same as evaluating it at the declaration; the backend fills the
+        // missing arguments in from here.
+        std::vector<Expression*> parameterDefaults;
+        // How many of the trailing parameters have one. A call may leave out
+        // that many arguments from the end.
+        size_t defaultedParameters = 0;
         AccessLevel access = AccessLevel::Public;
         AccessLevel readAccess = AccessLevel::Public;
         AccessLevel writeAccess = AccessLevel::Public;
@@ -140,6 +148,11 @@ namespace Absolute {
         PlaceInfo placeInfo;
         PointerRole pointerRole = PointerRole::None;
         std::vector<std::string> parameterTypes;
+        // Which callable a constructor call resolved to. A function or a
+        // method call reaches its callee through the name it was written
+        // with; a constructor call has no such name, and the backend needs it
+        // to fill in the arguments the call left out.
+        SymbolId calleeSymbol = InvalidSymbolId;
         bool createsArrayOwner = false;
         // A string expression that produced storage of its own, rather than
         // naming storage something else already holds. Only a call can: a
@@ -546,6 +559,17 @@ namespace Absolute {
         TypeSemantics SemanticsOfType(const std::string& name) const;
 
     private:
+        // A default parameter value is a constant, the same restriction a
+        // static field's initializer carries. That is what lets the backend
+        // evaluate one at the call site instead of the declaration.
+        static bool IsConstantDefaultArgument(const Expression* expression);
+
+        // How many trailing parameters may be left out of a call, and what to
+        // put there. Recorded where the callable is declared, because a call
+        // site may be analyzed before the declaration's body is.
+        static void RecordParameterDefaults(Symbol& symbol,
+            const std::vector<std::unique_ptr<VarDeclExpr>>& parameters);
+
         bool OwnsResourcesByParts(const std::string& name) const;
 
         // Whether a value of this type can be a second name for what the first

@@ -458,6 +458,7 @@ namespace Absolute {
             if (Symbol* symbol = table.Get(*declared)) {
                 symbol->access = constructor.access;
                 symbol->memberOwner = currentType;
+                RecordParameterDefaults(*symbol, stmt->parameters);
             }
             overloads.push_back(std::move(constructor));
             return;

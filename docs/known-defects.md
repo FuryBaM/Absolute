@@ -16,11 +16,8 @@ build/Release/absolutec file.abs --build-exe -o app && ./app
 
 ## 1. Open defects
 
-None of this section's own. Everything it held has been closed, and each entry
-records what the fix was, so a regression is recognizable rather than
-rediscovered. One *missing feature* is open and lives in section 2, where a
-thing that fails loudly belongs: a default parameter value is parsed and then
-ignored.
+None. Everything this section held has been closed, and each entry records what
+the fix was, so a regression is recognizable rather than rediscovered.
 
 The two were one defect seen from two sides -- **an array never releases what
 its elements own** and **a string has no lifetime** -- and they were fixed as
@@ -366,8 +363,9 @@ The two follow-ups this entry left behind are done:
 
 ## 2. Missing features that fail loudly
 
-One is open, below: a default parameter value. The four notations this section
-was written for all now lex. They were honest syntax errors rather than wrong answers, but
+All of them are closed. The four notations this section was written for now
+lex, and the fifth thing it collected -- a default parameter value, which was
+parsed and then ignored -- works. They were honest syntax errors rather than wrong answers, but
 they are ordinary notation, and a language with `double` and no way to write
 `1e-9` was missing something people reach for immediately.
 
@@ -506,36 +504,45 @@ as one now. Printing had had the same guard for longer -- it substitutes
 `<null>` there, which is a debugging affordance rather than an answer about the
 value.
 
-### Open: a default parameter value is parsed and then ignored
+### Fixed: a default parameter value was parsed and then ignored
 
 ```absolute
 int32 twice(int32 v = 3) { return v * 2; }
-twice();       // E_NO_MATCHING_OVERLOAD: no overload of 'twice' accepts ()
+twice();       // was E_NO_MATCHING_OVERLOAD: no overload of 'twice' accepts ()
 ```
 
-The default is parsed, stored on the parameter, and never used: nothing fills
-it in at a call site, so a call that omits the argument is refused as having no
-matching overload -- which names the wrong thing, because the overload the
-author wrote is right there. The same for a method and for a constructor,
-where the message is `E_NO_MATCHING_CONSTRUCTOR`.
+The default was parsed, stored on the parameter, and never used: nothing filled
+it in at a call site, so a call that omitted the argument was refused as having
+no matching overload -- which named the wrong thing, because the overload the
+author wrote was right there. The standard library declares seven of them, so
+`new Deque<string>()` did not compile although its own signature said it
+should.
 
-The standard library declares seven of them -- `Deque`, `Queue` and `Stack`
-take `int32 initialCapacity = 8`, `std.fs` has four, and
-`std.collections.channels` has one per element type -- so
-`new Deque<string>()` does not compile although its own signature says it
-should. Nothing depends on it today only because every call site in the
-library and the corpus passes the argument explicitly.
+**A default is a constant**, the same restriction a static field's initializer
+already carries. That is what makes filling it in at the call site mean the
+same thing as filling it in at the declaration -- there is nothing in it that
+could read the callee's frame -- and it is what bounded the change: every
+default in the standard library is a literal. It must also be trailing, because
+a call fills the missing arguments in from the end.
 
-**Not fixed here, and deliberately.** Refusing the declaration was written and
-withdrawn: it is one line in the analyzer and it fails 28 tests, which is the
-signal that the feature is expected rather than unwanted. Implementing it is a
-language change of a size that deserves its own pass: the analyzer's overload
-matching has to accept an arity shorter than the parameter list, `Symbol` has
-to carry which parameters have defaults, and every call path in the backend
-that builds its own argument list -- an ordinary call, a constructor call, a
-base call -- has to fill the missing ones in. Restricting defaults to constant
-expressions, the way a static field's initializer already is, would bound it:
-every one in the standard library is a literal.
+Three pieces:
+
+| | |
+|---|---|
+| the declaration | records what to put there, in the collect phase, because a call may be analyzed before the declaration's body is |
+| overload matching | accepts an arity down to the last required parameter, and charges a point per argument the call did not write, so an exact overload still wins |
+| the call | appends the missing expressions before evaluating them, in the one place that already builds an argument list |
+
+A constructor call reaches its callee differently from a function or a method:
+it has no name to resolve, so the analyzer now records which constructor was
+selected on the call's own `ExpressionInfo`, and the backend fills in from
+there.
+
+Pinned by `tests/default-arguments.abs` -- a function, a method, a constructor,
+a method of a generic type, two defaults in a row, an exact overload beating a
+filled-in one, and a container from the standard library built the way its
+signature says -- and by `tests/default-arguments-errors.abs`, which is the
+non-constant and the non-trailing default.
 
 ## 3. Behaviour that contradicts the documentation
 

@@ -1081,6 +1081,17 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "E_MAIN_RETURN_TYPE"
     )
     add_test(
+        NAME absolute.default-arguments-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/default-arguments.abs"
+    )
+    add_test(
+        NAME absolute.default-arguments-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/default-arguments-errors.abs"
+    )
+    set_tests_properties(absolute.default-arguments-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_DEFAULT_ARGUMENT_NOT_CONSTANT"
+    )
+    add_test(
         NAME absolute.shared-value-handoff-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/shared-value-handoff.abs"
     )
@@ -3531,7 +3542,8 @@ if(BUILD_TESTING)
             "field-initializer=field-initializer=ok"
             "generic-resource-aggregates=generic-resource-aggregates=ok"
             "foreach-temporary-source=foreach-temporary-source=ok"
-            "shared-value-handoff=shared-value-handoff=ok")
+            "shared-value-handoff=shared-value-handoff=ok"
+            "default-arguments=default-arguments=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those
