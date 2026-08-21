@@ -1,0 +1,23 @@
+// Two arms that share several types, none of which is the least: `Left` and
+// `Right` are both an `Alpha` and a `Beta`, and neither interface extends the
+// other, so there is no nearest name for the two of them. Refused rather than
+// picked from -- naming the type is what settles it.
+
+interface Alpha { int64 one(); }
+interface Beta { int64 two(); }
+
+class Left : Alpha, Beta {
+    public int64 one() { return 1; }
+    public int64 two() { return 2; }
+}
+
+class Right : Alpha, Beta {
+    public int64 one() { return 3; }
+    public int64 two() { return 4; }
+}
+
+int32 main() {
+    auto either = true ? new Left() : new Right();
+    println(format("{}", either.one()));
+    return 0;
+}

@@ -1081,6 +1081,17 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "E_MAIN_RETURN_TYPE"
     )
     add_test(
+        NAME absolute.conditional-type-inference-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/conditional-type-inference.abs"
+    )
+    add_test(
+        NAME absolute.conditional-type-inference-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/conditional-type-inference-errors.abs"
+    )
+    set_tests_properties(absolute.conditional-type-inference-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_AMBIGUOUS_CONDITIONAL_TYPE"
+    )
+    add_test(
         NAME absolute.auto-property-storage-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/auto-property-storage.abs"
     )
@@ -3565,7 +3576,8 @@ if(BUILD_TESTING)
             "default-arguments=default-arguments=ok"
             "temporary-array-elements=temporary-array-elements=ok"
             "conditional-owners=conditional-owners=ok"
-            "auto-property-storage=auto-property-storage=ok")
+            "auto-property-storage=auto-property-storage=ok"
+            "conditional-type-inference=conditional-type-inference=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those

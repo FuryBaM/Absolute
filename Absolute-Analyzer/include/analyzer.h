@@ -570,6 +570,18 @@ namespace Absolute {
         static void RecordParameterDefaults(Symbol& symbol,
             const std::vector<std::unique_ptr<VarDeclExpr>>& parameters);
 
+        // Every name a value of this type can be seen as: the type itself and
+        // each of its parents, transitively.
+        void CollectAncestors(const std::string& type,
+            std::vector<std::string>& into) const;
+
+        // The least upper bound of two pointer types: the most derived type
+        // both can be seen as. Empty if they share no supertype, and empty
+        // with `ambiguous` set if they share several that are unrelated to
+        // each other -- two interfaces neither of which extends the other.
+        std::string CommonPointerType(const std::string& left,
+            const std::string& right, bool& ambiguous) const;
+
         bool OwnsResourcesByParts(const std::string& name) const;
 
         // Whether a value of this type can be a second name for what the first

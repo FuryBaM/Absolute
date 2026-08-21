@@ -1,0 +1,109 @@
+// What type a conditional has.
+//
+// It used to be the numeric common type and nothing else, so two arms that
+// were both a `Shape` by inheritance had no type at all between them. The only
+// way to write one was to say the same thing twice:
+//
+//   Shape* shape = left ? new Bigger(3) as Shape : new Square(3) as Shape;
+//
+// which is an upcast -- always safe, never informative -- written on both
+// sides of the `:` so the reader checks the same expression twice.
+//
+// The rule now, in the order it is applied:
+//
+//   a type to read it as   both arms have to be assignable to it, and then
+//                          the conditional is that type
+//   no type to read it as  the least upper bound of the arms: the type
+//                          furthest down the hierarchy that both can be seen
+//                          as
+//   neither                E_TERNARY_BRANCH_TYPES, or
+//                          E_AMBIGUOUS_CONDITIONAL_TYPE when the arms share
+//                          several types and none of them is the least
+//
+// The target comes from wherever the conditional is being read: a declaration,
+// a parameter, a return. The bound is only ever a widening -- every arm is
+// already the type it is inferred to -- so nothing here converts a value.
+
+interface Shape { int64 area(); }
+interface Named { int64 tag(); }
+
+class Square : Shape {
+    protected int64 side;
+    public Square(int64 initial) { side = initial; }
+    public virtual int64 area() { return side * side; }
+}
+
+class Bigger : Square {
+    public Bigger(int64 initial) { base(initial); }
+    public override int64 area() { return side * side + 1; }
+}
+
+// Two types that share several supertypes and no least one: naming the type is
+// what settles which of them the conditional is read as. Without a name it is
+// E_AMBIGUOUS_CONDITIONAL_TYPE -- see conditional-type-inference-errors.abs.
+class Even : Shape, Named {
+    public int64 area() { return 2; }
+    public int64 tag() { return 20; }
+}
+
+class Odd : Shape, Named {
+    public int64 area() { return 3; }
+    public int64 tag() { return 30; }
+}
+
+int64 areaOf(Shape* shape) { return shape.area(); }
+
+Shape* pick(bool left) { return left ? new Bigger(2) : new Square(2); }
+
+int32 main() {
+    int32 round = 0;
+    while (round < 2000) {
+        bool left = round % 2 == 0;
+
+        // A declaration names the type, so neither arm says it again.
+        Shape* shape = left ? new Bigger(3) : new Square(3);
+        assert(shape.area() >= 9, "the conditional is read as the declared type");
+        delete shape;
+
+        // The base class is a target like any other.
+        Square* square = left ? new Bigger(4) : new Square(4);
+        assert(square.area() >= 16, "and a class is as good a target as an interface");
+        delete square;
+
+        // With no target, the arms decide: the nearest type that covers both.
+        auto inferred = left ? new Bigger(5) : new Square(5);
+        assert(inferred.area() >= 25, "the least upper bound covers both arms");
+        delete inferred;
+
+        // Which is what makes the cast outside the parentheses work: the
+        // conditional has a type of its own before anything widens it.
+        Shape* grouped = (left ? new Bigger(6) : new Square(6)) as Shape;
+        assert(grouped.area() >= 36, "a cast outside reads a conditional that has a type");
+        delete grouped;
+
+        // A parameter is a target, and so is a return.
+        Square* argument = new Bigger(7);
+        assert(areaOf(left ? argument : argument) >= 49, "a parameter names the type");
+        delete argument;
+
+        Shape* returned = pick(left);
+        assert(returned.area() >= 4, "and a return does");
+        delete returned;
+
+        // Both arms are a Shape and both are a Named, and neither interface
+        // extends the other: there is no least type between them, so the one
+        // written here is the one it is read as. Each way round.
+        Shape* asShape = left ? new Even() : new Odd();
+        assert(asShape.area() >= 2, "named as a Shape");
+        delete asShape;
+
+        Named* asNamed = left ? new Even() : new Odd();
+        assert(asNamed.tag() >= 20, "and the same pair named as a Named");
+        delete asNamed;
+
+        round = round + 1;
+    }
+
+    println("conditional-type-inference=ok");
+    return 0;
+}
