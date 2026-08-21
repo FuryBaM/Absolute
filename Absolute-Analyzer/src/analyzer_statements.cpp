@@ -198,7 +198,7 @@ namespace Absolute {
                 source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;
         }
         if (ArrayRank(currentReturnType) == 0 && !IsPointerType(currentReturnType) &&
-            TypeOwnsResources(currentReturnType) && !transfersAggregateOwner) {
+            TypeOwnsUniqueResource(currentReturnType) && !transfersAggregateOwner) {
             Report("resource-owning aggregate '" + currentReturnType +
                 "' cannot be returned by value; use move(...) for lvalues",
                 "E_RESOURCE_AGGREGATE_RETURN", value.symbol);

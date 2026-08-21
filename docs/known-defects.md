@@ -20,12 +20,9 @@ None of this section's own. Everything it held has been closed, and each entry
 records what the fix was, so a regression is recognizable rather than
 rediscovered.
 
-Two things are open elsewhere and neither is a defect in the sense this section
-uses. Section 2a is a name in the shared type model that answers two questions,
-which is a decision about the model. Section 15 records what slicing a
-temporary array leaves behind, which is a decision about what an array
-descriptor carries. Both are written where the reasoning is, rather than
-here.
+One thing is open elsewhere and it is not a defect in the sense this section
+uses: section 15 records what slicing a temporary array leaves behind, which is
+a decision about what an array descriptor carries rather than a patch.
 
 The two were one defect seen from two sides -- **an array never releases what
 its elements own** and **a string has no lifetime** -- and they were fixed as
@@ -691,7 +688,7 @@ filled-in one, and a container from the standard library built the way its
 signature says -- and by `tests/default-arguments-errors.abs`, which is the
 non-constant and the non-trailing default.
 
-## 2a. Open: one name over two questions in `TypeSemantics`
+## 2a. Fixed: one name over two questions in `TypeSemantics`
 
 `TypeSemantics` is shared between the analyzer and the backend, and
 `type_names.h` says so: one place decides what a type is, for every question
@@ -716,12 +713,22 @@ two is exactly the shape of the defects in section 1: a reader who checks the
 struct's definition learns the wrong thing about one of the halves, and the
 next rule written against it picks whichever meaning its author had in mind.
 
-Two ways to settle it, and picking one is a decision about the model rather
-than a patch: give the two questions two names (`needsDrop` and something like
-`ownsUniquely`, both answered by both halves), or make `needsDrop` mean the
-backend's "something to release" everywhere and give the analyzer's ownership
-rules an explicit predicate of their own. The second is closer to what the
-document already says a type is.
+Settled the second of the two ways it could be: `needsDrop` means "there is
+something to release" on both sides now -- the analyzer answers yes for a
+string, for a closure, for a tuple holding either, and for any aggregate whose
+parts do -- and the ownership rules ask
+`Analyzer::TypeOwnsUniqueResource`, which is the question they were always
+asking. Every rule that used to read `TypeOwnsResources` reads that instead,
+and none of them changed behaviour: a struct holding a string is still copied,
+a struct holding an owner is still refused, `copy` of a `string[]` still works
+and `copy` of a `Node*[]` is still refused.
+
+One honest consequence: no rule inside the analyzer reads `needsDrop` today,
+because every rule that seemed to was asking the other question. The field is
+there because the model is shared and the backend reads it, and it is now
+*right* rather than differently defined. What keeps it from drifting again is
+that the question it answers is written next to it in `type_names.h`, and the
+other question has a name of its own instead of borrowing this one.
 
 ## 3. Behaviour that contradicts the documentation
 
