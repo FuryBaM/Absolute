@@ -330,7 +330,7 @@ namespace Absolute {
             if (fact.shape == GenericBodyFact::Shape::CopiesElements) {
                 // Not only an owner: anything with a drop is duplicated by a
                 // block copy, and two of them then release the same thing.
-                if (SemanticsOfType(actual).needsDrop)
+                if (TypeOwnsUniqueResource(actual))
                     ReportAtLocation(fact.file, fact.line, fact.column,
                         std::string(fact.detail) + " cannot copy elements that own "
                         "something; at '" + base + "<" + actual + ">' that would "
@@ -687,7 +687,7 @@ namespace Absolute {
         if (IsValueReferenceType(declaredType)) return false;
         const std::string type = ValueReferenceBaseType(declaredType);
         return IsStrongManagedPointerType(type) || ArrayRank(type) > 0 ||
-            (!IsPointerType(type) && TypeOwnsResources(type));
+            (!IsPointerType(type) && TypeOwnsUniqueResource(type));
     }
 
     bool Analyzer::TransfersOwnership(
@@ -1063,8 +1063,17 @@ namespace Absolute {
         return source == "null" && !PrimitiveStringToEnum(target).has_value();
     }
 
-    bool Analyzer::TypeOwnsResources(const std::string& name) const {
-        return SemanticsOfType(name).needsDrop;
+    bool Analyzer::TypeOwnsUniqueResource(const std::string& name) const {
+        if (IsValueReferenceType(name))
+            return TypeOwnsUniqueResource(ValueReferenceBaseType(name));
+        if (const OwnershipKind kind = CanonicalOwnership(name);
+            kind != OwnershipKind::None)
+            return CanonicalHandleSemantics(kind).needsDrop;
+        if (ArrayRank(name) > 0) return true;
+        if (const PluginResourceDescriptor* descriptor =
+                GetPluginResourceDescriptor(name); descriptor && descriptor->isResource)
+            return true;
+        return OwnsUniqueResourceByParts(name);
     }
 
     // The analyzer's half of the one answer; see docs/ownership-kinds.md and
@@ -1095,8 +1104,28 @@ namespace Absolute {
                 GetPluginResourceDescriptor(name); descriptor && descriptor->isResource)
             return {true, true, true, DropKind::PluginResource};
 
+        // Shared, and with a count to give back: `needsDrop` asks whether
+        // there is anything to release, not whether there is one of it.
+        if (name == "string") return {true, true, true, DropKind::StringStorage};
+        {
+            std::string base;
+            std::vector<std::string> arguments;
+            if (ParseGenericTypeName(name, base, arguments) && base == "func")
+                return {true, true, true, DropKind::Closure};
+            if (ParseGenericTypeName(name, base, arguments) && base == "tuple") {
+                TypeSemantics result{true, true, false, DropKind::TupleValue};
+                for (const std::string& element : arguments) {
+                    const TypeSemantics part = SemanticsOfType(element);
+                    if (part.needsDrop) result.needsDrop = true;
+                    if (!part.copyable) result.copyable = false;
+                }
+                if (!result.needsDrop) result.dropKind = DropKind::None;
+                return result;
+            }
+        }
+
         TypeSemantics result{CopiesByParts(name), true,
-            OwnsResourcesByParts(name), DropKind::None};
+            ReleasesByParts(name), DropKind::None};
         if (!result.needsDrop) return result;
         if (const auto found = types.find(name); found != types.end()) {
             result.dropKind = found->second.kind == TypeKind::Class
@@ -1203,7 +1232,74 @@ namespace Absolute {
         }
     }
 
-    bool Analyzer::OwnsResourcesByParts(const std::string& name) const {
+    bool Analyzer::ReleasesByParts(const std::string& name) const {
+        std::unordered_set<std::string> visiting;
+        const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
+            if (candidate == "string") return true;
+            if (IsValueReferenceType(candidate))
+                return self(self, ValueReferenceBaseType(candidate));
+            if (const OwnershipKind kind = CanonicalOwnership(candidate);
+                kind != OwnershipKind::None)
+                return CanonicalHandleSemantics(kind).needsDrop;
+            if (ArrayRank(candidate) > 0) return true;
+            if (const PluginResourceDescriptor* descriptor =
+                    GetPluginResourceDescriptor(candidate);
+                descriptor && descriptor->isResource) return true;
+
+            std::string definitionName = candidate;
+            std::unordered_map<std::string, std::string> substitutions;
+            std::string genericBase;
+            std::vector<std::string> genericArguments;
+            if (ParseGenericTypeName(candidate, genericBase, genericArguments)) {
+                if (genericBase == "tuple" || genericBase == "func") {
+                    return genericBase == "func" ||
+                        std::any_of(genericArguments.begin(), genericArguments.end(),
+                            [&](const std::string& argument) { return self(self, argument); });
+                }
+                definitionName = genericBase;
+                const auto definition = types.find(definitionName);
+                if (definition != types.end() &&
+                    definition->second.genericParameters.size() == genericArguments.size()) {
+                    for (size_t index = 0; index < genericArguments.size(); ++index)
+                        substitutions.emplace(definition->second.genericParameters[index],
+                            genericArguments[index]);
+                }
+            }
+            if (!visiting.insert(definitionName).second) return false;
+            const auto release = [&] { visiting.erase(definitionName); };
+            const auto found = types.find(definitionName);
+            if (found == types.end() || (found->second.kind != TypeKind::Class &&
+                found->second.kind != TypeKind::Struct)) {
+                release();
+                return false;
+            }
+            for (const auto& [memberName, overloads] : found->second.members) {
+                if (memberName == "destroy") {
+                    release();
+                    return true;
+                }
+                for (const MemberSignature& member : overloads) {
+                    if (member.isStatic || (member.kind != SymbolKind::Field &&
+                        member.kind != SymbolKind::Property)) continue;
+                    if (self(self, SubstituteGenericType(member.type, substitutions))) {
+                        release();
+                        return true;
+                    }
+                }
+            }
+            for (const std::string& parent : found->second.parents) {
+                if (self(self, SubstituteGenericType(parent, substitutions))) {
+                    release();
+                    return true;
+                }
+            }
+            release();
+            return false;
+        };
+        return inspect(inspect, name);
+    }
+
+    bool Analyzer::OwnsUniqueResourceByParts(const std::string& name) const {
         std::unordered_set<std::string> visiting;
         const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
             if (IsStrongManagedPointerType(candidate) || ArrayRank(candidate) > 0) return true;
@@ -1498,7 +1594,7 @@ namespace Absolute {
             Report("value-reference parameter '" + name + "' of '" + callable +
                 "' requires a concrete struct type", "E_VALUE_REF_TYPE");
         }
-        else if (TypeOwnsResources(type)) {
+        else if (TypeOwnsUniqueResource(type)) {
             Report("value-reference parameter '" + name + "' cannot borrow resource-owning type '" +
                 type + "'", "E_VALUE_REF_RESOURCES");
         }
@@ -1809,7 +1905,7 @@ namespace Absolute {
                 Report("params is not supported on async functions",
                     "E_PARAMS_ASYNC");
             if (ArrayRank(parameterType) == 1 &&
-                TypeOwnsResources(ArrayElementType(parameterType)))
+                TypeOwnsUniqueResource(ArrayElementType(parameterType)))
                 Report("params element type cannot own resources",
                     "E_PARAMS_RESOURCE_ELEMENT");
             PopDiagnosticNode();
@@ -2534,7 +2630,7 @@ namespace Absolute {
                     parameter = SubstituteGenericType(parameter, substitutions);
             }
             else if (!explicitTypeArguments.empty()) continue;
-            if (variadic && TypeOwnsResources(ArrayElementType(
+            if (variadic && TypeOwnsUniqueResource(ArrayElementType(
                 ValueReferenceBaseType(concreteParameters.back()))))
                 continue;
             // One point per argument the call did not write, so an overload

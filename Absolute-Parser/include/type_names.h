@@ -117,6 +117,18 @@ namespace Absolute {
     // A container asks this and nothing else. It must not ask "is this a
     // managed pointer?", because `T*`, `sub T*` and `weak T*` all are, and
     // destroying them means three different things.
+    // One name, one question, each of them. `needsDrop` asks whether there is
+    // anything to release when a value of this type goes away -- a string has
+    // a count to give back, so it answers yes. It does *not* ask whether the
+    // type owns a resource there is one of; that is a different question, the
+    // ownership rules are the ones that ask it, and Analyzer::
+    // TypeOwnsUniqueResource is where it is answered. A string is the case
+    // that separates them: something to release, and shared, so a second name
+    // for one is an ordinary thing to have.
+    //
+    // The two were one field for a while, which cost nothing until a rule was
+    // written against the meaning its author had in mind rather than the one
+    // the other half used. See section 2a of docs/known-defects.md.
     struct TypeSemantics {
         bool copyable = true;
         bool movable = true;

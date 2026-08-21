@@ -552,10 +552,19 @@ namespace Absolute {
         std::string ResolveDeclaredType(VarDeclExpr& expression);
         void Save(Expression* expression, Result value);
         bool IsKnownType(const std::string& name) const;
-        bool TypeOwnsResources(const std::string& name) const;
+        // Whether a value of this type owns a resource that there is exactly
+        // one of: a strong managed pointer, an array's storage, a plugin
+        // resource, a hand-written destroy() hook, or an aggregate holding any
+        // of them. This is the question the ownership rules ask -- may it be
+        // copied, must it be moved, may a reference borrow it -- and it is
+        // *not* `needsDrop`, which asks whether there is anything to release
+        // at all. A string answers no here and yes there, and both are right:
+        // a string is shared, so a second name for one is an ordinary thing to
+        // have, and it still has a count to give back.
+        bool TypeOwnsUniqueResource(const std::string& name) const;
 
-        // What copying, moving and releasing a value of this type mean.
-        // TypeOwnsResources is the one question of it that had a name before.
+        // What copying, moving and releasing a value of this type mean, in the
+        // one meaning the backend uses (see type_names.h).
         TypeSemantics SemanticsOfType(const std::string& name) const;
 
     private:
@@ -582,7 +591,12 @@ namespace Absolute {
         std::string CommonPointerType(const std::string& left,
             const std::string& right, bool& ambiguous) const;
 
-        bool OwnsResourcesByParts(const std::string& name) const;
+        bool OwnsUniqueResourceByParts(const std::string& name) const;
+
+        // Whether a value of this type has anything to release at all -- the
+        // other question, and the one `needsDrop` answers. A field holding a
+        // string counts here and not above.
+        bool ReleasesByParts(const std::string& name) const;
 
         // Whether a value of this type can be a second name for what the first
         // one holds. A unique owner cannot -- there is one of it -- and

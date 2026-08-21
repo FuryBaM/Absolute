@@ -146,7 +146,7 @@ namespace Absolute {
                 source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;
         }
         if (ArrayRank(target.type) == 0 && !IsPointerType(target.type) &&
-            TypeOwnsResources(target.type) && !transfersAggregateOwner) {
+            TypeOwnsUniqueResource(target.type) && !transfersAggregateOwner) {
             Report("resource-owning aggregate '" + target.type +
                 "' cannot be copied; use move(...) for lvalues",
                 "E_RESOURCE_AGGREGATE_COPY", target.symbol);
@@ -403,7 +403,7 @@ namespace Absolute {
                     source->kind == SymbolKind::Method;
             }
             if (expr->value && ArrayRank(type) == 0 && !IsPointerType(type) &&
-                TypeOwnsResources(type) && !transfersAggregateOwner)
+                TypeOwnsUniqueResource(type) && !transfersAggregateOwner)
                 Report("resource-owning aggregate '" + type +
                     "' cannot be copied into '" + name +
                     "'; use move(...) for lvalues",
@@ -1015,7 +1015,7 @@ namespace Absolute {
                 source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;
         }
         if (expr->value && ArrayRank(type) == 0 && !IsPointerType(type) &&
-            TypeOwnsResources(type) && !transfersAggregateOwner)
+            TypeOwnsUniqueResource(type) && !transfersAggregateOwner)
             Report("resource-owning aggregate '" + type +
                 "' cannot be copied into '" + name +
                 "'; use move(...) for lvalues",
@@ -1211,7 +1211,7 @@ namespace Absolute {
                     element == "dynamic")
                     Report("tuple elements require concrete non-void types",
                         "E_TUPLE_ELEMENT_TYPE");
-                if (TypeOwnsResources(element))
+                if (TypeOwnsUniqueResource(element))
                     Report("tuple element type '" + element +
                         "' owns resources and is not supported yet",
                         "E_TUPLE_RESOURCE_ELEMENT");

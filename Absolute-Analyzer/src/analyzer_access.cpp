@@ -145,7 +145,7 @@ namespace Absolute {
                 captured.type, closureReturn, closureParameters);
             if (!nestedFunction && (IsPointerType(captured.type) ||
                 IsTaskType(captured.type) || ArrayRank(captured.type) > 0 ||
-                TypeOwnsResources(captured.type))) {
+                TypeOwnsUniqueResource(captured.type))) {
                 Report("lambda cannot safely capture resource value '" + captured.name +
                     "' of type '" + captured.type + "' by value",
                     "E_LAMBDA_CAPTURE_RESOURCE", captureId);
@@ -370,7 +370,7 @@ namespace Absolute {
                         element == "dynamic")
                         Report("tuple elements require concrete non-void values",
                             "E_TUPLE_ELEMENT_TYPE");
-                    if (TypeOwnsResources(element))
+                    if (TypeOwnsUniqueResource(element))
                         Report("tuple element type '" + element +
                             "' owns resources and is not supported yet",
                             "E_TUPLE_RESOURCE_ELEMENT", arguments[index].symbol);
@@ -536,7 +536,7 @@ namespace Absolute {
                 // Elements that own something are refused: copying the bytes
                 // would duplicate that ownership, the same reason `copy` of
                 // such an array is refused.
-                if (!transfers && destination != "error" && TypeOwnsResources(destination))
+                if (!transfers && destination != "error" && TypeOwnsUniqueResource(destination))
                     Report("unsafeArrayCopy cannot copy elements that own "
                         "something; that would duplicate the ownership -- "
                         "unsafeArrayMove transfers them instead",
@@ -842,7 +842,7 @@ namespace Absolute {
                     // decision this builtin does not get to make.
                     std::string element = source.type;
                     while (ArrayRank(element) > 0) element = ArrayElementType(element);
-                    if (TypeOwnsResources(element)) {
+                    if (TypeOwnsUniqueResource(element)) {
                         Report("copy of an array whose elements own something would "
                             "duplicate that ownership; copy the elements one at a time "
                             "into an array you build yourself",
@@ -934,7 +934,7 @@ namespace Absolute {
                 cloned.createsManagedOwner = IsStrongManagedPointerType(clone.type);
                 cloned.pointerValidity = IsPointerType(clone.type)
                     ? PointerValidity::Live : PointerValidity::NotPointer;
-                cloned.isMoveResult = TypeOwnsResources(clone.type);
+                cloned.isMoveResult = TypeOwnsUniqueResource(clone.type);
                 Save(expr, cloned);
                 return;
             }
@@ -1243,7 +1243,7 @@ namespace Absolute {
 
             const std::string receiverValueType = IsPointerType(receiver.type)
                 ? PointerPointee(receiver.type) : receiver.type;
-            if (TypeOwnsResources(receiverValueType))
+            if (TypeOwnsUniqueResource(receiverValueType))
                 Report("async instance method receiver type '" + receiverValueType +
                     "' owns resources and cannot cross the task lifetime boundary",
                     "E_ASYNC_RECEIVER_RESOURCES", receiver.symbol);

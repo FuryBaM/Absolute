@@ -16,8 +16,13 @@ build/Release/absolutec file.abs --build-exe -o app && ./app
 
 ## 1. Open defects
 
-None. Everything this section held has been closed, and each entry records what
-the fix was, so a regression is recognizable rather than rediscovered.
+None of this section's own. Everything it held has been closed, and each entry
+records what the fix was, so a regression is recognizable rather than
+rediscovered.
+
+One thing is open elsewhere and it is not a defect in the sense this section
+uses: section 15 records what slicing a temporary array leaves behind, which is
+a decision about what an array descriptor carries rather than a patch.
 
 The two were one defect seen from two sides -- **an array never releases what
 its elements own** and **a string has no lifetime** -- and they were fixed as
@@ -683,6 +688,48 @@ filled-in one, and a container from the standard library built the way its
 signature says -- and by `tests/default-arguments-errors.abs`, which is the
 non-constant and the non-trailing default.
 
+## 2a. Fixed: one name over two questions in `TypeSemantics`
+
+`TypeSemantics` is shared between the analyzer and the backend, and
+`type_names.h` says so: one place decides what a type is, for every question
+about copying, moving and releasing it. Its `needsDrop` is read by both halves
+and means two different things.
+
+```absolute
+struct WithString { public string t; }
+WithString copied = original;      // allowed, and rightly
+```
+
+The backend's `needsDrop` is *there is something to release*, and for
+`WithString` it is true -- the string field has a count to give back. The
+analyzer's is *this owns a unique resource*, and for `WithString` it is false --
+which is what lets the copy above be a copy rather than
+`E_RESOURCE_AGGREGATE_COPY`. Both answers are correct for the rules that read
+them, and every rule reading one of them today reads only its own half, so
+nothing is wrong at the moment.
+
+What is wrong is the name. A field claiming to be the one answer while holding
+two is exactly the shape of the defects in section 1: a reader who checks the
+struct's definition learns the wrong thing about one of the halves, and the
+next rule written against it picks whichever meaning its author had in mind.
+
+Settled the second of the two ways it could be: `needsDrop` means "there is
+something to release" on both sides now -- the analyzer answers yes for a
+string, for a closure, for a tuple holding either, and for any aggregate whose
+parts do -- and the ownership rules ask
+`Analyzer::TypeOwnsUniqueResource`, which is the question they were always
+asking. Every rule that used to read `TypeOwnsResources` reads that instead,
+and none of them changed behaviour: a struct holding a string is still copied,
+a struct holding an owner is still refused, `copy` of a `string[]` still works
+and `copy` of a `Node*[]` is still refused.
+
+One honest consequence: no rule inside the analyzer reads `needsDrop` today,
+because every rule that seemed to was asking the other question. The field is
+there because the model is shared and the backend reads it, and it is now
+*right* rather than differently defined. What keeps it from drifting again is
+that the question it answers is written next to it in `type_names.h`, and the
+other question has a name of its own instead of borrowing this one.
+
 ## 3. Behaviour that contradicts the documentation
 
 Resolved in favour of the traversal: the document was incomplete, not wrong.
@@ -1040,8 +1087,9 @@ built at `-O0` rather than `-O1`, because at `-O1` a missing release is not
 observable. The fuzzer runs as `absolute.codegen-fuzz`.
 
 A sweep of the whole suite under `-O0` with leak checking on found no other
-kind of leak: everything that remains traces to `absolute_string_*`, which is
-the open defect in section 1.
+kind of leak. Everything that remained traced to `absolute_string_*`, which was
+the open defect in section 1 when this was written and is closed now: a string
+has a lifetime.
 
 ## 13. Beyond the list: a test that could not overlap
 
