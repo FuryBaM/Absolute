@@ -140,20 +140,51 @@ namespace Absolute {
     }
 
     void Analyzer::Visit(TernaryExpr* expr) {
+        // The type the conditional is being read as, if there is one. Held
+        // across the arms because evaluating one sets it for whatever is
+        // nested inside it.
+        const std::string target = expectedType;
         const Result condition = Evaluate(expr->condition.get());
         if (!IsConditionType(condition.type)) Report("ternary condition must be boolean-compatible",
             "E_TERNARY_CONDITION_TYPE");
         const ValueFlowMap baseValues = valueFlow;
-        const Result trueResult = Evaluate(expr->trueExpr.get());
+        const Result trueResult = EvaluateExpected(expr->trueExpr.get(), target);
         const ValueFlowMap trueValues = valueFlow;
         valueFlow = baseValues;
-        const Result falseResult = Evaluate(expr->falseExpr.get());
+        const Result falseResult = EvaluateExpected(expr->falseExpr.get(), target);
         const ValueFlowMap falseValues = valueFlow;
         MergeValueFlowPaths(baseValues, {trueValues, falseValues});
-        std::string type = CommonType(trueResult.type, falseResult.type);
+
+        // Read as T when there is a T to read it as and both arms are one:
+        // `Shape* s = left ? new Bigger(3) : new Square(3)` needs no cast on
+        // either arm, because going from a type to one it derives from is
+        // always safe and writing it twice says nothing the declaration has
+        // not already said.
+        std::string type = "error";
+        const bool targeted = !target.empty() && target != "auto" &&
+            target != "error" && trueResult.type != "error" &&
+            falseResult.type != "error" &&
+            IsAssignable(target, trueResult.type) &&
+            IsAssignable(target, falseResult.type);
+        if (targeted) type = ValueReferenceBaseType(target);
+        else type = CommonType(trueResult.type, falseResult.type);
         if (type == "error" && IsPointerType(trueResult.type) && falseResult.type == "null") type = trueResult.type;
         if (type == "error" && IsPointerType(falseResult.type) && trueResult.type == "null") type = falseResult.type;
-        if (type == "error" && trueResult.type != "error" && falseResult.type != "error")
+        // With no type to read it as, the arms decide: the least of the types
+        // both can be seen as. `auto s = left ? new Bigger(3) : new Square(3)`
+        // is a `Square*` because that is the nearest name that covers both.
+        bool ambiguousBound = false;
+        if (type == "error") {
+            const std::string bound = CommonPointerType(
+                trueResult.type, falseResult.type, ambiguousBound);
+            if (!bound.empty()) type = bound;
+        }
+        if (ambiguousBound)
+            Report("ternary branches '" + trueResult.type + "' and '" +
+                falseResult.type + "' share several unrelated types and no "
+                "nearest one; name the type the conditional is read as",
+                "E_AMBIGUOUS_CONDITIONAL_TYPE");
+        else if (type == "error" && trueResult.type != "error" && falseResult.type != "error")
             Report("ternary branches have incompatible types '" + trueResult.type + "' and '" + falseResult.type + "'",
                 "E_TERNARY_BRANCH_TYPES");
         PointerValidity pointerValidity = PointerValidity::NotPointer;

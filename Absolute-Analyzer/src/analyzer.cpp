@@ -1301,6 +1301,71 @@ namespace Absolute {
         return found != types.end() && found->second.kind == TypeKind::Enum;
     }
 
+    void Analyzer::CollectAncestors(
+        const std::string& type, std::vector<std::string>& into) const {
+        if (type.empty() || type == "error") return;
+        if (std::find(into.begin(), into.end(), type) != into.end()) return;
+        into.push_back(type);
+        std::string definitionName = type;
+        std::unordered_map<std::string, std::string> substitutions;
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseGenericTypeName(type, genericBase, genericArguments)) {
+            definitionName = genericBase;
+            const auto definition = types.find(definitionName);
+            if (definition != types.end() &&
+                definition->second.genericParameters.size() == genericArguments.size()) {
+                for (size_t index = 0; index < genericArguments.size(); ++index)
+                    substitutions.emplace(definition->second.genericParameters[index],
+                        genericArguments[index]);
+            }
+        }
+        const auto found = types.find(definitionName);
+        if (found == types.end()) return;
+        for (const std::string& declaredParent : found->second.parents)
+            CollectAncestors(SubstituteGenericType(declaredParent, substitutions), into);
+    }
+
+    // The least upper bound: of every type both sides can be seen as, the one
+    // furthest down the hierarchy. Two interfaces that neither extends is the
+    // case with no least one, and it is reported rather than picked from.
+    std::string Analyzer::CommonPointerType(
+        const std::string& left, const std::string& right, bool& ambiguous) const {
+        ambiguous = false;
+        if (!IsPointerType(left) || !IsPointerType(right)) return {};
+        const OwnershipKind kind = CanonicalOwnership(left);
+        if (kind == OwnershipKind::None || CanonicalOwnership(right) != kind) return {};
+        if (IsAssignable(left, right)) return left;
+        if (IsAssignable(right, left)) return right;
+
+        std::vector<std::string> ancestors;
+        CollectAncestors(PointerPointee(left), ancestors);
+        std::vector<std::string> shared;
+        for (const std::string& ancestor : ancestors)
+            if (IsDerivedFrom(PointerPointee(right), ancestor))
+                shared.push_back(ancestor);
+        if (shared.empty()) return {};
+
+        std::string best;
+        for (const std::string& candidate : shared) {
+            const bool least = std::all_of(shared.begin(), shared.end(),
+                [&](const std::string& other) {
+                    return other == candidate || IsDerivedFrom(candidate, other);
+                });
+            if (!least) continue;
+            if (!best.empty() && best != candidate) {
+                ambiguous = true;
+                return {};
+            }
+            best = candidate;
+        }
+        if (best.empty()) {
+            ambiguous = true;
+            return {};
+        }
+        return CanonicalPointerName(best, kind);
+    }
+
     bool Analyzer::IsDerivedFrom(const std::string& type, const std::string& base) const {
         if (type == base) return true;
         std::string definitionName = type;

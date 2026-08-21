@@ -124,6 +124,43 @@ Base* base = derived;
 weak Base* observer = derived;
 ```
 
+## The type of a conditional
+
+`cond ? a : b` takes its type in this order:
+
+1. **The type it is being read as.** A declaration, a parameter or a return
+   says what the conditional has to be, and if both arms convert to that type
+   implicitly, that is the conditional's type. A derived pointer converting to
+   a base is one of those conversions, so neither arm says it again:
+
+   ```absolute
+   Shape* shape = left ? new Bigger(3) : new Square(3);
+   ```
+
+2. **The least upper bound of the arms,** when nothing says what to read it as
+   -- the type furthest down the hierarchy that both arms can be seen as:
+
+   ```absolute
+   auto shape = left ? new Bigger(3) : new Square(3);   // Square*
+   ```
+
+   Which is also what lets a cast stand outside the parentheses rather than on
+   both arms: `(left ? new Bigger(3) : new Square(3)) as Shape`.
+
+3. **Neither**, and it is a compile-time error: `E_TERNARY_BRANCH_TYPES` when
+   the arms share no type at all, and `E_AMBIGUOUS_CONDITIONAL_TYPE` when they
+   share several and none of them is the least -- two classes that both
+   implement two unrelated interfaces. Naming the type settles that one:
+
+   ```absolute
+   Alpha* either = left ? new Left() : new Right();
+   ```
+
+Both arms keep their own ownership mode, and a conditional over two different
+modes -- an owner on one side and a subscriber on the other -- has no type.
+Weakening one to match the other would change what the expression means
+without saying so.
+
 Conversions between unrelated values such as `string` to `int32` or `int32`
 to `bool` are compile-time errors. Absolute does not currently support
 user-declared conversion operators; wrap that conversion in a named function
