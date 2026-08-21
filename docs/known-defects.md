@@ -386,6 +386,32 @@ line and column instead of a number followed by a stray identifier.
 
 Covered by `tests/literal-notation.abs` and `tests/literal-notation-errors.abs`.
 
+### Fixed: a conditional answered for whichever arm ran last
+
+The counting half of a conditional was made to answer for the merge -- each arm
+takes a count of its own so both hand the same thing on. What the arms said
+about what they *made* was not: `valueCreatesManagedOwner` and its neighbours
+were left holding whatever the second arm's evaluation set, and one of them
+held an SSA value from that arm's block.
+
+```absolute
+Shape* shape = left ? new Bigger(3) as Shape : new Square(3) as Shape;
+```
+
+did not compile at all: the object behind a managed handle is cached so later
+reads need not go through the handle table, and caching it here stored a value
+from one path in a place both paths reach -- "instruction does not dominate all
+uses", an invalid function rather than a wrong answer.
+
+The other two are quieter. The result claimed to own what only one arm made, so
+`cond ? kept : make()` would have had the local destroy an object a name still
+holds; and it claimed to own nothing when the false arm happened to be a plain
+value, dropping what the true arm made.
+
+The merge owns something only if both arms produced one, and it holds no value
+that belongs to a single path: an array's owner is read out of the descriptor
+the merge itself produced. Pinned by `tests/conditional-owners.abs`.
+
 ### Fixed: a temporary array released its storage and nothing in it
 
 Found by the `flowing` shape the moment it was written -- a generated program

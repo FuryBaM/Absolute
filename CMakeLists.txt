@@ -1081,6 +1081,10 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "E_MAIN_RETURN_TYPE"
     )
     add_test(
+        NAME absolute.conditional-owners-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/conditional-owners.abs"
+    )
+    add_test(
         NAME absolute.temporary-array-elements-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/temporary-array-elements.abs"
     )
@@ -3548,7 +3552,8 @@ if(BUILD_TESTING)
             "foreach-temporary-source=foreach-temporary-source=ok"
             "shared-value-handoff=shared-value-handoff=ok"
             "default-arguments=default-arguments=ok"
-            "temporary-array-elements=temporary-array-elements=ok")
+            "temporary-array-elements=temporary-array-elements=ok"
+            "conditional-owners=conditional-owners=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those
