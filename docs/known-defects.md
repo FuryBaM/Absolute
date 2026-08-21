@@ -16,16 +16,50 @@ build/Release/absolutec file.abs --build-exe -o app && ./app
 
 ## 1. Open defects
 
-None of this section's own. Everything it held has been closed, and each entry
-records what the fix was, so a regression is recognizable rather than
-rediscovered.
+### Open: an indexer cannot say that its getter borrows and its setter takes
+
+```absolute
+class Source {
+    public Cell* made { get { return new Cell(1); } }        // released
+    public Cell* this[int32 i] { get { return new Cell(2); } }  // leaked
+}
+source.made.value;   // the temporary is released with the statement
+source[0].value;     // "memory leak detected for handle N" at exit
+```
+
+A property getter that produces an owner is a call that produced an owner, and
+the temporary it makes is released with the statement -- that is fixed, and
+`tests/accessor-owner-temporary.abs` pins it. An indexer is the same kind of
+call and could not be given the same answer, because an indexer has **one type
+for both of its accessors**: the setter is handed a `T`, so the getter cannot
+say `sub T`.
+
+Every generic container in `std/collections` relies on that. `Vector<Cell*>`'s
+indexer returns `unsafeArrayGet(items, index)` -- a borrow -- typed `T`, and at
+`T = Cell*` that reads as `Cell*`. Nothing in the expression distinguishes it
+from an owner the getter produced, so treating an indexer's result as a
+temporary owner destroys elements the container still holds: with the flag set
+on that path, `tests/vector-owner-elements.abs` and
+`tests/deque-owner-elements.abs` both abort with "null or expired managed
+pointer".
+
+What is missing is a way to write the two halves separately -- a getter that
+hands back `sub T` beside a setter that takes `T` -- or a rule that an
+indexer's getter always borrows. Both are decisions about what an indexer
+means, which is why this is recorded rather than patched. The property half is
+fixed and the containers are correct; what leaks is an indexer written to
+*produce* an owner, which no container in the standard library does.
+
+Everything else this section held has been closed, and each entry records what
+the fix was, so a regression is recognizable rather than rediscovered.
 
 An empty list is not the same as no defects, and this file should not be read
 as one. Most of what is recorded below was found *after* the list first
 emptied, by running programs rather than by reading it -- the standard
 library's own containers under AddressSanitizer, with every string built at
-runtime. The last such sweep found sixteen, six of them in the same gap, and
-section 1's last three entries are that sweep. The place to look next is section 5,
+runtime. The last such sweep found seventeen, six of them in the same gap, and
+section 1's last three entries are that sweep. The one thing it found and did
+not fix is at the top of this section. The place to look next is section 5,
 which says where not to.
 
 Nothing is open elsewhere either. The two things that were -- a name in the
@@ -727,6 +761,13 @@ arithmetic operators, integers for the bitwise ones. A raw pointer is still
 exempt -- `p += n` steps by elements and has its own rule -- and a plugin
 operator is left alone, because whether the compound form should reach a plugin
 at all is a question about plugins rather than about this check.
+
+**One more place an accessor is a call.** An owner produced by a property
+getter and dropped inside the expression that read it -- `source.made.value` --
+was never released; the flag that says an expression produced an owner was set
+on the call path and cleared by hand on the property path. It is set the same
+way on both now. The indexer half of it could not be answered and is the open
+defect at the top of section 1. See `tests/accessor-owner-temporary.abs`.
 
 **The ordering comparisons had the same hole from the other side.** `<`, `<=`,
 `>` and `>=` were checked only for the operands being assignable to each
