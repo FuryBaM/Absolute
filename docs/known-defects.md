@@ -24,7 +24,7 @@ An empty list is not the same as no defects, and this file should not be read
 as one. Most of what is recorded below was found *after* the list first
 emptied, by running programs rather than by reading it -- the standard
 library's own containers under AddressSanitizer, with every string built at
-runtime. The last such sweep found thirteen, six of them in the same gap, and
+runtime. The last such sweep found sixteen, six of them in the same gap, and
 section 1's last three entries are that sweep. The place to look next is section 5,
 which says where not to.
 
@@ -726,10 +726,26 @@ The compound form asks what the binary form asks now: numeric operands for the
 arithmetic operators, integers for the bitwise ones. A raw pointer is still
 exempt -- `p += n` steps by elements and has its own rule -- and a plugin
 operator is left alone, because whether the compound form should reach a plugin
-at all is a question about plugins rather than about this check. Pinned from
-both sides: `tests/compound-assignment-operands.abs` is every compound operator
-on the types that carry it, including the unsigned cases where the two forms
-once picked different instructions, and `tests/compound-assignment-errors.abs`
+at all is a question about plugins rather than about this check.
+
+**The ordering comparisons had the same hole from the other side.** `<`, `<=`,
+`>` and `>=` were checked only for the operands being assignable to each
+other, so `"a" < "b"` and `point < other` reached the backend and failed there
+the same way. They order what the backend can order now -- numbers,
+characters, enum members and raw addresses -- and inside a generic body the
+question is recorded and answered at each instantiation, the way the ownership
+rules already are, so `Sorted<Point>` names the line that cannot work.
+
+Found while writing that: **a boolean was orderable by accident, and gave the
+wrong answer.** One bit compared as a signed number reads `true` as -1, so
+`false < true` came out false and `true < false` came out true. Two answers
+were available -- compare it unsigned, or say a boolean is not an ordered
+value -- and the second is what the language means. Equality is untouched.
+
+Pinned from both sides: `tests/compound-assignment-operands.abs` is every
+compound operator on the types that carry it, including the unsigned cases
+where the two forms once picked different instructions, plus each ordering
+comparison on each type it can order; `tests/compound-assignment-errors.abs`
 is the refusals.
 
 ### Fixed: `sub T` did not survive a generic body, and neither did a move
@@ -777,10 +793,18 @@ because it is a ring -- and a read that is not the deque giving the element up
 hands back `sub T`. `tests/deque-owner-elements.abs` counts every destruction
 and runs under AddressSanitizer with the leak check on.
 
-Still open, and recorded rather than patched: `Set`, `HashMap`,
-`PriorityQueue`, `MapIterator` and `MapBuilder` are unmigrated for the same
-reason, and `VectorBuilder` is the one that cannot be fixed by saying something
-weaker -- `tests/std-collections-owner-elements-errors.abs` explains why it is
+`PriorityQueue` follows, and it is the harder shape for a different reason: a
+heap swaps on nearly every insertion and removal, so `swap` is the line the
+whole container turns on -- three reads there gave two slots one handle each
+time. `enqueueAll` is the other half: adding a batch by reading each slot left
+the array holding what the queue now had, and the runtime said so. The batch is
+handed over element by element now, and a take clears only what has something
+to clear, so at `T = int32` the caller's array is untouched. See
+`tests/priority-queue-owner-elements.abs`.
+
+Still open, and recorded rather than patched: `Set`, `HashMap`, `MapIterator`
+and `MapBuilder` are unmigrated for the same reason, and `VectorBuilder` is the
+one that cannot be fixed by saying something weaker -- `tests/std-collections-owner-elements-errors.abs` explains why it is
 a decision about what `builder()` means rather than a patch.
 
 ## 2. Missing features that fail loudly

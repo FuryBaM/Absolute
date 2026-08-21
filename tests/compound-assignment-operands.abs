@@ -15,6 +15,8 @@
 //
 // The refusals are in tests/compound-assignment-errors.abs.
 
+enum Shade { Light, Dark }
+
 int32 main() {
     // Arithmetic, on an integer.
     int32 a = 3;
@@ -74,6 +76,17 @@ int32 main() {
     slots[0] = 1;
     slots[0] += 4;
     assert(slots[0] == 5, "an element");
+
+    // The ordering comparisons, on everything the backend can order. A
+    // boolean is not among them: one bit compared as a signed number reads
+    // `true` as -1, so `false < true` came out false, and the answer the
+    // language gives is that a boolean is not an ordered value
+    // (tests/compound-assignment-errors.abs).
+    assert(1 < 2 && 2.5 > 1.5, "numbers");
+    assert('a' < 'b', "characters");
+    assert(Shade.Light < Shade.Dark, "enum members");
+    raw int32* first = unsafeArrayData(numbers);
+    assert(first < first + 1, "raw addresses");
 
     println("compound-assignment-operands=ok");
     return 0;

@@ -133,7 +133,10 @@ namespace std.collections {
             _count = 0;
         }
 
-        public bool contains(T target) {
+        // A search compares; it does not take the element it is given, so
+        // it asks for the weaker relation. At `T = int32` the qualifier is
+        // not there at all, and an owner still converts to a subscriber.
+        public bool contains(sub T target) {
             int32 index = 0;
             while (index < _count) {
                 if (unsafeArrayGet(items, (head + index) % _capacity) == target) {

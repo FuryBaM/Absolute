@@ -114,10 +114,44 @@ namespace Absolute {
             Save(expr, {InvalidSymbolId, "bool", false});
         }
         else if (op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=") {
-            if (op != "==" && op != "!=" &&
-                (IsManagedPointerType(left.type) || IsManagedPointerType(right.type)))
+            const bool managedOperand =
+                IsManagedPointerType(left.type) || IsManagedPointerType(right.type);
+            if (op != "==" && op != "!=" && managedOperand)
                 Report("managed pointers only support equality and null comparisons",
                     "E_MANAGED_POINTER_COMPARISON");
+            // `<`, `<=`, `>` and `>=` order their operands, and the backend
+            // orders numbers, characters, enum members and raw addresses --
+            // nothing else. A string and a struct reached it as
+            // "assignable to each other" and failed there with "binary
+            // operator requires numeric operands": the backend naming its own
+            // mechanism, with no file and no line. Equality is not asked,
+            // because it is defined for more than these -- a string compares
+            // by its bytes.
+            //
+            // A managed pointer is left to the message above rather than given
+            // a second one for the same mistake.
+            // An open `T` is not judged here -- it is not a type yet. A
+            // generic class records the question and each instantiation
+            // answers it; a generic function's parameter is left to the
+            // instantiation itself, which is where the backend meets a
+            // concrete type.
+            const auto judge = [&](const std::string& type) {
+                if (IsOpenGenericParameter(type)) {
+                    RecordGenericBodyFact(GenericBodyFact::Shape::OrdersValues,
+                        type, op, expr);
+                    return true;
+                }
+                return IsOrderableType(type);
+            };
+            if (op != "==" && op != "!=" && !managedOperand) {
+                const bool leftOrders = judge(left.type);
+                const bool rightOrders = judge(right.type);
+                if (!leftOrders || !rightOrders)
+                    Report("operator '" + op + "' orders numbers, characters, "
+                        "enum members and raw pointers, not '" +
+                        left.type + "' and '" + right.type + "'",
+                        "E_ORDERING_OPERAND_TYPE");
+            }
             if (!IsAssignable(left.type, right.type) && !IsAssignable(right.type, left.type))
                 Report("cannot compare '" + left.type + "' with '" + right.type + "'",
                     "E_INCOMPARABLE_TYPES");
