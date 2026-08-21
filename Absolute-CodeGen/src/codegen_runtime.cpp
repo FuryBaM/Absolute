@@ -20,8 +20,15 @@ namespace Absolute {
         }
         currentValueType = SemanticType(expression);
         if (ArrayRankName(currentValueType) > 0 && !valueCreatesArrayOwner) {
-            bool transfersOwner = dynamic_cast<FunctionCallExpr*>(expression) != nullptr;
-            if (transfersOwner) {
+            // An accessor is a call however it is written. Asking for the
+            // shape of the expression instead answered "no" for a property
+            // and an indexer, so `holder.tags` -- a getter that returns
+            // `copy(_tags)`, which the analyzer requires of it -- handed back
+            // an owner nobody was recorded as holding, and the storage and
+            // everything in it was never released. The analyzer already
+            // answers "did this expression produce its value", and `move`
+            // reaches here having settled the question itself.
+            if (CreatesFreshString(expression)) {
                 ArrayView returned = ArrayViewFromValue(value, currentValueType);
                 valueCreatesArrayOwner = true;
                 valueArrayOwner = returned.owner;

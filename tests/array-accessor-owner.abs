@@ -1,0 +1,95 @@
+// An accessor is a call however it is written.
+//
+// A value that arrives as an array from a call transfers the storage to
+// whoever receives it -- that is what makes `string[] rows = build();` release
+// anything at the end of its scope. Which expressions do that was decided by
+// the *shape* of the expression: a FunctionCallExpr, and nothing else. A
+// property getter and an indexer getter are calls that are not written as
+// calls, so `holder.rows` handed back an owner nobody was recorded as holding
+// and the storage -- and every string in it -- was never released.
+//
+// The analyzer already answers "did this expression produce its value", and it
+// has always said yes for a property and an indexer. It answers here now, the
+// same as it does for a string and for a value with counted parts. `move`
+// settles the question itself before reaching this point, so a moved array
+// still transfers.
+//
+// The analyzer requires `copy(...)` of any array a callable returns
+// (E_ARRAY_RETURN_REQUIRES_COPY), so every array that leaves an accessor is an
+// owner -- there is no borrowed case for this to get wrong.
+
+class Rows {
+    private string[] _data;
+    private int32 _index;
+
+    public Rows(int32 index) {
+        _index = index;
+        _data = new string[3];
+        _data[0] = format("a-{}", index);
+        _data[1] = format("b-{}", index);
+        _data[2] = format("c-{}", index);
+    }
+
+    // A property whose value is an array.
+    public string[] all { get { return copy(_data); } }
+
+    // An indexer whose value is an array.
+    public string[] this[int32 from] {
+        get { return copy(_data[from:3]); }
+    }
+
+    // The same thing written as a call, which always worked. It is here so
+    // the two are compared in one program.
+    public string[] allMethod() { return copy(_data); }
+
+    public int32 index { get { return _index; } }
+}
+
+int32 main() {
+    int32 total = 0;
+
+    // One of each, read and kept.
+    Rows* one = new Rows(0);
+    string[] fromProperty = one.all;
+    string[] fromIndexer = one[1];
+    string[] fromMethod = one.allMethod();
+    assert(fromProperty.length == 3, "a property hands back the whole array");
+    assert(fromIndexer.length == 2, "an indexer hands back what it sliced");
+    assert(fromMethod.length == 3, "and so does a method");
+    assert(fromProperty[0] == "a-0", "the property's contents are the field's");
+    assert(fromIndexer[0] == "b-0", "the indexer's start where it was told to");
+    fromProperty[0] = format("changed-{}", 0);
+    assert(one.all[0] == "a-0", "and each is a copy, not the field");
+    delete one;
+
+    // Read without keeping: the array is a temporary of the statement.
+    Rows* two = new Rows(1);
+    assert(two.all.length == 3, "an array read and dropped in one expression");
+    assert(two[0].length == 3, "the same through the indexer");
+    foreach (string text in two.all) {
+        assert(text != "", "a loop over an accessor's array");
+        total = total + 1;
+    }
+    assert(total == 3, "the loop saw every element");
+    delete two;
+
+    // Enough rounds that an array kept per read is a heap that grows, rather
+    // than a few hundred bytes at exit.
+    int32 round = 0;
+    while (round < 1500) {
+        Rows* rows = new Rows(round);
+        string[] held = rows.all;
+        total = total + held.length;
+        string[] sliced = rows[2];
+        total = total + sliced.length;
+        total = total + rows.allMethod().length;
+        foreach (string text in rows.all) { total = total + 1; }
+        assert(rows.index == round, "a property with nothing to own still reads");
+        delete rows;
+        round = round + 1;
+    }
+    assert(total == 3 + 1500 * 10, "every round counted the same way");
+
+    println("array-accessor-owner=ok");
+    return 0;
+}
