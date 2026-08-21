@@ -1,0 +1,123 @@
+// A move is a transfer, however many hands it passes through.
+//
+// A parameter whose type is an open `T` is role-polymorphic: whether it owns
+// what it names is not decidable from the type, so the caller says, with a
+// flag beside the argument, and `move(v)` inside the body checks that flag at
+// run time. What the flag was set from asked the analyzer whether the argument
+// creates a managed owner -- and inside an open generic body it cannot say so,
+// because `T` is not a pointer yet.
+//
+// One hop was fine: the outermost caller passes a `new`, which the analyzer
+// does see. The second hop is where it broke, and the second hop is a
+// container wrapping a container:
+//
+//     Ownership operation requires an owner argument
+//
+// on the first `Queue<Cell*>.enqueue`, followed by the runtime reporting every
+// element as leaked. `Queue` is `Deque` with two method names, and `Deque` is
+// storage: three levels, and the flag went to false at the second.
+//
+// A move is a transfer whatever the parameter turns out to be, so that is what
+// the flag says now. A shared value is unaffected -- `move` of a string is a
+// read, and a string parameter carries no ownership role for this to answer
+// about.
+
+int32 destroyed = 0;
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+    public void destroy() { destroyed = destroyed + 1; }
+}
+
+class Storage<T> {
+    private T[] items;
+    private int32 used;
+
+    public Storage() { items = new T[8]; used = 0; }
+
+    public int32 count { get { return used; } }
+
+    public void put(T value) {
+        unsafeArraySet(items, used, move(value));
+        used = used + 1;
+    }
+
+    public T take() {
+        used = used - 1;
+        return unsafeArrayTake(items, used);
+    }
+
+    public void drop() {
+        unsafeArrayDrop(items, 0, used);
+        used = 0;
+    }
+}
+
+// One hop.
+class Wrapper<T> {
+    private Storage<T>* inner;
+
+    public Wrapper() { inner = new Storage<T>(); }
+    public int32 count { get { return inner.count; } }
+    public void put(T value) { inner.put(move(value)); }
+    public T take() { return inner.take(); }
+    public void drop() { inner.drop(); }
+}
+
+// Two hops, which is what the standard collections are shaped like.
+class Outer<T> {
+    private Wrapper<T>* inner;
+
+    public Outer() { inner = new Wrapper<T>(); }
+    public int32 count { get { return inner.count; } }
+    public void put(T value) { inner.put(move(value)); }
+    public T take() { return inner.take(); }
+    public void drop() { inner.drop(); }
+}
+
+int32 main() {
+    // One hop, over an element that owns something.
+    Wrapper<Cell*>* once = new Wrapper<Cell*>();
+    int32 index = 0;
+    while (index < 4) { once.put(new Cell(index)); index = index + 1; }
+    assert(once.count == 4, "every element arrived");
+    Cell* taken = once.take();
+    assert(taken.value == 3, "and came back out");
+    delete taken;
+    once.drop();
+    assert(destroyed == 4, "one hop released every element exactly once");
+    delete once;
+
+    // Two hops, which is where the flag used to go to false.
+    Outer<Cell*>* twice = new Outer<Cell*>();
+    index = 0;
+    while (index < 5) { twice.put(new Cell(index)); index = index + 1; }
+    assert(twice.count == 5, "every element arrived through both hops");
+    Cell* second = twice.take();
+    assert(second.value == 4, "and came back out through both");
+    delete second;
+    twice.drop();
+    assert(destroyed == 9, "two hops released every element exactly once");
+    delete twice;
+
+    // A counted value through the same bodies: `move` of one is a read, and
+    // nothing here asks it for an ownership role.
+    Outer<string>* texts = new Outer<string>();
+    index = 0;
+    while (index < 4) { texts.put(format("t-{}", index)); index = index + 1; }
+    assert(texts.take() == "t-3", "a counted element comes back out");
+    texts.drop();
+    delete texts;
+
+    // And a value that owns nothing at all.
+    Outer<int32>* numbers = new Outer<int32>();
+    index = 0;
+    while (index < 4) { numbers.put(index * 3); index = index + 1; }
+    assert(numbers.take() == 9, "a plain value comes back out");
+    numbers.drop();
+    delete numbers;
+
+    println("generic-move-handoff=ok");
+    return 0;
+}

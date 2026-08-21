@@ -270,6 +270,20 @@ namespace Absolute {
             return builder.getFalse();
         const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
         if (!info) return builder.getFalse();
+        // A move is a transfer, whatever the parameter's type turns out to be.
+        // Inside an open generic body the analyzer cannot say that `T` is a
+        // managed owner -- `T` is not a pointer yet -- so `createsManagedOwner`
+        // is false for `move(v)` there, and the flag said "borrowed" about a
+        // value the caller had just given up. One hop was fine, because the
+        // outermost caller passes a `new` and the analyzer can see that; the
+        // second hop is where it failed, which is a container wrapping a
+        // container: `Queue<Cell*>` over `Deque<Cell*>` aborted on its first
+        // enqueue with "Ownership operation requires an owner argument".
+        //
+        // Asked after the guard above, so a shared value is unaffected: `move`
+        // of a string is a read, and a string parameter carries no ownership
+        // role for this to answer about.
+        if (info->isMoveResult) return builder.getTrue();
         const std::string valueType =
             ValueReferenceBaseTypeName(parameterType);
         bool transfers = false;
