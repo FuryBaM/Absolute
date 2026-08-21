@@ -213,6 +213,7 @@ namespace Absolute {
         impl->valueManagedPointee = nullptr;
         impl->valueCreatesArrayOwner = false;
         impl->valueArrayOwner = nullptr;
+        impl->valueArrayOwnedCount = nullptr;
         impl->valueCreatesClosureOwner = false;
     }
 
@@ -338,6 +339,7 @@ namespace Absolute {
             if (!expr->value) impl->Fail("array view declaration requires an initializer");
             llvm::Value* descriptor = impl->Evaluate(expr->value.get());
             const bool ownsStorage = impl->valueCreatesArrayOwner;
+            llvm::Value* ownedCount = impl->valueArrayOwnedCount;
             Impl::ArrayView view = impl->ArrayViewFromValue(descriptor, declaredTypeName);
             Impl::Variable variable;
             variable.address = view.address;
@@ -355,6 +357,15 @@ namespace Absolute {
                 view.owner ? view.owner
                     : llvm::ConstantPointerNull::get(impl->builder.getPtrTy()),
                 variable.arrayOwnerStorage);
+            // What this name owns is the allocation, and what it describes may
+            // be part of it: `string[] head = make()[0:2]` releases three
+            // elements and frees one buffer. Remembered here because the
+            // extent travels with the owner rather than with the view.
+            if (ownsStorage && ownedCount) {
+                variable.arrayOwnedCountStorage = impl->CreateEntryAlloca(
+                    *function, impl->builder.getInt64Ty(), name + ".array.owned.count");
+                impl->builder.CreateStore(ownedCount, variable.arrayOwnedCountStorage);
+            }
             if (ownsStorage) variable.arrayOwnerSymbol = variable.symbol;
             else if (Impl::Variable* source = impl->FindVariable(
                 impl->SemanticSymbol(expr->value.get()))) {
@@ -377,6 +388,7 @@ namespace Absolute {
             impl->valueCreatesManagedOwner = false;
             impl->valueCreatesArrayOwner = false;
             impl->valueArrayOwner = nullptr;
+        impl->valueArrayOwnedCount = nullptr;
             return;
         }
         const std::string& typeName = declaredTypeName;
@@ -679,6 +691,7 @@ namespace Absolute {
             // nothing reads back.
             impl->valueCreatesArrayOwner = true;
             impl->valueArrayOwner = dataPtr;
+            impl->valueArrayOwnedCount = count;
             return;
         }
         const std::string pointeeType = allocationType.empty()
@@ -867,6 +880,7 @@ namespace Absolute {
                 if (!expr->value) impl->Fail("array alias variable requires an initializer");
                 llvm::Value* descriptor = impl->Evaluate(expr->value.get());
                 const bool ownsStorage = impl->valueCreatesArrayOwner;
+                llvm::Value* ownedCount = impl->valueArrayOwnedCount;
                 Impl::ArrayView view = impl->ArrayViewFromValue(descriptor, typeName);
                 Impl::Variable variable;
                 variable.address = view.address;
@@ -884,6 +898,12 @@ namespace Absolute {
                     view.owner ? view.owner
                         : llvm::ConstantPointerNull::get(impl->builder.getPtrTy()),
                     variable.arrayOwnerStorage);
+                if (ownsStorage && ownedCount) {
+                    variable.arrayOwnedCountStorage = impl->CreateEntryAlloca(
+                        *function, impl->builder.getInt64Ty(),
+                        name + ".array.owned.count");
+                    impl->builder.CreateStore(ownedCount, variable.arrayOwnedCountStorage);
+                }
                 if (ownsStorage) variable.arrayOwnerSymbol = variable.symbol;
                 else if (Impl::Variable* source = impl->FindVariable(
                     impl->SemanticSymbol(expr->value.get()))) {
@@ -906,6 +926,7 @@ namespace Absolute {
                 impl->valueCreatesManagedOwner = false;
                 impl->valueCreatesArrayOwner = false;
                 impl->valueArrayOwner = nullptr;
+        impl->valueArrayOwnedCount = nullptr;
                 return;
             }
             llvm::Type* type = impl->TypeFromName(typeName);

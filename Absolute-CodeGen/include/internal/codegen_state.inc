@@ -14,6 +14,9 @@
             llvm::AllocaInst* managedPointee = nullptr;
             SymbolId symbol = InvalidSymbolId;
             llvm::Value* arrayOwner = nullptr;
+            // The extent the owner covers, when this name holds a view of part
+            // of it. Null means the view is the whole of it.
+            llvm::AllocaInst* arrayOwnedCountStorage = nullptr;
             bool ownsArrayStorage = false;
             // The storage is the frame's and is not freed, but the elements
             // are this name's to release: `Entry fixed[2] = { ... }` holds
@@ -226,6 +229,13 @@
         std::unordered_map<std::string, llvm::MDNode*> tbaaTypeNodes;
         bool valueCreatesArrayOwner = false;
         llvm::Value* valueArrayOwner = nullptr;
+        // How many elements the owner covers, which is not how many the value
+        // in hand describes: a slice is a view of part of an allocation, and
+        // releasing one has to release all of it. Travels with the owner
+        // pointer from wherever the array was made; null when the extent is
+        // not known here, and then the view's own length is used, which is
+        // what it always was.
+        llvm::Value* valueArrayOwnedCount = nullptr;
         bool valueCreatesClosureOwner = false;
         std::string currentValueType;
         bool addressMode = false;

@@ -72,7 +72,8 @@
         // elements hold and then the storage, which is what the type already
         // says and what a scope-owned array already does.
         void RegisterTemporaryArrayOwner(
-            llvm::Value* descriptor, const std::string& typeName);
+            llvm::Value* descriptor, const std::string& typeName,
+            llvm::Value* owner = nullptr, llvm::Value* ownedCount = nullptr);
 
         void RegisterTemporaryStringOwner(llvm::Value* text);
 
@@ -160,6 +161,9 @@
         llvm::Value* FunctionClosure(const Symbol& symbol);
 
         llvm::Value* BuildArrayDescriptor(const ArrayView& view);
+
+        // The number of elements a set of dimensions covers.
+        llvm::Value* ArrayElementCount(const std::vector<llvm::Value*>& dimensions);
 
         ArrayView ArrayViewFromValue(llvm::Value* descriptor, const std::string& typeName);
 

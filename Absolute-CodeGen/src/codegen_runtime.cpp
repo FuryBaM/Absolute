@@ -9,6 +9,7 @@ namespace Absolute {
         valueManagedPointee = nullptr;
         valueCreatesArrayOwner = false;
         valueArrayOwner = nullptr;
+        valueArrayOwnedCount = nullptr;
         valueCreatesClosureOwner = false;
         expression->Accept(visitor);
         if (!value) {
@@ -24,6 +25,7 @@ namespace Absolute {
                 ArrayView returned = ArrayViewFromValue(value, currentValueType);
                 valueCreatesArrayOwner = true;
                 valueArrayOwner = returned.owner;
+                valueArrayOwnedCount = ArrayElementCount(returned.dimensions);
             }
         }
         return value;
@@ -128,8 +130,18 @@ namespace Absolute {
                     // Guarded by the same owner pointer the free is: `move`
                     // clears that slot, and a moved-from local must not release
                     // what the destination now holds.
-                    EmitArrayElementCleanup(variable.address, variable.arrayElementType,
-                        variable.arrayDimensions,
+                    // Over what the owner covers. A name holding a slice of
+                    // an allocation still releases the whole allocation, and
+                    // walking the view would leave what is outside it held.
+                    llvm::Value* ownedCount = variable.arrayOwnedCountStorage
+                        ? builder.CreateLoad(builder.getInt64Ty(),
+                            variable.arrayOwnedCountStorage, "cleanup.array.owned.count")
+                        : nullptr;
+                    EmitArrayElementCleanup(
+                        ownedCount ? owner : variable.address,
+                        variable.arrayElementType,
+                        ownedCount ? std::vector<llvm::Value*>{ownedCount}
+                            : variable.arrayDimensions,
                         ArrayElementTypeName(variable.typeName,
                             ArrayRankName(variable.typeName)), owner);
                     builder.CreateCall(Free(), {owner});
@@ -342,6 +354,8 @@ namespace Absolute {
             }
             valueCreatesArrayOwner = false;
             valueArrayOwner = nullptr;
+        valueArrayOwnedCount = nullptr;
+            valueArrayOwnedCount = nullptr;
             return arguments;
         }
         if (parameterTypes.empty()) Fail("params callable has no array parameter");
@@ -372,6 +386,8 @@ namespace Absolute {
                 arrayType));
             valueCreatesArrayOwner = false;
             valueArrayOwner = nullptr;
+        valueArrayOwnedCount = nullptr;
+            valueArrayOwnedCount = nullptr;
             return arguments;
         }
 
@@ -396,6 +412,7 @@ namespace Absolute {
         if (ownershipFlags) ownershipFlags->push_back(builder.getFalse());
         valueCreatesArrayOwner = false;
         valueArrayOwner = nullptr;
+        valueArrayOwnedCount = nullptr;
         return arguments;
     }
 
@@ -431,7 +448,8 @@ namespace Absolute {
         // is dropped the same way: `map.toArray().length` allocated a snapshot
         // and read one field of it.
         if (valueCreatesArrayOwner && valueArrayOwner)
-            RegisterTemporaryArrayOwner(value, SemanticType(expression));
+            RegisterTemporaryArrayOwner(value, SemanticType(expression),
+                valueArrayOwner, valueArrayOwnedCount);
         RegisterIfFreshString(expression, value);
         return value;
     }
@@ -504,9 +522,48 @@ namespace Absolute {
     // and released with `free`, which let go of the storage and of nothing in
     // it: `snapshot()[0]`, `makeList().length` and a `foreach` over an array
     // its own header built all leaked every string the array held.
+    llvm::Value* CodeGenerator::Impl::ArrayElementCount(
+        const std::vector<llvm::Value*>& dimensions) {
+        llvm::Value* count = builder.getInt64(1);
+        for (llvm::Value* dimension : dimensions)
+            count = builder.CreateMul(count, dimension, "array.owned.count");
+        return count;
+    }
+
     void CodeGenerator::Impl::RegisterTemporaryArrayOwner(
-        llvm::Value* descriptor, const std::string& typeName) {
+        llvm::Value* descriptor, const std::string& typeName,
+        llvm::Value* owner, llvm::Value* ownedCount) {
         if (!descriptor || !CurrentFunction()) return;
+        // What is released is what the owner covers, not what the value in
+        // hand describes. A slice is a view of part of an allocation, and
+        // releasing it through the view left every element outside the view
+        // holding what it held: `copy(makeArray()[0:2])` gave back two of
+        // three strings and freed the storage under the third.
+        //
+        // Registered as a run of elements rather than as the array it was
+        // sliced from, because a rank the view no longer has is not needed to
+        // walk what the buffer holds -- one count and an element type are.
+        if (owner && ownedCount && ArrayRankName(typeName) > 0) {
+            const size_t rank = ArrayRankName(typeName);
+            const std::string elementTypeName = ArrayElementTypeName(typeName, rank);
+            const std::string ownedTypeName = elementTypeName + "[]";
+            ArrayView owned;
+            owned.address = owner;
+            owned.elementType = TypeFromName(elementTypeName);
+            owned.typeName = ownedTypeName;
+            owned.dimensions = {ownedCount};
+            owned.owner = owner;
+            llvm::Value* ownedDescriptor = BuildArrayDescriptor(owned);
+            llvm::AllocaInst* spill = CreateEntryAlloca(
+                *CurrentFunction(), ownedDescriptor->getType(), "array.temporary");
+            builder.CreateStore(ownedDescriptor, spill);
+            temporaryManagedOwners.push_back(
+                {spill, ownedTypeName, TemporaryOwner::Kind::AggregateValue});
+            valueCreatesArrayOwner = false;
+            valueArrayOwner = nullptr;
+            valueArrayOwnedCount = nullptr;
+            return;
+        }
         if (typeName.empty() || ArrayRankName(typeName) == 0) {
             temporaryManagedOwners.push_back(
                 {descriptor, {}, TemporaryOwner::Kind::ArrayBuffer});
@@ -520,6 +577,7 @@ namespace Absolute {
         }
         valueCreatesArrayOwner = false;
         valueArrayOwner = nullptr;
+        valueArrayOwnedCount = nullptr;
     }
 
     // A string an expression produced and nothing kept. `println(format(...))`

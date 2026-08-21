@@ -536,6 +536,7 @@ namespace Absolute {
                 ArrayView source = ViewOfArray(argument);
                 const bool releaseTemporarySource = valueCreatesArrayOwner;
                 llvm::Value* temporarySourceOwner = valueArrayOwner;
+                llvm::Value* temporarySourceCount = valueArrayOwnedCount;
                 llvm::Value* elementCount = builder.getInt64(1);
                 for (llvm::Value* dimension : source.dimensions)
                     elementCount = builder.CreateMul(
@@ -588,8 +589,17 @@ namespace Absolute {
                 // has just taken a count of every element that has one, so
                 // what the source held would never have been given back.
                 if (releaseTemporarySource) {
-                    EmitArrayElementCleanup(source.address, source.elementType,
-                        source.dimensions, copiedElement, temporarySourceOwner);
+                    // Through the owner and its whole extent, not through the
+                    // view: `copy(makeArray()[0:2])` names two elements of an
+                    // allocation of three, and the third is released here or
+                    // by nobody.
+                    EmitArrayElementCleanup(
+                        temporarySourceCount ? temporarySourceOwner : source.address,
+                        source.elementType,
+                        temporarySourceCount
+                            ? std::vector<llvm::Value*>{temporarySourceCount}
+                            : source.dimensions,
+                        copiedElement, temporarySourceOwner);
                     builder.CreateCall(Free(), {temporarySourceOwner});
                 }
                 source.address = copiedData;
@@ -599,6 +609,7 @@ namespace Absolute {
                 valueManagedPointee = nullptr;
                 valueCreatesArrayOwner = true;
                 valueArrayOwner = copiedData;
+                valueArrayOwnedCount = elementCount;
                 return;
             }
 
@@ -661,6 +672,8 @@ namespace Absolute {
             valueManagedPointee = nullptr;
             valueCreatesArrayOwner = false;
             valueArrayOwner = nullptr;
+        valueArrayOwnedCount = nullptr;
+            valueArrayOwnedCount = nullptr;
             return;
         }
 

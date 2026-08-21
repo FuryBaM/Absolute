@@ -94,6 +94,43 @@ int32 main() {
         same = same + 1;
     }
 
+    // A slice is a view of part of an allocation, and releasing one releases
+    // all of it. Through the view it released only what the view named, so the
+    // elements outside the slice were left holding what they held while the
+    // storage under them was freed.
+    int32 sliced = 0;
+    while (sliced < 2000) {
+        // Kept in a name: the name owns the allocation and describes part.
+        string[] head = three(sliced)[0:2];
+        assert(head[0] != "", "a slice keeps what it names");
+
+        // From the middle, so neither end is the allocation's.
+        string[] middle = three(sliced)[1:3];
+        assert(middle[0] != "", "wherever the slice starts");
+
+        // Copied out of one: `copy` releases its temporary source, all of it.
+        string[] copied = copy(three(sliced)[0:2]);
+        assert(copied[1] != "", "a copy of a slice of a temporary");
+
+        // Read through without keeping anything.
+        assert(three(sliced)[0:2].length == 2, "a field of one");
+        foreach (string text in three(sliced)[1:3]) {
+            assert(text != "", "a loop over one");
+        }
+        sliced = sliced + 1;
+    }
+
+    // A slice of a *named* array is a view into storage the name still owns,
+    // and nothing here releases it twice.
+    string[] owner = three(7);
+    int32 views = 0;
+    while (views < 2000) {
+        string[] view = owner[0:2];
+        assert(view[0] == owner[0], "a view names what the owner holds");
+        views = views + 1;
+    }
+    assert(owner[2] != "", "and the owner still holds all of it");
+
     println("temporary-array-elements=ok");
     return 0;
 }
