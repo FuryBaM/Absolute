@@ -36,9 +36,16 @@ a different spelling, could not be released at all: releasing it would kill
 what the copy still names, which is the withdrawn attempt again. `TypeSemantics`
 already said whether a type is `copyable`; what was missing was something that
 *performs* the copy. `EmitValueRetain` is the mirror of the destructor walk --
-a copy counts the parts it now names, a drop gives those counts back -- and it
-runs in the six places a copy happens: a store, an assignment, a declaration, a
-return, a temporary read out of a container, a scope. A tuple asks its elements rather
+a copy counts the parts it now names, a drop gives those counts back.
+
+Where it runs is the whole of it, and finding the places took longer than
+writing the walk. A copy counts what it takes at a store into a slot, an
+assignment, a declaration, a return, a temporary read out of a container, a
+loop's iteration variable, and a property's generated accessors; a name gives
+its counts back at a scope, a slot it overwrites, a field it overwrites, a
+temporary the statement made, and a loop variable taking the next element. Each
+of those was a separate entry below, because each was a place the rule had not
+reached rather than a rule that was wrong. A tuple asks its elements rather
 than a declaration it does not have; a value made only in order to pass in is
 released by the statement that made it, because an aggregate parameter borrows.
 
@@ -47,7 +54,10 @@ The model, the order of work and what proves each step are in
 `tests/ownership-qualifier-generics.abs`, `tests/subscriber-pointers.abs`,
 `tests/generic-body-ownership.abs`, `tests/open-ownership-qualifier.abs`,
 `tests/array-element-drop.abs`, `tests/string-lifetime.abs`,
-`tests/aggregate-copy.abs` and `tests/array-literal-owner.abs`.
+`tests/aggregate-copy.abs`, `tests/array-literal-owner.abs`,
+`tests/owned-aggregates.abs`, `tests/shared-value-handoff.abs`,
+`tests/temporary-array-elements.abs`, `tests/auto-property-storage.abs`,
+`tests/conditional-owners.abs` and `tests/foreach-temporary-source.abs`.
 
 ### Fixed: a string had no lifetime, so every string a program built was lost
 
@@ -250,141 +260,6 @@ now, the same way.
 
 Pinned by `tests/owned-aggregates.abs` and `tests/owned-aggregates-errors.abs`,
 and by the `owned` shape in the fuzzer.
-
-### Fixed: an owner produced inside a larger expression was lost
-
-The ownership rules only ever named the top of a statement, so an owner
-produced deeper in one was created, read, and dropped:
-
-```absolute
-if (make() != null) { println("compared"); }   // leaked
-int32 v = make().value;                        // leaked
-```
-
-Each ended with "memory leak detected for handle N" and an abort at exit.
-`std.json.parse(text)` used in a condition is the shape that found it. The two
-answers on the table were to refuse such an expression or to release it; the
-release was chosen, so `if (parse(x) != null)` keeps working.
-
-An unbound owner is now destroyed at the end of the statement that produced it
--- the end of the statement, not the point of use, so `make().child.value` can
-still read through the object after the first borrow. The accounting is the
-part that had to be right, and it is narrow on purpose: only an expression that
-*produces* an owner is registered, which is why a variable holding one is never
-touched, and an owner handed to a function stays the callee's. Releasing means
-the same two steps `delete` takes -- what the object owns, then the object --
-because destroying the handle alone left every managed field behind.
-
-Three things it had to get right beyond the leak, each found by a probe rather
-than by reading:
-
-- **A borrow on a path that may not run** -- the right side of `&&`, a ternary
-  arm, a loop condition -- is released on that path. A release after the merge
-  would name a value that path never produced, which is invalid IR, not a leak.
-- **A body emitted inside another body.** A lambda is emitted in the middle of
-  the function that writes it, and an SSA value belongs to exactly one
-  function; the first version put the lambda's destroys in `main`, and the
-  verifier caught it. Every body emitter now isolates its own temporaries, and
-  anything left pending when a body ends fails the build instead of leaking.
-- **Leaving through an exception**, where the statement's own release never
-  runs. The unwind path releases them.
-
-Pinned by `tests/temporary-owners.abs`, which counts destructions rather than
-watching for a crash: a missed release shows up as a leak at exit, a double
-release as a count that is too high. `docs/ownership-semantics.md` states the
-rule.
-
-### Fixed: `absolute.run-task-scheduling` aborted under load
-
-Recorded here as an unreproduced observation -- seen once in eight full
-parallel runs, then clean through 30 direct runs, 12 scheduler-only parallel
-runs and four more full runs. It reappeared once during this session's suite
-runs, which was the second sighting, and this time it reproduced: with eight
-busy loops competing for the CPU, the binary failed **18 times in 60**. Idle,
-it never fails. The doc's own advice applied -- a scheduler failure that only
-appears under contention is exactly what a green suite hides -- and the missing
-piece was simply making the machine busy while running it.
-
-The failure was always the same assertion, `metrics completed tasks`, and the
-cause is an ordering one rather than a race on the counter itself. A worker
-finishing a task marked it done and woke its waiters under the task's lock, and
-incremented `completedTasks` *after* releasing that lock. `await` returns the
-moment it sees `done`, so a program could await two tasks and then read a
-metric that did not include either of them yet. The counter is now incremented
-inside the same critical section, before the waiters are told -- anything that
-can observe the completion observes the count that goes with it.
-
-Same 60 runs under the same contention afterwards: no failures.
-
-### Fixed: a base class's destroy() was silently skipped
-
-Found while checking section 3, and the only silent wrong answer in this file.
-A derived `destroy()` shadows its base's under the same method key in
-`ClassInfo::methods`, and the synthesized destructor took that one entry, so a
-base that closes a handle or frees native memory stopped doing it the moment
-any derived class declared a hook of its own. Its *fields* were still released,
-which is why nothing failed loudly -- only the hand-written half went missing.
-
-```absolute
-class Base    { void destroy() { print(4); } }
-class Derived : Base { void destroy() { print(5); } }
-// delete a Derived: printed 5, never 4
-```
-
-`EmitClassDestructor` now walks the base chain through `declaredMethods`, which
-holds only what each class declares itself, and calls every hook most-derived
-first, deduplicated by link name so an inherited entry is not called twice.
-Pinned by `tests/destruction-order.abs`, including the dispatch through a
-base-class pointer.
-
-### Retired: "a module-scope struct never runs its destroy()"
-
-It cannot be declared at all. Every form is refused:
-
-```absolute
-struct Handle { int32 value; void destroy() { value = 0; } }
-Handle GLOBAL;                 // a module-scope declaration must be a
-                               // primitive with a constant initializer
-```
-
-Module-scope declarations only accept constant primitive initializers, which is
-what `GlobalConstant` in `Absolute-CodeGen/src/codegen_module.cpp` supports.
-Primitives and primitive arrays work; struct-typed globals do not exist, so
-there is no destructor to schedule and nothing silently wrong.
-
-The two follow-ups this entry left behind are done:
-
-- **The message.** It used to read "Top-level executable statements cannot be
-  combined with an explicit main function", which describes the parse and not
-  the problem -- the declaration is not executable. It now names the limit, the
-  variable and its type, with a file, line and column.
-- **The limitation.** `docs/module-scope.md` states what module scope accepts,
-  what it refuses and why, and where the rest belongs.
-
-## 2. Missing features that fail loudly
-
-All of them are closed. The four notations this section was written for now
-lex, and the fifth thing it collected -- a default parameter value, which was
-parsed and then ignored -- works. They were honest syntax errors rather than wrong answers, but
-they are ordinary notation, and a language with `double` and no way to write
-`1e-9` was missing something people reach for immediately.
-
-| Form | Status |
-|---|---|
-| `0xFF`, `0b1010`, `0o17` | lexed, any case, with `_` between digits |
-| `1_000_000` | lexed |
-| `1e3`, `1e-9`, `1.5e2` | lexed |
-| `>>=`, `<<=` | parsed |
-
-Bases and separators are normalized in the lexer, because every consumer
-downstream reads the token text with `std::stoull`, which would have read
-`0xFF` as 0 and stopped at the `x`. The exponent cannot be normalized away, so
-float detection moved from "the text contains a dot" to `IsFloatingLiteral`,
-which also knows the `e` in `0xE1` is a digit. A literal the pattern can only
-match part of -- `0xZZ`, `1_`, `1e`, `12abc` -- is a lexical error at its own
-line and column instead of a number followed by a stray identifier.
-
-Covered by `tests/literal-notation.abs` and `tests/literal-notation-errors.abs`.
 
 ### Fixed: a property's storage was written and read uncounted
 
@@ -601,6 +476,141 @@ declaration, and only the second of those carried the copy refusal. So
 was right. Both paths carry it now.
 
 Pinned by `tests/generic-resource-aggregates.abs` and its errors file.
+
+### Fixed: an owner produced inside a larger expression was lost
+
+The ownership rules only ever named the top of a statement, so an owner
+produced deeper in one was created, read, and dropped:
+
+```absolute
+if (make() != null) { println("compared"); }   // leaked
+int32 v = make().value;                        // leaked
+```
+
+Each ended with "memory leak detected for handle N" and an abort at exit.
+`std.json.parse(text)` used in a condition is the shape that found it. The two
+answers on the table were to refuse such an expression or to release it; the
+release was chosen, so `if (parse(x) != null)` keeps working.
+
+An unbound owner is now destroyed at the end of the statement that produced it
+-- the end of the statement, not the point of use, so `make().child.value` can
+still read through the object after the first borrow. The accounting is the
+part that had to be right, and it is narrow on purpose: only an expression that
+*produces* an owner is registered, which is why a variable holding one is never
+touched, and an owner handed to a function stays the callee's. Releasing means
+the same two steps `delete` takes -- what the object owns, then the object --
+because destroying the handle alone left every managed field behind.
+
+Three things it had to get right beyond the leak, each found by a probe rather
+than by reading:
+
+- **A borrow on a path that may not run** -- the right side of `&&`, a ternary
+  arm, a loop condition -- is released on that path. A release after the merge
+  would name a value that path never produced, which is invalid IR, not a leak.
+- **A body emitted inside another body.** A lambda is emitted in the middle of
+  the function that writes it, and an SSA value belongs to exactly one
+  function; the first version put the lambda's destroys in `main`, and the
+  verifier caught it. Every body emitter now isolates its own temporaries, and
+  anything left pending when a body ends fails the build instead of leaking.
+- **Leaving through an exception**, where the statement's own release never
+  runs. The unwind path releases them.
+
+Pinned by `tests/temporary-owners.abs`, which counts destructions rather than
+watching for a crash: a missed release shows up as a leak at exit, a double
+release as a count that is too high. `docs/ownership-semantics.md` states the
+rule.
+
+### Fixed: `absolute.run-task-scheduling` aborted under load
+
+Recorded here as an unreproduced observation -- seen once in eight full
+parallel runs, then clean through 30 direct runs, 12 scheduler-only parallel
+runs and four more full runs. It reappeared once during this session's suite
+runs, which was the second sighting, and this time it reproduced: with eight
+busy loops competing for the CPU, the binary failed **18 times in 60**. Idle,
+it never fails. The doc's own advice applied -- a scheduler failure that only
+appears under contention is exactly what a green suite hides -- and the missing
+piece was simply making the machine busy while running it.
+
+The failure was always the same assertion, `metrics completed tasks`, and the
+cause is an ordering one rather than a race on the counter itself. A worker
+finishing a task marked it done and woke its waiters under the task's lock, and
+incremented `completedTasks` *after* releasing that lock. `await` returns the
+moment it sees `done`, so a program could await two tasks and then read a
+metric that did not include either of them yet. The counter is now incremented
+inside the same critical section, before the waiters are told -- anything that
+can observe the completion observes the count that goes with it.
+
+Same 60 runs under the same contention afterwards: no failures.
+
+### Fixed: a base class's destroy() was silently skipped
+
+Found while checking section 3, and the only silent wrong answer in this file.
+A derived `destroy()` shadows its base's under the same method key in
+`ClassInfo::methods`, and the synthesized destructor took that one entry, so a
+base that closes a handle or frees native memory stopped doing it the moment
+any derived class declared a hook of its own. Its *fields* were still released,
+which is why nothing failed loudly -- only the hand-written half went missing.
+
+```absolute
+class Base    { void destroy() { print(4); } }
+class Derived : Base { void destroy() { print(5); } }
+// delete a Derived: printed 5, never 4
+```
+
+`EmitClassDestructor` now walks the base chain through `declaredMethods`, which
+holds only what each class declares itself, and calls every hook most-derived
+first, deduplicated by link name so an inherited entry is not called twice.
+Pinned by `tests/destruction-order.abs`, including the dispatch through a
+base-class pointer.
+
+### Retired: "a module-scope struct never runs its destroy()"
+
+It cannot be declared at all. Every form is refused:
+
+```absolute
+struct Handle { int32 value; void destroy() { value = 0; } }
+Handle GLOBAL;                 // a module-scope declaration must be a
+                               // primitive with a constant initializer
+```
+
+Module-scope declarations only accept constant primitive initializers, which is
+what `GlobalConstant` in `Absolute-CodeGen/src/codegen_module.cpp` supports.
+Primitives and primitive arrays work; struct-typed globals do not exist, so
+there is no destructor to schedule and nothing silently wrong.
+
+The two follow-ups this entry left behind are done:
+
+- **The message.** It used to read "Top-level executable statements cannot be
+  combined with an explicit main function", which describes the parse and not
+  the problem -- the declaration is not executable. It now names the limit, the
+  variable and its type, with a file, line and column.
+- **The limitation.** `docs/module-scope.md` states what module scope accepts,
+  what it refuses and why, and where the rest belongs.
+
+## 2. Missing features that fail loudly
+
+All of them are closed. Four were notations that did not lex; the fifth was a
+default parameter value, which parsed and was then ignored. None of them was a
+wrong answer -- each failed at the point of use, loudly -- but they are all
+ordinary notation, and a language with `double` and no way to write `1e-9` is
+missing something people reach for immediately.
+
+| Form | Status |
+|---|---|
+| `0xFF`, `0b1010`, `0o17` | lexed, any case, with `_` between digits |
+| `1_000_000` | lexed |
+| `1e3`, `1e-9`, `1.5e2` | lexed |
+| `>>=`, `<<=` | parsed |
+
+Bases and separators are normalized in the lexer, because every consumer
+downstream reads the token text with `std::stoull`, which would have read
+`0xFF` as 0 and stopped at the `x`. The exponent cannot be normalized away, so
+float detection moved from "the text contains a dot" to `IsFloatingLiteral`,
+which also knows the `e` in `0xE1` is a digit. A literal the pattern can only
+match part of -- `0xZZ`, `1_`, `1e`, `12abc` -- is a lexical error at its own
+line and column instead of a number followed by a stray identifier.
+
+Covered by `tests/literal-notation.abs` and `tests/literal-notation-errors.abs`.
 
 ### A field's initializer is refused rather than ignored
 
@@ -1125,6 +1135,31 @@ than only being available from a command line, because until then the
 comparison the corpus was added for had never actually run outside a hand
 invocation. With it on: 151 programs, `-O0` against `-O3` against WebAssembly,
 one nondeterministic program excluded by name, zero disagreements.
+
+### Three more, for values whose lifetime is counted
+
+The shapes above look at what a program computes. Three more were added for
+what it *holds*, and they are where the ownership entries in section 1 came
+from:
+
+| Shape | What it carries, and where the others do not go |
+|---|---|
+| `counted` | a struct of strings and a tuple through every place a copy happens -- `aggregates` builds tuples of numbers, `text` builds strings with no aggregate around them |
+| `owned` | a struct holding `Node*`, `sub Node*`, `weak Node*` -- assigned, returned, put in a slot, borrowed by a parameter -- where `handles` owns objects but never puts one in a struct |
+| `flowing` | counted values crossing statement boundaries: an early exit, an unwind, a deferred body, a branch arm, a loop header that made what it iterates over |
+
+Each found something on its first long run, which is the useful measurement:
+`counted` found both array initializers storing without counting, `owned` found
+assignment overwriting a resource-owning aggregate without destroying it, and
+`flowing` found a temporary array releasing its storage and nothing in it.
+
+What they share is a discipline the earlier shapes did not need. A leak of a
+counted value is only visible on the *second* pass over the same container --
+the first pass leaves the count one too high and everything still reads -- so
+every loop in these three runs twice over the same data. And a checksum is
+built from code points rather than from a length, because a count that is one
+too low frees the bytes and reads what the allocator put there next, which is
+often the right length and the wrong text.
 
 ## 15. Fixed: an array that never released what it holds
 
