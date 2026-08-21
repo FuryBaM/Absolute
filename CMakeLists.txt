@@ -1155,6 +1155,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-move-handoff.abs"
     )
     add_test(
+        NAME absolute.deque-owner-elements-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/deque-owner-elements.abs"
+    )
+    add_test(
         NAME absolute.compound-assignment-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/compound-assignment-errors.abs"
     )
@@ -3641,7 +3645,8 @@ if(BUILD_TESTING)
             "early-exit-temporaries=early-exit-temporaries=ok"
             "compound-assignment-operands=compound-assignment-operands=ok"
             "open-qualifier-substitution=open-qualifier-substitution=ok"
-            "generic-move-handoff=generic-move-handoff=ok")
+            "generic-move-handoff=generic-move-handoff=ok"
+            "deque-owner-elements=deque-owner-elements=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those

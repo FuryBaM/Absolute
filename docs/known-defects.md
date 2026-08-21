@@ -24,8 +24,8 @@ An empty list is not the same as no defects, and this file should not be read
 as one. Most of what is recorded below was found *after* the list first
 emptied, by running programs rather than by reading it -- the standard
 library's own containers under AddressSanitizer, with every string built at
-runtime. The last such sweep found eleven, six of them in the same gap, and
-section 1's last two entries are that sweep. The place to look next is section 5,
+runtime. The last such sweep found thirteen, six of them in the same gap, and
+section 1's last three entries are that sweep. The place to look next is section 5,
 which says where not to.
 
 Nothing is open elsewhere either. The two things that were -- a name in the
@@ -731,6 +731,57 @@ both sides: `tests/compound-assignment-operands.abs` is every compound operator
 on the types that carry it, including the unsigned cases where the two forms
 once picked different instructions, and `tests/compound-assignment-errors.abs`
 is the refusals.
+
+### Fixed: `sub T` did not survive a generic body, and neither did a move
+
+Two compiler defects that only show together, and what they were blocking.
+
+**A qualifier waiting for a type stopped waiting.** `sub T` is an instruction
+with nothing to apply it to yet; substitution applies it -- `sub Node*` at
+`T = Node*`, nothing at all at `T = int32`, because a value with no object has
+no lifetime relation to weaken. A generic body is checked before any of that,
+with every parameter substituted for itself, and the rule that drops the
+qualifier on a non-handle dropped it there too. `sub T` became `T`, and `T`
+does not take a `sub T` -- the arrow runs one way -- so a method of a generic
+class could not be called with what another method of the same class had just
+handed back (`no overload of 'weigh' accepts (sub T)`). Where the analyzer let
+it through, at a constructor argument, the backend could not find the callee
+and said so with no file and no line. Both halves substitute the same way now.
+See `tests/open-qualifier-substitution.abs`.
+
+**A move stopped being a transfer at the second hop.** A parameter of open
+type `T` is role-polymorphic: the caller says whether it is handing over an
+owner, with a flag beside the argument, and `move(v)` in the body checks that
+flag at run time. The flag was set from "does this argument create a managed
+owner", which inside an open generic body is always false -- `T` is not a
+pointer yet. One hop worked, because the outermost caller passes a `new` and
+the analyzer sees that. Two hops is a container wrapping a container, and there
+the flag said "borrowed" about a value the caller had just given up:
+`Ownership operation requires an owner argument`, then every element reported
+as leaked. A move is a transfer whatever the parameter turns out to be, and
+that is what the flag says now. See `tests/generic-move-handoff.abs`.
+
+**What they were blocking.** Three classes were brought over to the ownership
+model when it landed -- `Vector`, `VectorIterator`, and the container in
+`tests/vector-owner-elements.abs` -- and the rest of `std/collections` was left
+as it was: every one of them moved an element by reading a slot and storing
+what it read, and a handle read out of a slot is a second handle to one object.
+So no standard container could be instantiated over an owning element type at
+all. Naming `Deque<Cell*>` was a compile error inside the library; no line had
+to use it.
+
+`Deque` is now written the way the model requires, and with it `Queue` and
+`Stack`: growth carries the elements rather than copying them, a pop takes its
+slot rather than reading it, `clear` releases the live run -- one run or two,
+because it is a ring -- and a read that is not the deque giving the element up
+hands back `sub T`. `tests/deque-owner-elements.abs` counts every destruction
+and runs under AddressSanitizer with the leak check on.
+
+Still open, and recorded rather than patched: `Set`, `HashMap`,
+`PriorityQueue`, `MapIterator` and `MapBuilder` are unmigrated for the same
+reason, and `VectorBuilder` is the one that cannot be fixed by saying something
+weaker -- `tests/std-collections-owner-elements-errors.abs` explains why it is
+a decision about what `builder()` means rather than a patch.
 
 ## 2. Missing features that fail loudly
 

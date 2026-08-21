@@ -1,9 +1,14 @@
 namespace std.collections {
     class DequeIterator<T> {
-        private T[] snapshot;
+        // The same thing VectorIterator says: a snapshot is a second array
+        // over elements the deque still holds, and only one of the two can own
+        // them. At `T = Node*` this is `sub Node*[]` and releasing the iterator
+        // releases nothing; at `T = int32` the qualifier is not there at all,
+        // because a value with no object has no lifetime to weaken.
+        private sub T[] snapshot;
         private int32 index;
 
-        public DequeIterator(T[] source) {
+        public DequeIterator(sub T[] source) {
             snapshot = copy(source);
             index = -1;
         }
@@ -13,7 +18,7 @@ namespace std.collections {
             return index < snapshot.length;
         }
 
-        public T value {
+        public sub T value {
             get { return snapshot[index]; }
         }
     }
@@ -39,7 +44,12 @@ namespace std.collections {
             T[] next = new T[newCapacity];
             int32 index = 0;
             while (index < _count) {
-                next[index] = items[(head + index) % _capacity];
+                // A take rather than a read: the element is leaving the old
+                // storage, which is dropped on the next line. Reading it would
+                // leave two slots holding one object and the drop would
+                // release what the new storage now owns.
+                unsafeArraySet(next, index,
+                    unsafeArrayTake(items, (head + index) % _capacity));
                 index = index + 1;
             }
             items = move(next);
@@ -59,37 +69,43 @@ namespace std.collections {
             get { return _count == 0; }
         }
 
-        public T front {
+        // Reading an end is not the deque giving it up, so what comes back is
+        // the weaker relation to the same object. At `T = int32` the qualifier
+        // is not there at all.
+        public sub T front {
             get {
                 if (_count == 0) { throw new Error("Deque is empty"); }
-                return items[head];
+                return unsafeArrayGet(items, head);
             }
         }
 
-        public T back {
+        public sub T back {
             get {
                 if (_count == 0) { throw new Error("Deque is empty"); }
-                return items[(head + _count - 1) % _capacity];
+                return unsafeArrayGet(items, (head + _count - 1) % _capacity);
             }
         }
 
         public void pushFront(T value) {
             if (_count == _capacity) { grow(); }
             head = (head + _capacity - 1) % _capacity;
-            items[head] = move(value);
+            unsafeArraySet(items, head, move(value));
             _count = _count + 1;
         }
 
         public void pushBack(T value) {
             if (_count == _capacity) { grow(); }
             int32 index = (head + _count) % _capacity;
-            items[index] = move(value);
+            unsafeArraySet(items, index, move(value));
             _count = _count + 1;
         }
 
         public T popFront() {
             if (_count == 0) { throw new Error("Deque is empty"); }
-            T result = items[head];
+            // A take rather than a read: the element is leaving, so the slot
+            // stops holding it. A read would leave the deque owning what the
+            // caller now has, in a slot the deque still drops.
+            T result = unsafeArrayTake(items, head);
             head = (head + 1) % _capacity;
             _count = _count - 1;
             if (_count == 0) { head = 0; }
@@ -99,13 +115,20 @@ namespace std.collections {
         public T popBack() {
             if (_count == 0) { throw new Error("Deque is empty"); }
             int32 index = (head + _count - 1) % _capacity;
-            T result = items[index];
+            T result = unsafeArrayTake(items, index);
             _count = _count - 1;
             if (_count == 0) { head = 0; }
             return result;
         }
 
         public void clear() {
+            // Whatever the elements were holding is released here. The live
+            // range is circular, so it is one run or two; for an element that
+            // owns nothing this is not a loop, it is nothing.
+            int32 firstRun = _capacity - head;
+            if (firstRun > _count) { firstRun = _count; }
+            unsafeArrayDrop(items, head, firstRun);
+            unsafeArrayDrop(items, 0, _count - firstRun);
             head = 0;
             _count = 0;
         }
@@ -113,7 +136,7 @@ namespace std.collections {
         public bool contains(T target) {
             int32 index = 0;
             while (index < _count) {
-                if (items[(head + index) % _capacity] == target) {
+                if (unsafeArrayGet(items, (head + index) % _capacity) == target) {
                     return true;
                 }
                 index = index + 1;
@@ -121,26 +144,32 @@ namespace std.collections {
             return false;
         }
 
+        // Written the way Vector's indexer is: one type for both accessors,
+        // so the setter is given an element rather than a name for one, and
+        // the store releases what the slot held.
         public T this[int32 index] {
             get {
                 if (index < 0 || index >= _count) {
                     throw new Error("Deque index out of bounds");
                 }
-                return items[(head + index) % _capacity];
+                return unsafeArrayGet(items, (head + index) % _capacity);
             }
             set {
                 if (index < 0 || index >= _count) {
                     throw new Error("Deque index out of bounds");
                 }
-                items[(head + index) % _capacity] = value;
+                unsafeArraySet(items, (head + index) % _capacity, move(value));
             }
         }
 
-        public T[] toArray() {
-            T[] result = new T[_count];
+        // A second array over the same elements, and only one of the two can
+        // own them -- this one does not. At `T = int32` this is the ordinary
+        // `int32[]` copy it has always been.
+        public sub T[] toArray() {
+            sub T[] result = new T[_count];
             int32 index = 0;
             while (index < _count) {
-                result[index] = items[(head + index) % _capacity];
+                result[index] = unsafeArrayGet(items, (head + index) % _capacity);
                 index = index + 1;
             }
             return result;
@@ -166,12 +195,15 @@ namespace std.collections {
             get { return storage.isEmpty; }
         }
 
-        public T front {
+        public sub T front {
             get { return storage.front; }
         }
 
         public void enqueue(T value) {
-            storage.pushBack(value);
+            // The element is being handed on, not named again: a wrapper that
+            // takes an owner and passes it by name keeps the ownership its
+            // caller gave it and the deque never gets one.
+            storage.pushBack(move(value));
         }
 
         public T dequeue() {
@@ -182,7 +214,7 @@ namespace std.collections {
             storage.clear();
         }
 
-        public T[] toArray() {
+        public sub T[] toArray() {
             return storage.toArray();
         }
     }
@@ -202,12 +234,12 @@ namespace std.collections {
             get { return storage.isEmpty; }
         }
 
-        public T top {
+        public sub T top {
             get { return storage.back; }
         }
 
         public void push(T value) {
-            storage.pushBack(value);
+            storage.pushBack(move(value));
         }
 
         public T pop() {
@@ -218,9 +250,9 @@ namespace std.collections {
             storage.clear();
         }
 
-        public T[] toArray() {
-            T[] source = storage.toArray();
-            T[] result = new T[source.length];
+        public sub T[] toArray() {
+            sub T[] source = storage.toArray();
+            sub T[] result = new T[source.length];
             int32 index = 0;
             while (index < source.length) {
                 result[index] = source[source.length - index - 1];
