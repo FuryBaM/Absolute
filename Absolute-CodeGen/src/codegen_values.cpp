@@ -172,6 +172,15 @@ namespace Absolute {
         // taking the new one, the same way a field does -- and so does one
         // holding an aggregate whose parts are counted, which is the same
         // rule read one level up.
+        // An element slot is a place the array releases, so it gives back what
+        // it held before taking another -- the same rule a local and a field
+        // already follow. Whether the array itself is owned is a different
+        // question: a view into someone else's storage still names the element
+        // it is about to overwrite.
+        else if (dynamic_cast<ArrayAccessExpr*>(expr->target.get()) &&
+            impl->TypeNeedsCleanup(targetTypeName)) {
+            impl->EmitValueCleanup(targetAddress, targetTypeName);
+        }
         else if ((targetTypeName == "string" || releasesTarget) && targetSymbol &&
             (targetSymbol->kind == SymbolKind::Variable ||
              targetSymbol->kind == SymbolKind::Parameter)) {

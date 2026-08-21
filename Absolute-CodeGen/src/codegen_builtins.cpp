@@ -158,15 +158,30 @@ namespace Absolute {
             // parameter was about to give back.
             if (elementTypeName == "string")
                 assigned = RetainStoredString(source, assigned);
-            TagAccess(builder.CreateStore(assigned, address),
-                TbaaElementAccess(elementTypeName));
             // The same rule one level up: an aggregate is stored by copying
             // its bytes, which duplicates the pointers its parts hold without
             // duplicating their counts. The slot is a second name for them, so
             // it says so -- unless the expression made the value, in which
             // case the count it arrived with is the one the slot keeps.
-            if (elementTypeName != "string" && !CreatesFreshString(source))
-                EmitValueRetain(address, elementTypeName);
+            // Counted through a spill, before the slot's old value is
+            // released, because `a[i] = a[i]` is the two being the same bytes.
+            if (elementTypeName != "string" && !CreatesFreshString(source) &&
+                ValueCountsOnCopy(elementTypeName)) {
+                llvm::AllocaInst* incoming = CreateEntryAlloca(
+                    *CurrentFunction(), assigned->getType(), "element.incoming");
+                builder.CreateStore(assigned, incoming);
+                EmitValueRetain(incoming, elementTypeName);
+                assigned = builder.CreateLoad(
+                    assigned->getType(), incoming, "element.incoming.value");
+            }
+            // And it gives back what it held. A slot that is released is a
+            // name that counts, and overwriting one that already held
+            // something left the old value with nobody: `items[0] = text` in
+            // a loop leaked every string but the last.
+            if (TypeNeedsCleanup(elementTypeName))
+                EmitValueCleanup(address, elementTypeName);
+            TagAccess(builder.CreateStore(assigned, address),
+                TbaaElementAccess(elementTypeName));
             value = nullptr;
             valueCreatesManagedOwner = false;
             valueCreatesArrayOwner = false;

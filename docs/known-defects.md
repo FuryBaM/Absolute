@@ -409,6 +409,27 @@ one the type already describes -- `DropKind::ArrayStorage`, elements first and
 then the buffer, the same walk a scope-owned array gets. `copy` releases its
 temporary source the same way rather than freeing it.
 
+#### And a slot never gave back what it held
+
+The same defect one level down, found by probing an indexer on the way to
+something else. A store into an array slot counted what it took and never
+released what was already there:
+
+```absolute
+while (round < 2000) { slots[0] = format("w{}", round); }   // 1999 strings, nobody's
+```
+
+Every write to an occupied slot leaked its previous occupant -- through
+`unsafeArraySet`, through `a[i] = v`, and through any indexer written on top of
+either, which is every container's. It stayed invisible because a container
+fills empty slots: `push` writes where the storage was zeroed, growth memsets
+what it moved out of, and a test that fills an array fills each index once.
+
+A slot is a place the array releases, so it gives back what it held before
+taking another -- the rule a local and a field already followed. The incoming
+value is counted first, through a spill, because `a[i] = a[i]` is the two being
+the same bytes.
+
 **What is left, and recorded rather than fixed:** slicing such an array loses
 the counts of the elements outside the slice. `copy(makeArray()[0:2])` releases
 the two elements the slice names and frees the whole buffer, so the third
