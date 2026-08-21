@@ -567,8 +567,16 @@ namespace Absolute {
                     builder.CreateBr(test);
                     builder.SetInsertPoint(done);
                 }
-                if (releaseTemporarySource)
+                // The source was made by the expression and nobody kept it,
+                // so it goes here -- all of it. Freeing the buffer alone let
+                // go of the storage and of nothing in it, and the copy above
+                // has just taken a count of every element that has one, so
+                // what the source held would never have been given back.
+                if (releaseTemporarySource) {
+                    EmitArrayElementCleanup(source.address, source.elementType,
+                        source.dimensions, copiedElement, temporarySourceOwner);
                     builder.CreateCall(Free(), {temporarySourceOwner});
+                }
                 source.address = copiedData;
                 source.owner = copiedData;
                 value = BuildArrayDescriptor(source);

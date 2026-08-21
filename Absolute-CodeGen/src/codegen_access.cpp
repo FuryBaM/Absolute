@@ -665,7 +665,8 @@ namespace Absolute {
         // do this and `return copy(values)[1:3]` still owns what it returns.
         llvm::Value* address = impl->ArrayElementAddress(*expr, view);
         if (borrowedArrayOwner && borrowedArrayBuffer)
-            impl->RegisterTemporaryArrayOwner(borrowedArrayBuffer);
+            impl->RegisterTemporaryArrayOwner(
+                impl->BuildArrayDescriptor(view), view.typeName);
         if (impl->addressMode) {
             impl->addressValue = address;
             return;

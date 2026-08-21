@@ -1,0 +1,76 @@
+// An array an expression made and nobody kept releases what its elements hold.
+//
+// Such an array was registered as a bare buffer and released with `free`,
+// which let go of the storage and of nothing in it. Every shape that reads
+// something out of an array without keeping the array leaked one count per
+// element that has one:
+//
+//   makeArray().length          a field of it
+//   makeArray()[0]              an element of it
+//   foreach (x in makeArray())  a loop over it
+//   copy(makeArray())           a copy of it, which had just counted every
+//                               element into the new array
+//
+// It is registered as the value it is now, so the walk that releases it is the
+// one the type already describes -- the same walk a scope-owned array gets.
+// `copy` releases its temporary source the same way, elements first.
+//
+// What a named array does was already right and is here to stay right: the
+// scope walks it, and nothing releases a view into someone else's storage.
+//
+// Run under AddressSanitizer with the leak check on.
+
+import "../std/string.abs";
+
+string[] three(int32 seed) {
+    string[] made = new string[3];
+    made[0] = format("a{}", seed);
+    made[1] = format("b{}", seed);
+    made[2] = format("c{}", seed);
+    return made;
+}
+
+int32 total(string[] values) { return values.length; }
+
+int32 main() {
+    int32 round = 0;
+    while (round < 2000) {
+        // A field of an array nobody keeps.
+        assert(three(round).length == 3, "a field of a temporary array");
+
+        // An element of one.
+        assert(three(round)[1] != "", "an element of a temporary array");
+
+        // A loop over one, and one that leaves early.
+        foreach (string text in three(round)) {
+            assert(text != "", "a loop over a temporary array");
+        }
+        foreach (string text in three(round)) {
+            assert(text != "", "and one that stops");
+            break;
+        }
+
+        // A copy of one: the copy counts every element, so the source has to
+        // give its own counts back.
+        string[] copied = copy(three(round));
+        assert(copied[2] != "", "a copy of a temporary array");
+
+        // Borrowed by a call, which is the shape that was already right.
+        assert(total(three(round)) == 3, "a temporary array as an argument");
+
+        round = round + 1;
+    }
+
+    // A named array is the scope's, and a copy of it leaves it alone.
+    string[] kept = three(1);
+    int32 copies = 0;
+    while (copies < 2000) {
+        string[] copied = copy(kept);
+        assert(copied[0] == kept[0], "a copy names the same bytes");
+        copies = copies + 1;
+    }
+    assert(kept[0] != "", "and the original still holds them");
+
+    println("temporary-array-elements=ok");
+    return 0;
+}
