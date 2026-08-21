@@ -802,10 +802,24 @@ handed over element by element now, and a take clears only what has something
 to clear, so at `T = int32` the caller's array is untouched. See
 `tests/priority-queue-owner-elements.abs`.
 
-Still open, and recorded rather than patched: `Set`, `HashMap`, `MapIterator`
-and `MapBuilder` are unmigrated for the same reason, and `VectorBuilder` is the
-one that cannot be fixed by saying something weaker -- `tests/std-collections-owner-elements-errors.abs` explains why it is
-a decision about what `builder()` means rather than a patch.
+`Deque` and `PriorityQueue` are the two that can be finished, and both are
+finished. The rest are blocked on the same undecided question rather than on
+the same missing spelling, and they are recorded rather than patched:
+
+- **`Set` and `Map`** are blocked by their builders, exactly as `Vector` is by
+  `VectorBuilder`. A builder is a staging owner seeded from a live container's
+  storage, so over an owning element type its first act is to duplicate what
+  that container still holds; borrowing instead does not help, because
+  `finish()` would then hand a container of owners a set of handles it never
+  owned. `tests/std-collections-owner-elements-errors.abs` states it in full:
+  whether `builder()` should drain the container, be refused for owning
+  elements, or not exist is a decision about what the method means.
+- **`HashMap`** is blocked by its iterator for a related reason. The snapshot
+  is an array of `HashKeyValuePair`, and a pair is a struct: `sub` weakens a
+  handle and a struct is not one, so there is no way to say "this array names
+  what the map holds". `copy` of it is refused outright, and rightly --
+  `E_COPY_OWNING_ELEMENTS` -- so what `iterate()` means over an owning value
+  needs an answer before the container can have one.
 
 ## 2. Missing features that fail loudly
 
