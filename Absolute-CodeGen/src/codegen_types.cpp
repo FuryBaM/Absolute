@@ -1469,6 +1469,45 @@ namespace Absolute {
         return bytes;
     }
 
+    // A copy of an array is a copy of every element, and an element that
+    // counts something has to count it here. The element type decides how --
+    // the same walk a copy of a single value does -- so a struct holding a
+    // string is covered by the fact that the string is, and no shape is asked
+    // about twice.
+    void CodeGenerator::Impl::EmitArrayElementRetain(
+        llvm::Value* data, llvm::Type* elementType, llvm::Value* count,
+        const std::string& elementTypeName) {
+        if (!data || !elementType || !count) return;
+        if (!ValueCountsOnCopy(elementTypeName)) return;
+        if (!count->getType()->isIntegerTy(64))
+            count = builder.CreateIntCast(
+                count, builder.getInt64Ty(), true, "array.retain.count");
+        llvm::Function* function = builder.GetInsertBlock()->getParent();
+        llvm::BasicBlock* entry = builder.GetInsertBlock();
+        llvm::BasicBlock* test = llvm::BasicBlock::Create(
+            context, "array.retain.test", function);
+        llvm::BasicBlock* body = llvm::BasicBlock::Create(
+            context, "array.retain.body", function);
+        llvm::BasicBlock* done = llvm::BasicBlock::Create(
+            context, "array.retain.done", function);
+        builder.CreateBr(test);
+        builder.SetInsertPoint(test);
+        llvm::PHINode* index = builder.CreatePHI(
+            builder.getInt64Ty(), 2, "array.retain.index");
+        index->addIncoming(builder.getInt64(0), entry);
+        builder.CreateCondBr(
+            builder.CreateICmpSLT(index, count, "array.retain.more"), body, done);
+        builder.SetInsertPoint(body);
+        EmitValueRetain(
+            builder.CreateInBoundsGEP(elementType, data, index, "array.retain.element"),
+            elementTypeName);
+        llvm::Value* next = builder.CreateAdd(
+            index, builder.getInt64(1), "array.retain.next");
+        index->addIncoming(next, builder.GetInsertBlock());
+        builder.CreateBr(test);
+        builder.SetInsertPoint(done);
+    }
+
     void CodeGenerator::Impl::EmitArrayElementCleanup(
         llvm::Value* data, llvm::Type* elementType,
         const std::vector<llvm::Value*>& dimensions,

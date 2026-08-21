@@ -141,4 +141,11 @@
             const std::vector<llvm::Value*>& dimensions,
             const std::string& elementTypeName, llvm::Value* owner);
 
+        // The other half of that, for the one place an array is duplicated
+        // rather than named again: copied bytes are a second name for whatever
+        // the elements hold, and every element has to be told, not just an
+        // element that is itself a counted value.
+        void EmitArrayElementRetain(llvm::Value* data, llvm::Type* elementType,
+            llvm::Value* count, const std::string& elementTypeName);
+
         void EmitPointeeCleanup(llvm::Value* pointer, const std::string& pointerTypeName);
