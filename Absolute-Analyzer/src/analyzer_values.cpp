@@ -566,8 +566,11 @@ namespace Absolute {
                     Report("property '" + expr->member + "' has no addressable storage",
                         "E_PROPERTY_NOT_ADDRESSABLE", symbol->id);
             }
-            Save(expr, {qualifiedId, symbol->type,
-                symbol->kind == SymbolKind::Property ? symbol->canWrite : isValue});
+            if (symbol->kind == SymbolKind::Property) {
+                Save(expr, AccessorValue(qualifiedId, symbol->type, symbol->canWrite));
+                return;
+            }
+            Save(expr, {qualifiedId, symbol->type, isValue});
             return;
         }
 
@@ -646,7 +649,8 @@ namespace Absolute {
                     "E_PROPERTY_NOT_ADDRESSABLE", property->symbol);
             callable = false;
             callableParameters.clear();
-            Save(expr, {property->symbol, property->type, property->canWrite});
+            Save(expr, AccessorValue(
+                property->symbol, property->type, property->canWrite));
             return;
         }
         const auto field = std::find_if(members.begin(), members.end(), [](const MemberSignature& member) {

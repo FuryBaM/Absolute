@@ -217,6 +217,10 @@ namespace Absolute {
             ? CFunctionTypeName(symbol->type, symbol->parameterTypes)
             : (functionValue
                 ? FunctionTypeName(symbol->type, symbol->parameterTypes) : symbol->type);
+        if (symbol->kind == SymbolKind::Property && !capturedByCurrentLambda) {
+            Save(expr, AccessorValue(id, resolvedType, symbol->canWrite));
+            return;
+        }
         Save(expr, {id, resolvedType,
             (functionValue || cFunctionValue) ? false :
                 (capturedByCurrentLambda ? false :
@@ -1367,7 +1371,8 @@ namespace Absolute {
                 Report("indexers have no addressable storage",
                     "E_INDEXER_NOT_ADDRESSABLE", selected->symbol);
             }
-            Save(expr, {selected->symbol, selected->type, selected->canWrite});
+            Save(expr, AccessorValue(
+                selected->symbol, selected->type, selected->canWrite));
             expressionInfo[expr].parameterTypes = selected->parameterTypes;
         }
         else if (expr->indexes.size() > rank) {

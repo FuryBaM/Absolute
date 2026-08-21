@@ -1613,6 +1613,16 @@ namespace Absolute {
                 "E_VALUE_REF_C_ABI");
     }
 
+    Analyzer::Result Analyzer::AccessorValue(
+        SymbolId symbol, const std::string& type, bool isLValue) const {
+        Result value{symbol, type, isLValue};
+        value.createsManagedOwner = IsStrongManagedPointerType(type);
+        value.initialization = InitializationState::Initialized;
+        value.pointerValidity = IsPointerType(type)
+            ? PointerValidity::Unknown : PointerValidity::NotPointer;
+        return value;
+    }
+
     void Analyzer::ValidateCAbiType(const std::string& type, const std::string& where,
         bool isReturn) {
         if (isReturn && type == "void") return;

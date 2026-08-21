@@ -1,0 +1,96 @@
+// A getter is a call, and what a call returns it hands over.
+//
+// A callable that returns `T*` returns an owner -- the analyzer refuses any
+// other kind with E_MANAGED_RETURN_REQUIRES_OWNER, and it refuses it for a
+// property's getter the same as for a method. But the value a property access
+// produced said it created no owner, so the name that received it was a
+// subscriber: `delete` on it was refused as E_DELETE_SUBSCRIBER, nothing
+// released it at the end of its scope, and the runtime's own leak check
+// printed "memory leak detected for handle N" at exit. An indexer was the
+// same. A method, written with parentheses, was always right.
+//
+// A borrow still reads as a borrow: `sub T*` and `weak T*` say so in the type,
+// and a getter that hands one back is unchanged by this.
+
+class Node {
+    public int32 value;
+    public Node(int32 initial) { value = initial; }
+}
+
+class Source {
+    private Node* kept;
+    private int32 seed;
+
+    public Source(int32 initial) {
+        seed = initial;
+        kept = new Node(initial);
+    }
+
+    // Each of these produces an owner, which is the only thing a `Node*`
+    // return is allowed to be.
+    public Node* fresh { get { return new Node(seed); } }
+    public Node* this[int32 offset] { get { return new Node(seed + offset); } }
+    public Node* freshMethod() { return new Node(seed); }
+
+    // And each of these hands back what this object holds, which is what the
+    // qualifier says.
+    public sub Node* borrowed { get { return kept; } }
+    public weak Node* watched { get { return kept; } }
+
+    // A property read from inside the class, by its bare name.
+    public int32 doubled {
+        get {
+            Node* own = fresh;
+            const int32 result = own.value * 2;
+            delete own;
+            return result;
+        }
+    }
+}
+
+int32 main() {
+    Source* source = new Source(7);
+
+    // Each accessor's owner is deletable, which is what says the name owns it.
+    Node* fromProperty = source.fresh;
+    assert(fromProperty.value == 7, "the property built one");
+    delete fromProperty;
+
+    Node* fromIndexer = source[3];
+    assert(fromIndexer.value == 10, "the indexer built one");
+    delete fromIndexer;
+
+    Node* fromMethod = source.freshMethod();
+    assert(fromMethod.value == 7, "and so did the method");
+    delete fromMethod;
+
+    // A borrow is still a borrow: it names what the source holds, and the
+    // source is what releases it.
+    sub Node* borrowed = source.borrowed;
+    assert(borrowed.value == 7, "a sub property names the object's own");
+    weak Node* watched = source.watched;
+    assert(watched != null, "and a weak one is still live while the owner is");
+
+    // The bare name inside the class reaches the same getter.
+    assert(source.doubled == 14, "a property read by its own name");
+
+    // Enough rounds that an owner kept per read is a heap that grows. The
+    // runtime's leak check reports every handle it still holds at exit, so a
+    // missed release is loud rather than quiet.
+    int32 total = 0;
+    int32 round = 0;
+    while (round < 1500) {
+        Node* one = source.fresh;
+        Node* two = source[round % 5];
+        total = total + one.value + two.value;
+        delete one;
+        delete two;
+        total = total + source.doubled;
+        round = round + 1;
+    }
+    assert(total == 45000, "every round counted");
+
+    delete source;
+    println("accessor-owner-transfer=ok");
+    return 0;
+}

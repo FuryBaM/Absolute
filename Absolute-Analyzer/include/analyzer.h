@@ -547,6 +547,12 @@ namespace Absolute {
             std::string code = {}, SymbolId symbol = InvalidSymbolId);
         void ValidateAttributes(const Statement& statement, const std::string& target, bool callableTarget);
         Result Evaluate(Expression* expression);
+        // What a property or an indexer hands back. A getter is a call
+        // however it is written, and a `T*` a callable returns is an owner --
+        // E_MANAGED_RETURN_REQUIRES_OWNER refuses any other kind -- so the
+        // name that receives it owns it, exactly as it would from a method.
+        // Written once because the accessor is read from four places.
+        Result AccessorValue(SymbolId symbol, const std::string& type, bool isLValue) const;
         Result EvaluateExpected(Expression* expression, const std::string& type);
         std::string ResolveType(Expression* expression);
         std::string ResolveDeclaredType(VarDeclExpr& expression);
