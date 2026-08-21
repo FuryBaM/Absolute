@@ -104,7 +104,13 @@ namespace Absolute {
                 if (impl->addressMode) impl->Fail("a property is not addressable");
                 impl->value = impl->EmitPropertyAccessor(nullptr, impl->currentClassName,
                     CallableKey(PropertyGetterName(expr->name), {}), {});
-                impl->valueCreatesManagedOwner = false;
+                // The same line the call path uses. A `T*` a callable returns
+                // is an owner, and a getter is a callable -- so an owner read
+                // and dropped inside one expression is a temporary of the
+                // statement, which is what this flag says. Cleared by hand
+                // here, `s.made.value` built an object and released nothing.
+                impl->valueCreatesManagedOwner =
+                    IsStrongManagedPointerTypeName(impl->SemanticType(expr));
                 return;
             }
             if (symbol && symbol->kind == SymbolKind::Field && symbol->isStatic) {

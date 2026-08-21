@@ -47,6 +47,34 @@ namespace Absolute {
         else if (!IsAssignable(target.type, value.type))
             Report("cannot assign '" + value.type + "' to '" + target.type + "'",
                 "E_ASSIGNMENT_TYPE_MISMATCH");
+        // `a += b` stores `a + b`, so the operation has to be one that exists.
+        // Only assignability was asked, and a string is assignable to a
+        // string, so `text += other` passed the analyzer and failed in the
+        // backend with "binary operator requires numeric operands" -- a
+        // message naming the backend's own mechanism, with no file and no
+        // line, for notation the spelled-out form (`text = text + other`)
+        // refuses properly. The same two rules Visit(BinaryExpr*) applies,
+        // asked of the same operands.
+        //
+        // A plugin operator is left alone: Visit(BinaryExpr*) resolves one
+        // before reaching its own rules, and whether the compound form should
+        // reach a plugin at all is a question about plugins rather than about
+        // this check.
+        if (expr->op != "=" && !pointerCompound && target.type != "error" &&
+            value.type != "error" && ArrayRank(target.type) == 0 &&
+            !FindPluginBinaryOperator(target.type,
+                expr->op.substr(0, expr->op.size() - 1), value.type)) {
+            const std::string binaryOperator = expr->op.substr(0, expr->op.size() - 1);
+            if (binaryOperator == "&" || binaryOperator == "|" ||
+                binaryOperator == "^" || binaryOperator == "<<" ||
+                binaryOperator == ">>") {
+                if (!IsInteger(target.type) || !IsInteger(value.type))
+                    Report("bitwise operands must be integers", "E_BITWISE_OPERAND_TYPE");
+            }
+            else if (!IsNumeric(target.type) || !IsNumeric(value.type))
+                Report("operator '" + binaryOperator + "' requires numeric operands",
+                    "E_NUMERIC_OPERAND_REQUIRED");
+        }
         // The compound form lowers through the same shift as `a = a << n`, so
         // it has the same undefined case and gets the same answer here.
         if ((expr->op == "<<=" || expr->op == ">>=") &&

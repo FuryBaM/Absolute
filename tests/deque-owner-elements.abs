@@ -1,0 +1,149 @@
+import "../std/collections/deque.abs";
+
+// Deque over an element that owns something.
+//
+// Three classes were brought over to the ownership model when it landed --
+// `Vector`, `VectorIterator` and the container in
+// tests/vector-owner-elements.abs -- and the rest of std/collections was left
+// as it was: every one of them moved elements by reading a slot and storing
+// what it read, and a handle read out of a slot is a second handle to one
+// object. So `Deque<Cell*>` did not compile at all, and neither did
+// `Queue<Cell*>` or `Stack<Cell*>`. Naming the type was enough; no line had to
+// use it.
+//
+// The deque is the harder one of the two, because its live elements are a
+// circular run: growth reads them in ring order, `clear` releases one run or
+// two, and the slots outside the run must hold nothing, which is what makes a
+// take rather than a read the only correct way to move one out.
+//
+// Run under AddressSanitizer with the leak check on, because that is the half
+// that cannot be asserted from inside: the count below says every object was
+// destroyed exactly once, and the sanitizer says none of them was touched
+// after that.
+
+int32 destroyed = 0;
+
+class Cell {
+    public int32 value;
+    public string tag;
+
+    public Cell(int32 initial) {
+        value = initial;
+        tag = format("cell-{}", initial);
+    }
+
+    public void destroy() { destroyed = destroyed + 1; }
+}
+
+int32 main() {
+    int32 total = 0;
+
+    // A capacity of two, so filling it crosses several growths and the live
+    // run wraps before each one.
+    Deque<Cell*>* cells = new Deque<Cell*>(2);
+    int32 index = 0;
+    while (index < 9) { cells.pushBack(new Cell(index)); index = index + 1; }
+    index = 0;
+    while (index < 4) { cells.pushFront(new Cell(100 + index)); index = index + 1; }
+    assert(cells.count == 13, "every push counted");
+
+    // Reading an end, and reading through the indexer, is not the deque
+    // giving the element up.
+    assert(cells.front.value == 103, "the last pushFront is at the front");
+    assert(cells.back.value == 8, "and the last pushBack is at the back");
+    assert(cells[0].value == 103 && cells[12].value == 8, "both ends by index");
+    assert(destroyed == 0, "and none of that released anything");
+
+    // Twice, because one missing count is only visible on the second pass.
+    int32 pass = 0;
+    while (pass < 2) {
+        DequeIterator<Cell*>* walk = cells.iterate();
+        int32 seen = 0;
+        while (walk.next()) {
+            total = total + walk.value.value;
+            seen = seen + 1;
+        }
+        assert(seen == 13, "the iterator saw every element");
+        delete walk;
+        pass = pass + 1;
+    }
+    assert(destroyed == 0, "and iterating released nothing either");
+
+    // Draining: each pop hands the element over, so the caller destroys it.
+    while (!cells.isEmpty) {
+        Cell* taken = cells.popFront();
+        total = total + taken.value;
+        delete taken;
+    }
+    assert(destroyed == 13, "every drained element was destroyed once");
+
+    // Refill and let clear() release them -- the live run wraps here, so this
+    // is the two-run case.
+    index = 0;
+    while (index < 5) { cells.pushBack(new Cell(index)); index = index + 1; }
+    index = 0;
+    while (index < 3) { cells.pushFront(new Cell(index)); index = index + 1; }
+    cells.clear();
+    assert(destroyed == 21, "clear released what the elements held");
+    assert(cells.count == 0 && cells.isEmpty, "and left the deque empty");
+
+    // Refill and let the deque's own death release them.
+    index = 0;
+    while (index < 6) { cells.pushBack(new Cell(index)); index = index + 1; }
+    delete cells;
+    assert(destroyed == 27, "and so did the deque going away");
+
+    // Queue and Stack are the same storage with two names.
+    Queue<Cell*>* queue = new Queue<Cell*>(2);
+    index = 0;
+    while (index < 5) { queue.enqueue(new Cell(index)); index = index + 1; }
+    assert(queue.front.value == 0, "a queue reads its front without giving it up");
+    while (!queue.isEmpty) {
+        Cell* taken = queue.dequeue();
+        total = total + taken.value;
+        delete taken;
+    }
+    delete queue;
+    assert(destroyed == 32, "the queue's elements were destroyed once each");
+
+    Stack<Cell*>* stack = new Stack<Cell*>(2);
+    index = 0;
+    while (index < 5) { stack.push(new Cell(index)); index = index + 1; }
+    assert(stack.top.value == 4, "a stack reads its top without giving it up");
+    Cell* popped = stack.pop();
+    assert(popped.value == 4, "and hands the top over when asked");
+    delete popped;
+    delete stack;
+    assert(destroyed == 37, "and the rest went with the stack");
+
+    // The same container over a counted value and over a plain one, which is
+    // what the rest of the suite uses.
+    Deque<string>* texts = new Deque<string>(2);
+    index = 0;
+    while (index < 9) { texts.pushBack(format("t-{}", index)); index = index + 1; }
+    pass = 0;
+    while (pass < 2) {
+        index = 0;
+        while (index < texts.count) {
+            assert(texts[index] != "", "a counted element reads back");
+            index = index + 1;
+        }
+        pass = pass + 1;
+    }
+    assert(texts.popFront() == "t-0", "and comes out in order");
+    texts.clear();
+    delete texts;
+
+    Deque<int32>* numbers = new Deque<int32>(2);
+    index = 0;
+    while (index < 9) { numbers.pushBack(index); index = index + 1; }
+    assert(numbers.popBack() == 8 && numbers.popFront() == 0, "both ends");
+    assert(numbers.contains(4), "and a search over the ring");
+    numbers[0] = 99;
+    assert(numbers[0] == 99, "a store through the indexer");
+    delete numbers;
+
+    assert(total > 0, "the walk added something");
+    println("deque-owner-elements=ok");
+    return 0;
+}

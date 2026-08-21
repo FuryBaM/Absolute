@@ -327,6 +327,15 @@ namespace Absolute {
                 }
                 continue;
             }
+            if (fact.shape == GenericBodyFact::Shape::OrdersValues) {
+                if (!IsOrderableType(actual))
+                    ReportAtLocation(fact.file, fact.line, fact.column,
+                        "operator '" + fact.detail + "' orders numbers, characters, "
+                        "enum members and raw pointers; at '" + base + "<" +
+                        actual + ">' the operand is '" + actual + "'",
+                        "E_ORDERING_OPERAND_TYPE", InvalidSymbolId);
+                continue;
+            }
             if (fact.shape == GenericBodyFact::Shape::CopiesElements) {
                 // Not only an owner: anything with a drop is duplicated by a
                 // block copy, and two of them then release the same thing.
@@ -364,6 +373,7 @@ namespace Absolute {
             case GenericBodyFact::Shape::DeletesField:
             case GenericBodyFact::Shape::DeletesValue:
             case GenericBodyFact::Shape::CopiesElements:
+            case GenericBodyFact::Shape::OrdersValues:
                 break;
             }
         }
@@ -1030,6 +1040,17 @@ namespace Absolute {
     bool Analyzer::IsNumeric(const std::string& name) const {
         return name == "float" || name == "double" || name.starts_with("int") || name.starts_with("uint") ||
             name == "char";
+    }
+
+    // `bool` is not here, and it used to be orderable by accident. A boolean
+    // is one bit, and one bit compared as a signed number reads `true` as -1:
+    // `false < true` came out false and `true < false` came out true. Two
+    // answers were available -- compare it unsigned, or say a boolean is not
+    // an ordered value -- and the second is what the language means. Equality
+    // is untouched.
+    bool Analyzer::IsOrderableType(const std::string& name) const {
+        return name == "error" || name == "dynamic" || name == "null" ||
+            IsNumeric(name) || IsEnumType(name) || IsRawPointerType(name);
     }
 
     bool Analyzer::IsInteger(const std::string& name) const {

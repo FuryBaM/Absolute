@@ -1,0 +1,111 @@
+import "../std/string.abs";
+import "../std/collections/priority_queue.abs";
+
+// PriorityQueue over an element that owns something.
+//
+// The second of the standard containers brought over to the ownership model
+// (the first is tests/deque-owner-elements.abs). A heap swaps on nearly every
+// insertion and removal, so `swap` is the line the whole container turns on:
+// three reads there gave two slots one handle each time, and the storage could
+// not be dropped without releasing something twice.
+//
+// `enqueueAll` is the other half. Adding a batch by reading each slot left the
+// array holding what the queue now had; the runtime said so, aborting on the
+// first element with "Ownership operation requires an owner argument". The
+// batch is handed over now, element by element -- and a take clears only what
+// has something to clear, so at `T = int32` the caller's array is untouched,
+// which this file also checks.
+//
+// Run under AddressSanitizer with the leak check on: the counts below say
+// every object was destroyed exactly once, and the sanitizer says none of them
+// was touched after that.
+
+int32 destroyed = 0;
+
+class Cell {
+    public int32 value;
+    public string tag;
+
+    public Cell(int32 initial) {
+        value = initial;
+        tag = format("cell-{}", initial);
+    }
+
+    public void destroy() { destroyed = destroyed + 1; }
+}
+
+int32 main() {
+    func<int32, Cell*, Cell*> byValue = fn(Cell* left, Cell* right) => left.value - right.value;
+
+    // A capacity of two, so filling it crosses several growths, and values in
+    // an order that makes the heap sift both ways.
+    PriorityQueue<Cell*>* cells = new PriorityQueue<Cell*>(byValue, 2);
+    int32 index = 0;
+    while (index < 11) { cells.enqueue(new Cell((index * 7) % 11)); index = index + 1; }
+    assert(cells.count == 11, "every element arrived");
+    assert(cells.peek.value == 0, "and the smallest is at the front");
+    assert(destroyed == 0, "reading the front released nothing");
+    assert(cells.contains(cells.peek), "and a search over the heap finds it");
+
+    // Draining hands each element over, in order.
+    int32 previous = -1;
+    bool ordered = true;
+    while (!cells.isEmpty) {
+        Cell* taken = cells.dequeue();
+        if (taken.value < previous) { ordered = false; }
+        previous = taken.value;
+        delete taken;
+    }
+    assert(ordered, "the heap came out in order");
+    assert(destroyed == 11, "and every drained element was destroyed once");
+
+    // Refill and let clear() release them.
+    index = 0;
+    while (index < 6) { cells.enqueue(new Cell(index)); index = index + 1; }
+    cells.clear();
+    assert(destroyed == 17, "clear released what the elements held");
+    assert(cells.isEmpty, "and left the queue empty");
+
+    // A batch, handed over element by element.
+    Cell*[] batch = new Cell*[4];
+    index = 0;
+    while (index < 4) { batch[index] = new Cell(10 - index); index = index + 1; }
+    cells.enqueueAll(batch);
+    assert(cells.count == 4, "every element of the batch arrived");
+    assert(cells.peek.value == 7, "and the heap ordered them");
+
+    // Refill and let the queue's own death release everything it holds.
+    index = 0;
+    while (index < 3) { cells.enqueue(new Cell(index)); index = index + 1; }
+    delete cells;
+    assert(destroyed == 24, "the queue released all seven it still held");
+
+    // The same container over a counted value.
+    // Ordered by the digit each one ends with: `<` on two strings orders
+    // nothing the backend can order, which is E_ORDERING_OPERAND_TYPE.
+    func<int32, string, string> byText = fn(string left, string right) =>
+        std.text.codePointAt(left, 2) - std.text.codePointAt(right, 2);
+    PriorityQueue<string>* texts = new PriorityQueue<string>(byText, 2);
+    index = 0;
+    while (index < 7) { texts.enqueue(format("t-{}", 6 - index)); index = index + 1; }
+    assert(texts.peek == "t-0", "a counted element orders and reads back");
+    assert(texts.dequeue() == "t-0", "and comes out first");
+    texts.clear();
+    delete texts;
+
+    // And over a value that owns nothing, where a take clears nothing and the
+    // caller's array is left as it was.
+    func<int32, int32, int32> ascending = fn(int32 left, int32 right) => left - right;
+    PriorityQueue<int32>* numbers = new PriorityQueue<int32>(ascending, 2);
+    int32[] plain = new int32[4];
+    plain[0] = 9; plain[1] = 3; plain[2] = 7; plain[3] = 1;
+    numbers.enqueueAll(plain);
+    assert(plain[0] == 9 && plain[3] == 1, "a take of a plain value leaves the slot alone");
+    assert(numbers.count == 4, "and the queue still got all four");
+    assert(numbers.dequeue() == 1 && numbers.dequeue() == 3, "smallest first");
+    numbers.clear();
+    delete numbers;
+
+    println("priority-queue-owner-elements=ok");
+    return 0;
+}

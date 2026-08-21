@@ -270,6 +270,27 @@ namespace Absolute {
             return builder.getFalse();
         const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
         if (!info) return builder.getFalse();
+        // A value the expression produced is a value nobody else is holding: a
+        // `move`, a `new`, a call's return -- a `T*` return must transfer an
+        // owner, which the analyzer enforces -- or a take out of a slot, which
+        // clears the slot, and that is exactly what makes it a producer rather
+        // than a read.
+        //
+        // The questions below are all about the shape of the parameter's type,
+        // and inside an open generic body none of them can be answered: `T` is
+        // not a pointer yet, so `createsManagedOwner` is false for `move(v)`
+        // and for `unsafeArrayTake(values, i)` alike. The flag then said
+        // "borrowed" about a value the caller had just given up. One hop was
+        // fine, because the outermost caller passes a `new` and the analyzer
+        // sees that; the second hop is a container wrapping a container, and
+        // `Queue<Cell*>` over `Deque<Cell*>` aborted on its first enqueue with
+        // "Ownership operation requires an owner argument".
+        //
+        // Asked after the guard above, so a shared value is unaffected: `move`
+        // of a string is a read, and a string parameter carries no ownership
+        // role for this to answer about.
+        if (info->isMoveResult || CreatesFreshString(expression))
+            return builder.getTrue();
         const std::string valueType =
             ValueReferenceBaseTypeName(parameterType);
         bool transfers = false;

@@ -1,0 +1,93 @@
+// A compound assignment stores the result of an operation.
+//
+// `a += b` stores `a + b`, so `a + b` has to be an operation that exists.
+// Only assignability was asked, and a string is assignable to a string, so
+// `text += other` passed the analyzer and failed in the backend with "binary
+// operator requires numeric operands" -- the backend naming its own
+// mechanism, with no file and no line, for notation whose spelled-out form
+// (`text = text + other`) is refused properly with both.
+//
+// The compound form asks what the binary form asks now. This file is the
+// forms that do work, so the rule cannot be tightened into refusing them:
+// every arithmetic and bitwise compound operator on the types that carry
+// them, including the unsigned cases where the compound form once picked a
+// different instruction from its spelled-out twin.
+//
+// The refusals are in tests/compound-assignment-errors.abs.
+
+enum Shade { Light, Dark }
+
+int32 main() {
+    // Arithmetic, on an integer.
+    int32 a = 3;
+    a += 2;   assert(a == 5, "add");
+    a -= 1;   assert(a == 4, "subtract");
+    a *= 4;   assert(a == 16, "multiply");
+    a /= 2;   assert(a == 8, "divide");
+    a %= 5;   assert(a == 3, "remainder");
+
+    // Bitwise, on an integer.
+    a &= 7;   assert(a == 3, "and");
+    a |= 8;   assert(a == 11, "or");
+    a ^= 1;   assert(a == 10, "exclusive or");
+    a <<= 2;  assert(a == 40, "shift left");
+    a >>= 1;  assert(a == 20, "shift right");
+
+    // Arithmetic, on a floating value.
+    double d = 1.5;
+    d += 0.5; assert(d == 2.0, "float add");
+    d *= 2.0; assert(d == 4.0, "float multiply");
+    d -= 1.0; assert(d == 3.0, "float subtract");
+    d /= 3.0; assert(d == 1.0, "float divide");
+
+    // Unsigned: the compound form picks the instruction its spelled-out twin
+    // picks, which is what makes these two agree.
+    uint32 u = 4294967295;
+    u /= 2;   assert(u == 2147483647, "unsigned divide");
+    uint32 v = 4294967295;
+    v = v / 2;
+    assert(u == v, "the compound form and the spelled-out form agree");
+
+    uint32 shifted = 4294967295;
+    shifted >>= 1;
+    assert(shifted == 2147483647, "unsigned shift right");
+
+    // A mixed-width operand still narrows to the target.
+    int64 wide = 1;
+    wide += 2;
+    assert(wide == 3, "a literal widens to the target");
+
+    int32 narrow = 100;
+    narrow += 7 as int32;
+    assert(narrow == 107, "an explicit cast is still a number");
+
+    // A raw pointer steps by elements, which is why it is not asked the
+    // numeric question at all.
+    int32[] numbers = new int32[4];
+    numbers[0] = 10; numbers[1] = 20; numbers[2] = 30; numbers[3] = 40;
+    raw int32* walk = unsafeArrayData(numbers);
+    walk += 2;
+    assert(*walk == 30, "a raw pointer steps by elements");
+    walk -= 1;
+    assert(*walk == 20, "and back again");
+
+    // An element and a field are places like any other.
+    int32[] slots = new int32[2];
+    slots[0] = 1;
+    slots[0] += 4;
+    assert(slots[0] == 5, "an element");
+
+    // The ordering comparisons, on everything the backend can order. A
+    // boolean is not among them: one bit compared as a signed number reads
+    // `true` as -1, so `false < true` came out false, and the answer the
+    // language gives is that a boolean is not an ordered value
+    // (tests/compound-assignment-errors.abs).
+    assert(1 < 2 && 2.5 > 1.5, "numbers");
+    assert('a' < 'b', "characters");
+    assert(Shade.Light < Shade.Dark, "enum members");
+    raw int32* first = unsafeArrayData(numbers);
+    assert(first < first + 1, "raw addresses");
+
+    println("compound-assignment-operands=ok");
+    return 0;
+}

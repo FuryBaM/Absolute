@@ -16,16 +16,50 @@ build/Release/absolutec file.abs --build-exe -o app && ./app
 
 ## 1. Open defects
 
-None of this section's own. Everything it held has been closed, and each entry
-records what the fix was, so a regression is recognizable rather than
-rediscovered.
+### Open: an indexer cannot say that its getter borrows and its setter takes
+
+```absolute
+class Source {
+    public Cell* made { get { return new Cell(1); } }        // released
+    public Cell* this[int32 i] { get { return new Cell(2); } }  // leaked
+}
+source.made.value;   // the temporary is released with the statement
+source[0].value;     // "memory leak detected for handle N" at exit
+```
+
+A property getter that produces an owner is a call that produced an owner, and
+the temporary it makes is released with the statement -- that is fixed, and
+`tests/accessor-owner-temporary.abs` pins it. An indexer is the same kind of
+call and could not be given the same answer, because an indexer has **one type
+for both of its accessors**: the setter is handed a `T`, so the getter cannot
+say `sub T`.
+
+Every generic container in `std/collections` relies on that. `Vector<Cell*>`'s
+indexer returns `unsafeArrayGet(items, index)` -- a borrow -- typed `T`, and at
+`T = Cell*` that reads as `Cell*`. Nothing in the expression distinguishes it
+from an owner the getter produced, so treating an indexer's result as a
+temporary owner destroys elements the container still holds: with the flag set
+on that path, `tests/vector-owner-elements.abs` and
+`tests/deque-owner-elements.abs` both abort with "null or expired managed
+pointer".
+
+What is missing is a way to write the two halves separately -- a getter that
+hands back `sub T` beside a setter that takes `T` -- or a rule that an
+indexer's getter always borrows. Both are decisions about what an indexer
+means, which is why this is recorded rather than patched. The property half is
+fixed and the containers are correct; what leaks is an indexer written to
+*produce* an owner, which no container in the standard library does.
+
+Everything else this section held has been closed, and each entry records what
+the fix was, so a regression is recognizable rather than rediscovered.
 
 An empty list is not the same as no defects, and this file should not be read
 as one. Most of what is recorded below was found *after* the list first
 emptied, by running programs rather than by reading it -- the standard
 library's own containers under AddressSanitizer, with every string built at
-runtime. The last such sweep found ten, six of them in the same gap, and
-section 1's last entry is that sweep. The place to look next is section 5,
+runtime. The last such sweep found seventeen, six of them in the same gap, and
+section 1's last three entries are that sweep. The one thing it found and did
+not fix is at the top of this section. The place to look next is section 5,
 which says where not to.
 
 Nothing is open elsewhere either. The two things that were -- a name in the
@@ -706,6 +740,127 @@ Pinned by `tests/array-copy-parts.abs`,
 `tests/accessor-owner-transfer.abs` and `tests/early-exit-temporaries.abs`, all
 seven under AddressSanitizer with the leak check on, plus the `handing` shape
 in `tools/testing/codegen_fuzz.py`.
+
+### Fixed: a compound assignment never asked whether the operation exists
+
+```absolute
+string text = "a";
+text += "b";      // was: Error: LLVM codegen: binary operator requires numeric operands
+text = text + "b";  // E_NUMERIC_OPERAND_REQUIRED, with a file, a line and a column
+```
+
+`a += b` stores `a + b`, so `a + b` has to be an operation that exists. The
+compound path asked only whether the value was assignable to the target -- and
+a string is assignable to a string, a bool to a bool, a struct to a struct --
+so every one of those passed the analyzer and failed in the backend, which
+reported its own mechanism with no file and no line. The spelled-out form of
+each has always been refused properly.
+
+The compound form asks what the binary form asks now: numeric operands for the
+arithmetic operators, integers for the bitwise ones. A raw pointer is still
+exempt -- `p += n` steps by elements and has its own rule -- and a plugin
+operator is left alone, because whether the compound form should reach a plugin
+at all is a question about plugins rather than about this check.
+
+**One more place an accessor is a call.** An owner produced by a property
+getter and dropped inside the expression that read it -- `source.made.value` --
+was never released; the flag that says an expression produced an owner was set
+on the call path and cleared by hand on the property path. It is set the same
+way on both now. The indexer half of it could not be answered and is the open
+defect at the top of section 1. See `tests/accessor-owner-temporary.abs`.
+
+**The ordering comparisons had the same hole from the other side.** `<`, `<=`,
+`>` and `>=` were checked only for the operands being assignable to each
+other, so `"a" < "b"` and `point < other` reached the backend and failed there
+the same way. They order what the backend can order now -- numbers,
+characters, enum members and raw addresses -- and inside a generic body the
+question is recorded and answered at each instantiation, the way the ownership
+rules already are, so `Sorted<Point>` names the line that cannot work.
+
+Found while writing that: **a boolean was orderable by accident, and gave the
+wrong answer.** One bit compared as a signed number reads `true` as -1, so
+`false < true` came out false and `true < false` came out true. Two answers
+were available -- compare it unsigned, or say a boolean is not an ordered
+value -- and the second is what the language means. Equality is untouched.
+
+Pinned from both sides: `tests/compound-assignment-operands.abs` is every
+compound operator on the types that carry it, including the unsigned cases
+where the two forms once picked different instructions, plus each ordering
+comparison on each type it can order; `tests/compound-assignment-errors.abs`
+is the refusals.
+
+### Fixed: `sub T` did not survive a generic body, and neither did a move
+
+Two compiler defects that only show together, and what they were blocking.
+
+**A qualifier waiting for a type stopped waiting.** `sub T` is an instruction
+with nothing to apply it to yet; substitution applies it -- `sub Node*` at
+`T = Node*`, nothing at all at `T = int32`, because a value with no object has
+no lifetime relation to weaken. A generic body is checked before any of that,
+with every parameter substituted for itself, and the rule that drops the
+qualifier on a non-handle dropped it there too. `sub T` became `T`, and `T`
+does not take a `sub T` -- the arrow runs one way -- so a method of a generic
+class could not be called with what another method of the same class had just
+handed back (`no overload of 'weigh' accepts (sub T)`). Where the analyzer let
+it through, at a constructor argument, the backend could not find the callee
+and said so with no file and no line. Both halves substitute the same way now.
+See `tests/open-qualifier-substitution.abs`.
+
+**A move stopped being a transfer at the second hop.** A parameter of open
+type `T` is role-polymorphic: the caller says whether it is handing over an
+owner, with a flag beside the argument, and `move(v)` in the body checks that
+flag at run time. The flag was set from "does this argument create a managed
+owner", which inside an open generic body is always false -- `T` is not a
+pointer yet. One hop worked, because the outermost caller passes a `new` and
+the analyzer sees that. Two hops is a container wrapping a container, and there
+the flag said "borrowed" about a value the caller had just given up:
+`Ownership operation requires an owner argument`, then every element reported
+as leaked. A move is a transfer whatever the parameter turns out to be, and
+that is what the flag says now. See `tests/generic-move-handoff.abs`.
+
+**What they were blocking.** Three classes were brought over to the ownership
+model when it landed -- `Vector`, `VectorIterator`, and the container in
+`tests/vector-owner-elements.abs` -- and the rest of `std/collections` was left
+as it was: every one of them moved an element by reading a slot and storing
+what it read, and a handle read out of a slot is a second handle to one object.
+So no standard container could be instantiated over an owning element type at
+all. Naming `Deque<Cell*>` was a compile error inside the library; no line had
+to use it.
+
+`Deque` is now written the way the model requires, and with it `Queue` and
+`Stack`: growth carries the elements rather than copying them, a pop takes its
+slot rather than reading it, `clear` releases the live run -- one run or two,
+because it is a ring -- and a read that is not the deque giving the element up
+hands back `sub T`. `tests/deque-owner-elements.abs` counts every destruction
+and runs under AddressSanitizer with the leak check on.
+
+`PriorityQueue` follows, and it is the harder shape for a different reason: a
+heap swaps on nearly every insertion and removal, so `swap` is the line the
+whole container turns on -- three reads there gave two slots one handle each
+time. `enqueueAll` is the other half: adding a batch by reading each slot left
+the array holding what the queue now had, and the runtime said so. The batch is
+handed over element by element now, and a take clears only what has something
+to clear, so at `T = int32` the caller's array is untouched. See
+`tests/priority-queue-owner-elements.abs`.
+
+`Deque` and `PriorityQueue` are the two that can be finished, and both are
+finished. The rest are blocked on the same undecided question rather than on
+the same missing spelling, and they are recorded rather than patched:
+
+- **`Set` and `Map`** are blocked by their builders, exactly as `Vector` is by
+  `VectorBuilder`. A builder is a staging owner seeded from a live container's
+  storage, so over an owning element type its first act is to duplicate what
+  that container still holds; borrowing instead does not help, because
+  `finish()` would then hand a container of owners a set of handles it never
+  owned. `tests/std-collections-owner-elements-errors.abs` states it in full:
+  whether `builder()` should drain the container, be refused for owning
+  elements, or not exist is a decision about what the method means.
+- **`HashMap`** is blocked by its iterator for a related reason. The snapshot
+  is an array of `HashKeyValuePair`, and a pair is a struct: `sub` weakens a
+  handle and a struct is not one, so there is no way to say "this array names
+  what the map holds". `copy` of it is refused outright, and rightly --
+  `E_COPY_OWNING_ELEMENTS` -- so what `iterate()` means over an owning value
+  needs an answer before the container can have one.
 
 ## 2. Missing features that fail loudly
 

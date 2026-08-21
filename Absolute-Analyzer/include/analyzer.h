@@ -342,7 +342,8 @@ namespace Absolute {
                 DeletesField,        // a field released from inside the body
                 DeletesValue,        // anything released through a parameter type
                 CopiesElements,      // array elements duplicated as bytes
-                ElementFromNonOwner  // a slot filled from something not fresh
+                ElementFromNonOwner, // a slot filled from something not fresh
+                OrdersValues         // `<`, `<=`, `>` or `>=` on the parameter
             };
             Shape shape = Shape::FieldFromNonOwner;
             std::string parameterType;   // as written in the body, e.g. "T"
@@ -616,6 +617,10 @@ namespace Absolute {
     public:
         bool IsAsyncTaskValueType(const std::string& name) const;
         bool IsNumeric(const std::string& name) const;
+        // Whether `<`, `<=`, `>` and `>=` have something to order: the
+        // backend orders numbers, characters, enum members and raw addresses,
+        // and nothing else.
+        bool IsOrderableType(const std::string& name) const;
         bool IsInteger(const std::string& name) const;
         void CheckShiftAmount(
             Expression* amount, const std::string& resultType, const std::string& op);

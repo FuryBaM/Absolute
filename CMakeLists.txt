@@ -1142,6 +1142,37 @@ if(BUILD_TESTING)
         NAME absolute.subscriber-fresh-owner-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/subscriber-fresh-owner-errors.abs"
     )
+    add_test(
+        NAME absolute.compound-assignment-operands-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/compound-assignment-operands.abs"
+    )
+    add_test(
+        NAME absolute.open-qualifier-substitution-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/open-qualifier-substitution.abs"
+    )
+    add_test(
+        NAME absolute.generic-move-handoff-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-move-handoff.abs"
+    )
+    add_test(
+        NAME absolute.deque-owner-elements-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/deque-owner-elements.abs"
+    )
+    add_test(
+        NAME absolute.priority-queue-owner-elements-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/priority-queue-owner-elements.abs"
+    )
+    add_test(
+        NAME absolute.accessor-owner-temporary-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/accessor-owner-temporary.abs"
+    )
+    add_test(
+        NAME absolute.compound-assignment-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/compound-assignment-errors.abs"
+    )
+    set_tests_properties(absolute.compound-assignment-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_NUMERIC_OPERAND_REQUIRED"
+    )
     set_tests_properties(absolute.subscriber-fresh-owner-errors PROPERTIES
         PASS_REGULAR_EXPRESSION "E_SUBSCRIBER_REQUIRES_EXISTING_OWNER"
     )
@@ -3619,7 +3650,13 @@ if(BUILD_TESTING)
             "closure-value-lifetime=closure-value-lifetime=ok"
             "array-accessor-owner=array-accessor-owner=ok"
             "accessor-owner-transfer=accessor-owner-transfer=ok"
-            "early-exit-temporaries=early-exit-temporaries=ok")
+            "early-exit-temporaries=early-exit-temporaries=ok"
+            "compound-assignment-operands=compound-assignment-operands=ok"
+            "open-qualifier-substitution=open-qualifier-substitution=ok"
+            "generic-move-handoff=generic-move-handoff=ok"
+            "deque-owner-elements=deque-owner-elements=ok"
+            "priority-queue-owner-elements=priority-queue-owner-elements=ok"
+            "accessor-owner-temporary=accessor-owner-temporary=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those

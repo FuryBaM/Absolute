@@ -1,0 +1,124 @@
+// `sub T` inside a generic body, where `T` is still `T`.
+//
+// A qualifier written in front of a type variable is an instruction waiting
+// for something to apply to. Substitution is where it gets applied -- `sub T`
+// at `T = Node*` is `sub Node*`, and at `T = int32` it is nothing at all,
+// because a value with no object has no lifetime relation to weaken.
+//
+// But a generic body is checked before any of that, with every parameter
+// substituted for itself, and the rule that drops the qualifier on a
+// non-handle dropped it there too: `sub T` became `T`. `T` does not take a
+// `sub T` -- the arrow runs one way, which is the whole point of the
+// qualifier -- so a method of a generic class could not be called with what
+// another method of the same class had just handed back:
+//
+//     no overload of 'takes' accepts (sub T)   [E_NO_MATCHING_OVERLOAD]
+//
+// and where the analyzer let it through, the backend could not find the
+// callee and said so without a file or a line. Both halves substitute now,
+// and a variable substituted for itself keeps the qualifier waiting.
+//
+// This is what stopped std/collections/deque.abs from being written the way
+// the ownership model requires; tests/deque-owner-elements.abs is the result.
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+}
+
+class View<T> {
+    private sub T[] snapshot;
+
+    public View(sub T[] source) { snapshot = copy(source); }
+
+    public sub T at(int32 index) { return snapshot[index]; }
+    public int32 length() { return snapshot.length; }
+}
+
+class Bag<T> {
+    private T[] items;
+    private int32 used;
+
+    public Bag() { items = new T[4]; used = 0; }
+
+    public void put(T value) {
+        unsafeArraySet(items, used, move(value));
+        used = used + 1;
+    }
+
+    public sub T at(int32 index) { return unsafeArrayGet(items, index); }
+
+    public sub T[] toArray() {
+        sub T[] result = new T[used];
+        int32 index = 0;
+        while (index < used) {
+            result[index] = unsafeArrayGet(items, index);
+            index = index + 1;
+        }
+        return result;
+    }
+
+    // A `sub T` handed from one member of the class to another: by a name,
+    // and straight out of the call that produced it.
+    private int32 weigh(sub T one) { return 1; }
+    private int32 weighAll(sub T[] many) { return many.length; }
+
+    public int32 viaName() {
+        sub T one = at(0);
+        return weigh(one);
+    }
+
+    public int32 viaCall() { return weigh(at(0)); }
+
+    public int32 arrayViaName() {
+        sub T[] all = toArray();
+        return weighAll(all);
+    }
+
+    public int32 arrayViaCall() { return weighAll(toArray()); }
+
+    // And into a constructor, which is where the backend failed rather than
+    // the analyzer.
+    public View<T>* view() { return new View<T>(toArray()); }
+}
+
+int32 main() {
+    // Over an element that owns something.
+    Bag<Cell*>* owners = new Bag<Cell*>();
+    int32 i = 0;
+    while (i < 3) { owners.put(new Cell(i)); i = i + 1; }
+    assert(owners.viaName() == 1, "a sub T by name reaches a sub T parameter");
+    assert(owners.viaCall() == 1, "and so does one straight out of a call");
+    assert(owners.arrayViaName() == 3, "the same for sub T[]");
+    assert(owners.arrayViaCall() == 3, "by either route");
+    View<Cell*>* view = owners.view();
+    assert(view.length() == 3, "a constructor takes one too");
+    assert(view.at(2).value == 2, "and the view names what the bag holds");
+    delete view;
+    delete owners;
+
+    // Over a value that owns nothing, where the qualifier is not there at all
+    // once `T` is known.
+    Bag<int32>* numbers = new Bag<int32>();
+    i = 0;
+    while (i < 3) { numbers.put(i * 10); i = i + 1; }
+    assert(numbers.viaName() == 1, "the same body over a plain value");
+    assert(numbers.arrayViaCall() == 3, "and the same for its array");
+    View<int32>* plainView = numbers.view();
+    assert(plainView.at(1) == 10, "a view over plain values reads back");
+    delete plainView;
+    delete numbers;
+
+    // And over a counted value, which is neither.
+    Bag<string>* texts = new Bag<string>();
+    i = 0;
+    while (i < 3) { texts.put(format("t-{}", i)); i = i + 1; }
+    assert(texts.at(2) == "t-2", "a counted element reads back");
+    View<string>* textView = texts.view();
+    assert(textView.at(0) == "t-0", "and through a view");
+    delete textView;
+    delete texts;
+
+    println("open-qualifier-substitution=ok");
+    return 0;
+}

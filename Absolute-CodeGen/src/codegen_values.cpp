@@ -466,7 +466,8 @@ namespace Absolute {
                 const std::string baseType = impl->SemanticType(expr->base.get());
                 impl->value = impl->EmitPropertyAccessor(expr->base.get(), baseType,
                     CallableKey(PropertyGetterName(expr->member), {}), {});
-                impl->valueCreatesManagedOwner = false;
+                impl->valueCreatesManagedOwner =
+                    IsStrongManagedPointerTypeName(impl->SemanticType(expr));
                 return;
             }
             if (symbol && symbol->kind == SymbolKind::Field && symbol->isStatic) {

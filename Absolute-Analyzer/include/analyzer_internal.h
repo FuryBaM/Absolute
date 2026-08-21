@@ -183,9 +183,22 @@ namespace Absolute {
             // yet. This is where there is something -- whatever `T` became.
             if (const OwnershipKind open = CanonicalOpenOwnership(type);
                 open != OwnershipKind::None) {
-                return CanonicalWithOwnership(
-                    SubstituteGenericType(CanonicalOpenBaseName(type), substitutions),
-                    open);
+                const std::string base = CanonicalOpenBaseName(type);
+                const std::string substituted =
+                    SubstituteGenericType(base, substitutions);
+                // Unless `T` became `T`. Substituting a type variable for
+                // itself leaves the qualifier with nothing to apply to, the
+                // same as before, so it stays written down and waits.
+                // CanonicalWithOwnership drops a qualifier on anything that is
+                // not a handle -- right for `T = int32`, wrong for a variable
+                // that is still a variable -- and dropping it here is how
+                // `sub T` became `T` while a generic body was being checked.
+                // `T` does not take a `sub T`, because the arrow runs one way,
+                // so a method of a generic class could not be called with what
+                // another method of the same class handed back.
+                if (substituted == base)
+                    return std::string(CanonicalOwnershipPrefix(open)) + substituted;
+                return CanonicalWithOwnership(substituted, open);
             }
             // The qualifier survives substitution; see the same fix in
             // SubstituteCodegenType.

@@ -1,0 +1,59 @@
+// What a compound assignment refuses, and what it refused before.
+//
+// `a += b` stores `a + b`. Only assignability was asked, so a target whose
+// type is assignable to itself passed the analyzer whatever the operator was,
+// and the backend failed with "binary operator requires numeric operands" --
+// its own mechanism, no file, no line. The spelled-out form of each of these
+// has always been refused properly, with both.
+//
+// The ordering comparisons had the same hole from the other side: `<` on two
+// strings, or two structs, was "assignable to each other" and reached the
+// backend too. They are here because it is one question -- does the operation
+// exist for these operands -- asked at two spellings.
+//
+// Every case below has a twin in tests/compound-assignment-operands.abs that
+// still compiles and runs, so the rule cannot be tightened into refusing what
+// it is there to allow.
+
+struct Point { public int32 x; public int32 y; }
+
+int32 main() {
+    // A string is assignable to a string, which is what let this through.
+    string text = "a";
+    text += "b";
+
+    // So is a bool to a bool, and a struct to a struct.
+    bool flag = true;
+    flag += true;
+
+    Point point;
+    point.x = 1;
+    Point other;
+    other.x = 2;
+    point *= other;
+
+    // The ordering comparisons are the other half of the same question: `<`,
+    // `<=`, `>` and `>=` order numbers, characters, booleans, enum members and
+    // raw addresses, and reached the backend for anything else.
+    if (text < "b") { return 2; }
+
+    Point left;
+    Point right;
+    if (left > right) { return 3; }
+
+    // A boolean is not an ordered value. It used to be one by accident: one
+    // bit compared as a signed number reads `true` as -1, so `false < true`
+    // came out false and `true < false` came out true.
+    bool low = false;
+    bool high = true;
+    if (low < high) { return 4; }
+
+    // Bitwise operators want integers, the same as their spelled-out forms.
+    double scaled = 1.5;
+    scaled <<= 1;
+
+    bool masked = true;
+    masked &= false;
+
+    return text == "" ? 1 : 0;
+}
