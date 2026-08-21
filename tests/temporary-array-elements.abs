@@ -71,6 +71,29 @@ int32 main() {
     }
     assert(kept[0] != "", "and the original still holds them");
 
+    // A slot is a place the array releases, so it gives back what it held
+    // before taking another. Overwriting one that already held something left
+    // the old value with nobody at all -- and every write below is to a slot
+    // that is already full.
+    string[] slots = new string[2];
+    slots[0] = "first";
+    int32 written = 0;
+    while (written < 2000) {
+        slots[0] = format("w{}", written);
+        unsafeArraySet(slots, 1, format("u{}", written));
+        assert(slots[0] != "", "the slot holds the last one written");
+        assert(slots[1] != "", "however it was written");
+        written = written + 1;
+    }
+
+    // The two being the same bytes is the case the order has to survive.
+    int32 same = 0;
+    while (same < 2000) {
+        slots[0] = slots[0];
+        assert(slots[0] != "", "a slot assigned to itself keeps its bytes");
+        same = same + 1;
+    }
+
     println("temporary-array-elements=ok");
     return 0;
 }
