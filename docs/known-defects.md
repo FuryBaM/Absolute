@@ -24,7 +24,7 @@ An empty list is not the same as no defects, and this file should not be read
 as one. Most of what is recorded below was found *after* the list first
 emptied, by running programs rather than by reading it -- the standard
 library's own containers under AddressSanitizer, with every string built at
-runtime. The last such sweep found eight, six of them in the same gap, and
+runtime. The last such sweep found ten, six of them in the same gap, and
 section 1's last entry is that sweep. The place to look next is section 5,
 which says where not to.
 
