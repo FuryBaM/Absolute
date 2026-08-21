@@ -95,6 +95,16 @@
         // one expression.
         llvm::Value* RetainReturnedValue(Expression* source, llvm::Value* result);
 
+        // Everything between a value and the caller holding it: the count it
+        // takes on the way out, the temporaries the expression made, the
+        // scopes this callable is leaving -- an owner it hands over is left
+        // alone -- and the return itself. Both bodies a callable can have end
+        // here, so a lambda written as one expression closes its scopes the
+        // way a `return` statement does. Before this it closed none, and every
+        // count its parameters took on the way in was kept forever.
+        void EmitCallableReturn(Expression* source, llvm::Value* result,
+            size_t temporaryMark);
+
         // An indexer is a call written with brackets, and its indexes are its
         // arguments: a string made only in order to look something up is
         // released with the statement, the same as one passed to a method.

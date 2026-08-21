@@ -82,7 +82,6 @@ namespace Absolute {
         llvm::Value* assigned = impl->Evaluate(expr->value.get());
         const bool createsOwner = impl->valueCreatesManagedOwner;
         llvm::Value* assignedPointee = impl->valueManagedPointee;
-        const bool createsClosureOwner = impl->valueCreatesClosureOwner;
         std::string closureReturn;
         std::vector<std::string> closureParameters;
         const bool functionValue = ParseCodegenFunctionType(
@@ -191,7 +190,13 @@ namespace Absolute {
             }
         }
         if (functionValue) {
-            if (!createsClosureOwner)
+            // The same question a string is asked, from the same place: did
+            // the expression make this value, or is the name about to be a
+            // second holder of one that already exists? The codegen flag this
+            // used to read is set by a call and by a lambda and by nothing
+            // else, so a closure read out of a container -- `vector[i]`, whose
+            // getter hands back a counted one -- was counted twice.
+            if (!impl->CreatesFreshString(expr->value.get()))
                 impl->builder.CreateCall(impl->ClosureRetain(), {assigned});
             impl->EmitValueCleanup(targetAddress, targetTypeName);
         }
@@ -406,12 +411,12 @@ namespace Absolute {
         llvm::Value* initial = expr->value ? impl->Evaluate(expr->value.get()) : llvm::Constant::getNullValue(type);
         const bool createsOwner = impl->valueCreatesManagedOwner;
         llvm::Value* managedPointee = impl->valueManagedPointee;
-        const bool createsClosureOwner = impl->valueCreatesClosureOwner;
         std::string closureReturn;
         std::vector<std::string> closureParameters;
         const bool functionValue = ParseCodegenFunctionType(
             typeName, closureReturn, closureParameters);
-        if (functionValue && !createsClosureOwner)
+        if (functionValue && expr->value &&
+            !impl->CreatesFreshString(expr->value.get()))
             impl->builder.CreateCall(impl->ClosureRetain(), {initial});
         // The same for a string, for the same reason: the variable is one more
         // name holding the bytes, and it says so again when it goes out of
@@ -937,12 +942,12 @@ namespace Absolute {
             llvm::Value* initial = expr->value
                 ? impl->Evaluate(expr->value.get())
                 : llvm::Constant::getNullValue(type);
-            const bool createsClosureOwner = impl->valueCreatesClosureOwner;
-            std::string closureReturn;
+                std::string closureReturn;
             std::vector<std::string> closureParameters;
             const bool functionValue = ParseCodegenFunctionType(
                 typeName, closureReturn, closureParameters);
-            if (functionValue && !createsClosureOwner)
+            if (functionValue && expr->value &&
+                !impl->CreatesFreshString(expr->value.get()))
                 impl->builder.CreateCall(impl->ClosureRetain(), {initial});
             // The same for a string, for the same reason: the variable is one
             // more name holding the bytes, and it will say so again when it
@@ -1300,21 +1305,17 @@ namespace Absolute {
             // The body is one expression and the return terminates the block,
             // so what it borrowed is released by hand, before the terminator.
             const size_t temporaryMark = impl->temporaryManagedOwners.size();
-            llvm::Value* result = impl->Evaluate(expr->expressionBody.get());
-            // The same count a `return` statement takes, for the same reason:
-            // a lambda that hands back what it captured is handing out storage
-            // its environment still holds, and the caller releases what it is
-            // given. Only a closure was counted here before, so
-            // `fn() => captured` returned a string the environment would
-            // release out from under whoever kept it.
-            result = impl->RetainReturnedValue(expr->expressionBody.get(), result);
-            impl->ReleaseTemporaryOwners(temporaryMark);
-            result = impl->Coerce(result, impl->TypeFromName(returnType));
-            if (impl->currentReturnStorage) {
-                impl->builder.CreateStore(result, impl->currentReturnStorage);
-                impl->builder.CreateRetVoid();
-            }
-            else impl->builder.CreateRet(result);
+            llvm::Value* result = impl->Coerce(
+                impl->Evaluate(expr->expressionBody.get()),
+                impl->TypeFromName(returnType));
+            // One expression is still a return: it takes the same count on the
+            // way out, releases the same temporaries, and closes the same
+            // scopes. Only a returned closure was counted here before, and no
+            // scope was closed at all -- so `fn() => captured` handed out
+            // storage the environment still held, and a `string` parameter
+            // kept the count it took on the way in for as long as the program
+            // ran.
+            impl->EmitCallableReturn(expr->expressionBody.get(), result, temporaryMark);
         }
         else if (expr->statementBody) {
             expr->statementBody->Accept(*this);

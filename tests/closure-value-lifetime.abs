@@ -1,0 +1,140 @@
+// A closure is a value, and it is counted like one.
+//
+// Three things were wrong at once, and they only showed together.
+//
+// A lambda written as one expression never closed its scopes. A `return`
+// statement releases what the callable holds before it hands the value over;
+// an expression body emitted the return and nothing else, so every count its
+// parameters took on the way in was kept for as long as the program ran.
+// `fn(string body) => format("<{}>", body)` leaked its argument on every call.
+//
+// A closure could not be an array element. Its size was asked for by the
+// shape of the type name -- `func<...>` is not written like a pointer -- so
+// `new func<int32, int32>[3]` failed to build at all, while a field of the
+// same type had always worked.
+//
+// And a closure read out of a container was counted twice. The question "did
+// this expression make the value" had two answers for a closure: the analyzer
+// said yes for a getter, a backend flag said no, and the two disagreed exactly
+// where `Vector<func<string, string>>` puts its elements. Both ask the
+// analyzer now, which is what a string has always done.
+//
+// Every string here is built at runtime; a literal is never released, so a
+// missed count in a corpus of literals proves nothing.
+
+import "../std/collections/vector.abs";
+
+struct Step {
+    public func<string, string> apply;
+    public string name;
+}
+
+func<string, string> decorate(string prefix) {
+    return fn(string body) => format("{}({})", prefix, body);
+}
+
+int32 main() {
+    // An expression body with a counted parameter, called often enough that a
+    // count kept per call is a heap that grows.
+    func<string, string> wrap = fn(string body) => format("<{}>", body);
+    string text = format("seed-{}", 0);
+    int32 round = 0;
+    while (round < 3000) {
+        text = wrap(text);
+        text = format("t-{}", round);
+        round = round + 1;
+    }
+    assert(text == "t-2999", "the loop ran and the last value is the last one");
+
+    // An array of closures: allocated, filled, read back, twice.
+    func<int32, int32>[] steps = new func<int32, int32>[3];
+    int32 i = 0;
+    while (i < 3) {
+        int32 bias = (i + 1) * 10;
+        steps[i] = fn(int32 x) => x + bias;
+        i = i + 1;
+    }
+    int32 total = 0;
+    int32 pass = 0;
+    while (pass < 2) {
+        i = 0;
+        while (i < 3) {
+            func<int32, int32> step = steps[i];
+            total = total + step(1);
+            i = i + 1;
+        }
+        pass = pass + 1;
+    }
+    assert(total == 126, "every element was reachable on both passes");
+
+    // A closure in a container, read out through its getter -- the place the
+    // two answers disagreed. Two passes, because one missing count is only
+    // visible on the second.
+    Vector<func<string, string>>* pipeline = new Vector<func<string, string>>();
+    i = 0;
+    while (i < 4) {
+        pipeline.push(decorate(format("p{}", i)));
+        i = i + 1;
+    }
+    pass = 0;
+    while (pass < 2) {
+        string built = "x";
+        i = 0;
+        while (i < pipeline.count) {
+            func<string, string> step = pipeline[i];
+            built = step(built);
+            i = i + 1;
+        }
+        assert(built == "p3(p2(p1(p0(x))))", "every step ran in order");
+        pass = pass + 1;
+    }
+
+    // A struct holding a closure, kept in an array and read out. The local
+    // copy names the same closure the array does.
+    Step[] named = new Step[2];
+    i = 0;
+    while (i < 2) {
+        Step one;
+        one.apply = decorate(format("s{}", i));
+        one.name = format("name-{}", i);
+        named[i] = one;
+        i = i + 1;
+    }
+    pass = 0;
+    while (pass < 2) {
+        i = 0;
+        while (i < 2) {
+            Step taken = named[i];
+            func<string, string> call = taken.apply;
+            assert(call("v") != "", "a struct's callback survives being read out");
+            assert(taken.name != "", "and so does its name");
+            i = i + 1;
+        }
+        pass = pass + 1;
+    }
+    assert(named[1].name == "name-1", "and the array still holds both");
+
+    // A closure assigned over another: the one being replaced is released,
+    // and the one replacing it is held.
+    func<string, string> slot = decorate("first");
+    round = 0;
+    while (round < 2000) {
+        slot = decorate(format("r-{}", round));
+        round = round + 1;
+    }
+    assert(slot("z") == "r-1999(z)", "the last assignment is the one that stands");
+
+    // The same question in an assignment rather than a declaration: the value
+    // comes out of a container's getter, so nothing here made it and the name
+    // is a second holder of one the container still has.
+    func<string, string> reused = decorate("start");
+    round = 0;
+    while (round < 2000) {
+        reused = pipeline[round % pipeline.count];
+        round = round + 1;
+    }
+    assert(reused("q") == "p3(q)", "the last element read is the one held");
+
+    println("closure-value-lifetime=ok");
+    return 0;
+}

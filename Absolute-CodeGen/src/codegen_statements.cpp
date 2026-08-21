@@ -255,36 +255,7 @@ namespace Absolute {
         // copy named the container's strings without saying so and released
         // them when it went out of scope. Both are the one question asked in
         // RetainReturnedValue, which a lambda's expression body asks too.
-        result = impl->RetainReturnedValue(stmt->expr.get(), result);
-        impl->ReleaseTemporaryOwners(temporaryMark);
-        SymbolId transferredOwner = InvalidSymbolId;
-        if (IsStrongManagedPointerTypeName(impl->currentReturnTypeName)) {
-            const auto* returnedIdentifier = dynamic_cast<IdentifierExpr*>(stmt->expr.get());
-            if (returnedIdentifier) {
-                Impl::Variable& returned = impl->RequireVariable(returnedIdentifier->name);
-                if (returned.managedOwner) transferredOwner = returned.symbol;
-            }
-        }
-        else if (ArrayRankName(impl->currentReturnTypeName) > 0) {
-            if (Impl::Variable* returned = impl->FindVariable(
-                impl->SemanticSymbol(stmt->expr.get()))) {
-                transferredOwner = returned->ownsArrayStorage
-                    ? returned->symbol : returned->arrayOwnerSymbol;
-            }
-        }
-        // A returned aggregate is not transferred out of its local: it is
-        // copied, and the copy counts the parts it now names just above. The
-        // local keeps its own count and gives it back the ordinary way. Doing
-        // both -- suppressing the cleanup *and* counting -- leaves two counts
-        // and one release, which is a leak rather than the use-after-free the
-        // suppression was added to stop.
-        impl->EmitTransferCleanups(0, true, transferredOwner);
-        if (impl->builder.GetInsertBlock()->getTerminator()) return;
-        if (impl->currentReturnStorage) {
-            impl->builder.CreateStore(result, impl->currentReturnStorage);
-            impl->builder.CreateRetVoid();
-        }
-        else impl->builder.CreateRet(result);
+        impl->EmitCallableReturn(stmt->expr.get(), result, temporaryMark);
     }
 
     void CodeGenerator::Visit(AssignmentStmt* stmt) {

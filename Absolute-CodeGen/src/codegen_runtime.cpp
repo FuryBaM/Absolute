@@ -740,6 +740,38 @@ namespace Absolute {
         return builder.CreateLoad(result->getType(), carried, "return.counted");
     }
 
+    void CodeGenerator::Impl::EmitCallableReturn(
+        Expression* source, llvm::Value* result, size_t temporaryMark) {
+        result = RetainReturnedValue(source, result);
+        ReleaseTemporaryOwners(temporaryMark);
+        SymbolId transferredOwner = InvalidSymbolId;
+        if (IsStrongManagedPointerTypeName(currentReturnTypeName)) {
+            if (dynamic_cast<IdentifierExpr*>(source)) {
+                Impl::Variable& returned = RequireVariable(
+                    IdentifierName(source));
+                if (returned.managedOwner) transferredOwner = returned.symbol;
+            }
+        }
+        else if (ArrayRankName(currentReturnTypeName) > 0) {
+            if (Impl::Variable* returned = FindVariable(SemanticSymbol(source)))
+                transferredOwner = returned->ownsArrayStorage
+                    ? returned->symbol : returned->arrayOwnerSymbol;
+        }
+        // A returned aggregate is not transferred out of its local: it is
+        // copied, and the copy counts the parts it now names just above. The
+        // local keeps its own count and gives it back the ordinary way. Doing
+        // both -- suppressing the cleanup *and* counting -- leaves two counts
+        // and one release, which is a leak rather than the use-after-free the
+        // suppression was added to stop.
+        EmitTransferCleanups(0, true, transferredOwner);
+        if (builder.GetInsertBlock()->getTerminator()) return;
+        if (currentReturnStorage) {
+            builder.CreateStore(result, currentReturnStorage);
+            builder.CreateRetVoid();
+        }
+        else builder.CreateRet(result);
+    }
+
     void CodeGenerator::Impl::ReleaseTemporaryOwners(size_t mark) {
         if (temporaryManagedOwners.size() <= mark) return;
         // Nothing may be emitted into a block a terminator has already closed,
@@ -1714,6 +1746,14 @@ namespace Absolute {
         if (name == "int32" || name == "uint32" || name == "float") return 4;
         if (name == "int64" || name == "uint64" || name == "double" || name == "string" ||
             IsPointerTypeName(name)) return 8;
+        // A closure value is one pointer to the closure object, the same as
+        // every other handle here. It is asked for by name rather than left to
+        // the pointer test above, which reads type *names* and does not know
+        // that `func<...>` is one -- so an array of callbacks could not be
+        // allocated at all, while a field of the same type always could.
+        std::string closureReturn;
+        std::vector<std::string> closureParameters;
+        if (ParseCodegenFunctionType(name, closureReturn, closureParameters)) return 8;
         std::string genericBase;
         std::vector<std::string> genericArguments;
         if (ParseCodegenGenericType(name, genericBase, genericArguments) &&
