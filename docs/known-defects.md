@@ -680,6 +680,14 @@ already there and empty -- `CheckManagedArgumentOwnership`, called from all six
 places a call binds arguments -- so the rule is written once and reaches a
 function, a method, a constructor, a base call and a function value.
 
+A return is the fourth, and the subscriber form was not refused there either:
+neither handing back a fresh allocation, which nobody then owns, nor handing
+back a name for an owner that dies with the frame, which leaves the caller
+naming storage that is already gone. The weak form had refused both all along;
+they read alike now (`E_SUBSCRIBER_RETURN_LOCAL_OWNER`). Returning a *field*
+stays legal -- its owner is the object rather than the frame, which is what
+makes `sub T* p { get { return field; } }` the way a borrow is handed out.
+
 `T* b = a;` is unchanged: an unqualified name takes a subscriber when what it
 is given already has an owner and takes the owner when it does not, and the
 rule asks which. See `tests/subscriber-fresh-owner-errors.abs`.

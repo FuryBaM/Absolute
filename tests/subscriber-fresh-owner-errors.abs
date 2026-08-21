@@ -13,7 +13,13 @@
 //
 // An argument is the third place a value is bound to a name, and it refused
 // nothing for either qualifier: `takesSub(new Node())` and
-// `takesWeak(new Node())` both compiled and both leaked.
+// `takesWeak(new Node())` both compiled and both leaked. A return is the
+// fourth, and the subscriber form was not refused there either -- neither
+// handing back a fresh allocation, which nobody then owns, nor handing back a
+// name for an owner that dies with the frame, which leaves the caller naming
+// storage that is already gone. Returning a *field* stays legal: its owner is
+// the object, not the frame, and `sub T*` on a getter is how a borrow is
+// handed out.
 //
 // The positive cases are in tests/subscriber-pointers.abs: binding a
 // subscriber to an owner that exists is what the qualifier is for, and `T* b =
@@ -27,6 +33,15 @@ class Node {
 class Tree {
     public sub Node* root;
     public Tree() { root = null; }
+}
+
+// A return is the fourth place a value is bound to a name. The weak form was
+// refused (E_WEAK_RETURN_LOCAL_OWNER); the subscriber form was not.
+sub Node* freshSub() { return new Node(7); }
+
+sub Node* localOwner() {
+    Node* owned = new Node(8);
+    return owned;
 }
 
 int32 reads(sub Node* borrowed) { return borrowed.value; }
@@ -54,6 +69,8 @@ int32 main() {
     // The weak forms, which the first two places have always refused, so all
     // of them read alike.
     weak Node* watched = new Node(3);
+
+    total = total + freshSub().value + localOwner().value;
 
     return fresh.value + tree.root.value + watched.value + total + wrapper.held.value;
 }
