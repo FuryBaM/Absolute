@@ -386,6 +386,34 @@ line and column instead of a number followed by a stray identifier.
 
 Covered by `tests/literal-notation.abs` and `tests/literal-notation-errors.abs`.
 
+### Fixed: a property's storage was written and read uncounted
+
+`public H value { get; set; }` gets its storage and both accessors from the
+compiler, and neither of them counted anything.
+
+The **setter** released what the field held and stored what it was given
+without counting it, so the field named parts it never counted; reading the
+property once the assigned value had gone read freed bytes. For a string it
+happened to balance -- the accessor's parameter takes a count on the way in, as
+every parameter does, and this one never gave it back, so the count the field
+was missing and the count the parameter leaked were the same one. Two mistakes
+cancelling, which is not the same as being right: the moment the type was an
+aggregate holding a string, only one of them was there.
+
+The **getter** handed the caller a copy of the field's bytes uncounted, while
+the caller releases what a call produced. Every read took a count off the
+field, so reading a string property five hundred times freed what the field was
+still holding.
+
+Both are the rules the hand-written forms already follow: a store into a field
+counts what it takes and gives back what it held, and a return counts the copy
+it hands to the caller. The accessor's own parameter now gives its count back
+the ordinary way, by its scope closing.
+
+Pinned by `tests/auto-property-storage.abs`, which assigns from a name that
+then goes away, writes two thousand times over, assigns a property from itself,
+and reads two thousand times.
+
 ### Fixed: a message that named the wrong thing twice
 
 ```absolute

@@ -854,6 +854,21 @@ namespace Absolute {
             if (method.statement->propertyAccessor == PropertyAccessorKind::Getter) {
                 llvm::Value* propertyValue = builder.CreateLoad(
                     TypeFromName(method.returnType), storage, "auto.property.value");
+                // A getter hands a copy to the caller and the caller releases
+                // it, the way it releases anything a call produced. So the
+                // copy has to be counted -- the same rule a `return` follows.
+                // Handing out the bytes uncounted meant every read took a
+                // count off the field: reading a string property five hundred
+                // times freed what the field was still holding.
+                if (const TypeSemantics handed = SemanticsOfTypeName(method.returnType);
+                    handed.needsDrop && handed.copyable) {
+                    llvm::AllocaInst* carried = CreateEntryAlloca(
+                        *function, propertyValue->getType(), "auto.property.carried");
+                    builder.CreateStore(propertyValue, carried);
+                    EmitValueRetain(carried, method.returnType);
+                    propertyValue = builder.CreateLoad(
+                        propertyValue->getType(), carried, "auto.property.counted");
+                }
                 if (currentReturnStorage) {
                     builder.CreateStore(propertyValue, currentReturnStorage);
                     builder.CreateRetVoid();
@@ -861,14 +876,31 @@ namespace Absolute {
                 else builder.CreateRet(propertyValue);
             }
             else {
+                const std::string& stored = method.parameterTypes.front();
                 llvm::Value* assigned = function->getArg(offset);
-                if (IsIndirectValueType(method.parameterTypes.front()))
+                if (IsIndirectValueType(stored))
                     assigned = builder.CreateLoad(
-                        TypeFromName(method.parameterTypes.front()), assigned, "auto.property.input");
-                if (TypeNeedsCleanup(method.parameterTypes.front()))
-                    EmitValueCleanup(storage, method.parameterTypes.front());
-                builder.CreateStore(assigned, storage);
-                builder.CreateRetVoid();
+                        TypeFromName(stored), assigned, "auto.property.input");
+                // A backing field is a field like any other: it counts what it
+                // takes and gives back what it held. Writing the bytes and
+                // nothing else meant a property whose type is an aggregate
+                // holding a string named bytes it never counted, and reading
+                // it once the value that was assigned had gone was a
+                // use-after-free. For a string it happened to balance, because
+                // the parameter's own count was taken and never given back --
+                // two mistakes cancelling, which is not the same as being
+                // right.
+                llvm::AllocaInst* incoming = CreateEntryAlloca(
+                    *function, assigned->getType(), "auto.property.incoming");
+                builder.CreateStore(assigned, incoming);
+                EmitValueRetain(incoming, stored);
+                if (TypeNeedsCleanup(stored)) EmitValueCleanup(storage, stored);
+                builder.CreateStore(
+                    builder.CreateLoad(assigned->getType(), incoming,
+                        "auto.property.counted"),
+                    storage);
+                // No return here: the scope this accessor's parameter lives in
+                // closes below, and closing it is what gives that count back.
             }
         }
         else if (method.statement->body) method.statement->body->Accept(visitor);
@@ -1145,6 +1177,21 @@ namespace Absolute {
             if (method.statement->propertyAccessor == PropertyAccessorKind::Getter) {
                 llvm::Value* propertyValue = builder.CreateLoad(
                     TypeFromName(method.returnType), storage, "auto.property.value");
+                // A getter hands a copy to the caller and the caller releases
+                // it, the way it releases anything a call produced. So the
+                // copy has to be counted -- the same rule a `return` follows.
+                // Handing out the bytes uncounted meant every read took a
+                // count off the field: reading a string property five hundred
+                // times freed what the field was still holding.
+                if (const TypeSemantics handed = SemanticsOfTypeName(method.returnType);
+                    handed.needsDrop && handed.copyable) {
+                    llvm::AllocaInst* carried = CreateEntryAlloca(
+                        *function, propertyValue->getType(), "auto.property.carried");
+                    builder.CreateStore(propertyValue, carried);
+                    EmitValueRetain(carried, method.returnType);
+                    propertyValue = builder.CreateLoad(
+                        propertyValue->getType(), carried, "auto.property.counted");
+                }
                 if (currentReturnStorage) {
                     builder.CreateStore(propertyValue, currentReturnStorage);
                     builder.CreateRetVoid();
@@ -1152,14 +1199,31 @@ namespace Absolute {
                 else builder.CreateRet(propertyValue);
             }
             else {
+                const std::string& stored = method.parameterTypes.front();
                 llvm::Value* assigned = function->getArg(offset);
-                if (IsIndirectValueType(method.parameterTypes.front()))
+                if (IsIndirectValueType(stored))
                     assigned = builder.CreateLoad(
-                        TypeFromName(method.parameterTypes.front()), assigned, "auto.property.input");
-                if (TypeNeedsCleanup(method.parameterTypes.front()))
-                    EmitValueCleanup(storage, method.parameterTypes.front());
-                builder.CreateStore(assigned, storage);
-                builder.CreateRetVoid();
+                        TypeFromName(stored), assigned, "auto.property.input");
+                // A backing field is a field like any other: it counts what it
+                // takes and gives back what it held. Writing the bytes and
+                // nothing else meant a property whose type is an aggregate
+                // holding a string named bytes it never counted, and reading
+                // it once the value that was assigned had gone was a
+                // use-after-free. For a string it happened to balance, because
+                // the parameter's own count was taken and never given back --
+                // two mistakes cancelling, which is not the same as being
+                // right.
+                llvm::AllocaInst* incoming = CreateEntryAlloca(
+                    *function, assigned->getType(), "auto.property.incoming");
+                builder.CreateStore(assigned, incoming);
+                EmitValueRetain(incoming, stored);
+                if (TypeNeedsCleanup(stored)) EmitValueCleanup(storage, stored);
+                builder.CreateStore(
+                    builder.CreateLoad(assigned->getType(), incoming,
+                        "auto.property.counted"),
+                    storage);
+                // No return here: the scope this accessor's parameter lives in
+                // closes below, and closing it is what gives that count back.
             }
         }
         else if (method.statement->body) method.statement->body->Accept(visitor);

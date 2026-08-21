@@ -1081,6 +1081,10 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "E_MAIN_RETURN_TYPE"
     )
     add_test(
+        NAME absolute.auto-property-storage-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/auto-property-storage.abs"
+    )
+    add_test(
         NAME absolute.delete-owned-field-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/delete-owned-field-errors.abs"
     )
@@ -3560,7 +3564,8 @@ if(BUILD_TESTING)
             "shared-value-handoff=shared-value-handoff=ok"
             "default-arguments=default-arguments=ok"
             "temporary-array-elements=temporary-array-elements=ok"
-            "conditional-owners=conditional-owners=ok")
+            "conditional-owners=conditional-owners=ok"
+            "auto-property-storage=auto-property-storage=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those
