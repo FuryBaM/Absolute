@@ -748,6 +748,10 @@ namespace Absolute {
                 nullptr, {}, nullptr, SemanticSymbol(&parameter)};
             variable.ownsAggregateResources =
                 staticallyOwns && TypeNeedsCleanup(typeName);
+            // The slot belongs to the caller, so nothing is released when the
+            // call ends. A write through it still overwrites what the caller
+            // put there, which is what this says.
+            variable.namesBorrowedPlace = valueReference;
             bindOwnershipFlag(variable);
             if (!scopes.back().emplace(name, std::move(variable)).second)
                 Fail("duplicate parameter '" + name + "'");

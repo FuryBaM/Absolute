@@ -1,0 +1,125 @@
+import "../std/string.abs";
+
+// A write through a reference is a write to a place.
+//
+// `out T` and `T&` name a slot the caller owns. The callee releases nothing
+// when the call ends -- the slot is not its -- and that much was right. But a
+// write through the name is still a write to that slot, and a slot gives back
+// what it held: the same rule a local, a field and an array element already
+// follow.
+//
+// It did not, so
+//
+//     void twice(int32 i, out string result) {
+//         result = format("a-{}", i);
+//         result = format("b-{}", i);
+//     }
+//
+// leaked the first string on every call, and so did any caller that filled the
+// same `out` name twice. The identical assignments to a local were correct all
+// along, which is what made this quiet: the leak is per write, not per program.
+//
+// The two halves are separate flags now. Owning the slot decides what happens
+// at the end of the call; naming it decides what happens on a write.
+//
+// Run under AddressSanitizer with the leak check on: the values are strings,
+// so nothing here can assert its own release.
+
+struct Row {
+    public string key;
+    public string value;
+}
+
+void once(int32 index, out string result) {
+    result = format("a-{}", index);
+}
+
+void twice(int32 index, out string result) {
+    result = format("a-{}", index);
+    result = format("b-{}", index);
+}
+
+void manyTimes(int32 rounds, out string result) {
+    result = "";
+    int32 index = 0;
+    while (index < rounds) {
+        result = format("r-{}", index);
+        index = index + 1;
+    }
+}
+
+void fillRow(int32 index, out Row result) {
+    Row made;
+    made.key = format("k-{}", index);
+    made.value = format("v-{}", index);
+    result = made;
+}
+
+// A field written through a reference, which is the field rule rather than
+// this one -- here so the two are checked together.
+void fillFields(Row& target, int32 index) {
+    target.key = format("f-{}", index);
+    target.value = format("g-{}", index);
+}
+
+// The whole value written through a reference.
+void replace(ref Row target, int32 index) {
+    Row made;
+    made.key = format("s-{}", index);
+    made.value = format("t-{}", index);
+    target = made;
+}
+
+int32 main() {
+    int32 total = 0;
+
+    // The first write lands in a slot holding nothing, which must not be
+    // released as though it held something.
+    string first;
+    once(1, out first);
+    assert(first == "a-1", "the first write fills an empty slot");
+
+    // The second write releases what the first left.
+    string second;
+    twice(2, out second);
+    assert(second == "b-2", "the last write is the one that stands");
+
+    // The same name filled again by the caller.
+    once(3, out second);
+    assert(second == "a-3", "and a second call overwrites it");
+
+    // A struct through the same path.
+    Row row;
+    fillRow(4, out row);
+    assert(row.key == "k-4" && row.value == "v-4", "a struct arrives whole");
+    fillRow(5, out row);
+    assert(row.key == "k-5", "and the second fill replaces the first");
+
+    // Fields written through a reference, then the whole value replaced.
+    Row target;
+    fillFields(target, 6);
+    assert(target.key == "f-6", "a field written through a reference");
+    replace(ref target, 7);
+    assert(target.key == "s-7" && target.value == "t-7", "and the whole value");
+
+    // Enough writes that one string kept per write is a heap that grows.
+    string held;
+    manyTimes(2000, out held);
+    assert(held == "r-1999", "the loop left its last value");
+    total = total + std.text.codePointCount(held);
+
+    int32 round = 0;
+    while (round < 2000) {
+        twice(round, out held);
+        fillRow(round, out row);
+        fillFields(target, round);
+        replace(ref target, round);
+        total = total + std.text.codePointCount(held) +
+            std.text.codePointCount(row.key) + std.text.codePointCount(target.value);
+        round = round + 1;
+    }
+    assert(total > 0, "the loop read what it wrote");
+
+    println("reference-slot-overwrite=ok");
+    return 0;
+}
