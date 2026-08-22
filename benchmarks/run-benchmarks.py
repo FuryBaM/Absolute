@@ -39,6 +39,13 @@ REPO_ROOT = SUITE_ROOT.parent
 # the same headroom the Windows driver reserves with `/stack:67108864`.
 NATIVE_STACK_BYTES = 512 * 1024 * 1024
 
+# Every Absolute program carries the prelude, and the prelude's `Error` takes a
+# string -- so every program references the string runtime whether or not it
+# mentions a string. A suite that links the whole runtime library already has
+# it; the rest link this one source, compiled at the same flags as everything
+# else here rather than taken from a library built with the project's.
+ABSOLUTE_PRELUDE_RUNTIME_SOURCES = ("Absolute-Runtime/src/string.cpp",)
+
 
 @dataclass(frozen=True)
 class Suite:
@@ -49,12 +56,14 @@ class Suite:
     checksums: dict[str, str] | None
     cpp_source: str = "benchmark.cpp"
     cpp_extra_flags: tuple[str, ...] = ()
+    rust_source: str = "benchmark.rs"
     # Extra C++ sources linked into the Absolute executables (runtime support).
     absolute_runtime_sources: dict[str, tuple[str, ...]] = field(default_factory=dict)
     # Link the built Absolute runtime library into the Absolute executables.
     needs_absolute_runtime: bool = False
     # Languages this suite provides an implementation for.
-    languages: tuple[str, ...] = ("Absolute", "C++", "C#", "Java", "JavaScript", "Python")
+    languages: tuple[str, ...] = (
+        "Absolute", "C++", "Rust", "C#", "Java", "JavaScript", "Python")
 
 
 SUITES: dict[str, Suite] = {
@@ -116,7 +125,7 @@ SUITES: dict[str, Suite] = {
     ),
 }
 
-OPTIMIZED_LANGUAGES = ("Absolute", "C++", "C#", "Java", "JavaScript")
+OPTIMIZED_LANGUAGES = ("Absolute", "C++", "Rust", "C#", "Java", "JavaScript")
 
 
 def raise_stack_limit() -> None:
@@ -225,6 +234,11 @@ def compile_suite(
                 str(REPO_ROOT / relative)
                 for relative in suite.absolute_runtime_sources.get(algorithm, ())
             ]
+            if not suite.needs_absolute_runtime:
+                extra.extend(
+                    str(REPO_ROOT / relative)
+                    for relative in ABSOLUTE_PRELUDE_RUNTIME_SOURCES
+                )
             if suite.needs_absolute_runtime:
                 runtime_library = find_absolute_runtime(compiler)
                 if not runtime_library:
@@ -254,6 +268,30 @@ def compile_suite(
             algorithm: Runner([str(cpp_executable), algorithm])
             for algorithm in suite.algorithms
         }
+
+    if "Rust" in languages:
+        rustc = find_tool("rustc")
+        rust_source = suite_dir / suite.rust_source
+        if not rustc:
+            print("[Skip Rust] rustc was not found in PATH")
+        elif not rust_source.exists():
+            print(f"[Skip Rust] {rust_source} is missing")
+        else:
+            print("[Compile Rust benchmark]")
+            rust_executable = native_out / "benchmark-rust"
+            # The same three things the C++ build is given: optimize fully,
+            # target this machine, and let integer arithmetic wrap. The last
+            # one is written out rather than left to the profile default, so
+            # the arithmetic does not change with how rustc was invoked.
+            run("rustc benchmark", [
+                rustc, "-C", "opt-level=3", "-C", "target-cpu=native",
+                "-C", "overflow-checks=off", "--edition", "2021",
+                str(rust_source), "-o", str(rust_executable),
+            ])
+            runners["Rust"] = {
+                algorithm: Runner([str(rust_executable), algorithm])
+                for algorithm in suite.algorithms
+            }
 
     if "C#" in languages:
         dotnet = find_tool("dotnet")

@@ -26,10 +26,31 @@ sorting, matching the unchecked indexing contract of C++
 `std::vector::operator[]`. The ordinary `Absolute` row remains the safe
 bounds-checked collection API.
 
+## Rust
+
+Rust is measured with `rustc -C opt-level=3 -C target-cpu=native -C
+overflow-checks=off --edition 2021` -- the same three things the C++ build is
+given: optimize fully, target this machine, and let integer arithmetic wrap.
+The last is written out rather than left to a profile default so the
+arithmetic does not change with how `rustc` was invoked, and the ports use the
+explicit `wrapping_*` operations wherever the C++ relies on wraparound.
+
+The port follows [`benchmark.cpp`](benchmark.cpp) line for line rather than
+being written idiomatically. A suite compares one algorithm across languages,
+so a version that reaches the same answer by a different route measures a
+different thing. Every implementation is accepted only when it produces the
+checksum listed above.
+
+`HashMap` is the standard one with the hasher a Rust program gets by default.
+It is DoS-resistant and therefore slower than the one C++ hands out; swapping
+in a faster third-party hasher would measure a library the language does not
+ship.
+
 ## Benchmark Source Files
 
 - Absolute: [`absolute/vector-push-sum.abs`](absolute/vector-push-sum.abs), [`absolute/vector-sort.abs`](absolute/vector-sort.abs), [`absolute/vector-sort-unsafe.abs`](absolute/vector-sort-unsafe.abs), [`absolute/hashmap-insert-lookup.abs`](absolute/hashmap-insert-lookup.abs)
 - C++: [`benchmark.cpp`](benchmark.cpp)
+- Rust: [`benchmark.rs`](benchmark.rs)
 - C#: [`Program.cs`](Program.cs)
 - Java: [`Benchmark.java`](Benchmark.java)
 - JavaScript: [`benchmark.js`](benchmark.js)
