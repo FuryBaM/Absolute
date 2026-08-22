@@ -1,0 +1,125 @@
+// `HashMap<K, V>` and `HashSet<T>` over an element that owns something.
+//
+// This file is the retraction of a claim. Section 1 of docs/known-defects.md
+// said a hash map could not be answered: its iterator is an array of
+// `HashKeyValuePair`, a pair is a struct, `sub` weakens a handle and a struct
+// is not one -- so there was no way to say "this array names what the map
+// holds". The second half does not follow from the first. The pair is generic
+// in its value, so a snapshot does not weaken the struct; it instantiates it
+// at the weakened parameter. `HashKeyValuePair<K, sub V>` is a pair whose
+// value half borrows, and at `V = int32` it is the pair it has always been.
+//
+// A hash table has two places the ordinary containers do not, and both were
+// wrong for an owning element:
+//
+//   - **Rehashing.** Growth copied the old table and read each live slot into
+//     the new one, so both tables held a handle to every element -- and the
+//     old table is dropped on the way out of the call. The old table is moved
+//     out and each live entry is taken out of it now.
+//   - **Tombstones.** `remove` marked the slot dead and left the handle in it.
+//     Nothing looks at a tombstone again, so that is a leak for every entry a
+//     program removes. The slot gives back what it held.
+//
+// The counts below are the whole test, and the insert loop is long enough to
+// force several rehashes.
+
+import "../std/collections/hash_map.abs";
+import "../std/string.abs";
+
+int32 destroyed = 0;
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+    public void destroy() { destroyed = destroyed + 1; }
+}
+
+int32 main() {
+    // ---- HashMap ----
+    HashMap<int32, Cell*>* byKey = new HashMap<int32, Cell*>(
+        fn(int32 k) => k as int64,
+        fn(int32 a, int32 b) => a == b);
+
+    // Enough to grow the table from 8 several times over. A rehash that
+    // copies rather than moves gives the old table and the new one a handle
+    // each, and the old table is dropped as the call returns.
+    int32 i = 0;
+    while (i < 50) {
+        byKey.put(i, new Cell(i));
+        i = i + 1;
+    }
+    assert(byKey.count == 50, "fifty entries survived the growth");
+    assert(destroyed == 0, "and rehashing released none of them");
+
+    // Reading a value borrows it.
+    sub Cell* seventh = byKey[7];
+    assert(seventh.value == 7, "an entry reads back");
+    assert(destroyed == 0, "reading released nothing");
+
+    // Overwriting a key releases the value that was there.
+    byKey.put(7, new Cell(700));
+    assert(destroyed == 1, "the entry gave back what it held");
+    assert(byKey[7].value == 700, "and holds what it was given");
+    assert(byKey.count == 50, "without changing the count");
+
+    // Removing releases the entry, and the tombstone holds nothing.
+    assert(byKey.remove(7), "removed a key");
+    assert(destroyed == 2, "and the removal released its value");
+    assert(byKey.count == 49, "forty-nine left");
+    assert(!byKey.containsKey(7), "and the key is gone");
+
+    // A snapshot names what the map holds. Walking it releases nothing, and
+    // neither does dropping it.
+    int32 sum = 0;
+    HashMapIterator<int32, Cell*>* entries = byKey.iterate();
+    while (entries.next()) { sum = sum + entries.value.value.value; }
+    delete entries;
+    assert(sum == 1218, "walked every remaining entry");
+    assert(destroyed == 2, "and the iterator released none of them");
+
+    // The value view is the same promise without the pair.
+    sub Cell*[] values = byKey.valuesToArray();
+    assert(values.length == 49, "one per entry");
+    assert(destroyed == 2, "and the view owns none of them");
+
+    delete byKey;
+    assert(destroyed == 51, "forty-nine left in the map, each released once");
+
+    // ---- HashSet ----
+    HashSet<Cell*>* cells = new HashSet<Cell*>(
+        fn(sub Cell* c) => c.value as int64,
+        fn(sub Cell* a, sub Cell* b) => a.value == b.value);
+
+    int32 added = 0;
+    i = 0;
+    while (i < 40) {
+        if (cells.add(new Cell(i))) { added = added + 1; }
+        i = i + 1;
+    }
+    assert(added == 40, "forty went in");
+    assert(cells.count == 40, "and the set holds them");
+    assert(destroyed == 51, "growth released none of them");
+
+    // A duplicate is refused, and the value it was handed is released by the
+    // statement that made it rather than kept by the set.
+    Cell* probe = new Cell(3);
+    assert(!cells.add(probe), "a duplicate is refused");
+    assert(cells.count == 40, "and the set is unchanged");
+    delete probe;
+    assert(destroyed == 52, "the caller still owned what the set refused");
+
+    sub Cell* five = cells.toArray()[5];
+    assert(cells.contains(five), "the set says it has it");
+    assert(destroyed == 52, "and searching released nothing");
+
+    assert(cells.remove(five), "removed one");
+    assert(destroyed == 53, "which released exactly that one");
+    assert(cells.count == 39, "thirty-nine left");
+
+    delete cells;
+    assert(destroyed == 92, "thirty-nine left in the set, each released once");
+
+    println(format("std-hash-owner-elements: sum={} destroyed={}", sum, destroyed));
+    println("std-hash-owner-elements=ok");
+    return 0;
+}
