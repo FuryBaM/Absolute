@@ -1054,6 +1054,40 @@ the general form, and today it says the general form: "borrow it with 'sub', or
 hand it over with move(...)". That is true and it is not the sentence someone
 holding a `Vector<Cell*>` needs.
 
+**When a builder would earn its place**, so that this is not re-argued from
+scratch the next time someone reaches for one. There are three cases, and none
+of them is "staging changes to a mutable container":
+
+1. **A bridge to a frozen type.** When the published object is constant after
+   `finish()` -- a `FrozenHashMap` behind a symbol table, an immutable set --
+   the builder is the only thing that can be mutated, and `finish()` is what
+   freezes. There is nothing else to write the contents with.
+2. **An invariant that step-by-step insertion cannot hold.** When the finished
+   structure is built by one expensive pass over the whole batch rather than
+   one insertion at a time -- a perfect hash, a sorted and deduplicated run
+   laid out as a flat B-tree -- `finish()` is that pass, and the builder is
+   where the batch accumulates until it can run.
+3. **A model without an honest move.** In a language where transferring
+   ownership is not O(1), a staging layer is what keeps the copies down. This
+   one does not apply here, and it is listed so it is not mistaken for one
+   that does.
+
+   Be exact about what is known, because the test that looks like it settles
+   this does not. `tests/std-vector-owner-elements.abs` counts destructor
+   calls: it establishes that a transfer duplicates nothing and releases
+   nothing, and it would catch a release too many, a release too few, or two
+   names for one element. It does not measure cost. That the transfer is also
+   O(1) is a property of what the backend emits, and a change that made it
+   O(n) while keeping ownership balanced would leave those counts unchanged.
+   Guarding the cost needs a measurement, not a counter.
+
+`std/collections` has none of the three: its containers are mutable, an element
+moves without copying, and nothing it publishes is frozen. That is why
+`builder()` is a snapshot and nothing else, and why the operation that takes
+instead of copying is the container. If a frozen structure is ever added, the
+first case applies and a builder returns -- not as a wrapper over `Vector`, but
+as the only way to construct something that cannot otherwise be constructed.
+
 ### Fixed: a write through a reference did not overwrite
 
 ```absolute
