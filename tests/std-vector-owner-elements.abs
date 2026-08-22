@@ -103,9 +103,32 @@ int32 main() {
     assert(destroyed == 4, "walking the iterator released nothing");
     assert(walked == 7, "and saw both survivors");
 
+    // Staging changes without duplicating anything, which is what a builder
+    // would be for and what a builder cannot be over an element that owns. A
+    // snapshot builder copies, and an owner cannot be copied; an operation
+    // that *took* the elements instead would leave the source empty -- and
+    // then it is this, spelled out of what the container already has. There is
+    // no `intoBuilder`, because this is it.
+    Vector<Cell*>* staged = new Vector<Cell*>();
+    while (cells.count > 0) {
+        staged.push(cells.takeAt(0));
+    }
+    assert(cells.count == 0, "the source gave up every element");
+    assert(staged.count == 2, "and the staging vector has them");
+    assert(destroyed == 4, "and the transfer released none of them");
+
+    staged.removeAt(0);
+    assert(destroyed == 5, "a staged removal releases the element it removes");
+    staged.push(new Cell(42));
+    assert(staged.count == 2, "and a staged addition is an ordinary push");
+    assert(staged[1].value == 42, "with the value it was given");
+
+    delete staged;
+    assert(destroyed == 7, "two in the staging vector, each released once");
+
     // What is still in the vector goes with the vector.
     delete cells;
-    assert(destroyed == 6, "two left, and each released once");
+    assert(destroyed == 7, "the source was emptied, so it releases nothing");
 
     println(format("std-vector-owner-elements: total={} destroyed={}",
         total, destroyed));
