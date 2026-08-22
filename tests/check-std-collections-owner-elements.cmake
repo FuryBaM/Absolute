@@ -26,14 +26,19 @@ set(diagnostics "${compiler_stdout}${compiler_stderr}")
 foreach(pattern IN ITEMS
         "at 'std[.]collections[.]VectorBuilder<Cell[*]>' the field 'buffer' is stored from a subscriber [[]E_RESOURCE_FIELD_REQUIRES_OWNER[]]"
         "at 'std[.]collections[.]VectorBuilder<Cell[*]>' a slot of 'buffer' is filled by reading another slot rather than taking it [[]E_RESOURCE_ELEMENT_REQUIRES_OWNER[]]"
-        "at 'std[.]collections[.]VectorBuilder<Cell[*]>' 'buffer' hands back a field its object still owns [[]E_MANAGED_RETURN_REQUIRES_OWNER[]]")
+        "at 'std[.]collections[.]VectorBuilder<Cell[*]>' 'buffer' hands back a field its object still owns [[]E_MANAGED_RETURN_REQUIRES_OWNER[]]"
+        "at 'std[.]collections[.]SetBuilder<Cell[*]>' the field 'buffer' is stored from a subscriber [[]E_RESOURCE_FIELD_REQUIRES_OWNER[]]"
+        "at 'std[.]collections[.]MapBuilder<Cell[*]>' the field 'std[.]collections[.]KeyValuePair[.]value' is stored from a subscriber [[]E_RESOURCE_FIELD_REQUIRES_OWNER[]]")
     if(NOT diagnostics MATCHES "${pattern}")
         message(FATAL_ERROR "missing diagnostic: ${pattern}\n${diagnostics}")
     endif()
 endforeach()
 
-# Vector and VectorIterator say the weaker thing now, and must stay quiet.
-foreach(fixed IN ITEMS "Vector<Cell[*]>" "VectorIterator<Cell[*]>")
+# The containers themselves say the weaker thing now, and must stay quiet. Only
+# their builders report, and only because this program asks for one.
+foreach(fixed IN ITEMS "Vector<Cell[*]>" "VectorIterator<Cell[*]>"
+        "Set<Cell[*]>" "SetIterator<Cell[*]>"
+        "Map<Cell[*]>" "MapIterator<Cell[*]>")
     if(diagnostics MATCHES "at 'std[.]collections[.]${fixed}'")
         message(FATAL_ERROR
             "a class that was fixed is reporting again: ${fixed}\n${diagnostics}")

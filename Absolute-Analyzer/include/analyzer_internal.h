@@ -306,6 +306,23 @@ namespace Absolute {
             // rather than considered as a conversion.
             if (!MentionsGenericParameter(pattern, parameters)) return true;
             if (parameters.contains(pattern)) {
+                // A parameter is never bound to a qualified form of itself.
+                // `sub V` at `V` is not a type `V` could be -- it is the
+                // borrow of whatever `V` turns out to be -- and inside an open
+                // body `V` is already bound: it stands for itself. Binding it
+                // here produced a specialization of the method with `sub V`
+                // where `V` was written, and every ownership rule that asked
+                // what the parameter takes was then told "a borrow" about a
+                // parameter declared to take. `put(borrowed)` inside a
+                // container's own body was accepted in silence.
+                //
+                // Only the *same* name is refused. A genuinely borrowed
+                // argument still binds an unrelated parameter: at
+                // `take<T>(T v)` called with a `sub Cell*`, the base name is
+                // `Cell*` and `T` takes it.
+                if (CanonicalOpenOwnership(actual) != OwnershipKind::None &&
+                    CanonicalOpenBaseName(actual) == pattern)
+                    return true;
                 const auto found = substitutions.find(pattern);
                 if (found == substitutions.end()) {
                     substitutions.emplace(pattern, actual);

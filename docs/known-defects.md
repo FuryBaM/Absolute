@@ -933,27 +933,67 @@ qualifiers is absent, which is why `tests/collection-algorithms.abs` is
 unchanged. `tests/std-algorithms-owner-elements.abs` runs the same algorithms
 at an element type that owns.
 
-What is left is blocked on the same undecided question rather than on the same
-missing spelling, and it is recorded rather than patched:
+`Set` and `Map` follow, and neither had been migrated at all. Both moved
+elements by reading a slot and storing what they read, and both kept a
+copy-on-write flag whose only writer was `iterate()` -- an iterator already
+takes its own snapshot, so the flag bought nothing and its `copy` was the one
+operation an owning element refuses. Both are written the way the model
+requires now, both took the same `builder()` move out of the class, and
+`tests/std-set-map-owner-elements.abs` counts every destruction under
+AddressSanitizer.
 
-- **`Set` and `Map`** are blocked by their builders, and `VectorBuilder` is
-  blocked in the same way -- it is only no longer in `Vector`'s way. A builder
-  is a staging owner seeded from a live container's storage, so over an owning
+**A map is where a recorded claim turned out to be wrong**, and the correction
+matters more than the container. This file said that a map's element is a
+struct, that `sub` weakens a handle and a struct is not one, and that there was
+therefore no way to say "this array names what the map holds". The second half
+does not follow from the first: the pair is *generic in its value*, so the
+snapshot does not weaken the struct -- it instantiates it at the weakened
+parameter. `KeyValuePair<K, sub V>` is a pair whose value half borrows, and at
+`V = int32` it is the pair it has always been. `MapIterator`, `entryAt` and
+`toArray` are written with it. The two instantiations are two types, so the
+snapshot is filled field by field rather than by `copy`: it is the per-field
+store that weakens, and copying the array wholesale gave the snapshot the map's
+values, so deleting the iterator destroyed them.
+
+The same shape answers `HashMap`, which is the last container and is
+untouched: its iterator is an array of `HashKeyValuePair`, and the reason it
+was called unanswerable is the reason that has just been retracted.
+
+Two defects in the compiler surfaced on the way, both of them a qualifier
+carried where it does not belong:
+
+- **A `move` was not an owner inside an open generic body.** The rule that a
+  field or a slot must be filled from a fresh owner cannot run where `T` is not
+  a pointer yet, so it records the question and each instantiation asks it --
+  but it recorded `value = move(v)` too, because `createsManagedOwner` is false
+  for a `move` of an open `T` exactly as it is for reading a slot. A `move` is
+  the operation that hands an owner over and is refused on anything that is not
+  one, so its result is an owner whatever `T` becomes; every instantiation over
+  an owning type was reporting a field the body had taken correctly.
+- **A generic parameter was bound to a qualified form of itself.** Calling
+  `put(borrowed)` inside a container's own body unified the parameter `V`
+  against the argument type `sub V` and produced a *specialization of the
+  method* with `sub V` where `V` was written. Every ownership rule that then
+  asked what the parameter takes was told "a borrow" about a parameter declared
+  to take, so handing a borrow straight to a taking parameter was accepted in
+  silence. `sub V` is not a type `V` could be -- it is the borrow of whatever
+  `V` turns out to be -- and inside an open body `V` is already bound. Only the
+  same name is refused: at `take<T>(T v)` called with a `sub Cell*`, the base
+  name is `Cell*` and `T` still takes it.
+
+What is left is one undecided question, and it is recorded rather than patched:
+
+- **Every builder** -- `VectorBuilder`, `SetBuilder`, `MapBuilder` -- is a
+  staging owner seeded from a live container's storage, so over an owning
   element type its first act is to duplicate what that container still holds;
   borrowing instead does not help, because `finish()` would then hand a
-  container of owners a set of handles it never owned.
-  `tests/std-collections-owner-elements-errors.abs` states it in full: whether
-  `builder()` should drain the container, be refused for owning elements, or
-  not exist is a decision about what the method means. Moving it out of the
-  class is what makes that decision affordable to defer -- it now costs the
-  program that asks for a builder, and nothing else. `Set` and `Map` would take
-  the same move.
-- **`HashMap`** is blocked by its iterator for a related reason. The snapshot
-  is an array of `HashKeyValuePair`, and a pair is a struct: `sub` weakens a
-  handle and a struct is not one, so there is no way to say "this array names
-  what the map holds". `copy` of it is refused outright, and rightly --
-  `E_COPY_OWNING_ELEMENTS` -- so what `iterate()` means over an owning value
-  needs an answer before the container can have one.
+  container of owners a set of handles it never owned. Whether `builder()`
+  should drain the container, be refused for owning elements, or not exist is a
+  decision about what the method means.
+  `tests/std-collections-owner-elements-errors.abs` states it in full and pins
+  the refusal. None of it is in a container's way any more: a builder is an
+  extension, instantiated where it is called, so it costs the program that asks
+  for one and nothing else.
 
 ### Fixed: a write through a reference did not overwrite
 

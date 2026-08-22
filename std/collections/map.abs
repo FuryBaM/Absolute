@@ -3,19 +3,41 @@ namespace std.collections {
         public K key;
         public V value;
 
+        // A field store takes what it is given, so what is given must be an
+        // owner. A parameter borrows unless the caller says otherwise, which
+        // is what `move` at the call site says and what this checks.
         public void initialize(K k, V v) {
-            key = k;
-            value = v;
+            key = move(k);
+            value = move(v);
         }
     }
 
     class MapIterator<K, V> {
-        private KeyValuePair<K, V>[] snapshot;
+        // A snapshot names what the map holds; it does not own it. A pair is a
+        // struct, and `sub` weakens a handle rather than a struct -- but the
+        // pair is *generic* in its value, so the snapshot is the pair
+        // instantiated at the weakened parameter. At `V = Cell*` this is
+        // `KeyValuePair<K, sub Cell*>` and releasing the iterator releases
+        // nothing; at `V = int32` `sub V` is `V` and this is the array it has
+        // always been.
+        //
+        // Written element by element rather than with `copy`, because the two
+        // instantiations are two types: the copy would have to be from
+        // `KeyValuePair<K, V>[]` to `KeyValuePair<K, sub V>[]`, and it is the
+        // per-field store that weakens. Copying the array wholesale gave the
+        // snapshot the map's values, and deleting the iterator destroyed them.
+        private KeyValuePair<K, sub V>[] snapshot;
         private int32 length;
         private int32 index;
 
         public MapIterator(KeyValuePair<K, V>[] source, int32 sourceLength) {
-            snapshot = copy(source[0:sourceLength]);
+            snapshot = new KeyValuePair<K, sub V>[sourceLength];
+            int32 i = 0;
+            while (i < sourceLength) {
+                snapshot[i].key = source[i].key;
+                snapshot[i].value = source[i].value;
+                i = i + 1;
+            }
             length = sourceLength;
             index = -1;
         }
@@ -25,7 +47,7 @@ namespace std.collections {
             return index < length;
         }
 
-        public KeyValuePair<K, V> value {
+        public KeyValuePair<K, sub V> value {
             get { return snapshot[index]; }
         }
     }
@@ -35,6 +57,13 @@ namespace std.collections {
         private int32 _count;
         private int32 _capacity;
         private bool _finished;
+
+        public MapBuilder() {
+            _count = 0;
+            _capacity = 4;
+            buffer = new KeyValuePair<K, V>[4];
+            _finished = false;
+        }
 
         public MapBuilder(KeyValuePair<K, V>[] initialSource, int32 initialCount) {
             _count = initialCount;
@@ -59,7 +88,7 @@ namespace std.collections {
             int32 i = 0;
             while (i < _count) {
                 if (buffer[i].key == key) {
-                    buffer[i].value = value;
+                    buffer[i].value = move(value);
                     return;
                 }
                 i = i + 1;
@@ -101,6 +130,40 @@ namespace std.collections {
             return false;
         }
 
+        // Seeded through the builder's own door rather than over its storage,
+        // so what the seeding asks for is visible: a builder takes its
+        // entries, and what a map hands out is a borrow of them. At
+        // `V = int32` the two are the same type and this is the copy it has
+        // always been; at a value that owns, `put` below is asked to take a
+        // borrow and every instantiation is told so.
+        //
+        // A method of this class rather than a line of the extension that
+        // calls it, because a rule that cannot run in an open body is
+        // recorded against the generic *type* being analyzed -- a free
+        // function has none, so the same line written there is checked at
+        // neither point.
+        public void seedFrom(std.collections.Map<K, V>* source) {
+            int32 i = 0;
+            while (i < source.count) {
+                if (_count == _capacity) {
+                    int32 newCap = _capacity * 2;
+                    KeyValuePair<K, V>[] newBuf = new KeyValuePair<K, V>[newCap];
+                    unsafeArrayMove(newBuf, buffer, _count);
+                    buffer = move(newBuf);
+                    _capacity = newCap;
+                }
+                KeyValuePair<K, sub V> entry = source.entryAt(i);
+                buffer[_count].key = entry.key;
+                // The store that says what seeding is. A builder's entry is
+                // its own, and what a map hands out is a borrow of the map's
+                // -- so at a value type that owns, this is a field filled
+                // from a subscriber and every instantiation is told so.
+                buffer[_count].value = entry.value;
+                _count = _count + 1;
+                i = i + 1;
+            }
+        }
+
         public std.collections.Map<K, V>* finish() {
             if (_finished) {
                 throw new Error("MapBuilder already finished");
@@ -120,20 +183,11 @@ namespace std.collections {
         private KeyValuePair<K, V>[] entries;
         private int32 _count;
         private int32 _capacity;
-        private bool _isShared;
 
         public Map() {
             _count = 0;
             _capacity = 4;
             entries = new KeyValuePair<K, V>[4];
-            _isShared = false;
-        }
-
-        public void ensureUnshared() {
-            if (_isShared) {
-                entries = copy(entries);
-                _isShared = false;
-            }
         }
 
         public int32 count {
@@ -148,8 +202,13 @@ namespace std.collections {
             get { return _count == 0; }
         }
 
-        public KeyValuePair<K, V> entryAt(int32 index) {
-            return entries[index];
+        // Reading an entry is not the map giving its value up, so what comes
+        // back names the value rather than owning it.
+        public KeyValuePair<K, sub V> entryAt(int32 index) {
+            KeyValuePair<K, sub V> entry;
+            entry.key = entries[index].key;
+            entry.value = entries[index].value;
+            return entry;
         }
 
         public bool containsKey(K key) {
@@ -164,11 +223,12 @@ namespace std.collections {
         }
 
         public void put(K key, V value) {
-            ensureUnshared();
             int32 i = 0;
             while (i < _count) {
+                // A slot gives back what it held, so the value being replaced
+                // is released by this store.
                 if (entries[i].key == key) {
-                    entries[i].value = value;
+                    entries[i].value = move(value);
                     return;
                 }
                 i = i + 1;
@@ -186,18 +246,24 @@ namespace std.collections {
                 _capacity = newCap;
             }
 
-            entries[_count].initialize(key, value);
+            entries[_count].initialize(move(key), move(value));
             _count = _count + 1;
         }
 
+        // The entry being removed is released first; the shift then moves each
+        // survivor down by taking it, which leaves the slot it came from empty
+        // -- including the last one, so the tail past the new `_count` owns
+        // nothing. Reading a slot and storing what was read gave two slots one
+        // value: removing a middle entry released the entry after it as well,
+        // and the key that had pointed at it was left naming freed storage.
         public bool remove(K key) {
-            ensureUnshared();
             int32 i = 0;
             while (i < _count) {
                 if (entries[i].key == key) {
+                    unsafeArrayDrop(entries, i, 1);
                     int32 j = i;
                     while (j < _count - 1) {
-                        entries[j] = entries[j + 1];
+                        unsafeArraySet(entries, j, unsafeArrayTake(entries, j + 1));
                         j = j + 1;
                     }
                     _count = _count - 1;
@@ -225,31 +291,45 @@ namespace std.collections {
         }
 
         public void clear() {
-            ensureUnshared();
+            // Whatever the entries were holding is released here. For a value
+            // that owns nothing this is not a loop, it is nothing.
+            unsafeArrayDrop(entries, 0, _count);
             _count = 0;
         }
 
         public std.collections.MapIterator<K, V>* iterate() {
-            _isShared = true;
             return new std.collections.MapIterator<K, V>(entries, _count);
         }
 
-        public std.collections.MapBuilder<K, V>* builder() {
-            return new std.collections.MapBuilder<K, V>(entries, _count);
-        }
-
-        public KeyValuePair<K, V>[] toArray() {
-            KeyValuePair<K, V>[] res = new KeyValuePair<K, V>[_count];
+        // A second array over the same values, and only one of the two can own
+        // them -- this one does not, which the value half of the pair says.
+        public KeyValuePair<K, sub V>[] toArray() {
+            KeyValuePair<K, sub V>[] res = new KeyValuePair<K, sub V>[_count];
             int32 i = 0;
             while (i < _count) {
-                res[i] = entries[i];
+                res[i].key = entries[i].key;
+                res[i].value = entries[i].value;
                 i = i + 1;
             }
             return res;
         }
 
-        public KeyValuePair<K, V>[] unsafeCopyRaw() {
+        public KeyValuePair<K, sub V>[] unsafeCopyRaw() {
             return toArray();
         }
+    }
+
+    // A builder is a staging owner seeded from a live map's entries, so over a
+    // value type that owns, its first act is to duplicate what that map still
+    // holds -- the same undecided question `VectorBuilder` records, and the
+    // same reason this is an extension. A method's return type is instantiated
+    // with the class, so `Map<K, Cell*>` could not exist at all while
+    // `builder()` was one.
+    extension std.collections.MapBuilder<K, V>* builder<K, V>(
+        std.collections.Map<K, V>* target) {
+        std.collections.MapBuilder<K, V>* staged =
+            new std.collections.MapBuilder<K, V>();
+        staged.seedFrom(target);
+        return staged;
     }
 }

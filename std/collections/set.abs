@@ -1,6 +1,12 @@
 namespace std.collections {
     class SetIterator<T> {
-        private T[] snapshot;
+        // The same thing VectorIterator says: a snapshot is a second array
+        // over items the set still holds, and only one of the two can own
+        // them. At `T = Node*` this is `sub Node*[]` and releasing the
+        // iterator releases nothing; at `T = int32` the qualifier is not
+        // there at all, because a value with no object has no lifetime to
+        // weaken.
+        private sub T[] snapshot;
         private int32 length;
         private int32 index;
 
@@ -15,7 +21,7 @@ namespace std.collections {
             return index < length;
         }
 
-        public T value {
+        public sub T value {
             get { return snapshot[index]; }
         }
     }
@@ -117,20 +123,11 @@ namespace std.collections {
         private T[] items;
         private int32 _count;
         private int32 _capacity;
-        private bool _isShared;
 
         public Set() {
             _count = 0;
             _capacity = 4;
             items = new T[4];
-            _isShared = false;
-        }
-
-        public void ensureUnshared() {
-            if (_isShared) {
-                items = copy(items);
-                _isShared = false;
-            }
         }
 
         public int32 count {
@@ -145,11 +142,15 @@ namespace std.collections {
             get { return _count == 0; }
         }
 
-        public T itemAt(int32 index) {
-            return items[index];
+        // Reading an item is not the set giving it up, so what comes back is
+        // the weaker relation to the same object.
+        public sub T itemAt(int32 index) {
+            return unsafeArrayGet(items, index);
         }
 
-        public bool contains(T item) {
+        // A membership test compares and keeps nothing, so it borrows what it
+        // is handed rather than taking it.
+        public bool contains(sub T item) {
             int32 i = 0;
             while (i < _count) {
                 if (items[i] == item) {
@@ -160,37 +161,44 @@ namespace std.collections {
             return false;
         }
 
+        // A duplicate is refused without the set taking anything: nothing was
+        // moved out of `item`, so the caller's value is released by the
+        // statement that made it, exactly as an argument that is not kept
+        // always is.
         public bool add(T item) {
             if (contains(item)) {
                 return false;
             }
-            ensureUnshared();
 
             if (_count == _capacity) {
                 int32 newCap = _capacity * 2;
                 T[] newItems = new T[newCap];
-                int32 j = 0;
-                while (j < _count) {
-                    newItems[j] = items[j];
-                    j = j + 1;
-                }
+                // A move rather than a loop of element stores: the old
+                // storage is dropped on the next line, and for an item that
+                // owns something a copy would leave it holding what the new
+                // storage now owns.
+                unsafeArrayMove(newItems, items, _count);
                 items = move(newItems);
                 _capacity = newCap;
             }
 
-            items[_count] = item;
+            unsafeArraySet(items, _count, move(item));
             _count = _count + 1;
             return true;
         }
 
-        public bool remove(T item) {
-            ensureUnshared();
+        // The item being removed is released first; the shift then moves each
+        // survivor down by taking it, which leaves the slot it came from
+        // empty -- including the last one, so the tail past the new `_count`
+        // owns nothing.
+        public bool remove(sub T item) {
             int32 i = 0;
             while (i < _count) {
                 if (items[i] == item) {
+                    unsafeArrayDrop(items, i, 1);
                     int32 j = i;
                     while (j < _count - 1) {
-                        items[j] = items[j + 1];
+                        unsafeArraySet(items, j, unsafeArrayTake(items, j + 1));
                         j = j + 1;
                     }
                     _count = _count - 1;
@@ -202,21 +210,21 @@ namespace std.collections {
         }
 
         public void clear() {
-            ensureUnshared();
+            // Whatever the items were holding is released here. For an item
+            // that owns nothing this is not a loop, it is nothing.
+            unsafeArrayDrop(items, 0, _count);
             _count = 0;
         }
 
         public std.collections.SetIterator<T>* iterate() {
-            _isShared = true;
             return new std.collections.SetIterator<T>(items, _count);
         }
 
-        public std.collections.SetBuilder<T>* builder() {
-            return new std.collections.SetBuilder<T>(items, _count);
-        }
-
-        public T[] toArray() {
-            T[] res = new T[_count];
+        // A second array over the same items, and only one of the two can own
+        // them -- this one does not. At `T = int32` this is the ordinary
+        // `int32[]` copy it has always been.
+        public sub T[] toArray() {
+            sub T[] res = new T[_count];
             int32 i = 0;
             while (i < _count) {
                 res[i] = items[i];
@@ -225,8 +233,24 @@ namespace std.collections {
             return res;
         }
 
-        public T[] unsafeCopyRaw() {
+        public sub T[] unsafeCopyRaw() {
             return toArray();
         }
+    }
+
+    // A builder is a staging owner seeded from a live set's storage, so over
+    // an item type that owns, its first act is to duplicate what that set
+    // still holds. That is what a snapshot means, and an owning item cannot
+    // be one -- the same undecided question `VectorBuilder` records.
+    //
+    // Written as an extension for the same reason: a method's return type is
+    // instantiated with the class, so a `Set<Cell*>` could not exist at all
+    // while `builder()` was one. It is instantiated where it is called now,
+    // so a set of owners is an ordinary set and only a program that asks it
+    // for a builder is refused.
+    extension std.collections.SetBuilder<T>* builder<T>(
+        std.collections.Set<T>* target) {
+        return new std.collections.SetBuilder<T>(
+            target.unsafeCopyRaw(), target.count);
     }
 }

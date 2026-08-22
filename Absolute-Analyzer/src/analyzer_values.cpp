@@ -88,8 +88,17 @@ namespace Absolute {
         // Inside a generic body the field's type is `T`, so the rule below
         // cannot see a pointer and does not run. Record what was seen; each
         // instantiation substitutes the type and asks the rule then.
-        if (owningField && !value.createsManagedOwner && value.type != "null" &&
-            !IsStrongManagedPointerType(target.type)) {
+        //
+        // A `move` is not "what was seen" -- it is the operation that hands an
+        // owner over, and it is refused on anything that is not one, so its
+        // result is an owner whatever `T` turns out to be. The shape question
+        // below cannot tell: `T` is not a pointer yet, so `createsManagedOwner`
+        // is false for `move(v)` exactly as it is for reading a slot. Asking it
+        // anyway recorded `value = move(v)` as a store from a subscriber, and
+        // every instantiation over an owning type reported a field the body had
+        // taken correctly.
+        if (owningField && !value.createsManagedOwner && !value.isMoveResult &&
+            value.type != "null" && !IsStrongManagedPointerType(target.type)) {
             RecordGenericBodyFact(GenericBodyFact::Shape::FieldFromNonOwner,
                 target.type, targetSymbol->name, expr);
         }
@@ -127,8 +136,8 @@ namespace Absolute {
         // fresh owner, so it satisfies this the way `copy` and `move` do.
         const bool owningSlot =
             dynamic_cast<ArrayAccessExpr*>(expr->target.get()) != nullptr;
-        if (owningSlot && !value.createsManagedOwner && value.type != "null" &&
-            !IsStrongManagedPointerType(target.type)) {
+        if (owningSlot && !value.createsManagedOwner && !value.isMoveResult &&
+            value.type != "null" && !IsStrongManagedPointerType(target.type)) {
             const Symbol* array = table.Get(target.symbol);
             RecordGenericBodyFact(GenericBodyFact::Shape::ElementFromNonOwner,
                 target.type, array ? array->name : target.type, expr);
