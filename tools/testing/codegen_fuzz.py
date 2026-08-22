@@ -1191,7 +1191,30 @@ class Table {{
 
     // A counted value out of a property, and one that borrows.
     public string label {{ get {{ return std.text.concat(tag, make(seed)); }} }}
+
+    // A closure out of both accessors: one the getter builds, and one it
+    // reads out of a field and hands back. Both give the caller a count.
+    private func<string> held;
+    public func<string> maker {{
+        get {{
+            string text = make(seed + 1);
+            return fn() => text;
+        }}
+    }}
+    public func<string> this[bool ignored] {{ get {{ return held; }} }}
+    public void arm() {{
+        string text = make(seed + 2);
+        held = fn() => text;
+    }}
 }}
+
+int64 weighCell(Cell* given) {{
+    int64 weight = given.weight;
+    delete given;
+    return weight;
+}}
+
+int64 callMade(func<string> made) {{ return fold(made()); }}
 
 // A lookup whose key the caller builds only in order to make the call.
 class Index {{
@@ -1227,6 +1250,7 @@ class Index {{
 int32 main() {{
     int64 checksum = 0;
     Table* table = new Table({bias});
+    table.arm();
     Index* index = new Index();
     Row[] kept = rowsOf({bias});
     string keptText = make({bias});
@@ -1256,10 +1280,24 @@ int32 main() {{
             pass += 1;
         }}
 
-        // An owner out of a property, deleted by the name that received it.
+        // An owner out of a property, deleted by the name that received it,
+        // handed straight to a callee that takes it, and read and dropped
+        // inside one expression -- three positions, one of which is where a
+        // property's temporary used to be left behind.
         Cell* cell = table.cell;
         checksum += cell.weight;
         delete cell;
+        checksum += weighCell(table.cell);
+        checksum += table.cell.weight;
+
+        // A closure out of a property and out of an indexer, in the same
+        // three positions.
+        func<string> kept = table.maker;
+        checksum += fold(kept());
+        checksum += callMade(table.maker);
+        checksum += callMade(table[true]);
+        func<string> readOut = table[true];
+        checksum += fold(readOut());
 
         // A counted value out of a property, kept and dropped.
         string label = table.label;
