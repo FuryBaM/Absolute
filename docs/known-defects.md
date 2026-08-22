@@ -1027,13 +1027,32 @@ the program cannot see. See `tests/generic-constraints.abs`,
 `tests/std-collections-owner-elements-errors.abs`, which pins that the builders
 say it once.
 
-**Undecided: whether a container should also offer the other operation** -- one
-that *takes* its elements into a builder rather than copying them, leaving the
-source empty. It is sound for every `T`, and it is a different operation, so it
-would want a different name (`intoBuilder`), not a quieter `builder()`. Nothing
-needs it yet, and nothing is blocked on it: a builder is an extension,
-instantiated where it is called, so it costs the program that asks for one and
-nothing else.
+**And the other operation does not need a name**, which was worth finding out
+by trying to give it one. A builder that *took* its elements rather than
+copying them would be sound for every `T`, so it looked like the missing half.
+It is not: a builder exists for the snapshot -- staging changes while the
+original stays valid -- and an operation that empties the source has already
+given that up. What is left of it is "move these elements somewhere I can
+change, then use that", and over a container whose elements move correctly
+that is the container:
+
+```absolute
+Vector<Cell*>* staged = new Vector<Cell*>();
+while (source.count > 0) { staged.push(source.takeAt(0)); }
+staged.removeAt(0);
+staged.push(new Cell(42));
+```
+
+Nothing is duplicated, nothing is released by the transfer, and `staged` is the
+published result -- there is no `finish()` to call because there is nothing
+left to publish it *from*. `tests/std-vector-owner-elements.abs` runs exactly
+that and counts it. So `intoBuilder` would be a second name for `Vector`, and
+it is not there.
+
+The advice a program gets when a builder refuses it should say this rather than
+the general form, and today it says the general form: "borrow it with 'sub', or
+hand it over with move(...)". That is true and it is not the sentence someone
+holding a `Vector<Cell*>` needs.
 
 ### Fixed: a write through a reference did not overwrite
 
