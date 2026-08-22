@@ -1182,6 +1182,13 @@ if(BUILD_TESTING)
         NAME absolute.interface-value-type-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-value-type-errors.abs"
     )
+    add_test(
+        NAME absolute.array-allocation-size-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-allocation-size-errors.abs"
+    )
+    set_tests_properties(absolute.array-allocation-size-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_ARRAY_SIZE_TYPE"
+    )
     set_tests_properties(absolute.interface-value-type-errors PROPERTIES
         PASS_REGULAR_EXPRESSION "E_INTERFACE_REQUIRES_POINTER"
     )

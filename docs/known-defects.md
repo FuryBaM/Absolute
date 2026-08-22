@@ -66,7 +66,7 @@ An empty list is not the same as no defects, and this file should not be read
 as one. Most of what is recorded below was found *after* the list first
 emptied, by running programs rather than by reading it -- the standard
 library's own containers under AddressSanitizer, with every string built at
-runtime. The last such sweep found twenty-three, six of them in the same gap, and
+runtime. The last such sweep found twenty-four, six of them in the same gap, and
 section 1's last three entries are that sweep. The one thing it found and did
 not fix is at the top of this section. The place to look next is section 5,
 which says where not to.
@@ -1002,6 +1002,30 @@ holding a `T` by value cannot take an interface; `Viewer<T>` holding
 gets that wrong, which is what the first attempt did.
 
 See `tests/interface-value-type-errors.abs`.
+
+### Fixed: the size of an allocated array was evaluated and then ignored
+
+```absolute
+int32[] a = new int32["hello"];
+println(format("len={}", a.length));   // len=-1250607064
+```
+
+Two of the three places an array size is written asked whether it is a number:
+a declarator (`int32 fixed[n]`) and an array literal. The third -- `new T[n]`,
+which is the one people write -- evaluated the size against an expected `int64`
+and threw the answer away. No diagnostic, no crash, and a length read out of
+whatever the pointer happened to be, with every index into it then
+bounds-checked against garbage. Only the first dimension was evaluated at all,
+so the rest were unexamined too.
+
+Zero stays legal there, and that is the difference from the declarator form:
+`new int32[0]` is an array with nothing to read, which
+`tests/array-zero-initialization.abs` relies on, while a declarator's storage is
+the frame's and has to have a size. Copying the declarator's rule wholesale was
+the first attempt and it broke both of those tests, which is how the
+distinction got written down.
+
+See `tests/array-allocation-size-errors.abs`.
 
 ## 2. Missing features that fail loudly
 

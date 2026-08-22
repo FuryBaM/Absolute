@@ -796,8 +796,34 @@ namespace Absolute {
     void Analyzer::Visit(ConstructorCallExpr* expr) {
         const std::string constructedType = ResolveType(expr->constructName.get());
         if (ArrayRank(constructedType) > 0) {
-            if (!expr->arguments.empty()) {
-                EvaluateExpected(expr->arguments[0].get(), "int64");
+            // Every dimension, not only the first, and checked rather than
+            // merely evaluated. `new int32["hello"]` was accepted, allocated
+            // whatever the pointer read as, and printed a length of
+            // -1250607064 -- a wrong answer with no diagnostic and no crash.
+            // The two other places an array size is written, a declarator and
+            // an array literal, have asked this all along.
+            for (const auto& size : expr->arguments) {
+                if (!size) continue;
+                const Result resolved = EvaluateExpected(size.get(), "int64");
+                if (!IsInteger(resolved.type) && resolved.type != "error")
+                    ReportAt(size.get(), "array size must be an integer, got '" +
+                        resolved.type + "'", "E_ARRAY_SIZE_TYPE");
+                // Only the type and the range. Zero is a size a heap
+                // allocation may have -- `new int32[0]` is an array with
+                // nothing to read, which tests/array-zero-initialization.abs
+                // relies on -- and it is the declarator form, where the
+                // storage is the frame's, that requires a positive one.
+                else if (const auto* literal =
+                    dynamic_cast<const NumberLiteralExpr*>(size.get())) {
+                    try {
+                        (void)std::stoll(literal->value);
+                    }
+                    catch (const std::exception&) {
+                        ReportAt(size.get(),
+                            "array size is outside the supported integer range",
+                            "E_ARRAY_SIZE_OUT_OF_RANGE");
+                    }
+                }
             }
             Result allocation{InvalidSymbolId, constructedType, false,
                 true, false, InitializationState::Initialized,

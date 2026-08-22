@@ -1,0 +1,31 @@
+// The size of an allocated array is a number.
+//
+// Two of the three places an array size is written asked that: a declarator
+// (`int32 fixed[n]`) and an array literal. The third -- `new T[n]`, which is
+// the one people write -- evaluated the size and threw the answer away.
+//
+//     int32[] a = new int32["hello"];
+//     println(format("len={}", a.length));    // len=-1250607064
+//
+// No diagnostic, no crash, and a length read out of whatever the pointer
+// happened to be. Every index into it is then bounds-checked against garbage.
+// Only the first dimension was even evaluated, so the rest were unexamined
+// too.
+//
+// Zero stays legal here, and that is the difference from the declarator form:
+// `new int32[0]` is an array with nothing to read, which
+// tests/array-zero-initialization.abs relies on, while a declarator's storage
+// is the frame's and has to have a size.
+
+int32 main() {
+    // A string, a floating value and a bool are not sizes.
+    int32[] fromText = new int32["hello"];
+    int32[] fromReal = new int32[1.5];
+    int32[] fromFlag = new int32[true];
+
+    // Nor is an array, which is what the prefix bug used to let through.
+    int32[] source = new int32[2];
+    int32[] fromArray = new int32[source];
+
+    return fromText.length + fromReal.length + fromFlag.length + fromArray.length;
+}
