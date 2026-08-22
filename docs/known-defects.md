@@ -66,7 +66,7 @@ An empty list is not the same as no defects, and this file should not be read
 as one. Most of what is recorded below was found *after* the list first
 emptied, by running programs rather than by reading it -- the standard
 library's own containers under AddressSanitizer, with every string built at
-runtime. The last such sweep found twenty-two, six of them in the same gap, and
+runtime. The last such sweep found twenty-three, six of them in the same gap, and
 section 1's last three entries are that sweep. The one thing it found and did
 not fix is at the top of this section. The place to look next is section 5,
 which says where not to.
@@ -977,6 +977,31 @@ bracket from each and asking again, so rank never entered into it.
 
 The refusals are `tests/numeric-type-names-errors.abs`, all fourteen
 diagnostics with a file, a line and a code.
+
+### Fixed: an interface by value was refused in five places and not in four
+
+An interface is a dispatch table, not a value: it has no size and no storage of
+its own, so it is used through a pointer. A declaration said so -- `I one;` is
+`E_INTERFACE_REQUIRES_POINTER`, and so is a field of one, a struct member, and
+a return type. Four other places a type is used as a value did not, and each
+reached the backend:
+
+```
+Error: LLVM codegen: unsupported type 'I' (ctx='DeclareFunction:main', ...)
+```
+
+its own mechanism, no file, no line. They were an array's element type, a
+parameter, a tuple element, and a generic argument.
+
+The first three ask one question in one place now. The fourth is answered at
+each instantiation instead, from what the body did with the parameter, the way
+the ownership rules already are -- because the body is what decides. `Box<T>`
+holding a `T` by value cannot take an interface; `Viewer<T>` holding
+`sub T*` is exactly how an interface *should* be kept, and refusing
+`Viewer<I>` would have refused the fix. Judging it from the argument alone
+gets that wrong, which is what the first attempt did.
+
+See `tests/interface-value-type-errors.abs`.
 
 ## 2. Missing features that fail loudly
 

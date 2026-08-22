@@ -391,6 +391,11 @@ namespace Absolute {
                 Report("array variable '" + name + "' requires an array literal initializer",
                     "E_ARRAY_REQUIRES_LITERAL");
         }
+        // The same question a declaration already answers for a bare
+        // interface, asked of the element type and of every generic argument:
+        // `I[] rows` is an array of values, and `tuple<int32, I>` is one value
+        // with an interface inside it.
+        if (type != "auto") CheckInterfaceValueType(type, "variable '" + name + "'");
         Result value;
         if (expr->value) value = EvaluateExpected(expr->value.get(), type == "auto" ? std::string{} : type);
         if (type == "auto") {
@@ -1028,6 +1033,12 @@ namespace Absolute {
         std::string genericBase;
         std::vector<std::string> genericArguments;
         if (ParseGenericTypeName(type, genericBase, genericArguments)) definitionName = genericBase;
+        // An open parameter declared as a value -- `T slot;` inside `Box<T>` --
+        // is not a type yet, so each instantiation answers it. The same walk
+        // the rest of the ownership rules take through a generic body.
+        if (IsOpenGenericParameter(type))
+            RecordGenericBodyFact(GenericBodyFact::Shape::InterfaceValue,
+                type, "field '" + name + "'", expr);
         if (!IsKnownType(type)) Report("unknown object type '" + type + "'", "E_UNKNOWN_TYPE");
         else if (const auto definition = types.find(definitionName);
             definition != types.end() && definition->second.kind == TypeKind::Interface)

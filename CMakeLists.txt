@@ -1178,6 +1178,13 @@ if(BUILD_TESTING)
         NAME absolute.numeric-type-names-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/numeric-type-names-errors.abs"
     )
+    add_test(
+        NAME absolute.interface-value-type-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-value-type-errors.abs"
+    )
+    set_tests_properties(absolute.interface-value-type-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_INTERFACE_REQUIRES_POINTER"
+    )
     set_tests_properties(absolute.numeric-type-names-errors PROPERTIES
         PASS_REGULAR_EXPRESSION "E_NUMERIC_OPERAND_REQUIRED"
     )
