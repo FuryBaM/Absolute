@@ -1175,6 +1175,13 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/parameter-copy-counts.abs"
     )
     add_test(
+        NAME absolute.numeric-type-names-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/numeric-type-names-errors.abs"
+    )
+    set_tests_properties(absolute.numeric-type-names-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_NUMERIC_OPERAND_REQUIRED"
+    )
+    add_test(
         NAME absolute.accessor-owner-temporary-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/accessor-owner-temporary.abs"
     )

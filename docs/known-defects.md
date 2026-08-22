@@ -66,7 +66,7 @@ An empty list is not the same as no defects, and this file should not be read
 as one. Most of what is recorded below was found *after* the list first
 emptied, by running programs rather than by reading it -- the standard
 library's own containers under AddressSanitizer, with every string built at
-runtime. The last such sweep found twenty-one, six of them in the same gap, and
+runtime. The last such sweep found twenty-two, six of them in the same gap, and
 section 1's last three entries are that sweep. The one thing it found and did
 not fix is at the top of this section. The place to look next is section 5,
 which says where not to.
@@ -944,6 +944,39 @@ plain values counts nothing and is unchanged, because the walk asks the type.
 
 Pinned by `tests/parameter-copy-counts.abs`, which fails as a use-after-free
 rather than a leak when the fix is removed.
+
+### Fixed: a type name was matched by prefix, and the compiler segfaulted
+
+```absolute
+int32[] flat = {1, 2};
+int32[][] rows = flat;    // no diagnostic; the compiler crashed
+```
+
+`IsNumeric` asked whether a type name *starts with* `"int"` or `"uint"`. Eight
+names is the whole set and `int` and `uint` on their own are not types, so the
+prefix looked safe. It is not: `"int32[]"` starts with `"int"`, and an array of
+integers was a number everywhere the analyzer asked.
+
+One root cause, nine wrong answers. Arrays could be added, subtracted,
+compared, masked, used as a condition, printed, formatted, assigned to a scalar
+and assigned from one. Each either reached the backend and failed there naming
+the backend's own mechanism with no line -- "value cannot be used as a
+condition", "binary operator requires numeric operands" -- or did something
+worse. The worst was the rank mismatch above: nothing refused it, and the
+backend read a dimension the descriptor does not have, so **the compiler
+segfaulted with no diagnostic of any kind**. `IsInteger`, `IsConditionType` and
+`IsPrintableType` read the same prefix; all four name the eight types now.
+
+The rank rule that came out of fixing it is worth stating on its own. An array
+may be seen at a **lower** rank than it has, because the storage is row-major
+and contiguous -- that is what lets the grouped literal `{{1, 2, 3}, {4, 5, 6}}`
+fill an `int32[]` of six, which `tests/array-advanced.abs` has always covered
+and which had been passing through the same hole. It may never be seen at a
+higher one. Before, `IsAssignable` compared array types by stripping one
+bracket from each and asking again, so rank never entered into it.
+
+The refusals are `tests/numeric-type-names-errors.abs`, all fourteen
+diagnostics with a file, a line and a code.
 
 ## 2. Missing features that fail loudly
 

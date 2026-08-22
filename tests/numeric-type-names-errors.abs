@@ -1,0 +1,74 @@
+// A type name is a name, not a prefix.
+//
+// `IsNumeric` asked whether a type name *starts with* "int" or "uint". Eight
+// names is the whole set -- `int` and `uint` on their own are not types -- so
+// the prefix looked safe. It is not: `"int32[]"` starts with `"int"`, and an
+// array of integers was a number everywhere the analyzer asked.
+//
+// One root cause, nine wrong answers. Arrays could be added, subtracted,
+// compared, masked, used as a condition, printed, formatted, assigned to a
+// scalar and assigned from one -- none of which the backend can emit, so each
+// either failed there with a message naming the backend's own mechanism and no
+// line, or did something worse.
+//
+// The worst was `int32[][] rows = flat;`. Nothing refused it, and the backend
+// read a dimension the descriptor does not have: **the compiler segfaulted**,
+// with no diagnostic of any kind.
+//
+// The rank rule that came out of fixing it is worth stating on its own: an
+// array may be seen at a *lower* rank than it has, because the storage is
+// row-major and contiguous -- that is what lets the grouped literal
+// `{{1, 2, 3}, {4, 5, 6}}` fill an `int32[]` of six, which
+// tests/array-advanced.abs covers. It may never be seen at a higher one.
+
+int32 sum(int32[] values) {
+    int32 total = 0;
+    int32 index = 0;
+    while (index < values.length) {
+        total = total + values[index];
+        index = index + 1;
+    }
+    return total;
+}
+
+int32 main() {
+    int32[] left = {1, 2};
+    int32[] right = {3, 4};
+    int32 scalar = 5;
+    int32[][] grid = {{1, 2}, {3, 4}};
+
+    // Arithmetic on arrays.
+    int32[] added = left + right;
+    int32[] scaled = left * right;
+
+    // Ordering them.
+    if (left < right) { return 1; }
+
+    // Masking them.
+    int32[] masked = left & right;
+
+    // Using one as a condition.
+    if (left) { return 2; }
+    while (right) { return 3; }
+
+    // Printing and formatting one.
+    println(left);
+    println(format("{}", right));
+
+    // A scalar into an array, and an array into a scalar.
+    int32[] widened = scalar;
+    int32 narrowed = left;
+
+    // And the one that crashed the compiler: claiming a dimension that is
+    // not there.
+    int32[][] rows = left;
+    int32[][] alsoRows = new int32[2][];
+    alsoRows = left;
+
+    // The other direction stays legal, and is checked by
+    // tests/array-advanced.abs; naming it here says the rule has a direction.
+    int32[] flattened = grid;
+
+    return sum(flattened) + added.length + scaled.length + masked.length +
+        widened.length + narrowed + rows.length + alsoRows.length;
+}

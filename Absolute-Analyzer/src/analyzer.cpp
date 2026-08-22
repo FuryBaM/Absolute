@@ -1038,7 +1038,7 @@ namespace Absolute {
     }
 
     bool Analyzer::IsNumeric(const std::string& name) const {
-        return name == "float" || name == "double" || name.starts_with("int") || name.starts_with("uint") ||
+        return name == "float" || name == "double" || IsIntegerTypeName(name) ||
             name == "char";
     }
 
@@ -1054,7 +1054,7 @@ namespace Absolute {
     }
 
     bool Analyzer::IsInteger(const std::string& name) const {
-        return name.starts_with("int") || name.starts_with("uint") || name == "char";
+        return IsIntegerTypeName(name) || name == "char";
     }
 
     bool Analyzer::IsAssignable(const std::string& target, const std::string& source) const {
@@ -1073,8 +1073,23 @@ namespace Absolute {
             if (ParseCFunctionType(target, targetReturn, targetParameters) && source == "null")
                 return true;
         }
-        if (target.ends_with("[]") && source.ends_with("[]"))
-            return IsAssignable(ArrayElementType(target), ArrayElementType(source));
+        if (target.ends_with("[]") && source.ends_with("[]")) {
+            // An array may be seen at a lower rank than it has: the storage is
+            // row-major and contiguous, which is what lets a grouped literal
+            // `{{1, 2, 3}, {4, 5, 6}}` fill an `int32[]` of six, and what
+            // `int32[] flat = grid;` reads.
+            //
+            // It may never be seen at a higher one. The descriptor carries the
+            // dimensions it was built with, and `int32[][] rows = flat;` asked
+            // the backend to read a dimension that is not there -- which
+            // crashed the compiler, because nothing had refused it: `IsNumeric`
+            // read a prefix, and `"int32[]"` starts with `"int"`.
+            const size_t targetRank = ArrayRank(target);
+            const size_t sourceRank = ArrayRank(source);
+            if (targetRank > sourceRank) return false;
+            return IsAssignable(ArrayElementType(target, targetRank),
+                ArrayElementType(source, sourceRank));
+        }
         // `sub T` takes a `T`, for the same reason `sub Node*` takes a `Node*`:
         // it is the weaker relation to the same object, and the arrow runs one
         // way. Which of the two it turns out to be is settled at substitution;
@@ -1703,7 +1718,7 @@ namespace Absolute {
         if (type == "bool" || type == "string" || type == "char" ||
             type == "float" || type == "double")
             return;
-        if (type.starts_with("int") || type.starts_with("uint")) return;
+        if (IsIntegerTypeName(type)) return;
 
         const auto found = types.find(type);
         if (found != types.end()) {
