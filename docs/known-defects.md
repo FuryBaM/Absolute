@@ -66,7 +66,7 @@ An empty list is not the same as no defects, and this file should not be read
 as one. Most of what is recorded below was found *after* the list first
 emptied, by running programs rather than by reading it -- the standard
 library's own containers under AddressSanitizer, with every string built at
-runtime. The last such sweep found twenty, six of them in the same gap, and
+runtime. The last such sweep found twenty-one, six of them in the same gap, and
 section 1's last three entries are that sweep. The one thing it found and did
 not fix is at the top of this section. The place to look next is section 5,
 which says where not to.
@@ -906,6 +906,44 @@ slot at the end of a scope. For a global the answer to that is no -- it
 outlives every scope, nothing walks it at exit, and that is why a module-scope
 owner is refused outright. What is left is the write. See
 `tests/module-scope-slot.abs`.
+
+### Fixed: an aggregate parameter borrowed, and the exception cost what exceptions cost
+
+```absolute
+void writeField(Row row, int32 index) {
+    row.key = format("f-{}", index);   // released the *caller's* string
+}
+
+int32 rewrite(Row row, int32 index) {
+    row = rowOf(index);                // and this one nobody released
+    return ...;
+}
+```
+
+A by-value parameter is a copy, and a copy counts the parts it now names. A
+string parameter was given that answer long ago -- the caller hands over a
+count and the parameter gives it back at the end of the call -- and an
+aggregate parameter was made an exception: it borrowed.
+
+Two failures, one cause. Writing a *field* of the parameter took the field
+rule, which releases what the field held -- and what it held was the caller's,
+so the caller was left naming freed bytes. Writing the *whole* parameter could
+not release anything, because the same reasoning says the old value is the
+caller's, and the new value then had no owner at all and leaked. Per write,
+not per program: a callee that fills a parameter in a loop leaked one value an
+iteration.
+
+A parameter that is only read was unaffected, which is why this went
+unnoticed -- reading is what parameters mostly do, and the whole suite reads
+them.
+
+Owning from the start makes both writes ordinary. A reference parameter stays
+excluded: it names the caller's slot rather than a copy of it, so it has
+nothing of its own to count, and the entry above is that half. A struct of
+plain values counts nothing and is unchanged, because the walk asks the type.
+
+Pinned by `tests/parameter-copy-counts.abs`, which fails as a use-after-free
+rather than a leak when the fix is removed.
 
 ## 2. Missing features that fail loudly
 
