@@ -1,0 +1,116 @@
+// `Set<T>` and `Map<K, V>` over an element that owns something.
+//
+// Neither had been migrated. Both moved elements by reading a slot and storing
+// what they read, both kept a copy-on-write flag whose only writer was
+// `iterate()` -- and an iterator already takes its own snapshot, so the flag
+// bought nothing and its `copy` was the one operation an owning element
+// refuses. Both are written the way the model requires now, and both were
+// unreachable at an owning element type for a reason that had nothing to do
+// with any of that: a method's return type is instantiated with the class, and
+// `builder()` was a method.
+//
+// A map is the harder one, and it is where the recorded claim turned out to be
+// wrong. Its element is a *struct*, `KeyValuePair<K, V>`, and section 1 of
+// docs/known-defects.md said that `sub` weakens a handle and a struct is not
+// one, so there was no way to say "this array names what the map holds". The
+// pair is generic in its value, so the snapshot does not weaken the struct --
+// it instantiates it at the weakened parameter. `KeyValuePair<K, sub V>` is a
+// pair whose value half borrows, and at `V = int32` it is the pair it has
+// always been.
+//
+// The counts below are the whole test: an element released twice and an
+// element never released both show up in them, and the run under
+// AddressSanitizer says which.
+
+import "../std/collections/set.abs";
+import "../std/collections/map.abs";
+import "../std/string.abs";
+
+int32 destroyed = 0;
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+    public void destroy() { destroyed = destroyed + 1; }
+}
+
+int32 main() {
+    // ---- Set ----
+    Set<Cell*>* cells = new Set<Cell*>();
+    assert(cells.add(new Cell(1)), "the first went in");
+    assert(cells.add(new Cell(2)), "and the second");
+    assert(cells.add(new Cell(3)), "and the third");
+    assert(cells.add(new Cell(4)), "and the fourth");
+    assert(cells.add(new Cell(5)), "and the fifth crossed the initial capacity");
+    assert(cells.count == 5, "five of them");
+    assert(destroyed == 0, "and growing the storage released none");
+
+    // Reading an item borrows it; the set still owns it.
+    sub Cell* second = cells.itemAt(1);
+    assert(second.value == 2, "an item reads back");
+    assert(cells.contains(second), "and the set says it has it");
+    assert(destroyed == 0, "reading and searching released nothing");
+
+    // Removing releases exactly the item removed, and the survivors shift
+    // down without either of them being held in two slots.
+    assert(cells.remove(cells.itemAt(1)), "removed the second");
+    assert(destroyed == 1, "one released");
+    assert(cells.count == 4, "four left");
+    assert(cells.itemAt(1).value == 3, "and the third moved down");
+    assert(cells.itemAt(3).value == 5, "with the last one intact");
+
+    // An iterator is a snapshot of borrows: walking it releases nothing.
+    int32 walked = 0;
+    SetIterator<Cell*>* it = cells.iterate();
+    while (it.next()) { walked = walked + it.value.value; }
+    delete it;
+    assert(walked == 13, "walked every survivor");
+    assert(destroyed == 1, "and the iterator released none of them");
+
+    delete cells;
+    assert(destroyed == 5, "four left in the set, each released once");
+
+    // ---- Map ----
+    Map<int32, Cell*>* byKey = new Map<int32, Cell*>();
+    byKey.put(1, new Cell(10));
+    byKey.put(2, new Cell(20));
+    byKey.put(3, new Cell(30));
+    byKey.put(4, new Cell(40));
+    assert(byKey.count == 4, "four entries");
+    assert(destroyed == 5, "and none of the new ones released");
+
+    // The indexer projects onto the entry's value.
+    sub Cell* third = byKey[3];
+    assert(third.value == 30, "an entry reads back");
+
+    // Overwriting a key releases the value that was there.
+    byKey.put(1, new Cell(11));
+    assert(destroyed == 6, "the entry gave back what it held");
+    assert(byKey[1].value == 11, "and holds what it was given");
+    assert(byKey.count == 4, "without growing");
+
+    // Removing a middle entry releases that entry's value and nothing else.
+    // Reading a slot and storing what was read released the entry after it as
+    // well, and left the key that had pointed at it naming freed storage.
+    assert(byKey.remove(2), "removed the middle entry");
+    assert(destroyed == 7, "one released");
+    assert(byKey.count == 3, "three left");
+    assert(byKey[3].value == 30, "and the entry after it is still reachable");
+    assert(byKey[4].value == 40, "and so is the last");
+
+    // A map iterator is a snapshot of pairs whose value half borrows.
+    int32 sum = 0;
+    MapIterator<int32, Cell*>* entries = byKey.iterate();
+    while (entries.next()) { sum = sum + entries.value.value.value; }
+    delete entries;
+    assert(sum == 81, "walked every entry");
+    assert(destroyed == 7, "and the iterator released none of them");
+
+    delete byKey;
+    assert(destroyed == 10, "three left in the map, each released once");
+
+    println(format("std-set-map-owner-elements: walked={} sum={} destroyed={}",
+        walked, sum, destroyed));
+    println("std-set-map-owner-elements=ok");
+    return 0;
+}

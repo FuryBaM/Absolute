@@ -1155,6 +1155,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-algorithms-owner-elements.abs"
     )
     add_test(
+        NAME absolute.std-set-map-owner-elements-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-set-map-owner-elements.abs"
+    )
+    add_test(
         NAME absolute.indexer-borrow-projection-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/indexer-borrow-projection-errors.abs"
     )
@@ -3714,7 +3718,8 @@ if(BUILD_TESTING)
             "parameter-copy-counts=parameter-copy-counts=ok"
             "indexer-borrow-projection=indexer-borrow-projection=ok"
             "std-vector-owner-elements=std-vector-owner-elements=ok"
-            "std-algorithms-owner-elements=std-algorithms-owner-elements=ok")
+            "std-algorithms-owner-elements=std-algorithms-owner-elements=ok"
+            "std-set-map-owner-elements=std-set-map-owner-elements=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those

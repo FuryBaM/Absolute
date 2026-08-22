@@ -26,6 +26,8 @@
 // `Vector<int32>` is unaffected, and the rest of the suite uses exactly that.
 
 import "../std/collections/vector.abs";
+import "../std/collections/set.abs";
+import "../std/collections/map.abs";
 
 class Cell {
     public int32 value;
@@ -46,6 +48,21 @@ int32 main() {
     // asks.
     VectorBuilder<Cell*>* staged = owning.builder();
 
+    // A set and a map are in the same position, and for the same reason: both
+    // are ordinary containers over an element that owns
+    // (tests/std-set-map-owner-elements.abs runs them), and both refuse a
+    // builder, because a builder is a staging owner seeded from what the
+    // container still holds.
+    Set<Cell*>* items = new Set<Cell*>();
+    items.add(new Cell(2));
+    SetBuilder<Cell*>* stagedItems = items.builder();
+
+    Map<int32, Cell*>* byKey = new Map<int32, Cell*>();
+    byKey.put(1, new Cell(3));
+    MapBuilder<int32, Cell*>* stagedEntries = byKey.builder();
+
+    delete byKey;
+    delete items;
     delete owning;
     return borrowed.value;
 }
