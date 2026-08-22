@@ -111,6 +111,14 @@ namespace Absolute {
                 // here, `s.made.value` built an object and released nothing.
                 impl->valueCreatesManagedOwner =
                     IsStrongManagedPointerTypeName(impl->SemanticType(expr));
+                // And the same for a closure, which the call path also sets.
+                // A getter hands back a counted closure whatever its body
+                // does -- it returns a fresh one, or it retains the one it
+                // read, because that is what a callable return means -- so a
+                // closure read and dropped inside one expression is a
+                // temporary of the statement.
+                impl->valueCreatesClosureOwner =
+                    IsCodegenFunctionType(impl->SemanticType(expr));
                 return;
             }
             if (symbol && symbol->kind == SymbolKind::Field && symbol->isStatic) {
@@ -599,7 +607,20 @@ namespace Absolute {
                 impl->value = impl->EmitPropertyAccessor(
                     expr->base.get(), impl->SemanticType(expr->base.get()),
                     CallableKey(IndexerGetterName(), info->parameterTypes), arguments);
+                // An indexer cannot say whether its getter hands over an
+                // owner: it has one type for both accessors, so a container
+                // whose getter borrows would have to declare its setter as
+                // borrowing too. That is the open defect in
+                // docs/known-defects.md.
+                //
+                // A closure is not in that position. It is counted rather than
+                // owned uniquely, so a getter hands back a count whatever its
+                // body does -- a fresh closure, or a retained one, because
+                // that is what a callable return means -- and the statement
+                // that dropped it has to give that count back.
                 impl->valueCreatesManagedOwner = false;
+                impl->valueCreatesClosureOwner =
+                    IsCodegenFunctionType(impl->SemanticType(expr));
                 return;
             }
         }

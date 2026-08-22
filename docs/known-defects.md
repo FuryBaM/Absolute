@@ -50,6 +50,15 @@ means, which is why this is recorded rather than patched. The property half is
 fixed and the containers are correct; what leaks is an indexer written to
 *produce* an owner, which no container in the standard library does.
 
+A **closure** is not in this position, and both accessors hand one over
+correctly now. A closure is counted rather than owned uniquely, so a getter
+gives back a count whatever its body does -- it returns a fresh closure, or it
+retains the one it read, because that is what a callable return means -- and
+there is no borrowed case for the type to be unable to express. Both accessor
+paths used to leave that count behind, so passing `source.maker` or
+`pipeline[i]` straight into a call leaked the closure and its environment once
+per call. `tests/accessor-owner-temporary.abs` covers both.
+
 Everything else this section held has been closed, and each entry records what
 the fix was, so a regression is recognizable rather than rediscovered.
 

@@ -468,6 +468,8 @@ namespace Absolute {
                     CallableKey(PropertyGetterName(expr->member), {}), {});
                 impl->valueCreatesManagedOwner =
                     IsStrongManagedPointerTypeName(impl->SemanticType(expr));
+                impl->valueCreatesClosureOwner =
+                    IsCodegenFunctionType(impl->SemanticType(expr));
                 return;
             }
             if (symbol && symbol->kind == SymbolKind::Field && symbol->isStatic) {
