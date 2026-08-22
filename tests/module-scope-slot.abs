@@ -1,0 +1,72 @@
+import "../std/string.abs";
+
+// A module-scope name is a place.
+//
+// A place gives back what it held when it is overwritten -- a local does, a
+// field does, an array element does, and a slot named through a reference does.
+// A global did not, so
+//
+//     string label = "start";
+//     label = format("g-{}", i);   // in a loop
+//
+// leaked every value but the last. The identical line on a *static field* was
+// already right, because a static field is reached as a field and takes the
+// field rule; a module-scope name is reached as a variable and took a branch
+// that asks whether the name owns its slot at the end of a scope.
+//
+// Which is a different question, and for a global the answer is no: a
+// module-scope name outlives every scope, nothing walks it at exit, and that is
+// why a module-scope owner is refused outright (docs/module-scope.md). What is
+// left is the write, and a write to a place releases what the place held.
+//
+// The first write is safe because the initializer must be a constant literal,
+// and a literal is never released.
+//
+// Run under AddressSanitizer with the leak check on: the values are strings,
+// so nothing here can assert its own release. The last value written is still
+// held by the global at exit and is reachable, which is what a global means.
+
+string label = "start";
+string[] names = {"a", "b"};
+
+string labelOf(int32 index) { return format("g-{}", index); }
+
+int32 main() {
+    int32 total = 0;
+
+    // The first write replaces a literal.
+    label = labelOf(0);
+    assert(label == "g-0", "the first write lands");
+
+    // The second releases what the first left.
+    label = labelOf(1);
+    assert(label == "g-1", "and the second replaces it");
+
+    // An element of a module-scope array was already right -- an element slot
+    // takes the element rule -- and is here so the two are checked together.
+    names[0] = format("n-{}", 0);
+    assert(names[0] == "n-0", "an element of a global array");
+    names[0] = format("n-{}", 1);
+    assert(names[0] == "n-1", "and it releases what it held");
+
+    // Enough writes that one string kept per write is a heap that grows.
+    int32 round = 0;
+    while (round < 3000) {
+        label = labelOf(round);
+        names[round % 2] = format("n-{}", round);
+        total = total + std.text.codePointCount(label) +
+            std.text.codePointCount(names[round % 2]);
+        round = round + 1;
+    }
+    assert(label == "g-2999", "the loop left its last value");
+    assert(total > 0, "and the loop read what it wrote");
+
+    // Read out of the global into a name, which is one more holder of it.
+    string copied = label;
+    assert(copied == label, "a name for what the global holds");
+    label = labelOf(4000);
+    assert(copied == "g-2999", "and the overwrite left that name alone");
+
+    println("module-scope-slot=ok");
+    return 0;
+}

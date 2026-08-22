@@ -50,6 +50,15 @@ means, which is why this is recorded rather than patched. The property half is
 fixed and the containers are correct; what leaks is an indexer written to
 *produce* an owner, which no container in the standard library does.
 
+A **closure** is not in this position, and both accessors hand one over
+correctly now. A closure is counted rather than owned uniquely, so a getter
+gives back a count whatever its body does -- it returns a fresh closure, or it
+retains the one it read, because that is what a callable return means -- and
+there is no borrowed case for the type to be unable to express. Both accessor
+paths used to leave that count behind, so passing `source.maker` or
+`pipeline[i]` straight into a call leaked the closure and its environment once
+per call. `tests/accessor-owner-temporary.abs` covers both.
+
 Everything else this section held has been closed, and each entry records what
 the fix was, so a regression is recognizable rather than rediscovered.
 
@@ -57,7 +66,7 @@ An empty list is not the same as no defects, and this file should not be read
 as one. Most of what is recorded below was found *after* the list first
 emptied, by running programs rather than by reading it -- the standard
 library's own containers under AddressSanitizer, with every string built at
-runtime. The last such sweep found seventeen, six of them in the same gap, and
+runtime. The last such sweep found twenty-one, six of them in the same gap, and
 section 1's last three entries are that sweep. The one thing it found and did
 not fix is at the top of this section. The place to look next is section 5,
 which says where not to.
@@ -861,6 +870,80 @@ the same missing spelling, and they are recorded rather than patched:
   what the map holds". `copy` of it is refused outright, and rightly --
   `E_COPY_OWNING_ELEMENTS` -- so what `iterate()` means over an owning value
   needs an answer before the container can have one.
+
+### Fixed: a write through a reference did not overwrite
+
+```absolute
+void twice(int32 i, out string result) {
+    result = format("a-{}", i);
+    result = format("b-{}", i);   // the first string was never released
+}
+```
+
+`out T` and `T&` name a slot the caller owns. The callee releases nothing when
+the call ends -- the slot is not its -- and that much was right. But a write
+through the name is still a write to that slot, and a slot gives back what it
+held: the same rule a local, a field and an array element already follow. The
+identical assignments to a local were correct all along, which is what made
+this quiet; the leak is per write rather than per program, so a function that
+fills an `out` parameter in a loop leaked one value per iteration.
+
+The two halves are separate now. Owning the slot decides what happens at the
+end of the call; naming it decides what happens on a write. A first write into
+an empty slot is unaffected: an uninitialized local is zeroed, and releasing
+nothing is nothing.
+
+Pinned by `tests/reference-slot-overwrite.abs`, under AddressSanitizer with the
+leak check on, because the values are strings and nothing there can assert its
+own release.
+
+**A module-scope name is a place too**, and it was the other name for the same
+mistake: `label = format(...)` in a loop leaked every value but the last. The
+identical line on a *static field* was already right, because a static field is
+reached as a field and takes the field rule, while a module-scope name is
+reached as a variable and took a branch that asks whether the name owns its
+slot at the end of a scope. For a global the answer to that is no -- it
+outlives every scope, nothing walks it at exit, and that is why a module-scope
+owner is refused outright. What is left is the write. See
+`tests/module-scope-slot.abs`.
+
+### Fixed: an aggregate parameter borrowed, and the exception cost what exceptions cost
+
+```absolute
+void writeField(Row row, int32 index) {
+    row.key = format("f-{}", index);   // released the *caller's* string
+}
+
+int32 rewrite(Row row, int32 index) {
+    row = rowOf(index);                // and this one nobody released
+    return ...;
+}
+```
+
+A by-value parameter is a copy, and a copy counts the parts it now names. A
+string parameter was given that answer long ago -- the caller hands over a
+count and the parameter gives it back at the end of the call -- and an
+aggregate parameter was made an exception: it borrowed.
+
+Two failures, one cause. Writing a *field* of the parameter took the field
+rule, which releases what the field held -- and what it held was the caller's,
+so the caller was left naming freed bytes. Writing the *whole* parameter could
+not release anything, because the same reasoning says the old value is the
+caller's, and the new value then had no owner at all and leaked. Per write,
+not per program: a callee that fills a parameter in a loop leaked one value an
+iteration.
+
+A parameter that is only read was unaffected, which is why this went
+unnoticed -- reading is what parameters mostly do, and the whole suite reads
+them.
+
+Owning from the start makes both writes ordinary. A reference parameter stays
+excluded: it names the caller's slot rather than a copy of it, so it has
+nothing of its own to count, and the entry above is that half. A struct of
+plain values counts nothing and is unchanged, because the walk asks the type.
+
+Pinned by `tests/parameter-copy-counts.abs`, which fails as a use-after-free
+rather than a leak when the fix is removed.
 
 ## 2. Missing features that fail loudly
 

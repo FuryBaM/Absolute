@@ -1,0 +1,168 @@
+import "../std/string.abs";
+
+// A by-value parameter is a copy, and a copy counts the parts it now names.
+//
+// A string parameter was given that answer long ago: the caller hands over a
+// count and the parameter gives it back at the end of the call. An aggregate
+// parameter was made an exception -- it borrowed -- and the exception cost
+// exactly what an exception to the copy rule costs. The name had no owner for
+// anything written into it:
+//
+//     int32 rewrite(Row row, int32 index) {
+//         Row made;
+//         made.key = format("r-{}", index);
+//         row = made;            // nobody ever released this
+//         return ...;
+//     }
+//
+// and the value it replaced could not be released either, because the caller
+// still held that one. So every write into an aggregate parameter leaked what
+// was written -- per write, not per program. A parameter that is only read was
+// unaffected, which is why this went unnoticed: reading is what parameters
+// mostly do.
+//
+// Owning from the start makes both writes ordinary: the overwrite releases
+// what the slot held, and the end of the call releases what is left. A
+// reference parameter stays excluded -- it names the caller's slot rather than
+// a copy of it, so it has nothing of its own to count
+// (tests/reference-slot-overwrite.abs is that half).
+//
+// A struct of plain values counts nothing and is unchanged: the walk asks the
+// type, and a type with nothing to count emits nothing.
+//
+// Run under AddressSanitizer with the leak check on.
+
+struct Plain {
+    public int32 first;
+    public int32 second;
+}
+
+struct Row {
+    public string key;
+}
+
+struct Wide {
+    public string a;
+    public string b;
+    public string c;
+    public int64 d;
+    public int64 e;
+}
+
+Row rowOf(int32 index) {
+    Row made;
+    made.key = format("k-{}", index);
+    return made;
+}
+
+Wide wideOf(int32 index) {
+    Wide made;
+    made.a = format("a-{}", index);
+    made.b = format("b-{}", index);
+    made.c = format("c-{}", index);
+    made.d = index;
+    made.e = index * 2;
+    return made;
+}
+
+// Read only: the common case, and the one that always worked.
+int32 read(Row row) { return std.text.codePointCount(row.key); }
+
+// Written once, so the slot holds something of the callee's.
+int32 writeOnce(Row row, int32 index) {
+    row = rowOf(index + 1000);
+    return std.text.codePointCount(row.key);
+}
+
+// Written twice, so the first write has to be released by the second.
+int32 writeTwice(Row row, int32 index) {
+    row = rowOf(index + 2000);
+    row = rowOf(index + 3000);
+    return std.text.codePointCount(row.key);
+}
+
+// Written in a loop, which is where a leak per write becomes a heap.
+int32 writeMany(Row row, int32 rounds) {
+    int32 index = 0;
+    while (index < rounds) {
+        row = rowOf(index);
+        index = index + 1;
+    }
+    return std.text.codePointCount(row.key);
+}
+
+// Several parts at once, and a struct with nothing to count beside it.
+int32 writeWide(Wide wide, int32 index) {
+    wide = wideOf(index + 4000);
+    return std.text.codePointCount(wide.a) + std.text.codePointCount(wide.c);
+}
+
+Plain rowPlain(int32 index) {
+    Plain made;
+    made.first = index;
+    made.second = index;
+    return made;
+}
+
+int32 writePlain(Plain plain, int32 index) {
+    Plain made;
+    made.first = index;
+    made.second = index * 2;
+    plain = made;
+    return plain.first;
+}
+
+int32 writeTuple(tuple<int32, string> pair, int32 index) {
+    pair = (index, format("t-{}", index));
+    return std.text.codePointCount(pair.item1);
+}
+
+// A field of the parameter written on its own, which is the field rule.
+int32 writeField(Row row, int32 index) {
+    row.key = format("f-{}", index);
+    return std.text.codePointCount(row.key);
+}
+
+// The parameter handed on to another callable, which copies it again.
+int32 passOn(Row row) { return read(row) + read(row); }
+
+int32 main() {
+    int32 total = 0;
+
+    // The caller's value is untouched by anything the callee writes.
+    Row kept = rowOf(1);
+    total = total + writeOnce(kept, 1);
+    assert(kept.key == "k-1", "a by-value parameter is the callee's copy");
+    total = total + writeTwice(kept, 1);
+    assert(kept.key == "k-1", "and stays the caller's after two writes");
+    total = total + writeField(kept, 1);
+    assert(kept.key == "k-1", "and after a field write");
+    total = total + passOn(kept);
+    assert(kept.key == "k-1", "and after being handed on twice");
+
+    // Both kinds of argument: one the statement made, and a name.
+    total = total + writeOnce(rowOf(2), 2);
+    total = total + read(rowOf(3));
+    total = total + read(kept);
+
+    // Enough writes that one value kept per write is a heap that grows.
+    int32 round = 0;
+    while (round < 1500) {
+        total = total + writeOnce(kept, round);
+        total = total + writeTwice(rowOf(round), round);
+        total = total + writeWide(wideOf(round), round);
+        total = total + writePlain(rowPlain(round), round);
+        total = total + writeTuple((round, format("in-{}", round)), round);
+        total = total + writeField(kept, round);
+        round = round + 1;
+    }
+    assert(kept.key == "k-1", "the caller's value survived all of it");
+
+    // A loop inside the callee, writing into the same slot.
+    total = total + writeMany(kept, 2000);
+    assert(kept.key == "k-1", "and a loop inside the callee left it alone");
+
+    assert(total > 0, "the calls returned something");
+    println("parameter-copy-counts=ok");
+    return 0;
+}

@@ -475,8 +475,16 @@ namespace Absolute {
         const std::string globalName = Qualify(name);
         auto* storage = new llvm::GlobalVariable(*module, type, false,
             llvm::GlobalValue::ExternalLinkage, initializer, globalName);
-        globals.emplace(globalName, Variable{storage, type, typeName, false,
-            false, nullptr, {}, nullptr, InvalidSymbolId});
+        Variable variable{storage, type, typeName, false,
+            false, nullptr, {}, nullptr, InvalidSymbolId};
+        // A global is a place, and a place gives back what it held when it is
+        // overwritten. It is never released at exit -- a module-scope name
+        // outlives every scope, which is why an owner is refused above -- and
+        // no scope walks `globals`, so this says only what happens on a write.
+        // Without it, `label = format(...)` in a loop leaked every value but
+        // the last, while the same line on a static field was already right.
+        variable.ownsAggregateResources = TypeNeedsCleanup(typeName);
+        globals.emplace(globalName, std::move(variable));
     }
 
     llvm::Function* CodeGenerator::Impl::DeclareFunction(FunctionDeclStmt& statement) {
@@ -746,8 +754,25 @@ namespace Absolute {
         if (!external && (valueReference || IsIndirectValueType(typeName))) {
             Variable variable{&argument, TypeFromName(typeName), typeName, false, false,
                 nullptr, {}, nullptr, SemanticSymbol(&parameter)};
-            variable.ownsAggregateResources =
-                staticallyOwns && TypeNeedsCleanup(typeName);
+            // A by-value parameter is a copy, and a copy counts the parts it
+            // now names -- the same answer a string parameter has always been
+            // given, read one level up. Borrowing instead left the name with
+            // no owner for anything written into it: `row = made;` inside the
+            // body stored a value nobody would release, and the one it
+            // replaced could not be released either, because the caller still
+            // held it. Owning from the start makes both writes ordinary.
+            //
+            // A reference parameter is excluded: it names the caller's slot
+            // rather than a copy of it, so there is nothing of its own to
+            // count and nothing to release when the call ends.
+            const bool copiesParts = !valueReference && ValueCountsOnCopy(typeName);
+            if (copiesParts) EmitValueRetain(&argument, typeName);
+            variable.ownsAggregateResources = copiesParts ||
+                (staticallyOwns && TypeNeedsCleanup(typeName));
+            // The slot belongs to the caller, so nothing is released when the
+            // call ends. A write through it still overwrites what the caller
+            // put there, which is what this says.
+            variable.namesBorrowedPlace = valueReference;
             bindOwnershipFlag(variable);
             if (!scopes.back().emplace(name, std::move(variable)).second)
                 Fail("duplicate parameter '" + name + "'");
@@ -777,8 +802,14 @@ namespace Absolute {
         // instead was tried and does not compose -- a parameter with no count
         // of its own has nothing to hand on when it is moved into storage,
         // which is exactly what a container's push does.
+        // The same for a parameter the ABI hands over in registers: the alloca
+        // above is this name's copy, and a copy counts its parts.
+        if (!external && !valueReference && typeName != "string" &&
+            ValueCountsOnCopy(typeName))
+            EmitValueRetain(address, typeName);
         variable.ownsAggregateResources =
-            staticallyOwns && TypeNeedsCleanup(typeName);
+            (staticallyOwns || (!external && !valueReference &&
+                ValueCountsOnCopy(typeName))) && TypeNeedsCleanup(typeName);
         bindOwnershipFlag(variable);
         if (!scopes.back().emplace(name, std::move(variable)).second)
             Fail("duplicate parameter '" + name + "'");

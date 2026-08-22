@@ -24,6 +24,13 @@
             bool ownsArrayElements = false;
             SymbolId arrayOwnerSymbol = InvalidSymbolId;
             bool ownsAggregateResources = false;
+            // A name for a slot someone else owns: a value-reference
+            // parameter, which `out T` and `ref T` are spelled as. It releases
+            // nothing when the call ends, because the slot is not its -- but a
+            // write through it is still a write to that slot, and a slot gives
+            // back what it held. Only the second half is this flag's; the
+            // first is the absence of ownsAggregateResources.
+            bool namesBorrowedPlace = false;
             llvm::AllocaInst* arrayOwnerStorage = nullptr;
             llvm::AllocaInst* ownershipFlagStorage = nullptr;
             llvm::AllocaInst* debugStorage = nullptr;

@@ -184,8 +184,16 @@ namespace Absolute {
              targetSymbol->kind == SymbolKind::Parameter)) {
             if (const std::string name = IdentifierName(expr->target.get());
                 !name.empty()) {
+                // A value-reference parameter is the second of these: it
+                // owns nothing and releases nothing at the end of the call,
+                // but the slot it names is a real place and a write to a place
+                // gives back what the place held. Without it, writing twice
+                // through an `out string` leaked the first value -- and a
+                // function that fills an out parameter in a loop leaked one
+                // per iteration.
                 if (Impl::Variable* variable = impl->FindVariable(name);
-                    variable && variable->ownsAggregateResources)
+                    variable && (variable->ownsAggregateResources ||
+                        variable->namesBorrowedPlace))
                     impl->EmitValueCleanup(targetAddress, targetTypeName);
             }
         }
@@ -468,6 +476,8 @@ namespace Absolute {
                     CallableKey(PropertyGetterName(expr->member), {}), {});
                 impl->valueCreatesManagedOwner =
                     IsStrongManagedPointerTypeName(impl->SemanticType(expr));
+                impl->valueCreatesClosureOwner =
+                    IsCodegenFunctionType(impl->SemanticType(expr));
                 return;
             }
             if (symbol && symbol->kind == SymbolKind::Field && symbol->isStatic) {
