@@ -5,6 +5,9 @@ namespace Absolute {
         std::string name;
         std::vector<std::string> parents;
         std::vector<Token> templateParams;
+        // Parallel to templateParams: the requirement written in front of each
+        // parameter's name, or empty. See Parser::ParseTemplateParameters.
+        std::vector<std::string> templateConstraints;
         std::unique_ptr<Statement> body;
 
         ClassDeclStmt(std::string name, std::vector<std::string> parents, std::vector<Token> templateParams, std::unique_ptr<Statement> body)

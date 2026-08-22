@@ -1163,6 +1163,17 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-hash-owner-elements.abs"
     )
     add_test(
+        NAME absolute.generic-constraints-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-constraints.abs"
+    )
+    add_test(
+        NAME absolute.generic-constraints-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/generic-constraints-errors.abs"
+    )
+    set_tests_properties(absolute.generic-constraints-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_GENERIC_CONSTRAINT"
+    )
+    add_test(
         NAME absolute.indexer-borrow-projection-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/indexer-borrow-projection-errors.abs"
     )
@@ -3724,7 +3735,8 @@ if(BUILD_TESTING)
             "std-vector-owner-elements=std-vector-owner-elements=ok"
             "std-algorithms-owner-elements=std-algorithms-owner-elements=ok"
             "std-set-map-owner-elements=std-set-map-owner-elements=ok"
-            "std-hash-owner-elements=std-hash-owner-elements=ok")
+            "std-hash-owner-elements=std-hash-owner-elements=ok"
+            "generic-constraints=generic-constraints=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those

@@ -27,7 +27,7 @@ namespace std.collections {
         }
     }
 
-    class VectorBuilder<T> {
+    class VectorBuilder<copyable T> {
         private T[] buffer;
         private int32 _count;
         private int32 _capacity;

@@ -996,19 +996,44 @@ carried where it does not belong:
   same name is refused: at `take<T>(T v)` called with a `sub Cell*`, the base
   name is `Cell*` and `T` still takes it.
 
-What is left is one undecided question, and it is recorded rather than patched:
+What is left is one decided question and one undecided one.
 
-- **Every builder** -- `VectorBuilder`, `SetBuilder`, `MapBuilder` -- is a
-  staging owner seeded from a live container's storage, so over an owning
-  element type its first act is to duplicate what that container still holds;
-  borrowing instead does not help, because `finish()` would then hand a
-  container of owners a set of handles it never owned. Whether `builder()`
-  should drain the container, be refused for owning elements, or not exist is a
-  decision about what the method means.
-  `tests/std-collections-owner-elements-errors.abs` states it in full and pins
-  the refusal. None of it is in a container's way any more: a builder is an
-  extension, instantiated where it is called, so it costs the program that asks
-  for one and nothing else.
+**Decided: a builder is a snapshot, and a snapshot is for elements that can be
+copied.** `VectorBuilder`, `SetBuilder` and `MapBuilder` are staging owners
+seeded from a live container's storage, so over an owning element type the
+first act of each is to duplicate what that container still holds; borrowing
+instead does not help, because `finish()` would then hand a container of owners
+a set of handles it never owned. That is not a gap to close -- it is what the
+operation means. A modified copy of an element that owns requires duplicating
+it, and this language deliberately has no generic clone.
+
+So the three of them say it: `class VectorBuilder<copyable T>`. A generic type
+may state what it requires of a parameter, written where every other qualifier
+in this language is written -- in front of the name -- and the requirement is
+checked where the type is *used*. There is one requirement, because the
+ownership model answers exactly one question of this shape: `copyable`, whether
+a second name for a value is an ordinary thing to have. A number, a string, a
+borrow and an observer all answer yes; an owner and an aggregate holding one
+answer no.
+
+What this buys is the diagnostic. Asking `Vector<Cell*>` for a builder produced
+six errors, `Set<Cell*>` seven and `Map<K, Cell*>` two, every one of them naming
+a private field of a class the program never wrote, and not one of them on the
+line that asked. It is one sentence now, on that line. An instantiation a
+requirement refuses does not replay its body's facts at all: the requirement
+said the one thing worth saying, and the body would say it again about storage
+the program cannot see. See `tests/generic-constraints.abs`,
+`tests/generic-constraints-errors.abs`, and
+`tests/std-collections-owner-elements-errors.abs`, which pins that the builders
+say it once.
+
+**Undecided: whether a container should also offer the other operation** -- one
+that *takes* its elements into a builder rather than copying them, leaving the
+source empty. It is sound for every `T`, and it is a different operation, so it
+would want a different name (`intoBuilder`), not a quieter `builder()`. Nothing
+needs it yet, and nothing is blocked on it: a builder is an extension,
+instantiated where it is called, so it costs the program that asks for one and
+nothing else.
 
 ### Fixed: a write through a reference did not overwrite
 
@@ -1367,7 +1392,11 @@ they say where not to look again.
    `int32 x = 4294967296` to 0 in silence; a literal that cannot fit its target
    is now `E_LITERAL_OUT_OF_RANGE`, while narrowing a *value* stays allowed.
    Arithmetic on a bare `T` is refused for want of constraints, which is a
-   documented boundary rather than a defect (docs/generics.md). See
+   documented boundary rather than a defect (docs/generics.md). There is one
+   constraint now -- `copyable`, in section 1 -- and it is deliberately not a
+   general one: it names the single question the ownership model already
+   answers. An arithmetic constraint would be a second question, and nothing
+   has needed it. See
    `tests/generic-instantiation-widths.abs` and `tests/literal-range-errors.abs`.
 3. ~~**The WASM backend against native**~~ — swept by hand, outside the shapes
    the generator produces: every runnable test in `tests/` built for both

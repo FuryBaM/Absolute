@@ -86,7 +86,13 @@ namespace Absolute {
 
         void ParseModifiers();
         void ParseAttributes();
-        std::vector<Token> ParseTemplateParameters();
+        // `constraints`, when given, receives one entry per parameter: the
+        // requirement written in front of its name, or an empty string. A
+        // caller that passes nothing does not accept constraints, and one
+        // written there is a syntax error rather than a qualifier that is
+        // read and then ignored.
+        std::vector<Token> ParseTemplateParameters(
+            std::vector<std::string>* constraints = nullptr);
         bool LooksLikeFunctionDeclaration() const;
         bool LooksLikePropertyDeclaration() const;
         bool LooksLikeIndexerDeclaration() const;

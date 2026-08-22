@@ -56,11 +56,35 @@ Box<int32>* value = new Box<int32>(42);
 constructors, and method symbols. Generic types cannot be used without type
 arguments.
 
+## Requirements
+
+A generic class or struct may state what it requires of a parameter, written in
+front of the name, where every other qualifier in this language is written:
+
+```absolute
+class VectorBuilder<copyable T> { ... }
+struct Labelled<K, copyable V> { ... }
+```
+
+There is one requirement, and it names the single question the ownership model
+already answers: `copyable` -- whether a second name for a value is an ordinary
+thing to have. A number, a string, a `sub` borrow and a `weak` observer all
+answer yes; a `T*` owner and an aggregate holding one answer no.
+
+It is checked where the type is *used*, not inside the body, and that is the
+point of it. A body that cannot serve an argument otherwise says so in every
+line that touches it, each naming a private field the program never wrote, and
+none of them on the line that asked. An instantiation a requirement refuses
+does not report its body at all.
+
 ## Current boundaries
 
 - generic parameters are types and do not yet support default values;
-- constraints/traits (`where`), variance, and partial specialization are not
-  implemented yet;
+- `copyable` is the only requirement; general constraints/traits (`where`),
+  variance, and partial specialization are not implemented yet;
+- requirements are stated by classes and structs; an interface or a generic
+  function that writes one is a syntax error rather than a qualifier that is
+  read and then ignored;
 - independently generic class/struct methods are rejected for now; methods may
   use the parameters of their containing generic type;
 - operations in an open generic body must already be valid without assuming a

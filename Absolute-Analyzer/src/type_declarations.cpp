@@ -116,8 +116,13 @@ namespace Absolute {
             genericScope.emplace(parameter.value, parameter.value);
         if (phase == Phase::CollectTypeNames) {
             DeclareType(stmt->name, TypeKind::Struct);
-            for (const Token& parameter : stmt->templateParams)
-                types[typeName].genericParameters.push_back(parameter.value);
+            for (size_t index = 0; index < stmt->templateParams.size(); ++index) {
+                types[typeName].genericParameters.push_back(
+                    stmt->templateParams[index].value);
+                types[typeName].genericConstraints.push_back(
+                    index < stmt->templateConstraints.size()
+                        ? stmt->templateConstraints[index] : std::string{});
+            }
             return;
         }
         if (phase == Phase::CollectDeclarations) {
@@ -167,8 +172,13 @@ namespace Absolute {
         if (phase == Phase::CollectTypeNames) {
             DeclareType(stmt->name, TypeKind::Class);
             auto& definition = types[typeName];
-            for (const Token& parameter : stmt->templateParams)
-                definition.genericParameters.push_back(parameter.value);
+            for (size_t index = 0; index < stmt->templateParams.size(); ++index) {
+                definition.genericParameters.push_back(
+                    stmt->templateParams[index].value);
+                definition.genericConstraints.push_back(
+                    index < stmt->templateConstraints.size()
+                        ? stmt->templateConstraints[index] : std::string{});
+            }
             return;
         }
         if (phase == Phase::CollectDeclarations) {

@@ -256,6 +256,12 @@ namespace Absolute {
             std::vector<std::int32_t> enumValues;
             TypeKind kind = TypeKind::Other;
             std::vector<std::string> genericParameters;
+            // Parallel to genericParameters: what each one requires of the
+            // type it is given, or empty. Checked where the type is written
+            // rather than inside the body, so a program that asks for an
+            // instantiation the type cannot serve is told once, at its own
+            // line, instead of being handed the body's every consequence.
+            std::vector<std::string> genericConstraints;
         };
 
         struct TypeAliasDefinition {
@@ -361,6 +367,11 @@ namespace Absolute {
             int column = 0;
         };
         std::unordered_map<std::string, std::vector<GenericBodyFact>> genericBodyFacts;
+        // Instantiations a constraint already refused. Their bodies are not
+        // replayed: the constraint said the one thing worth saying, and every
+        // line of the body that cannot serve the argument would say it again
+        // about a private field the program never named.
+        std::unordered_set<std::string> unmetConstraintInstantiations;
 
         // Whether a written type is one of the generic parameters the current
         // type is being analyzed with -- a name that stands for itself here and

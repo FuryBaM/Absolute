@@ -2,19 +2,42 @@
 #include "parser.h"
 
 namespace Absolute{
-    std::vector<Token> Parser::ParseTemplateParameters() {
+    std::vector<Token> Parser::ParseTemplateParameters(
+        std::vector<std::string>* constraints) {
         std::vector<Token> parameters;
         if (!CurrentToken() || CurrentToken()->type != TokenType::OPERATOR ||
             CurrentToken()->value != "<") return parameters;
         Consume(TokenType::OPERATOR, "<");
         std::unordered_set<std::string> names;
         while (RequireCurrent("a generic parameter or '>'")->value != ">") {
+            // A requirement is written in front of the name, where every other
+            // qualifier in this language goes: `class Builder<copyable T>`.
+            // Only what the ownership model already answers can be asked for,
+            // so there is one of them.
+            // `copyable` is not a keyword: it is a requirement only when a
+            // parameter name follows it. `class Box<copyable>` still declares a
+            // parameter called `copyable`, which costs one look ahead and
+            // keeps an ordinary word ordinary.
+            std::string constraint;
+            const Token* following = PeekToken();
+            if (CurrentToken()->type == TokenType::IDENTIFIER &&
+                CurrentToken()->value == "copyable" &&
+                following && following->type == TokenType::IDENTIFIER) {
+                Token* written = Consume(TokenType::IDENTIFIER);
+                if (!constraints) {
+                    ReportSyntaxError(written,
+                        "Generic constraints are supported on classes and structs");
+                    throw std::runtime_error("Unsupported generic constraint");
+                }
+                constraint = written->value;
+            }
             Token* parameter = Consume(TokenType::IDENTIFIER);
             if (!names.insert(parameter->value).second) {
                 ReportSyntaxError(parameter, "Duplicate generic parameter '" + parameter->value + "'");
                 throw std::runtime_error("Duplicate generic parameter");
             }
             parameters.push_back(*parameter);
+            if (constraints) constraints->push_back(constraint);
             if (RequireCurrent("',' or '>'")->value == ",")
                 Consume(TokenType::DELIMITER, ",");
             else if (CurrentToken()->value != ">") {
