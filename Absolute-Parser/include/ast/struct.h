@@ -4,6 +4,9 @@ namespace Absolute {
     struct StructDeclStmt : Statement {
         std::string name;
         std::vector<Token> templateParams;
+        // Parallel to templateParams: the requirement written in front of each
+        // parameter's name, or empty. See Parser::ParseTemplateParameters.
+        std::vector<std::string> templateConstraints;
         std::vector<std::unique_ptr<Statement>> members;
 
         StructDeclStmt(std::string name, std::vector<Token> templateParams,

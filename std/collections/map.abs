@@ -52,7 +52,7 @@ namespace std.collections {
         }
     }
 
-    class MapBuilder<K, V> {
+    class MapBuilder<K, copyable V> {
         private KeyValuePair<K, V>[] buffer;
         private int32 _count;
         private int32 _capacity;

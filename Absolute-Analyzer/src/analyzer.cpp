@@ -11,6 +11,7 @@ namespace Absolute {
         exportedFunctionNames.clear();
         extensionMethods.clear();
         functionDeclarations.clear();
+        unmetConstraintInstantiations.clear();
         genericFunctionSpecializations.clear();
         genericFunctionSpecializationOrder.clear();
         instantiatedGenericTypes.clear();
@@ -114,7 +115,8 @@ namespace Absolute {
             for (size_t index = 0; index < genericArguments.size(); ++index)
                 substitutions.emplace(
                     definition->second.genericParameters[index], genericArguments[index]);
-            CheckGenericBodyFacts(genericBase, substitutions);
+            if (!unmetConstraintInstantiations.contains(genericType))
+                CheckGenericBodyFacts(genericBase, substitutions);
         }
         return !HasErrors();
     }
@@ -2959,6 +2961,31 @@ namespace Absolute {
                 });
             const bool inserted = instantiatedGenericTypes.insert(result).second;
             if (inserted && !open) {
+                // What the type asked of its parameters, asked here rather
+                // than left to the body. A body that cannot serve an argument
+                // says so in every line that touches it -- six of them for a
+                // builder, each naming a private field -- and none of them is
+                // the line the program wrote. This is that line.
+                for (size_t index = 0; index < genericArguments.size() &&
+                    index < definition->second.genericConstraints.size(); ++index) {
+                    const std::string& requirement =
+                        definition->second.genericConstraints[index];
+                    if (requirement.empty()) continue;
+                    const std::string& argument = genericArguments[index];
+                    if (argument == "error" || argument == "auto") continue;
+                    if (requirement == "copyable" &&
+                        !SemanticsOfType(argument).copyable) {
+                        unmetConstraintInstantiations.insert(result);
+                        Report("generic type '" + resolvedBase +
+                            "' requires a copyable '" +
+                            definition->second.genericParameters[index] +
+                            "', and '" + argument + "' owns a resource there "
+                            "is one of, so a second name for it is not an "
+                            "ordinary thing to have; borrow it with 'sub', or "
+                            "hand it over with move(...)",
+                            "E_GENERIC_CONSTRAINT");
+                    }
+                }
                 std::unordered_map<std::string, std::string> substitutions;
                 for (size_t index = 0; index < genericArguments.size(); ++index)
                     substitutions.emplace(
