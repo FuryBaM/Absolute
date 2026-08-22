@@ -159,6 +159,12 @@ namespace Absolute {
         // literal is static, and reading a variable, a field or an element
         // hands back the pointer that is already there.
         bool producesFreshValue = false;
+        // The element type an indexer was written with -- what its setter
+        // takes. `type` above is what its getter hands back, which is a
+        // borrow of this (see Analyzer::IndexerBorrowProjection), so the two
+        // are no longer the same string and the write path needs this one.
+        // Empty for everything that is not an indexer access.
+        std::string indexerPlaceType;
     };
 
     struct ANALYZER_API Diagnostic {
@@ -344,7 +350,8 @@ namespace Absolute {
                 CopiesElements,      // array elements duplicated as bytes
                 ElementFromNonOwner, // a slot filled from something not fresh
                 OrdersValues,        // `<`, `<=`, `>` or `>=` on the parameter
-                InterfaceValue       // the parameter used as a value, not a handle
+                InterfaceValue,      // the parameter used as a value, not a handle
+                BorrowsAsOwner       // `sub T` bound to a name written `T`
             };
             Shape shape = Shape::FieldFromNonOwner;
             std::string parameterType;   // as written in the body, e.g. "T"
@@ -364,6 +371,16 @@ namespace Absolute {
         bool IsOpenGenericParameter(const std::string& name) const;
         void RecordGenericBodyFact(GenericBodyFact::Shape shape,
             const std::string& parameterType, const std::string& detail,
+            const ASTNode* node);
+        // A borrow of an open parameter bound to a name written with the
+        // parameter itself -- `T key = vec[i];` inside a generic algorithm.
+        // Whether that duplicates ownership depends on what the parameter
+        // becomes, which the body cannot know, so the question is recorded
+        // here and asked at every instantiation. Called from the four places
+        // a value is bound to a name: a declaration, an assignment, an
+        // argument and a return.
+        void NoteBorrowBoundAsOwner(const std::string& target,
+            const std::string& source, const std::string& detail,
             const ASTNode* node);
         void CheckGenericBodyFacts(const std::string& base,
             const std::unordered_map<std::string, std::string>& substitutions);
@@ -555,9 +572,28 @@ namespace Absolute {
         // name that receives it owns it, exactly as it would from a method.
         // Written once because the accessor is read from four places.
         Result AccessorValue(SymbolId symbol, const std::string& type, bool isLValue) const;
+        // What an indexer's getter hands back, given what the indexer was
+        // written with. An indexer is a projection onto a cell the container
+        // keeps -- `c[i]` names storage that already exists -- so its getter
+        // borrows and its setter takes: `T this[...]` reads as `sub T` and is
+        // written as `T`. One type is still written, because there is one
+        // place; what differs is the role each half plays with it, and that
+        // is what the projection says.
+        //
+        // A no-op wherever there is no ownership to weaken: a number, a
+        // struct, an array descriptor. `sub` says what a value's relation to
+        // an object's lifetime is, and a value with no object has none.
+        std::string IndexerBorrowProjection(const std::string& type) const;
         Result EvaluateExpected(Expression* expression, const std::string& type);
         std::string ResolveType(Expression* expression);
         std::string ResolveDeclaredType(VarDeclExpr& expression);
+        // The return type of a declared callable, with the indexer getter's
+        // borrow projection already applied. The projection is recorded on
+        // the type expression itself, because the backend asks the analyzer
+        // what a type expression resolved to -- so both halves of the
+        // compiler read one answer from one place instead of each applying
+        // the rule and having to agree.
+        std::string CallableReturnType(FunctionDeclStmt& statement);
         void Save(Expression* expression, Result value);
         bool IsKnownType(const std::string& name) const;
         // Whether a value of this type owns a resource that there is exactly

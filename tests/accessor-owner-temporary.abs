@@ -10,11 +10,12 @@ import "../std/string.abs";
 // and cleared by hand on the property path; it is set the same way on both
 // now, from the type the getter hands back.
 //
-// An *indexer* is deliberately not included, and section 1 of
-// docs/known-defects.md says why: one type serves both of its accessors, so a
-// container whose getter borrows and whose setter takes has no way to say so,
-// and `Vector<Cell*>[i]` hands back a borrow typed `Cell*`. Nothing in the
-// expression can tell that from an owner the getter produced.
+// An *indexer* is not here, and it is not the same question. An indexer is a
+// projection onto a cell the container keeps, so its getter borrows and never
+// produces an owner for a statement to release -- a getter written as a
+// factory is refused where it is written. That rule and what it refuses are in
+// tests/indexer-borrow-projection.abs and its errors file; section 1 of
+// docs/known-defects.md records why it took a decision rather than a patch.
 //
 // A *closure* is not in the indexer's position, and is included for both
 // accessors. It is counted rather than owned uniquely, so a getter hands back

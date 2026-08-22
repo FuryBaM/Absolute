@@ -135,13 +135,22 @@ namespace Absolute {
             // answers it; a generic function's parameter is left to the
             // instantiation itself, which is where the backend meets a
             // concrete type.
+            //
+            // A qualifier in front of an open name is not part of that
+            // question either: ordering asks about the value, and `sub T`
+            // orders exactly when `T` does. Unwrapped rather than refused, or
+            // a container's own algorithms would be judged on the qualifier
+            // its indexer hands back rather than on the element.
             const auto judge = [&](const std::string& type) {
-                if (IsOpenGenericParameter(type)) {
+                const std::string asked =
+                    CanonicalOpenOwnership(type) == OwnershipKind::None
+                        ? type : CanonicalOpenBaseName(type);
+                if (IsOpenGenericParameter(asked)) {
                     RecordGenericBodyFact(GenericBodyFact::Shape::OrdersValues,
-                        type, op, expr);
+                        asked, op, expr);
                     return true;
                 }
-                return IsOrderableType(type);
+                return IsOrderableType(asked);
             };
             if (op != "==" && op != "!=" && !managedOperand) {
                 const bool leftOrders = judge(left.type);

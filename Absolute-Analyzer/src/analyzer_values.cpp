@@ -151,6 +151,7 @@ namespace Absolute {
         // qualifier that means the same thing about ownership. `T* b = a;`
         // stays legal: an unqualified name takes a subscriber when what it is
         // given already has an owner, and this asks whether it does.
+        NoteBorrowBoundAsOwner(target.type, value.type, "the assignment target", expr);
         if (IsSubscriberPointerType(target.type) && value.createsManagedOwner) {
             Report("subscriber cannot take ownership of a fresh managed allocation; "
                 "bind the allocation to a managed owner first",
@@ -499,6 +500,7 @@ namespace Absolute {
                 "' cannot own a fresh managed allocation; declare a managed owner first",
                 "E_WEAK_REQUIRES_EXISTING_OWNER", id);
         }
+        NoteBorrowBoundAsOwner(type, value.type, "'" + name + "'", expr);
         if (IsSubscriberPointerType(type) && value.createsManagedOwner) {
             Report("subscriber '" + name +
                 "' cannot own a fresh managed allocation; declare a managed owner first",
@@ -1084,6 +1086,11 @@ namespace Absolute {
         }
         Result value;
         if (expr->value) value = Evaluate(expr->value.get());
+        // A declaration written with a generic parameter's own name parses as
+        // this one rather than as a VarDeclExpr, so the rule that asks what a
+        // borrow may be bound to is asked here too. `T key = vec[i];` inside a
+        // generic algorithm is the shape it is for.
+        NoteBorrowBoundAsOwner(type, value.type, "'" + name + "'", expr);
         if (expr->value && !IsAssignable(type, value.type))
             Report("initializer of '" + name + "' has type '" + value.type + "', expected '" + type + "'",
                 "E_INITIALIZER_TYPE_MISMATCH");

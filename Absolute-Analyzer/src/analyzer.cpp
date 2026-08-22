@@ -338,6 +338,20 @@ namespace Absolute {
                         "E_INTERFACE_REQUIRES_POINTER", InvalidSymbolId);
                 continue;
             }
+            if (fact.shape == GenericBodyFact::Shape::BorrowsAsOwner) {
+                // Only a parameter that owns. At `T = int32` or `T = string`
+                // the borrow and the element are the same type and nothing is
+                // duplicated -- `sub` says what a value's relation to an
+                // object's lifetime is, and neither of those has one.
+                if (TypeOwnsUniqueResource(actual))
+                    ReportAtLocation(fact.file, fact.line, fact.column,
+                        "a borrowed element cannot be bound to a name that owns; at '" +
+                        base + "<" + actual + ">' " + fact.detail +
+                        " would name storage the container still holds; take the "
+                        "element out of its slot instead of reading it",
+                        "E_BORROW_BOUND_AS_OWNER", InvalidSymbolId);
+                continue;
+            }
             if (fact.shape == GenericBodyFact::Shape::OrdersValues) {
                 if (!IsOrderableType(actual))
                     ReportAtLocation(fact.file, fact.line, fact.column,
@@ -710,6 +724,9 @@ namespace Absolute {
     void Analyzer::CheckManagedArgumentOwnership(
         const Result& argument, const std::string& parameterType,
         size_t index, const std::string& context) {
+        NoteBorrowBoundAsOwner(ValueReferenceBaseType(parameterType),
+            argument.type, context + " argument " + std::to_string(index + 1),
+            nullptr);
         if (!argument.createsManagedOwner) return;
         const std::string type = ValueReferenceBaseType(parameterType);
         const bool weak = IsWeakPointerType(type);
@@ -1156,6 +1173,19 @@ namespace Absolute {
             if (CanonicalOpenOwnership(source) != OwnershipKind::None)
                 return CanonicalOpenBaseName(source) == base;
         }
+        // And `T` takes a `sub T`, which the arrow above says it must not --
+        // for a `T` that owns. Whether this one owns is not knowable here: at
+        // `T = int32` the two are the same type and nothing is duplicated, and
+        // at `T = Cell*` an owner-shaped name would be handed storage the
+        // container still holds. So the question is deferred rather than
+        // answered wrongly in either direction: the sites that bind a value to
+        // a name record it (GenericBodyFact::Shape::BorrowsAsOwner) and every
+        // instantiation asks it. A closed type is not in this position and
+        // does not reach here -- `Node* n = borrowed;` stays refused.
+        if (IsOpenGenericParameter(target) &&
+            CanonicalOpenOwnership(source) == OwnershipKind::Sub &&
+            CanonicalOpenBaseName(source) == target)
+            return true;
         if (IsPointerType(target) && source == "null") return true;
         if (IsPointerType(target) && IsPointerType(source)) {
             const bool compatibleMode =
@@ -1730,6 +1760,42 @@ namespace Absolute {
         return value;
     }
 
+    void Analyzer::NoteBorrowBoundAsOwner(const std::string& target,
+        const std::string& source, const std::string& detail,
+        const ASTNode* node) {
+        if (CanonicalOpenOwnership(source) != OwnershipKind::Sub) return;
+        if (CanonicalOpenBaseName(source) != target) return;
+        RecordGenericBodyFact(GenericBodyFact::Shape::BorrowsAsOwner,
+            target, detail, node);
+    }
+
+    std::string Analyzer::CallableReturnType(FunctionDeclStmt& statement) {
+        std::string type = ResolveType(statement.returnType.get());
+        if (statement.propertyAccessor != PropertyAccessorKind::Getter ||
+            statement.propertyName != "this")
+            return type;
+        type = IndexerBorrowProjection(type);
+        expressionInfo[statement.returnType.get()].type = type;
+        return type;
+    }
+
+    std::string Analyzer::IndexerBorrowProjection(const std::string& type) const {
+        // A handle that owns becomes a handle that borrows. `sub`, `weak` and
+        // `raw` are left alone: none of them owns, so there is nothing to
+        // weaken, and rewriting `weak T*` to `sub T*` would say something
+        // different about the object's lifetime than the author wrote.
+        if (CanonicalOwnership(type) == OwnershipKind::Unique)
+            return CanonicalWithOwnership(type, OwnershipKind::Sub);
+        // A generic parameter with nothing applied to it yet. The qualifier is
+        // kept as written and answered at instantiation, which is the only
+        // moment it can be: `sub T` at `T = Node*` is `sub Node*`, and at
+        // `T = int32` it is `int32`.
+        if (CanonicalOpenOwnership(type) == OwnershipKind::None &&
+            IsOpenGenericParameter(type))
+            return "sub " + type;
+        return type;
+    }
+
     void Analyzer::ValidateCAbiType(const std::string& type, const std::string& where,
         bool isReturn) {
         if (isReturn && type == "void") return;
@@ -1885,7 +1951,7 @@ namespace Absolute {
         for (const Token& parameter : statement.templateParams)
             genericScope.emplace(parameter.value, parameter.value);
         if (!genericScope.empty()) genericTypeScopes.push_back(genericScope);
-        const std::string returnType = ResolveType(statement.returnType.get());
+        const std::string returnType = CallableReturnType(statement);
         const bool asyncFunction = HasModifier(statement, "async");
         const bool constMethod = HasModifier(statement, "const");
         const bool staticMethod = HasModifier(statement, "static");

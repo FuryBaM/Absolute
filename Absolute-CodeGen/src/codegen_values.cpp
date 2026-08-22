@@ -33,7 +33,9 @@ namespace Absolute {
             assigned = impl->Coerce(assigned, impl->TypeFromName(targetTypeName),
                 impl->SemanticType(expr->value.get()), targetTypeName);
             impl->EmitPropertyAccessor(receiver, receiverType,
-                CallableKey(PropertySetterName(propertyName), {targetTypeName}), {assigned});
+                CallableKey(PropertySetterName(propertyName), {targetTypeName}),
+                {assigned},
+                {impl->ArgumentOwnershipFlag(expr->value.get(), targetTypeName)});
             impl->value = assigned;
             impl->valueCreatesManagedOwner = false;
             impl->valueManagedPointee = nullptr;
@@ -63,8 +65,15 @@ namespace Absolute {
             std::vector<std::string> setterTypes = targetInfo->parameterTypes;
             setterTypes.push_back(targetTypeName);
             arguments.push_back(assigned);
+            // One flag per argument: an index is a number and carries no
+            // ownership role, and the element the setter is handed carries
+            // the one the value expression produced.
+            std::vector<llvm::Value*> ownershipFlags(arguments.size(), nullptr);
+            ownershipFlags.back() =
+                impl->ArgumentOwnershipFlag(expr->value.get(), targetTypeName);
             impl->EmitPropertyAccessor(indexer->base.get(), receiverType,
-                CallableKey(IndexerSetterName(), setterTypes), arguments);
+                CallableKey(IndexerSetterName(), setterTypes), arguments,
+                ownershipFlags);
             impl->value = assigned;
             impl->valueCreatesManagedOwner = false;
             impl->valueManagedPointee = nullptr;

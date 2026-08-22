@@ -1371,9 +1371,18 @@ namespace Absolute {
                 Report("indexers have no addressable storage",
                     "E_INDEXER_NOT_ADDRESSABLE", selected->symbol);
             }
-            Save(expr, AccessorValue(
-                selected->symbol, selected->type, selected->canWrite));
+            // The getter borrows and the setter takes, so which half is
+            // being called decides which type this access has. `c[i] = v` is
+            // the setter's call and is typed with the place, because that is
+            // what the setter is handed; every other use of `c[i]` is the
+            // getter's, and hands back a borrow of the place.
+            Save(expr, AccessorValue(selected->symbol,
+                accessMode == AccessMode::Write
+                    ? selected->type
+                    : IndexerBorrowProjection(selected->type),
+                selected->canWrite));
             expressionInfo[expr].parameterTypes = selected->parameterTypes;
+            expressionInfo[expr].indexerPlaceType = selected->type;
         }
         else if (expr->indexes.size() > rank) {
             Report("array access provides " + std::to_string(expr->indexes.size()) +

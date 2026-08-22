@@ -91,7 +91,7 @@ namespace Absolute {
             if (currentType.empty()) DeclareGlobalFunction(*stmt);
             else if (stmt->name && stmt->returnType) {
                 DeclareMember(currentType, stmt->name->value,
-                    {SymbolKind::Method, ResolveType(stmt->returnType.get()),
+                    {SymbolKind::Method, CallableReturnType(*stmt),
                         ResolveParameterTypes(stmt->parameters), InvalidSymbolId,
                         HasModifier(*stmt, "const"), HasModifier(*stmt, "static"),
                         DeclaredAccess(*stmt)});
@@ -117,7 +117,7 @@ namespace Absolute {
                 Report("interface method '" + currentType + "." + stmt->name->value +
                     "' must be public", "E_INTERFACE_METHOD_ACCESS");
             ValidateAttributes(*stmt, "interface method", true);
-            const std::string returnType = ResolveType(stmt->returnType.get());
+            const std::string returnType = CallableReturnType(*stmt);
             if (!IsKnownType(returnType))
                 Report("unknown return type '" + returnType + "' of interface method '" +
                     currentType + "." + stmt->name->value + "'", "E_UNKNOWN_RETURN_TYPE");
@@ -182,6 +182,8 @@ namespace Absolute {
                 source->requiresOwner = true;
             }
         }
+        NoteBorrowBoundAsOwner(currentReturnType, value.type,
+            "the returned value", stmt);
         if (!IsAssignable(currentReturnType, value.type))
             Report("return type '" + value.type + "' does not match '" + currentReturnType + "'",
                 "E_RETURN_TYPE_MISMATCH");
@@ -247,9 +249,19 @@ namespace Absolute {
             value.type != "error" && value.type != "null") {
             const Symbol* owner = table.Get(value.pointerOwner);
             const bool weak = IsWeakPointerType(currentReturnType);
-            if (value.createsManagedOwner ||
-                (owner && owner->managedOwner && !owner->rolePolymorphic &&
-                    owner->scopeDepth > 0))
+            // Two mistakes, one code, and they are not the same sentence. A
+            // fresh allocation is owned by nobody, so nothing releases it; a
+            // local owner dies with the frame, so the caller is left naming
+            // storage that is gone. The first is what an indexer getter
+            // written as a factory does, and it read as the second.
+            if (value.createsManagedOwner)
+                Report(weak
+                    ? "returning a fresh managed allocation as a weak reference leaves it owned by nobody; bind it to a managed owner first"
+                    : "returning a fresh managed allocation as a subscriber leaves it owned by nobody; an indexer getter borrows the cell it projects onto rather than producing one",
+                    weak ? "E_WEAK_RETURN_LOCAL_OWNER"
+                         : "E_SUBSCRIBER_RETURN_LOCAL_OWNER", value.symbol);
+            else if (owner && owner->managedOwner && !owner->rolePolymorphic &&
+                owner->scopeDepth > 0)
                 Report(weak
                     ? "returning a weak reference to a local owner would produce an immediately expired handle"
                     : "returning a subscriber to a local owner would leave the caller naming storage that is already gone",
