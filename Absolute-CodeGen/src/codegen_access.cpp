@@ -3,7 +3,8 @@
 namespace Absolute {
     llvm::Value* CodeGenerator::Impl::EmitPropertyAccessor(Expression* receiver,
         const std::string& receiverType, const std::string& methodKey,
-        const std::vector<llvm::Value*>& explicitArguments) {
+        const std::vector<llvm::Value*>& explicitArguments,
+        const std::vector<llvm::Value*>& ownershipFlags) {
         const std::string aggregateName = ClassNameFromType(receiverType);
         llvm::Value* object = receiver ? ObjectPointer(receiver, receiverType) : currentThis;
         if (!object) Fail("property accessor requires an object receiver");
@@ -11,7 +12,8 @@ namespace Absolute {
         const auto emitCall = [&](const ClassMethod& method, llvm::Value* callee) -> llvm::Value* {
             llvm::FunctionType* methodType = MethodFunctionType(method);
             llvm::Value* result = EmitAbiCall(methodType, callee, method.returnType,
-                {object}, method.parameterTypes, explicitArguments, "property.result");
+                {object}, method.parameterTypes, explicitArguments,
+                "property.result", false, ownershipFlags);
             if (!method.statement || !HasModifier(*method.statement, "nothrow"))
                 EmitExceptionCheck();
             return result;
@@ -607,18 +609,21 @@ namespace Absolute {
                 impl->value = impl->EmitPropertyAccessor(
                     expr->base.get(), impl->SemanticType(expr->base.get()),
                     CallableKey(IndexerGetterName(), info->parameterTypes), arguments);
-                // An indexer cannot say whether its getter hands over an
-                // owner: it has one type for both accessors, so a container
-                // whose getter borrows would have to declare its setter as
-                // borrowing too. That is the open defect in
-                // docs/known-defects.md.
+                // An indexer getter hands back a borrow of the cell it
+                // projects onto -- the analyzer weakened the element type to
+                // say so -- and a borrow is not a temporary this statement
+                // releases: the container still owns what it named. Asked of
+                // the type rather than assumed, so a getter written to
+                // produce an owner would be visible here; it cannot be
+                // written, because a subscriber return refuses it.
                 //
-                // A closure is not in that position. It is counted rather than
-                // owned uniquely, so a getter hands back a count whatever its
-                // body does -- a fresh closure, or a retained one, because
-                // that is what a callable return means -- and the statement
-                // that dropped it has to give that count back.
-                impl->valueCreatesManagedOwner = false;
+                // A closure is counted rather than owned uniquely, so a
+                // getter hands back a count whatever its body does -- a fresh
+                // closure, or a retained one, because that is what a callable
+                // return means -- and the statement that dropped it has to
+                // give that count back.
+                impl->valueCreatesManagedOwner =
+                    IsStrongManagedPointerTypeName(impl->SemanticType(expr));
                 impl->valueCreatesClosureOwner =
                     IsCodegenFunctionType(impl->SemanticType(expr));
                 return;

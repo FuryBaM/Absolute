@@ -82,9 +82,17 @@
         // passes through a pointer, which supplies a real address.
         bool HasAddressableStorage(Expression* expression);
 
+        // `ownershipFlags` runs parallel to `explicitArguments`, exactly as
+        // it does for an ordinary call: a setter is a call, and its parameter
+        // is told whether what it is handed is an owner or a borrow. Left
+        // empty the parameter is told "borrowed", which is what every setter
+        // was told -- so `set { slot = move(value); }` aborted with
+        // "Ownership operation requires an owner argument" on a value the
+        // caller had just produced.
         llvm::Value* EmitPropertyAccessor(Expression* receiver,
             const std::string& receiverType, const std::string& methodKey,
-            const std::vector<llvm::Value*>& explicitArguments);
+            const std::vector<llvm::Value*>& explicitArguments,
+            const std::vector<llvm::Value*>& ownershipFlags = {});
 
         llvm::Value* FieldAddress(llvm::Value* object, ClassInfo& info, const ClassField& field);
 

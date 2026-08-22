@@ -147,9 +147,11 @@ namespace std.collections {
             return false;
         }
 
-        // Written the way Vector's indexer is: one type for both accessors,
-        // so the setter is given an element rather than a name for one, and
-        // the store releases what the slot held.
+        // Written the way Vector's indexer is, and read the two ways every
+        // indexer is read: the getter hands back `sub T`, because reading a
+        // slot does not give it up, and the setter is given an element rather
+        // than a name for one, so the store releases what the slot held.
+        // `take` and `popFront` are how an element is given up.
         public T this[int32 index] {
             get {
                 if (index < 0 || index >= _count) {

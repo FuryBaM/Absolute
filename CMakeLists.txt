@@ -1143,6 +1143,14 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/subscriber-fresh-owner-errors.abs"
     )
     add_test(
+        NAME absolute.indexer-borrow-projection-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/indexer-borrow-projection.abs"
+    )
+    add_test(
+        NAME absolute.indexer-borrow-projection-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/indexer-borrow-projection-errors.abs"
+    )
+    add_test(
         NAME absolute.compound-assignment-operands-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/compound-assignment-operands.abs"
     )
@@ -1208,6 +1216,9 @@ if(BUILD_TESTING)
     )
     set_tests_properties(absolute.subscriber-fresh-owner-errors PROPERTIES
         PASS_REGULAR_EXPRESSION "E_SUBSCRIBER_REQUIRES_EXISTING_OWNER"
+    )
+    set_tests_properties(absolute.indexer-borrow-projection-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_BORROW_BOUND_AS_OWNER"
     )
     add_test(
         NAME absolute.default-arguments-semantic
@@ -3692,7 +3703,8 @@ if(BUILD_TESTING)
             "accessor-owner-temporary=accessor-owner-temporary=ok"
             "reference-slot-overwrite=reference-slot-overwrite=ok"
             "module-scope-slot=module-scope-slot=ok"
-            "parameter-copy-counts=parameter-copy-counts=ok")
+            "parameter-copy-counts=parameter-copy-counts=ok"
+            "indexer-borrow-projection=indexer-borrow-projection=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those

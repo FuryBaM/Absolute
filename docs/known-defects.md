@@ -16,39 +16,91 @@ build/Release/absolutec file.abs --build-exe -o app && ./app
 
 ## 1. Open defects
 
-### Open: an indexer cannot say that its getter borrows and its setter takes
+Nothing is open here. The entry this section opened with -- an indexer that
+could not say its getter borrows and its setter takes -- is fixed, and it is
+the entry directly below.
+
+### Fixed: an indexer is a projection, so its getter borrows and its setter takes
 
 ```absolute
 class Source {
-    public Cell* made { get { return new Cell(1); } }        // released
-    public Cell* this[int32 i] { get { return new Cell(2); } }  // leaked
+    public Cell* made { get { return new Cell(1); } }            // released
+    public Cell* this[int32 i] { get { return new Cell(2); } }   // now refused
 }
-source.made.value;   // the temporary is released with the statement
-source[0].value;     // "memory leak detected for handle N" at exit
+Cell* stolen = cells[0];   // now refused: `c[i]` is `sub Cell*`
 ```
 
 A property getter that produces an owner is a call that produced an owner, and
-the temporary it makes is released with the statement -- that is fixed, and
-`tests/accessor-owner-temporary.abs` pins it. An indexer is the same kind of
-call and could not be given the same answer, because an indexer has **one type
-for both of its accessors**: the setter is handed a `T`, so the getter cannot
-say `sub T`.
+the temporary it makes is released with the statement -- that was fixed first,
+and `tests/accessor-owner-temporary.abs` pins it. An indexer could not be given
+the same answer, because an indexer has **one type for both of its accessors**:
+the setter is handed a `T`, so the getter had no way to say `sub T`. The
+backend then had one flag for two cases and had to pick. Treating the result as
+a temporary owner destroyed elements the container still held --
+`tests/vector-owner-elements.abs` and `tests/deque-owner-elements.abs` both
+aborted with "null or expired managed pointer" -- and treating it as a borrow
+leaked every indexer written as a factory. It was recorded rather than guessed
+at, because which one is right is a decision about what an indexer *means*.
 
-Every generic container in `std/collections` relies on that. `Vector<Cell*>`'s
-indexer returns `unsafeArrayGet(items, index)` -- a borrow -- typed `T`, and at
-`T = Cell*` that reads as `Cell*`. Nothing in the expression distinguishes it
-from an owner the getter produced, so treating an indexer's result as a
-temporary owner destroys elements the container still holds: with the flag set
-on that path, `tests/vector-owner-elements.abs` and
-`tests/deque-owner-elements.abs` both abort with "null or expired managed
-pointer".
+The decision is that **an indexer is a projection onto a cell the container
+keeps, not a factory**: `c[i]` names storage that already exists. So the one
+written type is read two ways -- the getter hands back `sub T`, because reading
+a cell does not give it up, and the setter is handed `T`, because writing one
+does. It is the same fixture C++ (`T&`), Rust (`&T`) and Swift (a borrowing
+subscript) settle on, and for the same reason: a container cannot both own an
+element and hand it out. Giving one up is a different operation, and it is
+spelled differently -- `take`, `pop`, `removeAt`.
 
-What is missing is a way to write the two halves separately -- a getter that
-hands back `sub T` beside a setter that takes `T` -- or a rule that an
-indexer's getter always borrows. Both are decisions about what an indexer
-means, which is why this is recorded rather than patched. The property half is
-fixed and the containers are correct; what leaks is an indexer written to
-*produce* an owner, which no container in the standard library does.
+`Analyzer::IndexerBorrowProjection` is the whole rule, and it is applied in two
+places: to the getter's declared return type, and to the type of a read through
+the brackets. A write keeps the written type, because a write is the setter's
+call. It is a no-op wherever there is nothing to weaken -- a number, a struct,
+an array descriptor -- so at `T = int32` nothing about a container changes.
+`CallableReturnType` records the projected type on the type expression itself,
+so the backend reads one answer from one place rather than applying the rule a
+second time and having to agree.
+
+Three things follow, and each is a refusal that used to be silent:
+
+- An indexer getter written as a factory is refused where it is written
+  (`E_SUBSCRIBER_RETURN_LOCAL_OWNER`), instead of leaking one object per read.
+- `Cell* x = c[i];` is refused (`E_INITIALIZER_TYPE_MISMATCH`), because the
+  container still holds the element and this would be a second owner. `sub
+  Cell* x = c[i];` is how it is written, and `c.takeAt(i)` is how the element
+  is given up.
+- `delete c[i];` is refused (`E_DELETE_SUBSCRIBER`).
+
+For an **open** parameter the question cannot be answered in the body: `T key =
+vec[i];` duplicates ownership at `T = Cell*` and is the same type twice at `T =
+int32`. So it is not answered there. `IsAssignable` lets `T` take a `sub T`
+inside an open body, and every site that binds a value to a name -- a
+declaration, an assignment, an argument, a return -- records
+`GenericBodyFact::Shape::BorrowsAsOwner`, which each instantiation replays.
+`Slots<int32>` is silent and `Slots<Node*>` reports `E_BORROW_BOUND_AS_OWNER`
+with the line inside the generic body. This is the same machinery the ordering
+and interface rules already use, and it is why the standard library's generic
+algorithms still compile: they are instantiated at parameters that own nothing.
+
+Two defects surfaced only because the rule made a setter mean something:
+
+- **A property or indexer setter was never told whether it was handed an owner
+  or a borrow.** `EmitPropertyAccessor` built its call without ownership flags,
+  so every setter parameter was told "borrowed", and `set { slot = move(value);
+  }` -- the only way a setter can take -- aborted at run time with "Ownership
+  operation requires an owner argument" on a value the caller had just
+  produced. The flags run parallel to the arguments now, exactly as they do
+  for an ordinary call, because a setter *is* an ordinary call.
+- **The subscriber return rule reported two different mistakes in one
+  sentence.** Handing back a fresh allocation and handing back a name for a
+  local owner are not the same error, and a factory getter -- now the most
+  likely way to hit this rule -- read as "returning a subscriber to a local
+  owner" about a program with no local owner in it.
+
+`tests/indexer-borrow-projection.abs` runs a generic container at both an
+owning and a non-owning parameter, under AddressSanitizer with leak detection,
+and counts destructor calls; `tests/indexer-borrow-projection-errors.abs` pins
+the four refusals. `tests/accessor-owner-transfer.abs` was written under the
+old model -- its indexer was a factory -- and now says what an indexer is.
 
 A **closure** is not in this position, and both accessors hand one over
 correctly now. A closure is counted rather than owned uniquely, so a getter
@@ -68,8 +120,10 @@ emptied, by running programs rather than by reading it -- the standard
 library's own containers under AddressSanitizer, with every string built at
 runtime. The last such sweep found twenty-four, six of them in the same gap, and
 section 1's last three entries are that sweep. The one thing it found and did
-not fix is at the top of this section. The place to look next is section 5,
-which says where not to.
+not fix -- an indexer that could not say its getter borrows -- is fixed now, at
+the top of this section: it was a decision about what an indexer means rather
+than a patch, which is why it waited to be decided. The place to look next is
+section 5, which says where not to.
 
 Nothing is open elsewhere either. The two things that were -- a name in the
 shared type model answering two questions, and what slicing a temporary array
@@ -727,7 +781,10 @@ A return is the fourth, and the subscriber form was not refused there either:
 neither handing back a fresh allocation, which nobody then owns, nor handing
 back a name for an owner that dies with the frame, which leaves the caller
 naming storage that is already gone. The weak form had refused both all along;
-they read alike now (`E_SUBSCRIBER_RETURN_LOCAL_OWNER`). Returning a *field*
+they read alike now (`E_SUBSCRIBER_RETURN_LOCAL_OWNER`), and the two say which
+of the two mistakes was made -- they shared one sentence until an indexer
+getter written as a factory became the likeliest way to reach the rule.
+Returning a *field*
 stays legal -- its owner is the object rather than the frame, which is what
 makes `sub T* p { get { return field; } }` the way a borrow is handed out.
 
