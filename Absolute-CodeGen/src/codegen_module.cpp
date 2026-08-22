@@ -475,8 +475,16 @@ namespace Absolute {
         const std::string globalName = Qualify(name);
         auto* storage = new llvm::GlobalVariable(*module, type, false,
             llvm::GlobalValue::ExternalLinkage, initializer, globalName);
-        globals.emplace(globalName, Variable{storage, type, typeName, false,
-            false, nullptr, {}, nullptr, InvalidSymbolId});
+        Variable variable{storage, type, typeName, false,
+            false, nullptr, {}, nullptr, InvalidSymbolId};
+        // A global is a place, and a place gives back what it held when it is
+        // overwritten. It is never released at exit -- a module-scope name
+        // outlives every scope, which is why an owner is refused above -- and
+        // no scope walks `globals`, so this says only what happens on a write.
+        // Without it, `label = format(...)` in a loop leaked every value but
+        // the last, while the same line on a static field was already right.
+        variable.ownsAggregateResources = TypeNeedsCleanup(typeName);
+        globals.emplace(globalName, std::move(variable));
     }
 
     llvm::Function* CodeGenerator::Impl::DeclareFunction(FunctionDeclStmt& statement) {

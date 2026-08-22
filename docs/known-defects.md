@@ -66,7 +66,7 @@ An empty list is not the same as no defects, and this file should not be read
 as one. Most of what is recorded below was found *after* the list first
 emptied, by running programs rather than by reading it -- the standard
 library's own containers under AddressSanitizer, with every string built at
-runtime. The last such sweep found nineteen, six of them in the same gap, and
+runtime. The last such sweep found twenty, six of them in the same gap, and
 section 1's last three entries are that sweep. The one thing it found and did
 not fix is at the top of this section. The place to look next is section 5,
 which says where not to.
@@ -896,6 +896,16 @@ nothing is nothing.
 Pinned by `tests/reference-slot-overwrite.abs`, under AddressSanitizer with the
 leak check on, because the values are strings and nothing there can assert its
 own release.
+
+**A module-scope name is a place too**, and it was the other name for the same
+mistake: `label = format(...)` in a loop leaked every value but the last. The
+identical line on a *static field* was already right, because a static field is
+reached as a field and takes the field rule, while a module-scope name is
+reached as a variable and took a branch that asks whether the name owns its
+slot at the end of a scope. For a global the answer to that is no -- it
+outlives every scope, nothing walks it at exit, and that is why a module-scope
+owner is refused outright. What is left is the write. See
+`tests/module-scope-slot.abs`.
 
 ## 2. Missing features that fail loudly
 

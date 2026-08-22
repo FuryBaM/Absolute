@@ -1167,6 +1167,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/reference-slot-overwrite.abs"
     )
     add_test(
+        NAME absolute.module-scope-slot-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/module-scope-slot.abs"
+    )
+    add_test(
         NAME absolute.accessor-owner-temporary-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/accessor-owner-temporary.abs"
     )
@@ -3661,7 +3665,8 @@ if(BUILD_TESTING)
             "deque-owner-elements=deque-owner-elements=ok"
             "priority-queue-owner-elements=priority-queue-owner-elements=ok"
             "accessor-owner-temporary=accessor-owner-temporary=ok"
-            "reference-slot-overwrite=reference-slot-overwrite=ok")
+            "reference-slot-overwrite=reference-slot-overwrite=ok"
+            "module-scope-slot=module-scope-slot=ok")
             # These two print with `format`. A string had no lifetime when
             # this list was written -- every string a program built was
             # allocated and never released -- and LeakSanitizer reported those
