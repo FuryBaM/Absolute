@@ -100,8 +100,28 @@ desired, for example in CI or another script.
 
 - Absolute programs: [`absolute/`](absolute/)
 - C++: [`benchmark.cpp`](benchmark.cpp)
+- Rust: [`benchmark.rs`](benchmark.rs)
 - C#: [`Program.cs`](Program.cs)
 - Java: [`Benchmark.java`](Benchmark.java)
 - JavaScript: [`benchmark.js`](benchmark.js)
 - Python: [`benchmark.py`](benchmark.py)
 - Runner: [`run.bat`](run.bat)
+
+## Rust
+
+Rust is measured with `rustc -C opt-level=3 -C target-cpu=native -C
+overflow-checks=off --edition 2021` -- the same three things the C++ build is
+given: optimize fully, target this machine, and let integer arithmetic wrap.
+The last is written out rather than left to a profile default so the
+arithmetic does not change with how `rustc` was invoked, and the ports use the
+explicit `wrapping_*` operations wherever the C++ relies on wraparound.
+
+The port follows [`benchmark.cpp`](benchmark.cpp) line for line rather than
+being written idiomatically. A suite compares one algorithm across languages,
+so a version that reaches the same answer by a different route measures a
+different thing. Every implementation is accepted only when it produces the
+checksum listed above.
+
+The arrays are locals in the Rust as they are in the C++ and in the Absolute --
+the runner reserves a large stack for exactly that -- so all three measure the
+same storage rather than a heap allocation holding the same numbers.
