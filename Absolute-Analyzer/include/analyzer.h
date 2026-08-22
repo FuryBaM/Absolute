@@ -343,7 +343,8 @@ namespace Absolute {
                 DeletesValue,        // anything released through a parameter type
                 CopiesElements,      // array elements duplicated as bytes
                 ElementFromNonOwner, // a slot filled from something not fresh
-                OrdersValues         // `<`, `<=`, `>` or `>=` on the parameter
+                OrdersValues,        // `<`, `<=`, `>` or `>=` on the parameter
+                InterfaceValue       // the parameter used as a value, not a handle
             };
             Shape shape = Shape::FieldFromNonOwner;
             std::string parameterType;   // as written in the body, e.g. "T"
@@ -621,6 +622,14 @@ namespace Absolute {
         // backend orders numbers, characters, enum members and raw addresses,
         // and nothing else.
         bool IsOrderableType(const std::string& name) const;
+        // An interface is a dispatch table, not a value: it has no size and
+        // no storage of its own, so it is used through a pointer. A
+        // declaration says so; the places where a type is used as a value
+        // without being declared -- a parameter, an array's element, a
+        // generic argument -- did not, and each reached the backend, which
+        // reported "unsupported type 'I'" with no file and no line.
+        void CheckInterfaceValueType(const std::string& type,
+            const std::string& where, SymbolId symbol = InvalidSymbolId);
         bool IsInteger(const std::string& name) const;
         void CheckShiftAmount(
             Expression* amount, const std::string& resultType, const std::string& op);

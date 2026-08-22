@@ -1,0 +1,87 @@
+// An interface is a dispatch table, not a value.
+//
+// It has no size and no storage of its own, so it is used through a pointer.
+// A declaration said so -- `I one;` is E_INTERFACE_REQUIRES_POINTER, and so is
+// a field of one, and a return type. Four other places a type is used as a
+// value did not say it, and each reached the backend, which reported
+//
+//     Error: LLVM codegen: unsupported type 'I' (ctx='DeclareFunction:main', ...)
+//
+// naming its own mechanism, with no file and no line: an array's element type,
+// a parameter, a tuple element, and a generic argument. The last is answered
+// at each instantiation rather than in the body, the way the ownership rules
+// already are -- `Box<T>` holding a `T` by value is fine until `T` is an
+// interface.
+//
+// A generic that only ever uses its parameter as a handle stays legal, which
+// is why the generic case is judged from the body rather than from the
+// argument: `Viewer<T>` holding `sub T*` is the right way to keep an
+// interface, and refusing `Viewer<I>` would refuse the fix.
+//
+// Every form that uses an interface through a pointer stays legal, and
+// tests/interfaces-codegen.abs is that side.
+
+interface I {
+    int32 go();
+}
+
+class Impl : I {
+    public int32 go() { return 1; }
+}
+
+// A parameter.
+int32 byParameter(I contract) { return contract.go(); }
+
+// A generic that stores its argument by value, and one that stores it as an
+// array of values. Both are answered where the argument is known.
+class Box<T> {
+    public T slot;
+    public Box() { }
+}
+
+class Slots<T> {
+    private T[] items;
+    public Slots() { items = new T[2]; }
+    public int32 count() { return items.length; }
+}
+
+// The body decides: this one holds its parameter as a handle, so any argument
+// is fine, including an interface.
+class Viewer<T> {
+    private sub T* seen;
+    public Viewer() { seen = null; }
+    public void watch(sub T* given) { seen = given; }
+    public int32 read() { return seen == null ? 0 : 1; }
+}
+
+int32 main() {
+    // A local, which was already refused -- here so the four below read as
+    // the same rule rather than a new one.
+    I local;
+
+    // An array's element type, and an array of arrays of them.
+    I[] row = new I[2];
+    I[][] grid = new I[2][2];
+
+    // A tuple element.
+    tuple<int32, I> pair;
+
+    // A generic argument, judged where the argument is known.
+    Box<I>* boxed = new Box<I>();
+    Slots<I>* slots = new Slots<I>();
+
+    // And a parameter, at the declaration above.
+    Impl* impl = new Impl();
+    int32 total = byParameter(impl);
+
+    // And the one that must stay legal.
+    Viewer<I>* viewer = new Viewer<I>();
+    viewer.watch(impl);
+    total = total + viewer.read();
+    delete viewer;
+
+    delete boxed;
+    delete slots;
+    delete impl;
+    return total + row.length + grid.length + pair.item0 + local.go();
+}

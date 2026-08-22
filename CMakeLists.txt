@@ -1175,6 +1175,27 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/parameter-copy-counts.abs"
     )
     add_test(
+        NAME absolute.numeric-type-names-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/numeric-type-names-errors.abs"
+    )
+    add_test(
+        NAME absolute.interface-value-type-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/interface-value-type-errors.abs"
+    )
+    add_test(
+        NAME absolute.array-allocation-size-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-allocation-size-errors.abs"
+    )
+    set_tests_properties(absolute.array-allocation-size-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_ARRAY_SIZE_TYPE"
+    )
+    set_tests_properties(absolute.interface-value-type-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_INTERFACE_REQUIRES_POINTER"
+    )
+    set_tests_properties(absolute.numeric-type-names-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_NUMERIC_OPERAND_REQUIRED"
+    )
+    add_test(
         NAME absolute.accessor-owner-temporary-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/accessor-owner-temporary.abs"
     )

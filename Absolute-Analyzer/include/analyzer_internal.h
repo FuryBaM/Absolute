@@ -46,9 +46,26 @@ namespace Absolute {
             for (const auto& node : nodes) AcceptIfPresent(node, visitor);
         }
 
+        // The integer types by name, not by prefix. `"int32[]"` starts with
+        // `"int"` and is not a number, and reading a prefix let an array of
+        // integers be added, compared, used as a condition, printed, and
+        // assigned to a scalar -- none of which the backend can emit. One of
+        // them crashed the compiler outright: `int32[][] rows = flat;` was
+        // accepted, and the backend read a dimension the descriptor does not
+        // have.
+        //
+        // Eight names is the whole set; `int` and `uint` on their own are not
+        // types (E_UNKNOWN_TYPE), which is what made the prefix look safe.
+        inline bool IsIntegerTypeName(const std::string& type) {
+            return type == "int8" || type == "uint8" ||
+                type == "int16" || type == "uint16" ||
+                type == "int32" || type == "uint32" ||
+                type == "int64" || type == "uint64";
+        }
+
         inline bool IsConditionType(const std::string& type) {
             return type == "bool" || type == "dynamic" || type == "error" ||
-                type.starts_with("int") || type.starts_with("uint") || type.ends_with("*");
+                IsIntegerTypeName(type) || type.ends_with("*");
         }
 
         // All of these read the one ownership answer rather than testing
@@ -413,7 +430,7 @@ namespace Absolute {
         inline bool IsPrintableType(const std::string& type) {
             return type == "bool" || type == "string" || type == "char" || type == "null" ||
                 type == "dynamic" || type == "error" || type == "float" || type == "double" ||
-                type.starts_with("int") || type.starts_with("uint");
+                IsIntegerTypeName(type);
         }
 
         inline std::optional<size_t> CountFormatPlaceholders(const std::string& format) {

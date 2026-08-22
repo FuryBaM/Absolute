@@ -327,6 +327,17 @@ namespace Absolute {
                 }
                 continue;
             }
+            if (fact.shape == GenericBodyFact::Shape::InterfaceValue) {
+                if (const auto definition = types.find(actual);
+                    definition != types.end() &&
+                    definition->second.kind == TypeKind::Interface)
+                    ReportAtLocation(fact.file, fact.line, fact.column,
+                        std::string(fact.detail) + " cannot be interface '" + actual +
+                        "' by value; at '" + base + "<" + actual + ">' an interface "
+                        "is used through a raw or managed pointer",
+                        "E_INTERFACE_REQUIRES_POINTER", InvalidSymbolId);
+                continue;
+            }
             if (fact.shape == GenericBodyFact::Shape::OrdersValues) {
                 if (!IsOrderableType(actual))
                     ReportAtLocation(fact.file, fact.line, fact.column,
@@ -374,6 +385,7 @@ namespace Absolute {
             case GenericBodyFact::Shape::DeletesValue:
             case GenericBodyFact::Shape::CopiesElements:
             case GenericBodyFact::Shape::OrdersValues:
+            case GenericBodyFact::Shape::InterfaceValue:
                 break;
             }
         }
@@ -1038,7 +1050,7 @@ namespace Absolute {
     }
 
     bool Analyzer::IsNumeric(const std::string& name) const {
-        return name == "float" || name == "double" || name.starts_with("int") || name.starts_with("uint") ||
+        return name == "float" || name == "double" || IsIntegerTypeName(name) ||
             name == "char";
     }
 
@@ -1048,13 +1060,56 @@ namespace Absolute {
     // answers were available -- compare it unsigned, or say a boolean is not
     // an ordered value -- and the second is what the language means. Equality
     // is untouched.
+    void Analyzer::CheckInterfaceValueType(const std::string& type,
+        const std::string& where, SymbolId symbol) {
+        std::string value = ValueReferenceBaseType(type);
+        // An array of interfaces is an array of values, and so is an array of
+        // arrays of them.
+        while (value.ends_with("[]")) value.resize(value.size() - 2);
+        if (value.empty()) return;
+        // A pointer to an interface is the way an interface is used, and stops
+        // the direct question here -- but not the one below it. A pointer to a
+        // generic instantiated with an interface still puts that interface
+        // inside the instantiation, whichever side of the handle it sits on.
+        const bool throughPointer = IsPointerType(value);
+        if (throughPointer) value = PointerPointee(value);
+        if (!throughPointer) {
+            // An open parameter is not a type yet: `T v;` inside `Box<T>` is a
+            // value of whatever `T` becomes, and each instantiation answers.
+            if (IsOpenGenericParameter(value)) {
+                RecordGenericBodyFact(GenericBodyFact::Shape::InterfaceValue,
+                    value, where, nullptr);
+                return;
+            }
+            if (const auto found = types.find(value);
+                found != types.end() && found->second.kind == TypeKind::Interface) {
+                Report(where + " cannot be interface '" + value +
+                    "' by value; an interface is used through a raw or managed pointer",
+                    "E_INTERFACE_REQUIRES_POINTER", symbol);
+                return;
+            }
+        }
+        std::string base;
+        std::vector<std::string> arguments;
+        if (!ParseGenericTypeName(value, base, arguments)) return;
+        // A tuple's elements are values by construction, so its arguments are
+        // answered here. A user generic is not: its body decides whether the
+        // parameter is a value or a handle, so it is judged at each
+        // instantiation from what the body did -- `Viewer<T>` that only ever
+        // writes `sub T*` is the right way to hold an interface, and refusing
+        // `Viewer<I>` here would refuse the fix.
+        if (base != "tuple") return;
+        for (const std::string& argument : arguments)
+            CheckInterfaceValueType(argument, where, symbol);
+    }
+
     bool Analyzer::IsOrderableType(const std::string& name) const {
         return name == "error" || name == "dynamic" || name == "null" ||
             IsNumeric(name) || IsEnumType(name) || IsRawPointerType(name);
     }
 
     bool Analyzer::IsInteger(const std::string& name) const {
-        return name.starts_with("int") || name.starts_with("uint") || name == "char";
+        return IsIntegerTypeName(name) || name == "char";
     }
 
     bool Analyzer::IsAssignable(const std::string& target, const std::string& source) const {
@@ -1073,8 +1128,23 @@ namespace Absolute {
             if (ParseCFunctionType(target, targetReturn, targetParameters) && source == "null")
                 return true;
         }
-        if (target.ends_with("[]") && source.ends_with("[]"))
-            return IsAssignable(ArrayElementType(target), ArrayElementType(source));
+        if (target.ends_with("[]") && source.ends_with("[]")) {
+            // An array may be seen at a lower rank than it has: the storage is
+            // row-major and contiguous, which is what lets a grouped literal
+            // `{{1, 2, 3}, {4, 5, 6}}` fill an `int32[]` of six, and what
+            // `int32[] flat = grid;` reads.
+            //
+            // It may never be seen at a higher one. The descriptor carries the
+            // dimensions it was built with, and `int32[][] rows = flat;` asked
+            // the backend to read a dimension that is not there -- which
+            // crashed the compiler, because nothing had refused it: `IsNumeric`
+            // read a prefix, and `"int32[]"` starts with `"int"`.
+            const size_t targetRank = ArrayRank(target);
+            const size_t sourceRank = ArrayRank(source);
+            if (targetRank > sourceRank) return false;
+            return IsAssignable(ArrayElementType(target, targetRank),
+                ArrayElementType(source, sourceRank));
+        }
         // `sub T` takes a `T`, for the same reason `sub Node*` takes a `Node*`:
         // it is the weaker relation to the same object, and the arrow runs one
         // way. Which of the two it turns out to be is settled at substitution;
@@ -1703,7 +1773,7 @@ namespace Absolute {
         if (type == "bool" || type == "string" || type == "char" ||
             type == "float" || type == "double")
             return;
-        if (type.starts_with("int") || type.starts_with("uint")) return;
+        if (IsIntegerTypeName(type)) return;
 
         const auto found = types.find(type);
         if (found != types.end()) {
@@ -2013,6 +2083,7 @@ namespace Absolute {
             PushDiagnosticNode(parameter.get());
             const std::string name = ExtractIdentifier(parameter->name.get());
             std::string type = ResolveDeclaredType(*parameter);
+            CheckInterfaceValueType(type, "parameter '" + name + "'");
             ValidateValueReferenceParameter(*parameter, type,
                 statement.name->value, asyncFunction, statement.UsesCAbi());
             if (asyncFunction && !IsAsyncTaskValueType(type))

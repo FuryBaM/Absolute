@@ -66,7 +66,7 @@ An empty list is not the same as no defects, and this file should not be read
 as one. Most of what is recorded below was found *after* the list first
 emptied, by running programs rather than by reading it -- the standard
 library's own containers under AddressSanitizer, with every string built at
-runtime. The last such sweep found twenty-one, six of them in the same gap, and
+runtime. The last such sweep found twenty-four, six of them in the same gap, and
 section 1's last three entries are that sweep. The one thing it found and did
 not fix is at the top of this section. The place to look next is section 5,
 which says where not to.
@@ -944,6 +944,88 @@ plain values counts nothing and is unchanged, because the walk asks the type.
 
 Pinned by `tests/parameter-copy-counts.abs`, which fails as a use-after-free
 rather than a leak when the fix is removed.
+
+### Fixed: a type name was matched by prefix, and the compiler segfaulted
+
+```absolute
+int32[] flat = {1, 2};
+int32[][] rows = flat;    // no diagnostic; the compiler crashed
+```
+
+`IsNumeric` asked whether a type name *starts with* `"int"` or `"uint"`. Eight
+names is the whole set and `int` and `uint` on their own are not types, so the
+prefix looked safe. It is not: `"int32[]"` starts with `"int"`, and an array of
+integers was a number everywhere the analyzer asked.
+
+One root cause, nine wrong answers. Arrays could be added, subtracted,
+compared, masked, used as a condition, printed, formatted, assigned to a scalar
+and assigned from one. Each either reached the backend and failed there naming
+the backend's own mechanism with no line -- "value cannot be used as a
+condition", "binary operator requires numeric operands" -- or did something
+worse. The worst was the rank mismatch above: nothing refused it, and the
+backend read a dimension the descriptor does not have, so **the compiler
+segfaulted with no diagnostic of any kind**. `IsInteger`, `IsConditionType` and
+`IsPrintableType` read the same prefix; all four name the eight types now.
+
+The rank rule that came out of fixing it is worth stating on its own. An array
+may be seen at a **lower** rank than it has, because the storage is row-major
+and contiguous -- that is what lets the grouped literal `{{1, 2, 3}, {4, 5, 6}}`
+fill an `int32[]` of six, which `tests/array-advanced.abs` has always covered
+and which had been passing through the same hole. It may never be seen at a
+higher one. Before, `IsAssignable` compared array types by stripping one
+bracket from each and asking again, so rank never entered into it.
+
+The refusals are `tests/numeric-type-names-errors.abs`, all fourteen
+diagnostics with a file, a line and a code.
+
+### Fixed: an interface by value was refused in five places and not in four
+
+An interface is a dispatch table, not a value: it has no size and no storage of
+its own, so it is used through a pointer. A declaration said so -- `I one;` is
+`E_INTERFACE_REQUIRES_POINTER`, and so is a field of one, a struct member, and
+a return type. Four other places a type is used as a value did not, and each
+reached the backend:
+
+```
+Error: LLVM codegen: unsupported type 'I' (ctx='DeclareFunction:main', ...)
+```
+
+its own mechanism, no file, no line. They were an array's element type, a
+parameter, a tuple element, and a generic argument.
+
+The first three ask one question in one place now. The fourth is answered at
+each instantiation instead, from what the body did with the parameter, the way
+the ownership rules already are -- because the body is what decides. `Box<T>`
+holding a `T` by value cannot take an interface; `Viewer<T>` holding
+`sub T*` is exactly how an interface *should* be kept, and refusing
+`Viewer<I>` would have refused the fix. Judging it from the argument alone
+gets that wrong, which is what the first attempt did.
+
+See `tests/interface-value-type-errors.abs`.
+
+### Fixed: the size of an allocated array was evaluated and then ignored
+
+```absolute
+int32[] a = new int32["hello"];
+println(format("len={}", a.length));   // len=-1250607064
+```
+
+Two of the three places an array size is written asked whether it is a number:
+a declarator (`int32 fixed[n]`) and an array literal. The third -- `new T[n]`,
+which is the one people write -- evaluated the size against an expected `int64`
+and threw the answer away. No diagnostic, no crash, and a length read out of
+whatever the pointer happened to be, with every index into it then
+bounds-checked against garbage. Only the first dimension was evaluated at all,
+so the rest were unexamined too.
+
+Zero stays legal there, and that is the difference from the declarator form:
+`new int32[0]` is an array with nothing to read, which
+`tests/array-zero-initialization.abs` relies on, while a declarator's storage is
+the frame's and has to have a size. Copying the declarator's rule wholesale was
+the first attempt and it broke both of those tests, which is how the
+distinction got written down.
+
+See `tests/array-allocation-size-errors.abs`.
 
 ## 2. Missing features that fail loudly
 
