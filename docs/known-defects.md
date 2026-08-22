@@ -955,9 +955,24 @@ snapshot is filled field by field rather than by `copy`: it is the per-field
 store that weakens, and copying the array wholesale gave the snapshot the map's
 values, so deleting the iterator destroyed them.
 
-The same shape answers `HashMap`, which is the last container and is
-untouched: its iterator is an array of `HashKeyValuePair`, and the reason it
-was called unanswerable is the reason that has just been retracted.
+`HashMap` and `HashSet` are the last containers, and the same shape answers
+them: the iterator's `HashKeyValuePair<K, sub V>` is the pair instantiated at
+the weakened parameter, exactly as the map's is. A hash table has two places
+the ordinary containers do not, and both were wrong for an owning element:
+
+- **Rehashing.** Growth copied the old table and read each live slot into the
+  new one, so both tables held a handle to every element -- and the old table
+  is dropped as the call returns. Every live entry is taken out of the old
+  table before the table is replaced now, which leaves exactly one name for
+  each entry at every moment in between.
+- **Tombstones.** `remove` marked the slot dead and left the handle in it.
+  Nothing looks at a tombstone again, so that was a leak for every entry a
+  program removed; the slot gives back what it held.
+
+`HashSet`'s element is its key, so its hash and equality callbacks take `sub T`
+-- they read an element and keep neither. At `T = int32` `sub T` is `T`, and a
+caller writes them as before. `tests/std-hash-owner-elements.abs` counts every
+destruction, and its insert loop is long enough to force several rehashes.
 
 Two defects in the compiler surfaced on the way, both of them a qualifier
 carried where it does not belong:

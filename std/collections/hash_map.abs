@@ -3,17 +3,25 @@ namespace std.collections {
         public K key;
         public V value;
 
+        // A field store takes what it is given, so what is given must be an
+        // owner. A parameter borrows unless the caller says otherwise.
         public void initialize(K entryKey, V entryValue) {
-            key = entryKey;
-            value = entryValue;
+            key = move(entryKey);
+            value = move(entryValue);
         }
     }
 
     class HashMapIterator<K, V> {
-        private HashKeyValuePair<K, V>[] snapshot;
+        // A snapshot names what the map holds; it does not own it. A pair is a
+        // struct, and `sub` weakens a handle rather than a struct -- but the
+        // pair is *generic* in its value, so the snapshot is the pair
+        // instantiated at the weakened parameter. `MapIterator` says the same
+        // thing the same way; this file recorded it as the thing that could
+        // not be said.
+        private HashKeyValuePair<K, sub V>[] snapshot;
         private int32 index;
 
-        public HashMapIterator(HashKeyValuePair<K, V>[] entries) {
+        public HashMapIterator(HashKeyValuePair<K, sub V>[] entries) {
             snapshot = copy(entries);
             index = -1;
         }
@@ -23,7 +31,7 @@ namespace std.collections {
             return index < snapshot.length;
         }
 
-        public HashKeyValuePair<K, V> value {
+        public HashKeyValuePair<K, sub V> value {
             get { return snapshot[index]; }
         }
     }
@@ -150,26 +158,46 @@ namespace std.collections {
 
         private void insertRehashed(K key, V value) {
             int32 index = findInsertionIndex(key);
-            keys[index] = key;
-            values[index] = value;
+            unsafeArraySet(keys, index, move(key));
+            unsafeArraySet(values, index, move(value));
             states[index] = 1;
             _count = _count + 1;
         }
 
+        // Every live entry is taken out of the old table before the table is
+        // replaced, and put into the new one from there. A copy gave the new
+        // table and the old one a handle each, and the old one is dropped as
+        // this call returns; taking is what leaves exactly one name for each
+        // entry at every moment in between. The staging arrays hold them for
+        // the length of the call, and what is left in them afterwards -- the
+        // tombstones and the empty slots -- holds nothing.
         private void rehash(int32 newCapacity) {
-            K[] previousKeys = copy(keys);
-            V[] previousValues = copy(values);
-            int32[] previousStates = copy(states);
             int32 previousCapacity = _capacity;
+            K[] stagedKeys = new K[previousCapacity];
+            V[] stagedValues = new V[previousCapacity];
+            int32[] stagedStates = new int32[previousCapacity];
+
+            int32 index = 0;
+            while (index < previousCapacity) {
+                stagedStates[index] = states[index];
+                if (states[index] == 1) {
+                    unsafeArraySet(stagedKeys, index,
+                        unsafeArrayTake(keys, index));
+                    unsafeArraySet(stagedValues, index,
+                        unsafeArrayTake(values, index));
+                }
+                index = index + 1;
+            }
 
             allocateTable(newCapacity);
             _count = 0;
             tombstoneCount = 0;
 
-            int32 index = 0;
+            index = 0;
             while (index < previousCapacity) {
-                if (previousStates[index] == 1) {
-                    insertRehashed(previousKeys[index], previousValues[index]);
+                if (stagedStates[index] == 1) {
+                    insertRehashed(unsafeArrayTake(stagedKeys, index),
+                        unsafeArrayTake(stagedValues, index));
                 }
                 index = index + 1;
             }
@@ -245,6 +273,12 @@ namespace std.collections {
         public bool remove(K key) {
             int32 index = findIndex(key);
             if (index < 0) { return false; }
+            // The slot becomes a tombstone, and nothing will look at it again,
+            // so what it held is given back here. Marking the state and
+            // leaving the handle in place is a leak for every entry a program
+            // removes.
+            unsafeArrayDrop(keys, index, 1);
+            unsafeArrayDrop(values, index, 1);
             states[index] = 2;
             _count = _count - 1;
             tombstoneCount = tombstoneCount + 1;
@@ -268,17 +302,20 @@ namespace std.collections {
             tombstoneCount = 0;
         }
 
-        public HashKeyValuePair<K, V>[] toArray() {
-            HashKeyValuePair<K, V>[] result =
-                new HashKeyValuePair<K, V>[_count];
+        // A second array over the same values, and only one of the two can
+        // own them -- this one does not, which the value half of the pair
+        // says. Filled field by field rather than through `initialize`,
+        // because initialize *takes* its arguments and this hands over
+        // nothing.
+        public HashKeyValuePair<K, sub V>[] toArray() {
+            HashKeyValuePair<K, sub V>[] result =
+                new HashKeyValuePair<K, sub V>[_count];
             int32 sourceIndex = 0;
             int32 resultIndex = 0;
             while (sourceIndex < _capacity) {
                 if (states[sourceIndex] == 1) {
-                    result[resultIndex].initialize(
-                        keys[sourceIndex],
-                        values[sourceIndex]
-                    );
+                    result[resultIndex].key = keys[sourceIndex];
+                    result[resultIndex].value = values[sourceIndex];
                     resultIndex = resultIndex + 1;
                 }
                 sourceIndex = sourceIndex + 1;
@@ -286,8 +323,8 @@ namespace std.collections {
             return result;
         }
 
-        public K[] keysToArray() {
-            K[] result = new K[_count];
+        public sub K[] keysToArray() {
+            sub K[] result = new K[_count];
             int32 sourceIndex = 0;
             int32 resultIndex = 0;
             while (sourceIndex < _capacity) {
@@ -300,8 +337,8 @@ namespace std.collections {
             return result;
         }
 
-        public V[] valuesToArray() {
-            V[] result = new V[_count];
+        public sub V[] valuesToArray() {
+            sub V[] result = new V[_count];
             int32 sourceIndex = 0;
             int32 resultIndex = 0;
             while (sourceIndex < _capacity) {
@@ -328,12 +365,15 @@ namespace std.collections {
         // Power-of-two capacity, so probing masks instead of taking a
         // remainder. See HashMap for the same reasoning.
         private int32 _mask;
-        private func<int64, T> hashFunction;
-        private func<bool, T, T> equalityFunction;
+        // The hash and the equality callbacks read an element and keep
+        // neither, so they are handed borrows. At `T = int32` `sub T` is `T`
+        // and a caller writes them exactly as before.
+        private func<int64, sub T> hashFunction;
+        private func<bool, sub T, sub T> equalityFunction;
 
         public HashSet(
-            func<int64, T> hash,
-            func<bool, T, T> equals
+            func<int64, sub T> hash,
+            func<bool, sub T, sub T> equals
         ) {
             hashFunction = hash;
             equalityFunction = equals;
@@ -351,8 +391,8 @@ namespace std.collections {
         }
 
         public HashSet(
-            func<int64, T> hash,
-            func<bool, T, T> equals,
+            func<int64, sub T> hash,
+            func<bool, sub T, sub T> equals,
             int32 initialCapacity
         ) {
             if (initialCapacity < 1) {
@@ -384,19 +424,19 @@ namespace std.collections {
             }
         }
 
-        private int32 bucket(T value) {
-            func<int64, T> hash = hashFunction;
+        private int32 bucket(sub T value) {
+            func<int64, sub T> hash = hashFunction;
             return (hash(value) & (_mask as int64)) as int32;
         }
 
-        private bool itemsEqual(T left, T right) {
-            func<bool, T, T> equals = equalityFunction;
+        private bool itemsEqual(sub T left, sub T right) {
+            func<bool, sub T, sub T> equals = equalityFunction;
             return equals(left, right);
         }
 
-        private int32 findIndex(T value) {
+        private int32 findIndex(sub T value) {
             int32 index = bucket(value);
-            func<bool, T, T> equals = equalityFunction;
+            func<bool, sub T, sub T> equals = equalityFunction;
             int32 scanned = 0;
             while (scanned <= _mask) {
                 int32 state = unsafeArrayGet(states, index);
@@ -410,7 +450,7 @@ namespace std.collections {
             return -1;
         }
 
-        private int32 findInsertionIndex(T value) {
+        private int32 findInsertionIndex(sub T value) {
             int32 index = bucket(value);
             int32 firstTombstone = -1;
             int32 scanned = 0;
@@ -430,15 +470,26 @@ namespace std.collections {
 
         private void insertRehashed(T value) {
             int32 index = findInsertionIndex(value);
-            items[index] = value;
+            unsafeArraySet(items, index, move(value));
             states[index] = 1;
             _count = _count + 1;
         }
 
+        // The same staging the map's rehash uses, and for the same reason.
         private void rehash(int32 newCapacity) {
-            T[] previousItems = copy(items);
-            int32[] previousStates = copy(states);
             int32 previousCapacity = _capacity;
+            T[] stagedItems = new T[previousCapacity];
+            int32[] stagedStates = new int32[previousCapacity];
+
+            int32 index = 0;
+            while (index < previousCapacity) {
+                stagedStates[index] = states[index];
+                if (states[index] == 1) {
+                    unsafeArraySet(stagedItems, index,
+                        unsafeArrayTake(items, index));
+                }
+                index = index + 1;
+            }
 
             _capacity = newCapacity;
             _mask = _capacity - 1;
@@ -448,10 +499,10 @@ namespace std.collections {
             _count = 0;
             tombstoneCount = 0;
 
-            int32 index = 0;
+            index = 0;
             while (index < previousCapacity) {
-                if (previousStates[index] == 1) {
-                    insertRehashed(previousItems[index]);
+                if (stagedStates[index] == 1) {
+                    insertRehashed(unsafeArrayTake(stagedItems, index));
                 }
                 index = index + 1;
             }
@@ -475,10 +526,15 @@ namespace std.collections {
             get { return _count == 0; }
         }
 
-        public bool contains(T value) {
+        // A membership test compares and keeps nothing, so it borrows what it
+        // is handed rather than taking it.
+        public bool contains(sub T value) {
             return findIndex(value) >= 0;
         }
 
+        // A duplicate is refused without the set taking anything: nothing was
+        // moved out of `value`, so the caller's value is released by the
+        // statement that made it.
         public bool add(T value) {
             if (contains(value)) { return false; }
             ensureRoomForNewEntry();
@@ -486,15 +542,18 @@ namespace std.collections {
             if (states[index] == 2) {
                 tombstoneCount = tombstoneCount - 1;
             }
-            items[index] = value;
+            unsafeArraySet(items, index, move(value));
             states[index] = 1;
             _count = _count + 1;
             return true;
         }
 
-        public bool remove(T value) {
+        public bool remove(sub T value) {
             int32 index = findIndex(value);
             if (index < 0) { return false; }
+            // The slot becomes a tombstone, and nothing will look at it again,
+            // so what it held is given back here.
+            unsafeArrayDrop(items, index, 1);
             states[index] = 2;
             _count = _count - 1;
             tombstoneCount = tombstoneCount + 1;
@@ -509,8 +568,10 @@ namespace std.collections {
             tombstoneCount = 0;
         }
 
-        public T[] toArray() {
-            T[] result = new T[_count];
+        // A second array over the same items, and only one of the two can own
+        // them -- this one does not.
+        public sub T[] toArray() {
+            sub T[] result = new T[_count];
             int32 sourceIndex = 0;
             int32 resultIndex = 0;
             while (sourceIndex < _capacity) {
