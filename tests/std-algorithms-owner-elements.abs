@@ -1,0 +1,103 @@
+// The standard algorithms over a vector whose elements own something.
+//
+// They were written when `vec[i]` handed back the element as if the vector
+// were giving it up, so each of them held an element out in a local and stored
+// it back into another slot: at `T = int32` that was a copy, and at an element
+// type that owns it would have been the vector holding one object in two
+// slots. None of it could be checked, because the indexer had one type for
+// both accessors and nothing distinguished a borrow from a handover.
+//
+// With the projection they say what they do. An algorithm that only reads is
+// handed borrows -- `sub T` on a comparator, a predicate, a mapper, a search
+// target -- and an algorithm that rearranges uses `swap`, which moves elements
+// between slots the vector already has and hands nothing out. `filter` returns
+// `Vector<sub T>`: it selects, and what it selects still belongs to the source.
+//
+// At `T = int32` every one of those qualifiers is absent, which is why
+// tests/collection-algorithms.abs is unchanged.
+
+import "../std/collections/vector.abs";
+import "../std/collections/algorithms.abs";
+import "../std/string.abs";
+
+int32 destroyed = 0;
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+    public void destroy() { destroyed = destroyed + 1; }
+}
+
+int32 byValue(sub Cell* left, sub Cell* right) {
+    if (left.value < right.value) { return -1; }
+    if (left.value > right.value) { return 1; }
+    return 0;
+}
+
+int32 main() {
+    Vector<Cell*>* cells = new Vector<Cell*>();
+    cells.push(new Cell(4));
+    cells.push(new Cell(1));
+    cells.push(new Cell(5));
+    cells.push(new Cell(2));
+    cells.push(new Cell(3));
+
+    // Sorting rearranges the vector's own slots. Nothing leaves it, so
+    // nothing is released and nothing is duplicated.
+    cells.sort(byValue);
+    assert(cells[0].value == 1, "sorted ascending");
+    assert(cells[4].value == 5, "and to the end");
+    assert(cells.count == 5, "with every element still in it");
+    assert(destroyed == 0, "and none of them released");
+
+    // Reversing is the same operation with a fixed pair schedule.
+    cells.reverse();
+    assert(cells[0].value == 5, "reversed");
+    assert(cells[4].value == 1, "both ends");
+    assert(destroyed == 0, "and still released nothing");
+
+    // A read-only walk hands the callback a borrow.
+    int32 firstSmall = cells.find(fn(sub Cell* c) => c.value < 3);
+    assert(firstSmall == 3, "found the first one under three");
+
+    int32 total = cells.reduce(0, fn(int32 acc, sub Cell* c) => acc + c.value);
+    assert(total == 15, "and added them all up");
+
+    // A mapper reads each element and produces a new value of its own.
+    Vector<int32>* doubled = cells.transform(fn(sub Cell* c) => c.value * 2);
+    assert(doubled.count == 5, "one output per element");
+    assert(doubled[0] == 10, "and each is the double of its input");
+    delete doubled;
+    assert(destroyed == 0, "a vector of numbers owns none of the cells");
+
+    // A filter selects. What it selects still belongs to the source, so the
+    // result names the elements rather than owning them -- deleting it
+    // releases nothing.
+    Vector<sub Cell*>* small = cells.filter(fn(sub Cell* c) => c.value < 4);
+    assert(small.count == 3, "three of them are under four");
+    assert(small[0].value == 3, "in the order the source has them");
+    delete small;
+    assert(destroyed == 0, "and the view released none of them");
+    assert(cells.count == 5, "the source still holds every element");
+
+    // Searching compares against a borrow and stores nothing.
+    sub Cell* third = cells[2];
+    assert(cells.indexOf(third) == 2, "found the element it was handed");
+    assert(cells.contains(third), "and says so");
+    assert(destroyed == 0, "searching released nothing");
+
+    // Taking an element out is the operation that hands one over, and it is
+    // spelled differently from reading one.
+    Cell* taken = cells.takeAt(0);
+    assert(taken.value == 5, "the take handed the element over");
+    delete taken;
+    assert(destroyed == 1, "and the name that owns it released it");
+
+    delete cells;
+    assert(destroyed == 5, "four left, and each released once");
+
+    println(format("std-algorithms-owner-elements: total={} destroyed={}",
+        total, destroyed));
+    println("std-algorithms-owner-elements=ok");
+    return 0;
+}
