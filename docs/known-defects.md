@@ -909,18 +909,45 @@ handed over element by element now, and a take clears only what has something
 to clear, so at `T = int32` the caller's array is untouched. See
 `tests/priority-queue-owner-elements.abs`.
 
-`Deque` and `PriorityQueue` are the two that can be finished, and both are
-finished. The rest are blocked on the same undecided question rather than on
-the same missing spelling, and they are recorded rather than patched:
+`Vector` follows too, and it is the one the indexer projection unblocked. Its
+own body was already right -- it moves elements rather than copying them, and
+`first`, `last` and `toArray` hand back the subscriber form -- but
+`Vector<Cell*>` could not be instantiated at all, because a **method's return
+type is instantiated with the class** and `builder()` returned a
+`VectorBuilder<T>`. A program paid for a builder it never called. `builder()`
+is an extension now, instantiated where it is called, so a vector of owners is
+an ordinary vector and only a program that asks one for a builder is refused --
+with the lines that say why. `tests/std-vector-owner-elements.abs` runs one:
+push, read, write, swap, take, pop, remove, iterate, and the destructor count
+at the end.
 
-- **`Set` and `Map`** are blocked by their builders, exactly as `Vector` is by
-  `VectorBuilder`. A builder is a staging owner seeded from a live container's
-  storage, so over an owning element type its first act is to duplicate what
-  that container still holds; borrowing instead does not help, because
-  `finish()` would then hand a container of owners a set of handles it never
-  owned. `tests/std-collections-owner-elements-errors.abs` states it in full:
-  whether `builder()` should drain the container, be refused for owning
-  elements, or not exist is a decision about what the method means.
+`swap` and `takeAt` are what the container gained. Both are the operations the
+projection made necessary to name: `v[i]` borrows the cell, so rearranging is
+an exchange between slots the vector already has, and giving an element up is
+`takeAt`. The generic algorithms over a vector are written with them --
+`sort` and `reverse` swap rather than holding a key out in a local -- and the
+ones that only read take `sub T`: a comparator, a predicate, a mapper, a search
+target. `filter` returns `Vector<sub T>`, because a filter selects and what it
+selects still belongs to the source; at `T = int32` every one of those
+qualifiers is absent, which is why `tests/collection-algorithms.abs` is
+unchanged. `tests/std-algorithms-owner-elements.abs` runs the same algorithms
+at an element type that owns.
+
+What is left is blocked on the same undecided question rather than on the same
+missing spelling, and it is recorded rather than patched:
+
+- **`Set` and `Map`** are blocked by their builders, and `VectorBuilder` is
+  blocked in the same way -- it is only no longer in `Vector`'s way. A builder
+  is a staging owner seeded from a live container's storage, so over an owning
+  element type its first act is to duplicate what that container still holds;
+  borrowing instead does not help, because `finish()` would then hand a
+  container of owners a set of handles it never owned.
+  `tests/std-collections-owner-elements-errors.abs` states it in full: whether
+  `builder()` should drain the container, be refused for owning elements, or
+  not exist is a decision about what the method means. Moving it out of the
+  class is what makes that decision affordable to defer -- it now costs the
+  program that asks for a builder, and nothing else. `Set` and `Map` would take
+  the same move.
 - **`HashMap`** is blocked by its iterator for a related reason. The snapshot
   is an array of `HashKeyValuePair`, and a pair is a struct: `sub` weakens a
   handle and a struct is not one, so there is no way to say "this array names

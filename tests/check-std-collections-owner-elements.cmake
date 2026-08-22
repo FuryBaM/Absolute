@@ -19,6 +19,10 @@ set(diagnostics "${compiler_stdout}${compiler_stderr}")
 # handle. Anchored to the class rather than to the line, because these lines
 # belong to the standard library and are expected to move; what must not change
 # quietly is that the instantiation is named.
+#
+# It is reached only because the program asks for a builder. `Vector<Cell*>`
+# itself is an ordinary vector -- the check below that a fixed class stays
+# quiet is what says so, and tests/std-vector-owner-elements.abs runs one.
 foreach(pattern IN ITEMS
         "at 'std[.]collections[.]VectorBuilder<Cell[*]>' the field 'buffer' is stored from a subscriber [[]E_RESOURCE_FIELD_REQUIRES_OWNER[]]"
         "at 'std[.]collections[.]VectorBuilder<Cell[*]>' a slot of 'buffer' is filled by reading another slot rather than taking it [[]E_RESOURCE_ELEMENT_REQUIRES_OWNER[]]"
