@@ -680,7 +680,8 @@ namespace {
                             available.wait(lock);
                         }
                         else {
-                            available.wait_until(lock, timers.top().deadline);
+                            const auto deadline = timers.top().deadline;
+                            available.wait_until(lock, deadline);
                         }
                     }
                     if (stopping && queued == 0) break;
