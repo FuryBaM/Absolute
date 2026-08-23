@@ -1,0 +1,66 @@
+// Percent-encoding is an encoding, not a list of four characters, and an
+// authority is more than "everything before the first colon". Both of those
+// used to hand back an answer that looked like a URL and named something else.
+import "../std/uri.abs";
+import "../std/form.abs";
+
+int32 main() {
+    // encode escapes everything outside the unreserved set, "%" included, so
+    // decode is its inverse rather than a lossy pass over four characters.
+    assert(std.uri.encode("a b") == "a%20b", "a space");
+    assert(std.uri.encode("%") == "%25", "a percent sign escapes itself");
+    assert(std.uri.encode("a&b=c") == "a%26b%3Dc", "a separator");
+    assert(std.uri.encode("-._~") == "-._~", "the unreserved set survives");
+    assert(std.uri.encode("/") == "%2F", "a path separator inside a component");
+    assert(std.uri.encode("é") == "%C3%A9", "a non-ASCII code point is its UTF-8 octets");
+
+    assert(std.uri.decode("a%20b") == "a b", "a decoded space");
+    assert(std.uri.decode("%C3%A9") == "é", "octets back to a code point");
+    assert(std.uri.decode("%2f") == "/", "lower-case hex digits");
+    assert(std.uri.decode("100%") == "100%", "a trailing percent is literal");
+    assert(std.uri.decode("%zz") == "%zz", "a percent that is not an escape");
+
+    assert(std.uri.decode(std.uri.encode("100%20")) == "100%20",
+        "a round trip through text that already looks encoded");
+    assert(std.uri.decode(std.uri.encode("a b&c=d%e")) == "a b&c=d%e",
+        "a round trip over every kind of character at once");
+
+    // A port that the scheme does not imply is part of the URL.
+    std.uri.Uri* httpOn443 = std.uri.parse("http://example.com:443/x");
+    assert(httpOn443.port == 443, "the written port is read");
+    assert(httpOn443.toString() == "http://example.com:443/x",
+        "http on 443 keeps its port");
+    std.uri.Uri* httpsOn80 = std.uri.parse("https://example.com:80/x");
+    assert(httpsOn80.toString() == "https://example.com:80/x",
+        "https on 80 keeps its port");
+    assert(std.uri.parse("http://example.com/x").toString() == "http://example.com/x",
+        "and a default port is still implied");
+    assert(std.uri.parse("https://example.com/x").toString() == "https://example.com/x",
+        "on both schemes");
+
+    // The authority is a host, optionally behind userinfo and optionally
+    // bracketed, and only the colon after it introduces a port.
+    std.uri.Uri* withUser = std.uri.parse("http://user:pass@example.com/x");
+    assert(withUser.host == "example.com", "userinfo is not the host");
+    assert(withUser.port == 80, "and its colon is not a port separator");
+
+    std.uri.Uri* v6 = std.uri.parse("http://[::1]:8080/x");
+    assert(v6.host == "[::1]", "an IPv6 literal keeps its brackets");
+    assert(v6.port == 8080, "and the colon after them is the port");
+    assert(v6.toString() == "http://[::1]:8080/x", "and it writes back");
+
+    std.uri.Uri* v6NoPort = std.uri.parse("https://[2001:db8::1]/x");
+    assert(v6NoPort.host == "[2001:db8::1]", "colons inside the brackets");
+    assert(v6NoPort.port == 443, "and the scheme's port");
+
+    // A form body is percent-decoded, which is the whole reason decode exists.
+    std.form.FormData* form = std.form.parseUrlEncoded(
+        "email=user%40example.com&note=a%26b&q=hello+world&pct=50%25");
+    assert(form.getValue("email") == "user@example.com", "an escaped at sign");
+    assert(form.getValue("note") == "a&b", "an escaped separator");
+    assert(form.getValue("q") == "hello world", "a plus is a space");
+    assert(form.getValue("pct") == "50%", "an escaped percent sign");
+
+    println("uri-percent-encoding=ok");
+    return 0;
+}

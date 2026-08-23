@@ -1,0 +1,97 @@
+// The edges of ISO-8601 text and of the instant it names. Every value here was
+// wrong before: a fraction read as a millisecond count, a bare date whose day
+// was read as a zone offset, a second that rounded the wrong way before the
+// epoch, and a negative year that lost a digit on the way out.
+import "../std/datetime.abs";
+
+DateTime parseUtc(string text) {
+    return std.datetime.parseIso(text);
+}
+
+bool rejects(string text) {
+    try {
+        std.datetime.parseIso(text);
+        return false;
+    }
+    catch (Error* error) {
+        return true;
+    }
+}
+
+int32 main() {
+    TimeZone utc = std.datetime.utcZone();
+
+    // A fraction is a fraction. ".1" is a tenth of a second, and the digits
+    // past the third are resolution this type does not have, not an error.
+    assert(parseUtc("2024-01-01T00:00:00.1Z").time.millisecond == 100,
+        ".1 is 100 ms");
+    assert(parseUtc("2024-01-01T00:00:00.12Z").time.millisecond == 120,
+        ".12 is 120 ms");
+    assert(parseUtc("2024-01-01T00:00:00.123Z").time.millisecond == 123,
+        ".123 is 123 ms");
+    assert(parseUtc("2024-01-01T00:00:00.1234Z").time.millisecond == 123,
+        ".1234 truncates to 123 ms");
+    assert(parseUtc("2024-01-01T00:00:00.000999Z").time.millisecond == 0,
+        "a fraction below a millisecond is zero, not 999");
+    assert(parseUtc("2024-01-01T00:00:00,5Z").time.millisecond == 500,
+        "a comma is the other decimal mark ISO-8601 allows");
+
+    // A bare date is a bare date. Its day is not a zone offset.
+    DateTime bare = parseUtc("1999-12-31");
+    assert(bare.timeZone.offsetMinutes == 0, "a date alone is UTC");
+    assert(bare.date.year == 1999 && bare.date.month == 12 && bare.date.day == 31,
+        "a date alone keeps its day");
+    assert(std.datetime.toUnixMillis(bare) == 946598400000 as int64,
+        "1999-12-31T00:00:00Z");
+
+    // A zone that is written is read, in both directions and both spellings.
+    assert(parseUtc("1970-01-01T05:30:00+05:30").timeZone.offsetMinutes == 330,
+        "+05:30 is 330 minutes");
+    assert(parseUtc("1970-01-01T05:30:00+0530").timeZone.offsetMinutes == 330,
+        "+0530 is the basic spelling of the same offset");
+    assert(std.datetime.toUnixMillis(parseUtc("1970-01-01T05:30:00+05:30")) == 0 as int64,
+        "an offset moves the instant, not the clock reading");
+    assert(parseUtc("1969-12-31T16:00:00-08:00").timeZone.offsetMinutes == -480,
+        "-08:00 is -480 minutes");
+    assert(parseUtc("2024-01-01T00:00:00").timeZone.offsetMinutes == 0,
+        "a time with no zone is UTC");
+
+    // What is not an ISO-8601 value is refused rather than half-read.
+    assert(rejects(""), "empty text");
+    assert(rejects("not a date"), "text that is not a date");
+    assert(rejects("20240101"), "a date with no separators");
+    assert(rejects("2024-01-01T00:00:00+99:00"), "an hour that is not an hour");
+    assert(rejects("2024-01-01T00:00:00Z extra"), "trailing text");
+    assert(rejects("2024-01-01T00:00:00."), "a decimal mark with no fraction");
+    assert(rejects("2024-1-1"), "a month that is not two digits");
+
+    // A second is floored, not truncated: before the epoch the two differ.
+    DateTime beforeEpoch = std.datetime.fromUnixMillis(-500 as int64, utc);
+    assert(std.datetime.toUnixMillis(beforeEpoch) == -500 as int64, "-500 ms");
+    assert(std.datetime.toUnixSeconds(beforeEpoch) == -1 as int64,
+        "-500 ms is second -1, not second 0");
+    assert(std.datetime.toUnixSeconds(std.datetime.fromUnixMillis(-1000 as int64, utc)) == -1 as int64,
+        "an exact second before the epoch is itself");
+    assert(std.datetime.toUnixSeconds(std.datetime.fromUnixMillis(500 as int64, utc)) == 0 as int64,
+        "after the epoch the two agree");
+    assert(std.datetime.toUnixSeconds(std.datetime.fromUnixMillis(-1500 as int64, utc)) == -2 as int64,
+        "and it keeps flooring further back");
+
+    // A year keeps its four digits, so what is written can be read back.
+    DateTime negative = std.datetime.createDateTime(
+        std.datetime.createDate(-1, 1, 1),
+        std.datetime.createTime(0, 0, 0, 0),
+        utc);
+    assert(std.datetime.formatIso(negative) == "-0001-01-01T00:00:00Z",
+        "a negative year is four digits and a sign");
+    assert(std.datetime.parseIso(std.datetime.formatIso(negative)).date.year == -1,
+        "and it reads back as the same year");
+
+    // A round trip through text is the identity, offset and all.
+    string iso = "2026-07-23T19:04:02.500+05:30";
+    assert(std.datetime.formatIso(std.datetime.parseIso(iso)) == iso,
+        "text -> value -> text");
+
+    println("datetime-iso-edges=ok");
+    return 0;
+}
