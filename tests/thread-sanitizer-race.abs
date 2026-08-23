@@ -18,13 +18,16 @@ import "std/concurrent.abs";
 // then the scheduler's own handoff orders their accesses -- ThreadSanitizer
 // sees the ordering, reports nothing, and this case fails for the one reason
 // it must never fail: looking clean.
+//
+// The loop itself must not yield. delay() takes a lock in the scheduler, and
+// that lock is a happens-before between one write and the next, which is how
+// a program that is a race by construction used to come back clean.
 async int64 racer(int64 address, int64 readyAddress, int64 iterations) {
     raw int64* slot = address as raw int64*;
     raw void* ready = readyAddress as raw void*;
     absolute_atomic_fetch_add(ready, 1);
     int32 waited = 0;
-    while (absolute_atomic_load(ready) < 2 && waited < 2000) {
-        std.task.delay(1);
+    while (absolute_atomic_load(ready) < 2 && waited < 20000000) {
         waited += 1;
     }
 
@@ -32,24 +35,22 @@ async int64 racer(int64 address, int64 readyAddress, int64 iterations) {
     while (index < iterations) {
         // Not `+= 1`: the read and the write are what the two tasks interleave.
         slot[0] = slot[0] + 1;
-        // Yielding inside the loop keeps both tasks in it at the same time
-        // even where the scheduler has fewer workers than tasks.
-        if ((index & 1023) == 0) { std.task.delay(1); }
         index += 1;
     }
     return index;
 }
 
 async int32 main() {
-    int64 counter = 0;
-    raw int64* address = &counter;
-    int64 handle = address as int64;
+    raw int64* cell = new raw int64;
+    cell[0] = 0;
+    int64 handle = cell as int64;
     std.concurrent.AtomicInt* ready = new std.concurrent.AtomicInt(0);
     int64 readyHandle = ready.nativeHandle() as int64;
     task<int64> first = spawn racer(handle, readyHandle, 40000);
     task<int64> second = spawn racer(handle, readyHandle, 40000);
     int64 performed = await first + await second;
     delete ready;
+    delete cell;
     println(performed);
     return 0;
 }

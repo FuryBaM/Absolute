@@ -6,7 +6,8 @@ import "../std/form.abs";
 
 bool rejectsPort(string text) {
     try {
-        std.uri.parse(text);
+        std.uri.Uri* uri = std.uri.parse(text);
+        delete uri;
         return false;
     }
     catch (Error* error) {
@@ -40,28 +41,40 @@ int32 main() {
     assert(httpOn443.port == 443, "the written port is read");
     assert(httpOn443.toString() == "http://example.com:443/x",
         "http on 443 keeps its port");
+    delete httpOn443;
+
     std.uri.Uri* httpsOn80 = std.uri.parse("https://example.com:80/x");
     assert(httpsOn80.toString() == "https://example.com:80/x",
         "https on 80 keeps its port");
-    assert(std.uri.parse("http://example.com/x").toString() == "http://example.com/x",
+    delete httpsOn80;
+
+    std.uri.Uri* httpDefault = std.uri.parse("http://example.com/x");
+    assert(httpDefault.toString() == "http://example.com/x",
         "and a default port is still implied");
-    assert(std.uri.parse("https://example.com/x").toString() == "https://example.com/x",
+    delete httpDefault;
+
+    std.uri.Uri* httpsDefault = std.uri.parse("https://example.com/x");
+    assert(httpsDefault.toString() == "https://example.com/x",
         "on both schemes");
+    delete httpsDefault;
 
     // The authority is a host, optionally behind userinfo and optionally
     // bracketed, and only the colon after it introduces a port.
     std.uri.Uri* withUser = std.uri.parse("http://user:pass@example.com/x");
     assert(withUser.host == "example.com", "userinfo is not the host");
     assert(withUser.port == 80, "and its colon is not a port separator");
+    delete withUser;
 
     std.uri.Uri* v6 = std.uri.parse("http://[::1]:8080/x");
     assert(v6.host == "[::1]", "an IPv6 literal keeps its brackets");
     assert(v6.port == 8080, "and the colon after them is the port");
     assert(v6.toString() == "http://[::1]:8080/x", "and it writes back");
+    delete v6;
 
     std.uri.Uri* v6NoPort = std.uri.parse("https://[2001:db8::1]/x");
     assert(v6NoPort.host == "[2001:db8::1]", "colons inside the brackets");
     assert(v6NoPort.port == 443, "and the scheme's port");
+    delete v6NoPort;
 
     // A port is a number between 0 and 65535, not the digits parseInt would
     // accept and then ignore. Trailing text, a value past the range, and a
@@ -70,10 +83,14 @@ int32 main() {
     assert(rejectsPort("http://example.com:65536/x"), "a port that is not a port");
     assert(rejectsPort("http://example.com:-1/x"), "a negative port");
     assert(rejectsPort("http://[::1]:99999/x"), "an IPv6 port past the range");
-    assert(std.uri.parse("http://example.com:65535/x").port == 65535,
-        "the maximum port");
-    assert(std.uri.parse("http://example.com:0/x").port == 0,
-        "port zero is a port");
+
+    std.uri.Uri* maxPort = std.uri.parse("http://example.com:65535/x");
+    assert(maxPort.port == 65535, "the maximum port");
+    delete maxPort;
+
+    std.uri.Uri* zeroPort = std.uri.parse("http://example.com:0/x");
+    assert(zeroPort.port == 0, "port zero is a port");
+    delete zeroPort;
 
     // A form body is percent-decoded, which is the whole reason decode exists.
     std.form.FormData* form = std.form.parseUrlEncoded(
@@ -82,6 +99,7 @@ int32 main() {
     assert(form.getValue("note") == "a&b", "an escaped separator");
     assert(form.getValue("q") == "hello world", "a plus is a space");
     assert(form.getValue("pct") == "50%", "an escaped percent sign");
+    delete form;
 
     println("uri-percent-encoding=ok");
     return 0;
