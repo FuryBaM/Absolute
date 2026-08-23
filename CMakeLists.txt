@@ -5738,6 +5738,7 @@ if(BUILD_TESTING)
         )
         set_tests_properties(absolute.build-integration-http-server PROPERTIES
             FIXTURES_SETUP absolute-integration-http-server
+            TIMEOUT 300
         )
         add_test(
             NAME absolute.run-integration-http-server
