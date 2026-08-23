@@ -1,8 +1,14 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <type_traits>
 #include <utility>
+
+// Durable language strings live behind this allocator. Network and TLS I/O
+// copy received bytes into it on every target, including Windows, so the
+// declaration cannot sit inside a POSIX-only #else.
+extern "C" char* absolute_string_alloc(std::size_t bytes);
 
 namespace Absolute::RuntimeDetail {
     using BlockingIoOperation = void (*)(void*);
