@@ -13,6 +13,8 @@
 import "std/task.abs";
 import "std/concurrent.abs";
 
+extern "C" void absolute_keep(int64 value);
+
 // ThreadSanitizer tracks OS threads, not fibers. A nested spawn without a core
 // enters the caller's queue, and a fiber that has started stays on that worker.
 // Two racers launched that way can run one after the other on one thread: the
@@ -25,6 +27,10 @@ import "std/concurrent.abs";
 // must not yield. delay() takes a lock in the scheduler, and that lock is a
 // happens-before between one write and the next, which is how a program that
 // is a race by construction used to come back clean.
+//
+// absolute_keep is an unknown call, so -O1 cannot turn the loop into one add.
+// A single store per task finishes before the other starts, and the
+// scheduler's completion handoff orders them.
 async int64 racer(int64 address, int64 readyAddress, int64 iterations) {
     raw int64* slot = address as raw int64*;
     raw void* ready = readyAddress as raw void*;
@@ -38,6 +44,7 @@ async int64 racer(int64 address, int64 readyAddress, int64 iterations) {
     while (index < iterations) {
         // Not `+= 1`: the read and the write are what the two tasks interleave.
         slot[0] = slot[0] + 1;
+        absolute_keep(index);
         index += 1;
     }
     return index;
