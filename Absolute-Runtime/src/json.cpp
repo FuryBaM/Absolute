@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cerrno>
 #include <cstdlib>
+#include <cmath>
 
 enum JsonNodeType {
     JSON_NULL = 0,
@@ -149,6 +150,13 @@ namespace {
                     node->stringValue = res;
                     return node;
                 }
+                // RFC 8259: a code point below U+0020 must be escaped. The
+                // wasm parser already refused one; this one took it, so the
+                // two targets disagreed on whether a document was legal.
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    error = "Control character in string";
+                    return nullptr;
+                }
                 if (c == '\\') {
                     if (pos >= src.size()) {
                         error = "Unterminated escape sequence in string";
@@ -181,21 +189,57 @@ namespace {
                         pos += 4;
                         uint32_t code = static_cast<uint32_t>(
                             std::strtoul(hexStr.c_str(), nullptr, 16));
+                        // A character outside the basic plane is written as a
+                        // surrogate pair, and the two halves are one character.
+                        // Encoding each half on its own produced six bytes of
+                        // CESU-8 where an emoji belonged -- invalid UTF-8, and
+                        // not what the wasm parser produced for the same text.
+                        if (code >= 0xD800 && code <= 0xDBFF) {
+                            if (pos + 6 > src.size() || src[pos] != '\\' ||
+                                src[pos + 1] != 'u') {
+                                error = "Unpaired UTF-16 surrogate in string";
+                                return nullptr;
+                            }
+                            std::string lowStr = src.substr(pos + 2, 4);
+                            if (lowStr.find_first_not_of("0123456789abcdefABCDEF") !=
+                                std::string::npos) {
+                                error = "Invalid \\uXXXX escape";
+                                return nullptr;
+                            }
+                            uint32_t low = static_cast<uint32_t>(
+                                std::strtoul(lowStr.c_str(), nullptr, 16));
+                            if (low < 0xDC00 || low > 0xDFFF) {
+                                error = "Unpaired UTF-16 surrogate in string";
+                                return nullptr;
+                            }
+                            pos += 6;
+                            code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+                        } else if (code >= 0xDC00 && code <= 0xDFFF) {
+                            error = "Unpaired UTF-16 surrogate in string";
+                            return nullptr;
+                        }
                         if (code <= 0x7F) {
                             res += static_cast<char>(code);
                         } else if (code <= 0x7FF) {
                             res += static_cast<char>(0xC0 | ((code >> 6) & 0x1F));
                             res += static_cast<char>(0x80 | (code & 0x3F));
-                        } else {
+                        } else if (code <= 0xFFFF) {
                             res += static_cast<char>(0xE0 | ((code >> 12) & 0x0F));
+                            res += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+                            res += static_cast<char>(0x80 | (code & 0x3F));
+                        } else {
+                            res += static_cast<char>(0xF0 | ((code >> 18) & 0x07));
+                            res += static_cast<char>(0x80 | ((code >> 12) & 0x3F));
                             res += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
                             res += static_cast<char>(0x80 | (code & 0x3F));
                         }
                         break;
                     }
                     default:
-                        res += esc;
-                        break;
+                        // "\\q" is not an escape. Turning it into "q" invented a
+                        // string the document does not contain; wasm refused it.
+                        error = "Invalid escape sequence in string";
+                        return nullptr;
                     }
                 } else {
                     res += c;
@@ -308,23 +352,44 @@ namespace {
         case JSON_NULL: ss << "null"; break;
         case JSON_BOOL: ss << (node->boolValue ? "true" : "false"); break;
         case JSON_NUMBER: {
-            double d = node->numberValue;
-            if (d == static_cast<int64_t>(d)) {
-                ss << static_cast<int64_t>(d);
+            const double d = node->numberValue;
+            // JSON has no infinity and no NaN. Writing "inf" produced a
+            // document this library's own parser refuses.
+            if (!std::isfinite(d)) {
+                ss << "null";
+                break;
+            }
+            // The range test comes first: converting a double that does not
+            // fit an int64 is undefined, and on wasm the same cast really did
+            // hand back INT64_MIN for 1e19.
+            const bool fitsInt64 =
+                d >= -9223372036854775808.0 && d < 9223372036854775808.0 &&
+                d == static_cast<double>(static_cast<int64_t>(d));
+            if (fitsInt64) {
+                if (d == 0.0 && std::signbit(d)) ss << "-0";
+                else ss << static_cast<int64_t>(d);
             } else {
                 ss << d;
             }
             break;
         }
         case JSON_STRING: {
+            static const char hex[] = "0123456789abcdef";
             ss << '"';
-            for (char c : node->stringValue) {
+            for (char raw : node->stringValue) {
+                const unsigned char c = static_cast<unsigned char>(raw);
                 if (c == '"') ss << "\\\"";
                 else if (c == '\\') ss << "\\\\";
+                else if (c == '\b') ss << "\\b";
+                else if (c == '\f') ss << "\\f";
                 else if (c == '\n') ss << "\\n";
                 else if (c == '\r') ss << "\\r";
                 else if (c == '\t') ss << "\\t";
-                else ss << c;
+                // RFC 8259 forbids an unescaped code point below U+0020. These
+                // reached the output as themselves, so a document that had come
+                // in as "\u0001" went out as a byte no other parser accepts.
+                else if (c < 0x20) ss << "\\u00" << hex[c >> 4] << hex[c & 15];
+                else ss << raw;
             }
             ss << '"';
             break;

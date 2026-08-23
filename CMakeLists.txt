@@ -780,6 +780,14 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-json.abs"
     )
     add_test(
+        NAME absolute.json-text-edges-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/json-text-edges.abs"
+    )
+    add_test(
+        NAME absolute.path-lexical-edges-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/path-lexical-edges.abs"
+    )
+    add_test(
         NAME absolute.std-binary-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-binary.abs"
     )
@@ -4593,6 +4601,36 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-std-datetime PROPERTIES
             FIXTURES_REQUIRED absolute-std-datetime-executable
             PASS_REGULAR_EXPRESSION "std-datetime=ok"
+        )
+
+        add_test(
+            NAME absolute.build-path-lexical-edges
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/path-lexical-edges.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/path-lexical-edges-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-path-lexical-edges PROPERTIES
+            FIXTURES_SETUP absolute-path-lexical-edges-executable
+        )
+        add_test(NAME absolute.run-path-lexical-edges
+            COMMAND "${CMAKE_BINARY_DIR}/path-lexical-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-path-lexical-edges PROPERTIES
+            FIXTURES_REQUIRED absolute-path-lexical-edges-executable
+            PASS_REGULAR_EXPRESSION "path-lexical-edges=ok"
+        )
+
+        add_test(
+            NAME absolute.build-json-text-edges
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/json-text-edges.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/json-text-edges-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-json-text-edges PROPERTIES
+            FIXTURES_SETUP absolute-json-text-edges-executable
+        )
+        add_test(NAME absolute.run-json-text-edges
+            COMMAND "${CMAKE_BINARY_DIR}/json-text-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-json-text-edges PROPERTIES
+            FIXTURES_REQUIRED absolute-json-text-edges-executable
+            PASS_REGULAR_EXPRESSION "json-text-edges=ok"
         )
 
         add_test(

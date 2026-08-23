@@ -1,0 +1,62 @@
+// The path helpers that touch no filesystem, at the spellings where two names
+// for one path used to become two different strings -- and where the native
+// runtime and the wasm virtual filesystem used to answer differently. This
+// file deliberately opens no file, so the suite differential compares it on
+// both targets; tests/std-fs.abs cannot be compared, because the rest of it
+// needs a host.
+import "../std/fs.abs";
+
+int32 main() {
+    // Normalizing is canonical, or it is not worth doing: a trailing separator
+    // is not a component, so two spellings of one path are one string.
+    assert(std.fs.normalize("a/b/..") == "a", "a/b/.. is a");
+    assert(std.fs.normalize("a/b/../") == "a", "and so is a/b/../");
+    assert(std.fs.normalize("a/") == "a", "and so is a/");
+    assert(std.fs.normalize("a/.") == "a", "and so is a/.");
+    assert(std.fs.normalize("a/b/c/../..") == "a", "however many steps back");
+    assert(std.fs.normalize("a/b/..") == std.fs.normalize("a"),
+        "which is the whole point: the two compare equal");
+    assert(std.fs.normalize(std.fs.normalize("a/b/..")) == std.fs.normalize("a/b/.."),
+        "and normalizing twice changes nothing");
+
+    // The root keeps its separator, because that is all it is.
+    assert(std.fs.normalize("/") == "/", "the root is the root");
+    assert(std.fs.normalize("") == "", "and nothing is nothing");
+    assert(std.fs.normalize("/a/b/..") == "/a", "an absolute path, same rule");
+    assert(std.fs.normalize("/../a") == "/a", "past the root is the root");
+    assert(std.fs.normalize("../a") == "../a", "a relative path keeps its steps");
+    assert(std.fs.normalize("a//b") == "a/b", "a doubled separator is one");
+
+    // Joining normalizes what it produced.
+    assert(std.fs.join("a", "b") == "a/b", "the ordinary case");
+    assert(std.fs.join("a/", "b") == "a/b", "a separator already there");
+    assert(std.fs.join("a", "/b") == "/b", "an absolute right-hand side wins");
+    assert(std.fs.join("a", "b/..") == "a", "and the result is canonical too");
+
+    // A trailing separator does not add an empty component: "/a/" names "a"
+    // inside "/", which is what basename and dirname say, and what the wasm
+    // filesystem said while the native one said the opposite.
+    assert(std.fs.fileName("/a/b.c") == "b.c", "an ordinary file name");
+    assert(std.fs.fileName("/a/") == "a", "a directory named with a slash");
+    assert(std.fs.parent("/a/b") == "/a", "an ordinary parent");
+    assert(std.fs.parent("/a/") == "/", "the parent of /a/ is the root");
+    assert(std.fs.parent("/a") == "/", "and so is the parent of /a");
+    assert(std.fs.parent("/") == "/", "the root is its own parent");
+    assert(std.fs.parent("a") == "", "a bare name has no parent");
+
+    // Stem and extension split at the last dot, and a leading dot is a name.
+    assert(std.fs.stem("/a/b.c") == "b", "the stem");
+    assert(std.fs.stem("/a/.hidden") == ".hidden", "a dotfile is all stem");
+    assert(std.fs.extensionOf("/a/b.c") == ".c", "the extension");
+    assert(std.fs.extensionOf("/a/.hidden") == "", "a dotfile has none");
+    assert(std.fs.extensionOf("/a/b.tar.gz") == ".gz", "the last one wins");
+    assert(std.fs.extensionOf("/a.b/c") == "", "a dot in a directory is not one");
+
+    assert(std.fs.resolve("/a/b", "c") == "/a/b/c", "resolve appends");
+    assert(std.fs.resolve("/a/b", "/c") == "/c", "unless the next part is absolute");
+    assert(std.fs.isAbsolute("/a"), "a leading separator");
+    assert(!std.fs.isAbsolute("a"), "and no leading separator");
+
+    println("path-lexical-edges=ok");
+    return 0;
+}

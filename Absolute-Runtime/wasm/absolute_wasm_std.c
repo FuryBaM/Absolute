@@ -950,6 +950,10 @@ static void json_buffer_text(JsonBuffer* buffer, const char* text) {
 static void json_buffer_indent(JsonBuffer* buffer, int depth) {
     for (int i = 0; i < depth * 2; ++i) json_buffer_char(buffer, ' ');
 }
+static int json_is_negative_zero(double value) {
+    /* No signbit() here; 1/-0.0 is -inf and 1/+0.0 is +inf. */
+    return value == 0.0 && (1.0 / value) < 0.0;
+}
 static void json_stringify_string(JsonBuffer* buffer, const char* text) {
     static const char hex[] = "0123456789abcdef";
     json_buffer_char(buffer, '"');
@@ -972,22 +976,50 @@ static void json_stringify_node(JsonBuffer* buffer, const WasmJsonNode* node, in
     if (!node || node->type == 0) { json_buffer_text(buffer, "null"); return; }
     if (node->type == 1) { json_buffer_text(buffer, node->boolean ? "true" : "false"); return; }
     if (node->type == 2) {
+        /* This shim has no float formatter -- the freestanding snprintf has no
+         * %g -- so a number it cannot write in full is written as null rather
+         * than as text that is not JSON. What it used to write: 1e19 became
+         * "-9223372036854775808." (an undefined cast, then a bare trailing
+         * dot) and 1e-7 became "0.", and its own parser refused both.
+         * docs/known-defects.md section 22 has what needs building. */
         char number[64];
-        int64_t integer = (int64_t)node->number;
-        if ((double)integer == node->number) {
-            snprintf(number, sizeof(number), "%lld", integer);
-        } else {
-            int64_t whole = (int64_t)node->number;
-            double fraction = node->number - (double)whole;
-            if (fraction < 0) fraction = -fraction;
-            uint64_t decimals = (uint64_t)(fraction * 1000000.0 + 0.5);
-            if (whole == 0 && node->number < 0)
-                snprintf(number, sizeof(number), "-0.%06llu", decimals);
-            else
-                snprintf(number, sizeof(number), "%lld.%06llu", whole, decimals);
-            size_t length = strlen(number);
-            while (length > 0 && number[length - 1] == '0') number[--length] = '\0';
+        double value = node->number;
+        int64_t integer;
+        double fraction;
+        uint64_t decimals;
+        size_t length;
+        if (value != value || value > 1.7976931348623157e308 ||
+            value < -1.7976931348623157e308) {
+            json_buffer_text(buffer, "null"); return;   /* nan, inf */
         }
+        if (!(value >= -9223372036854775808.0 && value < 9223372036854775808.0)) {
+            json_buffer_text(buffer, "null"); return;   /* the cast would be undefined */
+        }
+        integer = (int64_t)value;
+        if ((double)integer == value) {
+            if (value == 0.0 && json_is_negative_zero(value))
+                json_buffer_text(buffer, "-0");
+            else {
+                snprintf(number, sizeof(number), "%lld", (long long)integer);
+                json_buffer_text(buffer, number);
+            }
+            return;
+        }
+        fraction = value - (double)integer;
+        if (fraction < 0) fraction = -fraction;
+        decimals = (uint64_t)(fraction * 1000000.0 + 0.5);
+        if (decimals == 0 || decimals >= 1000000) {
+            /* Six decimal places cannot say what this value is. */
+            json_buffer_text(buffer, "null"); return;
+        }
+        if (integer == 0 && value < 0)
+            snprintf(number, sizeof(number), "-0.%06llu", (unsigned long long)decimals);
+        else
+            snprintf(number, sizeof(number), "%lld.%06llu", (long long)integer,
+                (unsigned long long)decimals);
+        length = strlen(number);
+        while (length > 1 && number[length - 1] == '0' && number[length - 2] != '.')
+            number[--length] = '\0';
         json_buffer_text(buffer, number); return;
     }
     if (node->type == 3) { json_stringify_string(buffer, node->string); return; }
@@ -1068,6 +1100,12 @@ static char* json_parse_string(JsonParser* parser) {
                 }
                 if (low < 0xdc00 || low > 0xdfff) { parser->error = "invalid JSON surrogate"; free(buffer.data); return NULL; }
                 code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+            }
+            /* A half of a pair on its own is not a character, and encoding it
+             * would put three bytes of invalid UTF-8 into an Absolute string. */
+            if (code >= 0xd800 && code <= 0xdfff) {
+                parser->error = "unpaired UTF-16 surrogate in JSON string";
+                free(buffer.data); return NULL;
             }
             json_utf8(&buffer, code);
         } else { parser->error = "invalid JSON escape"; free(buffer.data); return NULL; }

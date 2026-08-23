@@ -1,0 +1,79 @@
+// A JSON document that this library writes must be one it -- and everything
+// else -- can read back, and the two targets must agree on what a document
+// says. Every case here was one or the other before: output that no parser
+// accepts, an emoji cut in half, an escape invented out of nothing, and a cast
+// that was undefined.
+import "../std/json.abs";
+import "../std/string.abs";
+
+bool rejects(string text) {
+    return std.json.parse(text) == null;
+}
+
+string reparse(string text) {
+    std.json.JsonValue* value = std.json.parse(text);
+    assert(value != null, "the document this library wrote must parse");
+    return value.stringify();
+}
+
+int32 main() {
+    // A control character leaves as an escape. It used to leave as itself,
+    // which is a byte RFC 8259 does not allow inside a string.
+    assert(reparse("{\"x\":\"a\\u0001b\"}") == "{\"x\":\"a\\u0001b\"}",
+        "U+0001 is written back escaped");
+    assert(reparse("{\"x\":\"a\\bb\"}") == "{\"x\":\"a\\bb\"}", "backspace");
+    assert(reparse("{\"x\":\"a\\fb\"}") == "{\"x\":\"a\\fb\"}", "form feed");
+    assert(reparse("{\"x\":\"a\\tb\\nc\"}") == "{\"x\":\"a\\tb\\nc\"}", "tab and newline");
+    assert(reparse("{\"x\":\"a\\\"b\\\\c\"}") == "{\"x\":\"a\\\"b\\\\c\"}",
+        "a quote and a backslash");
+
+    // ... and one that arrives unescaped is refused, on both targets.
+    string rawControl = format("{}{}{}", "{\"x\":\"a",
+        std.text.fromCodePoint(1), "b\"}");
+    assert(rejects(rawControl), "a raw control character is not a string");
+
+    // A character outside the basic plane is one character, not two halves.
+    std.json.JsonValue* emoji = std.json.parse("{\"x\":\"\\uD83D\\uDE00\"}");
+    assert(emoji != null, "a surrogate pair parses");
+    string face = emoji.getStringOr("x", "");
+    assert(std.text.codePointCount(face) == 1, "a surrogate pair is one code point");
+    assert(std.text.byteCount(face) == 4, "and four bytes of UTF-8, not six of CESU-8");
+    assert(rejects("{\"x\":\"\\uD800\"}"), "half a pair is not a character");
+    assert(rejects("{\"x\":\"\\uDE00\"}"), "and neither is the other half");
+    assert(std.text.byteCount(
+        std.json.parse("{\"x\":\"\\u0416\"}").getStringOr("x", "")) == 2,
+        "a two-byte escape is still two bytes");
+
+    // An escape is one of the ones JSON has.
+    assert(rejects("{\"x\":\"a\\qb\"}"), "\\q is not an escape");
+    assert(std.json.parse("{\"x\":\"a\\/b\"}").getStringOr("x", "") == "a/b",
+        "and an escaped solidus is");
+
+    // JSON has no infinity and no NaN, so a number that is neither writes as
+    // null rather than as "inf", which this library's own parser refused.
+    std.json.JsonValue* nonFinite = std.json.createObject();
+    nonFinite.setNumber("n", 0.0 / 0.0);
+    nonFinite.setNumber("i", 1.0 / 0.0);
+    nonFinite.setNumber("m", -1.0 / 0.0);
+    string written = nonFinite.stringify();
+    assert(std.json.parse(written) != null, "what it wrote is a document");
+    assert(!std.text.contains(written, "inf"), "no infinity");
+    assert(!std.text.contains(written, "nan"), "no NaN");
+
+    // A number too large for an int64 is not written through one: the cast is
+    // undefined, and on wasm it really did produce "-9223372036854775808.".
+    string huge = reparse("{\"x\":1e19}");
+    assert(!std.text.contains(huge, "-9223372036854775808"), "no wrapped cast");
+    assert(!std.text.contains(huge, ".}"), "and no bare trailing dot");
+    string tiny = reparse("{\"x\":1e-7}");
+    assert(!std.text.contains(tiny, "0.}"), "nor for a value below the last decimal");
+
+    // Integers that do fit are still written as integers.
+    assert(reparse("{\"x\":2000000000000000000}") == "{\"x\":2000000000000000000}",
+        "an integral value keeps its digits");
+    assert(reparse("{\"x\":0.1}") == "{\"x\":0.1}", "and a short decimal keeps its own");
+    assert(reparse("{\"x\":-0.5}") == "{\"x\":-0.5}", "sign included");
+
+    println("json-text-edges=ok");
+    return 0;
+}
