@@ -17,9 +17,11 @@ build/Release/absolutec file.abs --build-exe -o app && ./app
 ## 1. Open defects
 
 One, and it is a decision rather than a patch: what `{}` means for a double.
-The entry this section opened with -- an indexer that could not say its getter
-borrows and its setter takes -- is fixed, and it is the entry below the open
-one.
+Section 25 found two more faces of it -- wasm prints no number at all, and the
+two targets write JSON numbers differently -- and they are recorded there,
+with the one component that answers all three. The entry this section opened
+with -- an indexer that could not say its getter borrows and its setter takes
+-- is fixed, and it is the entry below the open one.
 
 ### Open: printing a double prints six significant digits of it
 
@@ -41,6 +43,14 @@ language's one formatting placeholder promises, and both answers are defensible:
 `%g` at six digits is what C's `printf` and C++'s `iostream` default to, and
 the shortest text that round-trips is what Rust, Go and Python print. Changing
 it changes the output of every program that prints a real number.
+
+Section 25 found the rest of this, and it makes the choice less free than it
+looks here. The wasm target prints the literal text `%g`, because its
+freestanding formatter has no float directive at all; and in JSON, where the
+six digits are data loss rather than a house style, native and wasm write
+different text for the same number. All three are the same missing piece -- one
+shortest-round-trip routine both runtimes call -- and section 25 says what
+building it involves.
 
 If it is decided in favour of the round trip, the shape of the fix is known.
 `"%.17g"` needs no runtime and always round-trips, but it prints `0.1` as
@@ -154,8 +164,9 @@ runtime. The last such sweep found twenty-four, six of them in the same gap, and
 section 1's last three entries are that sweep. The one thing it found and did
 not fix -- an indexer that could not say its getter borrows -- is fixed now, at
 the top of this section: it was a decision about what an indexer means rather
-than a patch, which is why it waited to be decided. Section 24 is the newest
-sweep; section 20 is the one before it, and section 5 says where not
+than a patch, which is why it waited to be decided. Sections 24 and 25 are the
+newest sweeps -- 25 is where to start, because it names a shape rather than a
+module; section 5 says where not
 to look again.
 
 Nothing is open elsewhere either. The two things that were -- a name in the
@@ -1465,6 +1476,11 @@ narrow where to look.
 - **`std.encoding`: clean.** Base64 padding, non-canonical trailing bits, hex
   with an odd digit count, and UTF-8's overlong, surrogate and truncated forms
   are all refused where they should be.
+- **`std.fs` path helpers: swept and now covered.** Five of them answered
+  differently on the two targets; all fixed, at `tests/path-lexical-edges.abs`.
+  The rest -- `join` with an absolute or empty side, `stem` and `extensionOf`
+  on a dotfile and on a dot inside a directory name, `resolve`, `isAbsolute` --
+  were right and agreed.
 
 ## 5. Not swept — candidates, in rough order of expected yield
 
@@ -1524,7 +1540,9 @@ they say where not to look again.
    sweep rather than a gap in it: the two targets parsed ISO-8601 timestamps
    differently, and every test in the corpus agreed anyway, because none of
    them wrote down an input where the two parsers differ (section 20). Building
-   the same corpus twice proves the corpus, not the target.
+   the same corpus twice proves the corpus, not the target. Section 25 asked
+   the two copies the same question directly and found it again: JSON strings,
+   lexical paths, and a real number that wasm prints as the literal text `%g`.
 4. ~~**Collection boundaries**~~ — swept. Vector, Deque, Map, Set, HashMap and
    PriorityQueue all hold at their edges: empty and single-element containers,
    reallocation points, a deque whose contents straddle the end of its buffer
@@ -2585,7 +2603,7 @@ unexplained result.
 
 Section 20 found that native and the wasm shim each had an ISO-8601 parser and
 that the two were never the same one. The next sweep of that shape -- JSON
-strings and lexical paths -- is on a branch of its own. This one asked the
+strings and lexical paths -- is section 25. This one asked the
 same question of the copies that sweep did not reach.
 
 Nine defects. Seven of them are disagreements. In four of those the wasm copy
@@ -2685,4 +2703,190 @@ a refusal.
 ones; `tests/std-random.abs` and `tests/uri-percent-encoding.abs` grew the
 cases that show the old answers. All of them are ordinary members of the
 corpus, so the suite differential compares them on both targets.
+
+## 25. Beyond the list: one thing said twice, and the two answers
+
+Section 20 fixed an ISO-8601 parser that native and wasm had each implemented
+separately, and the entry noted why the WASM sweep in section 5 had not caught
+it. Section 24 asked the same question of the copies that sweep did not reach.
+This one is the sweep that was waiting: **every remaining place the runtime is
+written twice** -- once in C++ for the host and once in
+`Absolute-Runtime/wasm/` for the shim -- asked the two copies the same
+question, this time of JSON strings and of lexical paths.
+
+Nine defects. In seven of them the two copies disagree, and in five of those
+the wasm copy is the correct one, which is worth saying plainly: the shim is
+not a reduced version of the runtime, it is a second implementation, and it is
+sometimes the better one.
+
+The one thing this sweep found and did not fix is at the end, and it is the
+largest: **there is no routine that turns a real number into text.** Native
+borrows the C library's, and wasm has none at all.
+
+### Fixed: a JSON document could contain a byte no parser accepts
+
+```absolute
+std.json.parse("{\"x\":\"a\\u0001b\"}").stringify()   // was a raw 0x01 byte
+```
+
+RFC 8259 does not allow an unescaped code point below U+0020 inside a string.
+The native writer escaped `"`, `\`, `\n`, `\r` and `\t` and passed everything
+else through as itself, so a document that arrived carrying U+0001 left with
+that byte unescaped. What it produced was not JSON, and nothing but this
+library would read it back.
+
+It now writes `\b`, `\f` and `\u00XX` as well -- which is what the wasm writer
+already did. The native *parser* had the mirror of the same hole: it accepted a
+raw control byte where wasm refused one, so the two targets disagreed about
+whether a document was legal. Both refuse it now.
+
+### Fixed: an emoji came apart in the middle
+
+```absolute
+std.json.parse("{\"x\":\"\\uD83D\\uDE00\"}")   // was six bytes, two "characters"
+```
+
+A character outside the basic plane is written in JSON as a UTF-16 surrogate
+pair, and the two halves are one character. The native parser encoded each half
+on its own, producing six bytes of CESU-8 -- invalid UTF-8, inside a type whose
+whole contract is that it holds UTF-8. Every emoji, and every character above
+U+FFFF, in every document, on the native target only: wasm combined the pair
+correctly and produced the four bytes.
+
+Section 4 records "Strings and text: 23 of 23 clean" including emoji, and that
+is still true. The defect was never in the string library; it was in a second
+UTF-8 encoder written inside the JSON parser, which nothing had asked about.
+
+Native combines the pair now, and both targets refuse half a pair on its own,
+which is the only other thing it could be.
+
+### Fixed: `\q` was an escape that decoded to `q`
+
+The native parser's `default:` arm appended whatever character followed the
+backslash. So `"a\qb"` parsed to `aqb` -- a string the document does not
+contain, invented rather than refused. wasm rejected it. JSON has eight
+escapes; anything else is now an error on both.
+
+### Fixed: writing a number that is not a number
+
+`0.0 / 0.0` and `1.0 / 0.0` stored in a JSON document came out as `nan` and
+`inf`. JSON has neither, so this library wrote a document that this library's
+own parser then refused -- the shortest possible round trip, and it failed.
+Both targets write `null` now, which is what JavaScript's `JSON.stringify`
+does with the same values.
+
+### Fixed: a cast that was undefined, and what it actually produced
+
+Both writers decided "is this a whole number?" with `(int64_t)d == d`. The
+conversion is undefined when the value does not fit an int64, which is not a
+theoretical objection -- on wasm, `1e19` really did convert to `INT64_MIN`:
+
+```absolute
+std.json.parse("{\"x\":1e19}").stringify()    // was {"x":-9223372036854775808.}
+std.json.parse("{\"x\":1e-7}").stringify()    // was {"x":0.}
+```
+
+Both of those are the wrong number *and* invalid JSON -- the trailing-zero trim
+left a bare `.` -- and the parser refused its own output. The range is now
+tested before the cast, on both targets. Section 19 read the emitted IR for
+undefined behaviour and found the language clean; this is the same question
+asked of the runtime, where the answer was different.
+
+### Fixed: five path helpers, five disagreements, five times wasm was right
+
+`std.fs`'s lexical helpers touch no filesystem, and native and wasm answered
+differently for all of these:
+
+| | native | wasm |
+|---|---|---|
+| `normalize("a/b/..")` | `a/` | `a` |
+| `normalize("a/")` | `a/` | `a` |
+| `join("a", "b/..")` | `a/` | `a` |
+| `parent("/a/")` | `/a` | `/` |
+| `fileName("/a/")` | empty | `a` |
+
+The native ones are C++'s `lexically_normal()` faithfully applied, and its
+answer is that a trailing separator survives -- so `normalize("a/b/..")` and
+`normalize("a")` were two different strings for one path, and normalizing was
+not worth doing. The wasm virtual filesystem strips the trailing separator,
+which also makes `parent` and `fileName` agree with `basename` and `dirname`,
+and with every other language's path type.
+
+A trailing separator is not a component. One `CanonicalPath` says so once, and
+the six entry points that were each calling `lexically_normal()` for themselves
+now go through it.
+
+Why the differential did not catch this: `std-fs` is in the suite
+differential's `NEEDS_HOST_FACILITIES` set, because most of it opens files.
+Excluding a test from the wasm comparison excludes the pure part of it too.
+`tests/path-lexical-edges.abs` is the pure part, in its own file, so it is
+compared.
+
+### Open: there is no routine that turns a real number into text
+
+This is one defect with three faces, and the reason it is recorded rather than
+patched is that every available patch trades one wrong answer for another.
+
+**On wasm, printing a real number prints `%g`.**
+
+```absolute
+println(format("double {}", 3.5));    // native: double 3.5
+                                      // wasm:   double %g
+```
+
+Code generation lowers a `float` or a `double` to `printf("%g", ...)`. The
+shim's freestanding formatter (`format_into` in `absolute_wasm_runtime.c`)
+implements `%s`, `%c`, `%d`, `%i`, `%u` and `%x`, and prints any other
+directive literally, on purpose, so that an unsupported one stays visible.
+`%g` is unsupported. Every real number printed by a wasm program is the text
+`%g`.
+
+Section 5's WASM sweep built every test in `tests/` for both targets and diffed
+the output; this survived it because no test in the corpus prints a real
+number. That is the same limit section 20 recorded, and it is now recorded
+twice, which is the point at which it stops being a coincidence: **building the
+same corpus twice proves the corpus.**
+
+**The two targets write JSON numbers differently.** Native uses
+`std::ostringstream` at its default precision; wasm hand-rolls six decimal
+places. For `123456789.25`, native writes `1.23457e+08` and wasm writes
+`123456789.25`. Both are legal JSON; they are not the same text.
+
+**Six significant digits is data loss in a serializer.** `0.1234567890123`
+round-trips through `parse` and `stringify` as `0.123457`. For `println` this
+is a matter of taste -- section 1 has that entry, and both answers are
+defensible. For a data interchange format it is not: a document is supposed to
+survive being read and written.
+
+What the patches would cost, which is why none of them is here. Making wasm
+print *something* for `%g` means writing a float formatter; making it match
+glibc's `%g` digit for digit is the hard part of writing one, and a formatter
+that is close but not identical replaces a loud `%g` with a last digit that
+quietly differs between targets -- worse, because it is not discoverable.
+Making wasm's JSON writer refuse to write a number it cannot write exactly
+turns `1.0 / 3.0` into `null`, which is a different kind of data loss.
+
+The thing that is actually missing is one shortest-round-trip double-to-text
+routine, compiled into both runtimes, used by `PreparePrintable`, by
+`absolute_string_builder_append_double`, and by both JSON writers. Then the
+targets agree by construction rather than by matching each other's rounding,
+and section 1's open entry is answered at the same time. On the host that is
+`std::to_chars`; in the shim it is Dragon4 or Ryu plus a correctly rounded
+decimal parser to check against, and that is a component, not a patch.
+
+Until it exists, the invalid output and the undefined behaviour are gone --
+wasm writes `null` where it cannot write the number, rather than `0.` -- and
+what remains is a value that is imprecise and a target that prints `%g`. Both
+are visible, and neither pretends to be right.
+
+One thing the shim still does that is wrong, left alone for the same reason:
+`5e-7` writes as `0.000001`, because rounding to six decimal places is all its
+number path can do. That is a wrong number rather than invalid text, which is
+the trade named above.
+
+`tests/json-text-edges.abs` and `tests/path-lexical-edges.abs` pin the eight
+that are fixed, on both targets: the escapes, the surrogate pair and each half
+of it on its own, the non-finite values, `1e19` and `1e-7` past the cast, and
+each path spelling above.
+
 

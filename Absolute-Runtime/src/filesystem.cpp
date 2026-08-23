@@ -125,6 +125,22 @@ namespace {
         return PortablePath(value);
     }
 
+    // lexically_normal() ends "a/b/.." at "a/" and leaves "a/" as itself, so
+    // two spellings of one path were two different strings and comparing
+    // normalized paths did not work. A trailing separator is not a component:
+    // the root keeps its own, nothing else does. This is what the wasm virtual
+    // filesystem already did, and what POSIX basename/dirname do.
+    std::filesystem::path CanonicalPath(std::filesystem::path value) {
+        value = value.lexically_normal();
+        std::string text = PortablePath(value);
+        const std::string root = PortablePath(value.root_path());
+        while (text.size() > root.size() &&
+               (text.back() == '/' || text.back() == '\\')) {
+            text.pop_back();
+        }
+        return NativePath(text.c_str());
+    }
+
     void ClearError() {
         lastFileSystemError.clear();
     }
@@ -403,7 +419,7 @@ extern "C" const char* absolute_fs_path_join(const char* left, const char* right
     const std::filesystem::path combined = lhs.empty()
         ? rhs
         : (rhs.empty() ? lhs : lhs / rhs);
-    lastFileSystemResult = PreferredPath(combined.lexically_normal());
+    lastFileSystemResult = PreferredPath(CanonicalPath(combined));
     ClearError();
     return lastFileSystemResult.c_str();
 }
@@ -413,7 +429,7 @@ extern "C" const char* absolute_fs_path_normalize(const char* path) {
         lastFileSystemError = "path is null";
         return nullptr;
     }
-    lastFileSystemResult = PreferredPath(NativePath(path).lexically_normal());
+    lastFileSystemResult = PreferredPath(CanonicalPath(NativePath(path)));
     ClearError();
     return lastFileSystemResult.c_str();
 }
@@ -424,7 +440,7 @@ extern "C" const char* absolute_fs_path_parent(const char* path) {
         return nullptr;
     }
     lastFileSystemResult = PreferredPath(
-        NativePath(path).lexically_normal().parent_path());
+        CanonicalPath(NativePath(path)).parent_path());
     ClearError();
     return lastFileSystemResult.c_str();
 }
@@ -435,7 +451,7 @@ extern "C" const char* absolute_fs_path_filename(const char* path) {
         return nullptr;
     }
     lastFileSystemResult = PortablePath(
-        NativePath(path).lexically_normal().filename());
+        CanonicalPath(NativePath(path)).filename());
     ClearError();
     return lastFileSystemResult.c_str();
 }
@@ -446,7 +462,7 @@ extern "C" const char* absolute_fs_path_stem(const char* path) {
         return nullptr;
     }
     lastFileSystemResult = PortablePath(
-        NativePath(path).lexically_normal().stem());
+        CanonicalPath(NativePath(path)).stem());
     ClearError();
     return lastFileSystemResult.c_str();
 }
@@ -457,7 +473,7 @@ extern "C" const char* absolute_fs_path_extension(const char* path) {
         return nullptr;
     }
     lastFileSystemResult = PortablePath(
-        NativePath(path).lexically_normal().extension());
+        CanonicalPath(NativePath(path)).extension());
     ClearError();
     return lastFileSystemResult.c_str();
 }
