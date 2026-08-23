@@ -1,0 +1,10 @@
+{
+  "name": "SerdeIntegration",
+  "type": "app",
+  "entry": "src/main.abs",
+  "sources": ["src"],
+  "registries": ["../../.."],
+  "dependencies": {
+    "absolute.serde": "^0.1.0"
+  }
+}

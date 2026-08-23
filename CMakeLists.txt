@@ -5769,6 +5769,40 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "integration-crawler=ok"
             TIMEOUT 120
         )
+        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/integration-serde-project")
+        file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/integration-serde-project/SerdeApp-$<CONFIG>.absproj" CONTENT
+"{
+  \"name\": \"SerdeIntegration\",
+  \"type\": \"app\",
+  \"entry\": \"${PROJECT_SOURCE_DIR}/examples/integration/serde/src/main.abs\",
+  \"sources\": [\"${PROJECT_SOURCE_DIR}/examples/integration/serde/src\"],
+  \"registries\": [\"${PROJECT_SOURCE_DIR}\"],
+  \"dependencies\": {
+    \"absolute.serde\": \"^0.1.0\"
+  }
+}
+")
+        add_test(
+            NAME absolute.build-integration-serde
+            COMMAND Absolute-Compiler build
+                "${CMAKE_BINARY_DIR}/integration-serde-project/SerdeApp-$<CONFIG>.absproj"
+                --build-exe
+                -o "${CMAKE_BINARY_DIR}/integration-serde${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-integration-serde PROPERTIES
+            FIXTURES_SETUP absolute-integration-serde
+            TIMEOUT 300
+        )
+        add_test(
+            NAME absolute.run-integration-serde
+            COMMAND "${CMAKE_BINARY_DIR}/integration-serde${CMAKE_EXECUTABLE_SUFFIX}"
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/integration-work"
+        )
+        set_tests_properties(absolute.run-integration-serde PROPERTIES
+            FIXTURES_REQUIRED absolute-integration-serde
+            PASS_REGULAR_EXPRESSION "integration-serde=ok"
+            TIMEOUT 120
+        )
         set_tests_properties(absolute.run-std-typed-channel PROPERTIES
             FIXTURES_REQUIRED absolute-std-typed-channel-executable
             PASS_REGULAR_EXPRESSION "std-typed-channel=ok"

@@ -1437,7 +1437,22 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   уникальных fetch, детерминированное число duplicate/off-site skip.
   Async-параметр по-прежнему не носит string, поэтому воркеры принимают числа
   и собирают URL сами. Native CTest `absolute.run-integration-crawler`.
-- [ ] Добавить reusable parsing/serialization library как отдельный package target.
+- [x] Добавить reusable parsing/serialization library как отдельный package target.
+  `absolute.serde` — CSV (RFC 4180, разделитель задаётся) и INI
+  (секции, комментарии, кавычки, last-write-wins). Это не `std.*`: JSON и
+  binary там уже есть, а CSV/TOML в std остаются отдельным P1. Пакет
+  `type: lib`, приложение его импортирует как исходники — `--build-library`
+  отверг бы DOM на C ABI, а package manager пока пишет только lockfile,
+  исходники зависимости сам не компилирует.
+  `examples/integration/serde`. Герметик: сам строит каталог, пишет CSV и
+  INI, четыре воркера читают свои шарды, сверяют ячейки с формулой
+  генератора и гоняют parse(stringify(...)). Плюс кавычки с запятой и
+  переводом строки, CR LF, padding, semicolon/tab, JSON рядом с CSV,
+  отказ на незакрытой кавычке и широкой строке. Async по-прежнему не
+  носит string, поэтому воркеры принимают номер шарда. Native CTest
+  `absolute.run-integration-serde` собирает `.absproj` с зависимостью
+  `absolute.serde`, так что прогон оставляет пакет в lockfile.
+
 - [ ] Добавить desktop calculator/editor с persistent settings и file dialogs.
 - [ ] Добавить полноценную OpenGL/Vulkan/D3D scene вместо одного triangle smoke.
 - [ ] Добавить WASM web app с browser host, async task pool и persistent state.

@@ -1,0 +1,9 @@
+{
+  "name": "absolute.serde",
+  "version": "0.1.0",
+  "type": "lib",
+  "description": "CSV and INI parsing and serialization",
+  "entry": "src/csv.abs",
+  "sources": ["src"],
+  "dependencies": {}
+}

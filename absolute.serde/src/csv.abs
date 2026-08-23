@@ -1,0 +1,282 @@
+// CSV parse and stringify. RFC 4180 quoting, with LF / CR LF row
+// separators and a caller-chosen field separator. The table is a
+// single owner of copyable cells: a Vector of strings in row-major
+// order, not a vector of row owners.
+//
+// takeField writes the cursor and the field-kind through raw int64
+// slots. A tuple of (string, kind) would work today, but the crawler
+// already taught this tree not to thread a string through a tuple
+// unless it has to.
+
+import "../../std/string.abs";
+import "../../std/collections/vector.abs";
+
+namespace serde.csv {
+    const int32 COMMA = 44;
+    const int32 QUOTE = 34;
+    const int32 CR = 13;
+    const int32 LF = 10;
+    const int32 TAB = 9;
+    const int32 SPACE = 32;
+
+    const int32 FIELD_MORE = 0;
+    const int32 FIELD_ROW = 1;
+
+    class CsvTable {
+        private int32 _columns;
+        private std.collections.Vector<string>* _cells;
+
+        public CsvTable() {
+            _columns = 0;
+            _cells = new std.collections.Vector<string>();
+        }
+
+        public void destroy() {
+            if (_cells != null) {
+                _cells = null;
+            }
+        }
+
+        public void dispose() {
+            destroy();
+        }
+
+        public int32 columns {
+            get { return _columns; }
+        }
+
+        public int32 rows {
+            get {
+                if (_columns == 0) {
+                    return 0;
+                }
+                return _cells.count / _columns;
+            }
+        }
+
+        public string cell(int32 row, int32 col) {
+            assert(row >= 0 && col >= 0 && col < _columns, "csv: cell out of range");
+            int32 index = row * _columns + col;
+            assert(index < _cells.count, "csv: cell out of range");
+            return _cells[index];
+        }
+
+        public int32 columnIndex(string name) {
+            if (_columns == 0 || _cells.count < _columns) {
+                return -1;
+            }
+            int32 col = 0;
+            while (col < _columns) {
+                if (_cells[col] == name) {
+                    return col;
+                }
+                col = col + 1;
+            }
+            return -1;
+        }
+
+        public void addRow(std.collections.Vector<string>* row) {
+            if (row.count == 0) {
+                return;
+            }
+            if (_columns == 0) {
+                _columns = row.count;
+            }
+            if (row.count > _columns) {
+                throw new Error("csv: row has more fields than the first row");
+            }
+            int32 col = 0;
+            while (col < _columns) {
+                if (col < row.count) {
+                    _cells.push(row[col]);
+                } else {
+                    _cells.push("");
+                }
+                col = col + 1;
+            }
+        }
+    }
+
+    bool fieldNeedsQuotes(string field, int32 sep) {
+        int32 n = std.text.codePointCount(field);
+        if (n == 0) {
+            return false;
+        }
+        int32 first = std.text.codePointAt(field, 0);
+        int32 last = std.text.codePointAt(field, n - 1);
+        if (first == SPACE || first == TAB || last == SPACE || last == TAB) {
+            return true;
+        }
+        int32 i = 0;
+        while (i < n) {
+            int32 c = std.text.codePointAt(field, i);
+            if (c == sep || c == QUOTE || c == CR || c == LF) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    string quoteField(string field, int32 sep) {
+        if (!fieldNeedsQuotes(field, sep)) {
+            return field;
+        }
+        std.text.StringBuilder* buf = new std.text.StringBuilder();
+        buf.appendChar(QUOTE);
+        int32 n = std.text.codePointCount(field);
+        int32 i = 0;
+        while (i < n) {
+            int32 c = std.text.codePointAt(field, i);
+            if (c == QUOTE) {
+                buf.appendChar(QUOTE);
+                buf.appendChar(QUOTE);
+            } else {
+                buf.appendChar(c);
+            }
+            i = i + 1;
+        }
+        buf.appendChar(QUOTE);
+        string out = buf.toString();
+        delete buf;
+        return out;
+    }
+
+    string takeField(
+        string text,
+        raw int64* cursor,
+        int32 length,
+        int32 sep,
+        raw int64* kind
+    ) {
+        int32 i = (*cursor) as int32;
+        std.text.StringBuilder* buf = new std.text.StringBuilder();
+        bool quoted = false;
+        if (i < length && std.text.codePointAt(text, i) == QUOTE) {
+            quoted = true;
+            i = i + 1;
+        }
+
+        if (quoted) {
+            bool closed = false;
+            while (i < length) {
+                int32 c = std.text.codePointAt(text, i);
+                if (c == QUOTE) {
+                    if (i + 1 < length && std.text.codePointAt(text, i + 1) == QUOTE) {
+                        buf.appendChar(QUOTE);
+                        i = i + 2;
+                    } else {
+                        closed = true;
+                        i = i + 1;
+                        break;
+                    }
+                } else {
+                    buf.appendChar(c);
+                    i = i + 1;
+                }
+            }
+            if (!closed) {
+                throw new Error("csv: unclosed quoted field");
+            }
+        } else {
+            while (i < length) {
+                int32 c = std.text.codePointAt(text, i);
+                if (c == sep || c == CR || c == LF) {
+                    break;
+                }
+                buf.appendChar(c);
+                i = i + 1;
+            }
+        }
+
+        string field = buf.toString();
+        delete buf;
+
+        if (i >= length) {
+            *cursor = i as int64;
+            *kind = FIELD_ROW as int64;
+            return field;
+        }
+
+        int32 c = std.text.codePointAt(text, i);
+        if (c == sep) {
+            *cursor = (i + 1) as int64;
+            *kind = FIELD_MORE as int64;
+            return field;
+        }
+        if (c == CR) {
+            i = i + 1;
+            if (i < length && std.text.codePointAt(text, i) == LF) {
+                i = i + 1;
+            }
+            *cursor = i as int64;
+            *kind = FIELD_ROW as int64;
+            return field;
+        }
+        if (c == LF) {
+            *cursor = (i + 1) as int64;
+            *kind = FIELD_ROW as int64;
+            return field;
+        }
+
+        throw new Error("csv: unexpected text after quoted field");
+    }
+
+    CsvTable* parseWithSeparator(string text, int32 sep) {
+        if (sep == QUOTE || sep == CR || sep == LF) {
+            throw new Error("csv: separator cannot be a quote or a newline");
+        }
+        CsvTable* table = new CsvTable();
+        int32 length = std.text.codePointCount(text);
+        if (length == 0) {
+            return table;
+        }
+        int64[] scan = new int64[2];
+        scan[0] = 0;
+        scan[1] = 0;
+        while (scan[0] < length as int64) {
+            std.collections.Vector<string>* row = new std.collections.Vector<string>();
+            bool rowDone = false;
+            while (!rowDone) {
+                string field = takeField(text, &scan[0], length, sep, &scan[1]);
+                row.push(field);
+                if (scan[1] != FIELD_MORE as int64) {
+                    rowDone = true;
+                }
+            }
+            table.addRow(row);
+            delete row;
+        }
+        return table;
+    }
+
+    CsvTable* parse(string text) {
+        return parseWithSeparator(text, COMMA);
+    }
+
+    string stringifyWithSeparator(CsvTable* table, int32 sep) {
+        std.text.StringBuilder* buf = new std.text.StringBuilder();
+        int32 rowCount = table.rows;
+        int32 colCount = table.columns;
+        int32 row = 0;
+        while (row < rowCount) {
+            int32 col = 0;
+            while (col < colCount) {
+                if (col > 0) {
+                    buf.appendChar(sep);
+                }
+                buf.append(quoteField(table.cell(row, col), sep));
+                col = col + 1;
+            }
+            buf.appendChar(LF);
+            row = row + 1;
+        }
+        string out = buf.toString();
+        delete buf;
+        return out;
+    }
+
+    string stringify(CsvTable* table) {
+        return stringifyWithSeparator(table, COMMA);
+    }
+}
