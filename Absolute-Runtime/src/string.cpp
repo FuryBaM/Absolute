@@ -313,7 +313,10 @@ extern "C" int32_t absolute_string_index_of(const char* text, const char* sub) {
 }
 
 extern "C" int32_t absolute_string_last_index_of(const char* text, const char* sub) {
-    if (!text || !sub || !*sub) return -1;
+    if (!text || !sub) return -1;
+    // The empty string occurs at every index, including the end. indexOf("")
+    // already answered 0; lastIndexOf("") answered -1, as if it were absent.
+    if (!*sub) return absolute_string_code_point_count(text);
     std::string s(text);
     std::string needle(sub);
     size_t pos = s.rfind(needle);

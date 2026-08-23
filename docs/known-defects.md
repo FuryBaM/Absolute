@@ -154,8 +154,8 @@ runtime. The last such sweep found twenty-four, six of them in the same gap, and
 section 1's last three entries are that sweep. The one thing it found and did
 not fix -- an indexer that could not say its getter borrows -- is fixed now, at
 the top of this section: it was a decision about what an indexer means rather
-than a patch, which is why it waited to be decided. Section 20 is the newest
-sweep and the one furthest from the language itself; section 5 says where not
+than a patch, which is why it waited to be decided. Section 24 is the newest
+sweep; section 20 is the one before it, and section 5 says where not
 to look again.
 
 Nothing is open elsewhere either. The two things that were -- a name in the
@@ -2580,3 +2580,109 @@ not.
 
 Check `git log --oneline -1` before trusting a probe, and rebuild after any
 unexplained result.
+
+## 24. Beyond the list: the two copies, again
+
+Section 20 found that native and the wasm shim each had an ISO-8601 parser and
+that the two were never the same one. The next sweep of that shape -- JSON
+strings and lexical paths -- is on a branch of its own. This one asked the
+same question of the copies that sweep did not reach.
+
+Nine defects. Seven of them are disagreements. In four of those the wasm copy
+was the correct one; in two the native copy was; in one neither was, because
+both special-cased the empty string as missing from lastIndexOf while
+indexOf already answered 0.
+
+### Fixed: the wasm generator was not the generator
+
+```absolute
+std.random.Rng* rng = new std.random.Rng(42);
+rng.i32()   // native: 360188718, wasm: -1109970394
+```
+
+`docs/random.md` says xoshiro256** produces the same sequence for the same
+seed on every target. The native runtime does. The shim ran SplitMix64 on a
+single word. The golden assertion in `tests/std-random.abs` would have caught
+it on wasm, and the suite differential would have compared the two answers,
+except the test printed `entropy()` onto stdout -- a different number every
+run, on both targets -- so the corpus excluded itself from the comparison the
+way section 20's timestamps did.
+
+Two more disagreements rode along:
+
+- `new Rng(0)` replaced a zero seed with entropy on wasm, so the one seed that
+  looks like "not a seed" was not a seed there and was a seed natively.
+- `range(lo, hi)` computed the span as `(uint64_t)(hi - lo)`. The subtraction
+  is signed and overflows a span wider than `2^31`; native subtracts in
+  64 bits and rejects biased residues. `range(-2000000000, 2000000000)` was a
+  different interval on the two targets, when it was defined at all.
+
+The shim now has the same four-word xoshiro256**, the same SplitMix64
+expansion of whatever seed it is given -- zero included -- and the same
+unbiased range. The test no longer prints entropy.
+
+### Fixed: a JSON number that is not a number
+
+RFC 8259 does not allow a leading zero, a trailing decimal point, or an
+exponent with no digits. The native parser scanned with `isdigit` and handed
+the slice to `strtod`, so `"01"` was 1, `"1."` was 1, and `"1e"` was 1. The
+wasm parser already refused all three, accidentally: leftover digits looked
+like trailing text. Native reads the grammar now.
+
+### Fixed: a JSON key was not a JSON string
+
+```absolute
+obj.setNumber("a\"b", 1);
+obj.stringify()   // native was {"a"b":1}, which is not JSON
+```
+
+The native writer escaped quotes and backslashes in *values* and then wrote
+keys with `'"' << key << '"'`. A name containing either produced a document
+this library's own parser refused. Wasm already ran the value escaper on
+keys. One `writeJsonString` now writes both.
+
+Pretty-print was the same function, asked a second question: native wrote the
+compact form with a space after each comma, wasm wrote indented lines. The
+name is `stringifyPretty`. Native indents now.
+
+And a second `"a"` in `{"a":1,"a":2}` overwrote the pointer to the first
+value without deleting it. Wasm already freed the occupant. Native does too.
+
+### Fixed: lastIndexOf("") said the empty string was missing
+
+`indexOf("abc", "")` is 0 -- the empty string occurs at the start, which is
+what `strstr` and the wasm finder both answer. `lastIndexOf("abc", "")` was
+-1, because both copies special-cased an empty needle as not found. The empty
+string occurs at every index, including the end; lastIndexOf is 3, and 6 for
+`"Привет"`, because the index is in code points.
+
+### Fixed: dayOfWeek of year -1 was -1
+
+Sakamoto's formula uses `y/4 - y/100 + y/400`. Absolute division truncates
+toward zero, so a year at or before 0 is not the floor the formula needs:
+1 January of year 0 came back as Sunday instead of Saturday, and 1 January of
+year -1 came back as -1, which is not a weekday. It now asks the civil
+conversion for a day number -- the same Hinnant algorithm both runtimes
+already share -- and takes that modulo 7.
+
+### Fixed: an 8 KB scratch was a string, until it wasn't
+
+The wasm binary reader returned `readString` through a static 8192-byte
+buffer and truncated anything longer, then advanced by the full length, so a
+9000-character round trip came back short. `toHexString` of a payload over
+4095 bytes stopped after 4095. Native has neither limit. The shim allocates
+what it needs.
+
+### Fixed: a port was whatever parseInt would take
+
+`std.uri.parse("http://example.com:8080abc/x")` set port 8080, because
+`parseInt` keeps the digits before other text. `:65536` became 65536, which
+is not a port; `:-1` became -1. A port is now digits that fit in 0..65535, or
+a refusal.
+
+`tests/json-grammar-edges.abs`, `tests/datetime-weekday-edges.abs`,
+`tests/text-search-edges.abs`, `tests/binary-payload-edges.abs` pin the new
+ones; `tests/std-random.abs` and `tests/uri-percent-encoding.abs` grew the
+cases that show the old answers. All of them are ordinary members of the
+corpus, so the suite differential compares them on both targets.
+

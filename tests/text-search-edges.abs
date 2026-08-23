@@ -1,0 +1,22 @@
+// The empty string occurs at every index, including the end. indexOf already
+// answered 0; lastIndexOf answered -1, as if the empty string were absent.
+import "../std/string.abs";
+
+int32 main() {
+    assert(std.text.indexOf("abc", "") == 0, "indexOf empty is the start");
+    assert(std.text.lastIndexOf("abc", "") == 3, "lastIndexOf empty is the end");
+    assert(std.text.indexOf("", "") == 0, "the empty string contains itself");
+    assert(std.text.lastIndexOf("", "") == 0, "and lastIndexOf agrees");
+    assert(std.text.contains("abc", ""), "contains empty is true");
+
+    assert(std.text.lastIndexOf("Привет", "") == 6,
+        "lastIndexOf empty is a code-point count");
+    assert(std.text.indexOf("Привет", "вет") == 3, "a multibyte index");
+    assert(std.text.lastIndexOf("тест/тест", "тест") == 5, "a multibyte last index");
+
+    assert(std.text.lastIndexOf("abc", "z") == -1, "a missing needle is still -1");
+    assert(std.text.indexOf("abc", "z") == -1, "on both searches");
+
+    println("text-search-edges=ok");
+    return 0;
+}

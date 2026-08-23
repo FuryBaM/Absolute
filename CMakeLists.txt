@@ -768,6 +768,22 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/datetime-iso-edges.abs"
     )
     add_test(
+        NAME absolute.datetime-weekday-edges-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/datetime-weekday-edges.abs"
+    )
+    add_test(
+        NAME absolute.json-grammar-edges-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/json-grammar-edges.abs"
+    )
+    add_test(
+        NAME absolute.text-search-edges-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/text-search-edges.abs"
+    )
+    add_test(
+        NAME absolute.binary-payload-edges-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/binary-payload-edges.abs"
+    )
+    add_test(
         NAME absolute.std-string-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-string.abs"
     )
@@ -4608,6 +4624,66 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-datetime-iso-edges PROPERTIES
             FIXTURES_REQUIRED absolute-datetime-iso-edges-executable
             PASS_REGULAR_EXPRESSION "datetime-iso-edges=ok"
+        )
+
+        add_test(
+            NAME absolute.build-datetime-weekday-edges
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/datetime-weekday-edges.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/datetime-weekday-edges-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-datetime-weekday-edges PROPERTIES
+            FIXTURES_SETUP absolute-datetime-weekday-edges-executable
+        )
+        add_test(NAME absolute.run-datetime-weekday-edges
+            COMMAND "${CMAKE_BINARY_DIR}/datetime-weekday-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-datetime-weekday-edges PROPERTIES
+            FIXTURES_REQUIRED absolute-datetime-weekday-edges-executable
+            PASS_REGULAR_EXPRESSION "datetime-weekday-edges=ok"
+        )
+
+        add_test(
+            NAME absolute.build-json-grammar-edges
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/json-grammar-edges.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/json-grammar-edges-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-json-grammar-edges PROPERTIES
+            FIXTURES_SETUP absolute-json-grammar-edges-executable
+        )
+        add_test(NAME absolute.run-json-grammar-edges
+            COMMAND "${CMAKE_BINARY_DIR}/json-grammar-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-json-grammar-edges PROPERTIES
+            FIXTURES_REQUIRED absolute-json-grammar-edges-executable
+            PASS_REGULAR_EXPRESSION "json-grammar-edges=ok"
+        )
+
+        add_test(
+            NAME absolute.build-text-search-edges
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/text-search-edges.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/text-search-edges-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-text-search-edges PROPERTIES
+            FIXTURES_SETUP absolute-text-search-edges-executable
+        )
+        add_test(NAME absolute.run-text-search-edges
+            COMMAND "${CMAKE_BINARY_DIR}/text-search-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-text-search-edges PROPERTIES
+            FIXTURES_REQUIRED absolute-text-search-edges-executable
+            PASS_REGULAR_EXPRESSION "text-search-edges=ok"
+        )
+
+        add_test(
+            NAME absolute.build-binary-payload-edges
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/binary-payload-edges.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/binary-payload-edges-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-binary-payload-edges PROPERTIES
+            FIXTURES_SETUP absolute-binary-payload-edges-executable
+        )
+        add_test(NAME absolute.run-binary-payload-edges
+            COMMAND "${CMAKE_BINARY_DIR}/binary-payload-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-binary-payload-edges PROPERTIES
+            FIXTURES_REQUIRED absolute-binary-payload-edges-executable
+            PASS_REGULAR_EXPRESSION "binary-payload-edges=ok"
         )
 
         add_test(

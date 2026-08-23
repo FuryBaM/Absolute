@@ -9,6 +9,27 @@ namespace std.uri {
         return 80;
     }
 
+    int32 parsePort(string portText, string rawUrl) {
+        int32 length = std.text.codePointCount(portText);
+        if (length == 0) {
+            throw new Error(format("empty port in URL: {}", rawUrl));
+        }
+        int32 port = 0;
+        int32 index = 0;
+        while (index < length) {
+            int32 digit = std.text.codePointAt(portText, index) - 48;
+            if (digit < 0 || digit > 9) {
+                throw new Error(format("invalid port in URL: {}", rawUrl));
+            }
+            if (port > (65535 - digit) / 10) {
+                throw new Error(format("port out of range in URL: {}", rawUrl));
+            }
+            port = port * 10 + digit;
+            index = index + 1;
+        }
+        return port;
+    }
+
     class Uri {
         public string scheme;
         public string host;
@@ -113,7 +134,7 @@ namespace std.uri {
             string portText = std.text.substring(
                 authority, hostEnd + 1, authorityLength - (hostEnd + 1));
             if (portText != "") {
-                uri.port = std.text.parseInt(portText);
+                uri.port = parsePort(portText, rawUrl);
             }
         } else {
             uri.port = defaultPortFor(uri.scheme);

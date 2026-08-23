@@ -12,6 +12,10 @@ int32 main() {
     assert(firstValue != different.u64(), "different seeds must change the sequence");
     assert(golden.i32() == 360188718, "seed 42 must preserve the xoshiro256** sequence");
 
+    std.random.Rng* zeroA = new std.random.Rng(0);
+    std.random.Rng* zeroB = new std.random.Rng(0);
+    assert(zeroA.u64() == zeroB.u64(), "seed 0 is a seed");
+
     int32 iteration = 0;
     while (iteration < 256) {
         assert(first.u64() == second.u64(), "equal seeds must reproduce the full sequence");
@@ -33,7 +37,7 @@ int32 main() {
     }
     assert(invalidRangeRejected, "empty random ranges must be rejected");
 
-    uint64 systemSeed = std.random.entropy();
+    std.random.entropy();
     uint8[] randomBytes = new uint8[32];
     std.random.fill(randomBytes);
     bool anyNonZero = false;
@@ -48,6 +52,18 @@ int32 main() {
 
     std.random.Rng* system = std.random.create();
     system.u64();
-    println(format("std-random=ok seed={}", systemSeed));
+
+    // A span wider than 2^31 used to overflow the wasm copy's signed
+    // subtraction, so the interval it sampled was not the one it was asked for.
+    std.random.Rng* wide = new std.random.Rng(7);
+    int32 iterationWide = 0;
+    while (iterationWide < 64) {
+        int32 picked = wide.range(-2000000000, 2000000000);
+        assert(picked >= -2000000000 && picked < 2000000000,
+            "a wide range stays inside the range");
+        iterationWide += 1;
+    }
+
+    println("std-random=ok");
     return 0;
 }

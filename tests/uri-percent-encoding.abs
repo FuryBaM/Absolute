@@ -4,6 +4,16 @@
 import "../std/uri.abs";
 import "../std/form.abs";
 
+bool rejectsPort(string text) {
+    try {
+        std.uri.parse(text);
+        return false;
+    }
+    catch (Error* error) {
+        return true;
+    }
+}
+
 int32 main() {
     // encode escapes everything outside the unreserved set, "%" included, so
     // decode is its inverse rather than a lossy pass over four characters.
@@ -52,6 +62,18 @@ int32 main() {
     std.uri.Uri* v6NoPort = std.uri.parse("https://[2001:db8::1]/x");
     assert(v6NoPort.host == "[2001:db8::1]", "colons inside the brackets");
     assert(v6NoPort.port == 443, "and the scheme's port");
+
+    // A port is a number between 0 and 65535, not the digits parseInt would
+    // accept and then ignore. Trailing text, a value past the range, and a
+    // sign all used to become a port.
+    assert(rejectsPort("http://example.com:8080abc/x"), "trailing text after a port");
+    assert(rejectsPort("http://example.com:65536/x"), "a port that is not a port");
+    assert(rejectsPort("http://example.com:-1/x"), "a negative port");
+    assert(rejectsPort("http://[::1]:99999/x"), "an IPv6 port past the range");
+    assert(std.uri.parse("http://example.com:65535/x").port == 65535,
+        "the maximum port");
+    assert(std.uri.parse("http://example.com:0/x").port == 0,
+        "port zero is a port");
 
     // A form body is percent-decoded, which is the whole reason decode exists.
     std.form.FormData* form = std.form.parseUrlEncoded(
