@@ -88,9 +88,9 @@ string pathAfter(string url, string prefix) {
 }
 
 void appendAnchor(std.text.StringBuilder* body, string href, string label) {
-    body.append("<a href=\"");
+    body.append("<a href='");
     body.append(href);
-    body.append("\">");
+    body.append("'>");
     body.append(label);
     body.append("</a>");
 }
@@ -156,29 +156,32 @@ int32 classifyHref(string href) {
     return pageIdFromPath(requestPath(href));
 }
 
-tuple<string, int64> nextHref(string html, int64 cursor) {
+string takeHref(string html, raw int64* cursor) {
     int32 n = std.text.codePointCount(html);
-    int32 start = cursor as int32;
+    int32 start = (*cursor) as int32;
     if (start >= n) {
-        return ("", n as int64);
+        *cursor = n as int64;
+        return "";
     }
     string rest = std.text.substring(html, start, n - start);
-    int32 rel = std.text.indexOf(rest, "href=\"");
+    int32 rel = std.text.indexOf(rest, "href='");
     if (rel < 0) {
-        return ("", n as int64);
+        *cursor = n as int64;
+        return "";
     }
     int32 urlStart = start + rel + 6;
     if (urlStart >= n) {
-        return ("", n as int64);
+        *cursor = n as int64;
+        return "";
     }
     string after = std.text.substring(html, urlStart, n - urlStart);
-    int32 endRel = std.text.indexOf(after, "\"");
+    int32 endRel = std.text.indexOf(after, "'");
     if (endRel < 0) {
-        return ("", n as int64);
+        *cursor = n as int64;
+        return "";
     }
-    string href = std.text.substring(html, urlStart, endRel);
-    int64 next = (urlStart + endRel + 1) as int64;
-    return (href, next);
+    *cursor = (urlStart + endRel + 1) as int64;
+    return std.text.substring(html, urlStart, endRel);
 }
 
 int64 loadSlot(raw int64* state, int32 offset) {
@@ -355,7 +358,7 @@ async int32 crawlWorker(
         return 0;
     }
 
-    int32[] found = new int32[16];
+    int64[] scan = new int64[1];
     int32 idle = 0;
     while (absolute_atomic_load(shutdownAtom) == 0 && idle < 4000) {
         absolute_mutex_lock(mutex);
@@ -369,7 +372,7 @@ async int32 crawlWorker(
         absolute_mutex_unlock(mutex);
 
         if (id < 0) {
-            if (inFlight == 0 && fetched > 0) {
+            if (inFlight == 0 && fetched == PAGE_COUNT as int64) {
                 return 1;
             }
             idle += 1;
@@ -392,7 +395,7 @@ async int32 crawlWorker(
         bool fetchedOk = false;
         try {
             body = fetchPage(port, id);
-            fetchedOk = body != "";
+            fetchedOk = body != "" && std.text.contains(body, "href=");
         }
         catch (Error* error) {
             fetchedOk = false;
@@ -403,30 +406,19 @@ async int32 crawlWorker(
         absolute_mutex_unlock(mutex);
         absolute_semaphore_release(semaphore, 1);
 
-        int32 foundCount = 0;
-        if (fetchedOk) {
-            int64 cursor = 0;
-            while (foundCount < 16) {
-                tuple<string, int64> extracted = nextHref(body, cursor);
-                string href = extracted.item0;
-                cursor = extracted.item1;
-                if (href == "") {
-                    break;
-                }
-                found[foundCount] = classifyHref(href);
-                foundCount += 1;
-            }
-        }
-
         absolute_mutex_lock(mutex);
         addCount(state, COUNT_RESOLVES, 1);
         if (fetchedOk) {
             storeSlot(state, OFF_FETCHED + id,
                 loadSlot(state, OFF_FETCHED + id) + 1);
             addCount(state, COUNT_FETCHED, 1);
-            int32 index = 0;
-            while (index < foundCount) {
-                int32 classified = found[index];
+            scan[0] = 0;
+            while (true) {
+                string href = takeHref(body, &scan[0]);
+                if (href == "") {
+                    break;
+                }
+                int32 classified = classifyHref(href);
                 if (classified == HREF_OFFSITE) {
                     addCount(state, COUNT_OFFSITE, 1);
                 } else {
@@ -434,7 +426,6 @@ async int32 crawlWorker(
                         ingestId(state, classified);
                     }
                 }
-                index += 1;
             }
         } else {
             addCount(state, COUNT_ERRORS, 1);
@@ -519,6 +510,16 @@ async int32 main() {
     int32 w1 = await worker1;
     int32 w2 = await worker2;
     int32 w3 = await worker3;
+
+    println(format(
+        "crawler-stats fetched={} dups={} offsite={} errors={} peak={} resolves={} workers={}/{}/{}/{}",
+        loadCount(state, COUNT_FETCHED) as int32,
+        loadCount(state, COUNT_DUP) as int32,
+        loadCount(state, COUNT_OFFSITE) as int32,
+        loadCount(state, COUNT_ERRORS) as int32,
+        loadCount(state, COUNT_PEAK) as int32,
+        loadCount(state, COUNT_RESOLVES) as int32,
+        w0, w1, w2, w3));
 
     int32 published = waitForPort(startedHandle, portHandle);
     assert(published > 0, "server published an ephemeral port");
