@@ -745,12 +745,20 @@ namespace {
             task->state = TaskState::Runnable;
             {
                 std::lock_guard lock(mutex);
-                size_t queueIndex =
-                    nextSubmissionQueue++ % queues.size();
-                if (currentScheduler == this && currentWorkerIndex >= 0)
-                    queueIndex = static_cast<size_t>(currentWorkerIndex);
-                EnqueueReadyLocked(queueIndex, {
-                    task, entry, core, priority, std::move(role)});
+                if (core >= 0) {
+                    const size_t queueIndex =
+                        static_cast<size_t>(core) % queues.size();
+                    task->ownerWorker = static_cast<int>(queueIndex);
+                    EnqueueLaneLocked(queues[queueIndex].pinned, {
+                        task, entry, core, priority, std::move(role)});
+                } else {
+                    size_t queueIndex =
+                        nextSubmissionQueue++ % queues.size();
+                    if (currentScheduler == this && currentWorkerIndex >= 0)
+                        queueIndex = static_cast<size_t>(currentWorkerIndex);
+                    EnqueueReadyLocked(queueIndex, {
+                        task, entry, core, priority, std::move(role)});
+                }
             }
             NotifyProgress();
         }
