@@ -24,7 +24,7 @@ jobs:
         os: [ubuntu-24.04, windows-2022]
         configuration: [Debug, Release]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 120
 
     steps:
       - uses: actions/checkout@v4
@@ -104,18 +104,40 @@ jobs:
       - name: Test (Ubuntu)
         id: test_linux
         if: runner.os == 'Linux'
-        # Debug builds the compiler without optimization and then runs it once
-        # per test, so this step is roughly five times the Release one: 6.5
-        # minutes there against 35 here, which is exactly where it was killed.
-        # 50 leaves room under the 60-minute job cap without turning a hang
-        # into a long wait -- ctest still caps each individual test at 180s.
-        timeout-minutes: 50
+        # The default suite, without the tests labelled `differential`.
+        # Those rebuild every runnable program at several optimization
+        # levels and again for wasm; as test 12 of a serial run they
+        # spent the whole 50-minute budget on Debug and left Release
+        # seventy tests short. --parallel 2 matches the build. The
+        # labelled tests still run, on Release, in the next step.
+        timeout-minutes: 40
         shell: bash
         run: |
           set -o pipefail
           ctest --test-dir build -C ${{ matrix.configuration }} \
-            --output-on-failure --timeout 180 \
+            --output-on-failure --timeout 180 --parallel 2 \
+            -LE differential \
             2>&1 | tee ci-logs/ctest.log
+
+      - name: Test differential corpus (Ubuntu Release)
+        id: test_linux_differential
+        if: runner.os == 'Linux' && matrix.configuration == 'Release'
+        # suite-differential, alias-differential, and codegen-fuzz.
+        # Each already sets its own CMake TIMEOUT (up to 3600s), so
+        # this step does not pass --timeout 180, and they run one at
+        # a time: each rebuilds the corpus and sharing the machine
+        # makes both slower. Debug is excluded: the unoptimized
+        # compiler spent 48 minutes on suite-differential alone and
+        # never reached the rest of the suite. Release is the
+        # compiler the comparison is about.
+        timeout-minutes: 70
+        shell: bash
+        run: |
+          set -o pipefail
+          ctest --test-dir build -C Release \
+            --output-on-failure \
+            -L differential \
+            2>&1 | tee ci-logs/ctest-differential.log
 
       - name: Test frontend contract (Windows)
         id: test_windows
@@ -142,6 +164,7 @@ jobs:
           BUILD_LINUX: ${{ steps.build_linux.outcome }}
           BUILD_WINDOWS: ${{ steps.build_windows.outcome }}
           TEST_LINUX: ${{ steps.test_linux.outcome }}
+          TEST_LINUX_DIFFERENTIAL: ${{ steps.test_linux_differential.outcome }}
           TEST_WINDOWS: ${{ steps.test_windows.outcome }}
         run: |
           New-Item -ItemType Directory -Force ci-logs | Out-Null
@@ -149,7 +172,7 @@ jobs:
             'platform-bootstrap' = @($env:BOOTSTRAP_LINUX)
             'configure' = @($env:CONFIGURE_LINUX, $env:CONFIGURE_WINDOWS)
             'build-regression' = @($env:BUILD_LINUX, $env:BUILD_WINDOWS)
-            'test-regression' = @($env:TEST_LINUX, $env:TEST_WINDOWS)
+            'test-regression' = @($env:TEST_LINUX, $env:TEST_LINUX_DIFFERENTIAL, $env:TEST_WINDOWS)
           }
           $category = 'unknown'
           foreach ($phase in $phases.GetEnumerator()) {
@@ -398,7 +421,7 @@ jobs:
           set "LLVM_RT=%CD%\.absolute\toolchains\llvm-%ABSOLUTE_LLVM_RELEASE%\lib\clang\18\lib\windows"
           if not exist "%LLVM_RT%\clang_rt.asan_dynamic-x86_64.lib" exit /b 1
           set "LIB=%LLVM_RT%;%LIB%"
-          ctest --test-dir .absolute\build\windows-release -C Release --output-on-failure --timeout 180 > ci-logs\ctest.log 2>&1
+          ctest --test-dir .absolute\build\windows-release -C Release --output-on-failure --timeout 180 --parallel 2 -LE differential > ci-logs\ctest.log 2>&1
           set code=%ERRORLEVEL%
           type ci-logs\ctest.log
           exit /b %code%
@@ -462,7 +485,7 @@ jobs:
 
   macos-smoke:
     runs-on: macos-15
-    timeout-minutes: 50
+    timeout-minutes: 80
     steps:
       - uses: actions/checkout@v4
 
@@ -519,11 +542,12 @@ jobs:
 
       - name: Test
         id: test
-        timeout-minutes: 20
+        timeout-minutes: 30
         shell: bash
         run: |
           set -o pipefail
           ctest --test-dir build -C Release --output-on-failure --timeout 180 \
+            --parallel 2 -LE differential \
             2>&1 | tee ci-logs/ctest.log
 
       - name: Classify failure phase

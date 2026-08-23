@@ -233,6 +233,14 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "suite-differential=ok"
             LABELS differential
             TIMEOUT 3600)
+        # The `differential` label is the one-command exclusion the
+        # registration comments promise: CI's default Ubuntu/macOS/Windows
+        # LLVM steps run `-LE differential` and Linux Release runs the
+        # labelled tests in a step of their own. They rebuild the suite
+        # at several optimization levels (and native versus wasm) and
+        # cannot share the serial CTest budget with the rest of the
+        # corpus.
+
         # The alias information the backend attaches to field and element
         # accesses is a promise to the optimizer, and a wrong promise is
         # undefined behaviour it acts on rather than a slow program. Neither
