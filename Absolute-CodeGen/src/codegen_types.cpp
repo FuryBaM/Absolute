@@ -129,7 +129,17 @@ namespace Absolute {
 
 
 
-    llvm::StructType* CodeGenerator::Impl::ArrayDescriptorType(const std::string& name) {
+    llvm::StructType* CodeGenerator::Impl::ArrayDescriptorType(const std::string& rawName) {
+        // Ownership does not change representation: a subscriber handle is the
+        // same machine word an owner is, and the difference between them is
+        // what releasing one means -- which is decided from the type name at
+        // the point of release, not from the LLVM type. Giving the two arrays
+        // separate descriptor types would make them refuse to convert into
+        // each other for a difference that is not there in the layout.
+        const std::string name = ArrayRankName(rawName) > 0 &&
+            CanonicalOwnership(ArrayElementTypeName(rawName, ArrayRankName(rawName))) ==
+                OwnershipKind::Sub
+            ? CanonicalWithOwnership(rawName, OwnershipKind::Unique) : rawName;
         if (const auto found = arrayDescriptorTypes.find(name); found != arrayDescriptorTypes.end())
             return found->second;
         const size_t rank = ArrayRankName(name);
@@ -395,9 +405,15 @@ namespace Absolute {
                 if (classes.contains(name) || structs.contains(name) || interfaces.contains(name) ||
                     !enumTypes.insert(name).second)
                     Fail("duplicate type '" + name + "'");
-                for (size_t index = 0; index < enumDeclaration->members.size(); ++index) {
-                    const std::string member = name + "." + enumDeclaration->members[index];
-                    if (!enumConstants.emplace(member, static_cast<std::int32_t>(index)).second)
+                // A member stands for the number written after it, or for one
+                // past its predecessor. The analyzer has already refused a
+                // value that does not fit an i32 and two members sharing one.
+                long long next = 0;
+                for (const EnumMemberDecl& declared : enumDeclaration->members) {
+                    const std::string member = name + "." + declared.name;
+                    const long long value = declared.hasValue ? declared.value : next;
+                    next = value + 1;
+                    if (!enumConstants.emplace(member, static_cast<std::int32_t>(value)).second)
                         Fail("duplicate enum member '" + member + "'");
                 }
             }
@@ -1130,14 +1146,51 @@ namespace Absolute {
         return found->second;
     }
 
+    bool CodeGenerator::Impl::HasAddressableStorage(Expression* expression) {
+        if (!expression || !analyzer) return true;
+        const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
+        if (!info) return true;
+        if (!info->placeInfo.addressable) return false;
+        Expression* base = nullptr;
+        if (auto* member = dynamic_cast<MemberAccessExpr*>(expression)) base = member->base.get();
+        else if (auto* array = dynamic_cast<ArrayAccessExpr*>(expression)) base = array->base.get();
+        if (!base) return true;
+        // Through a pointer or an array descriptor the field has real storage
+        // behind it, whatever the expression that produced the pointer was.
+        const std::string baseType = SemanticType(base);
+        if (IsPointerTypeName(baseType) || ArrayRankName(baseType) > 0) return true;
+        return HasAddressableStorage(base);
+    }
+
     llvm::Value* CodeGenerator::Impl::ObjectPointer(Expression* expression, const std::string& typeName) {
         if (IsPointerTypeName(typeName)) {
             const bool oldAddressMode = addressMode;
             addressMode = false;
-            llvm::Value* pointer = Evaluate(expression);
+            // Reading a member or calling a method borrows the object: it does
+            // not take the owner, so `make().value` used to drop the handle and
+            // leak it. Registered for the end of the statement instead, which
+            // is late enough for a chain like `make().child.value` to finish.
+            llvm::Value* pointer = EvaluateBorrowed(expression);
             addressMode = oldAddressMode;
             return IsManagedPointerTypeName(typeName)
                 ? ManagedPointee(expression, pointer) : pointer;
+        }
+        // A struct value that is not a place -- what a property getter or a
+        // function returns -- has no address to take, but reading a field of
+        // it is ordinary notation: `pair.key`, `config().timeout`. Copy it into
+        // a temporary and read from there. Only when reading: with addressMode
+        // set the caller is writing, and a write has to keep failing, because
+        // it would land in the copy and be lost.
+        if (!addressMode && !HasAddressableStorage(expression)) {
+            const bool oldAddressMode = addressMode;
+            addressMode = false;
+            llvm::Value* value = Evaluate(expression);
+            addressMode = oldAddressMode;
+            llvm::Type* valueType = TypeFromName(typeName);
+            llvm::AllocaInst* temporary = CreateEntryAlloca(
+                *CurrentFunction(), valueType, "value.temporary");
+            builder.CreateStore(Coerce(value, valueType), temporary);
+            return temporary;
         }
         return EvaluateAddress(expression);
     }
@@ -1183,39 +1236,138 @@ namespace Absolute {
         builder.CreateMemSet(object, builder.getInt8(0), ObjectSize(info), llvm::MaybeAlign(8));
     }
 
-    bool CodeGenerator::Impl::TypeNeedsCleanup(const std::string& typeName) {
+    TypeSemantics CodeGenerator::Impl::SemanticsOfTypeName(const std::string& typeName) {
+        std::unordered_set<std::string> visiting;
+        return SemanticsOfTypeName(typeName, visiting);
+    }
+
+    // One place decides what a type is, for every question about copying,
+    // moving and releasing it. Everything that used to read the shape of a type
+    // name for itself now reads this, which is what lets an array or an
+    // aggregate work out its own answer by asking its parts rather than by
+    // knowing what a pointer looks like.
+    TypeSemantics CodeGenerator::Impl::SemanticsOfTypeName(
+        const std::string& typeName, std::unordered_set<std::string>& visiting) {
         std::string closureReturn;
         std::vector<std::string> closureParameters;
-        if (ParseCodegenFunctionType(typeName, closureReturn, closureParameters)) return true;
+        if (ParseCodegenFunctionType(typeName, closureReturn, closureParameters))
+            return {true, true, true, DropKind::Closure};
+
+        if (const OwnershipKind kind = CanonicalOwnership(typeName);
+            kind != OwnershipKind::None) {
+            const HandleSemantics handle = CanonicalHandleSemantics(kind);
+            const DropKind drop = handle.needsDrop
+                ? DropKind::ManagedOwner : DropKind::None;
+            return {handle.copyable, handle.movable, handle.needsDrop, drop};
+        }
+
+        // A string is shared: copying one is copying the pointer, and what
+        // releasing it means is one name fewer holding the bytes. Copyable and
+        // movable, unlike an owner, and still with something to drop.
+        if (typeName == "string") return {true, true, true, DropKind::StringStorage};
+
+        // A tuple is an aggregate that has no declaration to look up, so it
+        // asks its elements directly. Without this it answered "nothing to
+        // release" for `tuple<int64, string>` and the string in it was lost --
+        // the same hole a struct field had, reached by a different spelling.
+        {
+            std::string base;
+            std::vector<std::string> elements;
+            if (ParseCodegenGenericType(typeName, base, elements) && base == "tuple") {
+                TypeSemantics result{true, true, false, DropKind::TupleValue};
+                for (const std::string& element : elements) {
+                    const TypeSemantics part = SemanticsOfTypeName(element, visiting);
+                    if (part.needsDrop) result.needsDrop = true;
+                    if (!part.copyable) result.copyable = false;
+                }
+                if (!result.needsDrop) result.dropKind = DropKind::None;
+                return result;
+            }
+        }
+
+        // An array always has storage to free. Whether its elements need
+        // dropping too is a separate question, and the answer to it is what
+        // section 15 of docs/known-defects.md is about.
+        // Not copyable: the descriptor names storage with one owner, and
+        // copying it would make two. `copy(...)` is how a second array is
+        // asked for, and it allocates. This is what tells an aggregate holding
+        // an array that it travels with a role, the way one holding only a
+        // string does not -- a string is shared, an array's storage is not.
+        if (ArrayRankName(typeName) > 0)
+            return {false, true, true, DropKind::ArrayStorage};
+
+        // A cycle in the field graph is not a reason to keep looking.
+        if (!visiting.insert(typeName).second) return {};
+        const auto release = [&] { visiting.erase(typeName); };
+
+        if (const PluginResourceDescriptor* descriptor =
+                GetPluginResourceDescriptor(typeName)) {
+            if (descriptor->isResource) {
+                release();
+                return {true, true, true, DropKind::PluginResource};
+            }
+        }
+
+        // A hand-written destroy() hook, or any part that needs releasing.
+        // `methods` is keyed by CallableKey, which appends "$"-joined parameter
+        // types to the bare name, so a literal "destroy()" is not a key it can
+        // hold -- matching that silently skipped cleanup for every type whose
+        // only resource was its own hook.
+        const auto aggregate = [&](const auto& info, DropKind drop) {
+            TypeSemantics result{true, true, false, drop};
+            if (info.methods.contains(CallableKey("destroy", {})))
+                result.needsDrop = true;
+            for (const ClassField& field : info.fields) {
+                const TypeSemantics part = SemanticsOfTypeName(field.typeName, visiting);
+                if (part.needsDrop) result.needsDrop = true;
+                if (!part.copyable) result.copyable = false;
+            }
+            if (!result.needsDrop) result.dropKind = DropKind::None;
+            return result;
+        };
+
+        if (const auto found = classes.find(typeName); found != classes.end()) {
+            const TypeSemantics result = aggregate(found->second, DropKind::ClassObject);
+            release();
+            return result;
+        }
+        if (const auto found = structs.find(typeName); found != structs.end()) {
+            const TypeSemantics result = aggregate(found->second, DropKind::StructObject);
+            release();
+            return result;
+        }
+        release();
+        return {};
+    }
+
+    bool CodeGenerator::Impl::TypeNeedsCleanup(const std::string& typeName) {
+        return SemanticsOfTypeName(typeName).needsDrop;
+    }
+
+    bool CodeGenerator::Impl::ValueCountsOnCopy(const std::string& typeName) {
         std::unordered_set<std::string> visiting;
-        const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
-            if (IsStrongManagedPointerTypeName(candidate) || ArrayRankName(candidate) > 0) return true;
-            if (IsRawPointerTypeName(candidate) || !visiting.insert(candidate).second) return false;
-            
-            if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(candidate)) {
-                if (descriptor->isResource) return true;
-            }
-            
-            const auto release = [&] { visiting.erase(candidate); };
-            if (const auto found = classes.find(candidate); found != classes.end()) {
-                if (found->second.methods.contains("destroy()")) {
-                    release();
-                    return true;
-                }
-                for (const ClassField& field : found->second.fields) {
-                    if (self(self, field.typeName)) {
-                        release();
-                        return true;
-                    }
-                }
-            }
-            else if (const auto found = structs.find(candidate); found != structs.end()) {
-                if (found->second.methods.contains("destroy()")) {
-                    release();
-                    return true;
-                }
-                for (const ClassField& field : found->second.fields) {
-                    if (self(self, field.typeName)) {
+        return ValueCountsOnCopy(typeName, visiting);
+    }
+
+    // The same walk EmitValueRetain does, asking only whether it would emit
+    // anything. `needsDrop` is not the question and neither is `copyable`: a
+    // struct wrapping a `raw void*` with a destroy() hook is both droppable and
+    // copyable, and copying it counts nothing -- there is one handle and the
+    // hook closes it -- so a move of one has to be a transfer.
+    bool CodeGenerator::Impl::ValueCountsOnCopy(
+        const std::string& typeName, std::unordered_set<std::string>& visiting) {
+        const TypeSemantics semantics = SemanticsOfTypeName(typeName);
+        if (!semantics.needsDrop || !semantics.copyable) return false;
+        if (semantics.dropKind == DropKind::StringStorage) return true;
+        if (semantics.dropKind == DropKind::Closure) return true;
+        if (!visiting.insert(typeName).second) return false;
+        const auto release = [&] { visiting.erase(typeName); };
+        if (semantics.dropKind == DropKind::TupleValue) {
+            std::string base;
+            std::vector<std::string> elements;
+            if (ParseCodegenGenericType(typeName, base, elements)) {
+                for (const std::string& element : elements) {
+                    if (ValueCountsOnCopy(element, visiting)) {
                         release();
                         return true;
                     }
@@ -1223,8 +1375,24 @@ namespace Absolute {
             }
             release();
             return false;
+        }
+        const auto walk = [&](auto& info) {
+            for (const ClassField& field : info.fields)
+                if (ValueCountsOnCopy(field.typeName, visiting)) return true;
+            return false;
         };
-        return inspect(inspect, typeName);
+        if (auto found = classes.find(typeName); found != classes.end()) {
+            const bool counts = walk(found->second);
+            release();
+            return counts;
+        }
+        if (auto found = structs.find(typeName); found != structs.end()) {
+            const bool counts = walk(found->second);
+            release();
+            return counts;
+        }
+        release();
+        return false;
     }
 
     void CodeGenerator::Impl::EmitPointeeCleanup(
@@ -1259,11 +1427,201 @@ namespace Absolute {
         builder.SetInsertPoint(complete);
     }
 
+
+    // An array releases what its elements own, and the element type is what
+    // says whether there is anything to release: `Node*[]` drops every element,
+    // `sub Node*[]` drops none, and `int32[]` emits no loop at all. The array
+    // never asks what it is holding.
+    //
+    // Only when it owns its storage. A view into someone else's allocation has
+    // a null owner -- the same bit that decides whether the storage itself is
+    // freed -- and dropping through it would release elements the real owner
+    // still holds.
+    // Every string in the language points at the first byte of a block whose
+    // header says how many names are holding it. A literal is held by nobody
+    // and by everybody: its count is the static sentinel, so retaining it does
+    // nothing and releasing it does nothing. Laying it out this way rather than
+    // leaving literals headerless means release never has to guess whether the
+    // pointer it was given has a header at all.
+    llvm::Constant* CodeGenerator::Impl::EmitStringConstant(
+        const std::string& text, const std::string& name) {
+        const auto found = stringConstants.find(text);
+        if (found != stringConstants.end()) return found->second;
+
+        // { i32 magic, i32 refs } then the bytes and their terminator, in one
+        // constant, so the bytes are at a known offset from the header.
+        llvm::StructType* layout = llvm::StructType::get(context, {
+            builder.getInt32Ty(), builder.getInt32Ty(),
+            llvm::ArrayType::get(builder.getInt8Ty(), text.size() + 1)});
+        llvm::Constant* initializer = llvm::ConstantStruct::get(layout, {
+            builder.getInt32(0x41425331u),   // "ABS1", the same word the runtime writes
+            builder.getInt32(0xFFFFFFFFu),   // static: never released
+            llvm::ConstantDataArray::getString(context, text, true)});
+        auto* global = new llvm::GlobalVariable(
+            *module, layout, true, llvm::GlobalValue::PrivateLinkage,
+            initializer, name);
+        global->setAlignment(llvm::Align(8));
+        global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::None);
+        llvm::Constant* bytes = llvm::ConstantExpr::getInBoundsGetElementPtr(
+            layout, global,
+            llvm::ArrayRef<llvm::Constant*>{
+                builder.getInt32(0), builder.getInt32(2), builder.getInt32(0)});
+        stringConstants.emplace(text, bytes);
+        return bytes;
+    }
+
+    // A copy of an array is a copy of every element, and an element that
+    // counts something has to count it here. The element type decides how --
+    // the same walk a copy of a single value does -- so a struct holding a
+    // string is covered by the fact that the string is, and no shape is asked
+    // about twice.
+    void CodeGenerator::Impl::EmitArrayElementRetain(
+        llvm::Value* data, llvm::Type* elementType, llvm::Value* count,
+        const std::string& elementTypeName) {
+        if (!data || !elementType || !count) return;
+        if (!ValueCountsOnCopy(elementTypeName)) return;
+        if (!count->getType()->isIntegerTy(64))
+            count = builder.CreateIntCast(
+                count, builder.getInt64Ty(), true, "array.retain.count");
+        llvm::Function* function = builder.GetInsertBlock()->getParent();
+        llvm::BasicBlock* entry = builder.GetInsertBlock();
+        llvm::BasicBlock* test = llvm::BasicBlock::Create(
+            context, "array.retain.test", function);
+        llvm::BasicBlock* body = llvm::BasicBlock::Create(
+            context, "array.retain.body", function);
+        llvm::BasicBlock* done = llvm::BasicBlock::Create(
+            context, "array.retain.done", function);
+        builder.CreateBr(test);
+        builder.SetInsertPoint(test);
+        llvm::PHINode* index = builder.CreatePHI(
+            builder.getInt64Ty(), 2, "array.retain.index");
+        index->addIncoming(builder.getInt64(0), entry);
+        builder.CreateCondBr(
+            builder.CreateICmpSLT(index, count, "array.retain.more"), body, done);
+        builder.SetInsertPoint(body);
+        EmitValueRetain(
+            builder.CreateInBoundsGEP(elementType, data, index, "array.retain.element"),
+            elementTypeName);
+        llvm::Value* next = builder.CreateAdd(
+            index, builder.getInt64(1), "array.retain.next");
+        index->addIncoming(next, builder.GetInsertBlock());
+        builder.CreateBr(test);
+        builder.SetInsertPoint(done);
+    }
+
+    void CodeGenerator::Impl::EmitArrayElementCleanup(
+        llvm::Value* data, llvm::Type* elementType,
+        const std::vector<llvm::Value*>& dimensions,
+        const std::string& elementTypeName, llvm::Value* owner) {
+        if (!data || !elementType || dimensions.empty()) return;
+        if (!SemanticsOfTypeName(elementTypeName).needsDrop) return;
+
+        llvm::Value* count = builder.getInt64(1);
+        for (llvm::Value* dimension : dimensions) {
+            llvm::Value* extent = dimension;
+            if (!extent->getType()->isIntegerTy(64))
+                extent = builder.CreateIntCast(
+                    extent, builder.getInt64Ty(), true, "array.cleanup.extent");
+            count = builder.CreateMul(count, extent, "array.cleanup.count");
+        }
+        llvm::Function* function = builder.GetInsertBlock()->getParent();
+        llvm::BasicBlock* owned = llvm::BasicBlock::Create(
+            context, "array.cleanup.owned", function);
+        llvm::BasicBlock* test = llvm::BasicBlock::Create(
+            context, "array.cleanup.test", function);
+        llvm::BasicBlock* body = llvm::BasicBlock::Create(
+            context, "array.cleanup.body", function);
+        llvm::BasicBlock* done = llvm::BasicBlock::Create(
+            context, "array.cleanup.done", function);
+        // The owner pointer is what says this array owns anything at all: a
+        // view into someone else's allocation has none, and `move` clears the
+        // slot so a moved-from local does not release what the destination now
+        // holds. A caller that has already settled the question passes none.
+        if (owner)
+            builder.CreateCondBr(builder.CreateICmpNE(owner,
+                llvm::ConstantPointerNull::get(builder.getPtrTy()),
+                "array.cleanup.owns"), owned, done);
+        else builder.CreateBr(owned);
+        builder.SetInsertPoint(owned);
+        builder.CreateBr(test);
+        builder.SetInsertPoint(test);
+        llvm::PHINode* index = builder.CreatePHI(
+            builder.getInt64Ty(), 2, "array.cleanup.index");
+        index->addIncoming(builder.getInt64(0), owned);
+        builder.CreateCondBr(
+            builder.CreateICmpSLT(index, count, "array.cleanup.more"), body, done);
+        builder.SetInsertPoint(body);
+        llvm::Value* element = builder.CreateInBoundsGEP(
+            elementType, data, index, "array.cleanup.element");
+        EmitValueCleanup(element, elementTypeName);
+        llvm::Value* next = builder.CreateAdd(
+            index, builder.getInt64(1), "array.cleanup.next");
+        index->addIncoming(next, builder.GetInsertBlock());
+        builder.CreateBr(test);
+        builder.SetInsertPoint(done);
+    }
+
+    // Releasing a value is a switch on what the type says releasing it means,
+    // not a walk down the shapes a type name can have. The chain this replaced
+    // asked "is it a closure, is it a strong managed pointer, is it an array,
+    // is it a class..." and each question was a second place that had to agree
+    // with TypeNeedsCleanup about the answer.
+    // A copy of a value is a second name for whatever its parts hold, and the
+    // parts have to be told. Releasing without this is the withdrawn array
+    // attempt in a new place: a struct read out of a container would take the
+    // container's string with it when the local went out of scope.
+    //
+    // Only shared parts are walked. An owner or an array cannot be copied at
+    // all -- `copyable` says so, and a value holding one travels with a role
+    // rather than being duplicated -- so there is nothing here for them to do.
+    void CodeGenerator::Impl::EmitValueRetain(
+        llvm::Value* address, const std::string& typeName) {
+        const TypeSemantics semantics = SemanticsOfTypeName(typeName);
+        if (!semantics.needsDrop || !semantics.copyable) return;
+        if (semantics.dropKind == DropKind::StringStorage) {
+            builder.CreateCall(StringRetain(),
+                {builder.CreateLoad(builder.getPtrTy(), address, "copy.retain.text")});
+            return;
+        }
+        // A closure is counted the same way, and for the same reason: it is one
+        // pointer to storage that several names can hold. It is here so that a
+        // value *containing* one is covered -- a struct with a callback field
+        // read out of a container is a second name for that callback, and the
+        // walk that releases it already knew so.
+        if (semantics.dropKind == DropKind::Closure) {
+            builder.CreateCall(ClosureRetain(),
+                {builder.CreateLoad(builder.getPtrTy(), address, "copy.retain.closure")});
+            return;
+        }
+        if (semantics.dropKind == DropKind::TupleValue) {
+            std::string base;
+            std::vector<std::string> elements;
+            if (!ParseCodegenGenericType(typeName, base, elements)) return;
+            auto* layout = llvm::cast<llvm::StructType>(TypeFromName(typeName));
+            for (size_t index = 0; index < elements.size(); ++index)
+                EmitValueRetain(
+                    builder.CreateStructGEP(layout, address, unsigned(index),
+                        "tuple.retain.element"),
+                    elements[index]);
+            return;
+        }
+        const auto walk = [&](auto& info) {
+            for (const ClassField& field : info.fields)
+                EmitValueRetain(FieldAddress(address, info, field), field.typeName);
+        };
+        if (auto found = classes.find(typeName); found != classes.end()) {
+            walk(found->second);
+            return;
+        }
+        if (auto found = structs.find(typeName); found != structs.end()) walk(found->second);
+    }
+
     void CodeGenerator::Impl::EmitValueCleanup(
         llvm::Value* address, const std::string& typeName) {
-        std::string closureReturn;
-        std::vector<std::string> closureParameters;
-        if (ParseCodegenFunctionType(typeName, closureReturn, closureParameters)) {
+        const TypeSemantics semantics = SemanticsOfTypeName(typeName);
+        if (!semantics.needsDrop) return;
+        switch (semantics.dropKind) {
+        case DropKind::Closure: {
             llvm::Value* closure = builder.CreateLoad(
                 builder.getPtrTy(), address, "closure.cleanup.value");
             builder.CreateCall(ClosureRelease(), {closure});
@@ -1271,7 +1629,7 @@ namespace Absolute {
                 llvm::ConstantPointerNull::get(builder.getPtrTy()), address);
             return;
         }
-        if (IsStrongManagedPointerTypeName(typeName)) {
+        case DropKind::ManagedOwner: {
             llvm::Value* handle = builder.CreateLoad(
                 builder.getInt64Ty(), address, "field.cleanup.handle");
             llvm::Value* pointee = EmitManagedGet(handle, false);
@@ -1280,32 +1638,66 @@ namespace Absolute {
             builder.CreateStore(builder.getInt64(0), address);
             return;
         }
-        if (ArrayRankName(typeName) > 0) {
+        case DropKind::StringStorage: {
+            llvm::Value* text = builder.CreateLoad(
+                builder.getPtrTy(), address, "string.cleanup.text");
+            builder.CreateCall(StringRelease(), {text});
+            builder.CreateStore(
+                llvm::ConstantPointerNull::get(builder.getPtrTy()), address);
+            return;
+        }
+        case DropKind::TupleValue: {
+            std::string base;
+            std::vector<std::string> elements;
+            if (!ParseCodegenGenericType(typeName, base, elements)) return;
+            auto* layout = llvm::cast<llvm::StructType>(TypeFromName(typeName));
+            for (size_t index = elements.size(); index > 0; --index)
+                EmitValueCleanup(
+                    builder.CreateStructGEP(layout, address, unsigned(index - 1),
+                        "tuple.cleanup.element"),
+                    elements[index - 1]);
+            return;
+        }
+        case DropKind::ArrayStorage: {
             llvm::Value* descriptor = builder.CreateLoad(
                 ArrayDescriptorType(typeName), address, "field.cleanup.array");
             llvm::Value* owner = builder.CreateExtractValue(
                 descriptor, {1}, "field.cleanup.array.owner");
+            const size_t rank = ArrayRankName(typeName);
+            std::vector<llvm::Value*> dimensions;
+            for (size_t dimension = 0; dimension < rank; ++dimension)
+                dimensions.push_back(builder.CreateExtractValue(
+                    descriptor, {unsigned(2 + dimension)}, "array.cleanup.dimension"));
+            EmitArrayElementCleanup(
+                builder.CreateExtractValue(descriptor, {0}, "array.cleanup.data"),
+                TypeFromName(ArrayElementTypeName(typeName, rank)), dimensions,
+                ArrayElementTypeName(typeName, rank), owner);
             builder.CreateCall(Free(), {owner});
             builder.CreateStore(llvm::Constant::getNullValue(
                 ArrayDescriptorType(typeName)), address);
             return;
         }
-        if (const auto found = classes.find(typeName); found != classes.end()) {
-            if (TypeNeedsCleanup(typeName))
-                builder.CreateCall(DeclareClassDestructor(found->second), {address});
+        case DropKind::ClassObject:
+            builder.CreateCall(
+                DeclareClassDestructor(classes.at(typeName)), {address});
             return;
-        }
-        if (const auto found = structs.find(typeName); found != structs.end()) {
-            if (TypeNeedsCleanup(typeName))
-                builder.CreateCall(DeclareStructDestructor(found->second), {address});
+        case DropKind::StructObject:
+            builder.CreateCall(
+                DeclareStructDestructor(structs.at(typeName)), {address});
             return;
-        }
-        if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(typeName)) {
-            if (!descriptor->destroyFunction.empty()) {
-                llvm::FunctionType* type = llvm::FunctionType::get(builder.getVoidTy(), {builder.getPtrTy()}, false);
-                llvm::FunctionCallee callee = module->getOrInsertFunction(descriptor->destroyFunction, type);
-                builder.CreateCall(callee, {address});
+        case DropKind::PluginResource:
+            if (const PluginResourceDescriptor* descriptor =
+                    GetPluginResourceDescriptor(typeName);
+                descriptor && !descriptor->destroyFunction.empty()) {
+                llvm::FunctionType* type = llvm::FunctionType::get(
+                    builder.getVoidTy(), {builder.getPtrTy()}, false);
+                builder.CreateCall(
+                    module->getOrInsertFunction(descriptor->destroyFunction, type),
+                    {address});
             }
+            return;
+        case DropKind::None:
+            return;
         }
     }
 
@@ -1316,16 +1708,40 @@ namespace Absolute {
         builder.SetInsertPoint(entry);
         llvm::Value* object = function->getArg(0);
 
-        auto destroyMethod = info.methods.find(CallableKey("destroy", {}));
-        if (destroyMethod != info.methods.end()) {
+        // Every destroy() hook in the hierarchy, most-derived first. `methods`
+        // merges inherited entries, so a derived declaration shadows its
+        // base's under the same key: taking only that one meant a base that
+        // closes a handle or frees native memory silently stopped doing it as
+        // soon as any derived class declared a hook of its own. Its fields
+        // were still released -- only the hand-written half went missing,
+        // which is why nothing failed loudly. `declaredMethods` holds just
+        // what a class declares itself, so walking the base chain finds the
+        // shadowed bodies, and the link name keeps an inherited entry from
+        // being called twice.
+        std::vector<const ClassMethod*> hooks;
+        std::unordered_set<std::string> emitted;
+        const auto collectHook = [&](const std::unordered_map<std::string, ClassMethod>& methods) {
+            const auto found = methods.find(CallableKey("destroy", {}));
+            if (found == methods.end()) return;
+            if (!emitted.insert(found->second.linkName).second) return;
+            hooks.push_back(&found->second);
+        };
+        collectHook(info.methods);
+        for (std::string base = info.baseClass; !base.empty();) {
+            const auto found = classes.find(base);
+            if (found == classes.end()) break;
+            collectHook(found->second.declaredMethods);
+            base = found->second.baseClass;
+        }
+        for (const ClassMethod* hook : hooks) {
             llvm::FunctionCallee callee = module->getOrInsertFunction(
-                destroyMethod->second.linkName, MethodFunctionType(destroyMethod->second));
-            EmitAbiCall(MethodFunctionType(destroyMethod->second), callee.getCallee(),
-                destroyMethod->second.returnType, {object}, destroyMethod->second.parameterTypes, {}, "class.destroy.user");
+                hook->linkName, MethodFunctionType(*hook));
+            EmitAbiCall(MethodFunctionType(*hook), callee.getCallee(),
+                hook->returnType, {object}, hook->parameterTypes, {}, "class.destroy.user");
         }
 
         for (auto field = info.fields.rbegin(); field != info.fields.rend(); ++field) {
-            if (!TypeNeedsCleanup(field->typeName)) continue;
+            if (!SemanticsOfTypeName(field->typeName).needsDrop) continue;
             EmitValueCleanup(FieldAddress(object, info, *field), field->typeName);
         }
         if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(info.name)) {
@@ -1356,7 +1772,7 @@ namespace Absolute {
         }
 
         for (auto field = info.fields.rbegin(); field != info.fields.rend(); ++field) {
-            if (!TypeNeedsCleanup(field->typeName)) continue;
+            if (!SemanticsOfTypeName(field->typeName).needsDrop) continue;
             EmitValueCleanup(FieldAddress(object, info, *field), field->typeName);
         }
         if (const PluginResourceDescriptor* descriptor = GetPluginResourceDescriptor(info.name)) {

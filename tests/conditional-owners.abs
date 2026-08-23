@@ -1,0 +1,95 @@
+// What a conditional made, and what it only named.
+//
+// The two arms of a conditional run on different paths, and what they say
+// about what they produced was left over from whichever ran last rather than
+// answered for the merge. Three things came of that.
+//
+// A value from one arm's block was cached in a place both paths reach -- the
+// object behind a managed handle, stored so later reads need not go through
+// the handle table -- which is not a wrong answer but invalid IR: "instruction
+// does not dominate all uses". `cond ? new Leaf(3) as Shape : new Base(3) as
+// Shape` did not compile at all.
+//
+// The result claimed to own what only one arm made, so `cond ? kept : make()`
+// would have had the local destroy something a name still holds; and it
+// claimed to own nothing when the *false* arm happened to be a plain value,
+// so what the true arm made was dropped on the floor.
+//
+// The rule is the one the counting half already follows: the merge owns
+// something only if both arms produced one, and it holds no value that
+// belongs to a single path -- an array's owner is read out of the descriptor
+// the merge itself produced.
+//
+// Run under AddressSanitizer with the leak check on, and with the runtime's
+// managed-pointer report.
+
+interface Shape { int64 area(); }
+
+class Square : Shape {
+    protected int64 side;
+    public Square(int64 initial) { side = initial; }
+    public virtual int64 area() { return side * side; }
+}
+
+class Bigger : Square {
+    public Bigger(int64 initial) { base(initial); }
+    public override int64 area() { return side * side + 1; }
+}
+
+class Cell {
+    public int64 value;
+    public Cell(int64 initial) { value = initial; }
+}
+
+int32[] pair(int32 seed) {
+    int32[] made = new int32[2];
+    made[0] = seed;
+    made[1] = seed + 1;
+    return made;
+}
+
+int32 main() {
+    Cell* kept = new Cell(7);
+    int32[] keptArray = pair(1);
+
+    int32 round = 0;
+    while (round < 2000) {
+        bool left = round % 2 == 0;
+
+        // Both arms make one, and the cast to an interface is what put a
+        // value from one path where both paths read it.
+        Shape* shape = left
+            ? new Bigger(3) as Shape
+            : new Square(3) as Shape;
+        assert(shape.area() >= 9, "a conditional of fresh objects");
+        delete shape;
+
+        Cell* made = left ? new Cell(round) : new Cell(round + 1);
+        assert(made.value >= round, "and without the cast");
+        delete made;
+
+        // Neither arm makes one: the result is a second name for what the
+        // condition picked, and nothing here destroys it.
+        sub Cell* named = left ? kept : kept;
+        assert(named.value == 7, "a conditional of names owns nothing");
+
+        // Both arms make a closure, and both make an array.
+        func<int32> pick = left ? fn() => 1 : fn() => 2;
+        assert(pick() >= 1, "a conditional of closures");
+
+        int32[] numbers = left ? pair(round) : pair(round + 1);
+        assert(numbers[0] >= round, "a conditional of fresh arrays");
+
+        int32[] borrowed = left ? keptArray : keptArray;
+        assert(borrowed.length == 2, "a conditional of named arrays");
+
+        round = round + 1;
+    }
+
+    assert(kept.value == 7, "the object every borrow named is still here");
+    assert(keptArray[0] == 1, "and the array");
+    delete kept;
+
+    println("conditional-owners=ok");
+    return 0;
+}

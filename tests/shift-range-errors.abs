@@ -1,0 +1,36 @@
+// Shift amounts the source writes out, which the compiler can judge.
+//
+// Each of these was accepted and produced an undefined value: `1 << 32` on an
+// int32 printed -1780665664, and `1 << 40` produced something `format` could
+// not print. The amount is checked against the width of the result type now,
+// and refused where it cannot mean anything.
+//
+// Compiled for the diagnostics, so the file never runs.
+
+int32 main() {
+    int32 value = 1;
+
+    // Exactly the width, which is the case people write by mistake.
+    int32 tooFar = value << 32;
+
+    // Past it.
+    int32 wellPast = value << 40;
+
+    // The other direction, and the unsigned reading of it.
+    int32 down = value >> 32;
+    uint32 unsignedValue = 4294967295;
+    uint32 unsignedDown = unsignedValue >> 32;
+
+    // 64 bits has its own boundary, one past the largest legal amount.
+    int64 wide = 1;
+    int64 wideTooFar = wide << 64;
+
+    // A negative amount is not a shift in the other direction.
+    int32 backwards = value << -1;
+
+    // The compound forms are the same shift and get the same answer.
+    value <<= 32;
+    value >>= 64;
+
+    return tooFar + wellPast + down + backwards;
+}

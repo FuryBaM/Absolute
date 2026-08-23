@@ -1,6 +1,13 @@
 namespace std.collections {
     class VectorIterator<T> {
-        private T[] snapshot;
+        // A snapshot borrows what it snapshots. Over an element that owns
+        // something a plain `T[]` here would be a second array of owners over
+        // the same objects, and whichever of the two released them first, the
+        // other would be wrong. `sub T` says the weaker thing: at `T = Node*`
+        // this is `sub Node*[]` and releasing the iterator releases nothing,
+        // and at `T = int32` the qualifier is not there at all, because a value
+        // with no object has no relation to an object's lifetime to weaken.
+        private sub T[] snapshot;
         private int32 length;
         private int32 index;
 
@@ -15,12 +22,12 @@ namespace std.collections {
             return index < length;
         }
 
-        public T value {
+        public sub T value {
             get { return snapshot[index]; }
         }
     }
 
-    class VectorBuilder<T> {
+    class VectorBuilder<copyable T> {
         private T[] buffer;
         private int32 _count;
         private int32 _capacity;
@@ -137,14 +144,17 @@ namespace std.collections {
             get { return _count == 0; }
         }
 
-        public T first {
+        // Reading an element is not the vector giving it up, so what comes
+        // back is the weaker relation to the same object. At `T = int32` the
+        // qualifier is not there at all.
+        public sub T first {
             get {
                 if (_count == 0) { throw new Error("Vector is empty"); }
                 return items[0];
             }
         }
 
-        public T last {
+        public sub T last {
             get {
                 if (_count == 0) { throw new Error("Vector is empty"); }
                 return items[_count - 1];
@@ -155,15 +165,21 @@ namespace std.collections {
             if (_count == _capacity) {
                 int32 newCap = _capacity * 2;
                 T[] newItems = new T[newCap];
-                int32 i = 0;
-                while (i < _count) {
-                    newItems[i] = items[i];
-                    i = i + 1;
-                }
+                // One block move rather than a loop of element stores. Growth
+                // carries every element the vector holds, so at a million
+                // elements the scalar loop was a measurable share of the cost
+                // of filling it.
+                //
+                // A move rather than a copy: the old storage is dropped on the
+                // next line, and for an element that owns something a copy
+                // would leave it holding what the new storage now owns.
+                unsafeArrayMove(newItems, items, _count);
                 items = move(newItems);
                 _capacity = newCap;
             }
-            items[_count] = move(element);
+            // _count is below _capacity here, so the store is in range and the
+            // element index does not need checking again.
+            unsafeArraySet(items, _count, move(element));
             _count = _count + 1;
         }
 
@@ -172,11 +188,7 @@ namespace std.collections {
                 return;
             }
             T[] newItems = new T[requestedCapacity];
-            int32 i = 0;
-            while (i < _count) {
-                newItems[i] = items[i];
-                i = i + 1;
-            }
+            unsafeArrayMove(newItems, items, _count);
             items = move(newItems);
             _capacity = requestedCapacity;
         }
@@ -186,10 +198,18 @@ namespace std.collections {
                 throw new Error("Vector is empty");
             }
             _count = _count - 1;
-            return items[_count];
+            // A take rather than a get: the element is leaving the vector, so
+            // the slot must stop holding it. A get would hand the caller a
+            // second handle to what the vector still has in a slot past
+            // `_count` -- and a slot past `_count` is still inside the storage
+            // the vector drops.
+            return unsafeArrayTake(items, _count);
         }
 
         public void clear() {
+            // Whatever the elements were holding is released here. For an
+            // element that owns nothing this is not a loop, it is nothing.
+            unsafeArrayDrop(items, 0, _count);
             _count = 0;
         }
 
@@ -197,22 +217,65 @@ namespace std.collections {
             if (index < 0 || index >= _count) {
                 throw new Error("Index out of bounds");
             }
+            // The element being removed is released first; the shift then moves
+            // each survivor down by taking it, which leaves the slot it came
+            // from empty -- including the last one, so the tail past the new
+            // `_count` owns nothing.
+            unsafeArrayDrop(items, index, 1);
             int32 i = index;
             while (i < _count - 1) {
-                items[i] = items[i + 1];
+                unsafeArraySet(items, i, unsafeArrayTake(items, i + 1));
                 i = i + 1;
             }
             _count = _count - 1;
         }
 
+        // Exchanging two elements moves nothing out of the vector, which is
+        // why sorting is written with it. Reading `items[a]` and `items[b]`
+        // and storing them back would be two second handles to two objects
+        // the vector still holds; taking both leaves both slots empty for the
+        // moment between, which is the only shape that is true for every `T`.
+        public void swap(int32 a, int32 b) {
+            if (a < 0 || a >= _count || b < 0 || b >= _count) {
+                throw new Error("Index out of bounds");
+            }
+            if (a == b) {
+                return;
+            }
+            T left = unsafeArrayTake(items, a);
+            T right = unsafeArrayTake(items, b);
+            unsafeArraySet(items, a, move(right));
+            unsafeArraySet(items, b, move(left));
+        }
+
+        // Giving an element up, spelled as what it is. `v[i]` borrows the
+        // cell -- an indexer is a projection -- and this is the operation
+        // that hands the element over: the slot is cleared and every survivor
+        // shifts down, so exactly one name holds it afterwards.
+        public T takeAt(int32 index) {
+            if (index < 0 || index >= _count) {
+                throw new Error("Index out of bounds");
+            }
+            T taken = unsafeArrayTake(items, index);
+            int32 i = index;
+            while (i < _count - 1) {
+                unsafeArraySet(items, i, unsafeArrayTake(items, i + 1));
+                i = i + 1;
+            }
+            _count = _count - 1;
+            return taken;
+        }
+
         // Горячий путь: быстрый доступ по индексу
         public nothrow T this[int32 index] {
             get {
-                assert(index >= 0 && index < _count, "Index out of bounds");
+                // One unsigned compare covers both ends: a negative index
+                // becomes a very large unsigned value and fails the same test.
+                assert((index as uint32) < (_count as uint32), "Index out of bounds");
                 return unsafeArrayGet(items, index);
             }
             set {
-                assert(index >= 0 && index < _count, "Index out of bounds");
+                assert((index as uint32) < (_count as uint32), "Index out of bounds");
                 unsafeArraySet(items, index, move(value));
             }
         }
@@ -226,12 +289,11 @@ namespace std.collections {
             return new std.collections.VectorIterator<T>(items, _count);
         }
 
-        public std.collections.VectorBuilder<T>* builder() {
-            return new std.collections.VectorBuilder<T>(items, _count);
-        }
-
-        public T[] toArray() {
-            T[] res = new T[_count];
+        // A second array over the same elements, and only one of the two can
+        // own them -- this one does not. At `T = int32` this is the ordinary
+        // `int32[]` copy it has always been.
+        public sub T[] toArray() {
+            sub T[] res = new T[_count];
             int32 i = 0;
             while (i < _count) {
                 res[i] = items[i];
@@ -240,8 +302,27 @@ namespace std.collections {
             return res;
         }
 
-        public T[] unsafeCopyRaw() {
+        public sub T[] unsafeCopyRaw() {
             return toArray();
         }
+    }
+
+    // A builder is a staging *owner*: `add(T)` gives it an element and
+    // `finish()` hands every element to a new vector that owns them. Seeded
+    // from a live vector, its first act is to duplicate what that vector
+    // still holds -- which is what a snapshot means, and what an owning
+    // element cannot be. Borrowing instead does not help: `finish()` would
+    // then give a vector of owners handles it never owned.
+    //
+    // So it is written as an extension rather than as a method. A method's
+    // return type is instantiated with the class, so `Vector<Cell*>` could
+    // not exist at all -- a program paid for a builder it never called. An
+    // extension is instantiated where it is called, so a vector of owners is
+    // an ordinary vector, and a program that asks one for a builder is
+    // refused there, with the lines that say why.
+    extension std.collections.VectorBuilder<T>* builder<T>(
+        std.collections.Vector<T>* vec) {
+        return new std.collections.VectorBuilder<T>(
+            vec.unsafeCopyRaw(), vec.count);
     }
 }

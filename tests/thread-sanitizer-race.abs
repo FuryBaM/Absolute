@@ -1,0 +1,62 @@
+// A deliberate data race, so that a clean ThreadSanitizer run means something.
+//
+// Every other case built with --sanitize=thread asserts an absence, and an
+// absence is what an instrumentation that does nothing also produces. This
+// program is the control: two tasks read-modify-write the same int64 through a
+// raw pointer with no lock and no atomic, which is a race by construction, and
+// the build is expected to report it. If this one ever comes back clean, the
+// instrumentation stopped working and the rest of the thread-sanitizer cases
+// are proving nothing.
+//
+// It is not run outside the sanitizer: the answer it prints is whatever the
+// interleaving produced, which is the point.
+import "std/task.abs";
+import "std/concurrent.abs";
+
+// ThreadSanitizer tracks OS threads, not fibers. A nested spawn without a core
+// enters the caller's queue, and a fiber that has started stays on that worker.
+// Two racers launched that way can run one after the other on one thread: the
+// first never yields, the second never starts, and the sanitizer sees an order.
+// Naming two cores submits each task to that worker's pinned lane
+// before either fiber exists. The harness also asks for two workers, so
+// a one-core host cannot map both names onto one thread.
+//
+// Both still meet at the counter so the write loops overlap. The loop itself
+// must not yield. delay() takes a lock in the scheduler, and that lock is a
+// happens-before between one write and the next, which is how a program that
+// is a race by construction used to come back clean.
+async int64 racer(int64 address, int64 readyAddress, int64 iterations) {
+    raw int64* slot = address as raw int64*;
+    raw void* ready = readyAddress as raw void*;
+    absolute_atomic_fetch_add(ready, 1);
+    int32 waited = 0;
+    while (absolute_atomic_load(ready) < 2 && waited < 20000000) {
+        waited += 1;
+    }
+
+    int64 index = 0;
+    while (index < iterations) {
+        // Not `+= 1`: the read and the write are what the two tasks interleave.
+        slot[0] = slot[0] + 1;
+        index += 1;
+    }
+    return index;
+}
+
+async int32 main() {
+    raw int64* cell = new raw int64;
+    cell[0] = 0;
+    int64 handle = cell as int64;
+    std.concurrent.AtomicInt* ready = new std.concurrent.AtomicInt(0);
+    int64 readyHandle = ready.nativeHandle() as int64;
+
+    @spawn(core = 0)
+    task<int64> first = spawn racer(handle, readyHandle, 40000);
+    @spawn(core = 1)
+    task<int64> second = spawn racer(handle, readyHandle, 40000);
+    int64 performed = await first + await second;
+    delete ready;
+    delete cell;
+    println(performed);
+    return 0;
+}

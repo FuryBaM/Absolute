@@ -8,7 +8,8 @@ namespace Absolute {
         std::unique_ptr<UserTypeExpr> constructType = std::make_unique<UserTypeExpr>(ParseIdentifierExpr(true));
         std::unique_ptr<Expression> identifierName = ParsePrimaryExpr();
         std::unique_ptr<Expression> initializer = nullptr;
-        if (CurrentToken()->value == "=") {
+        // The source can end right after the name, so there may be no token.
+        if (CurrentToken() && CurrentToken()->value == "=") {
             Consume(TokenType::OPERATOR, "=");
             initializer = ParseExpression();
         }

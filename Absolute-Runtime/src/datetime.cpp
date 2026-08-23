@@ -2,7 +2,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <string>
 
 #if defined(_WIN32)
@@ -123,30 +122,64 @@ extern "C" const char* absolute_datetime_format_iso(
     int32_t hour, int32_t minute, int32_t second, int32_t millis,
     int32_t offsetMinutes) {
 
-    char buf[64];
+    // A negative year keeps its four digits: "%04d" spends one of them on the
+    // sign, so year -1 printed as "-001" and could not be read back.
+    char yearText[16];
+    if (year < 0) {
+        std::snprintf(yearText, sizeof(yearText), "-%04lld",
+            static_cast<long long>(-static_cast<int64_t>(year)));
+    } else {
+        std::snprintf(yearText, sizeof(yearText), "%04d", year);
+    }
+
+    char zone[16];
     if (offsetMinutes == 0) {
-        if (millis > 0) {
-            std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
-                year, month, day, hour, minute, second, millis);
-        } else {
-            std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02dZ",
-                year, month, day, hour, minute, second);
-        }
+        std::snprintf(zone, sizeof(zone), "Z");
     } else {
         int32_t absOff = offsetMinutes >= 0 ? offsetMinutes : -offsetMinutes;
-        int32_t hrs = absOff / 60;
-        int32_t mins = absOff % 60;
-        char sign = offsetMinutes >= 0 ? '+' : '-';
-        if (millis > 0) {
-            std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d.%03d%c%02d:%02d",
-                year, month, day, hour, minute, second, millis, sign, hrs, mins);
-        } else {
-            std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d%c%02d:%02d",
-                year, month, day, hour, minute, second, sign, hrs, mins);
-        }
+        std::snprintf(zone, sizeof(zone), "%c%02d:%02d",
+            offsetMinutes >= 0 ? '+' : '-', absOff / 60, absOff % 60);
+    }
+
+    char buf[64];
+    if (millis > 0) {
+        std::snprintf(buf, sizeof(buf), "%s-%02d-%02dT%02d:%02d:%02d.%03d%s",
+            yearText, month, day, hour, minute, second, millis, zone);
+    } else {
+        std::snprintf(buf, sizeof(buf), "%s-%02d-%02dT%02d:%02d:%02d%s",
+            yearText, month, day, hour, minute, second, zone);
     }
     lastDateTimeResult = buf;
     return lastDateTimeResult.c_str();
+}
+
+namespace {
+    // A year is at least four digits and may be longer (an expanded year);
+    // every other field is exactly as wide as it is written.
+    bool ReadYearDigits(const char*& cursor, int32_t& value) {
+        int64_t result = 0;
+        int digits = 0;
+        while (*cursor >= '0' && *cursor <= '9') {
+            if (result > 100000000) return false;
+            result = result * 10 + (*cursor - '0');
+            ++digits;
+            ++cursor;
+        }
+        if (digits < 4) return false;
+        value = static_cast<int32_t>(result);
+        return true;
+    }
+
+    bool ReadFixedDigits(const char*& cursor, int count, int32_t& value) {
+        int32_t result = 0;
+        for (int index = 0; index < count; ++index) {
+            if (*cursor < '0' || *cursor > '9') return false;
+            result = result * 10 + (*cursor - '0');
+            ++cursor;
+        }
+        value = result;
+        return true;
+    }
 }
 
 extern "C" int32_t absolute_datetime_parse_iso(
@@ -161,42 +194,99 @@ extern "C" int32_t absolute_datetime_parse_iso(
         return 0;
     }
 
-    int y = 0, m = 0, d = 0, hh = 0, mm = 0, ss = 0, ms = 0;
-    int tzSign = 1, tzH = 0, tzM = 0;
-    char zChar = '\0';
+    const char* cursor = text;
+    int32_t yearSign = 1;
+    if (*cursor == '-' || *cursor == '+') {
+        yearSign = (*cursor == '-') ? -1 : 1;
+        ++cursor;
+    }
 
-    int readCount = std::sscanf(text, "%d-%d-%dT%d:%d:%d.%d", &y, &m, &d, &hh, &mm, &ss, &ms);
-    if (readCount < 3) {
+    // The date is required, and it is all a bare "1999-12-31" consists of.
+    // Reading it as a grammar rather than scanning for the last sign is what
+    // keeps its day out of the zone: the value ends where the date ends, and
+    // there is nothing left for an offset to be read out of.
+    int32_t year = 0, month = 0, day = 0;
+    if (!ReadYearDigits(cursor, year) || *cursor != '-' ||
+        (++cursor, !ReadFixedDigits(cursor, 2, month)) || *cursor != '-' ||
+        (++cursor, !ReadFixedDigits(cursor, 2, day))) {
         lastDateTimeError = "Invalid ISO-8601 format";
         return 0;
     }
+    year *= yearSign;
 
-    // Check timezone at the end of string
-    const char* p = std::strchr(text, 'T');
-    if (!p) p = text;
-    const char* tzPos = std::strchr(p, 'Z');
-    if (!tzPos) tzPos = std::strchr(p, 'z');
-    if (tzPos) {
-        tzH = 0;
-        tzM = 0;
-    } else {
-        const char* plusPos = std::strrchr(p, '+');
-        const char* minusPos = std::strrchr(p, '-');
-        const char* signPos = plusPos ? plusPos : minusPos;
-        if (signPos && signPos > p) {
-            tzSign = (*signPos == '-') ? -1 : 1;
-            std::sscanf(signPos + 1, "%d:%d", &tzH, &tzM);
+    int32_t hour = 0, minute = 0, second = 0, millis = 0;
+    int32_t offsetMinutes = 0;
+
+    if (*cursor == 'T' || *cursor == 't' || *cursor == ' ') {
+        ++cursor;
+        if (!ReadFixedDigits(cursor, 2, hour) || *cursor != ':' ||
+            (++cursor, !ReadFixedDigits(cursor, 2, minute))) {
+            lastDateTimeError = "Invalid ISO-8601 time";
+            return 0;
+        }
+        if (*cursor == ':') {
+            ++cursor;
+            if (!ReadFixedDigits(cursor, 2, second)) {
+                lastDateTimeError = "Invalid ISO-8601 time";
+                return 0;
+            }
+        }
+        if (*cursor == '.' || *cursor == ',') {
+            ++cursor;
+            if (*cursor < '0' || *cursor > '9') {
+                lastDateTimeError = "Invalid ISO-8601 fractional second";
+                return 0;
+            }
+            // A fraction is a fraction: ".1" is 100 ms, not 1 ms. Digits past
+            // the third are truncated, which is the resolution this type has.
+            int digits = 0;
+            while (*cursor >= '0' && *cursor <= '9') {
+                if (digits < 3) millis = millis * 10 + (*cursor - '0');
+                ++digits;
+                ++cursor;
+            }
+            for (; digits < 3; ++digits) millis *= 10;
+        }
+
+        if (*cursor == 'Z' || *cursor == 'z') {
+            ++cursor;
+        } else if (*cursor == '+' || *cursor == '-') {
+            int32_t sign = (*cursor == '-') ? -1 : 1;
+            ++cursor;
+            int32_t offsetHours = 0, offsetMins = 0;
+            if (!ReadFixedDigits(cursor, 2, offsetHours)) {
+                lastDateTimeError = "Invalid ISO-8601 zone offset";
+                return 0;
+            }
+            if (*cursor == ':') ++cursor;
+            if (*cursor >= '0' && *cursor <= '9') {
+                if (!ReadFixedDigits(cursor, 2, offsetMins)) {
+                    lastDateTimeError = "Invalid ISO-8601 zone offset";
+                    return 0;
+                }
+            }
+            if (offsetHours > 23 || offsetMins > 59) {
+                lastDateTimeError = "Zone offset out of range";
+                return 0;
+            }
+            offsetMinutes = sign * (offsetHours * 60 + offsetMins);
         }
     }
 
-    if (outYear) *outYear = y;
-    if (outMonth) *outMonth = m;
-    if (outDay) *outDay = d;
-    if (outHour) *outHour = hh;
-    if (outMinute) *outMinute = mm;
-    if (outSecond) *outSecond = ss;
-    if (outMillis) *outMillis = ms;
-    if (outOffsetMinutes) *outOffsetMinutes = tzSign * (tzH * 60 + tzM);
+    while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n') ++cursor;
+    if (*cursor != '\0') {
+        lastDateTimeError = "Trailing text after ISO-8601 value";
+        return 0;
+    }
+
+    if (outYear) *outYear = year;
+    if (outMonth) *outMonth = month;
+    if (outDay) *outDay = day;
+    if (outHour) *outHour = hour;
+    if (outMinute) *outMinute = minute;
+    if (outSecond) *outSecond = second;
+    if (outMillis) *outMillis = millis;
+    if (outOffsetMinutes) *outOffsetMinutes = offsetMinutes;
 
     return 1;
 }

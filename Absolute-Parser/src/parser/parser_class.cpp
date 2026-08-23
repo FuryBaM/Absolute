@@ -11,7 +11,9 @@ namespace Absolute {
         Consume(TokenType::KEYWORD, "class"); // class
         Token* identifier = Consume(TokenType::IDENTIFIER); // имя класса
 
-        std::vector<Token> templateParams = ParseTemplateParameters();
+        std::vector<std::string> templateConstraints;
+        std::vector<Token> templateParams =
+            ParseTemplateParameters(&templateConstraints);
 
         // Проверяем, есть ли наследование или реализация интерфейсов
         if (CurrentToken() && CurrentToken()->value == ":") {
@@ -29,7 +31,7 @@ namespace Absolute {
                 }
                 else {
                     ReportSyntaxError(CurrentToken(), "Expected ',' or '{' after parent class");
-                    std::exit(EXIT_FAILURE);
+                    throw std::runtime_error("Expected ',' or '{' after parent class");
                 }
             }
         }
@@ -37,6 +39,7 @@ namespace Absolute {
         std::unique_ptr<Statement> body = ParseCompoundStatement();
         ExitScope();
         auto stmt = std::make_unique<ClassDeclStmt>(identifier->value, std::move(parents), templateParams, std::move(body));
+        stmt->templateConstraints = std::move(templateConstraints);
         stmt->modifiers = modifiers;
         stmt->attributes = std::move(attributes);
         return stmt;

@@ -1,0 +1,20 @@
+// A sandboxed module reads end-of-input instead of failing to link.
+//
+// getchar had no definition in the wasm runtime shim, so any program that reads
+// input -- tests/projects/multi-file/src/chess.abs among them -- failed to link
+// for wasm with a message about a missing symbol. The host gives a module a
+// console to write to and no standard input to read from, so a read now reports
+// end-of-input, which interactive programs already have to handle.
+//
+// Built for wasm only: run natively this would sit waiting on a terminal.
+
+extern "C" int32 getchar();
+
+int32 main() {
+    int32 first = getchar();
+    assert(first < 0, "a sandboxed module reads end-of-input");
+    int32 second = getchar();
+    assert(second < 0, "a second read is end-of-input too");
+    println("wasm-stdin-eof=ok");
+    return 0;
+}

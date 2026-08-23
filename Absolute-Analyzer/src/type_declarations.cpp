@@ -67,7 +67,8 @@ namespace Absolute {
                 }
                 if (defaults.empty()) {
                     Report("class '" + className + "' does not implement interface method '" +
-                        first.contract + "." + first.methodName + "'");
+                        first.contract + "." + first.methodName + "'",
+                            "E_INTERFACE_METHOD_MISSING");
                 }
                 else if (defaults.size() > 1) {
                     Report("class '" + className + "' inherits multiple default implementations of '" +
@@ -92,11 +93,12 @@ namespace Absolute {
                 if (implementation->type != requirement.type) {
                     Report("class method '" + className + "." + contract.methodName +
                         "' returns '" + implementation->type + "', but interface '" + contract.contract +
-                        "' requires '" + requirement.type + "'");
+                        "' requires '" + requirement.type + "'", "E_INTERFACE_RETURN_MISMATCH");
                 }
                 else if (implementation->isConst != requirement.isConst) {
                     Report("class method '" + className + "." + contract.methodName +
-                        "' does not match the const contract of interface '" + contract.contract + "'");
+                        "' does not match the const contract of interface '" + contract.contract + "'",
+                            "E_INTERFACE_CONST_MISMATCH");
                 }
                 else if (implementation->access != AccessLevel::Public) {
                     Report("class method '" + className + "." + contract.methodName +
@@ -114,8 +116,13 @@ namespace Absolute {
             genericScope.emplace(parameter.value, parameter.value);
         if (phase == Phase::CollectTypeNames) {
             DeclareType(stmt->name, TypeKind::Struct);
-            for (const Token& parameter : stmt->templateParams)
-                types[typeName].genericParameters.push_back(parameter.value);
+            for (size_t index = 0; index < stmt->templateParams.size(); ++index) {
+                types[typeName].genericParameters.push_back(
+                    stmt->templateParams[index].value);
+                types[typeName].genericConstraints.push_back(
+                    index < stmt->templateConstraints.size()
+                        ? stmt->templateConstraints[index] : std::string{});
+            }
             return;
         }
         if (phase == Phase::CollectDeclarations) {
@@ -165,8 +172,13 @@ namespace Absolute {
         if (phase == Phase::CollectTypeNames) {
             DeclareType(stmt->name, TypeKind::Class);
             auto& definition = types[typeName];
-            for (const Token& parameter : stmt->templateParams)
-                definition.genericParameters.push_back(parameter.value);
+            for (size_t index = 0; index < stmt->templateParams.size(); ++index) {
+                definition.genericParameters.push_back(
+                    stmt->templateParams[index].value);
+                definition.genericConstraints.push_back(
+                    index < stmt->templateConstraints.size()
+                        ? stmt->templateConstraints[index] : std::string{});
+            }
             return;
         }
         if (phase == Phase::CollectDeclarations) {
@@ -193,13 +205,16 @@ namespace Absolute {
             if (ParseGenericTypeName(resolvedParent, genericBase, genericArguments))
                 parentDefinition = genericBase;
             if (!types.contains(parentDefinition))
-                Report("unknown parent type '" + parent + "' of class '" + typeName + "'");
+                Report("unknown parent type '" + parent + "' of class '" + typeName + "'",
+                    "E_UNKNOWN_PARENT_TYPE");
             else if (types[parentDefinition].kind == TypeKind::Class) ++classParentCount;
             else if (types[parentDefinition].kind != TypeKind::Interface)
-                Report("class '" + typeName + "' cannot inherit non-class type '" + resolvedParent + "'");
+                Report("class '" + typeName + "' cannot inherit non-class type '" + resolvedParent + "'",
+                    "E_INVALID_CLASS_PARENT");
         }
         if (classParentCount > 1)
-            Report("class '" + typeName + "' cannot inherit more than one class");
+            Report("class '" + typeName + "' cannot inherit more than one class",
+                "E_MULTIPLE_CLASS_INHERITANCE");
         const std::string old = currentType;
         currentType = typeName;
         table.EnterScope();
@@ -276,9 +291,11 @@ namespace Absolute {
                 parentDefinition = genericBase;
             const auto found = types.find(parentDefinition);
             if (found == types.end())
-                Report("unknown parent interface '" + parent + "' of interface '" + typeName + "'");
+                Report("unknown parent interface '" + parent + "' of interface '" + typeName + "'",
+                    "E_UNKNOWN_PARENT_INTERFACE");
             else if (found->second.kind != TypeKind::Interface)
-                Report("interface '" + typeName + "' can only inherit another interface");
+                Report("interface '" + typeName + "' can only inherit another interface",
+                    "E_INVALID_INTERFACE_PARENT");
         }
         const std::string old = currentType;
         currentType = typeName;
@@ -420,7 +437,7 @@ namespace Absolute {
 
     void Analyzer::Visit(ConstructorDeclStmt* stmt) {
         if (currentType.empty()) {
-            Report("constructor declaration is outside a type");
+            Report("constructor declaration is outside a type", "E_CONSTRUCTOR_OUTSIDE_TYPE");
             return;
         }
         if (phase == Phase::CollectDeclarations) {
@@ -451,6 +468,7 @@ namespace Absolute {
             if (Symbol* symbol = table.Get(*declared)) {
                 symbol->access = constructor.access;
                 symbol->memberOwner = currentType;
+                RecordParameterDefaults(*symbol, stmt->parameters);
             }
             overloads.push_back(std::move(constructor));
             return;
@@ -465,7 +483,8 @@ namespace Absolute {
         if (HasModifier(*stmt, "static"))
             Report("constructors cannot be static", "E_STATIC_CONSTRUCTOR");
         if (stmt->name && Qualify(stmt->name->value) != currentType)
-            Report("constructor '" + stmt->name->value + "' must match type '" + currentType + "'");
+            Report("constructor '" + stmt->name->value + "' must match type '" + currentType + "'",
+                "E_CONSTRUCTOR_NAME_MISMATCH");
         ++functionDepth;
         const bool oldConstructor = currentConstructor;
         const SymbolId oldCallable = currentCallable;
@@ -524,7 +543,8 @@ namespace Absolute {
                         ? *declared : InvalidSymbolId,
                     IsTaskType(type) ? TaskState::Unknown : TaskState::NotTask});
             }
-            else Report("parameter '" + name + "' is already declared");
+            else Report("parameter '" + name + "' is already declared",
+                "E_DUPLICATE_PARAMETER");
         }
         const std::string baseClass = DirectBaseClass(currentType);
         if (stmt->hasExplicitBaseCall && baseClass.empty()) {
@@ -586,7 +606,7 @@ namespace Absolute {
                                     std::to_string(index + 1) + " cannot borrow a const value",
                                     "E_VALUE_REF_CONST_ARGUMENT", argument.symbol);
                         }
-                        CheckManagedMoveArgument(argument, expectedType, index,
+                        CheckManagedArgumentOwnership(argument, expectedType, index,
                             "base constructor");
                     }
                     RecordOwnershipCall(selected->symbol, baseArgs,
@@ -620,17 +640,53 @@ namespace Absolute {
         if (phase != Phase::CollectDeclarations) return;
         TypeDefinition& definition = types[typeName];
         definition.enumMembers.clear();
+        definition.enumValues.clear();
         std::unordered_set<std::string> members;
-        for (const std::string& member : stmt->members) {
-            if (!members.insert(member).second) {
-                Report("enum '" + typeName + "' contains duplicate member '" + member + "'",
+        // A member without a number takes the one after its predecessor, and
+        // the first takes zero -- the rule every language with this notation
+        // uses, and the one that keeps an enum written without any numbers
+        // exactly as it was.
+        long long next = 0;
+        std::unordered_map<long long, std::string> taken;
+        for (const EnumMemberDecl& member : stmt->members) {
+            // The member's own line, rather than the declaration's, so a long
+            // enum says which entry is meant.
+            const Token where(TokenType::IDENTIFIER, member.name, member.line, member.column);
+            if (!members.insert(member.name).second) {
+                ReportAt(&where,
+                    "enum '" + typeName + "' contains duplicate member '" + member.name + "'",
                     "E_DUPLICATE_ENUM_MEMBER");
                 continue;
             }
-            definition.enumMembers.push_back(member);
-            const std::string qualifiedMember = typeName + "." + member;
+            const long long value = member.hasValue ? member.value : next;
+            next = value + 1;
+            // An enum is an i32 wherever it is stored and at the C boundary
+            // (docs/native-c-abi.md), so a member that does not fit there has
+            // no representation to be given.
+            if (value < -2147483648LL || value > 2147483647LL) {
+                ReportAt(&where,
+                    "enum member '" + typeName + "." + member.name + "' is given " +
+                    std::to_string(value) + ", which does not fit in the 32 bits an enum has",
+                    "E_ENUM_VALUE_OUT_OF_RANGE");
+                continue;
+            }
+            // Two members with one value would make a match unsatisfiable --
+            // it must name every member, and two labels of equal value cannot
+            // both be reached. Refused here rather than left to the backend,
+            // which would emit a switch with a repeated case.
+            if (const auto existing = taken.find(value); existing != taken.end()) {
+                ReportAt(&where,
+                    "enum members '" + typeName + "." + existing->second + "' and '" +
+                    typeName + "." + member.name + "' are both " + std::to_string(value) +
+                    "; each member needs its own value", "E_DUPLICATE_ENUM_VALUE");
+                continue;
+            }
+            taken.emplace(value, member.name);
+            definition.enumMembers.push_back(member.name);
+            definition.enumValues.push_back(static_cast<std::int32_t>(value));
+            const std::string qualifiedMember = typeName + "." + member.name;
             if (!table.Declare(SymbolKind::Variable, qualifiedMember, typeName))
-                Report("enum member '" + qualifiedMember + "' is already declared",
+                ReportAt(&where, "enum member '" + qualifiedMember + "' is already declared",
                     "E_DUPLICATE_ENUM_MEMBER");
         }
     }

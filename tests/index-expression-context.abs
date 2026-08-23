@@ -1,0 +1,49 @@
+// What an index expression is allowed to say.
+//
+// An index is read, whatever is being done to the element it selects. That was
+// not how it worked: the access mode of the statement -- write for `a[i] = v`,
+// delete for `delete a[i]`, address for `&a[i]` -- reached the index
+// expression, so the index inherited the target's rules. Reading `a.length` to
+// compute an index was refused as an attempt to assign to `length`, which is
+// read-only, and which has nothing to do with reading it.
+//
+// The refusals that should stay are checked at the bottom of
+// `tests/array-errors.abs`; here everything is a program that must compile and
+// answer correctly.
+
+int32 main() {
+    int32[] values = new int32[5];
+    int32 cursor = 7;
+
+    // Write, with the array's own length in the index.
+    values[cursor % values.length] = 11;
+    assert(values[2] == 11, "the write landed where the index said");
+
+    // Compound assignment, and increment, through the same shape.
+    values[cursor % values.length] += 4;
+    assert(values[2] == 15, "compound assignment reads the same index");
+    values[cursor % values.length] += 1;
+    assert(values[2] == 16, "the index is evaluated the same way twice");
+
+    // Another array's length inside the index of the one being written.
+    int32[] other = new int32[3];
+    values[other.length] = 21;
+    assert(values[3] == 21, "a second array's length is readable as an index");
+
+    // Taking an address of an element whose index reads a length.
+    raw int32* address = &values[other.length];
+    assert(*address == 21, "the address is the element the index named");
+    *address = 22;
+    assert(values[3] == 22, "and writing through it reaches the array");
+
+    int32[] one = new int32[1];
+
+    // A slice whose bounds read a length, in a statement that assigns.
+    int32[] window = values[one.length : other.length];
+    assert(window.length == 2, "the slice took the bounds it was given");
+    window[0] = 30;
+    assert(values[1] == 30, "and writes through to the array it came from");
+
+    println("index-expression-context=ok");
+    return 0;
+}

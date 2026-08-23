@@ -1,0 +1,130 @@
+// The order a synthesized destructor runs in.
+//
+// docs/resource-ownership.md stated only half the rule -- fields in reverse
+// declaration order -- and said nothing about when a user destroy() runs
+// against them, so a chain of owning fields unwinding outermost-first read as
+// a contradiction of the document rather than as the other half of the rule.
+// Both halves are pinned here so neither can drift unnoticed.
+//
+// Each destroy() appends its own digit to a shared trace, so the assertion
+// compares one number and names what went wrong instead of leaving output to
+// read by eye.
+
+class Trace {
+    static int64 steps = 0;
+
+    static void record(int64 step) {
+        steps = steps * 10 + step;
+    }
+
+    static void reset() {
+        steps = 0;
+    }
+}
+
+class Leaf {
+    void destroy() {
+        Trace.record(3);
+    }
+}
+
+class Mid {
+    Leaf* child;
+
+    void destroy() {
+        Trace.record(2);
+    }
+}
+
+class Root {
+    Mid* child;
+
+    void destroy() {
+        Trace.record(1);
+    }
+}
+
+class FieldA {
+    void destroy() {
+        Trace.record(1);
+    }
+}
+
+class FieldB {
+    void destroy() {
+        Trace.record(2);
+    }
+}
+
+class FieldC {
+    void destroy() {
+        Trace.record(3);
+    }
+}
+
+class Holder {
+    FieldA* a;
+    FieldB* b;
+    FieldC* c;
+
+    void destroy() {
+        Trace.record(9);
+    }
+}
+
+class Base {
+    FieldA* owned;
+
+    void destroy() {
+        Trace.record(4);
+    }
+}
+
+class Derived : Base {
+    void destroy() {
+        Trace.record(5);
+    }
+}
+
+int32 main() {
+    // A chain of owning fields: the outermost owner is torn down first, so its
+    // destroy() can still reach what it owns.
+    Trace.reset();
+    Root* root = new Root();
+    root.child = new Mid();
+    root.child.child = new Leaf();
+    delete root;
+    assert(Trace.steps == 123, "an owner is destroyed before what it owns");
+
+    // Within one object the direction is the opposite: the object's own hook
+    // first, then its fields in reverse declaration order.
+    Trace.reset();
+    Holder* holder = new Holder();
+    holder.a = new FieldA();
+    holder.b = new FieldB();
+    holder.c = new FieldC();
+    delete holder;
+    assert(Trace.steps == 9321,
+        "fields are destroyed in reverse declaration order, after the hook");
+
+    // Every hook in the hierarchy runs, most-derived first. A derived
+    // declaration shadows its base's under the same method key, so taking only
+    // the shadowing one dropped the base's release logic silently: its fields
+    // were still released and nothing failed, only the hand-written half went
+    // missing.
+    Trace.reset();
+    Derived* derived = new Derived();
+    derived.owned = new FieldA();
+    delete derived;
+    assert(Trace.steps == 541, "a base destroy() runs after the derived one");
+
+    // Same through a base-class pointer, where slot zero dispatches to the
+    // most-derived destructor.
+    Trace.reset();
+    Base* asBase = new Derived();
+    delete asBase;
+    assert(Trace.steps == 54, "the chain is the same through a base pointer");
+
+    println("destruction-order=ok");
+    return 0;
+}

@@ -17,6 +17,35 @@ namespace Absolute {
         std::string sourceFile;
         size_t pos = 0;
 
+        // Expressions and statements are parsed by recursive descent, so
+        // nesting in the source becomes nesting on the machine stack: input
+        // deep enough overflowed it and killed the process. No real program
+        // nests this far, and the limit leaves room on the smaller main-thread
+        // stack Windows gives.
+        static constexpr size_t MaximumRecursionDepth = 1000;
+        size_t recursionDepth = 0;
+
+        // Counts one level of descent and gives it back on every exit path,
+        // including the throw that reports the overrun.
+        class RecursionGuard {
+        public:
+            explicit RecursionGuard(Parser& parser) : owner(parser) {
+                if (++owner.recursionDepth > MaximumRecursionDepth) {
+                    --owner.recursionDepth;
+                    owner.ReportSyntaxError(owner.CurrentToken(),
+                        "Expression or statement nesting is too deep");
+                    throw std::runtime_error(
+                        "Expression or statement nesting is too deep");
+                }
+            }
+            ~RecursionGuard() { --owner.recursionDepth; }
+            RecursionGuard(const RecursionGuard&) = delete;
+            RecursionGuard& operator=(const RecursionGuard&) = delete;
+
+        private:
+            Parser& owner;
+        };
+
         Parser(std::vector<Token> tokens, std::string sourceFile = {})
             : tokens(std::move(tokens)), sourceFile(std::move(sourceFile)) {}
 
@@ -57,7 +86,13 @@ namespace Absolute {
 
         void ParseModifiers();
         void ParseAttributes();
-        std::vector<Token> ParseTemplateParameters();
+        // `constraints`, when given, receives one entry per parameter: the
+        // requirement written in front of its name, or an empty string. A
+        // caller that passes nothing does not accept constraints, and one
+        // written there is a syntax error rather than a qualifier that is
+        // read and then ignored.
+        std::vector<Token> ParseTemplateParameters(
+            std::vector<std::string>* constraints = nullptr);
         bool LooksLikeFunctionDeclaration() const;
         bool LooksLikePropertyDeclaration() const;
         bool LooksLikeIndexerDeclaration() const;
@@ -128,9 +163,30 @@ namespace Absolute {
         std::unique_ptr<ImportStmt> ParseImport();
         std::unique_ptr<NamespaceDeclStmt> ParseNamespace();
         std::string ParseQualifiedName();
+        // Steps over an ownership qualifier at `index`, if one is written
+        // there. Each lookahead used to spell out its own list, so a qualifier
+        // was understood in some positions and not in others -- `sub` in a
+        // parameter, a field or a return type, for instance, while it worked
+        // for a local. `sub` is contextual: it only counts when something that
+        // can begin a type follows it.
+        size_t SkipOwnershipQualifier(size_t index) const {
+            if (index >= tokens.size()) return index;
+            const Token& token = tokens[index];
+            if (token.type == TokenType::KEYWORD &&
+                (token.value == "raw" || token.value == "weak"))
+                return index + 1;
+            if (token.type == TokenType::IDENTIFIER && token.value == "sub" &&
+                index + 1 < tokens.size() &&
+                (tokens[index + 1].type == TokenType::IDENTIFIER ||
+                    (tokens[index + 1].type == TokenType::KEYWORD &&
+                        IsPrimitiveType(tokens[index + 1].value))))
+                return index + 1;
+            return index;
+        }
+
         std::unique_ptr<TypeExpr> ParsePointerSuffix(
-            std::unique_ptr<TypeExpr> base, bool raw, bool weak = false,
-            bool shared = false);
+            std::unique_ptr<TypeExpr> base,
+            OwnershipKind ownership = OwnershipKind::Unique);
         std::string ParseParentTypeName();
     };
 }

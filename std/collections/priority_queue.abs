@@ -30,16 +30,22 @@ namespace std.collections {
 
         private bool comesBefore(int32 left, int32 right) {
             func<int32, T, T> compare = comparator;
-            int32 order = compare(items[left], items[right]);
+            int32 order = compare(
+                unsafeArrayGet(items, left), unsafeArrayGet(items, right));
             if (order < 0) { return true; }
             if (order > 0) { return false; }
             return insertionOrders[left] < insertionOrders[right];
         }
 
         private void swap(int32 left, int32 right) {
-            T item = items[left];
-            items[left] = items[right];
-            items[right] = item;
+            // Three takes rather than three reads. A handle read out of a slot
+            // is a second handle to one object, and a heap swaps on nearly
+            // every insertion and removal -- so this is the line the whole
+            // container turns on. Each take leaves its slot holding nothing,
+            // which is what lets the storage be dropped whole.
+            T item = unsafeArrayTake(items, left);
+            unsafeArraySet(items, left, unsafeArrayTake(items, right));
+            unsafeArraySet(items, right, move(item));
 
             int64 insertionOrder = insertionOrders[left];
             insertionOrders[left] = insertionOrders[right];
@@ -50,14 +56,18 @@ namespace std.collections {
             int32 newCapacity = _capacity * 2;
             T[] nextItems = new T[newCapacity];
             int64[] nextOrders = new int64[newCapacity];
+            // One block move rather than a loop of element stores, and a move
+            // rather than a copy: the old storage is dropped below, and for an
+            // element that owns something a copy would leave it holding what
+            // the new storage now owns.
+            unsafeArrayMove(nextItems, items, _count);
             int32 index = 0;
             while (index < _count) {
-                nextItems[index] = items[index];
                 nextOrders[index] = insertionOrders[index];
                 index = index + 1;
             }
-            items = copy(nextItems);
-            insertionOrders = copy(nextOrders);
+            items = move(nextItems);
+            insertionOrders = move(nextOrders);
             _capacity = newCapacity;
         }
 
@@ -99,52 +109,69 @@ namespace std.collections {
             get { return _count == 0; }
         }
 
-        public T peek {
+        // Reading the front is not the queue giving it up, so what comes back
+        // is the weaker relation to the same object. At `T = int32` the
+        // qualifier is not there at all.
+        public sub T peek {
             get {
                 if (_count == 0) { throw new Error("PriorityQueue is empty"); }
-                return items[0];
+                return unsafeArrayGet(items, 0);
             }
         }
 
         public void enqueue(T value) {
             if (_count == _capacity) { grow(); }
-            items[_count] = move(value);
+            unsafeArraySet(items, _count, move(value));
             insertionOrders[_count] = nextInsertionOrder;
             nextInsertionOrder = nextInsertionOrder + 1;
             siftUp(_count);
             _count = _count + 1;
         }
 
+        // The batch is handed over, element by element: a read would give the
+        // queue a second handle to what the array still holds, and the runtime
+        // said so -- `enqueueAll` over an owning element type aborted on its
+        // first element with "Ownership operation requires an owner argument".
+        // A take clears only what has something to clear, so at `T = int32`
+        // the caller's array is untouched.
         public void enqueueAll(T[] values) {
             int32 index = 0;
             while (index < values.length) {
-                enqueue(values[index]);
+                enqueue(unsafeArrayTake(values, index));
                 index = index + 1;
             }
         }
 
         public T dequeue() {
             if (_count == 0) { throw new Error("PriorityQueue is empty"); }
-            T result = items[0];
+            // A take: the element is leaving, so the root stops holding it,
+            // and the last element is carried into the root the same way.
+            T result = unsafeArrayTake(items, 0);
             _count = _count - 1;
             if (_count > 0) {
-                items[0] = items[_count];
+                unsafeArraySet(items, 0, unsafeArrayTake(items, _count));
                 insertionOrders[0] = insertionOrders[_count];
                 siftDown(0);
             }
             return result;
         }
 
-        public bool contains(T target) {
+        // A search compares; it does not take the element it is given, so
+        // it asks for the weaker relation. At `T = int32` the qualifier is
+        // not there at all, and an owner still converts to a subscriber.
+        public bool contains(sub T target) {
             int32 index = 0;
             while (index < _count) {
-                if (items[index] == target) { return true; }
+                if (unsafeArrayGet(items, index) == target) { return true; }
                 index = index + 1;
             }
             return false;
         }
 
         public void clear() {
+            // Whatever the elements were holding is released here. For an
+            // element that owns nothing this is not a loop, it is nothing.
+            unsafeArrayDrop(items, 0, _count);
             _count = 0;
             nextInsertionOrder = 0;
         }

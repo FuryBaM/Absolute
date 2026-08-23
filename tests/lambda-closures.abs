@@ -1,3 +1,27 @@
+// A lambda may capture the enclosing function's parameters, not just its
+// locals. The parameter's symbol has to survive into code generation for the
+// capture to find the storage it refers to.
+int32 captureFunctionParameter(int32 amount) {
+    func<int32, int32> add = fn(int32 value) => value + amount;
+    return add(1);
+}
+
+int32 captureTwoParameters(int32 left, int32 right) {
+    func<int32> total = fn() => left + right;
+    return total();
+}
+
+func<int32, int32> escapeWithParameter(int32 amount) {
+    return fn(int32 value) => value + amount;
+}
+
+class ParameterCapture {
+    public int32 scale(int32 factor) {
+        func<int32, int32> multiply = fn(int32 value) => value * factor;
+        return multiply(6);
+    }
+}
+
 int32 main() {
     int32 offset = 2;
     func<int32, int32> addOffset = fn(int32 value) => value + offset;
@@ -35,6 +59,16 @@ int32 main() {
         fn(int32 value) => value + captured;
     func<int32, int32> addTwo = makeAdder(2);
     assert(addTwo(40) == 42, "nested escaping closure");
+
+    assert(captureFunctionParameter(41) == 42,
+        "lambda captures an enclosing function parameter");
+    assert(captureTwoParameters(20, 22) == 42,
+        "lambda captures several enclosing parameters");
+    ParameterCapture* receiver = new ParameterCapture();
+    assert(receiver.scale(7) == 42, "lambda captures a method parameter");
+    func<int32, int32> escaped = escapeWithParameter(5);
+    assert(escaped(37) == 42,
+        "closure over a parameter outlives the call that made it");
 
     println("lambda-closures=ok");
     return 0;

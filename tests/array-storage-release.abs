@@ -1,0 +1,138 @@
+// Who frees the storage behind an array, in each shape an array can take.
+//
+// The answer used to be "nobody, ever": `new T[n]` produced a descriptor that
+// was never marked as an owner, so the buffer of every local array in every
+// program was allocated and leaked. A green test suite could not see it,
+// because it is not a wrong answer -- the program prints exactly what it
+// should -- and because from -O1 upwards the optimizer deletes an allocation
+// nothing reads back, so the bytes only exist at -O0. That is why this file is
+// built at -O0 under AddressSanitizer with the leak check on: at any other
+// optimization level it proves nothing.
+//
+// Nothing here prints through `format` or interpolation, on purpose. A string
+// has no lifetime yet (docs/known-defects.md), and one formatted line would put
+// bytes in the leak report that have nothing to do with arrays.
+
+int32 sumOf(int32[] values) {
+    int32 total = 0;
+    int32 index = 0;
+    while (index < values.length) {
+        total += values[index];
+        index += 1;
+    }
+    return total;
+}
+
+// Returns storage it allocated. The caller names it, so the caller's scope
+// frees it -- the ownership moves with the value, it is not copied.
+int32[] sequence(int32 count) {
+    int32[] made = new int32[count];
+    int32 index = 0;
+    while (index < count) {
+        made[index] = index * 2;
+        index += 1;
+    }
+    return made;
+}
+
+// Counts how many times it ran, so indexing what it returns can say whether
+// the base of an index is evaluated once.
+int32 batches = 0;
+int32[] batch() {
+    batches += 1;
+    int32[] made = new int32[3];
+    made[0] = batches;
+    return made;
+}
+
+int32 firstOfFresh(int32 count) {
+    // An owning array inside a larger expression that keeps nothing of it: the
+    // element is read out and the buffer is released with the statement.
+    return sequence(count)[0];
+}
+
+int32 lengthOfFresh(int32 count) {
+    // The same, through a field rather than an element.
+    return sequence(count).length;
+}
+
+int32 earlyReturn(int32 count, bool leave) {
+    int32[] scratch = new int32[count];
+    scratch[0] = 11;
+    // Leaving through a second path frees the same storage the first path
+    // frees; a release emitted on only one of them is a leak on the other.
+    if (leave) { return scratch[0]; }
+    scratch[1] = 22;
+    return scratch[0] + scratch[1];
+}
+
+int32 main() {
+    int32[] fixed = new int32[8];
+    int32 index = 0;
+    while (index < fixed.length) {
+        fixed[index] = index;
+        index += 1;
+    }
+    assert(sumOf(fixed) == 28, "a local array holds what was written into it");
+
+    // A fresh array on every iteration: the scope frees each one as it closes,
+    // rather than the last one only.
+    int32 round = 0;
+    int32 rounds = 0;
+    while (round < 64) {
+        int32[] perRound = new int32[round % 7 + 1];
+        perRound[0] = round;
+        rounds += perRound[0];
+        round += 1;
+    }
+    assert(rounds == 2016, "each round saw its own array");
+
+    // A nested scope's array is freed when the scope closes, not when main does.
+    int32 nested = 0;
+    {
+        int32[] inner = new int32[4];
+        inner[3] = 9;
+        nested = inner[3];
+    }
+    assert(nested == 9, "the nested array was readable while it existed");
+
+    int32[] returned = sequence(5);
+    assert(sumOf(returned) == 20, "storage a function allocated arrives whole");
+
+    assert(firstOfFresh(6) == 0, "an element read out of a fresh array");
+    assert(lengthOfFresh(6) == 6, "a field read off a fresh array");
+
+    assert(earlyReturn(4, true) == 11, "the early path frees its array");
+    assert(earlyReturn(4, false) == 33, "the late path frees the same array");
+
+    // A slice is the opposite case, and the reason the release above is
+    // written where it is: a slice keeps referring to the same buffer, so an
+    // array produced by an expression cannot be freed at the end of a
+    // statement that sliced it.
+    int32[] source = sequence(10);
+    int32[] window = source[2:5];
+    assert(window.length == 3, "a slice sees three elements");
+    assert(window[0] == 4, "a slice starts where it was asked to");
+    window[0] = 40;
+    assert(source[2] == 40, "a slice writes through to the array it came from");
+
+    // Two dimensions allocate one buffer and free one buffer.
+    int32[][] grid = {{1, 2, 3}, {4, 5, 6}};
+    grid[1, 2] = 7;
+    assert(grid[1, 2] == 7, "the far corner of a grid keeps its value");
+    assert(grid[0, 0] == 1, "the near corner was not disturbed");
+
+    // The base of an index is evaluated once. It used to be evaluated twice --
+    // once for the view, once again inside the address computation -- so a call
+    // with a side effect ran twice, the element came from the second array
+    // while the release freed the first, and the answer was off by exactly one
+    // extra call. Nothing about the printed result said so; the leak did.
+    int32 firstBatch = batch()[0];
+    assert(firstBatch == 1, "the base of an index runs once");
+    assert(batches == 1, "and left one call behind, not two");
+    assert(batch()[0] == 2, "the second call is the second call");
+    assert(batches == 2, "and still only one call per index");
+
+    println("array-storage-release=ok");
+    return 0;
+}

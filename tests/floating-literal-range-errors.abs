@@ -1,0 +1,17 @@
+// A floating literal that keeps nothing of what was written is refused.
+//
+// std::stod throws on every value the C library flags as out of range, which
+// includes subnormals, and the exception reached the user as a bare
+// "Error: stod" -- no file, no line, and wrong besides, because 1e-308 is a
+// value a double holds. Subnormals are accepted now
+// (tests/floating-point-edges.abs); only a literal that overflows to infinity
+// or underflows all the way to zero is refused, and it is refused where it is
+// written.
+//
+// Compiled for the diagnostics, so the file never runs.
+
+int32 main() {
+    double tooLarge = 1e400;
+    double tooSmall = 1e-400;
+    return (tooLarge + tooSmall) as int32;
+}

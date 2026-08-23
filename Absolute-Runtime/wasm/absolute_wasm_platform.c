@@ -11,13 +11,66 @@ typedef struct WasmStringBuilder {
     size_t capacity;
 } WasmStringBuilder;
 
+/* A string is its bytes and, immediately in front of them, a header saying how
+ * many names are holding it -- the same layout the native runtime uses and the
+ * same one the compiler lays a literal out in. The pointer handed out is the
+ * first byte, so everything downstream still sees a bare `const char*`.
+ *
+ * The count is a plain word here rather than an atomic one. A wasm instance
+ * cannot wait on another worker (docs/wasm-target.md), and strings do not
+ * cross instances: what crosses is copied. */
+#define ABSOLUTE_STRING_MAGIC 0x41425331u   /* "ABS1" */
+#define ABSOLUTE_STRING_STATIC 0xFFFFFFFFu  /* never released */
+
+typedef struct {
+    uint32_t magic;
+    uint32_t refs;
+} AbsoluteStringHeader;
+
+static AbsoluteStringHeader* wasm_string_header(const char* text) {
+    AbsoluteStringHeader* header;
+    if (!text)
+        return NULL;
+    header = (AbsoluteStringHeader*)((char*)text - sizeof(AbsoluteStringHeader));
+    return header->magic == ABSOLUTE_STRING_MAGIC ? header : NULL;
+}
+
+char* absolute_string_alloc(size_t bytes) {
+    AbsoluteStringHeader* header =
+        (AbsoluteStringHeader*)heap_alloc(sizeof(AbsoluteStringHeader) + bytes + 1);
+    char* text;
+    if (!header)
+        return NULL;
+    header->magic = ABSOLUTE_STRING_MAGIC;
+    header->refs = 1;
+    text = (char*)(header + 1);
+    text[bytes] = '\0';
+    return text;
+}
+
+const char* absolute_string_retain(const char* text) {
+    AbsoluteStringHeader* header = wasm_string_header(text);
+    if (header && header->refs != ABSOLUTE_STRING_STATIC)
+        ++header->refs;
+    return text;
+}
+
+void absolute_string_release(const char* text) {
+    AbsoluteStringHeader* header = wasm_string_header(text);
+    if (!header || header->refs == ABSOLUTE_STRING_STATIC)
+        return;
+    if (--header->refs)
+        return;
+    header->magic = 0;
+    free(header);
+}
+
 static const char* wasm_string_copy_range(const char* text, size_t length) {
-    char* result = (char*)heap_alloc(length + 1);
+    char* result = absolute_string_alloc(length);
     if (!result)
         return "";
     if (text && length)
         memcpy(result, text, length);
-    result[length] = '\0';
     return result;
 }
 
@@ -317,14 +370,13 @@ int32_t absolute_string_ends_with(const char* text, const char* suffix) {
 const char* absolute_string_concat(const char* left, const char* right) {
     size_t left_length = left ? strlen(left) : 0;
     size_t right_length = right ? strlen(right) : 0;
-    char* result = (char*)heap_alloc(left_length + right_length + 1);
+    char* result = absolute_string_alloc(left_length + right_length);
     if (!result)
         return "";
     if (left_length)
         memcpy(result, left, left_length);
     if (right_length)
         memcpy(result + left_length, right, right_length);
-    result[left_length + right_length] = '\0';
     return result;
 }
 
@@ -333,16 +385,29 @@ int32_t absolute_string_parse_int(const char* text) {
         return 0;
     while (wasm_string_is_space(*text))
         ++text;
-    int sign = 1;
+    int negative = 0;
     if (*text == '-' || *text == '+')
-        sign = *text++ == '-' ? -1 : 1;
-    int32_t value = 0;
+        negative = *text++ == '-';
+    /* Accumulated wide and unsigned, because the native side answers zero for a
+       number that does not fit -- std::stoi throws out_of_range and the wrapper
+       catches it -- while this loop used to wrap a signed int32 and keep going:
+       "99999999999999999999" came out as 1661992959 here and 0 there, and
+       "2147483648" as -2147483648 against 0. The limit is asymmetric because
+       -2147483648 is representable and 2147483648 is not. */
+    unsigned long long magnitude = 0;
+    const unsigned long long limit = negative ? 2147483648ULL : 2147483647ULL;
     int found = 0;
     while (*text >= '0' && *text <= '9') {
-        value = value * 10 + (*text++ - '0');
+        magnitude = magnitude * 10ULL + (unsigned long long)(*text++ - '0');
         found = 1;
+        if (magnitude > limit)
+            return 0;
     }
-    return found ? value * sign : 0;
+    if (!found)
+        return 0;
+    return negative
+        ? (int32_t)(0U - (unsigned int)magnitude)
+        : (int32_t)magnitude;
 }
 
 int32_t absolute_string_contains(const char* text, const char* sub) {
@@ -355,8 +420,12 @@ int32_t absolute_string_index_of(const char* text, const char* sub) {
 }
 
 int32_t absolute_string_last_index_of(const char* text, const char* sub) {
-    if (!text || !sub || !*sub)
+    if (!text || !sub)
         return -1;
+    /* The empty string occurs at every index, including the end. indexOf("")
+       already answered 0; lastIndexOf("") answered -1, as if it were absent. */
+    if (!*sub)
+        return absolute_string_code_point_count(text);
     const char* last = NULL;
     const char* cursor = text;
     while ((cursor = wasm_string_find(cursor, sub)) != NULL) {
@@ -387,7 +456,7 @@ const char* absolute_string_replace(const char* text, const char* from, const ch
         result_length += matches * (to_length - from_length);
     else
         result_length -= matches * (from_length - to_length);
-    char* result = (char*)heap_alloc(result_length + 1);
+    char* result = absolute_string_alloc(result_length);
     if (!result)
         return "";
     cursor = text;
@@ -2230,8 +2299,12 @@ void absolute_time_date_str(char* buffer, int32_t bufferSize) {
 }
 
 typedef struct WasmRng {
-    uint64_t state;
+    uint64_t values[4];
 } WasmRng;
+
+static uint64_t wasm_rotl64(uint64_t value, int amount) {
+    return (value << amount) | (value >> (64 - amount));
+}
 
 static uint64_t wasm_splitmix64(uint64_t* state) {
     uint64_t z = (*state += 0x9E3779B97F4A7C15ULL);
@@ -2239,6 +2312,11 @@ static uint64_t wasm_splitmix64(uint64_t* state) {
     z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
     return z ^ (z >> 31);
 }
+
+/* The same xoshiro256** the native runtime runs. docs/random.md says a seed
+   produces one sequence on every target; the shim used to run SplitMix64 on a
+   single word instead, so seed 42's first i32 was -1109970394 here and
+   360188718 natively. */
 
 uint64_t absolute_random_entropy(void) {
 #if defined(ABSOLUTE_WASM_USE_WASI)
@@ -2278,12 +2356,15 @@ int32_t absolute_random_fill(uint8_t* output, int32_t length) {
 
 uint64_t* absolute_random_create(uint64_t seed) {
     WasmRng* rng = (WasmRng*)heap_alloc(sizeof(WasmRng));
+    int index = 0;
     if (!rng)
         return NULL;
-    if (seed == 0)
-        seed = absolute_random_entropy();
-    rng->state = seed;
-    return &rng->state;
+    /* Seed 0 is a seed. Replacing it with entropy made `new Rng(0)` a
+       different generator on every run, and a different generator from the
+       native one. */
+    for (; index < 4; ++index)
+        rng->values[index] = wasm_splitmix64(&seed);
+    return rng->values;
 }
 
 void absolute_random_destroy(uint64_t* handle) {
@@ -2292,9 +2373,19 @@ void absolute_random_destroy(uint64_t* handle) {
 }
 
 uint64_t absolute_random_u64(uint64_t* handle) {
+    uint64_t result;
+    uint64_t shift;
     if (!handle)
         return 0;
-    return wasm_splitmix64(handle);
+    result = wasm_rotl64(handle[1] * 5, 7) * 9;
+    shift = handle[1] << 17;
+    handle[2] ^= handle[0];
+    handle[3] ^= handle[1];
+    handle[1] ^= handle[2];
+    handle[0] ^= handle[3];
+    handle[2] ^= shift;
+    handle[3] = wasm_rotl64(handle[3], 45);
+    return result;
 }
 
 int32_t absolute_random_i32(uint64_t* handle) {
@@ -2302,13 +2393,22 @@ int32_t absolute_random_i32(uint64_t* handle) {
 }
 
 int32_t absolute_random_range(uint64_t* handle, int32_t lo, int32_t hi) {
-    if (hi <= lo)
+    uint64_t span;
+    uint64_t threshold;
+    uint64_t value;
+    if (!handle || hi <= lo)
         return lo;
-    uint64_t span = (uint64_t)(hi - lo);
-    return lo + (int32_t)(absolute_random_u64(handle) % span);
+    /* The span is a 64-bit difference. `(uint64_t)(hi - lo)` overflowed the
+       signed subtraction first, so a range that spans more than 2^31 values
+       was a different interval on wasm than on native. */
+    span = (uint64_t)((int64_t)hi - (int64_t)lo);
+    threshold = (0 - span) % span;
+    do value = absolute_random_u64(handle); while (value < threshold);
+    return (int32_t)((int64_t)lo + (int64_t)(value % span));
 }
 
 double absolute_random_real(uint64_t* handle) {
-    const uint64_t bits = absolute_random_u64(handle) >> 11;
-    return (double)bits / (double)(1ULL << 53);
+    if (!handle)
+        return 0.0;
+    return (double)(absolute_random_u64(handle) >> 11) * 0x1.0p-53;
 }

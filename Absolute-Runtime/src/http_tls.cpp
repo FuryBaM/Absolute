@@ -9,6 +9,12 @@
 
 #include "scheduler_io.h"
 
+// Allocated behind a reference-counted header, like every other string the
+// language hands out; see Absolute-Runtime/src/string.cpp. The declaration
+// belongs to every target: receive copies the body into that storage on
+// Windows as well as on the POSIX path.
+extern "C" char* absolute_string_alloc(std::size_t bytes);
+
 #if defined(_WIN32)
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
@@ -542,9 +548,8 @@ extern "C" const char* absolute_http_tls_receive(
             state->body.data() + state->offset, count);
         state->offset += count;
 #endif
-        const std::size_t durableSize = receivedText.size() + 1;
-        char* durable =
-            static_cast<char*>(std::malloc(durableSize));
+        const std::size_t durableSize = receivedText.size();
+        char* durable = absolute_string_alloc(durableSize);
         if (!durable) {
             lastTlsError = "HTTPS receive allocation failed";
             return nullptr;

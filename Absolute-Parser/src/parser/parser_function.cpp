@@ -37,9 +37,7 @@ namespace Absolute {
     bool Parser::LooksLikeFunctionDeclaration() const
     {
         size_t index = pos;
-        if (index < tokens.size() && tokens[index].type == TokenType::KEYWORD &&
-            (tokens[index].value == "raw" || tokens[index].value == "weak" || tokens[index].value == "shared"))
-            ++index;
+        index = SkipOwnershipQualifier(index);
         if (index >= tokens.size()) return false;
         if (tokens[index].type == TokenType::KEYWORD && IsPrimitiveType(tokens[index].value)) {
             ++index;
@@ -85,7 +83,7 @@ namespace Absolute {
             return std::make_unique<FunctionCallExpr>(std::move(base), std::move(arguments));
         }
         ReportSyntaxError(bracket, "Expected bracket '('");
-        std::exit(EXIT_FAILURE);
+        throw std::runtime_error("Expected bracket '('");
         return nullptr;
     }
 

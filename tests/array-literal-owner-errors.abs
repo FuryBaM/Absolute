@@ -1,0 +1,9 @@
+// Storage the frame provides is not the literal's to hand on. A sized
+// declarator names the frame's own bytes, so moving it out would leave the
+// destination pointing into a frame that is about to end.
+
+int32 main() {
+    int32 fixed[3] = { 1, 2, 3 };
+    int32[] moved = move(fixed);
+    return moved[0];
+}

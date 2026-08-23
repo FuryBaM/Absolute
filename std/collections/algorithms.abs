@@ -21,21 +21,29 @@ namespace std.collections {
         }
     }
 
+    // Written with `swap` rather than with a held-out key.
+    //
+    // `vec[i]` borrows the cell it names -- an indexer is a projection onto
+    // storage the vector keeps, not a handover -- so `T key = vec[i];` asks
+    // for a second name that owns, and `vec[j + 1] = vec[j];` asks the vector
+    // to hold one element in two slots. Neither is a thing that can be true
+    // of an element that owns something, and at `T = int32` both were only
+    // ever a copy. An exchange is the operation that is true at both: it
+    // moves elements between slots the vector already has and hands nothing
+    // out.
     extension void sort<T>(Vector<T>* vec) {
         int32 len = vec.count;
         int32 i = 1;
         while (i < len) {
-            T key = vec[i];
-            int32 j = i - 1;
-            while (j >= 0) {
-                if (vec[j] > key) {
-                    vec[j + 1] = vec[j];
+            int32 j = i;
+            while (j > 0) {
+                if (vec[j - 1] > vec[j]) {
+                    vec.swap(j - 1, j);
                     j = j - 1;
                 } else {
                     break;
                 }
             }
-            vec[j + 1] = key;
             i = i + 1;
         }
     }
@@ -59,21 +67,22 @@ namespace std.collections {
         }
     }
 
-    extension void sort<T>(Vector<T>* vec, func<int32, T, T> comparator) {
+    // The comparator reads its two operands and keeps neither, so it is
+    // handed borrows. At `T = int32` `sub T` is `int32` and the callback is
+    // written exactly as before.
+    extension void sort<T>(Vector<T>* vec, func<int32, sub T, sub T> comparator) {
         int32 len = vec.count;
         int32 i = 1;
         while (i < len) {
-            T key = vec[i];
-            int32 j = i - 1;
-            while (j >= 0) {
-                if (comparator(vec[j], key) > 0) {
-                    vec[j + 1] = vec[j];
+            int32 j = i;
+            while (j > 0) {
+                if (comparator(vec[j - 1], vec[j]) > 0) {
+                    vec.swap(j - 1, j);
                     j = j - 1;
                 } else {
                     break;
                 }
             }
-            vec[j + 1] = key;
             i = i + 1;
         }
     }
@@ -95,7 +104,9 @@ namespace std.collections {
         return -1;
     }
 
-    extension int32 binarySearch<T>(Vector<T>* vec, T target) {
+    // The target is compared against elements and never stored, so it is
+    // borrowed rather than taken.
+    extension int32 binarySearch<T>(Vector<T>* vec, sub T target) {
         int32 low = 0;
         int32 high = vec.count - 1;
         while (low <= high) {
@@ -128,9 +139,7 @@ namespace std.collections {
         int32 i = 0;
         int32 j = vec.count - 1;
         while (i < j) {
-            T temp = vec[i];
-            vec[i] = vec[j];
-            vec[j] = temp;
+            vec.swap(i, j);
             i = i + 1;
             j = j - 1;
         }
@@ -148,7 +157,7 @@ namespace std.collections {
         return -1;
     }
 
-    extension int32 indexOf<T>(Vector<T>* vec, T target) {
+    extension int32 indexOf<T>(Vector<T>* vec, sub T target) {
         int32 i = 0;
         int32 len = vec.count;
         while (i < len) {
@@ -172,7 +181,7 @@ namespace std.collections {
         return -1;
     }
 
-    extension int32 find<T>(Vector<T>* vec, func<bool, T> predicate) {
+    extension int32 find<T>(Vector<T>* vec, func<bool, sub T> predicate) {
         int32 i = 0;
         int32 len = vec.count;
         while (i < len) {
@@ -188,7 +197,7 @@ namespace std.collections {
         return indexOf<T>(items, target) != -1;
     }
 
-    extension bool contains<T>(Vector<T>* vec, T target) {
+    extension bool contains<T>(Vector<T>* vec, sub T target) {
         return indexOf<T>(vec, target) != -1;
     }
 
@@ -203,7 +212,9 @@ namespace std.collections {
         return result;
     }
 
-    extension Vector<R>* transform<T, R>(Vector<T>* vec, func<R, T> mapper) {
+    // The mapper reads each element and produces a new one, so what it is
+    // handed is a borrow and what comes back is the new vector's own.
+    extension Vector<R>* transform<T, R>(Vector<T>* vec, func<R, sub T> mapper) {
         int32 len = vec.count;
         Vector<R>* result = new Vector<R>();
         int32 i = 0;
@@ -237,9 +248,19 @@ namespace std.collections {
         return result;
     }
 
-    extension Vector<T>* filter<T>(Vector<T>* vec, func<bool, T> predicate) {
+    // A filter selects; it does not take. The elements it selects are still
+    // the source vector's, so what comes back names them rather than owning
+    // them -- `Vector<sub T>`, which at `T = int32` is the `Vector<int32>`
+    // this has always returned, and at `T = Cell*` is a view whose deletion
+    // releases nothing. Returning `Vector<T>` would have been two vectors
+    // owning one set of elements, and whichever was deleted first would have
+    // left the other wrong.
+    //
+    // To move the matching elements out instead, walk the source backwards
+    // and `takeAt` them: that is a different operation and it says so.
+    extension Vector<sub T>* filter<T>(Vector<T>* vec, func<bool, sub T> predicate) {
         int32 len = vec.count;
-        Vector<T>* result = new Vector<T>();
+        Vector<sub T>* result = new Vector<sub T>();
         int32 i = 0;
         while (i < len) {
             if (predicate(vec[i])) {
@@ -261,7 +282,7 @@ namespace std.collections {
         return accumulator;
     }
 
-    extension Acc reduce<T, Acc>(Vector<T>* vec, Acc initial, func<Acc, Acc, T> reducer) {
+    extension Acc reduce<T, Acc>(Vector<T>* vec, Acc initial, func<Acc, Acc, sub T> reducer) {
         Acc accumulator = initial;
         int32 len = vec.count;
         int32 i = 0;

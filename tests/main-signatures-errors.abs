@@ -1,0 +1,20 @@
+// What `main` returns is a process exit status, and a status is an int32.
+//
+// Any other width was accepted and then had to be made to fit. Natively it was
+// truncated; on wasm the host reads the export's result back as the status, and
+// an `int64` arrives there as a BigInt that cannot be one -- so the same
+// program exited 0 natively and 1 on wasm. The suite differential is what said
+// so, on a test written to check something else.
+//
+// `void` stays legal: it says the program has no status of its own to report,
+// which is a real thing to say and is what most of the corpus says. That half
+// is tests/main-signatures.abs.
+//
+// This joins the rules `main` already has -- no parameters, no overloads, not
+// exported -- and for the same reason as the first of them: a declaration that
+// cannot be honoured is refused rather than given a second, quieter meaning.
+
+int64 main() {
+    println("a status this wide is not a status");
+    return 0;
+}

@@ -1,0 +1,2 @@
+class Node { public int32 v; public Node(int32 x) { v = x; } public virtual int32 read() { return v; } }
+int32 main() { Node* n = new Node(7); println(n.read()); delete n; return 0; }

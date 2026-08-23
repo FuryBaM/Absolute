@@ -14,9 +14,21 @@ of the allocation and is the only pointer passed to `free`.
 
 ## Ownership rules
 
-- Sized local arrays and array literals use stack storage. Their descriptors
-  have a null owner.
-- Global arrays use static storage and also have a null owner.
+- A sized local array uses stack storage. Its descriptor has a null owner, and
+  the frame keeps the bytes:
+
+  ```absolute
+  int32 fixed[3] = { 1, 2, 3 };   // the frame's storage
+  int32[] made   = { 1, 2, 3 };   // an owner
+  ```
+
+- **An array literal is an owner.** A literal that is an expression allocates
+  its own storage, so it can be moved, returned, stored in a field, or passed
+  where an owner is expected -- and whoever ends up holding it frees it. Which
+  of the two forms above an author gets is in the declaration rather than in
+  the element type.
+- Global arrays use static storage and have a null owner. A literal
+  initializing one is laid out statically rather than evaluated.
 - `copy(arrayOrSlice)` allocates a new buffer and returns an owning descriptor.
 - A local variable initialized from a fresh `copy(...)` or an array-returning
   call owns the descriptor's non-null allocation.

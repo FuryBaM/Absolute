@@ -1,0 +1,96 @@
+// "Array storage is zero-initialized" (README), which it was not.
+//
+// `new T[n]` called malloc and handed back whatever the allocator had in that
+// block. Reading an element before writing it therefore answered differently
+// at -O0 than at -O3, and differently again under a sanitizer -- three answers
+// to a question the language documents as having one. A test that allocates
+// once would usually see zeros anyway, because a fresh page from the operating
+// system is zero; the probe that shows it is allocating, writing, releasing,
+// and allocating the same size again, because the allocator hands the block
+// back and the old bytes are still in it.
+
+struct Point {
+    public int32 x;
+    public int32 y;
+}
+
+int64 sumAfterReuse(int32 size, int64 poison) {
+    // Fill a block, let the scope release it, then ask for the same size back.
+    // Without zeroing, the second array reads the first array's contents.
+    {
+        int64[] dirty = new int64[size];
+        int32 index = 0;
+        while (index < size) {
+            dirty[index] = poison;
+            index += 1;
+        }
+    }
+    int64[] fresh = new int64[size];
+    int64 total = 0;
+    int32 index = 0;
+    while (index < size) {
+        total += fresh[index];
+        index += 1;
+    }
+    return total;
+}
+
+int32 main() {
+    // Every width, read before anything is written into it.
+    int8[] tiny = new int8[8];
+    int16[] small = new int16[8];
+    int32[] medium = new int32[8];
+    int64[] wide = new int64[8];
+    uint64[] unsignedWide = new uint64[8];
+    double[] floating = new double[8];
+    bool[] flags = new bool[8];
+    char[] characters = new char[8];
+
+    int32 index = 0;
+    while (index < 8) {
+        assert(tiny[index] == 0, "int8 storage starts at zero");
+        assert(small[index] == 0, "int16 storage starts at zero");
+        assert(medium[index] == 0, "int32 storage starts at zero");
+        assert(wide[index] == 0, "int64 storage starts at zero");
+        assert(unsignedWide[index] == 0, "uint64 storage starts at zero");
+        assert(floating[index] == 0.0, "double storage starts at zero");
+        assert(!flags[index], "bool storage starts false");
+        assert(characters[index] == 0, "char storage starts at zero");
+        index += 1;
+    }
+
+    // The same question after the allocator has had the memory before.
+    int32 round = 0;
+    while (round < 16) {
+        assert(sumAfterReuse(round % 12 + 1, round * 7919 + 13) == 0,
+            "reused storage is zero again");
+        round += 1;
+    }
+
+    // A struct element type: every field of every element.
+    Point[] points = new Point[6];
+    index = 0;
+    while (index < 6) {
+        assert(points[index].x == 0, "a struct element's first field is zero");
+        assert(points[index].y == 0, "and so is its second");
+        index += 1;
+    }
+
+    // Size zero allocates nothing to read, and must still be a valid array.
+    int32[] empty = new int32[0];
+    assert(empty.length == 0, "an empty array has no elements");
+
+    // A large allocation, where the answer comes from the operating system
+    // rather than from the allocator's own free list.
+    int64[] large = new int64[100000];
+    int64 total = 0;
+    index = 0;
+    while (index < 100000) {
+        total += large[index];
+        index += 1;
+    }
+    assert(total == 0, "a large array is zero throughout");
+
+    println("array-zero-initialization=ok");
+    return 0;
+}

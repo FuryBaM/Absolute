@@ -1,0 +1,77 @@
+// `sub T*` says in the type what used to be reconstructed per symbol.
+//
+// A handle said where it pointed. It did not say what relation the value had to
+// the lifetime of what it pointed at: `T*` meant both "the owner" and "a copy
+// of the owner that must not release anything", and the difference lived in
+// flow analysis, so it was gone the moment the value was stored in a container
+// or passed through a generic. That is the hole an array of `T*` fell into --
+// it could not tell whether it held the owner or a copy, so it could neither
+// release the elements nor leave them alone without being wrong in the other
+// case. See docs/ownership-kinds.md.
+//
+// `sub` is contextual, not a keyword: it is already an ordinary identifier in
+// existing programs, and it stays one everywhere a type is not expected.
+
+class Node {
+    public int32 value;
+    public Node(int32 initial) { value = initial; }
+}
+
+class Cell<T> {
+    public T item;
+    public Cell(T given) { item = given; }
+}
+
+class Holder {
+    public sub Node* watched;
+    public Holder(sub Node* target) { watched = target; }
+    public int32 read() { return watched.value; }
+}
+
+int32 readThrough(sub Node* view) { return view.value; }
+
+sub T* viewOf<T>(T* owner) { return owner; }
+
+int32 main() {
+    Node* owner = new Node(7);
+
+    // Taken from an owner, and from another subscriber: the relation copies,
+    // the ownership does not.
+    sub Node* view = owner;
+    sub Node* second = view;
+    assert(view.value == 7, "a subscriber reads what its owner holds");
+    assert(second.value == 7, "and so does a subscriber of a subscriber");
+
+    // Through a parameter, a field, and a generic return.
+    assert(readThrough(owner) == 7, "an owner can be passed where a view is asked for");
+    assert(readThrough(view) == 7, "and so can a view");
+    Holder* holder = new Holder(owner);
+    assert(holder.read() == 7, "a field keeps the relation it was declared with");
+    sub Node* generic = viewOf<Node>(owner);
+    assert(generic.value == 7, "a generic return carries the qualifier");
+
+    // The word is only a qualifier in front of a type. Everywhere else it is
+    // an identifier, which is what it already is in the standard library.
+    int32 sub = 3;
+    int32 subtotal = sub + 1;
+    assert(sub == 3, "sub is an ordinary name where no type is expected");
+    assert(subtotal == 4, "and reads like any other");
+
+    // The same generic body, instantiated with a view: it releases nothing.
+    // Qualified template arguments did not parse at all before -- not
+    // `Cell<sub Node*>`, and not `Cell<raw int32*>` either, which had simply
+    // never been written -- and the argument's qualifier was then dropped a
+    // second time while the specialization name was built.
+    Node* watched = new Node(9);
+    sub Node* watcher = watched;
+    Cell<sub Node*>* cell = new Cell<sub Node*>(watcher);
+    assert(cell.item.value == 9, "a view stored in a generic reads its object");
+    delete cell;
+    assert(watched.value == 9, "and releasing the generic left the object alone");
+    delete watched;
+
+    delete owner;
+    delete holder;
+    println("subscriber-pointers=ok");
+    return 0;
+}

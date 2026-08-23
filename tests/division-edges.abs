@@ -1,0 +1,34 @@
+// The two integer divisions LLVM leaves undefined.
+//
+// A zero divisor was already refused. The other case is the most negative
+// value divided by -1: its quotient is not representable, so LLVM leaves the
+// result undefined and the program carried on with whatever the optimizer
+// produced -- an observed run printed 1066133320. Both are now refused at
+// runtime with a message rather than folded into a plausible-looking number.
+//
+// Only the failing halves need a separate program, since each one exits, so
+// this file pins the cases that must keep working and the error tests below
+// cover the refusals.
+
+int32 main() {
+    // Neighbours of the undefined case, which must divide normally.
+    int32 nearMin = -2147483647;
+    assert(nearMin / -1 == 2147483647, "one above the minimum negates fine");
+    assert(-2147483648 / 1 == -2147483648, "the minimum divided by one");
+    assert(-2147483648 / 2 == -1073741824, "the minimum halved");
+    assert(-2147483648 % 2 == 0, "the minimum remainder by two");
+
+    int64 wideNearMin = -9223372036854775807;
+    assert(wideNearMin / -1 == 9223372036854775807, "64-bit one above the minimum");
+
+    // Unsigned division has no undefined case at all, so the guard must not
+    // have been emitted into it.
+    uint32 big = 4294967295;
+    assert((big / 1) as int64 == 4294967295, "unsigned division by one");
+
+    assert(-7 / 2 == -3, "ordinary signed division still truncates toward zero");
+    assert(-7 % 2 == -1, "ordinary signed remainder keeps its sign");
+
+    println("division-edges=ok");
+    return 0;
+}

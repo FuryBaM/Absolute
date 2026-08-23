@@ -1,0 +1,51 @@
+// The numbers an enum member cannot be given.
+//
+// An enum is 32 bits wide wherever it is stored and at the C boundary, so a
+// member outside that range has no representation. Two members sharing one
+// number is worse than useless: `match` must name every member, and two labels
+// of equal value cannot both be reached, so the enum could not be matched at
+// all -- and the backend would be asked for a switch with a repeated case.
+//
+// The reverse conversion is refused here too, deliberately rather than for
+// want of implementation. An enum made out of an arbitrary integer would hold
+// values no member stands for, and every `match` in the program is exhaustive
+// on the assumption that cannot happen.
+//
+// Compiled for the diagnostics, so the file never runs.
+
+enum Shared {
+    First = 1,
+    Second = 1
+}
+
+// The same collision by counting, where the number is not written at all.
+enum Collided {
+    Start = 0,
+    Next,
+    Overlapping = 1
+}
+
+enum TooLarge {
+    Big = 3000000000
+}
+
+enum TooSmall {
+    Small = -3000000000
+}
+
+// A member counting past the end of the width.
+enum PastTheEnd {
+    Last = 2147483647,
+    Beyond
+}
+
+enum Direction {
+    North,
+    South
+}
+
+int32 main() {
+    // An integer is not a direction.
+    Direction guessed = 1 as Direction;
+    return guessed == Direction.North ? 0 : 1;
+}

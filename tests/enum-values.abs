@@ -1,0 +1,124 @@
+// The number an enum member stands for.
+//
+// Members used to be numbered by position and nothing else, so an enum could
+// not carry a number that means something outside the program -- an HTTP
+// status, an errno, a C constant -- even though an enum crosses the C boundary
+// as an i32 (docs/native-c-abi.md) and its number is exactly what the other
+// side reads. `enum Status { NotFound = 404 }` was a syntax error.
+//
+// A member may now be given a number, a member without one continues from its
+// predecessor, and the number is readable with `as`. The other direction is
+// still refused: an integer does not convert to an enum, which is what keeps
+// `match` exhaustive -- every value of the type is a member that a case names.
+
+enum Status {
+    Ok = 200,
+    Moved = 301,
+    NotFound = 404
+}
+
+enum Signed {
+    Below = -3,
+    Zero = 0,
+    Above = 3
+}
+
+// A number given once, and the rest counting on from it.
+enum Continuing {
+    First = 100,
+    Second,
+    Third
+}
+
+// The edges of the 32 bits an enum has.
+enum Extremes {
+    Lowest = -2147483648,
+    Highest = 2147483647
+}
+
+enum Plain {
+    A,
+    B,
+    C
+}
+
+int32 statusScore(Status status) {
+    match (status) {
+    case Status.Ok:
+        return 1;
+    case Status.Moved:
+        return 2;
+    case Status.NotFound:
+        return 3;
+    }
+}
+
+int32 signedScore(Signed value) {
+    match (value) {
+    case Signed.Below:
+        return 7;
+    case Signed.Zero:
+        return 8;
+    case Signed.Above:
+        return 9;
+    }
+}
+
+int32 partialSwitch(Continuing value) {
+    switch (value) {
+    case Continuing.Second:
+        return 22;
+    default:
+        return 0;
+    }
+}
+
+export "C" int32 absolute_signed_delta(Signed value) {
+    return value as int32;
+}
+
+int32 main() {
+    // The numbers as written.
+    assert(Status.Ok as int32 == 200, "a member keeps the number it is given");
+    assert(Status.NotFound as int32 == 404, "and so does the last one");
+    assert(Signed.Below as int32 == -3, "a negative member keeps its sign");
+    assert(Extremes.Lowest as int32 == -2147483648, "the lowest an enum can hold");
+    assert(Extremes.Highest as int32 == 2147483647, "and the highest");
+
+    // A member without a number continues from the one before it, and an enum
+    // written without any numbers is unchanged: it starts at zero.
+    assert(Continuing.First as int32 == 100, "the member that was given a number");
+    assert(Continuing.Second as int32 == 101, "the next one continues from it");
+    assert(Continuing.Third as int32 == 102, "and so does the one after that");
+    assert(Plain.A as int32 == 0, "an enum with no numbers starts at zero");
+    assert(Plain.B as int32 == 1 && Plain.C as int32 == 2, "and counts up");
+
+    // Matching is by member, so the numbers do not change which branch runs.
+    assert(statusScore(Status.Ok) == 1, "match on the first member");
+    assert(statusScore(Status.Moved) == 2, "match on a middle member");
+    assert(statusScore(Status.NotFound) == 3, "match on the last member");
+    assert(signedScore(Signed.Below) == 7, "match on a negative member");
+    assert(signedScore(Signed.Zero) == 8, "match on zero");
+    assert(signedScore(Signed.Above) == 9, "match on a positive member");
+    assert(partialSwitch(Continuing.Second) == 22, "a switch on a continued member");
+    assert(partialSwitch(Continuing.Third) == 0, "and its default");
+
+    // Comparison is unchanged, and reads the numbers.
+    assert(Status.Ok == Status.Ok, "a member equals itself");
+    assert(Status.Ok != Status.NotFound, "and differs from another");
+    assert(Signed.Below < Signed.Above, "ordering follows the numbers");
+    Status held = Status.Moved;
+    assert(held as int32 == 301, "the number survives a variable");
+
+    // The conversion is an ordinary integer conversion once it has the number:
+    // it widens, it narrows, and it takes part in arithmetic.
+    assert(Status.NotFound as int64 == 404, "widening keeps the value");
+    assert(Status.NotFound as int8 == -108, "narrowing truncates, as it does for any value");
+    assert((Status.NotFound as int32) + 1 == 405, "the number is an ordinary integer");
+
+    // The C boundary, which is why the numbers exist at all.
+    assert(absolute_signed_delta(Signed.Below) == -3, "an exported function reads the number");
+
+    println("enum-values=ok");
+    return 0;
+}

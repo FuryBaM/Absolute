@@ -3,7 +3,7 @@ project(Absolute-Runtime LANGUAGES CXX)
 
 find_package(Threads REQUIRED)
 
-add_library(Absolute-Runtime STATIC
+set(ABSOLUTE_RUNTIME_SOURCES
     src/android_pthread_affinity_compat.h
     src/binary.cpp
     src/bytes.cpp
@@ -27,8 +27,72 @@ add_library(Absolute-Runtime STATIC
     src/tasks.cpp
     src/time.cpp
 )
+
+add_library(Absolute-Runtime STATIC ${ABSOLUTE_RUNTIME_SOURCES})
 target_compile_features(Absolute-Runtime PUBLIC cxx_std_20)
+# The archive is linked into shared libraries as well as executables: a program
+# built with --build-library pulls in whatever of the runtime it uses, and a
+# string's storage is reference counted by the runtime now, so string.cpp is
+# part of that for any library that holds one. Without position-independent
+# code its thread-local accesses cannot be relocated into a shared object.
+set_target_properties(Absolute-Runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(Absolute-Runtime PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
+# lli JITs a module by itself, so a test that touches a managed pointer only
+# resolves `absolute_managed_*` if the runtime is handed to it. The static
+# archive cannot serve that purpose: its thread-local accesses carry
+# R_X86_64_GOTTPOFF relocations the JIT linker rejects. A shared build loaded
+# through the real dynamic loader resolves them normally.
+option(ABSOLUTE_BUILD_RUNTIME_SHARED
+    "Also build the Absolute runtime as a shared library for lli-based tests" OFF)
+if(ABSOLUTE_BUILD_RUNTIME_SHARED)
+    add_library(Absolute-Runtime-Shared SHARED ${ABSOLUTE_RUNTIME_SOURCES})
+    target_compile_features(Absolute-Runtime-Shared PUBLIC cxx_std_20)
+    target_link_libraries(Absolute-Runtime-Shared PUBLIC
+        Threads::Threads ${CMAKE_DL_LIBS})
+    set_target_properties(Absolute-Runtime-Shared PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+endif()
+
+# A second copy of the runtime, instrumented for ThreadSanitizer. It exists
+# because TSan is whole-program: a race between generated code and the runtime's
+# own scheduler is only visible if both sides are instrumented, and an
+# uninstrumented library on the other side of a lock produces false reports
+# rather than silence. Probed rather than assumed -- TSan needs a supported
+# target and a compiler that ships its runtime -- and skipped where it is not
+# available, which is what the ABSOLUTE_RUNTIME_TSAN_AVAILABLE answer is for.
+# Building it costs a second compile of the runtime, so it follows
+# BUILD_TESTING by default: a build that runs the suite gets the option
+# checked, a plain release build does not pay for it unless it asks.
+option(ABSOLUTE_BUILD_RUNTIME_TSAN
+    "Build a ThreadSanitizer copy of the runtime, enabling --sanitize=thread"
+    ${BUILD_TESTING})
+include(CheckCXXSourceCompiles)
+set(ABSOLUTE_TSAN_FLAGS -fsanitize=thread -fno-omit-frame-pointer)
+if(NOT ABSOLUTE_BUILD_RUNTIME_TSAN OR WIN32 OR ANDROID OR
+        DEFINED ENV{TERMUX_VERSION} OR CMAKE_CROSSCOMPILING)
+    set(ABSOLUTE_RUNTIME_TSAN_AVAILABLE OFF)
+else()
+    set(CMAKE_REQUIRED_FLAGS "-fsanitize=thread")
+    set(CMAKE_REQUIRED_LINK_OPTIONS "-fsanitize=thread")
+    check_cxx_source_compiles("int main() { return 0; }"
+        ABSOLUTE_TSAN_USABLE)
+    unset(CMAKE_REQUIRED_FLAGS)
+    unset(CMAKE_REQUIRED_LINK_OPTIONS)
+    set(ABSOLUTE_RUNTIME_TSAN_AVAILABLE ${ABSOLUTE_TSAN_USABLE})
+endif()
+set(ABSOLUTE_RUNTIME_TSAN_AVAILABLE ${ABSOLUTE_RUNTIME_TSAN_AVAILABLE}
+    CACHE INTERNAL "ThreadSanitizer runtime variant can be built")
+if(ABSOLUTE_RUNTIME_TSAN_AVAILABLE)
+    add_library(Absolute-Runtime-Tsan STATIC ${ABSOLUTE_RUNTIME_SOURCES})
+    target_compile_features(Absolute-Runtime-Tsan PUBLIC cxx_std_20)
+    target_compile_options(Absolute-Runtime-Tsan PRIVATE ${ABSOLUTE_TSAN_FLAGS})
+    target_link_options(Absolute-Runtime-Tsan PUBLIC -fsanitize=thread)
+    target_link_libraries(Absolute-Runtime-Tsan PUBLIC
+        Threads::Threads ${CMAKE_DL_LIBS})
+    set_target_properties(Absolute-Runtime-Tsan PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+endif()
+
 if(ANDROID OR DEFINED ENV{TERMUX_VERSION})
     find_package(PkgConfig QUIET)
     if(PkgConfig_FOUND)
@@ -70,6 +134,17 @@ else()
     # a no-op-on-other-platforms compatibility header for this translation unit.
     set_source_files_properties(src/tasks.cpp PROPERTIES
         COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/src/android_pthread_affinity_compat.h")
+endif()
+
+if(APPLE)
+    # Darwin gates the ucontext fiber routines, and the layout of ucontext_t
+    # itself, behind _XOPEN_SOURCE. Feature macros only apply to headers included
+    # after them, so this has to reach the compiler before any header rather than
+    # from inside scheduler_fiber.h, which is included after the standard library.
+    # _DARWIN_C_SOURCE restores the BSD extensions _XOPEN_SOURCE would otherwise
+    # hide from the rest of the translation unit.
+    set_source_files_properties(src/tasks.cpp PROPERTIES
+        COMPILE_DEFINITIONS "_XOPEN_SOURCE=700;_DARWIN_C_SOURCE")
 endif()
 
 set_target_properties(Absolute-Runtime PROPERTIES

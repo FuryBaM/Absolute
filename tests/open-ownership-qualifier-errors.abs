@@ -1,0 +1,29 @@
+// A qualifier still has to have something to qualify.
+//
+// `sub T` is allowed because `T` is a name that stands for itself and may turn
+// out to be a handle. `sub Node` is not: `Node` is a class, it is already
+// everything it is going to be, and it is not a handle. Accepting it and
+// quietly meaning `Node` would turn a missing `*` into silence.
+//
+// The parser cannot tell the two apart -- both are an identifier after `sub` --
+// so it carries the qualifier and the analyzer, which knows which names stand
+// for themselves, decides.
+
+class Node {
+    public int32 value;
+    public Node(int32 initial) { value = initial; }
+}
+
+class Holder<T> {
+    // Allowed: `T` may be a handle.
+    public sub T fine;
+}
+
+int32 main() {
+    // Refused: `Node` is not, and never will be.
+    sub Node borrowed;
+
+    Holder<Node*>* holder = new Holder<Node*>();
+    delete holder;
+    return 0;
+}

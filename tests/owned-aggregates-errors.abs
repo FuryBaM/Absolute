@@ -1,0 +1,26 @@
+// There is no second name for a unique owner, so an aggregate holding one is
+// not copied -- not by a declaration, and not by a conditional whose arms only
+// name what they hand back.
+
+class Node {
+    public int64 value;
+    public Node(int64 initial) { value = initial; }
+}
+
+struct Owner {
+    public Node* node;
+}
+
+Owner makeOwner(int64 n) {
+    Owner made;
+    made.node = new Node(n);
+    return move(made);
+}
+
+int32 main() {
+    Owner first = makeOwner(1);
+    Owner second = makeOwner(2);
+    Owner copied = true ? first : second;
+    println(format("{}", copied.node.value));
+    return 0;
+}

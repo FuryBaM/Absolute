@@ -11,6 +11,10 @@ namespace Absolute {
             llvm::Function* function = impl->CurrentFunction();
             if (!function) impl->Fail("logical expression outside a function");
 
+            // The left operand always runs, so it can wait for the end of the
+            // statement; the right one cannot, and is handled below.
+            if (leftCreatesManagedOwner) impl->RegisterTemporaryOwner(left, leftType);
+            impl->RegisterIfFreshString(expr->left.get(), left);
             left = impl->AsCondition(left);
             llvm::BasicBlock* leftBlock = impl->builder.GetInsertBlock();
             llvm::BasicBlock* rightBlock =
@@ -23,7 +27,14 @@ namespace Absolute {
                 impl->builder.CreateCondBr(left, mergeBlock, rightBlock);
 
             impl->builder.SetInsertPoint(rightBlock);
-            llvm::Value* right = impl->AsCondition(impl->Evaluate(expr->right.get()));
+            llvm::Value* right = nullptr;
+            {
+                // The right operand only runs on one path, so an owner it
+                // produces has to be released on that path: a destroy after the
+                // merge would name a value that does not reach it.
+                Impl::TemporaryOwnerScope shortCircuit(*impl);
+                right = impl->AsCondition(impl->EvaluateBorrowed(expr->right.get()));
+            }
             rightBlock = impl->builder.GetInsertBlock();
             impl->BranchIfNeeded(mergeBlock);
 
@@ -69,6 +80,19 @@ namespace Absolute {
             return;
         }
 
+        // Everything from here borrows its operands: a comparison, a pointer
+        // difference, arithmetic. None of them takes the owner, so an operand
+        // that produced one -- `make() != null` -- waits for the end of the
+        // statement instead of being dropped. The plugin path above is
+        // unchanged: it destroys its operands as soon as the call returns.
+        if (leftCreatesManagedOwner) impl->RegisterTemporaryOwner(left, leftType);
+        if (rightCreatesManagedOwner) impl->RegisterTemporaryOwner(right, rightType);
+        // The same for a string an operand made: `made == build(n)` compares
+        // the bytes and keeps neither side, so the one that was allocated for
+        // the comparison is released with the statement.
+        impl->RegisterIfFreshString(expr->left.get(), left);
+        impl->RegisterIfFreshString(expr->right.get(), right);
+
         const bool leftRaw = IsRawPointerTypeName(leftType);
         const bool rightRaw = IsRawPointerTypeName(rightType);
         const bool leftManaged = IsManagedPointerTypeName(leftType);
@@ -95,6 +119,23 @@ namespace Absolute {
             llvm::FunctionType* compareType = llvm::FunctionType::get(
                 impl->builder.getInt32Ty(),
                 {impl->builder.getPtrTy(), impl->builder.getPtrTy()}, false);
+            // Zero-initialized storage holds a null rather than a pointer to
+            // any bytes: a struct's string field starts that way, and so does
+            // an element of `new S[n]`. `strcmp` reads through what it is
+            // given, so `point.tag == ""` on a fresh struct was a segmentation
+            // fault -- reading a field of a value the program had only just
+            // made. A name holding no bytes is the empty string, which is what
+            // it is compared as. Printing has had the same guard for longer;
+            // it substitutes `<null>` there because that is a debugging
+            // affordance rather than an answer about the value.
+            const auto orEmpty = [&](llvm::Value* text) {
+                return impl->builder.CreateSelect(
+                    impl->builder.CreateIsNull(text, "string.compare.is.null"),
+                    impl->EmitStringConstant("", "empty.text"), text,
+                    "string.compare.text");
+            };
+            left = orEmpty(left);
+            right = orEmpty(right);
             llvm::Value* comparison = impl->builder.CreateCall(
                 impl->module->getOrInsertFunction("strcmp", compareType),
                 {left, right}, "string.compare");
@@ -170,20 +211,50 @@ namespace Absolute {
         llvm::BasicBlock* mergeBlock = llvm::BasicBlock::Create(impl->context, "ternary.end", function);
         impl->builder.CreateCondBr(condition, trueBlock, falseBlock);
 
+        const std::string resultTypeName = impl->SemanticType(expr);
+
+        // Each arm runs on its own path, so an owner borrowed inside one is
+        // released inside it. The arm's own result is not touched: it may be
+        // the owner the ternary yields. What it is made to do is hold a count
+        // of its own, so that both paths hand the merge the same thing.
         impl->builder.SetInsertPoint(trueBlock);
-        llvm::Value* trueValue = impl->Evaluate(expr->trueExpr.get());
+        llvm::Value* trueValue = nullptr;
+        bool trueMakesOwner = false;
+        bool trueMakesClosure = false;
+        {
+            Impl::TemporaryOwnerScope arm(*impl);
+            trueValue = impl->CountedArmValue(expr->trueExpr.get(),
+                impl->Evaluate(expr->trueExpr.get()), resultTypeName);
+            trueMakesOwner = impl->valueCreatesManagedOwner;
+            trueMakesClosure = impl->valueCreatesClosureOwner;
+        }
         trueBlock = impl->builder.GetInsertBlock();
         impl->BranchIfNeeded(mergeBlock);
 
         impl->builder.SetInsertPoint(falseBlock);
-        llvm::Value* falseValue = impl->Evaluate(expr->falseExpr.get());
+        llvm::Value* falseValue = nullptr;
+        bool falseMakesOwner = false;
+        bool falseMakesClosure = false;
+        {
+            Impl::TemporaryOwnerScope arm(*impl);
+            falseValue = impl->CountedArmValue(expr->falseExpr.get(),
+                impl->Evaluate(expr->falseExpr.get()), resultTypeName);
+            falseMakesOwner = impl->valueCreatesManagedOwner;
+            falseMakesClosure = impl->valueCreatesClosureOwner;
+        }
         falseBlock = impl->builder.GetInsertBlock();
         impl->BranchIfNeeded(mergeBlock);
 
         const std::string trueType = impl->SemanticType(expr->trueExpr.get());
         const std::string falseType = impl->SemanticType(expr->falseExpr.get());
-        const std::string resultTypeName = impl->SemanticType(expr);
-        llvm::Type* resultType = impl->CommonNumericType(trueValue->getType(), falseValue->getType());
+        // The type of the merge is the type of the expression, which the
+        // analyzer has already worked out from both arms. Asking for a common
+        // *numeric* type instead refused everything that is not a number or a
+        // handle: `cond ? "a" : "b"` and every struct and tuple failed in the
+        // backend, with a message about binary operators.
+        llvm::Type* resultType = resultTypeName.empty()
+            ? impl->CommonNumericType(trueValue->getType(), falseValue->getType())
+            : impl->TypeFromName(resultTypeName);
         impl->builder.SetInsertPoint(trueBlock->getTerminator());
         trueValue = impl->Coerce(trueValue, resultType, trueType, resultTypeName);
         impl->builder.SetInsertPoint(falseBlock->getTerminator());
@@ -193,6 +264,33 @@ namespace Absolute {
         result->addIncoming(trueValue, trueBlock);
         result->addIncoming(falseValue, falseBlock);
         impl->value = result;
+        // What the arms said about what they made has to be answered for the
+        // merge, not left over from whichever ran last. The result owns
+        // something only if both arms made one -- an arm that named its value
+        // did not -- and it owns nothing that is a value from one arm's block:
+        // caching the object behind a handle that way stored a value from one
+        // path in a place both paths reach, which is invalid IR rather than a
+        // wrong answer ("instruction does not dominate all uses").
+        impl->valueCreatesManagedOwner = trueMakesOwner && falseMakesOwner;
+        impl->valueManagedPointee = nullptr;
+        impl->valueCreatesClosureOwner = trueMakesClosure && falseMakesClosure;
+        // An array's owner is a field of the descriptor the merge produced, so
+        // it is read from there rather than from an arm.
+        if (impl->valueCreatesArrayOwner && ArrayRankName(resultTypeName) > 0) {
+            impl->valueArrayOwner = impl->builder.CreateExtractValue(
+                result, {1}, "ternary.array.owner");
+            // Both arms produced one, so both said what their owner covers.
+            // The merge cannot name one of the two values, and a conditional
+            // is not where a slice of a temporary is written, so the extent
+            // goes unrecorded and the view's own length is used -- which is
+            // what it was before any of this.
+            impl->valueArrayOwnedCount = nullptr;
+        }
+        else {
+            impl->valueCreatesArrayOwner = false;
+            impl->valueArrayOwner = nullptr;
+            impl->valueArrayOwnedCount = nullptr;
+        }
     }
 
     void CodeGenerator::Visit(NullExpr* expr) {
@@ -205,16 +303,41 @@ namespace Absolute {
     }
 
     void CodeGenerator::Visit(NumberLiteralExpr* expr) {
-        if (expr->value.find('.') != std::string::npos) {
-            impl->value = llvm::ConstantFP::get(impl->builder.getDoubleTy(), std::stod(expr->value));
+        if (IsFloatingLiteral(expr->value)) {
+            impl->value = llvm::ConstantFP::get(impl->builder.getDoubleTy(), impl->ParseFloatingLiteral(expr->value));
         }
         else {
-            impl->value = llvm::ConstantInt::get(impl->builder.getInt32Ty(), std::stoll(expr->value), true);
+            // The value was parsed as 64-bit and then truncated into an i32
+            // constant, so any literal wider than 32 bits was silently wrong:
+            // 2^31 came out negative, 2^32 came out zero, 10^10 came out
+            // 1410065408. Widen only when the value does not fit, so every
+            // literal that worked before keeps exactly the type it had.
+            // Parsed unsigned, because the whole 64-bit range has to be
+            // reachable and a signed parse cannot get there. The literal is
+            // always positive here -- a minus sign is a separate unary
+            // expression -- so int64's minimum arrives as 2^63 and negating its
+            // bit pattern yields the minimum again, and uint64's maximum has no
+            // signed spelling at all. A signed parse threw out_of_range on both
+            // and the exception reached the user as a bare "Error: stoll".
+            unsigned long long parsed = 0;
+            try {
+                parsed = std::stoull(expr->value);
+            }
+            catch (const std::exception&) {
+                impl->Fail("integer literal '" + expr->value +
+                    "' does not fit in 64 bits");
+            }
+            const bool fitsIn32 =
+                parsed <= static_cast<unsigned long long>(
+                    std::numeric_limits<int32_t>::max());
+            impl->value = llvm::ConstantInt::get(
+                fitsIn32 ? impl->builder.getInt32Ty() : impl->builder.getInt64Ty(),
+                parsed, false);
         }
     }
 
     void CodeGenerator::Visit(StringLiteralExpr* expr) {
-        impl->value = impl->builder.CreateGlobalStringPtr(expr->value, "string.literal");
+        impl->value = impl->EmitStringConstant(expr->value, "string.literal");
     }
 
     void CodeGenerator::Visit(CharLiteralExpr* expr) {
@@ -238,12 +361,27 @@ namespace Absolute {
         std::vector<Expression*> values;
         FlattenArrayValues(*expr, values);
 
-        llvm::Value* elementCount = impl->builder.getInt64(values.size());
-        llvm::AllocaInst* address = impl->builder.CreateAlloca(
-            elementType, elementCount, "array.literal.storage");
-        address->setAlignment(llvm::Align(16));
         llvm::Value* byteCount = impl->builder.getInt64(
             static_cast<std::uint64_t>(values.size()) * impl->SizeOfTypeName(elementTypeName));
+
+        // A literal is an owner. The owner pointer is what says an array owns
+        // anything: the drop is guarded by it, and `move` clears it to hand
+        // the elements on. A stack literal has no owner pointer, so its
+        // elements were never released -- and giving the drop a different
+        // guard instead makes a moved-from array release what the destination
+        // now holds.
+        //
+        // It was allocated only when its elements owned something, which left
+        // the analyzer and the backend disagreeing about what a literal is:
+        // the backend handed out an owner for `Cell*[]` and a pointer into the
+        // frame for `int32[]`, so `move` worked on one and not the other for a
+        // reason nobody could read off the source. Storage that belongs to the
+        // frame is now written as such -- `int32[3] a = { ... }` is the
+        // declaration that says the frame holds it -- and every literal that
+        // is an expression makes storage of its own.
+        llvm::Value* address = impl->builder.CreateCall(
+            impl->Malloc(), {byteCount}, "array.literal.allocation");
+        llvm::Value* owner = address;
         impl->builder.CreateMemSet(address, impl->builder.getInt8(0),
             byteCount, llvm::MaybeAlign(16));
 
@@ -253,14 +391,33 @@ namespace Absolute {
                 impl->SemanticType(values[index]), elementTypeName);
             llvm::Value* destination = impl->builder.CreateInBoundsGEP(
                 elementType, address, impl->builder.getInt64(index), "array.literal.element");
+            // A slot the array releases is a name that counts, and a literal's
+            // slots are no different from the ones `unsafeArraySet` writes:
+            // `{ made(), kept }` put a second name on whatever `kept` holds
+            // and said nothing, so releasing the literal took the strings the
+            // local still named. The sanitizer did not see it -- the bytes
+            // were freed and handed straight back out by the next allocation
+            // -- and what caught it was -O0 and -O3 printing different text.
+            if (elementTypeName == "string")
+                initial = impl->RetainStoredString(values[index], initial);
             impl->builder.CreateStore(initial, destination);
+            if (elementTypeName != "string" &&
+                !impl->CreatesFreshString(values[index]))
+                impl->EmitValueRetain(destination, elementTypeName);
         }
 
         std::vector<llvm::Value*> dimensions;
         dimensions.reserve(shape->size());
         for (size_t size : *shape) dimensions.push_back(impl->builder.getInt64(size));
         impl->value = impl->BuildArrayDescriptor(
-            {address, elementType, typeName, std::move(dimensions)});
+            {address, elementType, typeName, std::move(dimensions), owner});
+        impl->valueCreatesArrayOwner = true;
+        // Named as well as reported: whoever takes the literal over -- a
+        // declaration, an argument, `copy` -- frees it through this pointer,
+        // and while a literal was sometimes the frame's storage nobody ever
+        // asked for it.
+        impl->valueArrayOwner = owner;
+        impl->valueArrayOwnedCount = impl->builder.getInt64(values.size());
         impl->valueCreatesManagedOwner = false;
         impl->valueManagedPointee = nullptr;
     }

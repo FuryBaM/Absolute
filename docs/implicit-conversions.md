@@ -24,6 +24,91 @@ the call site:
 float frameTime = timer.deltaTime() as float;
 ```
 
+A literal is not covered by that allowance. Narrowing a *value* keeps whatever
+the conversion leaves behind, but a literal is a constant the compiler can
+measure, so one that cannot be represented in its target type is refused rather
+than truncated:
+
+```absolute
+int64 wide = someInt64;
+int32 narrowed = wide;      // allowed: a value conversion
+int32 tooLarge = 4294967296;  // refused: E_LITERAL_OUT_OF_RANGE
+uint32 mask = 4294967295;     // allowed: it fits uint32
+int32 smallest = -2147483648; // allowed: the sign belongs to the literal
+```
+
+An integer literal takes the narrowest type that holds it — `int32`, else
+`int64`, else `uint64` — which is also what decides an inferred generic
+parameter: `identity(10000000000)` instantiates with `int64`. A minus in front
+of the literal is part of the constant, so `-9223372036854775808` is an `int64`
+and not the negation of a `uint64`.
+
+## Floating point to integer
+
+A conversion from `float` or `double` to an integer type truncates toward zero,
+and saturates when the value does not fit: anything past an end clamps to that
+end, and `NaN` becomes zero. The same rule holds on every target, so a native
+build and a wasm build give the same answer.
+
+```absolute
+double huge = 1e18;
+int32 clamped = huge as int32;      // 2147483647
+int32 negative = -1e18 as int32;    // -2147483648
+int32 fromNan = (0.0 / 0.0) as int32;  // 0
+uint32 fromNegative = -1.0 as uint32;  // 0
+```
+
+Saturation is a deliberate choice over the C rule, where a value that does not
+fit is undefined: that produced a different number on each build, and a value
+that broke the formatter it was passed to.
+
+`as` binds like a suffix, tighter than a prefix `-`, so `-1.0 as uint32` is the
+negation of a converted `1` and not the conversion of `-1`. The two readings
+agree everywhere except an unsigned target, where one saturates to zero and the
+other wraps to the maximum; parenthesise when the distinction matters.
+
+```absolute
+uint32 negated = -1.0 as uint32;     // 4294967295: -(1.0 as uint32)
+uint32 converted = (-1.0) as uint32; // 0: the negative value saturates
+```
+
+## Shift amounts
+
+A binary operator produces the wider of its two operand types, and a shift is
+no exception: both sides are widened to that type first, and the shift happens
+at its width. `int32 << int32` shifts at 32 bits; the same left operand shifted
+by an `int64` amount shifts at 64.
+
+The amount has to be less than that width. An amount equal to it or larger —
+and a negative one — is refused, because there is no answer to give: LLVM
+leaves such a shift undefined, which produced `-1780665664` for `1 << 32` on
+one build and a value the formatter could not print for `1 << 40`. An amount
+written in the source is refused when the program is compiled
+(`E_SHIFT_OUT_OF_RANGE`); one that arrives in a variable is checked where it is
+used, and the program says so and exits, the way a zero divisor and an
+out-of-bounds index do.
+
+```absolute
+int32 one = 1;
+int32 top = one << 31;      // allowed: the largest amount at 32 bits
+int32 gone = one << 32;     // refused: E_SHIFT_OUT_OF_RANGE
+int64 count = 40;
+int64 wide = one << count;  // allowed: an int64 result shifts at 64 bits
+```
+
+## Floating point literals
+
+A literal is a `double`. Subnormal values are accepted, with the precision a
+double gives them; a literal that keeps nothing of what was written — one that
+overflows to infinity, or underflows all the way to zero — is refused with
+`E_LITERAL_OUT_OF_RANGE`.
+
+```absolute
+double small = 1e-308;   // accepted, subnormal
+double lost = 1e400;     // refused: larger than a double can hold
+```
+
+
 ## References and null
 
 - `null` converts to pointer and C-function-pointer types.
@@ -38,6 +123,43 @@ Derived* derived = new Derived();
 Base* base = derived;
 weak Base* observer = derived;
 ```
+
+## The type of a conditional
+
+`cond ? a : b` takes its type in this order:
+
+1. **The type it is being read as.** A declaration, a parameter or a return
+   says what the conditional has to be, and if both arms convert to that type
+   implicitly, that is the conditional's type. A derived pointer converting to
+   a base is one of those conversions, so neither arm says it again:
+
+   ```absolute
+   Shape* shape = left ? new Bigger(3) : new Square(3);
+   ```
+
+2. **The least upper bound of the arms,** when nothing says what to read it as
+   -- the type furthest down the hierarchy that both arms can be seen as:
+
+   ```absolute
+   auto shape = left ? new Bigger(3) : new Square(3);   // Square*
+   ```
+
+   Which is also what lets a cast stand outside the parentheses rather than on
+   both arms: `(left ? new Bigger(3) : new Square(3)) as Shape`.
+
+3. **Neither**, and it is a compile-time error: `E_TERNARY_BRANCH_TYPES` when
+   the arms share no type at all, and `E_AMBIGUOUS_CONDITIONAL_TYPE` when they
+   share several and none of them is the least -- two classes that both
+   implement two unrelated interfaces. Naming the type settles that one:
+
+   ```absolute
+   Alpha* either = left ? new Left() : new Right();
+   ```
+
+Both arms keep their own ownership mode, and a conditional over two different
+modes -- an owner on one side and a subscriber on the other -- has no type.
+Weakening one to match the other would change what the expression means
+without saying so.
 
 Conversions between unrelated values such as `string` to `int32` or `int32`
 to `bool` are compile-time errors. Absolute does not currently support

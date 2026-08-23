@@ -1,0 +1,71 @@
+// The ownership qualifier is part of the type and survives everything the type
+// goes through.
+//
+// It is the property the whole lifetime model rests on: a container that stores
+// a `T*` must be able to tell an owner from an observer, and it can only do
+// that if the distinction is still there after substitution. Two places dropped
+// it silently -- substitution spelled out `raw` and `weak` by hand and returned
+// everything else unqualified, and unification compared raw-ness and weak-ness
+// separately instead of comparing the kind -- so a qualifier the language did
+// not happen to name in those two lists went missing on the way through a
+// generic.
+//
+// What is checked here is behaviour, not spelling: an observer must expire when
+// its owner is deleted, and it must do that whether it was written directly or
+// arrived through a generic parameter, a generic field, or a generic return.
+
+class Node {
+    public int32 value;
+    public Node(int32 initial) { value = initial; }
+}
+
+class Watcher<T> {
+    // A generic field whose qualifier is written here, not at the use site.
+    public weak T* observed;
+
+    public Watcher(T* target) { observed = target; }
+
+    public bool alive() { return observed ? true : false; }
+}
+
+// A generic return type carrying the qualifier.
+weak T* observerOf<T>(T* target) { return target; }
+
+// A generic parameter carrying it in the other direction.
+bool stillThere<T>(weak T* observer) { return observer ? true : false; }
+
+int32 main() {
+    Node* owner = new Node(7);
+
+    Watcher<Node>* field = new Watcher<Node>(owner);
+    weak Node* returned = observerOf<Node>(owner);
+    weak Node* direct = owner;
+
+    assert(field.alive(), "a generic field observer sees a live owner");
+    assert(stillThere<Node>(returned), "a generic return is an observer");
+    assert(stillThere<Node>(direct), "a generic parameter takes an observer");
+    assert(field.observed.value == 7, "and reads through to the object");
+
+    delete owner;
+
+    // Every one of them must expire. If a qualifier were dropped anywhere along
+    // the way the value would be an owner instead, and an owner does not expire
+    // -- it would either keep the object alive or release it a second time.
+    // Checked in place rather than by passing them on: the analyzer knows an
+    // observer of a deleted owner is expired and refuses to let it travel,
+    // which is itself the qualifier doing its job.
+    assert(!field.alive(), "the generic field observer expired with the owner");
+    assert(!returned, "so did the generic return");
+    assert(!direct, "and the directly written one");
+
+    // A fresh allocation may land in the slot the deleted object used; a weak
+    // observer names a generation as well as a slot, so it must stay expired.
+    Node* replacement = new Node(9);
+    assert(!field.alive(), "a reused slot does not revive an observer");
+    assert(replacement.value == 9, "and the new object is itself");
+    delete replacement;
+
+    delete field;
+    println("ownership-qualifier-generics=ok");
+    return 0;
+}

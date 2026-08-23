@@ -1,0 +1,20 @@
+// What the entry point may be declared to take.
+//
+// Nothing. The entry point is the C `main`, which the platform calls with
+// (argc, argv), so a declared parameter was built out of whatever the
+// registers happened to hold: `main(string[] args)` compiled, `args.length`
+// read 913878280, and `args[1]` passed the bounds check and read past the end.
+// About half the runs segfaulted and the other half printed the right answer,
+// which is the worst shape a defect can take -- it was found while
+// benchmarking, not by a test.
+//
+// Command-line arguments have their own way in (`std.env.args()`,
+// `std.env.argAt`, `std.env.argsCount`), which reads them from the operating
+// system and works on every target, so the declaration is refused rather than
+// given a second and quieter path.
+//
+// Compiled for the diagnostic, so the file never runs.
+
+int32 main(string[] args) {
+    return args.length;
+}

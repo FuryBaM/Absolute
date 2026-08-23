@@ -1,0 +1,16 @@
+// A default must be a constant, and it must be trailing.
+//
+// A constant is what lets the backend emit it at the call site instead of the
+// declaration; anything else could read the callee's frame from the caller's.
+// Trailing is what lets a call leave arguments out at all, since the missing
+// ones are filled in from the end.
+
+int32 source(int32 value) { return value; }
+
+int32 computed(int32 value = source(1)) { return value; }
+
+int32 leading(int32 first = 1, int32 second) { return first + second; }
+
+int32 main() {
+    return computed() + leading(1, 2);
+}

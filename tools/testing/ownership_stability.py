@@ -32,6 +32,9 @@ def run(
         encoding="utf-8",
         errors="replace",
         timeout=timeout,
+        # Closed standard input rather than the runner's, so a program can
+        # never block on a terminal that happens to be attached.
+        stdin=subprocess.DEVNULL,
         env=os.environ.copy(),
     )
 

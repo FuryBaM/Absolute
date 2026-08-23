@@ -8,7 +8,7 @@ diagnostic artifacts.
 
 | Check | Pinned runner | Contract |
 |-------|---------------|----------|
-| `build-and-test` | `ubuntu-24.04` | LLVM Debug and Release, complete CTest suite |
+| `build-and-test` | `ubuntu-24.04` | LLVM Debug and Release, complete CTest suite; tests labelled `differential` run on Release only, in a separate step |
 | `build-and-test` | `windows-2022` | MSVC frontend Debug and Release contracts |
 | `llvm-compatibility` | Ubuntu 24.04/26.04 containers | LLVM 18, 19, 20 and 21 Release codegen contract |
 | `windows-llvm-release` | `windows-2022` | Portable LLVM native and WebAssembly Release suite |
@@ -72,9 +72,23 @@ retried automatically. A deterministic failure must remain visible.
 ## Timeouts
 
 Bootstrap, configure, build, regular tests, stress, fuzz, and sanitizers have
-separate step timeouts. Individual CTest programs are limited to 180 seconds;
-stress/fuzz tools additionally enforce their own shorter per-process limits.
-The job timeout is a final containment boundary, not the primary timeout.
+separate step timeouts. Individual CTest programs are limited to 180 seconds
+unless they set a longer CMake `TIMEOUT`; stress/fuzz tools additionally
+enforce their own shorter per-process limits. The job timeout is a final
+containment boundary, not the primary timeout.
+
+The tests labelled `differential` (`absolute.suite-differential`,
+`absolute.alias-differential`, `absolute.codegen-fuzz`) rebuild the runnable
+corpus at several optimization levels, and the suite differential also
+rebuilds it for wasm. They set CMake `TIMEOUT` values of 900–3600 seconds
+because of that, and they cannot share the default Ubuntu CTest step with
+the rest of the suite: on Debug, `suite-differential` alone occupied the
+whole 50-minute budget as test 12; on Release the remaining tests ran out
+of time around test 750 of 823. CI therefore excludes the label from the
+default Ubuntu, macOS, and Windows LLVM `ctest` invocations (`-LE
+differential`, `--parallel 2`) and runs it on Linux Release in a dedicated
+step. Debug is omitted there because the comparison is about the shipped
+compiler, and the unoptimized one does not finish under the job cap.
 
 ## Artifacts
 

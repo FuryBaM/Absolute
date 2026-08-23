@@ -1,0 +1,29 @@
+// The wasm copy of the binary reader kept its result in an 8 KB scratch
+// buffer. A longer string was truncated on the way out and the hex dump of a
+// longer payload stopped after 4095 bytes. Native had neither limit.
+import "../std/binary.abs";
+import "../std/string.abs";
+
+int32 main() {
+    string payload = std.text.repeat("Absolute!", 1000);
+    assert(std.text.codePointCount(payload) == 9000, "nine thousand characters");
+
+    std.binary.BinaryWriter* writer = new std.binary.BinaryWriter();
+    writer.writeString(payload);
+    std.binary.BinaryReader* reader = new std.binary.BinaryReader(
+        writer.getData(), writer.size());
+    string roundTrip = reader.readString();
+    assert(std.text.codePointCount(roundTrip) == 9000,
+        "a long string survives a round trip");
+    assert(roundTrip == payload, "and it is the same string");
+    assert(reader.isEof() == true, "the reader consumed all of it");
+    reader.dispose();
+
+    string hex = writer.toHexString();
+    assert(std.text.codePointCount(hex) == (writer.size() as int32) * 2,
+        "the hex dump is two digits per byte, not a truncated scratch");
+    writer.dispose();
+
+    println("binary-payload-edges=ok");
+    return 0;
+}

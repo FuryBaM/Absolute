@@ -34,6 +34,17 @@ void updatePeak(raw void* peak, int64 candidate) {
     }
 }
 
+// Holds the read lock until the other reader is inside it too, so that the
+// overlap the caller asserts is a property of the lock rather than of how fast
+// the second task happened to start. Holding for a fixed delay instead made
+// the check depend on that: whenever a reader finished its ten milliseconds
+// before the other one was scheduled -- which a loaded machine or a sanitized
+// build produces regularly -- the peak was one and the test failed for a
+// reason that had nothing to do with the lock.
+//
+// The wait is bounded and yields, so a scheduler that can only run one of them
+// at a time finishes rather than hanging; the caller's assertion is what
+// reports the shortfall.
 async int32 readWorker(
     int64 rwlockAddress,
     int64 activeReadersAddress,
@@ -44,7 +55,13 @@ async int32 readWorker(
     absolute_rwlock_lock_read(rwlock);
     int64 active = absolute_atomic_fetch_add(activeReaders, 1) + 1;
     updatePeak(peakReaders, active);
-    std.task.delay(10);
+    int32 waited = 0;
+    while (absolute_atomic_load(activeReaders) < 2 && waited < 2000) {
+        std.task.delay(1);
+        updatePeak(peakReaders, absolute_atomic_load(activeReaders));
+        waited += 1;
+    }
+    updatePeak(peakReaders, absolute_atomic_load(activeReaders));
     absolute_atomic_fetch_sub(activeReaders, 1);
     absolute_rwlock_unlock_read(rwlock);
     return 1;
@@ -135,7 +152,17 @@ async int32 main() {
         rwlockAddress, activeReadersAddress, peakReadersAddress);
     task<int32> readerTwo = spawn readWorker(
         rwlockAddress, activeReadersAddress, peakReadersAddress);
-    std.task.delay(2);
+    // The writer is spawned only once both readers are inside the lock. A
+    // fixed delay here decided the outcome by timing: an rwlock that prefers
+    // writers blocks a reader that arrives after a waiting writer, so a writer
+    // that got in between the two readers held the second one out and the
+    // overlap this asserts could never happen. Waiting for the readers first
+    // makes the sequence the test describes the sequence it runs.
+    int32 spinning = 0;
+    while (peakReaders.load() < 2 && spinning < 2000) {
+        std.task.delay(1);
+        spinning += 1;
+    }
     task<int32> writer = spawn writeWorker(
         rwlockAddress, activeReadersAddress, storedValueAddress);
     assert(await readerOne == 1, "first reader");

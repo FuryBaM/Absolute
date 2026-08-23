@@ -1,0 +1,137 @@
+// The standard `Vector<T>` over an element that owns something.
+//
+// This is what the indexer projection was for. `Vector<T>` was already
+// written the way the model requires -- it moves elements with
+// `unsafeArrayTake` and `unsafeArraySet`, `first`, `last` and `toArray` hand
+// back the subscriber form -- but `Vector<Cell*>` could not be instantiated at
+// all, because a *method's* return type is instantiated with the class and
+// `builder()` returned a `VectorBuilder<T>`. A program paid for a builder it
+// never called.
+//
+// A builder is a staging owner seeded from a live vector, so its first act is
+// to duplicate what that vector still holds. That is what a snapshot means,
+// and an owning element cannot be one. It is an extension now rather than a
+// method, so it is instantiated where it is called: a vector of owners is an
+// ordinary vector, and a program that asks one for a builder is refused there.
+// tests/std-collections-owner-elements-errors.abs pins that refusal.
+//
+// Everything below is the ordinary API, at an element type that owns. The
+// counts say each element was released exactly once.
+
+import "../std/collections/vector.abs";
+import "../std/string.abs";
+
+int32 destroyed = 0;
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+    public void destroy() { destroyed = destroyed + 1; }
+}
+
+int32 main() {
+    Vector<Cell*>* cells = new Vector<Cell*>();
+    cells.push(new Cell(1));
+    cells.push(new Cell(2));
+    cells.push(new Cell(3));
+    cells.push(new Cell(4));
+    cells.push(new Cell(5));
+    assert(cells.count == 5, "five went in");
+
+    // Growth carries the elements rather than duplicating them: the push
+    // above crossed the initial capacity of four.
+    assert(destroyed == 0, "and growing the storage released none of them");
+
+    // Reading an element borrows the cell it is in. The vector still owns it.
+    sub Cell* third = cells[2];
+    assert(third.value == 3, "an element reads back");
+    sub Cell* front = cells.first;
+    sub Cell* back = cells.last;
+    assert(front.value == 1, "and so does the first");
+    assert(back.value == 5, "and the last");
+    assert(destroyed == 0, "reading released nothing");
+
+    // Enough rounds that a release per read is a use-after-free and a handle
+    // kept per read is a heap that grows.
+    int32 total = 0;
+    int32 round = 0;
+    while (round < 2000) {
+        sub Cell* borrowed = cells[round % 5];
+        total = total + borrowed.value;
+        round = round + 1;
+    }
+    assert(total == 6000, "every round read one");
+    assert(destroyed == 0, "and none of them was released");
+
+    // The setter takes. The slot gives back what it held.
+    cells[0] = new Cell(10);
+    assert(destroyed == 1, "the slot released what it held");
+    assert(cells[0].value == 10, "and holds what it was handed");
+
+    // A swap moves nothing out of the vector.
+    cells.swap(0, 4);
+    assert(cells[0].value == 5, "swap moved the last one to the front");
+    assert(cells[4].value == 10, "and the front one to the last");
+    assert(destroyed == 1, "and released nothing doing it");
+
+    // Giving an element up, spelled as what it is.
+    Cell* taken = cells.takeAt(1);
+    assert(taken.value == 2, "the take handed the element over");
+    assert(cells.count == 4, "and the vector is one shorter");
+    assert(destroyed == 1, "and nothing was released on the way out");
+    delete taken;
+    assert(destroyed == 2, "the name that owns it released it");
+
+    // `pop` is the same operation at the end.
+    Cell* popped = cells.pop();
+    assert(popped.value == 10, "pop handed over the last");
+    delete popped;
+    assert(destroyed == 3, "and it released once");
+
+    // `removeAt` releases the element it removes.
+    cells.removeAt(0);
+    assert(destroyed == 4, "removeAt released the element it removed");
+    assert(cells.count == 2, "and the survivors shifted down");
+
+    // An iterator is a snapshot of borrows: walking it twice releases nothing.
+    int32 walked = 0;
+    VectorIterator<Cell*>* it = cells.iterate();
+    while (it.next()) {
+        walked = walked + it.value.value;
+    }
+    delete it;
+    assert(destroyed == 4, "walking the iterator released nothing");
+    assert(walked == 7, "and saw both survivors");
+
+    // Staging changes without duplicating anything, which is what a builder
+    // would be for and what a builder cannot be over an element that owns. A
+    // snapshot builder copies, and an owner cannot be copied; an operation
+    // that *took* the elements instead would leave the source empty -- and
+    // then it is this, spelled out of what the container already has. There is
+    // no `intoBuilder`, because this is it.
+    Vector<Cell*>* staged = new Vector<Cell*>();
+    while (cells.count > 0) {
+        staged.push(cells.takeAt(0));
+    }
+    assert(cells.count == 0, "the source gave up every element");
+    assert(staged.count == 2, "and the staging vector has them");
+    assert(destroyed == 4, "and the transfer released none of them");
+
+    staged.removeAt(0);
+    assert(destroyed == 5, "a staged removal releases the element it removes");
+    staged.push(new Cell(42));
+    assert(staged.count == 2, "and a staged addition is an ordinary push");
+    assert(staged[1].value == 42, "with the value it was given");
+
+    delete staged;
+    assert(destroyed == 7, "two in the staging vector, each released once");
+
+    // What is still in the vector goes with the vector.
+    delete cells;
+    assert(destroyed == 7, "the source was emptied, so it releases nothing");
+
+    println(format("std-vector-owner-elements: total={} destroyed={}",
+        total, destroyed));
+    println("std-vector-owner-elements=ok");
+    return 0;
+}

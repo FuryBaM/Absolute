@@ -1,0 +1,68 @@
+// What is left of the standard collections over an element that owns something.
+//
+// Three classes stand behind `Vector<T>`, and all three used to move elements
+// by reading a slot and storing what they read -- and a handle read out of a
+// slot is a second handle to one object. `Vector` and `VectorIterator` say the
+// weaker thing now: a snapshot is `sub T[]`, `first`, `last` and `toArray`
+// hand back the subscriber form, and at `T = int32` none of those qualifiers
+// are there at all. `Vector<Cell*>` is an ordinary vector --
+// tests/std-vector-owner-elements.abs runs one.
+//
+// `VectorBuilder` is the one that cannot be fixed by saying something weaker.
+// It is a staging owner: `add(T)` gives it an element and `finish()` hands
+// every element to a new `Vector<T>` that owns them. Seeded from a live
+// vector, its first act is to duplicate what that vector still holds -- which
+// is what a snapshot means, and what an owning element cannot be. Borrowing
+// instead does not help: `finish()` would then give a vector of owners handles
+// it never owned.
+//
+// What changed is where that is paid for. `builder()` used to be a method, and
+// a method's return type is instantiated with the class, so `Vector<Cell*>`
+// could not exist at all -- the builder was reached without being called. It
+// is an extension now, instantiated where it is called, so the refusal below
+// belongs to the line that asks for a builder rather than to every program
+// that holds a vector.
+//
+// `Vector<int32>` is unaffected, and the rest of the suite uses exactly that.
+
+import "../std/collections/vector.abs";
+import "../std/collections/set.abs";
+import "../std/collections/map.abs";
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+}
+
+int32 main() {
+    Vector<int32>* counted = new Vector<int32>();
+    counted.push(1);
+    delete counted;
+
+    // An ordinary vector of owners. Nothing here is refused.
+    Vector<Cell*>* owning = new Vector<Cell*>();
+    owning.push(new Cell(1));
+    sub Cell* borrowed = owning[0];
+
+    // Asking it for a builder is what is refused, and this is the line that
+    // asks.
+    VectorBuilder<Cell*>* staged = owning.builder();
+
+    // A set and a map are in the same position, and for the same reason: both
+    // are ordinary containers over an element that owns
+    // (tests/std-set-map-owner-elements.abs runs them), and both refuse a
+    // builder, because a builder is a staging owner seeded from what the
+    // container still holds.
+    Set<Cell*>* items = new Set<Cell*>();
+    items.add(new Cell(2));
+    SetBuilder<Cell*>* stagedItems = items.builder();
+
+    Map<int32, Cell*>* byKey = new Map<int32, Cell*>();
+    byKey.put(1, new Cell(3));
+    MapBuilder<int32, Cell*>* stagedEntries = byKey.builder();
+
+    delete byKey;
+    delete items;
+    delete owning;
+    return borrowed.value;
+}

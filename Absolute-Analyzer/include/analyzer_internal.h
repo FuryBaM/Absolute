@@ -46,41 +46,60 @@ namespace Absolute {
             for (const auto& node : nodes) AcceptIfPresent(node, visitor);
         }
 
-        inline bool IsConditionType(const std::string& type) {
-            return type == "bool" || type == "dynamic" || type == "error" ||
-                type.starts_with("int") || type.starts_with("uint") || type.ends_with("*");
+        // The integer types by name, not by prefix. `"int32[]"` starts with
+        // `"int"` and is not a number, and reading a prefix let an array of
+        // integers be added, compared, used as a condition, printed, and
+        // assigned to a scalar -- none of which the backend can emit. One of
+        // them crashed the compiler outright: `int32[][] rows = flat;` was
+        // accepted, and the backend read a dimension the descriptor does not
+        // have.
+        //
+        // Eight names is the whole set; `int` and `uint` on their own are not
+        // types (E_UNKNOWN_TYPE), which is what made the prefix look safe.
+        inline bool IsIntegerTypeName(const std::string& type) {
+            return type == "int8" || type == "uint8" ||
+                type == "int16" || type == "uint16" ||
+                type == "int32" || type == "uint32" ||
+                type == "int64" || type == "uint64";
         }
 
+        inline bool IsConditionType(const std::string& type) {
+            return type == "bool" || type == "dynamic" || type == "error" ||
+                IsIntegerTypeName(type) || type.ends_with("*");
+        }
+
+        // All of these read the one ownership answer rather than testing
+        // prefixes again; the second set of prefix tests is where `shared` was
+        // understood in one place and dropped in another.
         inline bool IsRawPointerType(const std::string& type) {
-            return type.starts_with("raw ") && type.ends_with("*");
+            return CanonicalOwnership(type) == OwnershipKind::Raw;
         }
 
         inline bool IsWeakPointerType(const std::string& type) {
-            return type.starts_with("weak ") && type.ends_with("*");
+            return CanonicalOwnership(type) == OwnershipKind::Weak;
         }
 
-        inline bool IsSharedPointerType(const std::string& type) {
-            return type.starts_with("shared ") && type.ends_with("*");
+        inline bool IsSubscriberPointerType(const std::string& type) {
+            return CanonicalOwnership(type) == OwnershipKind::Sub;
         }
 
         inline bool IsManagedPointerType(const std::string& type) {
-            return !IsRawPointerType(type) && type.ends_with("*");
+            const OwnershipKind kind = CanonicalOwnership(type);
+            return kind != OwnershipKind::None && kind != OwnershipKind::Raw;
         }
 
+        // "Strong" here means it holds the object up. A subscriber and a weak
+        // observer do not.
         inline bool IsStrongManagedPointerType(const std::string& type) {
-            return IsManagedPointerType(type) && !IsWeakPointerType(type);
+            return CanonicalOwnership(type) == OwnershipKind::Unique;
         }
 
         inline bool IsPointerType(const std::string& type) {
-            return IsRawPointerType(type) || IsManagedPointerType(type) || IsSharedPointerType(type);
+            return CanonicalOwnership(type) != OwnershipKind::None;
         }
 
         inline std::string PointerPointee(std::string type) {
-            if (IsRawPointerType(type)) type.erase(0, 4);
-            else if (IsWeakPointerType(type)) type.erase(0, 5);
-            else if (IsSharedPointerType(type)) type.erase(0, 7);
-            if (!type.empty() && type.back() == '*') type.pop_back();
-            return type;
+            return CanonicalPointeeName(type);
         }
 
         inline bool IsTaskType(const std::string& type) {
@@ -177,10 +196,34 @@ namespace Absolute {
                 return found->second;
             if (type.ends_with("[]"))
                 return SubstituteGenericType(type.substr(0, type.size() - 2), substitutions) + "[]";
-            if (IsPointerType(type)) {
-                const std::string prefix = IsRawPointerType(type) ? "raw " :
-                    (IsWeakPointerType(type) ? "weak " : "");
-                return prefix + SubstituteGenericType(PointerPointee(type), substitutions) + "*";
+            // `sub T`: the qualifier was written with nothing to apply it to
+            // yet. This is where there is something -- whatever `T` became.
+            if (const OwnershipKind open = CanonicalOpenOwnership(type);
+                open != OwnershipKind::None) {
+                const std::string base = CanonicalOpenBaseName(type);
+                const std::string substituted =
+                    SubstituteGenericType(base, substitutions);
+                // Unless `T` became `T`. Substituting a type variable for
+                // itself leaves the qualifier with nothing to apply to, the
+                // same as before, so it stays written down and waits.
+                // CanonicalWithOwnership drops a qualifier on anything that is
+                // not a handle -- right for `T = int32`, wrong for a variable
+                // that is still a variable -- and dropping it here is how
+                // `sub T` became `T` while a generic body was being checked.
+                // `T` does not take a `sub T`, because the arrow runs one way,
+                // so a method of a generic class could not be called with what
+                // another method of the same class handed back.
+                if (substituted == base)
+                    return std::string(CanonicalOwnershipPrefix(open)) + substituted;
+                return CanonicalWithOwnership(substituted, open);
+            }
+            // The qualifier survives substitution; see the same fix in
+            // SubstituteCodegenType.
+            if (const OwnershipKind kind = CanonicalOwnership(type);
+                kind != OwnershipKind::None) {
+                return CanonicalPointerName(
+                    SubstituteGenericType(CanonicalPointeeName(type), substitutions),
+                    kind);
             }
             std::string base;
             std::vector<std::string> arguments;
@@ -230,10 +273,56 @@ namespace Absolute {
             return result + ">";
         }
 
+        // Whether a type variable appears anywhere inside a pattern -- as the
+        // pattern itself, an element type, a pointee, or a type argument.
+        inline bool MentionsGenericParameter(const std::string& pattern,
+            const std::unordered_set<std::string>& parameters) {
+            if (parameters.contains(pattern)) return true;
+            if (pattern.ends_with("[]"))
+                return MentionsGenericParameter(
+                    pattern.substr(0, pattern.size() - 2), parameters);
+            if (IsPointerType(pattern))
+                return MentionsGenericParameter(PointerPointee(pattern), parameters);
+            std::string base;
+            std::vector<std::string> arguments;
+            if (ParseGenericTypeName(pattern, base, arguments)) {
+                for (const std::string& argument : arguments)
+                    if (MentionsGenericParameter(argument, parameters)) return true;
+            }
+            return false;
+        }
+
         inline bool UnifyGenericType(const std::string& pattern, const std::string& actual,
             const std::unordered_set<std::string>& parameters,
             std::unordered_map<std::string, std::string>& substitutions) {
+            // A pattern with no type variable in it binds nothing, so there is
+            // nothing here to decide: whether the argument fits the parameter is
+            // a conversion question, and answering it with an equality test is
+            // what refused `Box<int64>.put(7)`. A method of a generic class
+            // carries the class's type parameter in its symbol but has its own
+            // parameters already substituted, so the pattern was the concrete
+            // `int64`, unification demanded exactly `int64`, and an `int32` that
+            // any ordinary call widens was rejected as a failed unification
+            // rather than considered as a conversion.
+            if (!MentionsGenericParameter(pattern, parameters)) return true;
             if (parameters.contains(pattern)) {
+                // A parameter is never bound to a qualified form of itself.
+                // `sub V` at `V` is not a type `V` could be -- it is the
+                // borrow of whatever `V` turns out to be -- and inside an open
+                // body `V` is already bound: it stands for itself. Binding it
+                // here produced a specialization of the method with `sub V`
+                // where `V` was written, and every ownership rule that asked
+                // what the parameter takes was then told "a borrow" about a
+                // parameter declared to take. `put(borrowed)` inside a
+                // container's own body was accepted in silence.
+                //
+                // Only the *same* name is refused. A genuinely borrowed
+                // argument still binds an unrelated parameter: at
+                // `take<T>(T v)` called with a `sub Cell*`, the base name is
+                // `Cell*` and `T` takes it.
+                if (CanonicalOpenOwnership(actual) != OwnershipKind::None &&
+                    CanonicalOpenBaseName(actual) == pattern)
+                    return true;
                 const auto found = substitutions.find(pattern);
                 if (found == substitutions.end()) {
                     substitutions.emplace(pattern, actual);
@@ -244,11 +333,15 @@ namespace Absolute {
             if (pattern.ends_with("[]") && actual.ends_with("[]"))
                 return UnifyGenericType(pattern.substr(0, pattern.size() - 2),
                     actual.substr(0, actual.size() - 2), parameters, substitutions);
-            if (IsPointerType(pattern) && IsPointerType(actual) &&
-                IsRawPointerType(pattern) == IsRawPointerType(actual) &&
-                IsWeakPointerType(pattern) == IsWeakPointerType(actual))
-                return UnifyGenericType(PointerPointee(pattern), PointerPointee(actual),
-                    parameters, substitutions);
+            // Two handles unify only when they are the same kind of handle.
+            // Comparing raw-ness and weak-ness separately let a `shared T*`
+            // unify with a plain `T*`, which is the qualifier going missing by
+            // another route.
+            if (const OwnershipKind patternKind = CanonicalOwnership(pattern);
+                patternKind != OwnershipKind::None &&
+                patternKind == CanonicalOwnership(actual))
+                return UnifyGenericType(CanonicalPointeeName(pattern),
+                    CanonicalPointeeName(actual), parameters, substitutions);
             std::string patternBase;
             std::string actualBase;
             std::vector<std::string> patternArguments;
@@ -343,7 +436,9 @@ namespace Absolute {
                 name == "move" || name == "isOwner" || name == "debugBreak" ||
                 name == "adoptRaw" || name == "retainRaw" || name == "borrowRaw" || name == "share" ||
                 name == "unsafeArrayGet" || name == "unsafeArraySet" ||
-                name == "unsafeArrayData" ||
+                name == "unsafeArrayData" || name == "unsafeArrayCopy" ||
+                name == "unsafeArrayMove" || name == "unsafeArrayTake" ||
+                name == "unsafeArrayDrop" ||
                 name == "seal" || name == "unseal" ||
                 name == "load" || name == "isLoaded" || name == "loadError" ||
                 name == "taskGroupAdd" || name == "tuple";
@@ -352,7 +447,7 @@ namespace Absolute {
         inline bool IsPrintableType(const std::string& type) {
             return type == "bool" || type == "string" || type == "char" || type == "null" ||
                 type == "dynamic" || type == "error" || type == "float" || type == "double" ||
-                type.starts_with("int") || type.starts_with("uint");
+                IsIntegerTypeName(type);
         }
 
         inline std::optional<size_t> CountFormatPlaceholders(const std::string& format) {

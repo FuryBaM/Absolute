@@ -6,6 +6,7 @@
 
 #include "expression_visitor.h"
 #include "statement_visitor.h"
+#include "type_names.h"
 
 #include <cstdint>
 #include <iostream>
@@ -66,6 +67,14 @@ namespace Absolute {
         size_t parameterIndex = static_cast<size_t>(-1);
         SymbolId callableOwner = InvalidSymbolId;
         std::vector<bool> parameterRequiresOwner;
+        // The expression written after `=` for each parameter, or null. Only a
+        // constant is allowed there, so evaluating one at a call site is the
+        // same as evaluating it at the declaration; the backend fills the
+        // missing arguments in from here.
+        std::vector<Expression*> parameterDefaults;
+        // How many of the trailing parameters have one. A call may leave out
+        // that many arguments from the end.
+        size_t defaultedParameters = 0;
         AccessLevel access = AccessLevel::Public;
         AccessLevel readAccess = AccessLevel::Public;
         AccessLevel writeAccess = AccessLevel::Public;
@@ -139,7 +148,23 @@ namespace Absolute {
         PlaceInfo placeInfo;
         PointerRole pointerRole = PointerRole::None;
         std::vector<std::string> parameterTypes;
+        // Which callable a constructor call resolved to. A function or a
+        // method call reaches its callee through the name it was written
+        // with; a constructor call has no such name, and the backend needs it
+        // to fill in the arguments the call left out.
+        SymbolId calleeSymbol = InvalidSymbolId;
         bool createsArrayOwner = false;
+        // A string expression that produced storage of its own, rather than
+        // naming storage something else already holds. Only a call can: a
+        // literal is static, and reading a variable, a field or an element
+        // hands back the pointer that is already there.
+        bool producesFreshValue = false;
+        // The element type an indexer was written with -- what its setter
+        // takes. `type` above is what its getter hands back, which is a
+        // borrow of this (see Analyzer::IndexerBorrowProjection), so the two
+        // are no longer the same string and the write path needs this one.
+        // Empty for everything that is not an indexer access.
+        std::string indexerPlaceType;
     };
 
     struct ANALYZER_API Diagnostic {
@@ -226,8 +251,17 @@ namespace Absolute {
             std::vector<MemberSignature> constructors;
             std::vector<std::string> parents;
             std::vector<std::string> enumMembers;
+            // Parallel to enumMembers: the number each one stands for, which a
+            // member may be given rather than take from its position.
+            std::vector<std::int32_t> enumValues;
             TypeKind kind = TypeKind::Other;
             std::vector<std::string> genericParameters;
+            // Parallel to genericParameters: what each one requires of the
+            // type it is given, or empty. Checked where the type is written
+            // rather than inside the body, so a program that asks for an
+            // instantiation the type cannot serve is told once, at its own
+            // line, instead of being handed the body's every consequence.
+            std::vector<std::string> genericConstraints;
         };
 
         struct TypeAliasDefinition {
@@ -260,6 +294,7 @@ namespace Absolute {
             PlaceInfo placeInfo;
             PointerRole pointerRole = PointerRole::None;
             bool createsArrayOwner = false;
+            bool producesFreshValue = false;
         };
 
         enum class KeepState {
@@ -303,6 +338,63 @@ namespace Absolute {
         std::unordered_map<std::string, SymbolId> genericFunctionSpecializations;
         std::vector<SymbolId> genericFunctionSpecializationOrder;
         std::unordered_set<std::string> instantiatedGenericTypes;
+
+        // What the single pass over a generic body noticed but could not judge.
+        //
+        // A body is analyzed once with its parameters unsubstituted, so every
+        // ownership rule -- all of which ask whether a type is a pointer --
+        // silently does not run inside one: the type is `T`. Rather than
+        // analyze every body again for every instantiation, the pass records
+        // the shape it saw and the type it saw it on, and each instantiation
+        // substitutes that type and asks the rule then.
+        struct GenericBodyFact {
+            enum class Shape {
+                FieldFromNonOwner,   // a field assigned from something not fresh
+                ReturnsField,        // a field handed back to the caller
+                DeletesField,        // a field released from inside the body
+                DeletesValue,        // anything released through a parameter type
+                CopiesElements,      // array elements duplicated as bytes
+                ElementFromNonOwner, // a slot filled from something not fresh
+                OrdersValues,        // `<`, `<=`, `>` or `>=` on the parameter
+                InterfaceValue,      // the parameter used as a value, not a handle
+                BorrowsAsOwner       // `sub T` bound to a name written `T`
+            };
+            Shape shape = Shape::FieldFromNonOwner;
+            std::string parameterType;   // as written in the body, e.g. "T"
+            std::string detail;          // the name to put in the message
+            std::string file;
+            int line = 0;
+            int column = 0;
+        };
+        std::unordered_map<std::string, std::vector<GenericBodyFact>> genericBodyFacts;
+        // Instantiations a constraint already refused. Their bodies are not
+        // replayed: the constraint said the one thing worth saying, and every
+        // line of the body that cannot serve the argument would say it again
+        // about a private field the program never named.
+        std::unordered_set<std::string> unmetConstraintInstantiations;
+
+        // Whether a written type is one of the generic parameters the current
+        // type is being analyzed with -- a name that stands for itself here and
+        // will be something concrete at every instantiation.
+        bool IsCurrentGenericParameter(const std::string& type) const;
+        // A name that still stands for itself: a generic parameter of the type
+        // or the callable being analyzed, not yet substituted for anything.
+        bool IsOpenGenericParameter(const std::string& name) const;
+        void RecordGenericBodyFact(GenericBodyFact::Shape shape,
+            const std::string& parameterType, const std::string& detail,
+            const ASTNode* node);
+        // A borrow of an open parameter bound to a name written with the
+        // parameter itself -- `T key = vec[i];` inside a generic algorithm.
+        // Whether that duplicates ownership depends on what the parameter
+        // becomes, which the body cannot know, so the question is recorded
+        // here and asked at every instantiation. Called from the four places
+        // a value is bound to a name: a declaration, an assignment, an
+        // argument and a return.
+        void NoteBorrowBoundAsOwner(const std::string& target,
+            const std::string& source, const std::string& detail,
+            const ASTNode* node);
+        void CheckGenericBodyFacts(const std::string& base,
+            const std::unordered_map<std::string, std::string>& substitutions);
         std::vector<std::unordered_map<std::string, std::string>> genericTypeScopes;
         std::unordered_set<std::string> namespaces;
         std::unordered_set<std::string> importedNamespaces;
@@ -313,6 +405,9 @@ namespace Absolute {
         Result result;
         int typeContextDepth = 0;
         int loopDepth = 0;
+        // Only so a stray break inside a switch can be told why it is
+        // refused, rather than being called loop-related.
+        int switchDepth = 0;
         int functionDepth = 0;
         int catchDepth = 0;
         int finallyDepth = 0;
@@ -321,6 +416,10 @@ namespace Absolute {
         std::string currentType;
         std::string currentReturnType;
         std::string expectedType;
+        // -1 while a numeric literal is being visited as the operand of a
+        // unary minus, so the range check sees the constant the source
+        // actually writes: -2147483648 fits int32, 2147483648 does not.
+        int literalSign = 1;
         std::string currentNamespace;
         bool callable = false;
         std::vector<std::string> callableParameters;
@@ -365,6 +464,11 @@ namespace Absolute {
             std::vector<bool> ownerArguments;
             std::vector<SymbolId> argumentSymbols;
             std::string context;
+            // Kept because the check runs after the walk, when nothing is left
+            // on the diagnostic stack to say where the call was written.
+            std::string sourceFile;
+            int line = 0;
+            int column = 0;
         };
         std::vector<DeferredOwnershipCall> deferredOwnershipCalls;
 
@@ -462,6 +566,10 @@ namespace Absolute {
         void CollectProgramTypeNames(Program& program);
         void CollectTypeName(Statement& statement);
         void AnalyzeProgram(Program& program);
+        std::string EnclosingSourceFile() const;
+        void ReportAtLocation(std::string sourceFile, int line, int column,
+            std::string message, std::string code = {},
+            SymbolId symbol = InvalidSymbolId);
         void Report(std::string message, std::string code = {}, SymbolId symbol = InvalidSymbolId);
         void ReportAt(const ASTNode* node, std::string message,
             std::string code = {}, SymbolId symbol = InvalidSymbolId);
@@ -469,16 +577,111 @@ namespace Absolute {
             std::string code = {}, SymbolId symbol = InvalidSymbolId);
         void ValidateAttributes(const Statement& statement, const std::string& target, bool callableTarget);
         Result Evaluate(Expression* expression);
+        // What a property or an indexer hands back. A getter is a call
+        // however it is written, and a `T*` a callable returns is an owner --
+        // E_MANAGED_RETURN_REQUIRES_OWNER refuses any other kind -- so the
+        // name that receives it owns it, exactly as it would from a method.
+        // Written once because the accessor is read from four places.
+        Result AccessorValue(SymbolId symbol, const std::string& type, bool isLValue) const;
+        // What an indexer's getter hands back, given what the indexer was
+        // written with. An indexer is a projection onto a cell the container
+        // keeps -- `c[i]` names storage that already exists -- so its getter
+        // borrows and its setter takes: `T this[...]` reads as `sub T` and is
+        // written as `T`. One type is still written, because there is one
+        // place; what differs is the role each half plays with it, and that
+        // is what the projection says.
+        //
+        // A no-op wherever there is no ownership to weaken: a number, a
+        // struct, an array descriptor. `sub` says what a value's relation to
+        // an object's lifetime is, and a value with no object has none.
+        std::string IndexerBorrowProjection(const std::string& type) const;
         Result EvaluateExpected(Expression* expression, const std::string& type);
         std::string ResolveType(Expression* expression);
         std::string ResolveDeclaredType(VarDeclExpr& expression);
+        // The return type of a declared callable, with the indexer getter's
+        // borrow projection already applied. The projection is recorded on
+        // the type expression itself, because the backend asks the analyzer
+        // what a type expression resolved to -- so both halves of the
+        // compiler read one answer from one place instead of each applying
+        // the rule and having to agree.
+        std::string CallableReturnType(FunctionDeclStmt& statement);
         void Save(Expression* expression, Result value);
         bool IsKnownType(const std::string& name) const;
-        bool TypeOwnsResources(const std::string& name) const;
+        // Whether a value of this type owns a resource that there is exactly
+        // one of: a strong managed pointer, an array's storage, a plugin
+        // resource, a hand-written destroy() hook, or an aggregate holding any
+        // of them. This is the question the ownership rules ask -- may it be
+        // copied, must it be moved, may a reference borrow it -- and it is
+        // *not* `needsDrop`, which asks whether there is anything to release
+        // at all. A string answers no here and yes there, and both are right:
+        // a string is shared, so a second name for one is an ordinary thing to
+        // have, and it still has a count to give back.
+        bool TypeOwnsUniqueResource(const std::string& name) const;
+
+        // What copying, moving and releasing a value of this type mean, in the
+        // one meaning the backend uses (see type_names.h).
+        TypeSemantics SemanticsOfType(const std::string& name) const;
+
+    private:
+        // A default parameter value is a constant, the same restriction a
+        // static field's initializer carries. That is what lets the backend
+        // evaluate one at the call site instead of the declaration.
+        static bool IsConstantDefaultArgument(const Expression* expression);
+
+        // How many trailing parameters may be left out of a call, and what to
+        // put there. Recorded where the callable is declared, because a call
+        // site may be analyzed before the declaration's body is.
+        static void RecordParameterDefaults(Symbol& symbol,
+            const std::vector<std::unique_ptr<VarDeclExpr>>& parameters);
+
+        // Every name a value of this type can be seen as: the type itself and
+        // each of its parents, transitively.
+        void CollectAncestors(const std::string& type,
+            std::vector<std::string>& into) const;
+
+        // The least upper bound of two pointer types: the most derived type
+        // both can be seen as. Empty if they share no supertype, and empty
+        // with `ambiguous` set if they share several that are unrelated to
+        // each other -- two interfaces neither of which extends the other.
+        std::string CommonPointerType(const std::string& left,
+            const std::string& right, bool& ambiguous) const;
+
+        bool OwnsUniqueResourceByParts(const std::string& name) const;
+
+        // Whether a value of this type has anything to release at all -- the
+        // other question, and the one `needsDrop` answers. A field holding a
+        // string counts here and not above.
+        bool ReleasesByParts(const std::string& name) const;
+
+        // Whether a value of this type can be a second name for what the first
+        // one holds. A unique owner cannot -- there is one of it -- and
+        // neither can an array, whose storage has one owner; a subscriber, a
+        // weak reference and a string can, because sharing is what they are
+        // for. An aggregate answers by asking its parts, the same walk
+        // CodeGenerator::Impl::SemanticsOfTypeName does from the backend's own
+        // tables.
+        bool CopiesByParts(const std::string& name) const;
+
+    public:
         bool IsAsyncTaskValueType(const std::string& name) const;
         bool IsNumeric(const std::string& name) const;
+        // Whether `<`, `<=`, `>` and `>=` have something to order: the
+        // backend orders numbers, characters, enum members and raw addresses,
+        // and nothing else.
+        bool IsOrderableType(const std::string& name) const;
+        // An interface is a dispatch table, not a value: it has no size and
+        // no storage of its own, so it is used through a pointer. A
+        // declaration says so; the places where a type is used as a value
+        // without being declared -- a parameter, an array's element, a
+        // generic argument -- did not, and each reached the backend, which
+        // reported "unsupported type 'I'" with no file and no line.
+        void CheckInterfaceValueType(const std::string& type,
+            const std::string& where, SymbolId symbol = InvalidSymbolId);
         bool IsInteger(const std::string& name) const;
+        void CheckShiftAmount(
+            Expression* amount, const std::string& resultType, const std::string& op);
         bool IsAssignable(const std::string& target, const std::string& source) const;
+        bool IsEnumType(const std::string& name) const;
         bool IsDerivedFrom(const std::string& type, const std::string& base) const;
         AccessLevel DeclaredAccess(const Statement& statement) const;
         void ValidateAccessModifiers(const Statement& statement,
@@ -542,7 +745,7 @@ namespace Absolute {
         void MergeValueFlowPaths(const ValueFlowMap& base, const std::vector<ValueFlowMap>& paths);
         void RegisterFlowSymbol(SymbolId id, ValueFlowState state);
         void TransferManagedAliases(SymbolId previousOwner, SymbolId nextOwner);
-        void CheckManagedMoveArgument(const Result& argument,
+        void CheckManagedArgumentOwnership(const Result& argument,
             const std::string& parameterType, size_t index,
             const std::string& context);
         bool ParameterSupportsOwnership(const std::string& type) const;

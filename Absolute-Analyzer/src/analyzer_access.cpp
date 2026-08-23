@@ -2,7 +2,8 @@
 
 namespace Absolute {
     void Analyzer::Visit(PrimitiveTypeExpr* expr) {
-        if (typeContextDepth == 0) Report("type '" + expr->type + "' cannot be used as a value");
+        if (typeContextDepth == 0) Report("type '" + expr->type + "' cannot be used as a value",
+            "E_TYPE_USED_AS_VALUE");
         Save(expr, {InvalidSymbolId, expr->type, false});
     }
 
@@ -13,20 +14,35 @@ namespace Absolute {
 
     void Analyzer::Visit(PointerTypeExpr* expr) {
         const std::string pointee = ResolveType(expr->pointee.get());
-        if (pointee == "void" && !expr->raw) Report("managed pointers cannot point to void");
-        if (expr->shared) {
-            Report("shared pointers are not available in Absolute's deterministic "
-                "unique-ownership model; use T*, weak T*, and move(...)",
-                "E_SHARED_POINTER_UNSUPPORTED");
+        // `sub T` -- a qualifier with nothing to apply it to yet. It is kept as
+        // written and applied when `T` becomes something, which is the only
+        // moment it can be answered: `sub T` at `T = Node*` is `sub Node*`, and
+        // at `T = int32` it is `int32`, because a value with no object has no
+        // relation to an object's lifetime to weaken.
+        if (expr->qualifiesBase) {
+            if (phase == Phase::ResolveBodies && !IsOpenGenericParameter(pointee)) {
+                std::string written(CanonicalOwnershipPrefix(expr->ownership));
+                if (!written.empty()) written.pop_back();
+                Report("'" + written + "' must qualify a pointer type or a generic "
+                    "parameter, and '" + pointee + "' is neither",
+                    "E_QUALIFIER_REQUIRES_POINTER");
+                Save(expr, {InvalidSymbolId, pointee, false});
+                return;
+            }
+            Save(expr, {InvalidSymbolId,
+                std::string(CanonicalOwnershipPrefix(expr->ownership)) + pointee, false});
+            return;
         }
-        const std::string prefix = expr->raw ? "raw " : (expr->weak ? "weak " :
-            (expr->shared ? "shared " : ""));
-        Save(expr, {InvalidSymbolId, prefix + pointee + "*", false});
+        if (pointee == "void" && !expr->IsRaw())
+            Report("managed pointers cannot point to void", "E_MANAGED_POINTER_TO_VOID");
+        Save(expr, {InvalidSymbolId,
+            CanonicalPointerName(pointee, expr->ownership), false});
     }
 
     void Analyzer::Visit(ArrayTypeExpr* expr) {
         const std::string element = ResolveType(expr->element.get());
-        if (element == "void") Report("array element type cannot be void");
+        if (element == "void") Report("array element type cannot be void",
+            "E_VOID_ARRAY_ELEMENT");
         Save(expr, {InvalidSymbolId, element + "[]", false});
     }
 
@@ -42,7 +58,7 @@ namespace Absolute {
             }
             else {
                 if (phase == Phase::ResolveBodies && !IsKnownType(type))
-                    Report("unknown type '" + expr->name + "'");
+                    Report("unknown type '" + expr->name + "'", "E_UNKNOWN_TYPE");
                 Save(expr, {InvalidSymbolId, type, false});
             }
             return;
@@ -84,7 +100,7 @@ namespace Absolute {
             }
         }
         if (!symbol) {
-            Report("unknown object '" + expr->name + "'");
+            Report("unknown object '" + expr->name + "'", "E_UNKNOWN_OBJECT");
             Save(expr, {InvalidSymbolId, "error", false});
             return;
         }
@@ -129,7 +145,7 @@ namespace Absolute {
                 captured.type, closureReturn, closureParameters);
             if (!nestedFunction && (IsPointerType(captured.type) ||
                 IsTaskType(captured.type) || ArrayRank(captured.type) > 0 ||
-                TypeOwnsResources(captured.type))) {
+                TypeOwnsUniqueResource(captured.type))) {
                 Report("lambda cannot safely capture resource value '" + captured.name +
                     "' of type '" + captured.type + "' by value",
                     "E_LAMBDA_CAPTURE_RESOURCE", captureId);
@@ -185,7 +201,8 @@ namespace Absolute {
         const bool value = functionValue || cFunctionValue ||
             symbol->kind == SymbolKind::Variable || symbol->kind == SymbolKind::Parameter ||
             symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Property;
-        if (!value) Report("object '" + expr->name + "' is not a value");
+        if (!value) Report("object '" + expr->name + "' is not a value",
+            "E_OBJECT_NOT_A_VALUE");
         ValueFlowState flow;
         if (const auto found = valueFlow.find(id); found != valueFlow.end()) flow = found->second;
         if (value && symbol->kind != SymbolKind::Property && accessMode == AccessMode::Read) {
@@ -200,6 +217,10 @@ namespace Absolute {
             ? CFunctionTypeName(symbol->type, symbol->parameterTypes)
             : (functionValue
                 ? FunctionTypeName(symbol->type, symbol->parameterTypes) : symbol->type);
+        if (symbol->kind == SymbolKind::Property && !capturedByCurrentLambda) {
+            Save(expr, AccessorValue(id, resolvedType, symbol->canWrite));
+            return;
+        }
         Save(expr, {id, resolvedType,
             (functionValue || cFunctionValue) ? false :
                 (capturedByCurrentLambda ? false :
@@ -220,7 +241,8 @@ namespace Absolute {
         if (constructorContextDepth > 0) {
             const std::string typeName = ExtractIdentifier(expr->base.get());
             if (!IsKnownType(typeName) || !types.contains(typeName))
-                Report("unknown constructible type '" + typeName + "'");
+                Report("unknown constructible type '" + typeName + "'",
+                    "E_UNKNOWN_CONSTRUCTIBLE_TYPE");
             std::vector<Result> evaluated;
             evaluated.reserve(expr->arguments.size());
             for (const auto& argument : expr->arguments)
@@ -240,8 +262,9 @@ namespace Absolute {
                 const Result& argument = evaluated[i];
                 if (i < expected.size() && !IsAssignable(expectedValueType, argument.type))
                     Report("constructor argument " + std::to_string(i + 1) + " has type '" + argument.type +
-                        "', expected '" + expectedValueType + "'");
-                CheckManagedMoveArgument(argument, expectedType, i, "constructor");
+                        "', expected '" + expectedValueType + "'",
+                            "E_CONSTRUCTOR_ARGUMENT_TYPE");
+                CheckManagedArgumentOwnership(argument, expectedType, i, "constructor");
                 if (IsValueReferenceType(expectedType) &&
                     !IsConstValueReferenceType(expectedType)) {
                     if (!argument.isLValue)
@@ -253,7 +276,10 @@ namespace Absolute {
                 }
             }
             Save(expr, {InvalidSymbolId, typeName.empty() ? "error" : typeName, false});
-            if (selected) expressionInfo[expr].parameterTypes = expected;
+            if (selected) {
+                expressionInfo[expr].parameterTypes = expected;
+                expressionInfo[expr].calleeSymbol = selected->symbol;
+            }
             return;
         }
 
@@ -295,7 +321,7 @@ namespace Absolute {
                         " argument " + std::to_string(index + 1) +
                         " has type '" + argument.type + "', expected '" + expected + "'",
                         cFunctionValue ? "E_CFUNC_ARGUMENT" : "E_FUNCTION_VALUE_ARGUMENT");
-                CheckManagedMoveArgument(argument, expected, index, "function value");
+                CheckManagedArgumentOwnership(argument, expected, index, "function value");
                 if (IsTaskType(expected)) {
                     if (argument.taskState == TaskState::Awaited) {
                         Report("task argument " + std::to_string(index + 1) +
@@ -348,7 +374,7 @@ namespace Absolute {
                         element == "dynamic")
                         Report("tuple elements require concrete non-void values",
                             "E_TUPLE_ELEMENT_TYPE");
-                    if (TypeOwnsResources(element))
+                    if (TypeOwnsUniqueResource(element))
                         Report("tuple element type '" + element +
                             "' owns resources and is not supported yet",
                             "E_TUPLE_RESOURCE_ELEMENT", arguments[index].symbol);
@@ -364,27 +390,32 @@ namespace Absolute {
                 for (size_t index = 0; index < arguments.size(); ++index) {
                     if (!IsPrintableType(arguments[index].type))
                         Report(callName + " argument " + std::to_string(index + 1) +
-                            " has unsupported type '" + arguments[index].type + "'");
+                            " has unsupported type '" + arguments[index].type + "'",
+                                "E_UNSUPPORTED_ARGUMENT_TYPE");
                 }
                 Save(expr, {table.Lookup(callName), "void", false});
                 return;
             }
 
             if (callName == "toString") {
-                if (arguments.size() != 1) Report("toString expects exactly one argument");
+                if (arguments.size() != 1) Report("toString expects exactly one argument",
+                    "E_TOSTRING_ARGUMENTS");
                 else if (!IsPrintableType(arguments.front().type))
-                    Report("toString cannot convert type '" + arguments.front().type + "'");
+                    Report("toString cannot convert type '" + arguments.front().type + "'",
+                        "E_TOSTRING_UNSUPPORTED_TYPE");
                 Save(expr, {table.Lookup(callName), "string", false});
                 return;
             }
 
             if (callName == "assert") {
                 if (arguments.empty() || arguments.size() > 2)
-                    Report("assert expects a condition and an optional message");
+                    Report("assert expects a condition and an optional message",
+                        "E_ASSERT_ARGUMENTS");
                 else if (!IsConditionType(arguments.front().type))
-                    Report("assert condition must be boolean-compatible");
+                    Report("assert condition must be boolean-compatible",
+                        "E_ASSERT_CONDITION_TYPE");
                 if (arguments.size() == 2 && arguments[1].type != "string" && arguments[1].type != "error")
-                    Report("assert message must be a string");
+                    Report("assert message must be a string", "E_ASSERT_MESSAGE_TYPE");
                 Save(expr, {table.Lookup(callName), "void", false});
                 return;
             }
@@ -421,6 +452,108 @@ namespace Absolute {
                         "', expected '" + elementType + "'",
                         "E_UNSAFE_ARRAY_VALUE_TYPE", arguments[2].symbol);
                 Save(expr, {table.Lookup(callName), isSet ? "void" : elementType, false});
+                return;
+            }
+
+            // Reading a slot and clearing it in one step. `unsafeArrayGet`
+            // reads without clearing, which for an element that owns something
+            // leaves two handles to one object -- the one in the array and the
+            // one the caller now holds. A take is what handing an element out
+            // of a container actually means.
+            if (callName == "unsafeArrayTake") {
+                if (arguments.size() != 2) {
+                    Report("unsafeArrayTake expects an array and an index",
+                        "E_UNSAFE_ARRAY_ARGUMENT_COUNT");
+                    Save(expr, {table.Lookup(callName), "error", false});
+                    return;
+                }
+                const std::string& arrayType = arguments[0].type;
+                if (ArrayRank(arrayType) != 1 && arrayType != "error")
+                    Report("unsafeArrayTake requires a one-dimensional array",
+                        "E_UNSAFE_ARRAY_TYPE", arguments[0].symbol);
+                if (!IsInteger(arguments[1].type) && arguments[1].type != "error")
+                    Report("unsafeArrayTake index must be an integer",
+                        "E_UNSAFE_ARRAY_INDEX_TYPE", arguments[1].symbol);
+                const std::string elementType = ArrayRank(arrayType) == 1
+                    ? ArrayElementType(arrayType) : std::string("error");
+                Result taken{table.Lookup(callName), elementType, false};
+                // The slot no longer holds it, so what comes back is the owner
+                // rather than another handle to the same object.
+                taken.createsManagedOwner = IsStrongManagedPointerType(elementType);
+                Save(expr, std::move(taken));
+                return;
+            }
+
+            // Releasing a run of elements and clearing them. What releasing one
+            // means is the element type's answer, so for elements that own
+            // nothing this is nothing at all.
+            if (callName == "unsafeArrayDrop") {
+                if (arguments.size() != 3) {
+                    Report("unsafeArrayDrop expects an array, a first index and "
+                        "an element count", "E_UNSAFE_ARRAY_ARGUMENT_COUNT");
+                    Save(expr, {table.Lookup(callName), "void", false});
+                    return;
+                }
+                if (ArrayRank(arguments[0].type) != 1 && arguments[0].type != "error")
+                    Report("unsafeArrayDrop requires a one-dimensional array",
+                        "E_UNSAFE_ARRAY_TYPE", arguments[0].symbol);
+                for (size_t index = 1; index < 3; ++index) {
+                    if (!IsInteger(arguments[index].type) && arguments[index].type != "error")
+                        Report("unsafeArrayDrop range must be integers",
+                            "E_UNSAFE_ARRAY_INDEX_TYPE", arguments[index].symbol);
+                }
+                Save(expr, {table.Lookup(callName), "void", false});
+                return;
+            }
+
+            // A bulk element copy. It exists because the alternative -- a
+            // loop of unsafeArraySet/unsafeArrayGet -- is what a growing
+            // collection does on every reallocation, and a scalar loop is not
+            // what copying a block of memory should cost.
+            if (callName == "unsafeArrayCopy" || callName == "unsafeArrayMove") {
+                // The two differ in one place, and it is the place ownership
+                // lives: a copy leaves the source holding what it held, a move
+                // does not. Everything else about them is the same block of
+                // memory going the same distance.
+                const bool transfers = callName == "unsafeArrayMove";
+                if (arguments.size() != 3) {
+                    Report(callName + " expects a destination, a source and "
+                        "an element count", "E_UNSAFE_ARRAY_COPY_ARGUMENT_COUNT");
+                    Save(expr, {table.Lookup(callName), "void", false});
+                    return;
+                }
+                for (size_t index = 0; index < 2; ++index) {
+                    if (ArrayRank(arguments[index].type) != 1 &&
+                        arguments[index].type != "error")
+                        Report(callName + " requires one-dimensional arrays",
+                            "E_UNSAFE_ARRAY_COPY_TYPE", arguments[index].symbol);
+                }
+                const std::string destination = ArrayRank(arguments[0].type) == 1
+                    ? ArrayElementType(arguments[0].type) : std::string("error");
+                const std::string source = ArrayRank(arguments[1].type) == 1
+                    ? ArrayElementType(arguments[1].type) : std::string("error");
+                if (destination != "error" && source != "error" &&
+                    destination != source)
+                    Report(callName + " requires the same element type on "
+                        "both sides, got '" + destination + "' and '" + source +
+                        "'", "E_UNSAFE_ARRAY_COPY_ELEMENT", arguments[1].symbol);
+                // Elements that own something are refused: copying the bytes
+                // would duplicate that ownership, the same reason `copy` of
+                // such an array is refused.
+                if (!transfers && destination != "error" && TypeOwnsUniqueResource(destination))
+                    Report("unsafeArrayCopy cannot copy elements that own "
+                        "something; that would duplicate the ownership -- "
+                        "unsafeArrayMove transfers them instead",
+                        "E_UNSAFE_ARRAY_COPY_OWNING", arguments[0].symbol);
+                // The refusal above cannot see through a generic parameter, so
+                // the element type is recorded and asked again per instantiation.
+                if (!transfers && ArrayRank(arguments[0].type) == 1)
+                    RecordGenericBodyFact(GenericBodyFact::Shape::CopiesElements,
+                        destination, callName, expr);
+                if (!IsInteger(arguments[2].type) && arguments[2].type != "error")
+                    Report(callName + " count must be an integer",
+                        "E_UNSAFE_ARRAY_COPY_COUNT", arguments[2].symbol);
+                Save(expr, {table.Lookup(callName), "void", false});
                 return;
             }
 
@@ -500,13 +633,13 @@ namespace Absolute {
 
             if (callName == "move") {
                 if (arguments.size() != 1) {
-                    Report("move expects exactly one argument");
+                    Report("move expects exactly one argument", "E_MOVE_ARGUMENTS");
                     Save(expr, {table.Lookup(callName), "error", false});
                     return;
                 }
                 const Result& argument = arguments.front();
                 if (!argument.isLValue && argument.type != "error") {
-                    Report("move expects an lvalue argument");
+                    Report("move expects an lvalue argument", "E_MOVE_REQUIRES_LVALUE");
                 }
                 const bool constSource = argument.isLValue &&
                     IsConstMutationTarget(expr->arguments.front().get(), argument);
@@ -704,6 +837,21 @@ namespace Absolute {
 
                 const Result& source = arguments.front();
                 if (ArrayRank(source.type) > 0) {
+                    // `copy` duplicates the buffer, not what the bytes in it
+                    // refer to. For elements that own something that makes two
+                    // arrays holding the same handles, and since an array owns
+                    // its elements, whichever is released first destroys the
+                    // objects the other still names. Refused rather than
+                    // deep-copied: what a deep copy of an owner means is a
+                    // decision this builtin does not get to make.
+                    std::string element = source.type;
+                    while (ArrayRank(element) > 0) element = ArrayElementType(element);
+                    if (TypeOwnsUniqueResource(element)) {
+                        Report("copy of an array whose elements own something would "
+                            "duplicate that ownership; copy the elements one at a time "
+                            "into an array you build yourself",
+                            "E_COPY_OWNING_ELEMENTS", source.symbol);
+                    }
                     Result copied{table.Lookup(callName), source.type, false};
                     copied.createsArrayOwner = true;
                     Save(expr, std::move(copied));
@@ -790,7 +938,7 @@ namespace Absolute {
                 cloned.createsManagedOwner = IsStrongManagedPointerType(clone.type);
                 cloned.pointerValidity = IsPointerType(clone.type)
                     ? PointerValidity::Live : PointerValidity::NotPointer;
-                cloned.isMoveResult = TypeOwnsResources(clone.type);
+                cloned.isMoveResult = TypeOwnsUniqueResource(clone.type);
                 Save(expr, cloned);
                 return;
             }
@@ -826,25 +974,28 @@ namespace Absolute {
             }
 
             if (arguments.empty()) {
-                Report("format expects a string literal template");
+                Report("format expects a string literal template", "E_FORMAT_TEMPLATE_LITERAL");
             }
             else {
                 if (arguments.front().type != "string" && arguments.front().type != "error")
-                    Report("format template must be a string");
+                    Report("format template must be a string", "E_FORMAT_TEMPLATE_TYPE");
                 StringLiteralProbe literalProbe;
                 expr->arguments.front()->Accept(literalProbe);
-                if (!literalProbe.literal) Report("format template must be a string literal");
+                if (!literalProbe.literal) Report("format template must be a string literal",
+                    "E_FORMAT_TEMPLATE_LITERAL");
                 else {
                     const std::optional<size_t> placeholders = CountFormatPlaceholders(literalProbe.literal->value);
-                    if (!placeholders) Report("format template contains an unmatched brace");
+                    if (!placeholders) Report("format template contains an unmatched brace",
+                        "E_FORMAT_TEMPLATE_BRACES");
                     else if (*placeholders != arguments.size() - 1)
                         Report("format template expects " + std::to_string(*placeholders) +
-                            " value(s), got " + std::to_string(arguments.size() - 1));
+                            " value(s), got " + std::to_string(arguments.size() - 1),
+                                "E_FORMAT_VALUE_COUNT");
                 }
                 for (size_t index = 1; index < arguments.size(); ++index) {
                     if (!IsPrintableType(arguments[index].type))
                         Report("format value " + std::to_string(index) + " has unsupported type '" +
-                            arguments[index].type + "'");
+                            arguments[index].type + "'", "E_FORMAT_VALUE_TYPE");
                 }
             }
             Save(expr, {table.Lookup(callName), "string", false});
@@ -909,7 +1060,7 @@ namespace Absolute {
                 }
                 else {
                     Report("type '" + (typeReceiver ? ownerName : receiver.type) +
-                        "' has no method '" + memberCall->member + "'");
+                        "' has no method '" + memberCall->member + "'", "E_UNKNOWN_METHOD");
                 }
             }
         }
@@ -921,7 +1072,8 @@ namespace Absolute {
                     if (member.kind == SymbolKind::Method && (member.isStatic || !currentMethodStatic))
                         candidates.push_back(member.symbol);
             }
-            if (candidates.empty()) Report("unknown function '" + callName + "'");
+            if (candidates.empty()) Report("unknown function '" + callName + "'",
+                "E_UNKNOWN_FUNCTION");
             else symbolId = SelectOverload(candidates, arguments, callName, explicitTypeArguments);
         }
 
@@ -1020,7 +1172,7 @@ namespace Absolute {
                         }
                     }
                 }
-                CheckManagedMoveArgument(argument, parameterType, i, "function");
+                CheckManagedArgumentOwnership(argument, parameterType, i, "function");
                 if (IsTaskType(parameterValueType)) {
                     if (argument.taskState == TaskState::Awaited) {
                         Report("task argument " + std::to_string(i + 1) +
@@ -1095,7 +1247,7 @@ namespace Absolute {
 
             const std::string receiverValueType = IsPointerType(receiver.type)
                 ? PointerPointee(receiver.type) : receiver.type;
-            if (TypeOwnsResources(receiverValueType))
+            if (TypeOwnsUniqueResource(receiverValueType))
                 Report("async instance method receiver type '" + receiverValueType +
                     "' owns resources and cannot cross the task lifetime boundary",
                     "E_ASYNC_RECEIVER_RESOURCES", receiver.symbol);
@@ -1120,17 +1272,28 @@ namespace Absolute {
         }
         std::vector<Result> indexes;
         indexes.reserve(expr->indexes.size());
+        // An index is read, whatever is being done to the element it selects.
+        // The access mode belongs to the target of the statement -- write for
+        // `a[i] = v`, delete for `delete a[i]`, address for `&a[i]` -- and
+        // letting it reach the index expression made the index inherit the
+        // target's rules: `a[i % a.length] = v` was refused because `length`
+        // is read-only, which it is, and which has nothing to do with reading
+        // it to compute an index.
+        const AccessMode previousAccess = accessMode;
+        accessMode = AccessMode::Read;
         for (const auto& index : expr->indexes) {
             if (!index) {
-                Report("array access requires an index");
+                Report("array access requires an index", "E_ARRAY_INDEX_MISSING");
                 continue;
             }
             const Result indexResult = Evaluate(index.get());
             indexes.push_back(indexResult);
             if (rank == 0) continue;
             if (!IsInteger(indexResult.type) && indexResult.type != "error")
-                Report("array index must be an integer, got '" + indexResult.type + "'");
+                Report("array index must be an integer, got '" + indexResult.type + "'",
+                    "E_ARRAY_INDEX_TYPE");
         }
+        accessMode = previousAccess;
         if (rank == 0) {
             const auto members = FindMembers(base.type, IndexerMemberName());
             const MemberSignature* selected = nullptr;
@@ -1157,6 +1320,28 @@ namespace Absolute {
                     ambiguous = false;
                 }
                 else if (cost == bestCost) ambiguous = true;
+            }
+            if (!selected && IsRawPointerType(base.type)) {
+                // `p[i]` on a raw pointer is `*(p + i)`, the spelling every
+                // buffer walk reaches for. It was refused as "not an array and
+                // has no matching indexer" even though the equivalent
+                // arithmetic was accepted. Reached only after the indexer
+                // search fails, so a raw pointer to a type that declares an
+                // indexer keeps calling it. Raw only: a managed pointer has no
+                // arithmetic, and one index into it would walk off its own
+                // allocation.
+                if (expr->indexes.size() != 1)
+                    Report("a raw pointer takes exactly one index", "E_POINTER_INDEX_COUNT");
+                else if (!indexes.empty() && !IsInteger(indexes.front().type) &&
+                    indexes.front().type != "error")
+                    Report("pointer index must be an integer, got '" +
+                        indexes.front().type + "'", "E_POINTER_INDEX_TYPE");
+                if (base.pointerValidity == PointerValidity::Null)
+                    Report("null pointer is dereferenced", "E_NULL_DEREFERENCE", base.symbol);
+                else if (base.pointerValidity == PointerValidity::Deleted)
+                    Report("deleted pointer is dereferenced", "E_USE_AFTER_DELETE", base.symbol);
+                Save(expr, {InvalidSymbolId, PointerPointee(base.type), true});
+                return;
             }
             if (!selected) {
                 Report("object of type '" + base.type +
@@ -1186,12 +1371,23 @@ namespace Absolute {
                 Report("indexers have no addressable storage",
                     "E_INDEXER_NOT_ADDRESSABLE", selected->symbol);
             }
-            Save(expr, {selected->symbol, selected->type, selected->canWrite});
+            // The getter borrows and the setter takes, so which half is
+            // being called decides which type this access has. `c[i] = v` is
+            // the setter's call and is typed with the place, because that is
+            // what the setter is handed; every other use of `c[i]` is the
+            // getter's, and hands back a borrow of the place.
+            Save(expr, AccessorValue(selected->symbol,
+                accessMode == AccessMode::Write
+                    ? selected->type
+                    : IndexerBorrowProjection(selected->type),
+                selected->canWrite));
             expressionInfo[expr].parameterTypes = selected->parameterTypes;
+            expressionInfo[expr].indexerPlaceType = selected->type;
         }
         else if (expr->indexes.size() > rank) {
             Report("array access provides " + std::to_string(expr->indexes.size()) +
-                " index(es), but the array has " + std::to_string(rank) + " dimension(s)");
+                " index(es), but the array has " + std::to_string(rank) + " dimension(s)",
+                    "E_ARRAY_INDEX_COUNT");
             Save(expr, {base.symbol, "error", false});
         }
         else {
@@ -1203,20 +1399,24 @@ namespace Absolute {
         const Result base = Evaluate(expr->base.get());
         const size_t rank = ArrayRank(base.type);
         if (rank == 0 && base.type != "error") {
-            Report("slice operation requires an array type");
+            Report("slice operation requires an array type", "E_SLICE_REQUIRES_ARRAY");
         }
         if (expr->ranges.size() > rank && base.type != "error") {
             Report("slice specifies " + std::to_string(expr->ranges.size()) +
-                " range(s), but array has rank " + std::to_string(rank));
+                " range(s), but array has rank " + std::to_string(rank), "E_SLICE_RANGE_COUNT");
         }
+        // Bounds are read for the same reason indexes are.
+        const AccessMode previousAccess = accessMode;
+        accessMode = AccessMode::Read;
         for (const auto& range : expr->ranges) {
             for (Expression* bound : {range.begin.get(), range.end.get()}) {
                 if (!bound) continue;
                 const Result resolved = Evaluate(bound);
                 if (!IsInteger(resolved.type) && resolved.type != "error")
-                    Report("slice bounds must be integers");
+                    Report("slice bounds must be integers", "E_SLICE_BOUND_TYPE");
             }
         }
+        accessMode = previousAccess;
         Save(expr, {base.symbol, rank > 0 ? base.type : "error", false});
     }
 }

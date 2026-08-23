@@ -1,0 +1,55 @@
+// What switch and match say when they refuse something.
+//
+// Both diagnostics here described the implementation rather than the program.
+// A duplicate label was reported as `duplicate case label 'integer:1'`, where
+// `integer:` is the internal encoding that makes two spellings of one constant
+// compare equal -- a prefix the source never mentions. And a `break` written
+// out of C habit was refused as "outside a loop", which is true and explains
+// nothing: cases here do not fall through, so break has no work to do.
+//
+// The refusals themselves were right, and the checks around them -- a
+// non-exhaustive match naming the missing member, a case label that is not a
+// constant, a selector of the wrong type -- were right too, so this file only
+// pins the wording that was wrong.
+//
+// Compiled for the diagnostics, so the file never runs.
+
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+int32 duplicated(int32 value) {
+    switch (value) {
+    case 1:
+        return 1;
+    case 1:
+        return 2;
+    default:
+        return 3;
+    }
+}
+
+int32 breaksOutOfHabit(int32 value) {
+    switch (value) {
+    case 1:
+        break;
+    default:
+        return 0;
+    }
+    return 0;
+}
+
+int32 partial(Color color) {
+    match (color) {
+    case Color.Red:
+        return 1;
+    case Color.Green:
+        return 2;
+    }
+}
+
+int32 main() {
+    return duplicated(1) + breaksOutOfHabit(1) + partial(Color.Red);
+}

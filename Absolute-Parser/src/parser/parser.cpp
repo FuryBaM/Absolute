@@ -46,10 +46,11 @@ namespace Absolute{
     }
 
     std::unique_ptr<Expression> Parser::ParseExpressionImpl() {
+        RecursionGuard guard(*this);
         Token* token = CurrentToken();
         if (!token) {
             ReportSyntaxError(token, "Token is null");
-            std::exit(EXIT_FAILURE);
+            throw std::runtime_error("Token is null");
             return nullptr;
         }
         std::unique_ptr<Expression> left = nullptr;
@@ -73,10 +74,11 @@ namespace Absolute{
     }
 
     std::unique_ptr<Expression> Parser::ParseBaseExpr() {
+        RecursionGuard guard(*this);
         Token* token = CurrentToken();
         if (!token) {
             ReportSyntaxError(token, "Null token");
-            std::exit(EXIT_FAILURE);
+            throw std::runtime_error("Null token");
             return nullptr;
         }
 
@@ -152,7 +154,7 @@ namespace Absolute{
         }
 
         ReportSyntaxError(CurrentToken(), "Expected primary expression");
-        std::exit(EXIT_FAILURE);
+        throw std::runtime_error("Expected primary expression");
     }
 
     std::unique_ptr<Expression> Parser::ParseSuffixExpr(std::unique_ptr<Expression> base) {
@@ -202,6 +204,7 @@ namespace Absolute{
 
     std::unique_ptr<Statement> Parser::ParseStatementImpl()
     {
+        RecursionGuard guard(*this);
         ParseAttributes();
         ParseModifiers();
 
@@ -328,7 +331,6 @@ namespace Absolute{
                 return ParseExportFunctionDeclaration();
             case Hash("raw"):
             case Hash("weak"):
-            case Hash("shared"):
                 return ParseVarDeclaration();
             default:
                 break;
@@ -338,6 +340,15 @@ namespace Absolute{
         case TokenType::IDENTIFIER:
         {
             if (token->value == "task" && PeekToken() && PeekToken()->value == "<")
+                return ParseVarDeclaration();
+            // `sub Node* view = owner;` is a declaration. `sub` is contextual
+            // rather than a keyword -- it is an ordinary identifier in existing
+            // programs -- so it only reads as a qualifier when a type follows
+            // it, which is the only position where it means anything.
+            if (token->value == "sub" && PeekToken() &&
+                (PeekToken()->type == TokenType::IDENTIFIER ||
+                    (PeekToken()->type == TokenType::KEYWORD &&
+                        IsPrimitiveType(PeekToken()->value))))
                 return ParseVarDeclaration();
             Token* afterIdentifiers = PeekTokenAfterIdentifiers();
             const auto isDeclaratorPrefix = [](const Token* candidate) {
@@ -362,7 +373,18 @@ namespace Absolute{
             }
 
             if (candidate && (candidate->type == TokenType::IDENTIFIER || isDeclaratorPrefix(candidate))) {
-                if (hasArraySuffix || isDeclaratorPrefix(candidate) || (afterIdentifiers && afterIdentifiers->value == "<")) {
+                // A sized declarator on the name (`Point pts[3];`) declares an
+                // array, exactly as it does for a primitive element type. Only
+                // an empty `[]` suffix on the type was recognized here, so the
+                // sized form fell through to an inline value declaration and
+                // the variable ended up with the element type.
+                const Token* end = tokens.data() + tokens.size();
+                const Token* afterName = candidate->type == TokenType::IDENTIFIER &&
+                    candidate + 1 < end ? candidate + 1 : nullptr;
+                const bool sizedArrayDeclarator = afterName &&
+                    afterName->type == TokenType::BRACKET && afterName->value == "[";
+                if (hasArraySuffix || sizedArrayDeclarator || isDeclaratorPrefix(candidate) ||
+                    (afterIdentifiers && afterIdentifiers->value == "<")) {
                     return ParseVarDeclaration();
                 }
                 return ParseInstanceDeclStmt();

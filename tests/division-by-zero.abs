@@ -1,0 +1,13 @@
+// Integer division by zero is undefined behavior in LLVM, so an unchecked
+// sdiv lets the program continue on a garbage value. The divisor is checked
+// at runtime instead, the way an array index is, and the program exits.
+int32 divide(int32 left, int32 right) {
+    return left / right;
+}
+
+int32 main() {
+    int32 zero = 0;
+    println(divide(84, 2));
+    println(divide(1, zero));
+    return 0;
+}

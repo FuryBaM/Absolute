@@ -476,19 +476,35 @@ extern "C" const char* absolute_fs_read_text(const char* path) {
     bool success = false;
     std::string errorText;
     Absolute::RuntimeDetail::RunBlockingIo([&] {
-        std::ifstream input(NativePath(path), std::ios::binary);
-        if (!input) {
-            SetError("read file");
+        std::error_code directoryCheck;
+        // A directory opens as a stream and then fails on the first read, and
+        // libstdc++ reports that failure by throwing std::ios_base::failure
+        // out of the iterator -- past this function, past the generated code,
+        // and into a std::terminate. Named here instead, so reading a
+        // directory is an ordinary filesystem error like the others.
+        if (std::filesystem::is_directory(NativePath(path), directoryCheck)) {
+            lastFileSystemError = "read file: path is a directory";
         }
         else {
-            result.assign(std::istreambuf_iterator<char>(input),
-                std::istreambuf_iterator<char>());
-            if (input.bad()) {
+            std::ifstream input(NativePath(path), std::ios::binary);
+            if (!input) {
                 SetError("read file");
             }
             else {
-                ClearError();
-                success = true;
+                try {
+                    result.assign(std::istreambuf_iterator<char>(input),
+                        std::istreambuf_iterator<char>());
+                    if (input.bad()) SetError("read file");
+                    else {
+                        ClearError();
+                        success = true;
+                    }
+                }
+                catch (const std::exception& failure) {
+                    // Whatever the stream decided to throw stays inside the
+                    // runtime; the caller gets a message, not a terminate.
+                    lastFileSystemError = std::string("read file: ") + failure.what();
+                }
             }
         }
         errorText = lastFileSystemError;

@@ -1,0 +1,2 @@
+async int32 work(int32 x) { return x * 2; }
+int32 main() { func<int32, int32> f = fn(int32 v) => v + 1; println(f(1)); return 0; }

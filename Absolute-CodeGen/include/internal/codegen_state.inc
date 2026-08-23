@@ -14,9 +14,23 @@
             llvm::AllocaInst* managedPointee = nullptr;
             SymbolId symbol = InvalidSymbolId;
             llvm::Value* arrayOwner = nullptr;
+            // The extent the owner covers, when this name holds a view of part
+            // of it. Null means the view is the whole of it.
+            llvm::AllocaInst* arrayOwnedCountStorage = nullptr;
             bool ownsArrayStorage = false;
+            // The storage is the frame's and is not freed, but the elements
+            // are this name's to release: `Entry fixed[2] = { ... }` holds
+            // whatever its elements hold, the same as any other array.
+            bool ownsArrayElements = false;
             SymbolId arrayOwnerSymbol = InvalidSymbolId;
             bool ownsAggregateResources = false;
+            // A name for a slot someone else owns: a value-reference
+            // parameter, which `out T` and `ref T` are spelled as. It releases
+            // nothing when the call ends, because the slot is not its -- but a
+            // write through it is still a write to that slot, and a slot gives
+            // back what it held. Only the second half is this flag's; the
+            // first is the absence of ownsAggregateResources.
+            bool namesBorrowedPlace = false;
             llvm::AllocaInst* arrayOwnerStorage = nullptr;
             llvm::AllocaInst* ownershipFlagStorage = nullptr;
             llvm::AllocaInst* debugStorage = nullptr;
@@ -130,6 +144,10 @@
         struct ExceptionTarget {
             llvm::BasicBlock* handlerBlock = nullptr;
             size_t scopeCount = 0;
+            // What the frame already held when the try began. Everything a
+            // statement inside the try made is above this, and a throw leaves
+            // those statements without reaching the end of any of them.
+            size_t temporaryCount = 0;
         };
 
         struct FinallyTarget {
@@ -167,6 +185,9 @@
         std::vector<std::unordered_map<std::string, Variable>> scopes;
         std::unordered_map<std::string, Variable> globals;
         std::unordered_map<std::string, llvm::StructType*> arrayDescriptorTypes;
+        // One constant per distinct literal: two occurrences of the same text
+        // are the same storage, which is what they always were.
+        std::unordered_map<std::string, llvm::Constant*> stringConstants;
         llvm::StructType* closureObjectType = nullptr;
         std::unordered_map<SymbolId, llvm::GlobalVariable*> functionClosures;
         std::unordered_map<std::string, ClassInfo> classes;
@@ -191,8 +212,41 @@
         std::unordered_map<std::string, std::string> functionLinkNames;
         bool valueCreatesManagedOwner = false;
         llvm::Value* valueManagedPointee = nullptr;
+        // Owners produced inside a larger expression that nothing takes: a
+        // comparison, a member read, a condition. They are destroyed at the end
+        // of the statement that produced them, so the handles wait here until
+        // the statement's TemporaryOwnerScope closes. The type name travels
+        // with the handle because releasing an owner means releasing what it
+        // owns first, which needs to know what it is.
+        struct TemporaryOwner {
+            // What releasing it means. One kind rather than a flag per shape:
+            // an array owner is a plain buffer released with free(), a managed
+            // owner needs the two steps delete takes, and a string is a count
+            // behind its first byte.
+            enum class Kind { ManagedObject, ArrayBuffer, StringStorage, AggregateValue };
+            llvm::Value* handle = nullptr;
+            std::string typeName;
+            Kind kind = Kind::ManagedObject;
+        };
+        std::vector<TemporaryOwner> temporaryManagedOwners;
+        // Type-based alias information can be turned off, which is only ever
+        // useful for one thing: building the same program twice and comparing.
+        // A tag that claims two accesses cannot overlap when they can is
+        // undefined behaviour the optimizer acts on, and the difference between
+        // the two builds is the only way to see it -- both are correct code by
+        // themselves, and the wrong one is still wrong at -O0.
+        bool typeAliasInfoEnabled = true;
+        llvm::MDNode* tbaaRoot = nullptr;
+        std::unordered_map<std::string, llvm::MDNode*> tbaaTypeNodes;
         bool valueCreatesArrayOwner = false;
         llvm::Value* valueArrayOwner = nullptr;
+        // How many elements the owner covers, which is not how many the value
+        // in hand describes: a slice is a view of part of an allocation, and
+        // releasing one has to release all of it. Travels with the owner
+        // pointer from wherever the array was made; null when the extent is
+        // not known here, and then the view's own length is used, which is
+        // what it always was.
+        llvm::Value* valueArrayOwnedCount = nullptr;
         bool valueCreatesClosureOwner = false;
         std::string currentValueType;
         bool addressMode = false;
@@ -200,6 +254,10 @@
         std::string currentReturnTypeName;
         llvm::Value* currentReturnStorage = nullptr;
         std::string currentClassName;
+        // Set while a constructor body is being emitted. A constructor that
+        // leaves through an exception has already initialized some fields, and
+        // nothing outside holds a name for them, so it releases them itself.
+        std::string currentConstructorClass;
         std::unordered_map<std::string, std::string> currentGenericSubstitutions;
         llvm::Value* currentThis = nullptr;
         std::uint64_t taskThunkCounter = 0;

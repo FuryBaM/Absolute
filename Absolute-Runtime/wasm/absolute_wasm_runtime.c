@@ -375,6 +375,52 @@ int puts(const char* text) {
     return 0;
 }
 
+// Nothing generated calls putchar or fputc by name. LLVM rewrites them out of
+// printf: `printf("%c", value)` becomes putchar, and printing a char is
+// ordinary, so without these the module failed to link for wasm -- with a
+// message about a symbol the source never mentions -- while the identical
+// program built natively.
+int putchar(int value) {
+    const uint8_t byte = (uint8_t)value;
+    absolute_host_log(&byte, 1);
+    return value;
+}
+
+int fputc(int value, void* stream) {
+    (void)stream;
+    return putchar(value);
+}
+
+int putc(int value, void* stream) {
+    (void)stream;
+    return putchar(value);
+}
+
+// The host gives a module a console to write to and no standard input to read
+// from, so a read reports end-of-input rather than failing to link. Programs
+// that read interactively already have to handle EOF; on wasm they take that
+// path immediately. docs/wasm-target.md says so.
+/* Nothing here buffers: the console writes straight through the host import.
+   Defined because generated code calls it before abort(). */
+int fflush(void* stream) {
+    (void)stream;
+    return 0;
+}
+
+int getchar(void) {
+    return -1;
+}
+
+int fgetc(void* stream) {
+    (void)stream;
+    return -1;
+}
+
+int getc(void* stream) {
+    (void)stream;
+    return -1;
+}
+
 static void format_putc(char* out, size_t cap, size_t* offset, char value) {
     if (out && *offset + 1 < cap)
         out[*offset] = value;
@@ -718,6 +764,37 @@ typedef struct ErrorState {
 /* Single-threaded wasm: plain static TLS stand-in. */
 static ErrorState g_error;
 
+/* Copied rather than aliased: the strings live in module memory that a later
+   allocation may reuse, and a report happens after the throw site is gone. */
+static char g_error_type_name[128];
+static char g_error_message[256];
+
+static void copy_bounded(char* out, size_t capacity, const char* text) {
+    size_t index = 0;
+    if (!text) {
+        out[0] = '\0';
+        return;
+    }
+    while (text[index] && index + 1 < capacity) {
+        out[index] = text[index];
+        ++index;
+    }
+    out[index] = '\0';
+}
+
+void absolute_error_set_details(const char* typeName, const char* message) {
+    copy_bounded(g_error_type_name, sizeof(g_error_type_name), typeName);
+    copy_bounded(g_error_message, sizeof(g_error_message), message);
+}
+
+const char* absolute_error_type_name(void) {
+    return g_error_type_name;
+}
+
+const char* absolute_error_message(void) {
+    return g_error_message;
+}
+
 void absolute_error_set(uint64_t handle, uint64_t type) {
     if (g_error.handle && g_error.handle != handle)
         absolute_managed_destroy(g_error.handle);
@@ -745,9 +822,22 @@ void absolute_error_discard(void) {
         absolute_managed_destroy(g_error.handle);
     g_error.handle = 0;
     g_error.type = 0;
+    g_error_type_name[0] = '\0';
+    g_error_message[0] = '\0';
 }
 
 void absolute_error_report(void) {
+    /* The host gives a module a console, so an unhandled error says what it
+       was here too rather than vanishing into the exit code. */
+    if (g_error_type_name[0]) {
+        host_log_cstr("Unhandled Absolute exception: ");
+        host_log_cstr(g_error_type_name);
+        if (g_error_message[0]) {
+            host_log_cstr(": ");
+            host_log_cstr(g_error_message);
+        }
+        absolute_host_log((const uint8_t*)"\n", 1);
+    }
     absolute_error_discard();
 }
 

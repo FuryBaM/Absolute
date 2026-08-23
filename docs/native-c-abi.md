@@ -28,7 +28,7 @@ mangling, overloads, classes, C++ exceptions) is **not** supported.
 | `void` | `void` | Return only |
 | `string` | `char*` / `const char*` → `ptr` | Caller owns the buffer; no automatic free |
 | `raw T*` | pointer → `ptr` | Including `raw void*` |
-| enum | fixed `i32` | C enum size is platform-dependent; expose `int32` in C headers |
+| enum | fixed `i32` | C enum size is platform-dependent; expose `int32` in C headers. Give members explicit numbers to match the C constants they stand for |
 
 ## Rejected types
 

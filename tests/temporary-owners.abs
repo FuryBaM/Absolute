@@ -1,0 +1,201 @@
+// An owner produced inside a larger expression.
+//
+// The ownership rules only ever named the top of a statement, so an owner
+// produced deeper in one -- `if (make() != null)`, `int32 v = make().value`,
+// `make() is Base` -- was created, read, and then dropped on the floor. Every
+// such program ended with "memory leak detected for handle N" and an abort at
+// exit, and `std.json.parse(text)` used in a condition is the shape that found
+// it.
+//
+// An unbound owner is now destroyed at the end of the statement that produced
+// it. The end of the statement rather than the point of use, because a chain
+// like `make().child.value` has to keep reading through the object after the
+// first borrow is over.
+//
+// What must not happen is the other failure: destroying something that is
+// still owned. A named variable never becomes a temporary -- only a freshly
+// produced owner does -- so this file checks both directions at once, and the
+// leak checker that aborts at exit is the second half of every assertion here.
+
+int32 destroyed = 0;
+
+class Child {
+    public int32 value;
+    public Child(int32 v) { value = v; }
+}
+
+class Node {
+    public Child* child;
+    public int32 value;
+
+    public Node(int32 v) {
+        value = v;
+        child = new Child(v * 10);
+    }
+
+    public int32 twice() { return value * 2; }
+    public Node* copy() { return new Node(value); }
+    public void destroy() { destroyed = destroyed + 1; }
+}
+
+class Derived : Node {
+    public Derived(int32 v) { base(v); }
+}
+
+Node* make(int32 v) { return new Node(v); }
+int32 consume(Node* node) { return node.value; }
+int32 borrowValue(Node* node) { return node.value; }
+int32 fails() { throw new Error("thrown from the middle of a statement"); }
+int32 counted<T>(T value) { return 1; }
+async int32 later(int32 value) { return value; }
+
+async int32 main() {
+    // Each of these produced a leak. The count says the owner was destroyed,
+    // and the leak checker at exit says it was destroyed exactly once.
+    int32 before = destroyed;
+    println(format("{}", make(1) != null));
+    assert(destroyed == before + 1, "a comparison releases its temporary");
+
+    before = destroyed;
+    println(format("{}", make(2).value));
+    assert(destroyed == before + 1, "a member read releases its temporary");
+
+    before = destroyed;
+    println(format("{}", make(3).twice()));
+    assert(destroyed == before + 1, "a method receiver releases its temporary");
+
+    before = destroyed;
+    if (make(4) != null) { println("condition"); }
+    assert(destroyed == before + 1, "an if condition releases its temporary");
+
+    before = destroyed;
+    println(format("{}", make(5) is Node));
+    assert(destroyed == before + 1, "`is` releases the object it asked about");
+
+    before = destroyed;
+    println(format("{}", (make(6) as Node).value));
+    assert(destroyed == before + 1, "a cast followed by a read releases it");
+
+    before = destroyed;
+    switch (make(7).value) {
+    case 7:
+        println("seven");
+    default:
+        println("other");
+    }
+    assert(destroyed == before + 1, "a switch selector releases its temporary");
+
+    before = destroyed;
+    println(format("{}", make(8).value + make(9).value));
+    assert(destroyed == before + 2, "two temporaries in one statement both go");
+
+    before = destroyed;
+    println(format("{}", true ? make(10).value : 0));
+    assert(destroyed == before + 1, "a ternary arm releases what it borrowed");
+
+    before = destroyed;
+    println(format("{}", make(11) != null && make(12) != null));
+    assert(destroyed == before + 2, "both sides of a short circuit that ran");
+
+    before = destroyed;
+    println(format("{}", make(13) == null && make(14) != null));
+    assert(destroyed == before + 1, "and only the side that ran");
+
+    // The temporary has to survive the whole statement, not just the first
+    // borrow: this reads through it twice, the second time through a field.
+    before = destroyed;
+    assert(make(15).child.value == 150, "a chain reads through the temporary");
+    assert(destroyed == before + 1, "and the temporary goes once, at the end");
+
+    // A method on a temporary that returns another owner: two temporaries.
+    before = destroyed;
+    assert(make(16).copy().twice() == 32, "an owner produced from a temporary");
+    assert(destroyed == before + 2, "both are released");
+
+    // A named owner is not a temporary. Comparing it against one, passing it,
+    // and reading it afterwards must all leave it alone.
+    Node* held = make(17);
+    before = destroyed;
+    assert(!(held == make(18)), "a variable compared against a temporary");
+    assert(destroyed == before + 1, "only the temporary is released");
+    assert(held.value == 17, "the variable is still alive");
+    assert(borrowValue(held) == 17, "and can still be passed");
+    before = destroyed;
+    delete held;
+    assert(destroyed == before + 1, "and goes when it is deleted");
+
+    // An owner passed as an argument is transferred, not borrowed: the callee
+    // takes it, and the caller must not release it a second time.
+    before = destroyed;
+    assert(consume(make(19)) == 19, "an owner passed to a function");
+    assert(destroyed == before + 1, "is released once, by the callee");
+
+    // A loop makes one per iteration. Nothing accumulates, and the count is
+    // exact -- a missed release would leak, a double release would abort.
+    before = destroyed;
+    int32 total = 0;
+    for (int32 index = 0; index < 100; index = index + 1) {
+        total = total + make(index).twice();
+    }
+    assert(total == 9900, "the loop computed what it should");
+    assert(destroyed == before + 100, "one release per iteration");
+
+    // A condition evaluated once per iteration, including the test that ends
+    // the loop.
+    before = destroyed;
+    int32 spins = 0;
+    while (make(spins).value < 3) { spins = spins + 1; }
+    assert(spins == 3, "the loop ran to its bound");
+    assert(destroyed == before + 4, "every test released its own temporary");
+
+    // A temporary bound to a variable is taken, not released early.
+    before = destroyed;
+    Node* chosen = true ? make(20) : make(21);
+    assert(chosen.value == 20, "a bound owner survives its statement");
+    assert(destroyed == before, "and nothing was released");
+    delete chosen;
+
+    // A derived temporary read through its base, which is where the release
+    // has to find the right destructor.
+    before = destroyed;
+    assert(borrowValue(new Derived(22)) == 22, "a derived owner passed as its base");
+    assert(destroyed == before + 1, "released through the base");
+
+    // Leaving the statement through an exception. The temporary made before
+    // the throw is released on that path too.
+    before = destroyed;
+    try {
+        int32 unreachable = make(23).value + fails();
+        println(format("{}", unreachable));
+    }
+    catch (Error* error) {
+        println("caught");
+    }
+    assert(destroyed == before + 1, "an unwinding statement releases it too");
+
+    // A lambda body is emitted in the middle of the body that writes it, and
+    // an owner belongs to the blocks of exactly one function. Getting this
+    // wrong is not a leak but invalid IR, and it did: the destroys landed in
+    // main, naming values defined inside the lambda.
+    func<int32> reader = fn() => make(24).value + make(25).value;
+    before = destroyed;
+    assert(reader() == 49, "a lambda that borrows two temporaries");
+    assert(destroyed == before + 2, "releases both, inside itself");
+    before = destroyed;
+    assert(reader() == 49, "and does it again on the next call");
+    assert(destroyed == before + 2, "with nothing carried over");
+
+    // A generic body, which is emitted once per instantiation.
+    before = destroyed;
+    assert(counted<int32>(make(26).value) == 1, "a temporary inside a generic call");
+    assert(destroyed == before + 1, "released there too");
+
+    // An argument to a spawned call, evaluated before the task starts.
+    before = destroyed;
+    task<int32> pending = spawn later(make(27).value);
+    assert(await pending == 27, "a temporary in a spawn argument");
+    assert(destroyed == before + 1, "is released by the statement that made it");
+
+    println("temporary-owners=ok");
+    return 0;
+}

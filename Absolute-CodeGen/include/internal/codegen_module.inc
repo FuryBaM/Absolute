@@ -3,6 +3,14 @@
         llvm::Constant* GlobalConstant(Expression* expression, llvm::Type* type);
 
         void DeclareGlobalArray(VarDeclExpr& expression);
+        void DeclareGlobalScalar(VarDeclExpr& expression);
+        unsigned long long ParseIntegerLiteral(const std::string& text);
+
+        // std::stod throws on any result the C library flags as out of
+        // range, which includes every subnormal, and the exception reached
+        // the user as a bare "Error: stod". This accepts what a double can
+        // hold and refuses only a value that is entirely lost.
+        double ParseFloatingLiteral(const std::string& text);
 
         llvm::Function* DeclareFunction(FunctionDeclStmt& statement);
 
@@ -44,7 +52,7 @@
             bool debugInfo = false);
 
         void GenerateObject(Program& program, const std::string& moduleName,
-            const std::string& outputPath, bool sanitizeAddress = false,
+            const std::string& outputPath, Sanitizer sanitizer = Sanitizer::None,
             const std::string& targetTriple = {},
             OptimizationLevel optimizationLevel = OptimizationLevel::O3,
             bool debugInfo = false);

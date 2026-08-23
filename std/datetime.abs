@@ -145,7 +145,14 @@ namespace std.datetime {
     }
 
     int64 toUnixSeconds(DateTime dt) {
-        return toUnixMillis(dt) / (1000 as int64);
+        // Integer division truncates toward zero, which is the wrong direction
+        // before the epoch: -500 ms is second -1, not second 0.
+        int64 millis = toUnixMillis(dt);
+        int64 seconds = millis / (1000 as int64);
+        if (millis % (1000 as int64) != (0 as int64) && millis < (0 as int64)) {
+            seconds = seconds - (1 as int64);
+        }
+        return seconds;
     }
 
     DateTime nowUtc() {
@@ -185,7 +192,11 @@ namespace std.datetime {
         }
         string zoneName = "UTC";
         if (offsetMin != 0) {
-            zoneName = format("{}m", offsetMin);
+            int32 absOffset = offsetMin >= 0 ? offsetMin : -offsetMin;
+            zoneName = format("{}{}:{}",
+                offsetMin >= 0 ? "+" : "-",
+                absOffset / 60 < 10 ? format("0{}", absOffset / 60) : format("{}", absOffset / 60),
+                absOffset % 60 < 10 ? format("0{}", absOffset % 60) : format("{}", absOffset % 60));
         }
         return createDateTime(
             createDate(y, m, d),
@@ -195,27 +206,20 @@ namespace std.datetime {
     }
 
     int32 dayOfWeek(Date d) {
-        int32 y = d.year;
-        int32 m = d.month;
-        if (m < 3) { y = y - 1; }
-        int32 t = 0;
-        match (m) {
-        case 1: t = 0;
-        case 2: t = 3;
-        case 3: t = 2;
-        case 4: t = 5;
-        case 5: t = 0;
-        case 6: t = 3;
-        case 7: t = 5;
-        case 8: t = 1;
-        case 9: t = 4;
-        case 10: t = 6;
-        case 11: t = 2;
-        case 12: t = 4;
-        default: t = 0;
+        // Thursday 1970-01-01 is unix day 0. Sakamoto's formula uses
+        // truncating division, so a year at or before 0 produced a weekday
+        // that is not a weekday: year -1 January 1 came back as -1.
+        int64 millis = absolute_datetime_civil_to_unix_millis(
+            d.year, d.month, d.day, 0, 0, 0, 0, 0);
+        int64 dayMs = 86400000 as int64;
+        int64 days = millis / dayMs;
+        if (millis < (0 as int64) && millis % dayMs != (0 as int64)) {
+            days = days - (1 as int64);
         }
-        int32 res = (y + y / 4 - y / 100 + y / 400 + t + d.day) % 7;
-        return res == 0 ? 7 : res;
+        int32 w = ((days + (4 as int64)) % (7 as int64)) as int32;
+        if (w < 0) { w = w + 7; }
+        if (w == 0) { return 7; }
+        return w;
     }
 
     int32 dayOfYear(Date d) {

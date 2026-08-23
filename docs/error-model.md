@@ -80,7 +80,18 @@ therefore not allowed to bypass lifetime checks. The Analyzer merges normal and
 caught paths using the same value-flow maps used by `if` and `match`.
 
 An exception that reaches `main` is reported to standard error and terminates
-the process with a non-zero exit code after destroying the exception owner.
+the process with a non-zero exit code after destroying the exception owner. The
+report names the thrown type and prints the `Error`'s message:
+
+```
+Unhandled Absolute exception: ParseError: source is empty
+```
+
+The name is the static type of the thrown expression, which is exact for
+`throw new ParseError(...)` and reads as `Error` when the value travels through
+a base-typed owner first; the message is exact either way. An exception that
+escapes a task carries its description across the await with it. On wasm the
+same line goes to the host console.
 
 ## Portable runtime ABI
 

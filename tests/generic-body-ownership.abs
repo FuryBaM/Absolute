@@ -1,0 +1,54 @@
+// The same generic body, two instantiations, two answers.
+//
+// This is the property the ownership model is worth having for: `Holder<T>`
+// stores whatever it is given and hands it back, and nothing in it mentions
+// ownership. Instantiated with `sub Node*` it borrows -- the container holds a
+// handle it never owned, so releasing the container releases nothing, and the
+// owner outlives it. Instantiated with `Node*` the identical lines are refused,
+// which is what tests/generic-body-ownership-errors.abs pins.
+//
+// A container does not decide what its elements mean. It carries the type, and
+// the type carries the ownership.
+
+class Node {
+    public int32 value;
+    public Node(int32 initial) { value = initial; }
+}
+
+class Holder<T> {
+    public T held;
+
+    public Holder(T incoming) { held = incoming; }
+
+    public T fetch() { return held; }
+}
+
+int32 main() {
+    Node* owner = new Node(5);
+
+    Holder<sub Node*>* borrowed = new Holder<sub Node*>(owner);
+    assert(borrowed.held.value == 5, "a borrowed handle reads through to the object");
+    assert(borrowed.fetch().value == 5, "and can be handed back out");
+
+    // Releasing the container releases the handle it holds and nothing else:
+    // that handle never owned the object, so the object is still here.
+    delete borrowed;
+    assert(owner.value == 5, "the owner outlived the container that borrowed it");
+
+    // A second borrower over the same owner is ordinary, not a second owner.
+    Holder<sub Node*>* again = new Holder<sub Node*>(owner);
+    owner.value = 6;
+    assert(again.held.value == 6, "both handles name the same object");
+    delete again;
+
+    delete owner;
+
+    // Nothing about `Holder` mentions ownership, so it carries what owns
+    // nothing just as well.
+    Holder<int32>* counted = new Holder<int32>(3);
+    assert(counted.fetch() == 3, "a value parameter is unaffected by any of this");
+    delete counted;
+
+    println("generic-body-ownership=ok");
+    return 0;
+}

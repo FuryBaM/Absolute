@@ -17,6 +17,13 @@ namespace Absolute {
                 targetSymbol->name.rfind('.') == std::string::npos
                     ? 0 : targetSymbol->name.rfind('.') + 1);
             llvm::Value* assigned = impl->Evaluate(expr->value.get());
+            // A setter is a call, and its parameter borrows like any other, so
+            // a value made only in order to hand it over is released by the
+            // statement that made it. This path builds its own call rather
+            // than going through EvaluateCallArgument, which is where every
+            // other argument is told that.
+            impl->RegisterIfFreshString(expr->value.get(), assigned);
+            impl->RegisterFreshValueArgument(expr->value.get(), assigned);
             if (expr->op != "=") {
                 llvm::Value* current = impl->EmitPropertyAccessor(receiver, receiverType,
                     CallableKey(PropertyGetterName(propertyName), {}), {});
@@ -26,7 +33,9 @@ namespace Absolute {
             assigned = impl->Coerce(assigned, impl->TypeFromName(targetTypeName),
                 impl->SemanticType(expr->value.get()), targetTypeName);
             impl->EmitPropertyAccessor(receiver, receiverType,
-                CallableKey(PropertySetterName(propertyName), {targetTypeName}), {assigned});
+                CallableKey(PropertySetterName(propertyName), {targetTypeName}),
+                {assigned},
+                {impl->ArgumentOwnershipFlag(expr->value.get(), targetTypeName)});
             impl->value = assigned;
             impl->valueCreatesManagedOwner = false;
             impl->valueManagedPointee = nullptr;
@@ -36,11 +45,14 @@ namespace Absolute {
             auto* indexer = dynamic_cast<ArrayAccessExpr*>(expr->target.get());
             if (!indexer) impl->Fail("indexer assignment requires an indexed target");
             const std::string receiverType = impl->SemanticType(indexer->base.get());
-            std::vector<llvm::Value*> arguments;
+            std::vector<llvm::Value*> arguments =
+                impl->EvaluateIndexArguments(indexer->indexes);
             arguments.reserve(indexer->indexes.size() + 1);
-            for (const auto& index : indexer->indexes)
-                arguments.push_back(impl->Evaluate(index.get()));
             llvm::Value* assigned = impl->Evaluate(expr->value.get());
+            // The same for an indexer's setter, which is the same kind of call
+            // written with brackets.
+            impl->RegisterIfFreshString(expr->value.get(), assigned);
+            impl->RegisterFreshValueArgument(expr->value.get(), assigned);
             if (expr->op != "=") {
                 llvm::Value* current = impl->EmitPropertyAccessor(
                     indexer->base.get(), receiverType,
@@ -53,8 +65,15 @@ namespace Absolute {
             std::vector<std::string> setterTypes = targetInfo->parameterTypes;
             setterTypes.push_back(targetTypeName);
             arguments.push_back(assigned);
+            // One flag per argument: an index is a number and carries no
+            // ownership role, and the element the setter is handed carries
+            // the one the value expression produced.
+            std::vector<llvm::Value*> ownershipFlags(arguments.size(), nullptr);
+            ownershipFlags.back() =
+                impl->ArgumentOwnershipFlag(expr->value.get(), targetTypeName);
             impl->EmitPropertyAccessor(indexer->base.get(), receiverType,
-                CallableKey(IndexerSetterName(), setterTypes), arguments);
+                CallableKey(IndexerSetterName(), setterTypes), arguments,
+                ownershipFlags);
             impl->value = assigned;
             impl->valueCreatesManagedOwner = false;
             impl->valueManagedPointee = nullptr;
@@ -72,15 +91,29 @@ namespace Absolute {
         llvm::Value* assigned = impl->Evaluate(expr->value.get());
         const bool createsOwner = impl->valueCreatesManagedOwner;
         llvm::Value* assignedPointee = impl->valueManagedPointee;
-        const bool createsClosureOwner = impl->valueCreatesClosureOwner;
         std::string closureReturn;
         std::vector<std::string> closureParameters;
         const bool functionValue = ParseCodegenFunctionType(
             targetTypeName, closureReturn, closureParameters);
 
-        if (expr->op != "=") {
+        if (expr->op != "=" && IsRawPointerTypeName(targetTypeName)) {
+            // `p += n` steps by elements, so it goes through the same offset
+            // the binary form uses. ApplyBinary works on numbers and would
+            // have to treat the address as one.
             llvm::Value* current = impl->builder.CreateLoad(targetType, targetAddress, "assignment.current");
-            assigned = impl->ApplyBinary(expr->op.substr(0, expr->op.size() - 1), current, assigned);
+            assigned = impl->PointerOffset(current, targetTypeName, assigned, expr->op == "-=");
+        }
+        else if (expr->op != "=") {
+            llvm::Value* current = impl->builder.CreateLoad(targetType, targetAddress, "assignment.current");
+            // With the type names, so a compound assignment picks the same
+            // instruction its spelled-out form would. Without them this call
+            // went through the untyped overload and every unsigned `/=`, `%=`
+            // and `>>=` was emitted signed while `a = a / b` was not:
+            // 4294967295u /= 2 gave zero where the same division gave
+            // 2147483647.
+            assigned = impl->ApplyBinary(
+                expr->op.substr(0, expr->op.size() - 1), current, assigned,
+                targetTypeName, impl->SemanticType(expr->value.get()));
         }
 
         if (IsManagedPointerTypeName(targetTypeName)) {
@@ -104,23 +137,104 @@ namespace Absolute {
                 }
             }
         }
+        // A string being stored is one more name for the bytes -- unless the
+        // value made them, in which case it is already counted once. Retained
+        // before the old value is released, because the two can be the same
+        // storage: `text = text` must not free what it is about to store.
+        if (targetTypeName == "string")
+            assigned = impl->RetainStoredString(expr->value.get(), assigned);
+        // The same one level up: an aggregate is assigned by copying its
+        // bytes, which duplicates the pointers its parts hold without
+        // duplicating their counts. The target is one more name for them, and
+        // it gives back what it held. Counted through a spill because the
+        // walk needs an address, and counted before the old value is released
+        // for the reason the string comment above gives.
+        const TypeSemantics targetSemantics =
+            impl->SemanticsOfTypeName(targetTypeName);
+        // A value whose parts are counted: the target is one more name for
+        // them. A value that travels with a role instead cannot be a second
+        // name at all, so nothing is counted -- but it is still overwritten,
+        // and what it held has to go somewhere. Without the second of these an
+        // `owner = make();` in a loop leaked every object but the last, and
+        // the runtime said so at exit.
+        const bool releasesTarget =
+            targetSemantics.dropKind == DropKind::TupleValue ||
+            targetSemantics.dropKind == DropKind::ClassObject ||
+            targetSemantics.dropKind == DropKind::StructObject;
+        const bool countsParts = targetSemantics.copyable && releasesTarget;
+        if (countsParts && assigned && !functionValue &&
+            !impl->CreatesFreshString(expr->value.get())) {
+            llvm::AllocaInst* counted = impl->CreateEntryAlloca(
+                *impl->CurrentFunction(), assigned->getType(), "assignment.counted");
+            impl->builder.CreateStore(assigned, counted);
+            impl->EmitValueRetain(counted, targetTypeName);
+            assigned = impl->builder.CreateLoad(
+                assigned->getType(), counted, "assignment.counted.value");
+        }
         if (targetSymbol && targetSymbol->kind == SymbolKind::Field &&
             impl->TypeNeedsCleanup(targetTypeName) && !functionValue) {
             impl->EmitValueCleanup(targetAddress, targetTypeName);
         }
+        // A local or a parameter holding a string releases what it held before
+        // taking the new one, the same way a field does -- and so does one
+        // holding an aggregate whose parts are counted, which is the same
+        // rule read one level up.
+        // An element slot is a place the array releases, so it gives back what
+        // it held before taking another -- the same rule a local and a field
+        // already follow. Whether the array itself is owned is a different
+        // question: a view into someone else's storage still names the element
+        // it is about to overwrite.
+        else if (dynamic_cast<ArrayAccessExpr*>(expr->target.get()) &&
+            impl->TypeNeedsCleanup(targetTypeName)) {
+            impl->EmitValueCleanup(targetAddress, targetTypeName);
+        }
+        else if ((targetTypeName == "string" || releasesTarget) && targetSymbol &&
+            (targetSymbol->kind == SymbolKind::Variable ||
+             targetSymbol->kind == SymbolKind::Parameter)) {
+            if (const std::string name = IdentifierName(expr->target.get());
+                !name.empty()) {
+                // A value-reference parameter is the second of these: it
+                // owns nothing and releases nothing at the end of the call,
+                // but the slot it names is a real place and a write to a place
+                // gives back what the place held. Without it, writing twice
+                // through an `out string` leaked the first value -- and a
+                // function that fills an out parameter in a loop leaked one
+                // per iteration.
+                if (Impl::Variable* variable = impl->FindVariable(name);
+                    variable && (variable->ownsAggregateResources ||
+                        variable->namesBorrowedPlace))
+                    impl->EmitValueCleanup(targetAddress, targetTypeName);
+            }
+        }
         if (functionValue) {
-            if (!createsClosureOwner)
+            // The same question a string is asked, from the same place: did
+            // the expression make this value, or is the name about to be a
+            // second holder of one that already exists? The codegen flag this
+            // used to read is set by a call and by a lambda and by nothing
+            // else, so a closure read out of a container -- `vector[i]`, whose
+            // getter hands back a counted one -- was counted twice.
+            if (!impl->CreatesFreshString(expr->value.get()))
                 impl->builder.CreateCall(impl->ClosureRetain(), {assigned});
             impl->EmitValueCleanup(targetAddress, targetTypeName);
         }
         assigned = impl->Coerce(assigned, targetType,
             impl->SemanticType(expr->value.get()), targetTypeName);
-        impl->builder.CreateStore(assigned, targetAddress);
+        llvm::Value* store = impl->builder.CreateStore(assigned, targetAddress);
+        // An element of an array and a field of an object are different
+        // storage, and saying so is what lets the optimizer keep an array's
+        // data pointer and its length in registers across a loop.
+        if (dynamic_cast<ArrayAccessExpr*>(expr->target.get()))
+            impl->TagAccess(store, impl->TbaaElementAccess(targetTypeName));
+        else if (dynamic_cast<MemberAccessExpr*>(expr->target.get()) ||
+            (!impl->FindVariable(IdentifierName(expr->target.get())) &&
+                !IdentifierName(expr->target.get()).empty()))
+            impl->TagAccess(store, impl->TbaaFieldAccess(targetTypeName));
         impl->value = assigned;
         impl->valueCreatesManagedOwner = false;
         impl->valueManagedPointee = nullptr;
         impl->valueCreatesArrayOwner = false;
         impl->valueArrayOwner = nullptr;
+        impl->valueArrayOwnedCount = nullptr;
         impl->valueCreatesClosureOwner = false;
     }
 
@@ -187,6 +301,14 @@ namespace Absolute {
             impl->builder.CreateStore(
                 llvm::ConstantPointerNull::get(impl->builder.getPtrTy()),
                 variable.arrayOwnerStorage);
+            // The frame provides the storage and keeps it, but what the
+            // elements hold is still this name's to give back. Without this an
+            // `Entry fixed[2] = { ... }` in a loop lost one string an
+            // iteration: the owner pointer is null, and the release walk was
+            // guarded by it, because for a *view* a null owner means someone
+            // else holds the elements. A frame array is not a view.
+            variable.ownsArrayElements =
+                impl->SemanticsOfTypeName(baseTypeName).needsDrop;
             if (!impl->scopes.back().emplace(name, std::move(variable)).second)
                 impl->Fail("duplicate variable '" + name + "'");
 
@@ -218,7 +340,14 @@ namespace Absolute {
                         impl->SemanticType(values[index]), baseTypeName);
                     llvm::Value* destination = impl->builder.CreateInBoundsGEP(
                         elementType, address, impl->builder.getInt64(index), "array.initializer.element");
+                    // A slot this array releases is a name that counts, the
+                    // same as a literal's or one `unsafeArraySet` writes.
+                    if (baseTypeName == "string")
+                        initial = impl->RetainStoredString(values[index], initial);
                     impl->builder.CreateStore(initial, destination);
+                    if (baseTypeName != "string" &&
+                        !impl->CreatesFreshString(values[index]))
+                        impl->EmitValueRetain(destination, baseTypeName);
                 }
             }
             else if (expr->value) impl->Fail("array variable requires an array literal initializer");
@@ -231,6 +360,7 @@ namespace Absolute {
             if (!expr->value) impl->Fail("array view declaration requires an initializer");
             llvm::Value* descriptor = impl->Evaluate(expr->value.get());
             const bool ownsStorage = impl->valueCreatesArrayOwner;
+            llvm::Value* ownedCount = impl->valueArrayOwnedCount;
             Impl::ArrayView view = impl->ArrayViewFromValue(descriptor, declaredTypeName);
             Impl::Variable variable;
             variable.address = view.address;
@@ -248,6 +378,15 @@ namespace Absolute {
                 view.owner ? view.owner
                     : llvm::ConstantPointerNull::get(impl->builder.getPtrTy()),
                 variable.arrayOwnerStorage);
+            // What this name owns is the allocation, and what it describes may
+            // be part of it: `string[] head = make()[0:2]` releases three
+            // elements and frees one buffer. Remembered here because the
+            // extent travels with the owner rather than with the view.
+            if (ownsStorage && ownedCount) {
+                variable.arrayOwnedCountStorage = impl->CreateEntryAlloca(
+                    *function, impl->builder.getInt64Ty(), name + ".array.owned.count");
+                impl->builder.CreateStore(ownedCount, variable.arrayOwnedCountStorage);
+            }
             if (ownsStorage) variable.arrayOwnerSymbol = variable.symbol;
             else if (Impl::Variable* source = impl->FindVariable(
                 impl->SemanticSymbol(expr->value.get()))) {
@@ -270,6 +409,7 @@ namespace Absolute {
             impl->valueCreatesManagedOwner = false;
             impl->valueCreatesArrayOwner = false;
             impl->valueArrayOwner = nullptr;
+        impl->valueArrayOwnedCount = nullptr;
             return;
         }
         const std::string& typeName = declaredTypeName;
@@ -288,19 +428,39 @@ namespace Absolute {
         llvm::Value* initial = expr->value ? impl->Evaluate(expr->value.get()) : llvm::Constant::getNullValue(type);
         const bool createsOwner = impl->valueCreatesManagedOwner;
         llvm::Value* managedPointee = impl->valueManagedPointee;
-        const bool createsClosureOwner = impl->valueCreatesClosureOwner;
         std::string closureReturn;
         std::vector<std::string> closureParameters;
         const bool functionValue = ParseCodegenFunctionType(
             typeName, closureReturn, closureParameters);
-        if (functionValue && !createsClosureOwner)
+        if (functionValue && expr->value &&
+            !impl->CreatesFreshString(expr->value.get()))
             impl->builder.CreateCall(impl->ClosureRetain(), {initial});
+        // The same for a string, for the same reason: the variable is one more
+        // name holding the bytes, and it says so again when it goes out of
+        // scope. A fresh one already counts as held once.
+        const bool stringValue = typeName == "string";
+        if (stringValue && expr->value)
+            initial = impl->RetainStoredString(expr->value.get(), initial);
         initial = impl->Coerce(initial, type,
             expr->value ? impl->SemanticType(expr->value.get()) : typeName, typeName);
         impl->builder.CreateStore(initial, address);
         impl->DeclareDebugVariable(
             name, typeName, address, expr);
-        if (functionValue)
+        // A value that is not a handle releases what its parts hold when its
+        // name goes out of scope, and says so on the way in when the parts
+        // arrived already held by someone else. A managed pointer is excluded:
+        // whether a local owns the object it names is a question about the
+        // symbol, not the type, and `staticOwner` answers it.
+        // A tuple reaches here and nowhere else -- it is in neither `classes`
+        // nor `structs` -- so before this a `tuple<int64, string>` local
+        // dropped the string it carried.
+        const TypeSemantics semantics = impl->SemanticsOfTypeName(typeName);
+        const bool ownsParts = semantics.needsDrop &&
+            semantics.dropKind != DropKind::ManagedOwner;
+        if (semantics.dropKind == DropKind::TupleValue && expr->value &&
+            !impl->CreatesFreshString(expr->value.get()))
+            impl->EmitValueRetain(address, typeName);
+        if (ownsParts)
             impl->RequireVariable(name).ownsAggregateResources = true;
         if (staticOwner && createsOwner && managedPointee) {
             Impl::Variable& variable = impl->RequireVariable(name);
@@ -323,7 +483,10 @@ namespace Absolute {
                 const std::string baseType = impl->SemanticType(expr->base.get());
                 impl->value = impl->EmitPropertyAccessor(expr->base.get(), baseType,
                     CallableKey(PropertyGetterName(expr->member), {}), {});
-                impl->valueCreatesManagedOwner = false;
+                impl->valueCreatesManagedOwner =
+                    IsStrongManagedPointerTypeName(impl->SemanticType(expr));
+                impl->valueCreatesClosureOwner =
+                    IsCodegenFunctionType(impl->SemanticType(expr));
                 return;
             }
             if (symbol && symbol->kind == SymbolKind::Field && symbol->isStatic) {
@@ -351,7 +514,7 @@ namespace Absolute {
         const std::string baseType = impl->SemanticType(expr->base.get());
         if (ArrayRankName(baseType) > 0 && (expr->member == "length" || expr->member == "count")) {
             if (impl->addressMode) impl->Fail("array length property is not assignable");
-            llvm::Value* descriptor = impl->Evaluate(expr->base.get());
+            llvm::Value* descriptor = impl->EvaluateBorrowed(expr->base.get());
             if (descriptor->getType()->isPointerTy()) {
                 llvm::LoadInst* load = impl->builder.CreateLoad(
                     impl->ArrayDescriptorType(baseType), descriptor, "array.descriptor");
@@ -414,6 +577,7 @@ namespace Absolute {
             if (field == found->second.fieldByName.end())
                 impl->Fail("class '" + found->second.name + "' has no field '" + expr->member + "'");
             llvm::Value* object = impl->ObjectPointer(expr->base.get(), baseType);
+            impl->RegisterAggregateTemporaryBase(expr->base.get(), object, baseType);
             fieldAddress = impl->FieldAddress(object, found->second, field->second);
             fieldTypeName = field->second.typeName;
         }
@@ -422,6 +586,7 @@ namespace Absolute {
             if (field == found->second.fieldByName.end())
                 impl->Fail("struct '" + found->second.name + "' has no field '" + expr->member + "'");
             llvm::Value* object = impl->ObjectPointer(expr->base.get(), baseType);
+            impl->RegisterAggregateTemporaryBase(expr->base.get(), object, baseType);
             fieldAddress = impl->FieldAddress(object, found->second, field->second);
             fieldTypeName = field->second.typeName;
         }
@@ -432,6 +597,7 @@ namespace Absolute {
         }
         impl->value = impl->builder.CreateLoad(
             impl->TypeFromName(fieldTypeName), fieldAddress, expr->member + ".value");
+        impl->TagAccess(impl->value, impl->TbaaFieldAccess(fieldTypeName));
         impl->valueCreatesManagedOwner = false;
     }
 
@@ -445,12 +611,17 @@ namespace Absolute {
                 (impl->classes.contains(runtimeTarget) || impl->interfaces.contains(runtimeTarget)));
         if (runtimeOperation) {
             llvm::Value* reference = impl->Evaluate(expr->base.get());
+            const bool baseCreatesManagedOwner = impl->valueCreatesManagedOwner;
             llvm::Value* sourcePointee = impl->valueManagedPointee;
             const ExpressionInfo* sourceInfo = impl->analyzer
                 ? impl->analyzer->GetExpressionInfo(*expr->base) : nullptr;
             llvm::Value* matches = impl->EmitRuntimeTypeTest(
                 reference, sourceType, runtimeTarget);
             if (expr->operation == "is") {
+                // `is` answers a question about the object and gives back a
+                // bool, so an owner asked about -- `make() is Base` -- is
+                // nobody's afterwards. It waits for the end of the statement.
+                if (baseCreatesManagedOwner) impl->RegisterTemporaryOwner(reference, sourceType);
                 impl->value = matches;
                 impl->valueCreatesManagedOwner = false;
                 impl->valueManagedPointee = nullptr;
@@ -518,9 +689,14 @@ namespace Absolute {
                 : impl->Coerce(impl->Evaluate(expr->arguments[0].get()),
                     impl->builder.getInt64Ty());
             llvm::Value* elemSize = impl->builder.getInt64(impl->SizeOfTypeName(elemTypeName));
-            llvm::Value* allocBytes = impl->builder.CreateMul(count, elemSize, "array.alloc.bytes");
+            // calloc, not malloc: "Array storage is zero-initialized" is a
+            // documented promise, and it was not kept. A fresh `new int64[16]`
+            // handed back whatever the allocator had there, so a program that
+            // read an element it had not written yet got a different answer at
+            // -O0 than at -O3, and a different one again under a sanitizer --
+            // three answers to a question the language says has one.
             llvm::Value* dataPtr = impl->builder.CreateCall(
-                impl->Malloc(), {allocBytes}, "array.data.alloc");
+                impl->Calloc(), {count, elemSize}, "array.data.alloc");
             Impl::ArrayView view;
             view.address = dataPtr;
             view.elementType = elemType;
@@ -530,6 +706,16 @@ namespace Absolute {
             impl->value = impl->BuildArrayDescriptor(view);
             impl->valueCreatesManagedOwner = false;
             impl->valueManagedPointee = nullptr;
+            // `new T[n]` produces an owner, and saying so is what connects it to
+            // the release that already exists: a scope frees the array storage
+            // it owns, a call frees an array temporary the callee did not take.
+            // Without these two lines the buffer was allocated and never freed
+            // -- every local array in every program -- and only -O0 showed it,
+            // because at -O1 and above the optimizer deletes an allocation
+            // nothing reads back.
+            impl->valueCreatesArrayOwner = true;
+            impl->valueArrayOwner = dataPtr;
+            impl->valueArrayOwnedCount = count;
             return;
         }
         const std::string pointeeType = allocationType.empty()
@@ -577,14 +763,22 @@ namespace Absolute {
                         info.constructors.front(), info.substitutions);
                 std::vector<llvm::Value*> temporaryArrays;
                 std::vector<llvm::Value*> temporaryClosures;
-                for (size_t index = 0; index < expr->arguments.size(); ++index) {
+                // Written arguments first, then the ones the call left out.
+                std::vector<Expression*> argumentExpressions;
+                for (const auto& argument : expr->arguments)
+                    argumentExpressions.push_back(argument.get());
+                if (const ExpressionInfo* callInfo = impl->analyzer
+                    ? impl->analyzer->GetExpressionInfo(*expr) : nullptr)
+                    impl->AppendDefaultArguments(argumentExpressions,
+                        impl->analyzer->GetSymbol(callInfo->calleeSymbol));
+                for (size_t index = 0; index < argumentExpressions.size(); ++index) {
                     const std::string parameterType =
                         index < parameterTypes.size()
                         ? parameterTypes[index] : std::string{};
                     ownershipFlags.push_back(impl->ArgumentOwnershipFlag(
-                        expr->arguments[index].get(), parameterType));
+                        argumentExpressions[index], parameterType));
                     arguments.push_back(impl->EvaluateCallArgument(
-                        expr->arguments[index].get(), temporaryArrays, temporaryClosures,
+                        argumentExpressions[index], temporaryArrays, temporaryClosures,
                         parameterType));
                 }
                 impl->EmitAbiCall(constructor->getFunctionType(), constructor, "void",
@@ -619,14 +813,22 @@ namespace Absolute {
                         info.constructors.front(), info.substitutions);
                 std::vector<llvm::Value*> temporaryArrays;
                 std::vector<llvm::Value*> temporaryClosures;
-                for (size_t index = 0; index < expr->arguments.size(); ++index) {
+                // Written arguments first, then the ones the call left out.
+                std::vector<Expression*> argumentExpressions;
+                for (const auto& argument : expr->arguments)
+                    argumentExpressions.push_back(argument.get());
+                if (const ExpressionInfo* callInfo = impl->analyzer
+                    ? impl->analyzer->GetExpressionInfo(*expr) : nullptr)
+                    impl->AppendDefaultArguments(argumentExpressions,
+                        impl->analyzer->GetSymbol(callInfo->calleeSymbol));
+                for (size_t index = 0; index < argumentExpressions.size(); ++index) {
                     const std::string parameterType =
                         index < parameterTypes.size()
                         ? parameterTypes[index] : std::string{};
                     ownershipFlags.push_back(impl->ArgumentOwnershipFlag(
-                        expr->arguments[index].get(), parameterType));
+                        argumentExpressions[index], parameterType));
                     arguments.push_back(impl->EvaluateCallArgument(
-                        expr->arguments[index].get(), temporaryArrays, temporaryClosures,
+                        argumentExpressions[index], temporaryArrays, temporaryClosures,
                         parameterType));
                 }
                 impl->EmitAbiCall(constructor->getFunctionType(), constructor, "void",
@@ -702,6 +904,7 @@ namespace Absolute {
                 if (!expr->value) impl->Fail("array alias variable requires an initializer");
                 llvm::Value* descriptor = impl->Evaluate(expr->value.get());
                 const bool ownsStorage = impl->valueCreatesArrayOwner;
+                llvm::Value* ownedCount = impl->valueArrayOwnedCount;
                 Impl::ArrayView view = impl->ArrayViewFromValue(descriptor, typeName);
                 Impl::Variable variable;
                 variable.address = view.address;
@@ -719,6 +922,12 @@ namespace Absolute {
                     view.owner ? view.owner
                         : llvm::ConstantPointerNull::get(impl->builder.getPtrTy()),
                     variable.arrayOwnerStorage);
+                if (ownsStorage && ownedCount) {
+                    variable.arrayOwnedCountStorage = impl->CreateEntryAlloca(
+                        *function, impl->builder.getInt64Ty(),
+                        name + ".array.owned.count");
+                    impl->builder.CreateStore(ownedCount, variable.arrayOwnedCountStorage);
+                }
                 if (ownsStorage) variable.arrayOwnerSymbol = variable.symbol;
                 else if (Impl::Variable* source = impl->FindVariable(
                     impl->SemanticSymbol(expr->value.get()))) {
@@ -741,6 +950,7 @@ namespace Absolute {
                 impl->valueCreatesManagedOwner = false;
                 impl->valueCreatesArrayOwner = false;
                 impl->valueArrayOwner = nullptr;
+        impl->valueArrayOwnedCount = nullptr;
                 return;
             }
             llvm::Type* type = impl->TypeFromName(typeName);
@@ -752,24 +962,44 @@ namespace Absolute {
             llvm::Value* initial = expr->value
                 ? impl->Evaluate(expr->value.get())
                 : llvm::Constant::getNullValue(type);
-            const bool createsClosureOwner = impl->valueCreatesClosureOwner;
-            std::string closureReturn;
+                std::string closureReturn;
             std::vector<std::string> closureParameters;
             const bool functionValue = ParseCodegenFunctionType(
                 typeName, closureReturn, closureParameters);
-            if (functionValue && !createsClosureOwner)
+            if (functionValue && expr->value &&
+                !impl->CreatesFreshString(expr->value.get()))
                 impl->builder.CreateCall(impl->ClosureRetain(), {initial});
+            // The same for a string, for the same reason: the variable is one
+            // more name holding the bytes, and it will say so again when it
+            // goes out of scope.
+            const bool stringValue = typeName == "string";
+            if (stringValue && expr->value)
+                initial = impl->RetainStoredString(expr->value.get(), initial);
             initial = impl->Coerce(initial, type);
             const bool createsOwner = impl->valueCreatesManagedOwner;
             llvm::Value* managedPointee = impl->valueManagedPointee;
             impl->builder.CreateStore(initial, address);
+            // A value that is not a handle releases what its parts hold when
+            // its name goes out of scope, and says so on the way in if the
+            // parts arrived already held by someone else. A managed pointer is
+            // excluded because whether a local owns the object it names is a
+            // question about the symbol, not the type, and `staticOwner`
+            // answers it. A tuple reaches here and nowhere else: it is not in
+            // `classes` or `structs`, so before this a `tuple<int64, string>`
+            // local dropped its string on the floor.
+            const TypeSemantics semantics = impl->SemanticsOfTypeName(typeName);
+            const bool ownsParts = semantics.needsDrop &&
+                semantics.dropKind != DropKind::ManagedOwner;
+            if (semantics.dropKind == DropKind::TupleValue && expr->value &&
+                !impl->CreatesFreshString(expr->value.get()))
+                impl->EmitValueRetain(address, typeName);
             if (!impl->scopes.back().emplace(name,
                 Impl::Variable{address, type, typeName, staticOwner, false, nullptr, {},
                     nullptr, symbol}).second)
                 impl->Fail("duplicate variable '" + name + "'");
             impl->DeclareDebugVariable(
                 name, typeName, address, expr);
-            if (functionValue)
+            if (ownsParts)
                 impl->RequireVariable(name).ownsAggregateResources = true;
             if (staticOwner && createsOwner && managedPointee) {
                 Impl::Variable& variable = impl->RequireVariable(name);
@@ -797,6 +1027,13 @@ namespace Absolute {
         if (expr->value) {
             llvm::Value* initial = impl->Coerce(impl->Evaluate(expr->value.get()), llvmType);
             impl->builder.CreateStore(initial, address);
+            // The bytes of the aggregate are copied; what its parts hold is
+            // not, so the parts are told there is a second name. Without this
+            // a `Header entry = entries[index];` released the vector's strings
+            // when the local went out of scope. A value the expression made
+            // itself arrives already counted.
+            if (!impl->CreatesFreshString(expr->value.get()))
+                impl->EmitValueRetain(address, typeName);
         }
         else if (llvm::Function* constructor =
             impl->module->getFunction(impl->ConstructorLinkName(typeName, {}));
@@ -879,9 +1116,8 @@ namespace Absolute {
             if (operandSymbol && operandSymbol->kind == SymbolKind::Indexer) {
                 auto* indexer = dynamic_cast<ArrayAccessExpr*>(expr->operand.get());
                 if (!indexer) impl->Fail("indexer increment requires an indexed operand");
-                std::vector<llvm::Value*> arguments;
-                for (const auto& index : indexer->indexes)
-                    arguments.push_back(impl->Evaluate(index.get()));
+                std::vector<llvm::Value*> arguments =
+                    impl->EvaluateIndexArguments(indexer->indexes);
                 const std::string receiverType = impl->SemanticType(indexer->base.get());
                 llvm::Value* current = impl->EmitPropertyAccessor(
                     indexer->base.get(), receiverType,
@@ -898,7 +1134,13 @@ namespace Absolute {
             }
             Impl::Variable& variable = impl->AddressOf(expr->operand.get());
             llvm::Value* current = impl->builder.CreateLoad(variable.type, variable.address, "prefix.current");
-            llvm::Value* updated = impl->ApplyBinary(expr->op == "++" ? "+" : "-", current, impl->One(variable.type));
+            // A raw pointer steps by one element, not by one byte, so it takes
+            // the same offset the binary and compound forms take.
+            const std::string operandType = impl->SemanticType(expr->operand.get());
+            llvm::Value* updated = IsRawPointerTypeName(operandType)
+                ? impl->PointerOffset(current, operandType,
+                    impl->builder.getInt64(1), expr->op == "--")
+                : impl->ApplyBinary(expr->op == "++" ? "+" : "-", current, impl->One(variable.type));
             impl->builder.CreateStore(updated, variable.address);
             impl->value = updated;
             return;
@@ -944,9 +1186,8 @@ namespace Absolute {
         if (operandSymbol && operandSymbol->kind == SymbolKind::Indexer) {
             auto* indexer = dynamic_cast<ArrayAccessExpr*>(expr->operand.get());
             if (!indexer) impl->Fail("indexer increment requires an indexed operand");
-            std::vector<llvm::Value*> arguments;
-            for (const auto& index : indexer->indexes)
-                arguments.push_back(impl->Evaluate(index.get()));
+            std::vector<llvm::Value*> arguments =
+                impl->EvaluateIndexArguments(indexer->indexes);
             const std::string receiverType = impl->SemanticType(indexer->base.get());
             llvm::Value* current = impl->EmitPropertyAccessor(
                 indexer->base.get(), receiverType,
@@ -963,7 +1204,11 @@ namespace Absolute {
         }
         Impl::Variable& variable = impl->AddressOf(expr->operand.get());
         llvm::Value* current = impl->builder.CreateLoad(variable.type, variable.address, "postfix.current");
-        llvm::Value* updated = impl->ApplyBinary(expr->op == "++" ? "+" : "-", current, impl->One(variable.type));
+        const std::string operandType = impl->SemanticType(expr->operand.get());
+        llvm::Value* updated = IsRawPointerTypeName(operandType)
+            ? impl->PointerOffset(current, operandType,
+                impl->builder.getInt64(1), expr->op == "--")
+            : impl->ApplyBinary(expr->op == "++" ? "+" : "-", current, impl->One(variable.type));
         impl->builder.CreateStore(updated, variable.address);
         impl->value = current;
     }
@@ -1010,6 +1255,11 @@ namespace Absolute {
         llvm::Value* savedReturnStorage = impl->currentReturnStorage;
         const std::string savedClass = impl->currentClassName;
         llvm::Value* savedThis = impl->currentThis;
+        // A lambda body emitted inside a constructor is a separate function that
+        // may run long after construction finished, so it must not inherit the
+        // constructor's partial-object cleanup.
+        const std::string savedConstructorClass = impl->currentConstructorClass;
+        impl->currentConstructorClass.clear();
         const auto savedSubstitutions = impl->currentGenericSubstitutions;
         llvm::DIScope* savedDebugScope = impl->currentDebugScope;
         const auto savedDebugScopeStack = impl->debugScopeStack;
@@ -1024,6 +1274,11 @@ namespace Absolute {
         impl->finallyTargets.clear();
         impl->caughtExceptions.clear();
         impl->deferredScopes.clear();
+        // A lambda body is emitted in the middle of the body that writes it, so
+        // it needs the same isolation a function body gets: an owner produced
+        // here belongs to this function's blocks and must be released in them.
+        std::vector<Impl::TemporaryOwner> enclosingTemporaries;
+        enclosingTemporaries.swap(impl->temporaryManagedOwners);
         impl->PushScope();
         impl->BeginDebugFunction(
             *lambda, expr, "lambda." + std::to_string(lambdaId));
@@ -1067,19 +1322,20 @@ namespace Absolute {
         }
 
         if (expr->expressionBody) {
-            llvm::Value* result = impl->Evaluate(expr->expressionBody.get());
-            const bool createsClosureOwner = impl->valueCreatesClosureOwner;
-            std::string nestedReturn;
-            std::vector<std::string> nestedParameters;
-            if (ParseCodegenFunctionType(returnType, nestedReturn, nestedParameters) &&
-                !createsClosureOwner)
-                impl->builder.CreateCall(impl->ClosureRetain(), {result});
-            result = impl->Coerce(result, impl->TypeFromName(returnType));
-            if (impl->currentReturnStorage) {
-                impl->builder.CreateStore(result, impl->currentReturnStorage);
-                impl->builder.CreateRetVoid();
-            }
-            else impl->builder.CreateRet(result);
+            // The body is one expression and the return terminates the block,
+            // so what it borrowed is released by hand, before the terminator.
+            const size_t temporaryMark = impl->temporaryManagedOwners.size();
+            llvm::Value* result = impl->Coerce(
+                impl->Evaluate(expr->expressionBody.get()),
+                impl->TypeFromName(returnType));
+            // One expression is still a return: it takes the same count on the
+            // way out, releases the same temporaries, and closes the same
+            // scopes. Only a returned closure was counted here before, and no
+            // scope was closed at all -- so `fn() => captured` handed out
+            // storage the environment still held, and a `string` parameter
+            // kept the count it took on the way in for as long as the program
+            // ran.
+            impl->EmitCallableReturn(expr->expressionBody.get(), result, temporaryMark);
         }
         else if (expr->statementBody) {
             expr->statementBody->Accept(*this);
@@ -1089,6 +1345,10 @@ namespace Absolute {
                 else impl->Fail("lambda body reached code generation without a return");
             }
         }
+
+        if (!impl->temporaryManagedOwners.empty())
+            impl->Fail("temporary owner left unreleased in a lambda body");
+        impl->temporaryManagedOwners.swap(enclosingTemporaries);
 
         std::string verifierMessage;
         llvm::raw_string_ostream verifierStream(verifierMessage);
@@ -1109,6 +1369,7 @@ namespace Absolute {
         impl->currentReturnStorage = savedReturnStorage;
         impl->currentClassName = savedClass;
         impl->currentThis = savedThis;
+        impl->currentConstructorClass = savedConstructorClass;
         impl->currentGenericSubstitutions = savedSubstitutions;
         impl->builder.restoreIP(savedInsertPoint);
         impl->currentDebugScope = savedDebugScope;
@@ -1130,15 +1391,22 @@ namespace Absolute {
                     impl->Fail("missing captured value '" + captures[index].name + "'");
                 llvm::Value* captured = impl->builder.CreateLoad(
                     source->type, source->address, captures[index].name + ".captured");
-                std::string capturedReturn;
-                std::vector<std::string> capturedParameters;
-                if (ParseCodegenFunctionType(captures[index].type,
-                    capturedReturn, capturedParameters))
-                    impl->builder.CreateCall(impl->ClosureRetain(), {captured});
                 llvm::Value* destination = impl->builder.CreateStructGEP(
                     environmentType, environmentValue, static_cast<unsigned>(index),
                     captures[index].name + ".environment.address");
                 impl->builder.CreateStore(captured, destination);
+                // The environment is a second name for what it captured, and
+                // it outlives the scope the value was read from -- which is
+                // the whole point of a closure. So it counts what it holds,
+                // the same walk any other copy does, and the destroy function
+                // below gives those counts back. Only a copyable value is
+                // counted: a unique owner cannot be duplicated at all, so a
+                // capture of one is a borrow and the environment neither
+                // counts it nor releases it. Before this only a captured
+                // closure was counted, and a captured string outlived nothing
+                // -- the scope it came from released it and the environment
+                // held the freed bytes.
+                impl->EmitValueRetain(destination, captures[index].type);
             }
 
             llvm::FunctionType* destroyType = llvm::FunctionType::get(
@@ -1155,16 +1423,16 @@ namespace Absolute {
             impl->builder.SetCurrentDebugLocation(llvm::DebugLoc());
             llvm::Value* destroyedEnvironment = destroyEnvironment->getArg(0);
             for (size_t index = 0; index < captures.size(); ++index) {
-                std::string capturedReturn;
-                std::vector<std::string> capturedParameters;
-                if (!ParseCodegenFunctionType(captures[index].type,
-                    capturedReturn, capturedParameters)) continue;
+                // Exactly what the capture above took, and nothing else: the
+                // same two questions in the same order, so the environment
+                // cannot release a borrow it never counted.
+                const TypeSemantics captured =
+                    impl->SemanticsOfTypeName(captures[index].type);
+                if (!captured.needsDrop || !captured.copyable) continue;
                 llvm::Value* address = impl->builder.CreateStructGEP(
                     environmentType, destroyedEnvironment, static_cast<unsigned>(index),
-                    "captured.closure.address");
-                llvm::Value* captured = impl->builder.CreateLoad(
-                    impl->builder.getPtrTy(), address, "captured.closure");
-                impl->builder.CreateCall(impl->ClosureRelease(), {captured});
+                    captures[index].name + ".captured.address");
+                impl->EmitValueCleanup(address, captures[index].type);
             }
             impl->builder.CreateCall(impl->Free(), {destroyedEnvironment});
             impl->builder.CreateRetVoid();

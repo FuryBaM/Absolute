@@ -1,0 +1,78 @@
+// JSON number grammar, object keys, pretty-print, and a second name for one
+// key. Native and the wasm shim each wrote a copy; they disagreed on all four.
+import "../std/json.abs";
+import "../std/string.abs";
+
+bool rejects(string text) {
+    std.json.JsonValue* value = std.json.parse(text);
+    if (value == null) {
+        return true;
+    }
+    value.dispose();
+    return false;
+}
+
+int32 main() {
+    // RFC 8259: a leading zero is only legal as the number zero. "01" is not
+    // a number; the native parser used to hand it to strtod and keep 1.
+    assert(rejects("01"), "a leading zero");
+    assert(rejects("[01]"), "a leading zero in an array");
+    assert(rejects("{\"n\":01}"), "a leading zero in an object");
+    assert(rejects("00"), "two zeros");
+    assert(rejects("-01"), "a signed leading zero");
+    assert(rejects("1."), "a decimal point with no fraction");
+    assert(rejects("1e"), "an exponent with no digits");
+    assert(rejects("1e+"), "an exponent with a sign and no digits");
+    assert(!rejects("0"), "zero itself");
+    assert(!rejects("-0"), "negative zero");
+    assert(!rejects("0.5"), "a fraction of zero");
+    assert(!rejects("10"), "ten");
+    assert(!rejects("1e2"), "a legal exponent");
+    assert(!rejects("1E-2"), "the other exponent sign");
+
+    std.json.JsonValue* zero = std.json.parse("0");
+    assert(zero != null && zero.asInt() == (0 as int64), "zero parses");
+    zero.dispose();
+
+    // A key is a JSON string. A quote or a backslash in the name used to leave
+    // the native writer unescaped, so the document it wrote was not JSON.
+    std.json.JsonValue* keyed = std.json.createObject();
+    keyed.setNumber("a\"b", 1.0);
+    keyed.setNumber("c\\d", 2.0);
+    string keyedText = keyed.stringify();
+    assert(std.text.contains(keyedText, "\"a\\\"b\""), "a quote in a key is escaped");
+    assert(std.text.contains(keyedText, "\"c\\\\d\""), "a backslash in a key is escaped");
+    std.json.JsonValue* keyedBack = std.json.parse(keyedText);
+    assert(keyedBack != null, "and the document reads back");
+    assert(keyedBack.getIntOr("a\"b", 0 as int64) == (1 as int64), "the quoted key survived");
+    assert(keyedBack.getIntOr("c\\d", 0 as int64) == (2 as int64), "the escaped key survived");
+    keyed.dispose();
+    keyedBack.dispose();
+
+    // Pretty-print is indented, on both targets. Native used to write the
+    // compact form with a space after each comma; wasm wrote real newlines.
+    std.json.JsonValue* prettyObj = std.json.createObject();
+    prettyObj.setNumber("a", 1.0);
+    prettyObj.setNumber("b", 2.0);
+    string pretty = prettyObj.stringifyPretty();
+    assert(pretty == "{\n  \"a\": 1,\n  \"b\": 2\n}",
+        "an object pretty-prints the same way on both targets");
+    prettyObj.dispose();
+
+    std.json.JsonValue* prettyArr = std.json.createArray();
+    prettyArr.addNumber(1.0);
+    prettyArr.addNumber(2.0);
+    string prettyArray = prettyArr.stringifyPretty();
+    assert(prettyArray == "[\n  1,\n  2\n]", "an array pretty-prints the same way on both targets");
+    prettyArr.dispose();
+
+    // A second "a" replaces the first. Native used to leak the first value.
+    std.json.JsonValue* dup = std.json.parse("{\"a\":1,\"a\":2}");
+    assert(dup != null, "duplicate keys parse");
+    assert(dup.getIntOr("a", 0 as int64) == (2 as int64), "the later value wins");
+    assert(dup.size() == 1, "and there is still one name");
+    dup.dispose();
+
+    println("json-grammar-edges=ok");
+    return 0;
+}

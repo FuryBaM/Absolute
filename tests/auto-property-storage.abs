@@ -1,0 +1,97 @@
+// A property's backing field is a field like any other.
+//
+// `public H value { get; set; }` gets its storage and its two accessors from
+// the compiler, and the setter wrote the bytes and nothing else: it released
+// what the field held and stored what it was given without counting it. So the
+// field named parts it never counted, and reading the property once the value
+// that had been assigned was gone read freed bytes.
+//
+// For a string it happened to balance. The accessor's parameter takes a count
+// on the way in, as every parameter does, and this one never gave it back --
+// so the count the field was missing and the count the parameter leaked were
+// the same one. Two mistakes cancelling, which is not the same as being right:
+// the moment the type was an aggregate holding a string, only one of them was
+// there and the program read freed memory.
+//
+// The setter counts what it takes and gives back what it held now, and its
+// parameter's own count goes back the ordinary way, by the scope closing.
+//
+// Run under AddressSanitizer with the leak check on: a missing count is a
+// use-after-free here and an extra one is a leak, and the loops below are long
+// enough that either is thousands.
+
+struct Inner { public string text; }
+
+struct Outer { public Inner inner; public int64 tag; }
+
+class Holder {
+    public string name { get; set; }
+    public Inner part { get; set; }
+    public Outer whole { get; set; }
+}
+
+int32 main() {
+    Holder* holder = new Holder();
+
+    // Assigned from a name that then goes away, which is what a field's
+    // missing count shows up as.
+    {
+        string local = format("n{}", 1);
+        holder.name = local;
+    }
+    assert(holder.name != "", "a string property outlives what was assigned");
+
+    {
+        Inner made;
+        made.text = format("p{}", 1);
+        holder.part = made;
+    }
+    assert(holder.part.text != "", "and so does an aggregate one");
+
+    {
+        Outer made;
+        made.inner.text = format("w{}", 1);
+        made.tag = 7;
+        holder.whole = made;
+    }
+    assert(holder.whole.inner.text != "", "however deep it goes");
+
+    // Written over and over: the field gives back what it held every time.
+    int32 round = 0;
+    while (round < 2000) {
+        holder.name = format("n{}", round);
+        Inner made;
+        made.text = format("p{}", round);
+        holder.part = made;
+        assert(holder.name != "", "the last one written is there");
+        assert(holder.part.text != "", "for both");
+        round = round + 1;
+    }
+
+    // The two being the same bytes is the case the order has to survive.
+    int32 same = 0;
+    while (same < 2000) {
+        holder.name = holder.name;
+        holder.part = holder.part;
+        same = same + 1;
+    }
+    assert(holder.name != "", "a property assigned from itself keeps its bytes");
+    assert(holder.part.text != "", "for both");
+
+    // Reading is the other half. A getter hands a copy to the caller and the
+    // caller releases it, the way it releases anything a call produced -- so
+    // the copy has to be counted. Handing out the bytes uncounted took a count
+    // off the field on every read, and five hundred reads freed what the field
+    // was still holding.
+    int32 reads = 0;
+    while (reads < 2000) {
+        assert(holder.name != "", "reading a string property leaves it alone");
+        assert(holder.part.text != "", "and an aggregate one");
+        assert(holder.whole.inner.text != "", "however deep");
+        reads = reads + 1;
+    }
+
+    delete holder;
+    println("auto-property-storage=ok");
+    return 0;
+}

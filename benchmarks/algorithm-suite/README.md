@@ -17,6 +17,7 @@ shown below before its timing is accepted.
 - CPU: Intel Core i5-13420H (8 cores, 12 logical processors)
 - OS: Windows 11, build 26200
 - Absolute and C++: LLVM/Clang 18.1.3, `-O3 -march=native`
+- Rust: `rustc -C opt-level=3 -C target-cpu=native -C overflow-checks=off`
 - C++ floating-point contraction: disabled to match Absolute's separate
   multiply and add semantics
 - C#: .NET SDK 10.0.103, `Release`
@@ -55,3 +56,23 @@ This recorded suite predates the array backend. Memory traversal, random access,
 and sorting are measured separately in the
 [`array-suite`](../array-suite/README.md). Allocation, strings, async work, and
 larger application workloads still need their own benchmarks.
+
+## Rust
+
+Rust is measured with `rustc -C opt-level=3 -C target-cpu=native -C
+overflow-checks=off --edition 2021` -- the same three things the C++ build is
+given: optimize fully, target this machine, and let integer arithmetic wrap.
+The last is written out rather than left to a profile default so the
+arithmetic does not change with how `rustc` was invoked, and the ports use the
+explicit `wrapping_*` operations wherever the C++ relies on wraparound.
+
+The port follows [`benchmark.cpp`](benchmark.cpp) line for line rather than
+being written idiomatically. A suite compares one algorithm across languages,
+so a version that reaches the same answer by a different route measures a
+different thing. Every implementation is accepted only when it produces the
+checksum listed above.
+
+The floating-point loop is written as a separate multiply and add, for the
+same reason the C++ build passes `-ffp-contract=off`: Absolute emits the two
+instructions, and a fused multiply-add would measure different arithmetic
+rather than a faster compiler.

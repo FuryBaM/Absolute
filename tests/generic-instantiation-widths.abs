@@ -1,0 +1,86 @@
+// Generic instantiation across widths and signedness.
+//
+// Signedness was where every recent numeric defect lived, and a generic
+// parameter is where a type name is most easily lost: the instruction the
+// backend picks comes from the declared type, and inside a specialization that
+// type arrived through a substitution.
+//
+// The sweep found one real defect, and it was in inference rather than in
+// substitution. Every literal was typed int32 by the analyzer regardless of
+// magnitude, so `identity(10000000000)` inferred T = int32 and returned
+// 1410065408. The backend had always emitted a literal at the width it needs;
+// only the analyzer disagreed, and the disagreement showed wherever its type
+// decided the storage.
+//
+// Values sit above the signed maximum of their width on purpose. Below it a
+// signed and an unsigned instruction give the same answer and the defect hides.
+
+T identity<T>(T value) {
+    return value;
+}
+
+bool greater<T>(T left, T right) {
+    return left > right;
+}
+
+class Box<T> {
+    public T value;
+
+    public Box(T initial) {
+        value = initial;
+    }
+
+    public T read() {
+        return value;
+    }
+}
+
+struct Pair<A, B> {
+    public A first;
+    public B second;
+}
+
+int32 main() {
+    // Inference from a literal wider than int32.
+    assert(identity(2147483648) == 2147483648, "2^31 survives inference");
+    assert(identity(4294967296) == 4294967296, "2^32 survives inference");
+    assert(identity(10000000000) == 10000000000, "10^10 survives inference");
+    int64 inferred = identity(10000000000);
+    assert(inferred / 2 == 5000000000, "the inferred value is wide, not truncated");
+
+    // Inference from a declared unsigned value keeps its signedness.
+    uint32 big = 4294967295;
+    assert(identity(big) / 2 == 2147483647, "an inferred uint32 divides unsigned");
+    uint8 small = 200;
+    assert(identity(small) > 100, "an inferred uint8 compares unsigned");
+
+    // Explicit arguments, on both sides of the signed maximum.
+    assert(identity<uint32>(4294967295) / 2 == 2147483647, "uint32 divides unsigned");
+    assert(identity<uint64>(18446744073709551615) / 2 == 9223372036854775807,
+        "uint64 divides unsigned");
+    assert(identity<int32>(-1) / 2 == 0, "int32 divides signed");
+    assert(greater<uint32>(4294967295, 1), "uint32 compares unsigned inside a generic");
+    assert(greater<uint64>(18446744073709551615, 1), "uint64 compares unsigned inside a generic");
+    assert(greater<uint8>(200, 100), "uint8 compares unsigned inside a generic");
+    assert(!greater<int32>(-8, 1), "int32 compares signed inside a generic");
+
+    // Two specializations of one type with the same machine width and
+    // different signedness must not share a body.
+    Box<uint32>* unsignedBox = new Box<uint32>(4294967295);
+    Box<int32>* signedBox = new Box<int32>(-1);
+    assert(unsignedBox.read() / 2 == 2147483647, "Box<uint32> stays unsigned");
+    assert(signedBox.read() / 2 == 0, "Box<int32> stays signed");
+    assert(unsignedBox.value > 1, "an unsigned field compares unsigned");
+    assert(!(signedBox.value > 1), "a signed field compares signed");
+
+    // Two parameters of different widths in one instantiation.
+    Pair<uint8, int64> mixed;
+    mixed.first = 200;
+    mixed.second = 10000000000;
+    assert(mixed.first > 100, "the narrow unsigned parameter compares unsigned");
+    assert(mixed.first / 2 == 100, "the narrow unsigned parameter divides unsigned");
+    assert(mixed.second == 10000000000, "the wide parameter holds a wide value");
+
+    println("generic-instantiation-widths=ok");
+    return 0;
+}

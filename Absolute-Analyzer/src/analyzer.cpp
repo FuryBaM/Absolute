@@ -11,6 +11,7 @@ namespace Absolute {
         exportedFunctionNames.clear();
         extensionMethods.clear();
         functionDeclarations.clear();
+        unmetConstraintInstantiations.clear();
         genericFunctionSpecializations.clear();
         genericFunctionSpecializationOrder.clear();
         instantiatedGenericTypes.clear();
@@ -97,6 +98,26 @@ namespace Absolute {
             }
             addedNew = instantiatedGenericTypes.size() > beforeCount;
         }
+        // Every instantiation the program reaches, against every fact its body
+        // left behind. This runs last because neither side can be trusted to
+        // come first: a generic may be instantiated above its own declaration,
+        // and the closure loop above discovers instantiations that no line of
+        // source mentions.
+        for (const std::string& genericType : instantiatedGenericTypes) {
+            std::string genericBase;
+            std::vector<std::string> genericArguments;
+            if (!ParseGenericTypeName(genericType, genericBase, genericArguments)) continue;
+            const auto definition = types.find(genericBase);
+            if (definition == types.end() ||
+                definition->second.genericParameters.size() != genericArguments.size())
+                continue;
+            std::unordered_map<std::string, std::string> substitutions;
+            for (size_t index = 0; index < genericArguments.size(); ++index)
+                substitutions.emplace(
+                    definition->second.genericParameters[index], genericArguments[index]);
+            if (!unmetConstraintInstantiations.contains(genericType))
+                CheckGenericBodyFacts(genericBase, substitutions);
+        }
         return !HasErrors();
     }
 
@@ -124,7 +145,11 @@ namespace Absolute {
                 output << diagnostic.sourceFile << ':' << diagnostic.line
                     << ':' << std::max(diagnostic.column, 1) << ": ";
             }
-            output << "Semantic error: " << diagnostic.message << '\n';
+            output << "Semantic error: " << diagnostic.message;
+            // The code is what a reader looks up and what a tool matches on. It
+            // was recorded on most diagnostics and printed on none of them.
+            if (!diagnostic.code.empty()) output << " [" << diagnostic.code << ']';
+            output << '\n';
         }
     }
 
@@ -184,9 +209,232 @@ namespace Absolute {
 
     void Analyzer::AnalyzeProgram(Program& program) { AcceptAll(program.statements, *this); }
 
+    std::string Analyzer::EnclosingSourceFile() const {
+        for (auto entry = diagnosticNodeStack.rbegin();
+            entry != diagnosticNodeStack.rend(); ++entry) {
+            if (*entry && !(*entry)->sourceFile.empty()) return (*entry)->sourceFile;
+        }
+        return {};
+    }
+
+    bool Analyzer::IsCurrentGenericParameter(const std::string& type) const {
+        if (currentType.empty() || type.empty()) return false;
+        const auto found = types.find(currentType);
+        if (found == types.end()) return false;
+        const std::vector<std::string>& parameters = found->second.genericParameters;
+        return std::find(parameters.begin(), parameters.end(), type) !=
+            parameters.end();
+    }
+
+    bool Analyzer::IsOpenGenericParameter(const std::string& name) const {
+        if (name.empty()) return false;
+        if (IsCurrentGenericParameter(name)) return true;
+        return std::any_of(genericTypeScopes.begin(), genericTypeScopes.end(),
+            [&](const auto& scope) {
+                const auto parameter = scope.find(name);
+                return parameter != scope.end() && parameter->second == name;
+            });
+    }
+
+    // Noticed here, judged at each instantiation. The type is kept as written --
+    // `T` -- because that is the only thing that can be substituted later.
+    void Analyzer::RecordGenericBodyFact(GenericBodyFact::Shape shape,
+        const std::string& parameterType, const std::string& detail,
+        const ASTNode* node) {
+        // Only a bare parameter of the type being analyzed is worth recording;
+        // anything concrete was already judged by the rules themselves.
+        if (!IsCurrentGenericParameter(parameterType)) return;
+
+        // Not every node carries a location -- a destructor call does not --
+        // so the nearest enclosing one that does is used, the same way an
+        // ordinary diagnostic finds its line.
+        if (!node || node->line <= 0) {
+            for (auto entry = diagnosticNodeStack.rbegin();
+                entry != diagnosticNodeStack.rend(); ++entry) {
+                if (!*entry) continue;
+                if (!node) node = *entry;
+                if ((*entry)->line > 0) { node = *entry; break; }
+            }
+        }
+
+        GenericBodyFact fact;
+        fact.shape = shape;
+        fact.parameterType = parameterType;
+        fact.detail = detail;
+        fact.file = node && !node->sourceFile.empty()
+            ? node->sourceFile : EnclosingSourceFile();
+        fact.line = node ? node->line : 0;
+        fact.column = node ? node->column : 0;
+        std::vector<GenericBodyFact>& recorded = genericBodyFacts[currentType];
+        // The same line is analyzed once, but a class can be re-entered.
+        for (const GenericBodyFact& existing : recorded) {
+            if (existing.shape == fact.shape && existing.line == fact.line &&
+                existing.column == fact.column && existing.file == fact.file)
+                return;
+        }
+        recorded.push_back(std::move(fact));
+    }
+
+    // One instantiation, every fact the body left behind. The parameter is
+    // substituted and the rule that could not run inside the body runs now.
+    void Analyzer::CheckGenericBodyFacts(const std::string& base,
+        const std::unordered_map<std::string, std::string>& substitutions) {
+        const auto found = genericBodyFacts.find(base);
+        if (found == genericBodyFacts.end()) return;
+        for (const GenericBodyFact& fact : found->second) {
+            const std::string actual =
+                SubstituteGenericType(fact.parameterType, substitutions);
+            // Each shape asks its own question of the substituted type. The
+            // ownership rules only have something to say about an owner; the
+            // shape rule has something to say about everything that is not a
+            // pointer at all.
+            const bool owner = IsStrongManagedPointerType(actual);
+            if (fact.shape == GenericBodyFact::Shape::DeletesValue) {
+                if (!IsPointerType(actual))
+                    ReportAtLocation(fact.file, fact.line, fact.column,
+                        "delete requires a pointer; at '" + base + "<" + actual +
+                        ">' '" + fact.detail + "' is '" + actual + "'",
+                        "E_DELETE_REQUIRES_POINTER", InvalidSymbolId);
+                continue;
+            }
+            if (fact.shape == GenericBodyFact::Shape::DeletesField) {
+                // Delete is about who owns the object, and every kind but the
+                // unmanaged one answers no here: an owner field is released by
+                // the object that owns the field, a subscriber and an observer
+                // never owned anything to release.
+                switch (CanonicalOwnership(actual)) {
+                case OwnershipKind::Weak:
+                    ReportAtLocation(fact.file, fact.line, fact.column,
+                        "weak managed pointer cannot be deleted; at '" + base +
+                        "<" + actual + ">' the field '" + fact.detail +
+                        "' observes an object it does not own",
+                        "E_WEAK_DELETE", InvalidSymbolId);
+                    break;
+                case OwnershipKind::Sub:
+                    ReportAtLocation(fact.file, fact.line, fact.column,
+                        "managed subscriber cannot be deleted; at '" + base +
+                        "<" + actual + ">' the field '" + fact.detail +
+                        "' borrows an object it does not own",
+                        "E_DELETE_SUBSCRIBER", InvalidSymbolId);
+                    break;
+                case OwnershipKind::Unique:
+                    ReportAtLocation(fact.file, fact.line, fact.column,
+                        "managed subscriber cannot be deleted; at '" + base +
+                        "<" + actual + ">' the field '" + fact.detail +
+                        "' is released by its own object, not by its owner",
+                        "E_DELETE_SUBSCRIBER", InvalidSymbolId);
+                    break;
+                default:
+                    break;
+                }
+                continue;
+            }
+            if (fact.shape == GenericBodyFact::Shape::InterfaceValue) {
+                if (const auto definition = types.find(actual);
+                    definition != types.end() &&
+                    definition->second.kind == TypeKind::Interface)
+                    ReportAtLocation(fact.file, fact.line, fact.column,
+                        std::string(fact.detail) + " cannot be interface '" + actual +
+                        "' by value; at '" + base + "<" + actual + ">' an interface "
+                        "is used through a raw or managed pointer",
+                        "E_INTERFACE_REQUIRES_POINTER", InvalidSymbolId);
+                continue;
+            }
+            if (fact.shape == GenericBodyFact::Shape::BorrowsAsOwner) {
+                // Only a parameter that owns. At `T = int32` or `T = string`
+                // the borrow and the element are the same type and nothing is
+                // duplicated -- `sub` says what a value's relation to an
+                // object's lifetime is, and neither of those has one.
+                if (TypeOwnsUniqueResource(actual))
+                    ReportAtLocation(fact.file, fact.line, fact.column,
+                        "a borrowed element cannot be bound to a name that owns; at '" +
+                        base + "<" + actual + ">' " + fact.detail +
+                        " would name storage the container still holds; take the "
+                        "element out of its slot instead of reading it",
+                        "E_BORROW_BOUND_AS_OWNER", InvalidSymbolId);
+                continue;
+            }
+            if (fact.shape == GenericBodyFact::Shape::OrdersValues) {
+                if (!IsOrderableType(actual))
+                    ReportAtLocation(fact.file, fact.line, fact.column,
+                        "operator '" + fact.detail + "' orders numbers, characters, "
+                        "enum members and raw pointers; at '" + base + "<" +
+                        actual + ">' the operand is '" + actual + "'",
+                        "E_ORDERING_OPERAND_TYPE", InvalidSymbolId);
+                continue;
+            }
+            if (fact.shape == GenericBodyFact::Shape::CopiesElements) {
+                // Not only an owner: anything with a drop is duplicated by a
+                // block copy, and two of them then release the same thing.
+                if (TypeOwnsUniqueResource(actual))
+                    ReportAtLocation(fact.file, fact.line, fact.column,
+                        std::string(fact.detail) + " cannot copy elements that own "
+                        "something; at '" + base + "<" + actual + ">' that would "
+                        "duplicate the ownership -- unsafeArrayMove transfers "
+                        "them instead", "E_UNSAFE_ARRAY_COPY_OWNING", InvalidSymbolId);
+                continue;
+            }
+            if (!owner) continue;
+            switch (fact.shape) {
+            case GenericBodyFact::Shape::FieldFromNonOwner:
+                ReportAtLocation(fact.file, fact.line, fact.column,
+                    "managed resource fields require a fresh owner or null; at '" +
+                    base + "<" + actual + ">' the field '" + fact.detail +
+                    "' is stored from a subscriber",
+                    "E_RESOURCE_FIELD_REQUIRES_OWNER", InvalidSymbolId);
+                break;
+            case GenericBodyFact::Shape::ElementFromNonOwner:
+                ReportAtLocation(fact.file, fact.line, fact.column,
+                    "managed array elements require a fresh owner or null; at '" +
+                    base + "<" + actual + ">' a slot of '" + fact.detail +
+                    "' is filled by reading another slot rather than taking it",
+                    "E_RESOURCE_ELEMENT_REQUIRES_OWNER", InvalidSymbolId);
+                break;
+            case GenericBodyFact::Shape::ReturnsField:
+                ReportAtLocation(fact.file, fact.line, fact.column,
+                    "a managed pointer return must transfer an owner; at '" +
+                    base + "<" + actual + ">' '" + fact.detail +
+                    "' hands back a field its object still owns",
+                    "E_MANAGED_RETURN_REQUIRES_OWNER", InvalidSymbolId);
+                break;
+            case GenericBodyFact::Shape::DeletesField:
+            case GenericBodyFact::Shape::DeletesValue:
+            case GenericBodyFact::Shape::CopiesElements:
+            case GenericBodyFact::Shape::OrdersValues:
+            case GenericBodyFact::Shape::InterfaceValue:
+                break;
+            }
+        }
+    }
+
+    void Analyzer::ReportAtLocation(std::string sourceFile, int line, int column,
+        std::string message, std::string code, SymbolId symbol) {
+        Diagnostic diagnostic;
+        diagnostic.message = std::move(message);
+        diagnostic.code = std::move(code);
+        diagnostic.symbol = symbol;
+        diagnostic.sourceFile = std::move(sourceFile);
+        diagnostic.line = line;
+        diagnostic.column = column;
+        diagnostics.push_back(std::move(diagnostic));
+    }
+
     void Analyzer::Report(std::string message, std::string code, SymbolId symbol) {
-        const ASTNode* node = diagnosticNodeStack.empty()
-            ? nullptr : diagnosticNodeStack.back();
+        // The innermost node that knows where it is. Only the top of an
+        // expression and the top of a statement are stamped with a line by the
+        // parser, so a diagnostic about a nested node -- an argument, an
+        // operand, a member access -- used to carry no location at all: 87 of
+        // the 361 diagnostics the error tests produce printed a bare "Semantic
+        // error:" with nothing to open in an editor. The enclosing construct is
+        // not the exact token, but it is the right line, and it is always
+        // there.
+        const ASTNode* node = nullptr;
+        for (auto entry = diagnosticNodeStack.rbegin();
+            entry != diagnosticNodeStack.rend(); ++entry) {
+            if (!*entry) continue;
+            if (!node) node = *entry;
+            if ((*entry)->line > 0) { node = *entry; break; }
+        }
         ReportAt(node, std::move(message), std::move(code), symbol);
     }
 
@@ -201,6 +449,10 @@ namespace Absolute {
             diagnostic.line = node->line;
             diagnostic.column = node->column;
         }
+        // A node may carry a line but no file, or the other way round, because
+        // only some of them are stamped. Whatever is missing is taken from the
+        // nearest enclosing node that has it.
+        if (diagnostic.sourceFile.empty()) diagnostic.sourceFile = EnclosingSourceFile();
         diagnostics.push_back(std::move(diagnostic));
     }
 
@@ -210,8 +462,7 @@ namespace Absolute {
         diagnostic.message = std::move(message);
         diagnostic.code = std::move(code);
         diagnostic.symbol = symbol;
-        if (!diagnosticNodeStack.empty() && diagnosticNodeStack.back())
-            diagnostic.sourceFile = diagnosticNodeStack.back()->sourceFile;
+        diagnostic.sourceFile = EnclosingSourceFile();
         if (token) {
             diagnostic.line = token->line;
             diagnostic.column = token->column;
@@ -450,25 +701,50 @@ namespace Absolute {
             previousOwner == nextOwner)
             return;
         for (auto& [id, state] : valueFlow) {
-            if (id != previousOwner && state.pointerOwner == previousOwner)
+            // The moved-from symbol is re-pointed alongside its aliases. It no
+            // longer owns the allocation either, and leaving it pointing at
+            // itself hides a back-edge onto it: with `left.child = move(right)`
+            // followed by `right.child = move(left)`, neither assignment names
+            // the same symbol twice, so the cycle is only visible if the first
+            // move records that right's allocation now belongs to left.
+            if (state.pointerOwner == previousOwner)
                 state.pointerOwner = nextOwner;
         }
     }
 
-    void Analyzer::CheckManagedMoveArgument(
+    // What a parameter's ownership qualifier says about the value it is given.
+    // A subscriber and a weak name both mean "someone else owns this", and
+    // neither releases anything -- so a fresh allocation handed to one is
+    // owned by nobody and released by nobody. A declaration and an assignment
+    // have refused that for `weak` all along; this is the third place a value
+    // is bound to a name, and it refused nothing, so `takesSub(new Node())`
+    // compiled and the runtime's own check printed the handle at exit.
+    //
+    // An unqualified `T*` parameter is untouched: it takes a subscriber when
+    // what it is given has an owner and takes the owner when it does not,
+    // which is the ordinary way an argument is passed.
+    void Analyzer::CheckManagedArgumentOwnership(
         const Result& argument, const std::string& parameterType,
         size_t index, const std::string& context) {
-        (void)argument;
-        (void)parameterType;
-        (void)index;
-        (void)context;
+        NoteBorrowBoundAsOwner(ValueReferenceBaseType(parameterType),
+            argument.type, context + " argument " + std::to_string(index + 1),
+            nullptr);
+        if (!argument.createsManagedOwner) return;
+        const std::string type = ValueReferenceBaseType(parameterType);
+        const bool weak = IsWeakPointerType(type);
+        if (!weak && !IsSubscriberPointerType(type)) return;
+        Report(context + " argument " + std::to_string(index + 1) + " gives a fresh "
+            "managed allocation to a " + (weak ? "weak pointer" : "subscriber") +
+            "; bind the allocation to a managed owner first",
+            weak ? "E_WEAK_REQUIRES_EXISTING_OWNER"
+                 : "E_SUBSCRIBER_REQUIRES_EXISTING_OWNER", argument.symbol);
     }
 
     bool Analyzer::ParameterSupportsOwnership(const std::string& declaredType) const {
         if (IsValueReferenceType(declaredType)) return false;
         const std::string type = ValueReferenceBaseType(declaredType);
         return IsStrongManagedPointerType(type) || ArrayRank(type) > 0 ||
-            (!IsPointerType(type) && TypeOwnsResources(type));
+            (!IsPointerType(type) && TypeOwnsUniqueResource(type));
     }
 
     bool Analyzer::TransfersOwnership(
@@ -502,6 +778,15 @@ namespace Absolute {
                 TransfersOwnership(arguments[index], parameterType));
             call.argumentSymbols.push_back(arguments[index].symbol);
         }
+        for (auto entry = diagnosticNodeStack.rbegin();
+            entry != diagnosticNodeStack.rend(); ++entry) {
+            if (!*entry || (*entry)->line <= 0) continue;
+            call.sourceFile = (*entry)->sourceFile.empty()
+                ? EnclosingSourceFile() : (*entry)->sourceFile;
+            call.line = (*entry)->line;
+            call.column = (*entry)->column;
+            break;
+        }
         deferredOwnershipCalls.push_back(std::move(call));
     }
 
@@ -514,7 +799,8 @@ namespace Absolute {
                 index < call.ownerArguments.size(); ++index) {
                 if (!callable->parameterRequiresOwner[index] ||
                     call.ownerArguments[index]) continue;
-                Report(call.context + " argument " + std::to_string(index + 1) +
+                ReportAtLocation(call.sourceFile, call.line, call.column,
+                    call.context + " argument " + std::to_string(index + 1) +
                     " is borrowed, but the function moves or stores this parameter; "
                     "pass move(owner)",
                     "E_PARAMETER_REQUIRES_OWNER",
@@ -670,6 +956,50 @@ namespace Absolute {
             value.pointerRole = (value.createsManagedOwner ||
                 (symbol && symbol->managedOwner))
                 ? PointerRole::ManagedOwner : PointerRole::ManagedSub;
+        // An expression that produced the value it handed back, rather than
+        // naming storage something else already holds. Only a call can: a
+        // literal is static, and reading a variable, a field or an element
+        // hands back what is already there. A getter is a call however it is
+        // written, which is why the kind is asked for rather than the shape of
+        // the expression alone.
+        //
+        // What the backend does with the answer depends on the type. A value
+        // whose parts are counted -- a string, or an aggregate holding one --
+        // arrives already counted once when it is fresh, and needs counting
+        // when it is not.
+        if (expression) {
+            // A lambda is the other producer that is not written as a call:
+            // it allocates the closure and its environment right here, so the
+            // value arrives held once, the same as a constructor's does.
+            if (dynamic_cast<FunctionCallExpr*>(expression) ||
+                dynamic_cast<ConstructorCallExpr*>(expression) ||
+                dynamic_cast<LambdaExpr*>(expression))
+                value.producesFreshValue = true;
+            // A conditional is the one shape that is not a call and can still
+            // produce its value -- when the backend can make both arms produce
+            // it. For a value whose parts are counted it always can: the arm
+            // that only named the bytes takes a count of its own, and the
+            // result arrives counted once whichever path ran. For one that
+            // travels with a role there is no such thing as a second name, so
+            // the conditional produces its value only if both arms already do.
+            else if (auto* conditional = dynamic_cast<TernaryExpr*>(expression)) {
+                const auto produced = [&](Expression* side) {
+                    const ExpressionInfo* arm = side ? GetExpressionInfo(*side) : nullptr;
+                    if (!arm) return false;
+                    if (arm->producesFreshValue || arm->isMoveResult) return true;
+                    const Symbol* named = GetSymbol(arm->symbol);
+                    return named && (named->kind == SymbolKind::Function ||
+                        named->kind == SymbolKind::Method);
+                };
+                value.producesFreshValue = SemanticsOfType(value.type).copyable ||
+                    (produced(conditional->trueExpr.get()) &&
+                     produced(conditional->falseExpr.get()));
+            }
+            else if (symbol)
+                value.producesFreshValue =
+                    symbol->kind == SymbolKind::Property ||
+                    symbol->kind == SymbolKind::Indexer;
+        }
         result = std::move(value);
         if (expression) {
             ExpressionInfo info;
@@ -690,6 +1020,7 @@ namespace Absolute {
             info.createsRawOwner = result.createsRawOwner;
             info.isMoveResult = result.isMoveResult;
             info.createsArrayOwner = result.createsArrayOwner;
+            info.producesFreshValue = result.producesFreshValue;
             expressionInfo[expression] = std::move(info);
         }
     }
@@ -698,6 +1029,10 @@ namespace Absolute {
         if (IsValueReferenceType(name))
             return IsKnownType(ValueReferenceBaseType(name));
         if (IsPointerType(name)) return IsKnownType(PointerPointee(name));
+        // `sub T` is known exactly when `T` is; the qualifier adds nothing to
+        // recognize, it only says what to do once `T` is something.
+        if (CanonicalOpenOwnership(name) != OwnershipKind::None)
+            return IsKnownType(CanonicalOpenBaseName(name));
         if (IsTaskType(name)) return IsKnownType(TaskValueType(name));
         for (auto scope = genericTypeScopes.rbegin(); scope != genericTypeScopes.rend(); ++scope)
             if (scope->contains(name)) return true;
@@ -734,12 +1069,66 @@ namespace Absolute {
     }
 
     bool Analyzer::IsNumeric(const std::string& name) const {
-        return name == "float" || name == "double" || name.starts_with("int") || name.starts_with("uint") ||
+        return name == "float" || name == "double" || IsIntegerTypeName(name) ||
             name == "char";
     }
 
+    // `bool` is not here, and it used to be orderable by accident. A boolean
+    // is one bit, and one bit compared as a signed number reads `true` as -1:
+    // `false < true` came out false and `true < false` came out true. Two
+    // answers were available -- compare it unsigned, or say a boolean is not
+    // an ordered value -- and the second is what the language means. Equality
+    // is untouched.
+    void Analyzer::CheckInterfaceValueType(const std::string& type,
+        const std::string& where, SymbolId symbol) {
+        std::string value = ValueReferenceBaseType(type);
+        // An array of interfaces is an array of values, and so is an array of
+        // arrays of them.
+        while (value.ends_with("[]")) value.resize(value.size() - 2);
+        if (value.empty()) return;
+        // A pointer to an interface is the way an interface is used, and stops
+        // the direct question here -- but not the one below it. A pointer to a
+        // generic instantiated with an interface still puts that interface
+        // inside the instantiation, whichever side of the handle it sits on.
+        const bool throughPointer = IsPointerType(value);
+        if (throughPointer) value = PointerPointee(value);
+        if (!throughPointer) {
+            // An open parameter is not a type yet: `T v;` inside `Box<T>` is a
+            // value of whatever `T` becomes, and each instantiation answers.
+            if (IsOpenGenericParameter(value)) {
+                RecordGenericBodyFact(GenericBodyFact::Shape::InterfaceValue,
+                    value, where, nullptr);
+                return;
+            }
+            if (const auto found = types.find(value);
+                found != types.end() && found->second.kind == TypeKind::Interface) {
+                Report(where + " cannot be interface '" + value +
+                    "' by value; an interface is used through a raw or managed pointer",
+                    "E_INTERFACE_REQUIRES_POINTER", symbol);
+                return;
+            }
+        }
+        std::string base;
+        std::vector<std::string> arguments;
+        if (!ParseGenericTypeName(value, base, arguments)) return;
+        // A tuple's elements are values by construction, so its arguments are
+        // answered here. A user generic is not: its body decides whether the
+        // parameter is a value or a handle, so it is judged at each
+        // instantiation from what the body did -- `Viewer<T>` that only ever
+        // writes `sub T*` is the right way to hold an interface, and refusing
+        // `Viewer<I>` here would refuse the fix.
+        if (base != "tuple") return;
+        for (const std::string& argument : arguments)
+            CheckInterfaceValueType(argument, where, symbol);
+    }
+
+    bool Analyzer::IsOrderableType(const std::string& name) const {
+        return name == "error" || name == "dynamic" || name == "null" ||
+            IsNumeric(name) || IsEnumType(name) || IsRawPointerType(name);
+    }
+
     bool Analyzer::IsInteger(const std::string& name) const {
-        return name.starts_with("int") || name.starts_with("uint") || name == "char";
+        return IsIntegerTypeName(name) || name == "char";
     }
 
     bool Analyzer::IsAssignable(const std::string& target, const std::string& source) const {
@@ -758,13 +1147,57 @@ namespace Absolute {
             if (ParseCFunctionType(target, targetReturn, targetParameters) && source == "null")
                 return true;
         }
-        if (target.ends_with("[]") && source.ends_with("[]"))
-            return IsAssignable(ArrayElementType(target), ArrayElementType(source));
+        if (target.ends_with("[]") && source.ends_with("[]")) {
+            // An array may be seen at a lower rank than it has: the storage is
+            // row-major and contiguous, which is what lets a grouped literal
+            // `{{1, 2, 3}, {4, 5, 6}}` fill an `int32[]` of six, and what
+            // `int32[] flat = grid;` reads.
+            //
+            // It may never be seen at a higher one. The descriptor carries the
+            // dimensions it was built with, and `int32[][] rows = flat;` asked
+            // the backend to read a dimension that is not there -- which
+            // crashed the compiler, because nothing had refused it: `IsNumeric`
+            // read a prefix, and `"int32[]"` starts with `"int"`.
+            const size_t targetRank = ArrayRank(target);
+            const size_t sourceRank = ArrayRank(source);
+            if (targetRank > sourceRank) return false;
+            return IsAssignable(ArrayElementType(target, targetRank),
+                ArrayElementType(source, sourceRank));
+        }
+        // `sub T` takes a `T`, for the same reason `sub Node*` takes a `Node*`:
+        // it is the weaker relation to the same object, and the arrow runs one
+        // way. Which of the two it turns out to be is settled at substitution;
+        // that it is the weaker one is settled here.
+        if (const OwnershipKind openTarget = CanonicalOpenOwnership(target);
+            openTarget != OwnershipKind::None) {
+            const std::string base = CanonicalOpenBaseName(target);
+            if (source == base) return true;
+            if (CanonicalOpenOwnership(source) != OwnershipKind::None)
+                return CanonicalOpenBaseName(source) == base;
+        }
+        // And `T` takes a `sub T`, which the arrow above says it must not --
+        // for a `T` that owns. Whether this one owns is not knowable here: at
+        // `T = int32` the two are the same type and nothing is duplicated, and
+        // at `T = Cell*` an owner-shaped name would be handed storage the
+        // container still holds. So the question is deferred rather than
+        // answered wrongly in either direction: the sites that bind a value to
+        // a name record it (GenericBodyFact::Shape::BorrowsAsOwner) and every
+        // instantiation asks it. A closed type is not in this position and
+        // does not reach here -- `Node* n = borrowed;` stays refused.
+        if (IsOpenGenericParameter(target) &&
+            CanonicalOpenOwnership(source) == OwnershipKind::Sub &&
+            CanonicalOpenBaseName(source) == target)
+            return true;
         if (IsPointerType(target) && source == "null") return true;
         if (IsPointerType(target) && IsPointerType(source)) {
             const bool compatibleMode =
                 (IsRawPointerType(target) && IsRawPointerType(source)) ||
                 (IsWeakPointerType(target) && IsManagedPointerType(source)) ||
+                // A subscriber can be taken of any managed handle, including
+                // another subscriber. It never becomes an owner, which is the
+                // whole point: the arrow runs one way.
+                (IsSubscriberPointerType(target) && IsManagedPointerType(source) &&
+                    !IsWeakPointerType(source)) ||
                 (IsStrongManagedPointerType(target) && IsStrongManagedPointerType(source));
             if (compatibleMode)
                 return IsDerivedFrom(PointerPointee(source), PointerPointee(target));
@@ -773,9 +1206,243 @@ namespace Absolute {
         return source == "null" && !PrimitiveStringToEnum(target).has_value();
     }
 
-    bool Analyzer::TypeOwnsResources(const std::string& name) const {
+    bool Analyzer::TypeOwnsUniqueResource(const std::string& name) const {
         if (IsValueReferenceType(name))
-            return TypeOwnsResources(ValueReferenceBaseType(name));
+            return TypeOwnsUniqueResource(ValueReferenceBaseType(name));
+        if (const OwnershipKind kind = CanonicalOwnership(name);
+            kind != OwnershipKind::None)
+            return CanonicalHandleSemantics(kind).needsDrop;
+        if (ArrayRank(name) > 0) return true;
+        if (const PluginResourceDescriptor* descriptor =
+                GetPluginResourceDescriptor(name); descriptor && descriptor->isResource)
+            return true;
+        return OwnsUniqueResourceByParts(name);
+    }
+
+    // The analyzer's half of the one answer; see docs/ownership-kinds.md and
+    // CodeGenerator::Impl::SemanticsOfTypeName, which decides the same thing
+    // from the backend's own type tables. Both read the ownership kind rather
+    // than asking what a pointer looks like, because `T*`, `sub T*` and
+    // `weak T*` are all managed pointers and releasing them means three
+    // different things.
+    TypeSemantics Analyzer::SemanticsOfType(const std::string& name) const {
+        if (IsValueReferenceType(name))
+            return SemanticsOfType(ValueReferenceBaseType(name));
+
+        if (const OwnershipKind kind = CanonicalOwnership(name);
+            kind != OwnershipKind::None) {
+            const HandleSemantics handle = CanonicalHandleSemantics(kind);
+            const DropKind drop = handle.needsDrop
+                ? DropKind::ManagedOwner : DropKind::None;
+            return {handle.copyable, handle.movable, handle.needsDrop, drop};
+        }
+        // An array always has storage to free; whether its elements need
+        // dropping as well is docs/known-defects.md section 15.
+        // Not copyable: the descriptor names storage with one owner, and
+        // copying it would make two.
+        if (ArrayRank(name) > 0)
+            return {false, true, true, DropKind::ArrayStorage};
+
+        if (const PluginResourceDescriptor* descriptor =
+                GetPluginResourceDescriptor(name); descriptor && descriptor->isResource)
+            return {true, true, true, DropKind::PluginResource};
+
+        // Shared, and with a count to give back: `needsDrop` asks whether
+        // there is anything to release, not whether there is one of it.
+        if (name == "string") return {true, true, true, DropKind::StringStorage};
+        {
+            std::string base;
+            std::vector<std::string> arguments;
+            if (ParseGenericTypeName(name, base, arguments) && base == "func")
+                return {true, true, true, DropKind::Closure};
+            if (ParseGenericTypeName(name, base, arguments) && base == "tuple") {
+                TypeSemantics result{true, true, false, DropKind::TupleValue};
+                for (const std::string& element : arguments) {
+                    const TypeSemantics part = SemanticsOfType(element);
+                    if (part.needsDrop) result.needsDrop = true;
+                    if (!part.copyable) result.copyable = false;
+                }
+                if (!result.needsDrop) result.dropKind = DropKind::None;
+                return result;
+            }
+        }
+
+        TypeSemantics result{CopiesByParts(name), true,
+            ReleasesByParts(name), DropKind::None};
+        if (!result.needsDrop) return result;
+        if (const auto found = types.find(name); found != types.end()) {
+            result.dropKind = found->second.kind == TypeKind::Class
+                ? DropKind::ClassObject : DropKind::StructObject;
+        }
+        else result.dropKind = DropKind::StructObject;
+        return result;
+    }
+
+    bool Analyzer::CopiesByParts(const std::string& name) const {
+        std::unordered_set<std::string> visiting;
+        const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
+            if (IsValueReferenceType(candidate))
+                return self(self, ValueReferenceBaseType(candidate));
+            if (const OwnershipKind kind = CanonicalOwnership(candidate);
+                kind != OwnershipKind::None)
+                return CanonicalHandleSemantics(kind).copyable;
+            // An array descriptor names storage with one owner, and copying it
+            // would make two. `copy(...)` is how a second array is asked for.
+            if (ArrayRank(candidate) > 0) return false;
+
+            std::string definitionName = candidate;
+            std::string genericBase;
+            std::vector<std::string> genericArguments;
+            if (ParseGenericTypeName(candidate, genericBase, genericArguments)) {
+                if (genericBase == "tuple") {
+                    return std::all_of(genericArguments.begin(),
+                        genericArguments.end(), [&](const std::string& argument) {
+                            return self(self, argument);
+                        });
+                }
+                definitionName = genericBase;
+            }
+            // A cycle in the field graph is not a reason to keep looking.
+            if (!visiting.insert(candidate).second) return true;
+            const auto release = [&] { visiting.erase(candidate); };
+            const auto found = types.find(definitionName);
+            if (found == types.end() || (found->second.kind != TypeKind::Class &&
+                found->second.kind != TypeKind::Struct)) {
+                release();
+                return true;
+            }
+            // Substituted, for the reason OwnsResourcesByParts gives: a
+            // generic's fields are written in terms of its parameters, and `T`
+            // on its own answers for nothing.
+            std::unordered_map<std::string, std::string> substitutions;
+            if (!genericArguments.empty() &&
+                found->second.genericParameters.size() == genericArguments.size())
+                for (size_t index = 0; index < genericArguments.size(); ++index)
+                    substitutions.emplace(
+                        found->second.genericParameters[index], genericArguments[index]);
+            const auto asWritten = [&](const std::string& type) {
+                return substitutions.empty()
+                    ? type : SubstituteGenericType(type, substitutions);
+            };
+            for (const auto& [memberName, overloads] : found->second.members) {
+                (void)memberName;
+                for (const MemberSignature& member : overloads) {
+                    if (member.isStatic || member.kind != SymbolKind::Field) continue;
+                    if (!self(self, asWritten(member.type))) {
+                        release();
+                        return false;
+                    }
+                }
+            }
+            for (const std::string& parent : found->second.parents) {
+                if (!self(self, asWritten(parent))) {
+                    release();
+                    return false;
+                }
+            }
+            release();
+            return true;
+        };
+        return inspect(inspect, name);
+    }
+
+    bool Analyzer::IsConstantDefaultArgument(const Expression* expression) {
+        if (!expression) return false;
+        if (dynamic_cast<const NumberLiteralExpr*>(expression) ||
+            dynamic_cast<const BooleanLiteralExpr*>(expression) ||
+            dynamic_cast<const CharLiteralExpr*>(expression) ||
+            dynamic_cast<const StringLiteralExpr*>(expression) ||
+            dynamic_cast<const NullExpr*>(expression)) return true;
+        // A negative number is a unary expression rather than a literal.
+        const auto* unary = dynamic_cast<const PrefixUnaryExpr*>(expression);
+        return unary && unary->op == "-" &&
+            dynamic_cast<const NumberLiteralExpr*>(unary->operand.get());
+    }
+
+    void Analyzer::RecordParameterDefaults(Symbol& symbol,
+        const std::vector<std::unique_ptr<VarDeclExpr>>& parameters) {
+        symbol.parameterDefaults.assign(parameters.size(), nullptr);
+        for (size_t index = 0; index < parameters.size(); ++index)
+            if (parameters[index] && parameters[index]->value)
+                symbol.parameterDefaults[index] = parameters[index]->value.get();
+        // Only the trailing run can be left out of a call, because a call
+        // fills the missing arguments in from the end. A default anywhere
+        // else is refused where the parameter is analyzed.
+        symbol.defaultedParameters = 0;
+        for (size_t index = parameters.size(); index > 0; --index) {
+            if (!symbol.parameterDefaults[index - 1]) break;
+            symbol.defaultedParameters += 1;
+        }
+    }
+
+    bool Analyzer::ReleasesByParts(const std::string& name) const {
+        std::unordered_set<std::string> visiting;
+        const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
+            if (candidate == "string") return true;
+            if (IsValueReferenceType(candidate))
+                return self(self, ValueReferenceBaseType(candidate));
+            if (const OwnershipKind kind = CanonicalOwnership(candidate);
+                kind != OwnershipKind::None)
+                return CanonicalHandleSemantics(kind).needsDrop;
+            if (ArrayRank(candidate) > 0) return true;
+            if (const PluginResourceDescriptor* descriptor =
+                    GetPluginResourceDescriptor(candidate);
+                descriptor && descriptor->isResource) return true;
+
+            std::string definitionName = candidate;
+            std::unordered_map<std::string, std::string> substitutions;
+            std::string genericBase;
+            std::vector<std::string> genericArguments;
+            if (ParseGenericTypeName(candidate, genericBase, genericArguments)) {
+                if (genericBase == "tuple" || genericBase == "func") {
+                    return genericBase == "func" ||
+                        std::any_of(genericArguments.begin(), genericArguments.end(),
+                            [&](const std::string& argument) { return self(self, argument); });
+                }
+                definitionName = genericBase;
+                const auto definition = types.find(definitionName);
+                if (definition != types.end() &&
+                    definition->second.genericParameters.size() == genericArguments.size()) {
+                    for (size_t index = 0; index < genericArguments.size(); ++index)
+                        substitutions.emplace(definition->second.genericParameters[index],
+                            genericArguments[index]);
+                }
+            }
+            if (!visiting.insert(definitionName).second) return false;
+            const auto release = [&] { visiting.erase(definitionName); };
+            const auto found = types.find(definitionName);
+            if (found == types.end() || (found->second.kind != TypeKind::Class &&
+                found->second.kind != TypeKind::Struct)) {
+                release();
+                return false;
+            }
+            for (const auto& [memberName, overloads] : found->second.members) {
+                if (memberName == "destroy") {
+                    release();
+                    return true;
+                }
+                for (const MemberSignature& member : overloads) {
+                    if (member.isStatic || (member.kind != SymbolKind::Field &&
+                        member.kind != SymbolKind::Property)) continue;
+                    if (self(self, SubstituteGenericType(member.type, substitutions))) {
+                        release();
+                        return true;
+                    }
+                }
+            }
+            for (const std::string& parent : found->second.parents) {
+                if (self(self, SubstituteGenericType(parent, substitutions))) {
+                    release();
+                    return true;
+                }
+            }
+            release();
+            return false;
+        };
+        return inspect(inspect, name);
+    }
+
+    bool Analyzer::OwnsUniqueResourceByParts(const std::string& name) const {
         std::unordered_set<std::string> visiting;
         const auto inspect = [&](const auto& self, const std::string& candidate) -> bool {
             if (IsStrongManagedPointerType(candidate) || ArrayRank(candidate) > 0) return true;
@@ -798,30 +1465,52 @@ namespace Absolute {
                 }
                 definitionName = genericBase;
             }
-            if (!visiting.insert(definitionName).second) return false;
-            const auto release = [&] { visiting.erase(definitionName); };
+            // Keyed on the full name rather than the bare base, so
+            // `Cell<Cell<Node*>>` is not mistaken for a cycle in itself.
+            if (!visiting.insert(candidate).second) return false;
+            const auto release = [&] { visiting.erase(candidate); };
             const auto found = types.find(definitionName);
             if (found == types.end() || (found->second.kind != TypeKind::Class &&
                 found->second.kind != TypeKind::Struct)) {
                 release();
                 return false;
             }
+            // A generic's members are declared in terms of its parameters, so
+            // walking them unsubstituted asks about `T` and gets the answer for
+            // a name nothing is known about. That made `Cell<Node*>` a type
+            // that owns nothing, invisible to every ownership rule here --
+            // while the backend, which substitutes, destroyed its owner. The
+            // two disagreeing that way is not a leak: the callee destroyed
+            // what it returned and the caller read a handle to it.
+            std::unordered_map<std::string, std::string> substitutions;
+            if (!genericArguments.empty() &&
+                found->second.genericParameters.size() == genericArguments.size())
+                for (size_t index = 0; index < genericArguments.size(); ++index)
+                    substitutions.emplace(
+                        found->second.genericParameters[index], genericArguments[index]);
+            const auto asWritten = [&](const std::string& type) {
+                return substitutions.empty()
+                    ? type : SubstituteGenericType(type, substitutions);
+            };
             for (const auto& [memberName, overloads] : found->second.members) {
-                if (memberName == "destroy()") {
+                // Members are keyed by their bare name, so "destroy()" never
+                // matched and a type whose only resource was its own destroy()
+                // hook was treated as owning nothing.
+                if (memberName == "destroy") {
                     release();
                     return true;
                 }
                 for (const MemberSignature& member : overloads) {
                     if (member.isStatic || (member.kind != SymbolKind::Field &&
                         member.kind != SymbolKind::Property)) continue;
-                    if (self(self, member.type)) {
+                    if (self(self, asWritten(member.type))) {
                         release();
                         return true;
                     }
                 }
             }
             for (const std::string& parent : found->second.parents) {
-                if (self(self, parent)) {
+                if (self(self, asWritten(parent))) {
                     release();
                     return true;
                 }
@@ -844,6 +1533,76 @@ namespace Absolute {
             return descriptor->canCrossIsolateBoundary();
         const auto found = types.find(name);
         return found != types.end() && found->second.kind == TypeKind::Enum;
+    }
+
+    bool Analyzer::IsEnumType(const std::string& name) const {
+        const auto found = types.find(name);
+        return found != types.end() && found->second.kind == TypeKind::Enum;
+    }
+
+    void Analyzer::CollectAncestors(
+        const std::string& type, std::vector<std::string>& into) const {
+        if (type.empty() || type == "error") return;
+        if (std::find(into.begin(), into.end(), type) != into.end()) return;
+        into.push_back(type);
+        std::string definitionName = type;
+        std::unordered_map<std::string, std::string> substitutions;
+        std::string genericBase;
+        std::vector<std::string> genericArguments;
+        if (ParseGenericTypeName(type, genericBase, genericArguments)) {
+            definitionName = genericBase;
+            const auto definition = types.find(definitionName);
+            if (definition != types.end() &&
+                definition->second.genericParameters.size() == genericArguments.size()) {
+                for (size_t index = 0; index < genericArguments.size(); ++index)
+                    substitutions.emplace(definition->second.genericParameters[index],
+                        genericArguments[index]);
+            }
+        }
+        const auto found = types.find(definitionName);
+        if (found == types.end()) return;
+        for (const std::string& declaredParent : found->second.parents)
+            CollectAncestors(SubstituteGenericType(declaredParent, substitutions), into);
+    }
+
+    // The least upper bound: of every type both sides can be seen as, the one
+    // furthest down the hierarchy. Two interfaces that neither extends is the
+    // case with no least one, and it is reported rather than picked from.
+    std::string Analyzer::CommonPointerType(
+        const std::string& left, const std::string& right, bool& ambiguous) const {
+        ambiguous = false;
+        if (!IsPointerType(left) || !IsPointerType(right)) return {};
+        const OwnershipKind kind = CanonicalOwnership(left);
+        if (kind == OwnershipKind::None || CanonicalOwnership(right) != kind) return {};
+        if (IsAssignable(left, right)) return left;
+        if (IsAssignable(right, left)) return right;
+
+        std::vector<std::string> ancestors;
+        CollectAncestors(PointerPointee(left), ancestors);
+        std::vector<std::string> shared;
+        for (const std::string& ancestor : ancestors)
+            if (IsDerivedFrom(PointerPointee(right), ancestor))
+                shared.push_back(ancestor);
+        if (shared.empty()) return {};
+
+        std::string best;
+        for (const std::string& candidate : shared) {
+            const bool least = std::all_of(shared.begin(), shared.end(),
+                [&](const std::string& other) {
+                    return other == candidate || IsDerivedFrom(candidate, other);
+                });
+            if (!least) continue;
+            if (!best.empty() && best != candidate) {
+                ambiguous = true;
+                return {};
+            }
+            best = candidate;
+        }
+        if (best.empty()) {
+            ambiguous = true;
+            return {};
+        }
+        return CanonicalPointerName(best, kind);
     }
 
     bool Analyzer::IsDerivedFrom(const std::string& type, const std::string& base) const {
@@ -934,7 +1693,18 @@ namespace Absolute {
         if (!IsNumeric(left) || !IsNumeric(right)) return "error";
         if (left == "double" || right == "double") return "double";
         if (left == "float" || right == "float") return "float";
-        if (left == "int64" || right == "int64" || left == "uint64" || right == "uint64") return "int64";
+        // Unsignedness has to survive here, not just in CodeGen. The result
+        // type is what a later cast widens from, so collapsing uint32 to int32
+        // made `(unsignedValue / 1) as int64` sign-extend and produce -1 where
+        // the same value read through a variable produced 4294967295.
+        //
+        // The ladder follows which type can represent the other. int64 covers
+        // every uint32, so mixing them stays signed; nothing signed covers
+        // uint64, so mixing with it goes unsigned; at equal rank the unsigned
+        // side wins.
+        if (left == "uint64" || right == "uint64") return "uint64";
+        if (left == "int64" || right == "int64") return "int64";
+        if (left == "uint32" || right == "uint32") return "uint32";
         return "int32";
     }
 
@@ -967,7 +1737,7 @@ namespace Absolute {
             Report("value-reference parameter '" + name + "' of '" + callable +
                 "' requires a concrete struct type", "E_VALUE_REF_TYPE");
         }
-        else if (TypeOwnsResources(type)) {
+        else if (TypeOwnsUniqueResource(type)) {
             Report("value-reference parameter '" + name + "' cannot borrow resource-owning type '" +
                 type + "'", "E_VALUE_REF_RESOURCES");
         }
@@ -980,6 +1750,52 @@ namespace Absolute {
         if (cAbi)
             Report("C ABI callable '" + callable + "' cannot declare Absolute value references",
                 "E_VALUE_REF_C_ABI");
+    }
+
+    Analyzer::Result Analyzer::AccessorValue(
+        SymbolId symbol, const std::string& type, bool isLValue) const {
+        Result value{symbol, type, isLValue};
+        value.createsManagedOwner = IsStrongManagedPointerType(type);
+        value.initialization = InitializationState::Initialized;
+        value.pointerValidity = IsPointerType(type)
+            ? PointerValidity::Unknown : PointerValidity::NotPointer;
+        return value;
+    }
+
+    void Analyzer::NoteBorrowBoundAsOwner(const std::string& target,
+        const std::string& source, const std::string& detail,
+        const ASTNode* node) {
+        if (CanonicalOpenOwnership(source) != OwnershipKind::Sub) return;
+        if (CanonicalOpenBaseName(source) != target) return;
+        RecordGenericBodyFact(GenericBodyFact::Shape::BorrowsAsOwner,
+            target, detail, node);
+    }
+
+    std::string Analyzer::CallableReturnType(FunctionDeclStmt& statement) {
+        std::string type = ResolveType(statement.returnType.get());
+        if (statement.propertyAccessor != PropertyAccessorKind::Getter ||
+            statement.propertyName != "this")
+            return type;
+        type = IndexerBorrowProjection(type);
+        expressionInfo[statement.returnType.get()].type = type;
+        return type;
+    }
+
+    std::string Analyzer::IndexerBorrowProjection(const std::string& type) const {
+        // A handle that owns becomes a handle that borrows. `sub`, `weak` and
+        // `raw` are left alone: none of them owns, so there is nothing to
+        // weaken, and rewriting `weak T*` to `sub T*` would say something
+        // different about the object's lifetime than the author wrote.
+        if (CanonicalOwnership(type) == OwnershipKind::Unique)
+            return CanonicalWithOwnership(type, OwnershipKind::Sub);
+        // A generic parameter with nothing applied to it yet. The qualifier is
+        // kept as written and answered at instantiation, which is the only
+        // moment it can be: `sub T` at `T = Node*` is `sub Node*`, and at
+        // `T = int32` it is `int32`.
+        if (CanonicalOpenOwnership(type) == OwnershipKind::None &&
+            IsOpenGenericParameter(type))
+            return "sub " + type;
+        return type;
     }
 
     void Analyzer::ValidateCAbiType(const std::string& type, const std::string& where,
@@ -1025,7 +1841,7 @@ namespace Absolute {
         if (type == "bool" || type == "string" || type == "char" ||
             type == "float" || type == "double")
             return;
-        if (type.starts_with("int") || type.starts_with("uint")) return;
+        if (IsIntegerTypeName(type)) return;
 
         const auto found = types.find(type);
         if (found != types.end()) {
@@ -1065,6 +1881,28 @@ namespace Absolute {
             Report("entry function 'main' cannot be exported", "E_EXPORT_MAIN");
         if (name == "main" && functionOverloads.contains(name))
             Report("entry function 'main' cannot be overloaded", "E_MAIN_OVERLOAD");
+        // The entry point is the C `main`, which is called with (argc, argv).
+        // A declared parameter was accepted and then built out of whatever the
+        // registers happened to hold: `main(string[] args)` read `args.length`
+        // as 913878280 and crashed on `args[1]` about half the time, differing
+        // from run to run. Arguments have their own way in, so the declaration
+        // is refused rather than given a second, quieter one.
+        if (name == "main" && !statement.parameters.empty())
+            Report("entry function 'main' takes no parameters; read command-line "
+                "arguments with std.env.args()", "E_MAIN_PARAMETERS");
+        // What `main` returns is a process exit status, and a status is an
+        // int32 everywhere it goes: the C `main` returns one, the wasm host
+        // reads one back. Any other width was accepted and then had to be
+        // made to fit -- truncated natively, and handed to JavaScript as a
+        // BigInt that the host could not use as a status at all, so the same
+        // program exited 0 natively and 1 on wasm. `void` stays: it says the
+        // program has no status of its own to report, which is a real thing
+        // to say and is what most of the corpus says.
+        if (name == "main" && returnType != "int32" && returnType != "void" &&
+            returnType != "error")
+            Report("entry function 'main' returns a process exit status, which "
+                "is 'int32'; declare it 'int32' or 'void', not '" + returnType + "'",
+                "E_MAIN_RETURN_TYPE");
         if (statement.IsExternal() && functionOverloads.contains(name) &&
             std::any_of(functionOverloads[name].begin(), functionOverloads[name].end(), [&](SymbolId id) {
                 const Symbol* existing = table.Get(id);
@@ -1088,7 +1926,8 @@ namespace Absolute {
             Report("export function '" + name + "' cannot be overloaded", "E_EXPORT_OVERLOAD");
         const auto declared = table.Declare(SymbolKind::Function, name,
             returnType, ResolveParameterTypes(statement.parameters));
-        if (!declared) Report("function '" + name + "' already has an overload with this signature");
+        if (!declared) Report("function '" + name + "' already has an overload with this signature",
+            "E_DUPLICATE_OVERLOAD");
         else if (Symbol* symbol = table.Get(*declared)) {
             symbol->asyncFunction = HasModifier(statement, "async");
             symbol->extensionFunction = HasModifier(statement, "extension");
@@ -1099,6 +1938,7 @@ namespace Absolute {
                 statement.parameters.back()->isParams;
             for (const Token& parameter : statement.templateParams)
                 symbol->genericParameters.push_back(parameter.value);
+            RecordParameterDefaults(*symbol, statement.parameters);
             functionOverloads[name].push_back(*declared);
             functionDeclarations[*declared] = &statement;
             if (symbol->extensionFunction)
@@ -1113,7 +1953,7 @@ namespace Absolute {
         for (const Token& parameter : statement.templateParams)
             genericScope.emplace(parameter.value, parameter.value);
         if (!genericScope.empty()) genericTypeScopes.push_back(genericScope);
-        const std::string returnType = ResolveType(statement.returnType.get());
+        const std::string returnType = CallableReturnType(statement);
         const bool asyncFunction = HasModifier(statement, "async");
         const bool constMethod = HasModifier(statement, "const");
         const bool staticMethod = HasModifier(statement, "static");
@@ -1190,7 +2030,8 @@ namespace Absolute {
             Report("static members of generic types are not implemented yet",
                 "E_STATIC_GENERIC_UNSUPPORTED");
         if (!IsKnownType(returnType))
-            Report("unknown return type '" + returnType + "' of function '" + statement.name->value + "'");
+            Report("unknown return type '" + returnType + "' of function '" + statement.name->value + "'",
+                "E_UNKNOWN_RETURN_TYPE");
         if (asyncFunction && !IsAsyncTaskValueType(returnType))
             ReportAt(statement.name.get(),
                 "async function '" + statement.name->value + "' cannot return '" +
@@ -1198,7 +2039,7 @@ namespace Absolute {
                 "E_ASYNC_RESULT_LIFETIME");
 
         if (statement.IsExternal() && kind == SymbolKind::Method)
-            Report("extern functions cannot be class or struct members");
+            Report("extern functions cannot be class or struct members", "E_EXTERN_MEMBER");
         if (statement.IsExported() && kind == SymbolKind::Method)
             Report("export functions cannot be class or struct members", "E_EXPORT_MEMBER");
         if (HasModifier(statement, "extension") && kind != SymbolKind::Function)
@@ -1253,7 +2094,7 @@ namespace Absolute {
                 Report("params is not supported on async functions",
                     "E_PARAMS_ASYNC");
             if (ArrayRank(parameterType) == 1 &&
-                TypeOwnsResources(ArrayElementType(parameterType)))
+                TypeOwnsUniqueResource(ArrayElementType(parameterType)))
                 Report("params element type cannot own resources",
                     "E_PARAMS_RESOURCE_ELEMENT");
             PopDiagnosticNode();
@@ -1302,6 +2143,7 @@ namespace Absolute {
                 });
             }
         }
+        bool sawDefaultParameter = false;
         for (size_t parameterIndex = 0;
             parameterIndex < statement.parameters.size(); ++parameterIndex) {
             const auto& parameter = statement.parameters[parameterIndex];
@@ -1309,6 +2151,7 @@ namespace Absolute {
             PushDiagnosticNode(parameter.get());
             const std::string name = ExtractIdentifier(parameter->name.get());
             std::string type = ResolveDeclaredType(*parameter);
+            CheckInterfaceValueType(type, "parameter '" + name + "'");
             ValidateValueReferenceParameter(*parameter, type,
                 statement.name->value, asyncFunction, statement.UsesCAbi());
             if (asyncFunction && !IsAsyncTaskValueType(type))
@@ -1318,8 +2161,30 @@ namespace Absolute {
                     "E_ASYNC_CAPTURE_LIFETIME");
             if (statement.UsesCAbi())
                 ValidateCAbiType(type, "C ABI parameter '" + name + "'", false);
+            // A default is a constant, the same restriction a static field's
+            // initializer already carries: evaluating it at a call site then
+            // means the same thing as evaluating it at the declaration, and
+            // nothing about the callee's frame can leak into the caller's.
+            if (parameter->value) {
+                if (!IsConstantDefaultArgument(parameter->value.get()))
+                    ReportAt(parameter->value.get(),
+                        "default value for '" + name + "' must be a constant",
+                        "E_DEFAULT_ARGUMENT_NOT_CONSTANT");
+                if (parameter->isReference)
+                    ReportAt(parameter->value.get(),
+                        "reference parameter '" + name + "' cannot have a default value",
+                        "E_DEFAULT_ARGUMENT_REFERENCE");
+                sawDefaultParameter = true;
+            }
+            // Trailing, because a call fills the missing ones in from the end.
+            else if (sawDefaultParameter)
+                ReportAt(parameter->name.get(),
+                    "parameter '" + name + "' has no default value but follows "
+                    "one that does",
+                    "E_DEFAULT_ARGUMENT_ORDER");
             SymbolId parameterId = InvalidSymbolId;
-            if (name.empty()) Report("function parameter requires an identifier");
+            if (name.empty()) Report("function parameter requires an identifier",
+                "E_PARAMETER_REQUIRES_IDENTIFIER");
             else if (const auto declared = table.Declare(SymbolKind::Parameter, name, type)) {
                 parameterId = *declared;
                 if (Symbol* symbol = table.Get(parameterId)) {
@@ -1340,7 +2205,13 @@ namespace Absolute {
                         symbol->ownsArrayStorage = symbol->rolePolymorphic;
                 }
             }
-            else Report("parameter '" + name + "' is already declared");
+            else Report("parameter '" + name + "' is already declared",
+                "E_DUPLICATE_PARAMETER");
+            // Record the declaration so code generation can map the parameter
+            // back to its symbol. A lambda capture names that symbol, and
+            // without this the capture cannot be resolved to its storage.
+            if (parameterId != InvalidSymbolId)
+                Save(parameter.get(), {parameterId, type, true});
         RegisterFlowSymbol(parameterId, {
                 InitializationState::Initialized,
                 IsPointerType(type) ? PointerValidity::Unknown : PointerValidity::NotPointer,
@@ -1350,7 +2221,8 @@ namespace Absolute {
             if (parameter->value) {
                 const Result value = Evaluate(parameter->value.get());
                 if (!IsAssignable(type, value.type))
-                    Report("default value of parameter '" + name + "' has type '" + value.type + "', expected '" + type + "'");
+                    Report("default value of parameter '" + name + "' has type '" + value.type + "', expected '" + type + "'",
+                        "E_DEFAULT_VALUE_TYPE");
             }
             PopDiagnosticNode();
         }
@@ -1379,14 +2251,15 @@ namespace Absolute {
     void Analyzer::DeclareType(const std::string& name, TypeKind kind) {
         const std::string qualifiedName = Qualify(name);
         if (types.contains(qualifiedName)) {
-            Report("type '" + qualifiedName + "' is already declared");
+            Report("type '" + qualifiedName + "' is already declared", "E_DUPLICATE_TYPE");
             return;
         }
         TypeDefinition definition;
         definition.kind = kind;
         types.emplace(qualifiedName, std::move(definition));
         if (!table.Declare(SymbolKind::Type, qualifiedName, qualifiedName))
-            Report("object '" + qualifiedName + "' is already declared in this scope");
+            Report("object '" + qualifiedName + "' is already declared in this scope",
+                "E_DUPLICATE_DECLARATION");
     }
 
     void Analyzer::DeclareMember(const std::string& owner, std::string name, MemberSignature signature) {
@@ -1399,13 +2272,15 @@ namespace Absolute {
                 existing.parameterTypes == signature.parameterTypes;
         });
         if (collision) {
-            Report("member '" + owner + "." + name + "' already has this signature");
+            Report("member '" + owner + "." + name + "' already has this signature",
+                "E_DUPLICATE_MEMBER_SIGNATURE");
             return;
         }
         const auto declared = table.Declare(signature.kind, owner + "." + name,
             signature.type, signature.parameterTypes);
         if (!declared) {
-            Report("member '" + owner + "." + name + "' already has this signature");
+            Report("member '" + owner + "." + name + "' already has this signature",
+                "E_DUPLICATE_MEMBER_SIGNATURE");
             return;
         }
         signature.symbol = *declared;
@@ -1654,8 +2529,15 @@ namespace Absolute {
             std::vector<std::string> parameters = candidate.parameterTypes;
             for (std::string& parameter : parameters)
                 parameter = SubstituteGenericType(parameter, substitutions);
-            if (parameters.size() != arguments.size()) continue;
-            int cost = 0;
+            // The same rule a call gets: the trailing parameters that have
+            // defaults may be left out.
+            const Symbol* declared = table.Get(candidate.symbol);
+            const size_t defaulted = declared ? declared->defaultedParameters : 0;
+            if (arguments.size() > parameters.size() ||
+                arguments.size() + defaulted < parameters.size()) continue;
+            // One point per argument the call did not write, so a constructor
+            // that takes exactly what was passed wins.
+            int cost = static_cast<int>(parameters.size() - arguments.size());
             bool applicable = true;
             for (size_t index = 0; index < arguments.size(); ++index) {
                 const std::string expected = ValueReferenceBaseType(parameters[index]);
@@ -1864,7 +2746,12 @@ namespace Absolute {
             const bool variadic = candidate->variadicParameter;
             const size_t fixedCount = variadic && !candidate->parameterTypes.empty()
                 ? candidate->parameterTypes.size() - 1 : candidate->parameterTypes.size();
-            if ((!variadic && candidate->parameterTypes.size() != arguments.size()) ||
+            // A call may leave out the trailing parameters that have
+            // defaults; the backend fills them in from the declaration.
+            const size_t requiredCount =
+                candidate->parameterTypes.size() - candidate->defaultedParameters;
+            if ((!variadic && (arguments.size() < requiredCount ||
+                    arguments.size() > candidate->parameterTypes.size())) ||
                 (variadic && arguments.size() < fixedCount)) continue;
             std::vector<std::string> concreteParameters = candidate->parameterTypes;
             std::vector<std::string> inferredArguments;
@@ -1877,7 +2764,12 @@ namespace Absolute {
                 for (size_t index = 0; index < explicitTypeArguments.size(); ++index)
                     substitutions.emplace(candidate->genericParameters[index], explicitTypeArguments[index]);
                 bool unified = true;
-                for (size_t index = 0; index < arguments.size(); ++index) {
+                // Explicit type arguments already bind every generic parameter, so
+                // unifying them against the argument types would demand an exact
+                // match and reject the implicit conversions an ordinary call
+                // accepts. Leave that judgement to ConversionCost below.
+                for (size_t index = 0;
+                    explicitTypeArguments.empty() && index < arguments.size(); ++index) {
                     std::string pattern;
                     if (!variadic || index < fixedCount) {
                         pattern = ValueReferenceBaseType(candidate->parameterTypes[index]);
@@ -1928,10 +2820,16 @@ namespace Absolute {
                     parameter = SubstituteGenericType(parameter, substitutions);
             }
             else if (!explicitTypeArguments.empty()) continue;
-            if (variadic && TypeOwnsResources(ArrayElementType(
+            if (variadic && TypeOwnsUniqueResource(ArrayElementType(
                 ValueReferenceBaseType(concreteParameters.back()))))
                 continue;
+            // One point per argument the call did not write, so an overload
+            // that takes exactly what was passed wins over one that fills the
+            // rest in.
             int cost = variadic ? 1 : 0;
+            if (!variadic)
+                cost += static_cast<int>(
+                    candidate->parameterTypes.size() - arguments.size());
             bool applicable = true;
             const bool directVariadicArray = variadic &&
                 arguments.size() == concreteParameters.size() &&
@@ -2013,10 +2911,10 @@ namespace Absolute {
     std::string Analyzer::ResolveTypeReference(const std::string& name) {
         if (name.ends_with("[]"))
             return ResolveTypeReference(name.substr(0, name.size() - 2)) + "[]";
-        if (IsPointerType(name)) {
-            const std::string prefix = IsRawPointerType(name) ? "raw " :
-                (IsWeakPointerType(name) ? "weak " : "");
-            return prefix + ResolveTypeReference(PointerPointee(name)) + "*";
+        if (const OwnershipKind kind = CanonicalOwnership(name);
+            kind != OwnershipKind::None) {
+            return CanonicalPointerName(
+                ResolveTypeReference(CanonicalPointeeName(name)), kind);
         }
         for (auto scope = genericTypeScopes.rbegin(); scope != genericTypeScopes.rend(); ++scope)
             if (const auto found = scope->find(name); found != scope->end()) return found->second;
@@ -2063,10 +2961,40 @@ namespace Absolute {
                 });
             const bool inserted = instantiatedGenericTypes.insert(result).second;
             if (inserted && !open) {
+                // What the type asked of its parameters, asked here rather
+                // than left to the body. A body that cannot serve an argument
+                // says so in every line that touches it -- six of them for a
+                // builder, each naming a private field -- and none of them is
+                // the line the program wrote. This is that line.
+                for (size_t index = 0; index < genericArguments.size() &&
+                    index < definition->second.genericConstraints.size(); ++index) {
+                    const std::string& requirement =
+                        definition->second.genericConstraints[index];
+                    if (requirement.empty()) continue;
+                    const std::string& argument = genericArguments[index];
+                    if (argument == "error" || argument == "auto") continue;
+                    if (requirement == "copyable" &&
+                        !SemanticsOfType(argument).copyable) {
+                        unmetConstraintInstantiations.insert(result);
+                        Report("generic type '" + resolvedBase +
+                            "' requires a copyable '" +
+                            definition->second.genericParameters[index] +
+                            "', and '" + argument + "' owns a resource there "
+                            "is one of, so a second name for it is not an "
+                            "ordinary thing to have; borrow it with 'sub', or "
+                            "hand it over with move(...)",
+                            "E_GENERIC_CONSTRAINT");
+                    }
+                }
                 std::unordered_map<std::string, std::string> substitutions;
                 for (size_t index = 0; index < genericArguments.size(); ++index)
                     substitutions.emplace(
                         definition->second.genericParameters[index], genericArguments[index]);
+                // The facts are checked once the whole program has been
+                // analyzed, not here: a body declared after the instantiation
+                // that reaches it -- in a later file, or lower in this one --
+                // has not been seen yet, and checking now would silently find
+                // nothing to say about it.
                 for (const std::string& parent : definition->second.parents)
                     ResolveTypeReference(SubstituteGenericType(parent, substitutions));
                 for (const auto& [memberName, overloads] : definition->second.members) {
@@ -2186,6 +3114,30 @@ namespace Absolute {
         Expression* expression, const Result& target, const std::string& operation) {
         if (IsConstMutationTarget(expression, target))
             Report(operation + " cannot modify a const value", "E_CONST_MUTATION", target.symbol);
+
+        // Writing to a field of something that is not a place. Reading one is
+        // ordinary -- `pair.key`, `config().timeout` -- and the backend copies
+        // the value into a temporary to do it, but a write would land in that
+        // copy and be lost. The backend refuses it as "a property is not
+        // addressable", which names the mechanism rather than the rule, and
+        // without a file or a line.
+        for (Expression* current = expression; current;) {
+            Expression* base = nullptr;
+            if (auto* member = dynamic_cast<MemberAccessExpr*>(current)) base = member->base.get();
+            else if (auto* array = dynamic_cast<ArrayAccessExpr*>(current)) base = array->base.get();
+            else break;
+            if (!base) break;
+            const ExpressionInfo* info = GetExpressionInfo(*base);
+            if (info && !info->placeInfo.addressable && !IsPointerType(info->type) &&
+                ArrayRank(info->type) == 0) {
+                Report(operation + " cannot write through '" + info->type +
+                    "', which is a copy rather than a place; assign it to a variable, "
+                    "change it there, and store it back",
+                    "E_WRITE_THROUGH_COPY", target.symbol);
+                break;
+            }
+            current = base;
+        }
     }
 
 }

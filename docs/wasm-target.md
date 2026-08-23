@@ -31,12 +31,26 @@ absolutec tests\wasm-export-only.abs --target wasm32-unknown-unknown --build-exe
 | Mode | Result |
 |------|--------|
 | `--target wasm32-... --sanitize=address` | Error |
+| `--target wasm32-... --sanitize=thread` | Error |
 | `--build-exe --target` for non-wasm triples | Error |
 | `load(.dll)` / desktop plugins on wasm | not available |
 | Full WASI sysroot / wasi-sdk libc | Not shipped |
 | pthread / wasi-threads ABI and TLS | Not available; use Absolute task workers |
 | `std.process.run`, dynamic libraries, UDP | Not available in sandboxed wasm |
 | Blocking `std.time.sleep` in a reactor | Cooperative no-op; schedule in the host |
+| Blocking channel send/receive | Non-blocking; see below |
+| Standard input (`getchar`, `fgetc`, `getc`) | Always end-of-input (-1) |
+
+### Channels do not block here
+
+A wasm instance cannot synchronously wait for another worker instance, so
+`absolute_channel_send` never waits for room and `absolute_channel_receive`
+never waits for a value. A send to a full channel reports failure; a receive
+from an empty one yields zero, which a program cannot tell from a real zero.
+Use `absolute_channel_receive_checked`, which reports whether a value was taken,
+whenever the distinction matters -- and expect a producer/consumer program
+written against the native blocking semantics to lose messages here rather than
+to wait for them.
 
 ## Runtime and linking
 
@@ -210,6 +224,25 @@ Link against `absolute_wasm_runtime_wasi.o` (no custom `env.*` Absolute host):
 | `args_sizes_get` / `args_get` | `absolute_process_args_*` |
 | `environ_*` | seed for `absolute_env_*` (table capped) |
 | `proc_exit` | `absolute_process_exit` / abort |
+
+`std.fs.normalize` and the path helpers around it read a backslash differently
+on the two targets, and a program that normalizes a Windows-shaped path gets
+different answers: `normalize("tmp\\assets\\..\\hello.txt")` is
+`tmp/hello.txt` on wasm, where the virtual filesystem accepts either separator,
+and `tmp\assets\..\hello.txt` on Linux, where a backslash is an ordinary
+character in a file name and collapsing it would rename the file being asked
+about. Both are right for the filesystem underneath them; a program that must
+agree everywhere should use `/` or ask `std.fs.join` to build the path.
+
+A failing runtime check ends differently on the two targets, and a host has to
+know which it is looking at. Natively the check prints its message and calls
+`exit(1)`. On wasm the shim's `exit` is `__builtin_trap()`, because a module
+cannot hand an exit code back through a trap: the host sees
+`RuntimeError: unreachable`, and the message the check printed is in the
+captured log, written before the trap. A host that reports the error without
+first flushing what the module logged loses the only part that says what
+happened -- which is what `tools/testing/suite_differential.py` had to fix in
+its own runner before the WebAssembly comparison meant anything.
 
 How to build:
 

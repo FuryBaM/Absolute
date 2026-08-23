@@ -1,0 +1,76 @@
+// A subscriber names something someone else owns.
+//
+// `weak T*` already refused to be given a fresh allocation
+// (E_WEAK_REQUIRES_EXISTING_OWNER): nothing would ever release it, because a
+// weak name releases nothing by definition. `sub T*` says the same thing about
+// ownership and refused nothing, so
+//
+//     class Tree { public sub Node* root; }
+//     tree.root = new Node();
+//
+// compiled, ran, and printed "memory leak detected for handle N" at exit --
+// the runtime's own check, on a program the analyzer had accepted.
+//
+// An argument is the third place a value is bound to a name, and it refused
+// nothing for either qualifier: `takesSub(new Node())` and
+// `takesWeak(new Node())` both compiled and both leaked. A return is the
+// fourth, and the subscriber form was not refused there either -- neither
+// handing back a fresh allocation, which nobody then owns, nor handing back a
+// name for an owner that dies with the frame, which leaves the caller naming
+// storage that is already gone. Returning a *field* stays legal: its owner is
+// the object, not the frame, and `sub T*` on a getter is how a borrow is
+// handed out.
+//
+// The positive cases are in tests/subscriber-pointers.abs: binding a
+// subscriber to an owner that exists is what the qualifier is for, and `T* b =
+// a;` still takes a subscriber without saying so.
+
+class Node {
+    public int32 value;
+    public Node(int32 initial) { value = initial; }
+}
+
+class Tree {
+    public sub Node* root;
+    public Tree() { root = null; }
+}
+
+// A return is the fourth place a value is bound to a name. The weak form was
+// refused (E_WEAK_RETURN_LOCAL_OWNER); the subscriber form was not.
+sub Node* freshSub() { return new Node(7); }
+
+sub Node* localOwner() {
+    Node* owned = new Node(8);
+    return owned;
+}
+
+int32 reads(sub Node* borrowed) { return borrowed.value; }
+int32 watches(weak Node* borrowed) { return borrowed.value; }
+
+class Wrapper {
+    public sub Node* held;
+    public Wrapper(sub Node* given) { held = given; }
+}
+
+int32 main() {
+    // A declaration.
+    sub Node* fresh = new Node(1);
+
+    // A field.
+    Tree* tree = new Tree();
+    tree.root = new Node(2);
+
+    // An argument -- the third place a value is bound to a name, and the one
+    // that refused nothing for either qualifier.
+    int32 total = reads(new Node(4));
+    total = total + watches(new Node(5));
+    Wrapper* wrapper = new Wrapper(new Node(6));
+
+    // The weak forms, which the first two places have always refused, so all
+    // of them read alike.
+    weak Node* watched = new Node(3);
+
+    total = total + freshSub().value + localOwner().value;
+
+    return fresh.value + tree.root.value + watched.value + total + wrapper.held.value;
+}

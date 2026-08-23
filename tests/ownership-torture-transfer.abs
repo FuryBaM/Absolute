@@ -1,0 +1,178 @@
+// P4 ownership torture: transferring an owner.
+//
+// Covers move(owner) through return values, parameters, fields, generic
+// wrappers and interface dispatch, and — the case with the most room for a leak
+// — a throw that lands after ownership has already been taken but before the
+// operation that took it completed. At that moment the source has been
+// invalidated and the destination does not exist yet, so the only code that can
+// still release the resource is the frame the exception is leaving.
+//
+// Live objects are counted through a raw int32 the caller owns, so a leak fails
+// an assertion here instead of waiting for a sanitizer.
+
+class Tracked {
+    public raw int32* live;
+    public int32 value;
+
+    public Tracked(raw int32* counter, int32 initial) {
+        live = counter;
+        value = initial;
+        *counter = *counter + 1;
+    }
+
+    public void destroy() {
+        if (live != null) {
+            *live = *live - 1;
+            live = null;
+        }
+    }
+}
+
+interface Emitter {
+    int32 emit();
+}
+
+class TrackedEmitter : Emitter {
+    public raw int32* live;
+    public int32 value;
+
+    public TrackedEmitter(raw int32* counter, int32 initial) {
+        live = counter;
+        value = initial;
+        *counter = *counter + 1;
+    }
+
+    public int32 emit() {
+        return value;
+    }
+
+    public void destroy() {
+        if (live != null) {
+            *live = *live - 1;
+            live = null;
+        }
+    }
+}
+
+class Holder {
+    public Tracked* item;
+
+    public Holder() {
+        item = null;
+    }
+}
+
+Tracked* produce(raw int32* counter, int32 initial) {
+    Tracked* fresh = new Tracked(counter, initial);
+    return move(fresh);
+}
+
+void consume(Tracked* owned) {
+    assert(isOwner(owned), "a moved argument arrives as an owner");
+    assert(owned.value >= 0, "the moved owner is still readable");
+}
+
+T* passThrough<T>(T* value) {
+    return move(value);
+}
+
+// Ownership has been taken, the source is invalidated, and nothing outside this
+// frame names the object yet.
+void takeThenThrow(Tracked* owned) {
+    assert(isOwner(owned), "ownership arrives before the throw");
+    throw new Error("fails after taking ownership");
+}
+
+int32 transfersThroughReturn() {
+    int32 live = 0;
+    raw int32* place = &live;
+    {
+        Tracked* owner = produce(place, 1);
+        assert(live == 1, "the produced owner is live");
+        assert(owner.value == 1, "the returned owner carries its value");
+        delete owner;
+    }
+    return live;
+}
+
+int32 transfersThroughParameter() {
+    int32 live = 0;
+    raw int32* place = &live;
+    {
+        Tracked* owner = new Tracked(place, 2);
+        consume(move(owner));
+    }
+    return live;
+}
+
+int32 transfersIntoField() {
+    int32 live = 0;
+    raw int32* place = &live;
+    {
+        Holder* holder = new Holder();
+        Tracked* owner = new Tracked(place, 3);
+        holder.item = move(owner);
+        assert(live == 1, "the field holds the only owner");
+        assert(holder.item.value == 3, "the field reads through to the pointee");
+        delete holder;
+    }
+    return live;
+}
+
+int32 transfersThroughGenericWrapper() {
+    int32 live = 0;
+    raw int32* place = &live;
+    {
+        Tracked* owner = new Tracked(place, 4);
+        Tracked* forwarded = passThrough<Tracked>(move(owner));
+        assert(forwarded.value == 4, "the generic wrapper preserves the pointee");
+        delete forwarded;
+    }
+    return live;
+}
+
+int32 releasesThroughInterfaceDispatch() {
+    int32 live = 0;
+    raw int32* place = &live;
+    {
+        TrackedEmitter* concrete = new TrackedEmitter(place, 5);
+        Emitter* dispatched = move(concrete);
+        assert(dispatched.emit() == 5, "interface dispatch reaches the override");
+        // Slot zero must reach the most-derived destructor, not the interface.
+        delete dispatched;
+        assert(live == 0, "deleting through an interface releases the object");
+    }
+    return live;
+}
+
+int32 releasesWhenTheTakerThrows() {
+    int32 live = 0;
+    raw int32* place = &live;
+    try {
+        Tracked* owner = new Tracked(place, 6);
+        takeThenThrow(move(owner));
+        assert(false, "the taker must not complete");
+    }
+    catch (Error* failure) {
+        assert(failure, "the failure is observable");
+    }
+    return live;
+}
+
+int32 main() {
+    assert(transfersThroughReturn() == 0,
+        "an owner returned by move is released by its new owner");
+    assert(transfersThroughParameter() == 0,
+        "an owner moved into a parameter is released by the callee");
+    assert(transfersIntoField() == 0,
+        "an owner moved into a field is released with its holder");
+    assert(transfersThroughGenericWrapper() == 0,
+        "an owner forwarded through a generic wrapper is released once");
+    assert(releasesThroughInterfaceDispatch() == 0,
+        "deleting through an interface runs the most-derived destructor");
+    assert(releasesWhenTheTakerThrows() == 0,
+        "a throw after ownership was taken still releases it");
+
+    println("ownership-torture-transfer=ok");
+    return 0;
+}

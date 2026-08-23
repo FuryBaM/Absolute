@@ -1,0 +1,52 @@
+// What a requirement refuses, and where it says so.
+//
+// The line numbers matter here in a way they usually do not: the whole point
+// is that the diagnostic belongs to the line that wrote the instantiation, not
+// to a line of the type's body. The positive half is in
+// tests/generic-constraints.abs.
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+}
+
+class Snapshot<copyable T> {
+    private T[] kept;
+    public Snapshot(int32 capacity) { kept = new T[capacity]; }
+}
+
+struct Boxed<copyable T> {
+    public T held;
+}
+
+// An aggregate that owns is refused for the same reason a handle that owns is:
+// copying it would make two of whatever it holds.
+class Holder {
+    public Cell* cell;
+    public Holder() { cell = new Cell(1); }
+}
+
+int32 main() {
+    // Met: a number, a string, a borrow, an observer.
+    Snapshot<int32>* numbers = new Snapshot<int32>(1);
+    Snapshot<string>* words = new Snapshot<string>(1);
+    Snapshot<sub Cell*>* views = new Snapshot<sub Cell*>(1);
+    Snapshot<weak Cell*>* watchers = new Snapshot<weak Cell*>(1);
+
+    // Refused: an owner.
+    Snapshot<Cell*>* owners = new Snapshot<Cell*>(1);
+
+    // Refused: an aggregate that owns one.
+    Snapshot<Holder>* holders = new Snapshot<Holder>(1);
+
+    // And a struct states it the same way.
+    Boxed<Cell*> boxed;
+
+    delete owners;
+    delete holders;
+    delete watchers;
+    delete views;
+    delete words;
+    delete numbers;
+    return boxed.held.value;
+}

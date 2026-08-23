@@ -1,0 +1,84 @@
+// The refusals that follow from an indexer being a projection.
+//
+// Each one used to be accepted, and each one was a leak or a second owner.
+// The positive half is in tests/indexer-borrow-projection.abs.
+
+class Node {
+    public int32 value;
+    public Node(int32 initial) { value = initial; }
+}
+
+class Factory {
+    private int32 seed;
+    public Factory(int32 given) { seed = given; }
+
+    // An indexer getter that builds an object. It compiled, and the object it
+    // built was owned by nobody: `source[0].value` printed the field and the
+    // runtime's own check printed "memory leak detected for handle N" at
+    // exit. A getter borrows the cell it projects onto, so there is nothing
+    // for this one to project onto and it is refused where it is written.
+    public Node* this[int32 offset] { get { return new Node(seed + offset); } }
+}
+
+class Cells {
+    private Node*[] items;
+    public Cells() {
+        items = new Node*[2];
+        items[0] = new Node(1);
+        items[1] = new Node(2);
+    }
+    public Node* this[int32 index] {
+        get { return items[index]; }
+        set { items[index] = move(value); }
+    }
+}
+
+class Slots<T> {
+    private T[] items;
+    public Slots(int32 capacity) { items = new T[capacity]; }
+    public T this[int32 index] {
+        get { return unsafeArrayGet(items, index); }
+        set { unsafeArraySet(items, index, move(value)); }
+    }
+    public void add(int32 index, T value) {
+        unsafeArraySet(items, index, move(value));
+    }
+
+    // A borrow bound to a name written with the parameter itself. Whether
+    // that is a second owner depends on what `T` becomes, which this body
+    // cannot know -- at `T = int32` the two are the same type and nothing is
+    // duplicated -- so the question is recorded here and asked at every
+    // instantiation.
+    public T first() {
+        T taken = this[0];
+        return taken;
+    }
+}
+
+int32 main() {
+    Cells* cells = new Cells();
+
+    // A name that owns, given a borrow. The container still holds the
+    // element, so this would be a second owner of one object.
+    Node* stolen = cells[0];
+
+    // And the same mistake spelled as a release.
+    delete cells[1];
+
+    // At `T = int32` the recorded question answers "nothing to duplicate" and
+    // this instantiation is silent.
+    Slots<int32>* numbers = new Slots<int32>(1);
+    numbers.add(0, 7);
+    int32 number = numbers.first();
+
+    // At `T = Node*` it answers the other way.
+    Slots<Node*>* owners = new Slots<Node*>(1);
+    owners.add(0, new Node(3));
+    Node* owned = owners.first();
+
+    delete owned;
+    delete owners;
+    delete numbers;
+    delete cells;
+    return number + stolen.value;
+}

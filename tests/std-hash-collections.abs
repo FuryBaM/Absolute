@@ -117,6 +117,60 @@ int32 main() {
     }
     assert(missingRejected, "hash map missing key throws");
 
+    // Probing masks the hash with capacity - 1, so a requested capacity that
+    // is not a power of two has to be rounded up, and negative hashes still
+    // have to land inside the table.
+    func<int64, int32> signedHash =
+        fn(int32 value) => (value as int64) * -2654435761;
+    std.collections.HashMap<int32, int32>* odd =
+        new std.collections.HashMap<int32, int32>(signedHash, intEquals, 7);
+    int32 key = -500;
+    while (key < 500) {
+        odd.put(key, key * 3);
+        key = key + 1;
+    }
+    assert(odd.count == 1000, "odd initial capacity holds every entry");
+    assert(odd.capacity >= 1000, "table grew past the rounded capacity");
+    int64 signedTotal = 0;
+    key = -500;
+    while (key < 500) {
+        assert(odd.containsKey(key), "negative hash finds its entry");
+        signedTotal = signedTotal + (odd[key] as int64);
+        key = key + 1;
+    }
+    assert(signedTotal == -1500, "every value survives a negative hash");
+
+    // A single probe now serves both the lookup and the insertion slot, so
+    // overwriting and reusing tombstones must still be exact.
+    key = -500;
+    while (key < 0) {
+        assert(odd.remove(key), "tombstone created");
+        key = key + 1;
+    }
+    assert(odd.count == 500, "removal count");
+    key = -500;
+    while (key < 0) {
+        odd.put(key, 7);
+        key = key + 1;
+    }
+    assert(odd.count == 1000, "reinserting reuses tombstones without duplicating");
+    key = -500;
+    while (key < 0) {
+        assert(odd[key] == 7, "reinserted value replaced the tombstone");
+        key = key + 1;
+    }
+
+    std.collections.HashSet<int32>* oddSet =
+        new std.collections.HashSet<int32>(signedHash, intEquals, 7);
+    key = -300;
+    while (key < 300) {
+        oddSet.add(key);
+        key = key + 1;
+    }
+    assert(oddSet.count == 600, "hash set with an odd initial capacity");
+    assert(oddSet.contains(-300) && oddSet.contains(299) && !oddSet.contains(300),
+        "hash set membership across a masked table");
+
     println("std-hash-collections=ok");
     return 0;
 }

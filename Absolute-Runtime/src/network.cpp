@@ -26,6 +26,10 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
+
+// Allocated behind a reference-counted header, like every other string the
+// language hands out; see Absolute-Runtime/src/string.cpp.
+extern "C" char* absolute_string_alloc(std::size_t bytes);
 #endif
 
 namespace {
@@ -284,8 +288,15 @@ namespace {
         // Name resolution remains the portable blocking part. The resulting
         // address list is consumed by the scheduler thread after this fiber is
         // resumed, while connect itself uses the native socket reactor.
-        return RunNetworkIo<addrinfo*>([&] {
-            return Resolve(host, port, false);
+        //
+        // The name is copied rather than borrowed. What runs here runs on
+        // another thread, and the caller's `const char*` belongs to a string
+        // whose lifetime the caller controls; borrowing it across that
+        // boundary was invisible only while a string was never released at
+        // all. A copy costs one allocation per connect and depends on nothing.
+        const std::string name = host ? host : "";
+        return RunNetworkIo<addrinfo*>([&name, port] {
+            return Resolve(name.c_str(), port, false);
         });
     }
 
@@ -583,8 +594,11 @@ extern "C" void* absolute_net_tcp_connect(const char* host, std::int32_t port) {
 
 extern "C" void* absolute_net_tcp_listen(
     const char* host, std::int32_t port, std::int32_t backlog) {
-    return RunNetworkIo<void*>([&]() -> void* {
-        addrinfo* addresses = Resolve(host, port, true);
+    // Copied for the same reason as in ResolveForConnect: the lambda runs on
+    // the I/O thread and the caller's string is the caller's to release.
+    const std::string name = host ? host : "";
+    return RunNetworkIo<void*>([&name, port, backlog]() -> void* {
+        addrinfo* addresses = Resolve(name.c_str(), port, true);
         if (!addresses) return nullptr;
         NativeSocket listener = InvalidSocket;
         for (addrinfo* address = addresses; address; address = address->ai_next) {
@@ -811,8 +825,8 @@ extern "C" const char* absolute_net_tcp_receive(
         lastNetworkError.clear();
         // Durable copy: callers may keep the string after the next
         // receive/close and after the I/O worker processes another request.
-        const std::size_t size = receiveBuffer.size() + 1;
-        char* durable = static_cast<char*>(std::malloc(size));
+        const std::size_t size = receiveBuffer.size();
+        char* durable = absolute_string_alloc(size);
         if (!durable) {
             lastNetworkError = "receive allocation failed";
             return nullptr;
@@ -900,7 +914,9 @@ extern "C" void absolute_net_tcp_close(void* handle) {
 }
 
 extern "C" const char* absolute_net_resolve_host(const char* hostname) {
-    return RunNetworkIo<const char*>([&]() -> const char* {
+    const std::string name = hostname ? hostname : "";
+    return RunNetworkIo<const char*>([&name]() -> const char* {
+        const char* hostname = name.empty() ? nullptr : name.c_str();
         if (!EnsureSockets() || !hostname || !*hostname) {
             lastNetworkError = "hostname is empty";
             return "";
@@ -921,8 +937,8 @@ extern "C" const char* absolute_net_resolve_host(const char* hostname) {
         freeaddrinfo(result);
         // Durable copy: Absolute string is a bare pointer and must outlive later
         // resolve/send calls on both the scheduler and I/O threads.
-        const std::size_t size = std::strlen(ipBuffer) + 1;
-        char* durable = static_cast<char*>(std::malloc(size));
+        const std::size_t size = std::strlen(ipBuffer);
+        char* durable = absolute_string_alloc(size);
         if (!durable) {
             lastNetworkError = "resolve host allocation failed";
             return "";
@@ -1099,8 +1115,8 @@ extern "C" const char* absolute_net_udp_receive_from(void* handle, std::int32_t 
         }
         receiveBuffer.resize(static_cast<std::size_t>(count));
         lastNetworkError.clear();
-        const std::size_t size = receiveBuffer.size() + 1;
-        char* durable = static_cast<char*>(std::malloc(size));
+        const std::size_t size = receiveBuffer.size();
+        char* durable = absolute_string_alloc(size);
         if (!durable) {
             lastNetworkError = "udp receive allocation failed";
             return nullptr;

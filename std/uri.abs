@@ -1,6 +1,35 @@
 import "string.abs";
+import "encoding.abs";
 
 namespace std.uri {
+    int32 defaultPortFor(string scheme) {
+        if (scheme == "https") { return 443; }
+        if (scheme == "ws") { return 80; }
+        if (scheme == "wss") { return 443; }
+        return 80;
+    }
+
+    int32 parsePort(string portText, string rawUrl) {
+        int32 length = std.text.codePointCount(portText);
+        if (length == 0) {
+            throw new Error(format("empty port in URL: {}", rawUrl));
+        }
+        int32 port = 0;
+        int32 index = 0;
+        while (index < length) {
+            int32 digit = std.text.codePointAt(portText, index) - 48;
+            if (digit < 0 || digit > 9) {
+                throw new Error(format("invalid port in URL: {}", rawUrl));
+            }
+            if (port > (65535 - digit) / 10) {
+                throw new Error(format("port out of range in URL: {}", rawUrl));
+            }
+            port = port * 10 + digit;
+            index = index + 1;
+        }
+        return port;
+    }
+
     class Uri {
         public string scheme;
         public string host;
@@ -23,10 +52,10 @@ namespace std.uri {
 
         public string toString() {
             string result = format("{}://{}", scheme, host);
-            if (port != 80) {
-                if (port != 443) {
-                    result = format("{}:{}", result, port);
-                }
+            // A port is only implied by the scheme that implies it: dropping
+            // 443 from an http URL, or 80 from an https one, moves the URL.
+            if (port != defaultPortFor(scheme)) {
+                result = format("{}:{}", result, port);
             }
             result = format("{}{}", result, path);
             if (query != "") {
@@ -47,9 +76,7 @@ namespace std.uri {
         if (schemeEnd >= 0) {
             uri.scheme = std.text.substring(remaining, 0, schemeEnd);
             remaining = std.text.substring(remaining, schemeEnd + 3, std.text.codePointCount(remaining) - (schemeEnd + 3));
-            if (uri.scheme == "https") {
-                uri.port = 443;
-            }
+            uri.port = defaultPortFor(uri.scheme);
         }
 
         int32 fragStart = std.text.indexOf(remaining, "#");
@@ -73,31 +100,111 @@ namespace std.uri {
             uri.path = "/";
         }
 
-        int32 portSep = std.text.indexOf(authority, ":");
-        if (portSep >= 0) {
-            uri.host = std.text.substring(authority, 0, portSep);
-            string portStr = std.text.substring(authority, portSep + 1, std.text.codePointCount(authority) - (portSep + 1));
-            uri.port = std.text.parseInt(portStr);
+        // Userinfo is part of the authority and ends at the last "@"; without
+        // dropping it, "user:pass@host" reads as host "user" on port 0.
+        int32 userInfoEnd = std.text.lastIndexOf(authority, "@");
+        if (userInfoEnd >= 0) {
+            authority = std.text.substring(
+                authority, userInfoEnd + 1,
+                std.text.codePointCount(authority) - (userInfoEnd + 1));
+        }
+
+        // An IPv6 literal is bracketed and full of colons, so the port
+        // separator is the colon after "]", not the first one in the string.
+        int32 hostEnd = 0;
+        if (std.text.startsWith(authority, "[")) {
+            int32 bracketEnd = std.text.indexOf(authority, "]");
+            if (bracketEnd < 0) {
+                throw new Error(format("unterminated IPv6 host in URL: {}", rawUrl));
+            }
+            uri.host = std.text.substring(authority, 0, bracketEnd + 1);
+            hostEnd = bracketEnd + 1;
         } else {
-            uri.host = authority;
+            int32 portSep = std.text.indexOf(authority, ":");
+            hostEnd = portSep >= 0 ? portSep : std.text.codePointCount(authority);
+            uri.host = std.text.substring(authority, 0, hostEnd);
+        }
+
+        int32 authorityLength = std.text.codePointCount(authority);
+        if (hostEnd < authorityLength) {
+            string separator = std.text.substring(authority, hostEnd, 1);
+            if (separator != ":") {
+                throw new Error(format("unexpected text after host in URL: {}", rawUrl));
+            }
+            string portText = std.text.substring(
+                authority, hostEnd + 1, authorityLength - (hostEnd + 1));
+            if (portText != "") {
+                uri.port = parsePort(portText, rawUrl);
+            }
+        } else {
+            uri.port = defaultPortFor(uri.scheme);
         }
 
         return uri;
     }
 
+    int32 hexDigitUpper(int32 value) {
+        return value < 10 ? 48 + value : 55 + value;
+    }
+
+    bool isUnreserved(int32 byteValue) {
+        if (byteValue >= 65 && byteValue <= 90) { return true; }   // A-Z
+        if (byteValue >= 97 && byteValue <= 122) { return true; }  // a-z
+        if (byteValue >= 48 && byteValue <= 57) { return true; }   // 0-9
+        return byteValue == 45 || byteValue == 46 ||               // - .
+            byteValue == 95 || byteValue == 126;                   // _ ~
+    }
+
+    // RFC 3986 percent-encoding over UTF-8 octets. Encoding a subset would not
+    // be a smaller version of this: it would be an encoding whose decode is not
+    // its inverse, because "%" itself would survive unescaped.
     string encode(string text) {
-        string res = std.text.replace(text, " ", "%20");
-        res = std.text.replace(res, "\"", "%22");
-        res = std.text.replace(res, "<", "%3C");
-        res = std.text.replace(res, ">", "%3E");
-        return res;
+        uint8[] bytes = std.encoding.utf8Encode(text);
+        std.text.StringBuilder* result = new std.text.StringBuilder();
+        int32 index = 0;
+        while (index < bytes.length) {
+            int32 byteValue = bytes[index] as int32;
+            if (isUnreserved(byteValue)) {
+                result.appendChar(byteValue);
+            } else {
+                result.appendChar(37);
+                result.appendChar(hexDigitUpper((byteValue >> 4) & 15));
+                result.appendChar(hexDigitUpper(byteValue & 15));
+            }
+            index = index + 1;
+        }
+        return result.toString();
     }
 
     string decode(string text) {
-        string res = std.text.replace(text, "%20", " ");
-        res = std.text.replace(res, "%22", "\"");
-        res = std.text.replace(res, "%3C", "<");
-        res = std.text.replace(res, "%3E", ">");
-        return res;
+        uint8[] bytes = std.encoding.utf8Encode(text);
+        int32 length = bytes.length;
+        uint8[] decoded = new uint8[length];
+        int32 source = 0;
+        int32 output = 0;
+        while (source < length) {
+            int32 byteValue = bytes[source] as int32;
+            if (byteValue == 37 && source + 2 < length) {
+                int32 high = std.encoding.hexValue(bytes[source + 1] as int32);
+                int32 low = std.encoding.hexValue(bytes[source + 2] as int32);
+                if (high >= 0 && low >= 0) {
+                    decoded[output] = ((high << 4) | low) as uint8;
+                    output = output + 1;
+                    source = source + 3;
+                    continue;
+                }
+            }
+            decoded[output] = byteValue as uint8;
+            output = output + 1;
+            source = source + 1;
+        }
+
+        uint8[] exact = new uint8[output];
+        int32 copyIndex = 0;
+        while (copyIndex < output) {
+            exact[copyIndex] = decoded[copyIndex];
+            copyIndex = copyIndex + 1;
+        }
+        return std.encoding.utf8Decode(exact);
     }
 }

@@ -1,0 +1,141 @@
+import "../std/string.abs";
+
+// An owner an accessor produced, that nobody keeps.
+//
+// `s.madeMethod().v` builds an object, reads one field of it and drops it: the
+// object is a temporary of the statement, and the statement releases it.
+// Written as a property -- `s.made.v` -- it built the object and released
+// nothing, and the runtime's own check printed the handle at exit. The flag
+// that says "this expression produced an owner" was set from the call path
+// and cleared by hand on the property path; it is set the same way on both
+// now, from the type the getter hands back.
+//
+// An *indexer* is not here, and it is not the same question. An indexer is a
+// projection onto a cell the container keeps, so its getter borrows and never
+// produces an owner for a statement to release -- a getter written as a
+// factory is refused where it is written. That rule and what it refuses are in
+// tests/indexer-borrow-projection.abs and its errors file; section 1 of
+// docs/known-defects.md records why it took a decision rather than a patch.
+//
+// A *closure* is not in the indexer's position, and is included for both
+// accessors. It is counted rather than owned uniquely, so a getter hands back
+// a count whatever its body does -- a fresh closure, or the one it read,
+// because that is what a callable return means -- and the statement that
+// dropped it has to give that count back. Both accessor paths left that
+// count behind: passing `source.maker` or `pipeline[i]` straight into a call
+// leaked the closure and its environment, once per call.
+//
+// A counted value and an array were already right -- a string temporary is
+// registered by its own path, and an array from an accessor was fixed with
+// the transfer rule -- so this file checks those too, to say that every kind
+// of temporary comes out of a property the same way.
+
+int32 destroyed = 0;
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+    public void destroy() { destroyed = destroyed + 1; }
+}
+
+class Source {
+    private int32 seed;
+
+    public Source(int32 given) { seed = given; }
+
+    public Cell* made { get { return new Cell(seed); } }
+    public Cell* madeMethod() { return new Cell(seed); }
+
+    public string text { get { return format("t-{}", seed); } }
+
+    // A closure built by the getter, and one the getter reads out of a field
+    // and hands back -- the return retains it, so both hand over a count.
+    private func<string> held;
+    public func<string> maker {
+        get {
+            string text = format("m-{}", seed);
+            return fn() => text;
+        }
+    }
+    public func<string> kept { get { return held; } }
+    public func<string> this[bool ignored] { get { return held; } }
+    public void arm() {
+        string text = format("k-{}", seed);
+        held = fn() => text;
+    }
+    public string[] rows {
+        get {
+            string[] made = new string[2];
+            made[0] = format("a-{}", seed);
+            made[1] = format("b-{}", seed);
+            return copy(made);
+        }
+    }
+}
+
+int32 calls(func<string> made) { return std.text.codePointCount(made()); }
+
+int32 takes(Cell* given) {
+    const int32 value = given.value;
+    delete given;
+    return value;
+}
+
+int32 main() {
+    Source* source = new Source(5);
+    int32 total = 0;
+
+    // One of each, read and dropped inside the expression.
+    total = total + source.madeMethod().value;
+    assert(destroyed == 1, "a method's temporary is released");
+    total = total + source.made.value;
+    assert(destroyed == 2, "and so is a property's");
+
+    // Handed to a callee that takes ownership: the callee destroys it, and
+    // nothing here releases it a second time.
+    total = total + takes(source.made);
+    total = total + takes(source.madeMethod());
+    assert(destroyed == 4, "a callee that takes one destroys it exactly once");
+
+    // Read into a name, which owns it until the name goes away.
+    Cell* kept = source.made;
+    assert(destroyed == 4, "a name holding one releases nothing yet");
+    assert(kept.value == 5, "and reads what it holds");
+    delete kept;
+    assert(destroyed == 5, "until it is deleted");
+
+    // Enough rounds that one owner kept per read is a heap that grows, and
+    // the runtime's leak check names every handle it still holds at exit.
+    int32 round = 0;
+    while (round < 1500) {
+        total = total + source.made.value;
+        total = total + takes(source.made);
+        round = round + 1;
+    }
+    assert(destroyed == 5 + 1500 * 2, "every round released both");
+
+    // A closure out of a property, used and dropped inside the expression.
+    // The getter that builds one and the getter that hands back a field both
+    // give the caller a count.
+    source.arm();
+    round = 0;
+    while (round < 1500) {
+        total = total + calls(source.maker);
+        total = total + calls(source.kept);
+        total = total + calls(source[true]);
+        round = round + 1;
+    }
+
+    // A counted value and an array out of the same accessors.
+    round = 0;
+    while (round < 1500) {
+        total = total + std.text.codePointCount(source.text);
+        total = total + source.rows.length;
+        round = round + 1;
+    }
+
+    delete source;
+    assert(total > 0, "the reads added something");
+    println("accessor-owner-temporary=ok");
+    return 0;
+}

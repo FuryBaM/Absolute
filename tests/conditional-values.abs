@@ -1,0 +1,79 @@
+// A conditional hands back one value from two paths.
+//
+// The backend asked for a *common numeric type* to merge the two arms with,
+// so anything that is not a number or a handle was refused there -- with a
+// message about binary operators, and no line to look at, because the
+// analyzer had already accepted the program. `cond ? "yes" : "no"` did not
+// compile, and neither did a struct or a tuple.
+//
+// The type of the merge is the type of the expression, which the analyzer
+// works out from both arms. That is all the shapes below need except one:
+// a value whose parts are counted arrives held on one path and borrowed on
+// the other -- `cond ? format(...) : name` -- and nothing downstream can ask
+// which path ran. So each arm takes a count of its own, and the conditional
+// reports that it produced its value, the way a call does.
+//
+// Run under AddressSanitizer with the leak check on: one arm counted and the
+// other not is a leak on one path and a use-after-free on the other, and the
+// loops here run both.
+
+struct Header {
+    public string name;
+    public int64 size;
+}
+
+Header made(int64 n) {
+    Header header;
+    header.name = format("h{}", n);
+    header.size = n;
+    return header;
+}
+
+string label(int64 n) { return format("n{}", n); }
+
+int32 main() {
+    string kept = "kept";
+    Header held = made(0);
+
+    int32 round = 0;
+    while (round < 2000) {
+        bool left = round % 2 == 0;
+
+        // A string: a literal, a name, and a call, in every combination that
+        // mixes who is holding the bytes.
+        string chosen = left ? "yes" : "no";
+        assert(chosen != "", "a conditional of literals");
+
+        string mixed = left ? label(round) : kept;
+        assert(mixed != "", "a conditional of a fresh string and a name");
+
+        string other = left ? kept : label(round);
+        assert(other != "", "and the same the other way round");
+
+        // Made only to be read: released with the statement that made it.
+        assert((left ? label(round) : kept) != "", "a conditional as an argument");
+
+        // An aggregate, which is the same rule read one level up.
+        Header picked = left ? made(round) : held;
+        assert(picked.name != "", "a conditional of aggregates");
+
+        Header borrowed = left ? held : made(round);
+        assert(borrowed.name != "", "either way round");
+
+        // A tuple has no declaration to look up and answers the same.
+        tuple<int32, string> pair = left ? (round, label(round)) : (0, kept);
+        assert(pair.item1 != "", "a conditional of tuples");
+
+        // Numbers and handles, which always worked, still do.
+        int64 number = left ? round : 0;
+        assert(number >= 0, "a conditional of numbers");
+
+        round = round + 1;
+    }
+
+    assert(kept == "kept", "the name that was borrowed still holds its bytes");
+    assert(held.name != "", "and so does the aggregate");
+
+    println("conditional-values=ok");
+    return 0;
+}

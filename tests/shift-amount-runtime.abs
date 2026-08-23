@@ -1,0 +1,22 @@
+// A shift amount that only exists at runtime.
+//
+// The written-out form is refused when the program is compiled, but an amount
+// that arrives in a variable can only be checked where it is used. It is
+// checked there the way a divisor and an array index are: the program says
+// what happened and exits, instead of continuing on a value LLVM left
+// undefined.
+//
+// The program exits through that check, so the test is on what it printed.
+
+int32 shift(int32 value, int32 amount) {
+    return value << amount;
+}
+
+int32 main() {
+    int32 legal = 31;
+    println(format("{}", shift(1, legal)));
+    int32 width = 32;
+    println(format("{}", shift(1, width)));
+    println("not reached");
+    return 0;
+}

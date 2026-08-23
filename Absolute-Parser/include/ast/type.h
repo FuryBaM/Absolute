@@ -1,5 +1,7 @@
 #pragma once
 
+#include "type_names.h"
+
 namespace Absolute {
     struct TypeExpr : public Expression {};  // Базовый класс для всех типов
 
@@ -40,18 +42,35 @@ namespace Absolute {
 
     struct PointerTypeExpr : public TypeExpr {
         std::unique_ptr<TypeExpr> pointee;
-        bool raw = false;
-        bool weak = false;
-        bool shared = false;
+        // One kind rather than three independent flags. Flags that can disagree
+        // are what let a qualifier go missing: two of them said what the
+        // pointer was and every reader had to combine them the same way.
+        OwnershipKind ownership = OwnershipKind::Unique;
+        // True when the qualifier was written in front of a name with nothing
+        // after it -- `sub T`. There is no pointer level to add here: what the
+        // qualifier applies to is whatever `T` turns out to be, which is known
+        // at substitution and not before. `sub Node*` is the ordinary case and
+        // leaves this false.
+        bool qualifiesBase = false;
 
-        PointerTypeExpr(std::unique_ptr<TypeExpr> pointee, bool raw, bool weak = false,
-            bool shared = false)
-            : pointee(std::move(pointee)), raw(raw), weak(weak), shared(shared) {}
+        PointerTypeExpr(std::unique_ptr<TypeExpr> pointee, OwnershipKind ownership,
+            bool qualifiesBase = false)
+            : pointee(std::move(pointee)), ownership(ownership),
+              qualifiesBase(qualifiesBase) {}
+
+        bool IsRaw() const { return ownership == OwnershipKind::Raw; }
+        bool IsWeak() const { return ownership == OwnershipKind::Weak; }
+        bool IsSubscriber() const { return ownership == OwnershipKind::Sub; }
 
         std::string ToString(int indent = 0) const override {
-            const std::string kind = raw ? "Raw pointer type:\n" :
-                (weak ? "Weak managed pointer type:\n" :
-                    (shared ? "Shared managed pointer type:\n" : "Managed pointer type:\n"));
+            std::string kind;
+            switch (ownership) {
+            case OwnershipKind::Raw: kind = "Raw pointer type:\n"; break;
+            case OwnershipKind::Weak: kind = "Weak managed pointer type:\n"; break;
+            case OwnershipKind::Sub: kind = "Subscriber pointer type:\n"; break;
+            default: kind = "Managed pointer type:\n"; break;
+            }
+            if (qualifiesBase) kind.insert(0, "Qualified ");
             return std::string(indent, ' ') + kind +
                 (pointee ? pointee->ToString(indent + 1) : std::string(indent + 1, ' ') + "<missing>");
         }

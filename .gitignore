@@ -366,6 +366,8 @@ FodyWeavers.xsd
 ~AutoRecover.Absolute.vcxproj*
 
 build/
+build-debug/
+build-fuzz/
 
 # Local array benchmark artifacts
 benchmarks/array-suite/.benchmark-build/
@@ -377,6 +379,18 @@ examples/desktop/.desktop-build/
 examples/chess/.build/
 .absolute/
 benchmarks/pointer-object-suite/results/
+benchmarks/algorithm-suite/.benchmark-build/
+benchmarks/algorithm-suite/results/
+benchmarks/value-ref-suite/.benchmark-build/
+benchmarks/value-ref-suite/results/
+# Linux benchmark output. The Windows .exe/.obj/.ll/.class artifacts this
+# suite already tracks stay tracked; only the extension-less native
+# executables and the Linux result files are ignored.
+benchmarks/collection-suite/.benchmark-build/native/*
+!benchmarks/collection-suite/.benchmark-build/native/*.ll
+!benchmarks/collection-suite/.benchmark-build/native/*.obj
+!benchmarks/collection-suite/.benchmark-build/native/*.exe
+benchmarks/*/results/*-linux-*.csv
 
 # Local Absolute outputs and packaged editor builds
 /*.exe
@@ -385,3 +399,4 @@ benchmarks/pointer-object-suite/results/
 /scratch/*.exe
 /absolute-extension/*.vsix
 /Testing/
+build-cov/

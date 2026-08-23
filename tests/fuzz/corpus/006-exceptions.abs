@@ -1,0 +1,7 @@
+int32 main() {
+    defer println("done");
+    try { throw new Error("boom"); }
+    catch (Error* e) { println("caught"); }
+    finally { println("finally"); }
+    return 0;
+}

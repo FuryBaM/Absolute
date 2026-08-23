@@ -1,5 +1,9 @@
 #include "codegen_internal.h"
 
+#include <cerrno>
+#include <cmath>
+#include <cstdlib>
+
 namespace Absolute {
     void AddAbsoluteOptimizationPassesToPipeline(llvm::ModulePassManager& passes);
 
@@ -30,19 +34,32 @@ namespace Absolute {
             llvm::Module& module,
             llvm::TargetMachine* targetMachine,
             OptimizationLevel level,
-            bool sanitizeAddress) {
+            CodeGenerator::Sanitizer sanitizer) {
             llvm::LoopAnalysisManager loopAnalyses;
             llvm::FunctionAnalysisManager functionAnalyses;
             llvm::CGSCCAnalysisManager cgsccAnalyses;
             llvm::ModuleAnalysisManager moduleAnalyses;
             llvm::PassBuilder passBuilder(targetMachine);
-            if (sanitizeAddress) {
+            if (sanitizer == CodeGenerator::Sanitizer::Address) {
                 passBuilder.registerOptimizerLastEPCallback(
                     [](llvm::ModulePassManager& passes,
                         llvm::OptimizationLevel) {
                         llvm::AddressSanitizerOptions options;
                         passes.addPass(
                             llvm::AddressSanitizerPass(options));
+                    });
+            }
+            // The module pass creates the constructor that calls __tsan_init;
+            // the function pass instruments the accesses. Both are needed, and
+            // in that order, or the instrumented program starts without a
+            // sanitizer to report to.
+            if (sanitizer == CodeGenerator::Sanitizer::Thread) {
+                passBuilder.registerOptimizerLastEPCallback(
+                    [](llvm::ModulePassManager& passes,
+                        llvm::OptimizationLevel) {
+                        passes.addPass(llvm::ModuleThreadSanitizerPass());
+                        passes.addPass(llvm::createModuleToFunctionPassAdaptor(
+                            llvm::ThreadSanitizerPass()));
                     });
             }
             passBuilder.registerModuleAnalyses(moduleAnalyses);
@@ -300,12 +317,51 @@ namespace Absolute {
             location, builder.GetInsertBlock());
     }
 
+    unsigned long long CodeGenerator::Impl::ParseIntegerLiteral(const std::string& text) {
+        try {
+            size_t consumed = 0;
+            const unsigned long long value = std::stoull(text, &consumed);
+            // std::stoull stops at the first character it cannot use and
+            // reports success, so a floating literal reaching an integer
+            // constant would come out as its leading digits: 1e3 as 1. Refuse
+            // instead of storing a wrong number.
+            if (consumed != text.size())
+                Fail("integer constant expected, but the literal is '" + text + "'");
+            return value;
+        }
+        catch (const std::exception&) {
+            Fail("integer literal '" + text + "' does not fit in 64 bits");
+        }
+        return 0;
+    }
+
+    double CodeGenerator::Impl::ParseFloatingLiteral(const std::string& text) {
+        errno = 0;
+        char* end = nullptr;
+        const double value = std::strtod(text.c_str(), &end);
+        if (!end || *end != '\0')
+            Fail("floating literal '" + text + "' is not a number");
+        // A subnormal is flagged out of range by the C library and is still a
+        // value a double holds, which is why std::stod was the wrong tool: it
+        // threw on 1e-308. Only a result that keeps nothing of what was written
+        // is refused -- an overflow to infinity, or an underflow all the way to
+        // zero from a literal that was not zero.
+        if (std::isinf(value))
+            Fail("floating literal '" + text + "' is larger than a double can hold");
+        if (value == 0.0 && errno == ERANGE)
+            Fail("floating literal '" + text + "' is smaller than a double can hold");
+        return value;
+    }
+
     llvm::Constant* CodeGenerator::Impl::GlobalConstant(Expression* expression, llvm::Type* type) {
         if (!expression) return llvm::Constant::getNullValue(type);
         if (auto* number = dynamic_cast<NumberLiteralExpr*>(expression)) {
             if (type->isFloatingPointTy())
-                return llvm::ConstantFP::get(type, std::stod(number->value));
-            return llvm::ConstantInt::get(type, std::stoll(number->value), true);
+                return llvm::ConstantFP::get(type, ParseFloatingLiteral(number->value));
+            // Unsigned parse for the same reason as the runtime path: the
+            // literal is positive and the full 64-bit range has to be
+            // reachable.
+            return llvm::ConstantInt::get(type, ParseIntegerLiteral(number->value), false);
         }
         if (auto* boolean = dynamic_cast<BooleanLiteralExpr*>(expression))
             return llvm::ConstantInt::get(type, boolean->value ? 1 : 0);
@@ -313,8 +369,7 @@ namespace Absolute {
             return llvm::ConstantInt::get(type, static_cast<unsigned char>(character->value));
         if (auto* string = dynamic_cast<StringLiteralExpr*>(expression)) {
             if (!type->isPointerTy()) Fail("string constant requires pointer storage");
-            return llvm::cast<llvm::Constant>(builder.CreateGlobalStringPtr(
-                string->value, "static.string", 0, module.get()));
+            return EmitStringConstant(string->value, "static.string");
         }
         if (dynamic_cast<NullExpr*>(expression)) {
             if (!type->isPointerTy()) Fail("null constant requires pointer storage");
@@ -324,11 +379,19 @@ namespace Absolute {
             unary && unary->op == "-") {
             if (auto* number = dynamic_cast<NumberLiteralExpr*>(unary->operand.get())) {
                 if (type->isFloatingPointTy())
-                    return llvm::ConstantFP::get(type, -std::stod(number->value));
-                return llvm::ConstantInt::get(type, -std::stoll(number->value), true);
+                    return llvm::ConstantFP::get(type, -ParseFloatingLiteral(number->value));
+                // Negating the parsed pattern rather than parsing a negative
+                // number, so int64's minimum works: 2^63 negated is itself.
+                return llvm::ConstantInt::get(type,
+                    0ull - ParseIntegerLiteral(number->value), false);
             }
         }
-        Fail("global initializer requires a constant primitive value");
+        // Module storage is emitted once, before anything runs, so its
+        // initializer has to be a value the backend can write into the object
+        // file. Nothing folds constant expressions here, which is why `1 + 2`
+        // is refused as readily as a constructor call.
+        Fail("a module-scope initializer must be a constant literal, not an "
+            "expression evaluated at run time");
     }
 
     void CodeGenerator::Impl::DeclareGlobalArray(VarDeclExpr& expression) {
@@ -391,6 +454,39 @@ namespace Absolute {
             true, elementType, std::move(dimensionValues), nullptr, InvalidSymbolId});
     }
 
+    void CodeGenerator::Impl::DeclareGlobalScalar(VarDeclExpr& expression) {
+        const std::string name = IdentifierName(expression.name.get());
+        const std::string typeName = DeclaredTypeName(expression);
+        if (name.empty() || typeName.empty()) return;
+
+        // A module-scope owner would need answers this does not have: when its
+        // destructor runs, in what order against other globals, and who owns it
+        // while the module initializes. Refuse it by name here rather than
+        // emitting storage whose lifetime nobody has decided.
+        if (IsManagedPointerTypeName(typeName) || IsWeakPointerTypeName(typeName))
+            Fail("a managed or weak pointer cannot be declared at module scope");
+        if (IsTaskTypeName(typeName))
+            Fail("a task cannot be declared at module scope");
+
+        llvm::Type* type = TypeFromName(typeName);
+        if (!type) Fail("unknown type '" + typeName + "' for global '" + name + "'");
+        llvm::Constant* initializer = GlobalConstant(expression.value.get(), type);
+
+        const std::string globalName = Qualify(name);
+        auto* storage = new llvm::GlobalVariable(*module, type, false,
+            llvm::GlobalValue::ExternalLinkage, initializer, globalName);
+        Variable variable{storage, type, typeName, false,
+            false, nullptr, {}, nullptr, InvalidSymbolId};
+        // A global is a place, and a place gives back what it held when it is
+        // overwritten. It is never released at exit -- a module-scope name
+        // outlives every scope, which is why an owner is refused above -- and
+        // no scope walks `globals`, so this says only what happens on a write.
+        // Without it, `label = format(...)` in a loop leaked every value but
+        // the last, while the same line on a static field was already right.
+        variable.ownsAggregateResources = TypeNeedsCleanup(typeName);
+        globals.emplace(globalName, std::move(variable));
+    }
+
     llvm::Function* CodeGenerator::Impl::DeclareFunction(FunctionDeclStmt& statement) {
         return DeclareFunction(statement, nullptr);
     }
@@ -443,8 +539,16 @@ namespace Absolute {
         if (!symbol || (analyzer && analyzer->FunctionOverloadCount(sourceName) <= 1))
             functionLinkNames[sourceName] = functionName;
 
+        // The entry point is the C `main`, and the C `main` returns an int.
+        // A `void main()` -- five programs in tests/ are written that way --
+        // was emitted returning nothing, so the process exit status was
+        // whatever the register happened to hold: 2, from a program that did
+        // everything it was asked to. The same reasoning the analyzer uses to
+        // refuse `main(string[] args)`, one step further out.
+        const bool voidEntryPoint = functionName == "main" && returnTypeName == "void";
         llvm::FunctionType* functionType = llvm::FunctionType::get(
-            AbiReturnType(returnTypeName, external),
+            voidEntryPoint ? builder.getInt32Ty()
+                : AbiReturnType(returnTypeName, external),
             parameterTypes, false);
         if (llvm::Function* existing = module->getFunction(functionName)) {
             if (existing->getFunctionType() != functionType)
@@ -517,6 +621,7 @@ namespace Absolute {
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
         builder.SetInsertPoint(entry);
         PushScope();
+        FunctionTemporaryScope bodyTemporaries(*this);
         BeginDebugFunction(*function, &statement,
             specialization ? specialization->name : statement.name->value);
         const std::string oldReturnTypeName = currentReturnTypeName;
@@ -542,6 +647,7 @@ namespace Absolute {
         }
 
         if (statement.body) statement.body->Accept(visitor);
+        RequireNoPendingTemporaries("'" + function->getName().str() + "'");
         if (!builder.GetInsertBlock()->getTerminator()) {
             EmitScopeCleanup(scopes.size() - 1);
             if (!builder.GetInsertBlock() ||
@@ -590,7 +696,13 @@ namespace Absolute {
         const std::string typeName = ValueReferenceBaseTypeName(declaredTypeName);
         const bool rolePolymorphic =
             ParameterSupportsOwnershipName(declaredTypeName, external);
-        const bool staticallyOwns = rolePolymorphic;
+        // A string parameter always owns the count it was handed, without a
+        // role to say so: the caller passes one and the parameter gives it
+        // back. It carries no role argument precisely because there is nothing
+        // to decide -- a string is shared, so the answer is the same every
+        // call, which is what `staticallyOwns` means.
+        const bool staticallyOwns = rolePolymorphic ||
+            (!external && !valueReference && typeName == "string");
         auto bindOwnershipFlag = [&](Variable& variable) {
             if (!rolePolymorphic) return;
             if (!ownershipArgument)
@@ -642,8 +754,25 @@ namespace Absolute {
         if (!external && (valueReference || IsIndirectValueType(typeName))) {
             Variable variable{&argument, TypeFromName(typeName), typeName, false, false,
                 nullptr, {}, nullptr, SemanticSymbol(&parameter)};
-            variable.ownsAggregateResources =
-                staticallyOwns && TypeNeedsCleanup(typeName);
+            // A by-value parameter is a copy, and a copy counts the parts it
+            // now names -- the same answer a string parameter has always been
+            // given, read one level up. Borrowing instead left the name with
+            // no owner for anything written into it: `row = made;` inside the
+            // body stored a value nobody would release, and the one it
+            // replaced could not be released either, because the caller still
+            // held it. Owning from the start makes both writes ordinary.
+            //
+            // A reference parameter is excluded: it names the caller's slot
+            // rather than a copy of it, so there is nothing of its own to
+            // count and nothing to release when the call ends.
+            const bool copiesParts = !valueReference && ValueCountsOnCopy(typeName);
+            if (copiesParts) EmitValueRetain(&argument, typeName);
+            variable.ownsAggregateResources = copiesParts ||
+                (staticallyOwns && TypeNeedsCleanup(typeName));
+            // The slot belongs to the caller, so nothing is released when the
+            // call ends. A write through it still overwrites what the caller
+            // put there, which is what this says.
+            variable.namesBorrowedPlace = valueReference;
             bindOwnershipFlag(variable);
             if (!scopes.back().emplace(name, std::move(variable)).second)
                 Fail("duplicate parameter '" + name + "'");
@@ -655,13 +784,32 @@ namespace Absolute {
         // C ABI may pass bool as i8; store Absolute locals as the language type (i1).
         llvm::Type* storageType = TypeFromName(typeName);
         llvm::AllocaInst* address = CreateEntryAlloca(*argument.getParent(), storageType, name);
-        builder.CreateStore(Coerce(&argument, storageType), address);
+        // A string parameter takes a count of its own on the way in and gives
+        // it back at the end of the call, so the value cannot go out from
+        // under it -- whatever the caller does with its own name for the same
+        // bytes. Emitted here, in the body, which is why an external function
+        // needs nothing: it has no body, and its caller releases what it made.
+        llvm::Value* stored = Coerce(&argument, storageType);
+        if (!external && !valueReference && typeName == "string")
+            stored = builder.CreateCall(StringRetain(), {stored}, "parameter.retained");
+        builder.CreateStore(stored, address);
         Variable variable{address, storageType, typeName, false, false, nullptr, {},
             nullptr, SemanticSymbol(&parameter)};
         variable.managedOwner =
             staticallyOwns && IsStrongManagedPointerTypeName(typeName);
+        // A string parameter owns its value: the caller hands over a count
+        // and the parameter gives it back at the end of the call. Borrowing
+        // instead was tried and does not compose -- a parameter with no count
+        // of its own has nothing to hand on when it is moved into storage,
+        // which is exactly what a container's push does.
+        // The same for a parameter the ABI hands over in registers: the alloca
+        // above is this name's copy, and a copy counts its parts.
+        if (!external && !valueReference && typeName != "string" &&
+            ValueCountsOnCopy(typeName))
+            EmitValueRetain(address, typeName);
         variable.ownsAggregateResources =
-            staticallyOwns && TypeNeedsCleanup(typeName);
+            (staticallyOwns || (!external && !valueReference &&
+                ValueCountsOnCopy(typeName))) && TypeNeedsCleanup(typeName);
         bindOwnershipFlag(variable);
         if (!scopes.back().emplace(name, std::move(variable)).second)
             Fail("duplicate parameter '" + name + "'");
@@ -671,6 +819,11 @@ namespace Absolute {
     }
 
     void CodeGenerator::Impl::FinishClassCallable(llvm::Function& function) {
+        // The same guard a plain function body gets. Without it here, a
+        // constructor or a method that registered a temporary and opened no
+        // scope for it leaked in silence -- which is how a base call's
+        // argument went unreleased.
+        RequireNoPendingTemporaries("'" + function.getName().str() + "'");
         if (!builder.GetInsertBlock()->getTerminator()) {
             EmitScopeCleanup(scopes.size() - 1);
             if (!builder.GetInsertBlock() ||
@@ -693,6 +846,7 @@ namespace Absolute {
         llvm::Function* function = DeclareMethodFunction(method);
         if (!function->empty()) return;
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+        FunctionTemporaryScope bodyTemporaries(*this);
         builder.SetInsertPoint(entry);
         PushScope();
         BeginDebugFunction(
@@ -731,6 +885,21 @@ namespace Absolute {
             if (method.statement->propertyAccessor == PropertyAccessorKind::Getter) {
                 llvm::Value* propertyValue = builder.CreateLoad(
                     TypeFromName(method.returnType), storage, "auto.property.value");
+                // A getter hands a copy to the caller and the caller releases
+                // it, the way it releases anything a call produced. So the
+                // copy has to be counted -- the same rule a `return` follows.
+                // Handing out the bytes uncounted meant every read took a
+                // count off the field: reading a string property five hundred
+                // times freed what the field was still holding.
+                if (const TypeSemantics handed = SemanticsOfTypeName(method.returnType);
+                    handed.needsDrop && handed.copyable) {
+                    llvm::AllocaInst* carried = CreateEntryAlloca(
+                        *function, propertyValue->getType(), "auto.property.carried");
+                    builder.CreateStore(propertyValue, carried);
+                    EmitValueRetain(carried, method.returnType);
+                    propertyValue = builder.CreateLoad(
+                        propertyValue->getType(), carried, "auto.property.counted");
+                }
                 if (currentReturnStorage) {
                     builder.CreateStore(propertyValue, currentReturnStorage);
                     builder.CreateRetVoid();
@@ -738,14 +907,31 @@ namespace Absolute {
                 else builder.CreateRet(propertyValue);
             }
             else {
+                const std::string& stored = method.parameterTypes.front();
                 llvm::Value* assigned = function->getArg(offset);
-                if (IsIndirectValueType(method.parameterTypes.front()))
+                if (IsIndirectValueType(stored))
                     assigned = builder.CreateLoad(
-                        TypeFromName(method.parameterTypes.front()), assigned, "auto.property.input");
-                if (TypeNeedsCleanup(method.parameterTypes.front()))
-                    EmitValueCleanup(storage, method.parameterTypes.front());
-                builder.CreateStore(assigned, storage);
-                builder.CreateRetVoid();
+                        TypeFromName(stored), assigned, "auto.property.input");
+                // A backing field is a field like any other: it counts what it
+                // takes and gives back what it held. Writing the bytes and
+                // nothing else meant a property whose type is an aggregate
+                // holding a string named bytes it never counted, and reading
+                // it once the value that was assigned had gone was a
+                // use-after-free. For a string it happened to balance, because
+                // the parameter's own count was taken and never given back --
+                // two mistakes cancelling, which is not the same as being
+                // right.
+                llvm::AllocaInst* incoming = CreateEntryAlloca(
+                    *function, assigned->getType(), "auto.property.incoming");
+                builder.CreateStore(assigned, incoming);
+                EmitValueRetain(incoming, stored);
+                if (TypeNeedsCleanup(stored)) EmitValueCleanup(storage, stored);
+                builder.CreateStore(
+                    builder.CreateLoad(assigned->getType(), incoming,
+                        "auto.property.counted"),
+                    storage);
+                // No return here: the scope this accessor's parameter lives in
+                // closes below, and closing it is what gives that count back.
             }
         }
         else if (method.statement->body) method.statement->body->Accept(visitor);
@@ -765,6 +951,7 @@ namespace Absolute {
         llvm::Function* function = DeclareConstructorFunction(info, constructor);
         if (!function || !function->empty()) return;
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+        FunctionTemporaryScope bodyTemporaries(*this);
         builder.SetInsertPoint(entry);
         PushScope();
         BeginDebugFunction(
@@ -772,11 +959,17 @@ namespace Absolute {
                                    : static_cast<ASTNode*>(info.statement),
             info.name + "." + info.name);
         const std::string oldClass = currentClassName;
+        const std::string oldConstructorClass = currentConstructorClass;
         llvm::Value* oldThis = currentThis;
         const std::string oldReturn = currentReturnTypeName;
         const auto oldSubstitutions = currentGenericSubstitutions;
         currentGenericSubstitutions = info.substitutions;
         currentClassName = info.name;
+        // Stays empty until the base constructor has succeeded. While the base
+        // runs, no field of this class is initialized yet, and a base that throws
+        // releases its own fields on its own exception path — so this frame must
+        // not clean anything, or inherited fields would be released twice.
+        currentConstructorClass.clear();
         currentThis = function->getArg(0);
         currentReturnTypeName = "void";
         if (constructor) {
@@ -850,30 +1043,45 @@ namespace Absolute {
                 std::vector<llvm::Value*> arguments;
                 std::vector<llvm::Value*> ownershipFlags;
                 std::vector<std::string> parameterTypes = baseParameterTypes;
-                if (constructor && constructor->hasExplicitBaseCall) {
-                    for (size_t index = 0;
-                        index < constructor->baseArguments.size(); ++index) {
-                        const std::string parameterType = index < parameterTypes.size()
-                            ? parameterTypes[index] : std::string{};
-                        std::vector<llvm::Value*> temporaryArrays;
-                        std::vector<llvm::Value*> temporaryClosures;
-                        arguments.push_back(EvaluateCallArgument(
-                            constructor->baseArguments[index].get(),
-                            temporaryArrays, temporaryClosures, parameterType));
-                        ownershipFlags.push_back(ArgumentOwnershipFlag(
-                            constructor->baseArguments[index].get(),
-                            parameterType));
+                std::vector<llvm::Value*> temporaryArrays;
+                std::vector<llvm::Value*> temporaryClosures;
+                {
+                    // A base call is a call, and a value made only in order to
+                    // pass into it is released once the call it was made for is
+                    // over. Nothing opened a scope for those temporaries here,
+                    // so `base(makeHeader(n))` registered one and nobody ever
+                    // released it -- and the guard that exists to catch exactly
+                    // that did not reach a constructor.
+                    TemporaryOwnerScope temporaries(*this);
+                    if (constructor && constructor->hasExplicitBaseCall) {
+                        for (size_t index = 0;
+                            index < constructor->baseArguments.size(); ++index) {
+                            const std::string parameterType = index < parameterTypes.size()
+                                ? parameterTypes[index] : std::string{};
+                            arguments.push_back(EvaluateCallArgument(
+                                constructor->baseArguments[index].get(),
+                                temporaryArrays, temporaryClosures, parameterType));
+                            ownershipFlags.push_back(ArgumentOwnershipFlag(
+                                constructor->baseArguments[index].get(),
+                                parameterType));
+                        }
                     }
+                    EmitAbiCall(baseConstructor->getFunctionType(), baseConstructor, "void",
+                        {currentThis}, parameterTypes, arguments, "base.constructor.result",
+                        false, ownershipFlags);
+                    ReleaseArrayTemporaries(temporaryArrays);
+                    ReleaseClosureTemporaries(temporaryClosures);
                 }
-                EmitAbiCall(baseConstructor->getFunctionType(), baseConstructor, "void",
-                    {currentThis}, parameterTypes, arguments, "base.constructor.result",
-                    false, ownershipFlags);
                 EmitExceptionCheck();
             }
         }
+        // The base is established; from here a throw must release this object's
+        // own fields, including the inherited ones the base finished building.
+        currentConstructorClass = info.name;
         if (constructor && constructor->body) constructor->body->Accept(visitor);
         FinishClassCallable(*function);
         PopScope();
+        currentConstructorClass = oldConstructorClass;
         currentClassName = oldClass;
         currentThis = oldThis;
         currentReturnTypeName = oldReturn;
@@ -908,6 +1116,7 @@ namespace Absolute {
         llvm::Function* function = DeclareMethodFunction(method);
         if (!function->empty()) return;
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+        FunctionTemporaryScope bodyTemporaries(*this);
         builder.SetInsertPoint(entry);
         PushScope();
         BeginDebugFunction(
@@ -960,6 +1169,7 @@ namespace Absolute {
         llvm::Function* function = DeclareMethodFunction(method);
         if (!function->empty()) return;
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+        FunctionTemporaryScope bodyTemporaries(*this);
         builder.SetInsertPoint(entry);
         PushScope();
         BeginDebugFunction(
@@ -998,6 +1208,21 @@ namespace Absolute {
             if (method.statement->propertyAccessor == PropertyAccessorKind::Getter) {
                 llvm::Value* propertyValue = builder.CreateLoad(
                     TypeFromName(method.returnType), storage, "auto.property.value");
+                // A getter hands a copy to the caller and the caller releases
+                // it, the way it releases anything a call produced. So the
+                // copy has to be counted -- the same rule a `return` follows.
+                // Handing out the bytes uncounted meant every read took a
+                // count off the field: reading a string property five hundred
+                // times freed what the field was still holding.
+                if (const TypeSemantics handed = SemanticsOfTypeName(method.returnType);
+                    handed.needsDrop && handed.copyable) {
+                    llvm::AllocaInst* carried = CreateEntryAlloca(
+                        *function, propertyValue->getType(), "auto.property.carried");
+                    builder.CreateStore(propertyValue, carried);
+                    EmitValueRetain(carried, method.returnType);
+                    propertyValue = builder.CreateLoad(
+                        propertyValue->getType(), carried, "auto.property.counted");
+                }
                 if (currentReturnStorage) {
                     builder.CreateStore(propertyValue, currentReturnStorage);
                     builder.CreateRetVoid();
@@ -1005,14 +1230,31 @@ namespace Absolute {
                 else builder.CreateRet(propertyValue);
             }
             else {
+                const std::string& stored = method.parameterTypes.front();
                 llvm::Value* assigned = function->getArg(offset);
-                if (IsIndirectValueType(method.parameterTypes.front()))
+                if (IsIndirectValueType(stored))
                     assigned = builder.CreateLoad(
-                        TypeFromName(method.parameterTypes.front()), assigned, "auto.property.input");
-                if (TypeNeedsCleanup(method.parameterTypes.front()))
-                    EmitValueCleanup(storage, method.parameterTypes.front());
-                builder.CreateStore(assigned, storage);
-                builder.CreateRetVoid();
+                        TypeFromName(stored), assigned, "auto.property.input");
+                // A backing field is a field like any other: it counts what it
+                // takes and gives back what it held. Writing the bytes and
+                // nothing else meant a property whose type is an aggregate
+                // holding a string named bytes it never counted, and reading
+                // it once the value that was assigned had gone was a
+                // use-after-free. For a string it happened to balance, because
+                // the parameter's own count was taken and never given back --
+                // two mistakes cancelling, which is not the same as being
+                // right.
+                llvm::AllocaInst* incoming = CreateEntryAlloca(
+                    *function, assigned->getType(), "auto.property.incoming");
+                builder.CreateStore(assigned, incoming);
+                EmitValueRetain(incoming, stored);
+                if (TypeNeedsCleanup(stored)) EmitValueCleanup(storage, stored);
+                builder.CreateStore(
+                    builder.CreateLoad(assigned->getType(), incoming,
+                        "auto.property.counted"),
+                    storage);
+                // No return here: the scope this accessor's parameter lives in
+                // closes below, and closing it is what gives that count back.
             }
         }
         else if (method.statement->body) method.statement->body->Accept(visitor);
@@ -1040,6 +1282,7 @@ namespace Absolute {
             function = module->getFunction(ConstructorLinkName(info.name, parameterTypes));
             if (!function || !function->empty()) continue;
             llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", function);
+            FunctionTemporaryScope bodyTemporaries(*this);
             builder.SetInsertPoint(entry);
             PushScope();
             BeginDebugFunction(
@@ -1146,6 +1389,7 @@ namespace Absolute {
         valueManagedPointee = nullptr;
         valueCreatesArrayOwner = false;
         valueArrayOwner = nullptr;
+        valueArrayOwnedCount = nullptr;
         addressMode = false;
         addressValue = nullptr;
         taskThunkCounter = 0;
@@ -1234,7 +1478,8 @@ namespace Absolute {
             BuildModule(program, moduleName, triple);
         if (optimizationLevel)
             OptimizeModule(
-                generatedModule, nullptr, *optimizationLevel, false);
+                generatedModule, nullptr, *optimizationLevel,
+                CodeGenerator::Sanitizer::None);
 
         std::string output;
         llvm::raw_string_ostream stream(output);
@@ -1244,7 +1489,7 @@ namespace Absolute {
     }
 
     void CodeGenerator::Impl::GenerateObject(Program& program, const std::string& moduleName,
-        const std::string& outputPath, bool sanitizeAddress,
+        const std::string& outputPath, Sanitizer sanitizer,
         const std::string& targetTriple,
         OptimizationLevel optimizationLevel,
         bool debugInfo) {
@@ -1254,8 +1499,10 @@ namespace Absolute {
 
         const std::string tripleName = ResolveTargetTriple(targetTriple);
         const llvm::Triple triple(tripleName);
-        if (sanitizeAddress && IsWebAssemblyTriple(triple))
-            Fail("AddressSanitizer is not supported for WebAssembly targets");
+        if (sanitizer != Sanitizer::None && IsWebAssemblyTriple(triple))
+            Fail(sanitizer == Sanitizer::Thread
+                ? "ThreadSanitizer is not supported for WebAssembly targets"
+                : "AddressSanitizer is not supported for WebAssembly targets");
 
         std::string targetError;
         const llvm::Target* target = llvm::TargetRegistry::lookupTarget(tripleName, targetError);
@@ -1263,6 +1510,7 @@ namespace Absolute {
 
         llvm::TargetOptions options;
         std::string cpu = "generic";
+        std::string features;
         llvm::Reloc::Model reloc = llvm::Reloc::PIC_;
         if (IsWebAssemblyTriple(triple)) {
             // Wasm objects use a generic CPU; PIC is the usual reloc model.
@@ -1270,27 +1518,50 @@ namespace Absolute {
             reloc = llvm::Reloc::PIC_;
         }
         else {
+            // The host CPU name only identifies a microarchitecture, it does not say
+            // which of that microarchitecture's features the machine actually exposes.
+            // A virtualised host can report a model whose default feature set includes
+            // instructions the hypervisor masks off, and selecting by name alone then
+            // emits code the CPU refuses to execute. Pin the feature string to what the
+            // host really advertises so generated objects stay runnable on that host.
             const std::string hostCpu = llvm::sys::getHostCPUName().str();
             if (!hostCpu.empty()) cpu = hostCpu;
+
+#if LLVM_VERSION_MAJOR >= 19
+            const llvm::StringMap<bool> hostFeatures = llvm::sys::getHostCPUFeatures();
+            const bool detectedFeatures = !hostFeatures.empty();
+#else
+            llvm::StringMap<bool> hostFeatures;
+            const bool detectedFeatures = llvm::sys::getHostCPUFeatures(hostFeatures);
+#endif
+            if (detectedFeatures) {
+                llvm::SubtargetFeatures hostSubtarget;
+                for (const llvm::StringMapEntry<bool>& feature : hostFeatures)
+                    hostSubtarget.AddFeature(feature.getKey(), feature.getValue());
+                features = hostSubtarget.getString();
+            }
         }
 
         std::unique_ptr<llvm::TargetMachine> targetMachine(target->createTargetMachine(
-            tripleName, cpu, "", options, reloc,
+            tripleName, cpu, features, options, reloc,
             std::nullopt,
             LlvmCodeGenOptimizationLevel(optimizationLevel)));
         if (!targetMachine) Fail("cannot create target machine for '" + tripleName + "'");
         const std::string dataLayout = targetMachine->createDataLayout().getStringRepresentation();
         llvm::Module& generatedModule = BuildModule(program, moduleName, tripleName, dataLayout);
-        if (sanitizeAddress) {
+        if (sanitizer != Sanitizer::None) {
+            const llvm::Attribute::AttrKind kind =
+                sanitizer == Sanitizer::Thread
+                    ? llvm::Attribute::SanitizeThread
+                    : llvm::Attribute::SanitizeAddress;
             for (llvm::Function& function : generatedModule) {
-                if (!function.isDeclaration())
-                    function.addFnAttr(llvm::Attribute::SanitizeAddress);
+                if (!function.isDeclaration()) function.addFnAttr(kind);
             }
         }
 
         OptimizeModule(
             generatedModule, targetMachine.get(),
-            optimizationLevel, sanitizeAddress);
+            optimizationLevel, sanitizer);
 
         std::error_code error;
         llvm::raw_fd_ostream output(outputPath, error, llvm::sys::fs::OF_None);

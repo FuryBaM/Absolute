@@ -1,9 +1,16 @@
+// Reference-counting operations left over from an abandoned attempt at shared
+// ownership. They are refused rather than implemented: the model has one owner,
+// views that borrow from it, and weak observers, and a second kind of owner
+// buys nothing that those three do not already say.
+//
+// `shared T*` used to be listed here too. It is gone entirely now -- not
+// refused, unspelled -- so the word is an ordinary identifier again.
+
 class Document {
 }
 
 void main() {
     Document* owner = new Document();
-    shared Document* unsupportedType = owner;
     Document* unsupportedRetain = retainRaw(owner);
     auto unsupportedShare = share(move(owner));
 }

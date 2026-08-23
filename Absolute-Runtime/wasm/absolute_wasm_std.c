@@ -521,7 +521,6 @@ int32_t absolute_process_set_cwd(const char* path) {
 
 typedef struct WasmBinaryWriter { uint8_t* data; size_t size; size_t capacity; } WasmBinaryWriter;
 typedef struct WasmBinaryReader { uint8_t* data; size_t size; size_t position; } WasmBinaryReader;
-static char g_binary_scratch[8192];
 
 static int binary_reserve(WasmBinaryWriter* writer, size_t extra) {
     if (!writer || extra > (size_t)-1 - writer->size) return 0;
@@ -565,17 +564,23 @@ int64_t absolute_binary_writer_size(const void* p) {
 const void* absolute_binary_writer_get_data(const void* p) {
     return p ? ((const WasmBinaryWriter*)p)->data : NULL;
 }
+static char* g_binary_result;
+
 const char* absolute_binary_writer_to_hex(const void* p) {
     static const char digits[] = "0123456789abcdef";
     const WasmBinaryWriter* writer = (const WasmBinaryWriter*)p;
     if (!writer) return "";
     size_t count = writer->size;
-    if (count * 2 + 1 > sizeof(g_binary_scratch)) count = (sizeof(g_binary_scratch) - 1) / 2;
+    char* out = (char*)heap_alloc(count * 2 + 1);
+    if (!out) return "";
     for (size_t i = 0; i < count; ++i) {
-        g_binary_scratch[i * 2] = digits[writer->data[i] >> 4];
-        g_binary_scratch[i * 2 + 1] = digits[writer->data[i] & 15];
+        out[i * 2] = digits[writer->data[i] >> 4];
+        out[i * 2 + 1] = digits[writer->data[i] & 15];
     }
-    g_binary_scratch[count * 2] = '\0'; return g_binary_scratch;
+    out[count * 2] = '\0';
+    free(g_binary_result);
+    g_binary_result = out;
+    return g_binary_result;
 }
 void* absolute_binary_reader_create(const void* data, int64_t size) {
     WasmBinaryReader* reader = (WasmBinaryReader*)calloc(1, sizeof(WasmBinaryReader));
@@ -605,9 +610,10 @@ const char* absolute_binary_reader_read_string(void* p) {
     WasmBinaryReader* reader = (WasmBinaryReader*)p;
     int32_t size = absolute_binary_reader_read_i32(p);
     if (!reader || size < 0 || reader->position + (size_t)size > reader->size) return "";
-    size_t copy = (size_t)size < sizeof(g_binary_scratch)-1 ? (size_t)size : sizeof(g_binary_scratch)-1;
-    memcpy(g_binary_scratch, reader->data + reader->position, copy);
-    g_binary_scratch[copy] = '\0'; reader->position += (size_t)size; return g_binary_scratch;
+    const char* copy = wasm_string_copy_range(
+        (const char*)(reader->data + reader->position), (size_t)size);
+    reader->position += (size_t)size;
+    return copy;
 }
 int64_t absolute_binary_reader_read_bytes(void* p, void* out, int64_t size) {
     WasmBinaryReader* reader=(WasmBinaryReader*)p;
@@ -617,7 +623,9 @@ int64_t absolute_binary_reader_read_bytes(void* p, void* out, int64_t size) {
 }
 int64_t absolute_binary_reader_position(const void* p) { return p?(int64_t)((const WasmBinaryReader*)p)->position:0; }
 int64_t absolute_binary_reader_remaining(const void* p) {
-    const WasmBinaryReader* r=(const WasmBinaryReader*)p; return r?(int64_t)(r->size-r->position):0;
+    const WasmBinaryReader* r=(const WasmBinaryReader*)p;
+    if (!r || r->position >= r->size) return 0;
+    return (int64_t)(r->size-r->position);
 }
 int32_t absolute_binary_reader_is_eof(const void* p) {
     const WasmBinaryReader* r=(const WasmBinaryReader*)p; return !r||r->position>=r->size;
@@ -728,24 +736,65 @@ int64_t absolute_datetime_civil_to_unix_millis(int32_t y,int32_t m,int32_t d,int
     return (wasm_days_from_civil(y,m,d)*86400+h*3600+mi*60+s)*1000+ms-(int64_t)off*60000;
 }
 const char* absolute_datetime_format_iso(int32_t y,int32_t m,int32_t d,int32_t h,int32_t mi,int32_t s,int32_t ms,int32_t off){
-    char sign=off>=0?'+':'-';int32_t a=off>=0?off:-off;
-    if(off==0) {
-        if(ms) snprintf(g_datetime_scratch,sizeof(g_datetime_scratch),"%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",y,m,d,h,mi,s,ms);
-        else snprintf(g_datetime_scratch,sizeof(g_datetime_scratch),"%04d-%02d-%02dT%02d:%02d:%02dZ",y,m,d,h,mi,s);
-    } else {
-        if(ms) snprintf(g_datetime_scratch,sizeof(g_datetime_scratch),"%04d-%02d-%02dT%02d:%02d:%02d.%03d%c%02d:%02d",y,m,d,h,mi,s,ms,sign,a/60,a%60);
-        else snprintf(g_datetime_scratch,sizeof(g_datetime_scratch),"%04d-%02d-%02dT%02d:%02d:%02d%c%02d:%02d",y,m,d,h,mi,s,sign,a/60,a%60);
-    }
+    /* The same text the native runtime writes, including a negative year:
+       "%04d" would spend one of the four digits on the sign. */
+    char yearText[16];
+    if(y<0) snprintf(yearText,sizeof(yearText),"-%04lld",(long long)(-(int64_t)y));
+    else snprintf(yearText,sizeof(yearText),"%04d",y);
+    char zone[16];
+    if(off==0) snprintf(zone,sizeof(zone),"Z");
+    else{int32_t a=off>=0?off:-off;snprintf(zone,sizeof(zone),"%c%02d:%02d",off>=0?'+':'-',a/60,a%60);}
+    if(ms) snprintf(g_datetime_scratch,sizeof(g_datetime_scratch),"%s-%02d-%02dT%02d:%02d:%02d.%03d%s",yearText,m,d,h,mi,s,ms,zone);
+    else snprintf(g_datetime_scratch,sizeof(g_datetime_scratch),"%s-%02d-%02dT%02d:%02d:%02d%s",yearText,m,d,h,mi,s,zone);
     return g_datetime_scratch;
 }
 static int parse_digits(const char* p,int count,int32_t*out){int32_t v=0;for(int i=0;i<count;++i){if(p[i]<'0'||p[i]>'9')return 0;v=v*10+p[i]-'0';}*out=v;return 1;}
+static int datetime_fail(const char* message){fs_copy_path(g_datetime_error,sizeof(g_datetime_error),message);return 0;}
+static int read_fixed(const char**c,int count,int32_t*out){if(!parse_digits(*c,count,out))return 0;*c+=count;return 1;}
+/* The same grammar the native runtime reads, and the same refusals, because a
+   program that parses a timestamp must not depend on which target it is built
+   for. See docs/known-defects.md section 20. */
 int32_t absolute_datetime_parse_iso(const char*t,int32_t*y,int32_t*m,int32_t*d,int32_t*h,int32_t*mi,int32_t*s,int32_t*ms,int32_t*off){
-    g_datetime_error[0]='\0';if(!t||strlen(t)<19){fs_copy_path(g_datetime_error,sizeof(g_datetime_error),"invalid ISO-8601");return 0;}
-    int32_t yy,mm,dd,hh,mn,ss,milli=0,zone=0;
-    if(!parse_digits(t,4,&yy)||t[4]!='-'||!parse_digits(t+5,2,&mm)||t[7]!='-'||!parse_digits(t+8,2,&dd)||(t[10]!='T'&&t[10]!='t')||!parse_digits(t+11,2,&hh)||t[13]!=':'||!parse_digits(t+14,2,&mn)||t[16]!=':'||!parse_digits(t+17,2,&ss))return 0;
-    size_t p=19;if(t[p]=='.'){++p;int digits=0;while(t[p]>='0'&&t[p]<='9'&&digits<3){milli=milli*10+t[p++]-'0';++digits;}while(digits++<3)milli*=10;while(t[p]>='0'&&t[p]<='9')++p;}
-    if(t[p]=='Z'||t[p]=='z')++p;else if(t[p]=='+'||t[p]=='-'){int sign=t[p++]=='-'?-1:1,zh=0,zm=0;if(!parse_digits(t+p,2,&zh)||t[p+2]!=':'||!parse_digits(t+p+3,2,&zm))return 0;zone=sign*(zh*60+zm);p+=5;}
-    if(t[p])return 0;if(y)*y=yy;if(m)*m=mm;if(d)*d=dd;if(h)*h=hh;if(mi)*mi=mn;if(s)*s=ss;if(ms)*ms=milli;if(off)*off=zone;return 1;
+    g_datetime_error[0]='\0';
+    if(!t||!*t) return datetime_fail("Empty ISO-8601 text");
+    const char* c=t;
+    int32_t yearSign=1;
+    if(*c=='-'||*c=='+'){yearSign=(*c=='-')?-1:1;++c;}
+    int32_t yy=0,mm=0,dd=0,hh=0,mn=0,ss=0,milli=0,zone=0;
+    {   int64_t acc=0;int digits=0;
+        while(*c>='0'&&*c<='9'){if(acc>100000000)return datetime_fail("Invalid ISO-8601 format");acc=acc*10+(*c-'0');++digits;++c;}
+        if(digits<4) return datetime_fail("Invalid ISO-8601 format");
+        yy=(int32_t)acc*yearSign;
+    }
+    if(*c!='-'||(++c,!read_fixed(&c,2,&mm))||*c!='-'||(++c,!read_fixed(&c,2,&dd)))
+        return datetime_fail("Invalid ISO-8601 format");
+    if(*c=='T'||*c=='t'||*c==' '){
+        ++c;
+        if(!read_fixed(&c,2,&hh)||*c!=':'||(++c,!read_fixed(&c,2,&mn)))
+            return datetime_fail("Invalid ISO-8601 time");
+        if(*c==':'){++c;if(!read_fixed(&c,2,&ss))return datetime_fail("Invalid ISO-8601 time");}
+        if(*c=='.'||*c==','){
+            ++c;
+            if(*c<'0'||*c>'9') return datetime_fail("Invalid ISO-8601 fractional second");
+            int digits=0;
+            while(*c>='0'&&*c<='9'){if(digits<3)milli=milli*10+(*c-'0');++digits;++c;}
+            for(;digits<3;++digits)milli*=10;
+        }
+        if(*c=='Z'||*c=='z')++c;
+        else if(*c=='+'||*c=='-'){
+            int32_t sign=(*c=='-')?-1:1;++c;
+            int32_t zh=0,zm=0;
+            if(!read_fixed(&c,2,&zh)) return datetime_fail("Invalid ISO-8601 zone offset");
+            if(*c==':')++c;
+            if(*c>='0'&&*c<='9'){if(!read_fixed(&c,2,&zm))return datetime_fail("Invalid ISO-8601 zone offset");}
+            if(zh>23||zm>59) return datetime_fail("Zone offset out of range");
+            zone=sign*(zh*60+zm);
+        }
+    }
+    while(*c==' '||*c=='\t'||*c=='\r'||*c=='\n')++c;
+    if(*c) return datetime_fail("Trailing text after ISO-8601 value");
+    if(y)*y=yy;if(m)*m=mm;if(d)*d=dd;if(h)*h=hh;if(mi)*mi=mn;if(s)*s=ss;if(ms)*ms=milli;if(off)*off=zone;
+    return 1;
 }
 
 /* ---------- JSON ---------- */

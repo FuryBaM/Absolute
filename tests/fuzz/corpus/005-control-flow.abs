@@ -1,0 +1,8 @@
+int32 main() {
+    int32 total = 0;
+    for (int32 i = 0; i < 4; i += 1) { if (i % 2 == 0) { continue; } total += i; }
+    while (total < 10) { total += 3; }
+    do { total -= 1; } while (total > 8);
+    switch (total) { case 8: total = 1; break; default: total = 2; }
+    return 0;
+}

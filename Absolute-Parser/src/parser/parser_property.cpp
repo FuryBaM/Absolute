@@ -12,7 +12,8 @@ namespace Absolute {
                 return std::make_unique<UserTypeExpr>(CloneTypeExpression(*user->typeExpr));
             if (const auto* pointer = dynamic_cast<const PointerTypeExpr*>(&type))
                 return std::make_unique<PointerTypeExpr>(
-                    CloneType(*pointer->pointee), pointer->raw, pointer->weak);
+                    CloneType(*pointer->pointee), pointer->ownership,
+                    pointer->qualifiesBase);
             if (const auto* array = dynamic_cast<const ArrayTypeExpr*>(&type))
                 return std::make_unique<ArrayTypeExpr>(CloneType(*array->element));
             throw std::runtime_error("Unsupported property type expression");
@@ -59,9 +60,7 @@ namespace Absolute {
     }
 
     bool Parser::LooksLikePropertyDeclaration() const {
-        size_t index = pos;
-        if (index < tokens.size() && tokens[index].type == TokenType::KEYWORD &&
-            tokens[index].value == "raw") ++index;
+        size_t index = SkipOwnershipQualifier(pos);
         if (index >= tokens.size()) return false;
         if (tokens[index].type == TokenType::KEYWORD && IsPrimitiveType(tokens[index].value)) {
             ++index;

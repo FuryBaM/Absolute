@@ -26,7 +26,15 @@ namespace std.io {
             buffer = move(existing);
         }
 
-        public ByteBuffer* getBuffer() { return buffer.slice(); }
+        // Everything written so far. `slice()` starts at the current position,
+        // which after writing is the unwritten remainder rather than the
+        // content, so the bytes just written were not reachable through here.
+        public ByteBuffer* getBuffer() { return buffer.sliceAt(0, buffer.position()); }
+
+        // Switch from writing to reading: the stream rereads from the start and
+        // stops where writing stopped. Without this a MemoryStream could be
+        // written or read but never both.
+        public void flip() { buffer.flip(); }
 
         public int32 readByte() {
             if (!buffer.hasRemaining()) { return -1; }

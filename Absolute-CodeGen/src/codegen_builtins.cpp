@@ -76,6 +76,15 @@ namespace Absolute {
             }
             format += '\n';
             EmitPrintf(format, values);
+            // abort() does not flush stdio, and stdout is fully buffered
+            // whenever it is not a terminal -- a pipe, a file, a CI log. The
+            // message was written into that buffer and died there, so a failing
+            // assertion looked like a bare exit code 134 everywhere it mattered
+            // most. Flushing every stream first costs one call on a path that
+            // is about to end the process.
+            builder.CreateCall(module->getOrInsertFunction("fflush",
+                llvm::FunctionType::get(builder.getInt32Ty(), {builder.getPtrTy()}, false)),
+                {llvm::ConstantPointerNull::get(builder.getPtrTy())});
             builder.CreateCall(Abort());
             builder.CreateUnreachable();
             builder.SetInsertPoint(success);
@@ -93,8 +102,10 @@ namespace Absolute {
             return;
         }
 
-        if (name == "unsafeArrayGet" || name == "unsafeArraySet") {
+        if (name == "unsafeArrayGet" || name == "unsafeArraySet" ||
+            name == "unsafeArrayTake") {
             const bool isSet = name == "unsafeArraySet";
+            const bool isTake = name == "unsafeArrayTake";
             const size_t expectedCount = isSet ? 3 : 2;
             if (expression.arguments.size() != expectedCount)
                 Fail(name + " received an invalid argument count");
@@ -112,8 +123,23 @@ namespace Absolute {
                     index, builder.getInt64Ty(), !unsignedIndex, "unsafe.array.index");
             llvm::Value* address = builder.CreateInBoundsGEP(
                 view.elementType, view.address, index, "unsafe.array.element.address");
+            const std::string accessedElementType =
+                ArrayElementTypeName(SemanticType(expression.arguments[0].get()));
             if (!isSet) {
                 value = builder.CreateLoad(view.elementType, address, "unsafe.array.element");
+                // A take clears the slot it read. The array is left holding a
+                // zero, which is what "owns nothing" is spelled as everywhere
+                // else -- so the drop that walks it later skips this element
+                // instead of releasing what the caller now holds.
+                if (isTake && SemanticsOfTypeName(accessedElementType).needsDrop)
+                    builder.CreateStore(
+                        llvm::Constant::getNullValue(view.elementType), address);
+                // Described as an element like any other: the check in front of
+                // it is the caller's, not a reason for the access to alias more
+                // than it does. Without this the indexer of a collection
+                // reloaded the object's count and data pointer on every
+                // element, and its bounds check stayed inside the loop.
+                TagAccess(value, TbaaElementAccess(accessedElementType));
                 valueCreatesManagedOwner = false;
                 valueCreatesArrayOwner = false;
                 valueCreatesClosureOwner = false;
@@ -125,7 +151,137 @@ namespace Absolute {
             llvm::Value* assigned = Coerce(
                 Evaluate(source), view.elementType,
                 SemanticType(source), elementTypeName);
-            builder.CreateStore(assigned, address);
+            // A slot is a place the array releases, so what goes into it is
+            // one more name for the bytes unless the expression made them.
+            // Without this a container that stores its parameter -- which is
+            // what every `add` does -- left the slot holding what the
+            // parameter was about to give back.
+            if (elementTypeName == "string")
+                assigned = RetainStoredString(source, assigned);
+            // The same rule one level up: an aggregate is stored by copying
+            // its bytes, which duplicates the pointers its parts hold without
+            // duplicating their counts. The slot is a second name for them, so
+            // it says so -- unless the expression made the value, in which
+            // case the count it arrived with is the one the slot keeps.
+            // Counted through a spill, before the slot's old value is
+            // released, because `a[i] = a[i]` is the two being the same bytes.
+            if (elementTypeName != "string" && !CreatesFreshString(source) &&
+                ValueCountsOnCopy(elementTypeName)) {
+                llvm::AllocaInst* incoming = CreateEntryAlloca(
+                    *CurrentFunction(), assigned->getType(), "element.incoming");
+                builder.CreateStore(assigned, incoming);
+                EmitValueRetain(incoming, elementTypeName);
+                assigned = builder.CreateLoad(
+                    assigned->getType(), incoming, "element.incoming.value");
+            }
+            // And it gives back what it held. A slot that is released is a
+            // name that counts, and overwriting one that already held
+            // something left the old value with nobody: `items[0] = text` in
+            // a loop leaked every string but the last.
+            if (TypeNeedsCleanup(elementTypeName))
+                EmitValueCleanup(address, elementTypeName);
+            TagAccess(builder.CreateStore(assigned, address),
+                TbaaElementAccess(elementTypeName));
+            value = nullptr;
+            valueCreatesManagedOwner = false;
+            valueCreatesArrayOwner = false;
+            valueCreatesClosureOwner = false;
+            return;
+        }
+
+        // Lowered to a memcpy rather than a loop. The destination is freshly
+        // allocated storage the caller has not published yet and the source is
+        // a different allocation, so the two cannot overlap -- which is what
+        // makes the non-overlapping form correct here.
+        if (name == "unsafeArrayCopy" || name == "unsafeArrayMove") {
+            const bool transfers = name == "unsafeArrayMove";
+            if (expression.arguments.size() != 3)
+                Fail(name + " expects a destination, a source and a count");
+            ArrayView destination = ViewOfArray(expression.arguments[0].get());
+            ArrayView source = ViewOfArray(expression.arguments[1].get());
+            if (destination.dimensions.size() != 1 || source.dimensions.size() != 1)
+                Fail(name + " requires one-dimensional arrays");
+            llvm::Value* count = Evaluate(expression.arguments[2].get());
+            if (!count->getType()->isIntegerTy())
+                Fail(name + " count must be an integer");
+            const std::string countTypeName = SemanticType(expression.arguments[2].get());
+            const bool unsignedCount = countTypeName.starts_with("uint") ||
+                countTypeName == "char";
+            if (!count->getType()->isIntegerTy(64))
+                count = builder.CreateIntCast(count, builder.getInt64Ty(),
+                    !unsignedCount, "unsafe.array.copy.count");
+            const std::string elementTypeName = ArrayElementTypeName(
+                SemanticType(expression.arguments[0].get()));
+            llvm::Value* bytes = builder.CreateMul(count,
+                builder.getInt64(SizeOfTypeName(elementTypeName)),
+                "unsafe.array.copy.bytes");
+            builder.CreateMemCpy(destination.address, llvm::MaybeAlign(),
+                source.address, llvm::MaybeAlign(), bytes);
+            // What makes it a move: the source range is left owning nothing.
+            // Without this the block that was copied out of is still holding
+            // every handle that was copied, and dropping it releases what the
+            // destination now owns. For elements that own nothing there is
+            // nothing to transfer and the clear is not emitted.
+            if (transfers && SemanticsOfTypeName(elementTypeName).needsDrop)
+                builder.CreateMemSet(source.address, builder.getInt8(0), bytes,
+                    llvm::MaybeAlign());
+            value = nullptr;
+            valueCreatesManagedOwner = false;
+            valueCreatesArrayOwner = false;
+            valueCreatesClosureOwner = false;
+            return;
+        }
+
+        // Releasing a run of elements. What releasing one means is the
+        // element type's answer -- so this is a loop for a run of owners and
+        // nothing at all for a run of numbers.
+        if (name == "unsafeArrayDrop") {
+            if (expression.arguments.size() != 3)
+                Fail("unsafeArrayDrop expects an array, a first index and a count");
+            ArrayView view = ViewOfArray(expression.arguments[0].get());
+            if (view.dimensions.size() != 1)
+                Fail("unsafeArrayDrop requires a one-dimensional array");
+            const std::string elementTypeName = ArrayElementTypeName(
+                SemanticType(expression.arguments[0].get()));
+            const auto toIndex = [&](size_t argument, const char* label) {
+                llvm::Value* raw = Evaluate(expression.arguments[argument].get());
+                if (!raw->getType()->isIntegerTy())
+                    Fail("unsafeArrayDrop range must be integers");
+                const std::string typeName = SemanticType(expression.arguments[argument].get());
+                const bool isUnsigned = typeName.starts_with("uint") || typeName == "char";
+                if (!raw->getType()->isIntegerTy(64))
+                    raw = builder.CreateIntCast(raw, builder.getInt64Ty(), !isUnsigned, label);
+                return raw;
+            };
+            llvm::Value* first = toIndex(1, "unsafe.array.drop.first");
+            llvm::Value* count = toIndex(2, "unsafe.array.drop.count");
+            if (SemanticsOfTypeName(elementTypeName).needsDrop) {
+                llvm::Function* function = builder.GetInsertBlock()->getParent();
+                llvm::BasicBlock* test = llvm::BasicBlock::Create(
+                    context, "unsafe.array.drop.test", function);
+                llvm::BasicBlock* body = llvm::BasicBlock::Create(
+                    context, "unsafe.array.drop.body", function);
+                llvm::BasicBlock* done = llvm::BasicBlock::Create(
+                    context, "unsafe.array.drop.done", function);
+                llvm::Value* limit = builder.CreateAdd(first, count, "unsafe.array.drop.limit");
+                llvm::BasicBlock* entry = builder.GetInsertBlock();
+                builder.CreateBr(test);
+                builder.SetInsertPoint(test);
+                llvm::PHINode* index = builder.CreatePHI(
+                    builder.getInt64Ty(), 2, "unsafe.array.drop.index");
+                index->addIncoming(first, entry);
+                builder.CreateCondBr(
+                    builder.CreateICmpSLT(index, limit, "unsafe.array.drop.more"), body, done);
+                builder.SetInsertPoint(body);
+                llvm::Value* address = builder.CreateInBoundsGEP(
+                    view.elementType, view.address, index, "unsafe.array.drop.address");
+                EmitValueCleanup(address, elementTypeName);
+                llvm::Value* next = builder.CreateAdd(
+                    index, builder.getInt64(1), "unsafe.array.drop.next");
+                index->addIncoming(next, builder.GetInsertBlock());
+                builder.CreateBr(test);
+                builder.SetInsertPoint(done);
+            }
             value = nullptr;
             valueCreatesManagedOwner = false;
             valueCreatesArrayOwner = false;
@@ -282,8 +438,17 @@ namespace Absolute {
                             builder.getFalse(),
                             variable->ownershipFlagStorage);
                 }
+                // Clearing the source is what makes a move a transfer, and it
+                // is a transfer only where the destination cannot take a count
+                // of its own. For a value whose copy counts -- a string, or an
+                // aggregate holding one -- a move is a read: it hands back what
+                // the source still names, and the store that takes it counts
+                // it. Clearing as well meant the source's own count was dropped
+                // on the floor, one leak per `unsafeArraySet(items, n,
+                // move(element))`, which is how every container stores what it
+                // is given.
                 const uint64_t size = SizeOfTypeName(argumentType);
-                if (size > 0) {
+                if (!ValueCountsOnCopy(argumentType) && size > 0) {
                     builder.CreateMemSet(
                         address, builder.getInt8(0), size,
                         llvm::MaybeAlign(8));
@@ -371,6 +536,7 @@ namespace Absolute {
                 ArrayView source = ViewOfArray(argument);
                 const bool releaseTemporarySource = valueCreatesArrayOwner;
                 llvm::Value* temporarySourceOwner = valueArrayOwner;
+                llvm::Value* temporarySourceCount = valueArrayOwnedCount;
                 llvm::Value* elementCount = builder.getInt64(1);
                 for (llvm::Value* dimension : source.dimensions)
                     elementCount = builder.CreateMul(
@@ -381,8 +547,34 @@ namespace Absolute {
                 llvm::Value* copiedData = builder.CreateCall(Malloc(), {byteCount}, "copy.data");
                 builder.CreateMemCpy(copiedData, llvm::MaybeAlign(16),
                     source.address, llvm::MaybeAlign(1), byteCount);
-                if (releaseTemporarySource)
+                // The bytes are copied; what they refer to is not. For an
+                // element that owns something shared, the copy is one more
+                // name holding it and has to say so -- otherwise the two
+                // arrays release the same storage. An element that owns
+                // something *uniquely* cannot be copied at all, which is what
+                // E_COPY_OWNING_ELEMENTS refuses before reaching here.
+                const std::string copiedElement = ArrayElementTypeName(typeName, rank);
+                EmitArrayElementRetain(copiedData,
+                    TypeFromName(copiedElement), elementCount, copiedElement);
+                // The source was made by the expression and nobody kept it,
+                // so it goes here -- all of it. Freeing the buffer alone let
+                // go of the storage and of nothing in it, and the copy above
+                // has just taken a count of every element that has one, so
+                // what the source held would never have been given back.
+                if (releaseTemporarySource) {
+                    // Through the owner and its whole extent, not through the
+                    // view: `copy(makeArray()[0:2])` names two elements of an
+                    // allocation of three, and the third is released here or
+                    // by nobody.
+                    EmitArrayElementCleanup(
+                        temporarySourceCount ? temporarySourceOwner : source.address,
+                        source.elementType,
+                        temporarySourceCount
+                            ? std::vector<llvm::Value*>{temporarySourceCount}
+                            : source.dimensions,
+                        copiedElement, temporarySourceOwner);
                     builder.CreateCall(Free(), {temporarySourceOwner});
+                }
                 source.address = copiedData;
                 source.owner = copiedData;
                 value = BuildArrayDescriptor(source);
@@ -390,6 +582,7 @@ namespace Absolute {
                 valueManagedPointee = nullptr;
                 valueCreatesArrayOwner = true;
                 valueArrayOwner = copiedData;
+                valueArrayOwnedCount = elementCount;
                 return;
             }
 
@@ -452,6 +645,8 @@ namespace Absolute {
             valueManagedPointee = nullptr;
             valueCreatesArrayOwner = false;
             valueArrayOwner = nullptr;
+        valueArrayOwnedCount = nullptr;
+            valueArrayOwnedCount = nullptr;
             return;
         }
 

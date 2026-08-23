@@ -3,7 +3,8 @@
 namespace Absolute {
     llvm::Value* CodeGenerator::Impl::EmitPropertyAccessor(Expression* receiver,
         const std::string& receiverType, const std::string& methodKey,
-        const std::vector<llvm::Value*>& explicitArguments) {
+        const std::vector<llvm::Value*>& explicitArguments,
+        const std::vector<llvm::Value*>& ownershipFlags) {
         const std::string aggregateName = ClassNameFromType(receiverType);
         llvm::Value* object = receiver ? ObjectPointer(receiver, receiverType) : currentThis;
         if (!object) Fail("property accessor requires an object receiver");
@@ -11,7 +12,8 @@ namespace Absolute {
         const auto emitCall = [&](const ClassMethod& method, llvm::Value* callee) -> llvm::Value* {
             llvm::FunctionType* methodType = MethodFunctionType(method);
             llvm::Value* result = EmitAbiCall(methodType, callee, method.returnType,
-                {object}, method.parameterTypes, explicitArguments, "property.result");
+                {object}, method.parameterTypes, explicitArguments,
+                "property.result", false, ownershipFlags);
             if (!method.statement || !HasModifier(*method.statement, "nothrow"))
                 EmitExceptionCheck();
             return result;
@@ -104,7 +106,21 @@ namespace Absolute {
                 if (impl->addressMode) impl->Fail("a property is not addressable");
                 impl->value = impl->EmitPropertyAccessor(nullptr, impl->currentClassName,
                     CallableKey(PropertyGetterName(expr->name), {}), {});
-                impl->valueCreatesManagedOwner = false;
+                // The same line the call path uses. A `T*` a callable returns
+                // is an owner, and a getter is a callable -- so an owner read
+                // and dropped inside one expression is a temporary of the
+                // statement, which is what this flag says. Cleared by hand
+                // here, `s.made.value` built an object and released nothing.
+                impl->valueCreatesManagedOwner =
+                    IsStrongManagedPointerTypeName(impl->SemanticType(expr));
+                // And the same for a closure, which the call path also sets.
+                // A getter hands back a counted closure whatever its body
+                // does -- it returns a fresh one, or it retains the one it
+                // read, because that is what a callable return means -- so a
+                // closure read and dropped inside one expression is a
+                // temporary of the statement.
+                impl->valueCreatesClosureOwner =
+                    IsCodegenFunctionType(impl->SemanticType(expr));
                 return;
             }
             if (symbol && symbol->kind == SymbolKind::Field && symbol->isStatic) {
@@ -130,8 +146,10 @@ namespace Absolute {
                 impl->addressValue = fieldAddress;
                 return;
             }
-            llvm::Type* fieldType = impl->TypeFromName(impl->SemanticType(expr));
+            const std::string fieldTypeName = impl->SemanticType(expr);
+            llvm::Type* fieldType = impl->TypeFromName(fieldTypeName);
             impl->value = impl->builder.CreateLoad(fieldType, fieldAddress, expr->name + ".value");
+            impl->TagAccess(impl->value, impl->TbaaFieldAccess(fieldTypeName));
             impl->valueCreatesManagedOwner = false;
             return;
         }
@@ -150,6 +168,7 @@ namespace Absolute {
             impl->valueCreatesManagedOwner = false;
             impl->valueCreatesArrayOwner = false;
             impl->valueArrayOwner = nullptr;
+        impl->valueArrayOwnedCount = nullptr;
             return;
         }
         impl->value = impl->builder.CreateLoad(variable->type, variable->address, expr->name + ".value");
@@ -161,6 +180,7 @@ namespace Absolute {
         impl->valueManagedPointee = nullptr;
         impl->valueCreatesArrayOwner = false;
         impl->valueArrayOwner = nullptr;
+        impl->valueArrayOwnedCount = nullptr;
         impl->valueCreatesClosureOwner = false;
         const ExpressionInfo* callInfo = impl->analyzer ? impl->analyzer->GetExpressionInfo(*expr) : nullptr;
         const Symbol* selected = callInfo ? impl->analyzer->GetSymbol(callInfo->symbol) : nullptr;
@@ -254,6 +274,7 @@ namespace Absolute {
             std::vector<Expression*> argumentExpressions;
             for (const auto& argument : expr->arguments)
                 argumentExpressions.push_back(argument.get());
+            impl->AppendDefaultArguments(argumentExpressions, selected);
             arguments = impl->EvaluateCallArguments(argumentExpressions,
                 temporaryArrayOwners, temporaryClosureOwners,
                 selected->parameterTypes, selected->variadicParameter,
@@ -308,6 +329,28 @@ namespace Absolute {
                 method = &found->second;
                 callee = impl->module->getFunction(method->linkName);
             }
+            else if (auto owner = impl->interfaces.find(impl->currentClassName);
+                owner != impl->interfaces.end()) {
+                // A default method body runs on the concrete implementation, so
+                // an unqualified call to another contract method has to dispatch
+                // through the vtable the object carries rather than bind to the
+                // interface declaration.
+                const auto found = owner->second.methods.find(methodKey);
+                if (found == owner->second.methods.end())
+                    impl->Fail("interface '" + impl->currentClassName +
+                        "' has no method '" + methodName + "'");
+                method = &found->second;
+                if (!method->virtualSlot)
+                    impl->Fail("interface method '" + impl->currentClassName + "." +
+                        methodName + "' has no dispatch slot");
+                llvm::Value* vtable = impl->builder.CreateLoad(
+                    impl->builder.getPtrTy(), impl->currentThis, "interface.vtable");
+                llvm::Value* slot = impl->builder.CreateGEP(
+                    impl->builder.getPtrTy(), vtable,
+                    impl->builder.getInt64(*method->virtualSlot), "interface.slot");
+                callee = impl->builder.CreateLoad(
+                    impl->builder.getPtrTy(), slot, "interface.method");
+            }
             if (!method || !callee)
                 impl->Fail("missing implicit instance method '" + methodName + "'");
             std::vector<llvm::Value*> arguments;
@@ -317,6 +360,7 @@ namespace Absolute {
             std::vector<Expression*> argumentExpressions;
             for (const auto& argument : expr->arguments)
                 argumentExpressions.push_back(argument.get());
+            impl->AppendDefaultArguments(argumentExpressions, selected);
             arguments = impl->EvaluateCallArguments(argumentExpressions,
                 temporaryArrayOwners, temporaryClosureOwners,
                 method->parameterTypes, selected->variadicParameter,
@@ -347,6 +391,7 @@ namespace Absolute {
                 std::vector<Expression*> argumentExpressions{member->base.get()};
                 for (const auto& argument : expr->arguments)
                     argumentExpressions.push_back(argument.get());
+                impl->AppendDefaultArguments(argumentExpressions, selected);
                 arguments = impl->EvaluateCallArguments(argumentExpressions,
                     temporaryArrayOwners, temporaryClosureOwners,
                     selected->parameterTypes, selected->variadicParameter,
@@ -386,6 +431,7 @@ namespace Absolute {
                 std::vector<Expression*> argumentExpressions;
                 for (const auto& argument : expr->arguments)
                     argumentExpressions.push_back(argument.get());
+                impl->AppendDefaultArguments(argumentExpressions, selected);
                 arguments = impl->EvaluateCallArguments(argumentExpressions,
                     temporaryArrayOwners, temporaryClosureOwners,
                     method->second.parameterTypes,
@@ -440,6 +486,7 @@ namespace Absolute {
                 std::vector<Expression*> argumentExpressions;
                 for (const auto& argument : expr->arguments)
                     argumentExpressions.push_back(argument.get());
+                impl->AppendDefaultArguments(argumentExpressions, selected);
                 arguments = impl->EvaluateCallArguments(argumentExpressions,
                     temporaryArrayOwners, temporaryClosureOwners,
                     method->second.parameterTypes,
@@ -483,6 +530,7 @@ namespace Absolute {
                 std::vector<Expression*> argumentExpressions;
                 for (const auto& argument : expr->arguments)
                     argumentExpressions.push_back(argument.get());
+                impl->AppendDefaultArguments(argumentExpressions, selected);
                 arguments = impl->EvaluateCallArguments(argumentExpressions,
                     temporaryArrayOwners, temporaryClosureOwners,
                     method->second.parameterTypes,
@@ -524,6 +572,7 @@ namespace Absolute {
         }
         if (selected) {
             parameterTypes = selected->parameterTypes;
+            impl->AppendDefaultArguments(argumentExpressions, selected);
             arguments = impl->EvaluateCallArguments(argumentExpressions,
                 temporaryArrayOwners, temporaryClosureOwners,
                 parameterTypes, selected->variadicParameter,
@@ -555,32 +604,78 @@ namespace Absolute {
             const Symbol* symbol = info ? impl->analyzer->GetSymbol(info->symbol) : nullptr;
             if (symbol && symbol->kind == SymbolKind::Indexer) {
                 if (impl->addressMode) impl->Fail("an indexer is not addressable");
-                std::vector<llvm::Value*> arguments;
-                arguments.reserve(expr->indexes.size());
-                for (const auto& index : expr->indexes)
-                    arguments.push_back(impl->Evaluate(index.get()));
+                std::vector<llvm::Value*> arguments =
+                    impl->EvaluateIndexArguments(expr->indexes);
                 impl->value = impl->EmitPropertyAccessor(
                     expr->base.get(), impl->SemanticType(expr->base.get()),
                     CallableKey(IndexerGetterName(), info->parameterTypes), arguments);
-                impl->valueCreatesManagedOwner = false;
+                // An indexer getter hands back a borrow of the cell it
+                // projects onto -- the analyzer weakened the element type to
+                // say so -- and a borrow is not a temporary this statement
+                // releases: the container still owns what it named. Asked of
+                // the type rather than assumed, so a getter written to
+                // produce an owner would be visible here; it cannot be
+                // written, because a subscriber return refuses it.
+                //
+                // A closure is counted rather than owned uniquely, so a
+                // getter hands back a count whatever its body does -- a fresh
+                // closure, or a retained one, because that is what a callable
+                // return means -- and the statement that dropped it has to
+                // give that count back.
+                impl->valueCreatesManagedOwner =
+                    IsStrongManagedPointerTypeName(impl->SemanticType(expr));
+                impl->valueCreatesClosureOwner =
+                    IsCodegenFunctionType(impl->SemanticType(expr));
                 return;
             }
+        }
+        // `p[i]` on a raw pointer is `*(p + i)`: one offset, then a load, or
+        // the address itself when this access is an assignment target. It
+        // reaches neither the array descriptor below -- a raw pointer carries
+        // no dimensions -- nor the indexer path above.
+        const std::string baseType = impl->SemanticType(expr->base.get());
+        if (IsRawPointerTypeName(baseType)) {
+            if (expr->indexes.size() != 1 || !expr->indexes.front())
+                impl->Fail("a raw pointer takes exactly one index");
+            const bool outerAddressMode = impl->addressMode;
+            impl->addressMode = false;
+            llvm::Value* pointer = impl->Evaluate(expr->base.get());
+            llvm::Value* index = impl->Evaluate(expr->indexes.front().get());
+            impl->addressMode = outerAddressMode;
+            llvm::Value* address = impl->PointerOffset(pointer, baseType, index, false);
+            if (outerAddressMode) {
+                impl->addressValue = address;
+                return;
+            }
+            impl->value = impl->builder.CreateLoad(
+                impl->TypeFromName(PointerPointeeName(baseType)), address, "pointer.element");
+            impl->valueCreatesManagedOwner = false;
+            return;
         }
         if (expr->indexes.size() == 1 && !expr->indexes.front()) {
             if (impl->addressMode) impl->Fail("a slice is not assignable");
             Impl::ArrayView view = impl->ViewOfArray(expr->base.get());
             const bool createsOwner = impl->valueCreatesArrayOwner;
             llvm::Value* owner = impl->valueArrayOwner;
+            llvm::Value* ownedCount = impl->valueArrayOwnedCount;
             impl->value = impl->BuildArrayDescriptor(view);
             impl->valueCreatesManagedOwner = false;
             impl->valueCreatesArrayOwner = createsOwner;
             impl->valueArrayOwner = owner;
+            // A view of part of an allocation is still the whole allocation's
+            // to release, so what the owner covers travels unchanged.
+            impl->valueArrayOwnedCount = ownedCount;
             return;
         }
         Impl::ArrayView view = impl->ViewOfArray(expr->base.get());
+        // Whether the base produced the storage it describes is decided here,
+        // before an index is evaluated: evaluating one overwrites the answer.
+        const bool borrowedArrayOwner = impl->valueCreatesArrayOwner;
+        llvm::Value* borrowedArrayBuffer = impl->valueArrayOwner;
+        llvm::Value* borrowedArrayOwnedCount = impl->valueArrayOwnedCount;
         if (expr->indexes.size() < view.dimensions.size()) {
             if (impl->addressMode) impl->Fail("sub-array slice is not assignable");
-            llvm::Value* address = impl->ArrayElementAddress(*expr);
+            llvm::Value* address = impl->ArrayElementAddress(*expr, view);
             std::vector<llvm::Value*> subDims;
             for (size_t d = expr->indexes.size(); d < view.dimensions.size(); ++d) {
                 subDims.push_back(view.dimensions[d]);
@@ -593,16 +688,32 @@ namespace Absolute {
             subView.owner = view.owner;
             impl->value = impl->BuildArrayDescriptor(subView);
             impl->valueCreatesManagedOwner = false;
+            // A row of an array is still that array's storage, so ownership
+            // travels with it rather than ending here.
+            impl->valueCreatesArrayOwner = borrowedArrayOwner;
+            impl->valueArrayOwner = borrowedArrayBuffer;
+            impl->valueArrayOwnedCount = borrowedArrayOwnedCount;
             return;
         }
 
-        llvm::Value* address = impl->ArrayElementAddress(*expr);
+        // Reading one element takes a value out of the array and keeps nothing
+        // of it, so an array the expression produced -- `snapshot()[0]` -- is
+        // released with the statement. A *slice* is the opposite: it keeps
+        // referring to the same buffer, which is why the branch above does not
+        // do this and `return copy(values)[1:3]` still owns what it returns.
+        llvm::Value* address = impl->ArrayElementAddress(*expr, view);
+        if (borrowedArrayOwner && borrowedArrayBuffer)
+            impl->RegisterTemporaryArrayOwner(
+                impl->BuildArrayDescriptor(view), view.typeName,
+                borrowedArrayBuffer, borrowedArrayOwnedCount);
         if (impl->addressMode) {
             impl->addressValue = address;
             return;
         }
-        llvm::Type* elementType = impl->TypeFromName(impl->SemanticType(expr));
+        const std::string elementTypeName = impl->SemanticType(expr);
+        llvm::Type* elementType = impl->TypeFromName(elementTypeName);
         impl->value = impl->builder.CreateLoad(elementType, address, "array.element");
+        impl->TagAccess(impl->value, impl->TbaaElementAccess(elementTypeName));
         impl->valueCreatesManagedOwner = false;
     }
 
@@ -610,7 +721,8 @@ namespace Absolute {
         if (impl->addressMode) impl->Fail("a slice is not assignable");
         Impl::ArrayView source = impl->ViewOfArray(expr->base.get());
         const bool createsOwner = impl->valueCreatesArrayOwner;
-        llvm::Value* owner = impl->valueArrayOwner;
+llvm::Value* owner = impl->valueArrayOwner;
+        llvm::Value* ownedCount = impl->valueArrayOwnedCount;
 
         const size_t sourceRank = source.dimensions.size();
         if (sourceRank == 0) impl->Fail("slice target is not an array");
@@ -679,6 +791,7 @@ namespace Absolute {
             impl->valueCreatesManagedOwner = false;
             impl->valueCreatesArrayOwner = createsOwner;
             impl->valueArrayOwner = owner;
+            impl->valueArrayOwnedCount = ownedCount;
             return;
         }
 
@@ -760,6 +873,7 @@ namespace Absolute {
         impl->valueCreatesManagedOwner = false;
         impl->valueCreatesArrayOwner = false;
         impl->valueArrayOwner = nullptr;
+        impl->valueArrayOwnedCount = nullptr;
     }
 
 }

@@ -1,0 +1,117 @@
+// A requirement a generic type states about its own parameter.
+//
+// Without one, a type that cannot serve an argument says so in every line of
+// its body that touches it. A builder is the case that made this worth having:
+// asking `Vector<Cell*>` for a builder produced six diagnostics, each naming a
+// private field of a class the program never wrote, and none of them was the
+// line that asked. What the program did wrong is one thing, so it is one
+// sentence, at that line.
+//
+// One requirement exists, because the ownership model answers exactly one
+// question of this shape: `copyable` -- whether a second name for a value is
+// an ordinary thing to have. It is written where every other qualifier in this
+// language is written, in front of the name.
+//
+// It is a no-op for every argument that can serve it, which is most of them: a
+// number, a string (shared, so a second name is ordinary), a borrow, an
+// observer. What it refuses is an owner, and `tests/generic-constraints-
+// errors.abs` is where that is pinned.
+
+import "../std/string.abs";
+
+int32 destroyed = 0;
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+    public void destroy() { destroyed = destroyed + 1; }
+}
+
+// A staging copy: it holds a second name for everything it is given, which is
+// exactly what the requirement is about.
+class Snapshot<copyable T> {
+    private T[] kept;
+    private int32 filled;
+
+    public Snapshot(int32 capacity) {
+        kept = new T[capacity];
+        filled = 0;
+    }
+
+    public int32 count { get { return filled; } }
+
+    public void add(T value) {
+        kept[filled] = value;
+        filled = filled + 1;
+    }
+
+    public sub T this[int32 index] {
+        get { return kept[index]; }
+    }
+}
+
+// A struct may state one too, and a parameter without a requirement is
+// unaffected by one on its neighbour.
+struct Labelled<K, copyable V> {
+    public K key;
+    public V value;
+}
+
+// `copyable` is not a keyword. It is a requirement only when a parameter name
+// follows it, so an ordinary word stays ordinary and this declares a parameter
+// called `copyable`.
+class Plain<copyable> {
+    private copyable held;
+    public Plain(copyable given) { held = given; }
+    public copyable value { get { return held; } }
+}
+
+int32 main() {
+    // A number.
+    Snapshot<int32>* numbers = new Snapshot<int32>(3);
+    numbers.add(10);
+    numbers.add(20);
+    assert(numbers[1] == 20, "a number snapshots");
+    assert(numbers.count == 2, "twice");
+
+    // A string: shared, so a second name for one is ordinary, and the
+    // requirement is met.
+    Snapshot<string>* words = new Snapshot<string>(2);
+    words.add(format("a-{}", 1));
+    words.add(format("b-{}", 2));
+    assert(words[0] == "a-1", "a string snapshots");
+
+    // A borrow of an owner. The owner is elsewhere, so a second name for the
+    // borrow is ordinary too -- which is the answer that makes the
+    // requirement usable rather than merely restrictive.
+    Cell* owned = new Cell(7);
+    sub Cell* borrowed = owned;
+    Snapshot<sub Cell*>* views = new Snapshot<sub Cell*>(2);
+    views.add(borrowed);
+    views.add(borrowed);
+    assert(views[0].value == 7, "a borrow snapshots");
+    assert(views.count == 2, "as many times as asked");
+    assert(destroyed == 0, "and the snapshot owns none of it");
+    delete views;
+    assert(destroyed == 0, "dropping the snapshot released nothing");
+    delete owned;
+    assert(destroyed == 1, "the one name that owned it released it");
+
+    // A struct with one constrained parameter and one free one.
+    Labelled<int32, string> tagged;
+    tagged.key = 1;
+    tagged.value = format("c-{}", 3);
+    assert(tagged.value == "c-3", "a struct states one too");
+
+    // The word, used as a name.
+    Plain<int32>* plain = new Plain<int32>(9);
+    assert(plain.value == 9, "a parameter may be called copyable");
+    delete plain;
+
+    delete words;
+    delete numbers;
+
+    println(format("generic-constraints: destroyed={}", destroyed));
+    println("generic-constraints=ok");
+    return 0;
+}

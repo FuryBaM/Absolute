@@ -1,0 +1,99 @@
+// A method of a generic class accepts the conversions any other call accepts.
+//
+// It did not. A method declared `void put(T value)` inside `class Box<T>` has
+// its parameter substituted to the concrete type when the class is specialized
+// -- `Box<int64>.put` really does take an int64 -- but its symbol still lists
+// the class's `T` among its generic parameters. That sent the call through
+// generic unification, whose job is to bind type variables and which decides a
+// pattern with no variable in it by equality. The pattern was the concrete
+// `int64`, the argument was `int32`, and the candidate was discarded as a
+// failed unification rather than considered as a widening conversion, so
+// `Box<int64>.put(7)` was refused with "no overload accepts (int32)".
+//
+// The same call written against a plain class, a free function, or a generic
+// *function* with an explicit type argument always worked, which is what makes
+// this a defect rather than a rule: the same conversion was legal everywhere
+// else.
+
+class Box<T> {
+    public T[] items;
+    public int32 used;
+
+    public Box(int32 size) {
+        items = new T[size];
+        used = 0;
+    }
+
+    public void put(T value) {
+        items[used % items.length] = value;
+        used += 1;
+    }
+
+    public T at(int32 index) {
+        return items[index % items.length];
+    }
+
+    public T combineWith(int32 index, T value) {
+        return items[index % items.length];
+    }
+}
+
+class Pair<K, V> {
+    public K key;
+    public V value;
+
+    public Pair(K first, V second) {
+        key = first;
+        value = second;
+    }
+
+    public void replace(K first, V second) {
+        key = first;
+        value = second;
+    }
+}
+
+int32 main() {
+    Box<int64>* wide = new Box<int64>(4);
+    // A literal, which has no declared type to narrow the decision.
+    wide.put(7);
+    assert(wide.at(0) == 7, "a literal widens into a specialized parameter");
+
+    int32 narrow = 5;
+    wide.put(narrow);
+    assert(wide.at(1) == 5, "an int32 widens into an int64 parameter");
+
+    int16 narrower = 3;
+    wide.put(narrower);
+    assert(wide.at(2) == 3, "an int16 widens the same way");
+
+    int64 exact = 9;
+    wide.put(exact);
+    assert(wide.at(3) == 9, "the exact type still matches");
+    assert(wide.combineWith(0, 1) == 7, "a mixed signature converts each argument");
+    delete wide;
+
+    // A specialization that must not accept the same value: the conversion
+    // rule is what decides, and it decides differently here.
+    Box<int32>* narrowBox = new Box<int32>(2);
+    narrowBox.put(4);
+    assert(narrowBox.at(0) == 4, "the narrow specialization takes an int32");
+    delete narrowBox;
+
+    Box<double>* floating = new Box<double>(2);
+    floating.put(2);
+    assert(floating.at(0) == 2.0, "an integer widens into a floating parameter");
+    delete floating;
+
+    // Two type parameters, converted independently.
+    Pair<int64, double>* pair = new Pair<int64, double>(1, 2);
+    assert(pair.key == 1, "the first parameter widened");
+    assert(pair.value == 2.0, "and the second widened differently");
+    pair.replace(8, 9);
+    assert(pair.key == 8, "a method converts both the same way");
+    assert(pair.value == 9.0, "including the floating one");
+    delete pair;
+
+    println("generic-member-conversions=ok");
+    return 0;
+}

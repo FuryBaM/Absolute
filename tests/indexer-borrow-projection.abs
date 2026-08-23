@@ -1,0 +1,131 @@
+// An indexer is a projection, not a factory.
+//
+// `c[i]` names a cell the container already keeps, which is what an index
+// into a container means -- in this language as in every other one that has
+// both an owner and a borrow. So the two halves of an indexer play different
+// roles with the one type it is written with: the getter hands back `sub T`,
+// because reading a cell does not give it up, and the setter is handed `T`,
+// because writing one does. `Slots<T>` below writes `T this[int32]` once and
+// gets both.
+//
+// Before the rule there was no way to say that. An indexer had one type for
+// both accessors, so a container whose getter borrowed had to declare it as
+// handing over an owner, and nothing in `c[i]` could tell that from an owner
+// the getter had produced. The backend then had one flag for two cases and
+// had to pick: treating the result as a temporary owner destroyed elements
+// the container still held, and treating it as a borrow leaked every indexer
+// written as a factory. It was recorded as an open defect rather than
+// guessed at.
+//
+// The rule settles it in the type, so neither side has to guess: an indexer's
+// getter never produces an owner -- a factory getter is refused, and
+// tests/indexer-borrow-projection-errors.abs pins that -- and its result is
+// never a temporary to release.
+//
+// Both instantiations are here on purpose. At `T = int32` the qualifier is
+// not there at all, because a value with no object has no lifetime to weaken,
+// and the whole rule must come out as a no-op. At `T = Cell*` it is the
+// difference between a leak and a use-after-free, and the counts below say
+// which happened.
+
+import "../std/string.abs";
+
+int32 destroyed = 0;
+
+class Cell {
+    public int32 value;
+    public Cell(int32 initial) { value = initial; }
+    public void destroy() { destroyed = destroyed + 1; }
+}
+
+class Slots<T> {
+    private T[] items;
+    private int32 filled;
+
+    public Slots(int32 capacity) {
+        items = new T[capacity];
+        filled = 0;
+    }
+
+    public int32 count { get { return filled; } }
+
+    // Written once, read two ways.
+    public T this[int32 index] {
+        get { return unsafeArrayGet(items, index); }
+        set { unsafeArraySet(items, index, move(value)); }
+    }
+
+    public void add(T value) {
+        unsafeArraySet(items, filled, move(value));
+        filled = filled + 1;
+    }
+
+    // What taking an element out looks like when it is meant: the slot is
+    // cleared, so exactly one name holds the element afterwards.
+    public T takeAt(int32 index) { return unsafeArrayTake(items, index); }
+}
+
+int32 main() {
+    // A parameter with nothing to own. `sub int32` is `int32`, so every line
+    // below reads exactly as it did before the rule existed.
+    Slots<int32>* numbers = new Slots<int32>(3);
+    numbers.add(10);
+    numbers.add(20);
+    numbers.add(30);
+    assert(numbers[1] == 20, "a number reads back");
+    numbers[1] = 25;
+    assert(numbers[1] == 25, "and writes back");
+    int32 sum = numbers[0] + numbers[1] + numbers[2];
+    assert(sum == 65, "and adds up");
+
+    // A parameter that owns. Reading a cell borrows it; the container is
+    // still what releases it.
+    Slots<Cell*>* cells = new Slots<Cell*>(4);
+    cells.add(new Cell(1));
+    cells.add(new Cell(2));
+    cells.add(new Cell(3));
+    cells.add(new Cell(4));
+
+    sub Cell* second = cells[1];
+    assert(second.value == 2, "an element reads back through the indexer");
+    assert(destroyed == 0, "and reading it destroyed nothing");
+
+    // Enough rounds that an owner kept per read is a heap that grows and a
+    // release per read is a use-after-free. Neither is quiet: the runtime
+    // reports every handle it still holds at exit, and a double release
+    // trips the managed-pointer check.
+    int32 total = 0;
+    int32 round = 0;
+    while (round < 2000) {
+        sub Cell* borrowed = cells[round % 4];
+        total = total + borrowed.value;
+        round = round + 1;
+    }
+    assert(total == 5000, "every round read one");
+    assert(destroyed == 0, "and released none of them");
+
+    // The setter takes, which is the other half of the same type. The slot
+    // gives back what it held, so the element that was there is destroyed
+    // exactly once.
+    cells[2] = new Cell(30);
+    assert(destroyed == 1, "the slot released what it held");
+    assert(cells[2].value == 30, "and holds what it was handed");
+
+    // Taking an element out is the explicit operation, and after it exactly
+    // one name holds the element.
+    Cell* taken = cells.takeAt(0);
+    assert(taken.value == 1, "the take handed over the element");
+    assert(destroyed == 1, "and destroyed nothing on the way out");
+    delete taken;
+    assert(destroyed == 2, "the name that owns it released it");
+
+    // Everything still in the container goes with the container.
+    delete cells;
+    assert(destroyed == 5, "three elements left, and each released once");
+
+    delete numbers;
+    println(format("indexer-borrow-projection: total={} destroyed={}",
+        total, destroyed));
+    println("indexer-borrow-projection=ok");
+    return 0;
+}

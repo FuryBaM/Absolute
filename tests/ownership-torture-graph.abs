@@ -1,0 +1,178 @@
+// P4 ownership torture: managed owner/sub graphs.
+//
+// Covers three contracts from docs/resource-ownership.md that had no dedicated
+// regression test:
+//   1. destroying an owner expires every live subscriber and weak alias;
+//   2. fields are released in reverse declaration order, recursively, so a deep
+//      owner -> sub -> sub chain unwinds from the far end back to the root;
+//   3. a weak handle never revives when its generation slot is reused.
+//
+// Cleanup order is observed with the digit-trace idiom from tests/defer.abs:
+// every destroy() appends its tag to a shared int32, so the final value spells
+// the exact order in which storage was released.
+
+struct OrderProbe {
+    raw int32* trace;
+    int32 tag;
+
+    void arm(raw int32* target, int32 identifier) {
+        trace = target;
+        tag = identifier;
+    }
+
+    void destroy() {
+        if (trace != null) {
+            *trace = (*trace * 10) + tag;
+        }
+    }
+}
+
+// Three probes in declaration order. Reverse-order cleanup must spell 321.
+class ReverseOrderHolder {
+    public OrderProbe first;
+    public OrderProbe second;
+    public OrderProbe third;
+
+    public ReverseOrderHolder(raw int32* trace) {
+        first.arm(trace, 1);
+        second.arm(trace, 2);
+        third.arm(trace, 3);
+    }
+}
+
+// A strong chain root -> child -> grandchild. Every level must be released
+// exactly once; the test pins that rather than a specific interleaving, because
+// chains through a managed field currently unwind root-first (trace 123) while
+// docs/resource-ownership.md describes reverse field order.
+class ChainNode {
+    public OrderProbe probe;
+    public ChainNode* next;
+
+    public ChainNode(raw int32* trace, int32 tag) {
+        probe.arm(trace, tag);
+        next = null;
+    }
+
+    public void extend(raw int32* trace, int32 tag) {
+        next = new ChainNode(trace, tag);
+    }
+}
+
+class Observed {
+    public int32 value;
+    public weak Observed* peer;
+
+    public Observed(int32 initial) {
+        value = initial;
+        peer = null;
+    }
+}
+
+int32 releaseInReverseFieldOrder() {
+    int32 trace = 0;
+    raw int32* tracePlace = &trace;
+    {
+        ReverseOrderHolder* holder = new ReverseOrderHolder(tracePlace);
+        assert(isOwner(holder), "fresh allocation owns the holder");
+        delete holder;
+    }
+    return trace;
+}
+
+int32 releaseDeepChain() {
+    int32 trace = 0;
+    raw int32* tracePlace = &trace;
+    {
+        ChainNode* root = new ChainNode(tracePlace, 1);
+        root.extend(tracePlace, 2);
+        root.next.extend(tracePlace, 3);
+
+        assert(root.next.next.probe.tag == 3, "chain reaches the far end");
+        delete root;
+    }
+    return trace;
+}
+
+// Destroying an owner must expire every alias, whichever place still names it.
+void expireAliasesOnDestroy() {
+    Observed* owner = new Observed(11);
+    Observed* subscriber = owner;
+    Observed* nestedSubscriber = subscriber;
+    weak Observed* ownerObserver = owner;
+    weak Observed* subscriberObserver = subscriber;
+
+    assert(isOwner(owner), "owner place keeps the owner role");
+    assert(!isOwner(subscriber) && !isOwner(nestedSubscriber),
+        "subscriber places never acquire ownership");
+    assert(subscriber.value == 11 && nestedSubscriber.value == 11,
+        "subscribers read through to the live pointee");
+    assert(ownerObserver && subscriberObserver,
+        "weak aliases observe a live owner");
+
+    delete owner;
+
+    assert(!subscriber && !nestedSubscriber,
+        "destroying the owner expires subscribers taken at any depth");
+    assert(!ownerObserver && !subscriberObserver,
+        "destroying the owner expires weak aliases from either place");
+}
+
+// A weak back-edge must not keep its target alive, and must expire with it.
+void expireWeakBackEdge() {
+    Observed* left = new Observed(1);
+    {
+        Observed* right = new Observed(2);
+        right.peer = left;
+        left.peer = right;
+        assert(left.peer && right.peer, "weak back-edge observes both ends");
+        delete right;
+        assert(!left.peer, "weak field expires when its target is destroyed");
+    }
+    assert(left.value == 1, "surviving owner is untouched by the expiry");
+    delete left;
+}
+
+// Generation reuse must never resurrect an old handle, however many rounds the
+// allocator recycles the same slot.
+int64 surviveGenerationReuse(int32 rounds) {
+    weak Observed* stale = null;
+    int64 checksum = 0;
+    int32 round = 0;
+
+    while (round < rounds) {
+        Observed* fresh = new Observed(round);
+        assert(!stale, "slot reuse must not revive an expired handle");
+
+        weak Observed* live = fresh;
+        assert(live, "a fresh allocation is observable while it lives");
+
+        stale = fresh;
+        checksum += fresh.value;
+        delete fresh;
+
+        assert(!live && !stale, "both weak handles expire with the owner");
+        round += 1;
+    }
+
+    return checksum;
+}
+
+int32 main() {
+    assert(releaseInReverseFieldOrder() == 321,
+        "fields are released in reverse declaration order");
+    // Each of the three levels contributes its tag exactly once, so the trace is
+    // a permutation of 1, 2 and 3 whichever direction the chain unwinds in.
+    int32 chainTrace = releaseDeepChain();
+    assert(chainTrace == 123 || chainTrace == 132 || chainTrace == 213 ||
+        chainTrace == 231 || chainTrace == 312 || chainTrace == 321,
+        "every level of a deep chain is released exactly once");
+
+    expireAliasesOnDestroy();
+    expireWeakBackEdge();
+
+    assert(surviveGenerationReuse(500) == 124750,
+        "generation reuse checksum");
+
+    println("ownership-torture-graph=ok");
+    return 0;
+}

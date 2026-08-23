@@ -35,9 +35,21 @@ namespace Absolute {
         const std::string& name, bool external) {
         if (external || IsValueReferenceTypeName(name)) return false;
         const std::string valueType = ValueReferenceBaseTypeName(name);
+        // A string is borrowed by a callee, never taken: the caller holds the
+        // bytes for the length of the call and releases them itself. There is
+        // no role to pass, so no flag argument -- and adding one would shift
+        // every parameter after it out from under the attributes and the
+        // indexes that name them.
+        if (valueType == "string") return false;
+        // An aggregate travels with a role only if it cannot be copied. Having
+        // something to release is not the same question: a struct holding a
+        // string has something to release and is still an ordinary value,
+        // because a string is shared. Asking `needsDrop` here made every such
+        // struct demand an owner at every call.
         return IsStrongManagedPointerTypeName(valueType) ||
             ArrayRankName(valueType) > 0 ||
-            (!IsPointerTypeName(valueType) && TypeNeedsCleanup(valueType));
+            (!IsPointerTypeName(valueType) &&
+                !SemanticsOfTypeName(valueType).copyable);
     }
 
     unsigned CodeGenerator::Impl::AbiReturnOffset(

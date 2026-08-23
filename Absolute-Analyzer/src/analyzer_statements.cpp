@@ -46,6 +46,17 @@ namespace Absolute {
             if (info && info->isMoveResult)
                 Report("move result must be consumed by an assignment, field store, "
                     "argument, or return", "E_MOVE_RESULT_UNUSED", info->symbol);
+            // The same rule for the other ways to produce a managed or raw
+            // owner. A discarded move was already refused while `new Box();`
+            // and a call returning an owner were accepted and leaked -- the
+            // program ran, and the leak checker aborted it at exit with a
+            // handle number and no idea where it came from. Arrays are not
+            // included: the backend already releases an array temporary at the
+            // end of the statement, which tests/array-copy.abs relies on.
+            else if (info && (info->createsManagedOwner || info->createsRawOwner))
+                Report("this expression produces an owner that nothing takes; "
+                    "bind it to a variable, pass it on, return it, or delete it",
+                    "E_OWNING_RESULT_DISCARDED", info->symbol);
         }
     }
 
@@ -80,7 +91,7 @@ namespace Absolute {
             if (currentType.empty()) DeclareGlobalFunction(*stmt);
             else if (stmt->name && stmt->returnType) {
                 DeclareMember(currentType, stmt->name->value,
-                    {SymbolKind::Method, ResolveType(stmt->returnType.get()),
+                    {SymbolKind::Method, CallableReturnType(*stmt),
                         ResolveParameterTypes(stmt->parameters), InvalidSymbolId,
                         HasModifier(*stmt, "const"), HasModifier(*stmt, "static"),
                         DeclaredAccess(*stmt)});
@@ -94,6 +105,7 @@ namespace Absolute {
                         symbol->genericParameters = types[currentType].genericParameters;
                         for (const Token& parameter : stmt->templateParams)
                             symbol->genericParameters.push_back(parameter.value);
+                        RecordParameterDefaults(*symbol, stmt->parameters);
                         functionDeclarations[symbol->id] = stmt;
                     }
                 }
@@ -105,26 +117,28 @@ namespace Absolute {
                 Report("interface method '" + currentType + "." + stmt->name->value +
                     "' must be public", "E_INTERFACE_METHOD_ACCESS");
             ValidateAttributes(*stmt, "interface method", true);
-            const std::string returnType = ResolveType(stmt->returnType.get());
+            const std::string returnType = CallableReturnType(*stmt);
             if (!IsKnownType(returnType))
                 Report("unknown return type '" + returnType + "' of interface method '" +
-                    currentType + "." + stmt->name->value + "'");
+                    currentType + "." + stmt->name->value + "'", "E_UNKNOWN_RETURN_TYPE");
             for (const auto& parameter : stmt->parameters) {
                 const std::string parameterType = ResolveDeclaredType(*parameter);
                 ValidateValueReferenceParameter(*parameter, parameterType,
                     currentType + "." + stmt->name->value);
                 if (!IsKnownType(parameterType))
                     Report("unknown parameter type '" + parameterType + "' of interface method '" +
-                        currentType + "." + stmt->name->value + "'");
+                        currentType + "." + stmt->name->value + "'",
+                            "E_UNKNOWN_PARAMETER_TYPE");
                 if (parameter->value)
-                    Report("interface methods cannot declare default parameter values");
+                    Report("interface methods cannot declare default parameter values",
+                        "E_INTERFACE_DEFAULT_ARGUMENT");
             }
             const bool staticMethod = HasModifier(*stmt, "static");
             if (HasModifier(*stmt, "extension") || HasModifier(*stmt, "async") ||
                 HasModifier(*stmt, "override") ||
                 HasModifier(*stmt, "sealed"))
                 Report("interface method '" + currentType + "." + stmt->name->value +
-                    "' has an unsupported modifier");
+                    "' has an unsupported modifier", "E_INTERFACE_METHOD_MODIFIER");
             if (staticMethod && !stmt->body)
                 Report("static interface method '" + currentType + "." +
                     stmt->name->value + "' requires a body",
@@ -151,7 +165,8 @@ namespace Absolute {
             Report("return is not allowed inside finally", "E_FINALLY_CONTROL_TRANSFER");
         if (deferDepth > 0)
             Report("return is not allowed inside defer", "E_DEFER_CONTROL_TRANSFER");
-        if (functionDepth == 0) Report("return statement is outside a function");
+        if (functionDepth == 0) Report("return statement is outside a function",
+            "E_RETURN_OUTSIDE_FUNCTION");
         const Result value = EvaluateExpected(stmt->expr.get(), currentReturnType);
         if (Symbol* source = table.Get(value.symbol);
             source && source->rolePolymorphic &&
@@ -167,15 +182,25 @@ namespace Absolute {
                 source->requiresOwner = true;
             }
         }
+        NoteBorrowBoundAsOwner(currentReturnType, value.type,
+            "the returned value", stmt);
         if (!IsAssignable(currentReturnType, value.type))
-            Report("return type '" + value.type + "' does not match '" + currentReturnType + "'");
-        bool transfersAggregateOwner = value.isMoveResult;
+            Report("return type '" + value.type + "' does not match '" + currentReturnType + "'",
+                "E_RETURN_TYPE_MISMATCH");
+        // An expression that produced the value can hand it on: nothing is
+        // copied, because there is no other name for it. Asking whether the
+        // value's symbol is a callable answers that for a direct call and
+        // loses it for everything else -- a conditional of two calls is two
+        // values, each produced by the arm that ran, and refusing it said
+        // "use move(...)" about a value no name holds.
+        bool transfersAggregateOwner =
+            value.isMoveResult || value.producesFreshValue;
         if (const Symbol* source = table.Get(value.symbol)) {
             transfersAggregateOwner = transfersAggregateOwner ||
                 source->kind == SymbolKind::Function || source->kind == SymbolKind::Method;
         }
         if (ArrayRank(currentReturnType) == 0 && !IsPointerType(currentReturnType) &&
-            TypeOwnsResources(currentReturnType) && !transfersAggregateOwner) {
+            TypeOwnsUniqueResource(currentReturnType) && !transfersAggregateOwner) {
             Report("resource-owning aggregate '" + currentReturnType +
                 "' cannot be returned by value; use move(...) for lvalues",
                 "E_RESOURCE_AGGREGATE_RETURN", value.symbol);
@@ -201,14 +226,47 @@ namespace Absolute {
             !value.createsManagedOwner && !value.referencesManagedOwner)
             Report("a managed pointer return must transfer an owner; subscribers and aggregate fields cannot escape their owner",
                 "E_MANAGED_RETURN_REQUIRES_OWNER", value.symbol);
-        if (IsWeakPointerType(currentReturnType) && value.type != "error" &&
-            value.type != "null") {
+        // The same rule, for a return type that is still a generic parameter.
+        else if (!IsStrongManagedPointerType(currentReturnType) &&
+            value.type != "error" && value.type != "null" &&
+            !value.createsManagedOwner && !value.referencesManagedOwner) {
+            if (const Symbol* returned = table.Get(value.symbol);
+                returned && returned->kind == SymbolKind::Field)
+                RecordGenericBodyFact(GenericBodyFact::Shape::ReturnsField,
+                    currentReturnType, returned->name, stmt);
+        }
+        // A return is the fourth place a value is bound to a name, and a
+        // subscriber means what a weak name means about ownership: someone
+        // else holds this. Handing back a fresh allocation leaves it owned by
+        // nobody -- `sub Node* f() { return new Node(); }` compiled and the
+        // runtime's own check printed the handle at exit -- and handing back a
+        // name for an owner that dies with the frame leaves the caller with a
+        // handle to nothing. A field of `this` is neither: its owner is the
+        // object, which is why `sub T* p { get { return field; } }` is the way
+        // a borrow is returned and stays legal.
+        if ((IsWeakPointerType(currentReturnType) ||
+                IsSubscriberPointerType(currentReturnType)) &&
+            value.type != "error" && value.type != "null") {
             const Symbol* owner = table.Get(value.pointerOwner);
-            if (value.createsManagedOwner ||
-                (owner && owner->managedOwner && !owner->rolePolymorphic &&
-                    owner->scopeDepth > 0))
-                Report("returning a weak reference to a local owner would produce an immediately expired handle",
-                    "E_WEAK_RETURN_LOCAL_OWNER", value.symbol);
+            const bool weak = IsWeakPointerType(currentReturnType);
+            // Two mistakes, one code, and they are not the same sentence. A
+            // fresh allocation is owned by nobody, so nothing releases it; a
+            // local owner dies with the frame, so the caller is left naming
+            // storage that is gone. The first is what an indexer getter
+            // written as a factory does, and it read as the second.
+            if (value.createsManagedOwner)
+                Report(weak
+                    ? "returning a fresh managed allocation as a weak reference leaves it owned by nobody; bind it to a managed owner first"
+                    : "returning a fresh managed allocation as a subscriber leaves it owned by nobody; an indexer getter borrows the cell it projects onto rather than producing one",
+                    weak ? "E_WEAK_RETURN_LOCAL_OWNER"
+                         : "E_SUBSCRIBER_RETURN_LOCAL_OWNER", value.symbol);
+            else if (owner && owner->managedOwner && !owner->rolePolymorphic &&
+                owner->scopeDepth > 0)
+                Report(weak
+                    ? "returning a weak reference to a local owner would produce an immediately expired handle"
+                    : "returning a subscriber to a local owner would leave the caller naming storage that is already gone",
+                    weak ? "E_WEAK_RETURN_LOCAL_OWNER"
+                         : "E_SUBSCRIBER_RETURN_LOCAL_OWNER", value.symbol);
         }
         if (IsRawPointerType(currentReturnType) && value.type != "error" && value.type != "null") {
             if (const Symbol* owner = table.Get(value.pointerOwner)) {
@@ -274,7 +332,8 @@ namespace Absolute {
             valueFlow = baseValues;
             flowTerminated = false;
             const Result condition = Evaluate(branch.condition.get());
-            if (!IsConditionType(condition.type)) Report("if condition must be boolean-compatible");
+            if (!IsConditionType(condition.type)) Report("if condition must be boolean-compatible",
+                "E_CONDITION_TYPE");
             const SymbolId guardedOwner =
                 OwnerGuardParameter(branch.condition.get());
             if (guardedOwner != InvalidSymbolId)
@@ -308,6 +367,7 @@ namespace Absolute {
 
     void Analyzer::Visit(SwitchStmt* stmt) {
         if (phase == Phase::CollectDeclarations) return;
+        ++switchDepth;
         const Result selector = Evaluate(stmt->value.get());
         const auto enumType = types.find(selector.type);
         const bool selectsEnum = enumType != types.end() && enumType->second.kind == TypeKind::Enum;
@@ -331,7 +391,7 @@ namespace Absolute {
             if (const auto* boolean = dynamic_cast<BooleanLiteralExpr*>(expression))
                 return std::string("bool:") + (boolean->value ? "true" : "false");
             if (const auto* number = dynamic_cast<NumberLiteralExpr*>(expression)) {
-                if (number->value.find('.') != std::string::npos) return std::nullopt;
+                if (IsFloatingLiteral(number->value)) return std::nullopt;
                 return "integer:" + std::to_string(std::stoll(number->value));
             }
             if (const auto* character = dynamic_cast<CharLiteralExpr*>(expression))
@@ -340,7 +400,7 @@ namespace Absolute {
                 if ((unary->op == "+" || unary->op == "-") &&
                     dynamic_cast<NumberLiteralExpr*>(unary->operand.get())) {
                     const auto* number = static_cast<NumberLiteralExpr*>(unary->operand.get());
-                    if (number->value.find('.') != std::string::npos) return std::nullopt;
+                    if (IsFloatingLiteral(number->value)) return std::nullopt;
                     const std::int64_t magnitude = std::stoll(number->value);
                     return "integer:" + std::to_string(unary->op == "-" ? -magnitude : magnitude);
                 }
@@ -369,7 +429,14 @@ namespace Absolute {
                     "E_SWITCH_CASE_CONSTANT");
             }
             else if (!labels.insert(*key).second) {
-                Report("duplicate case label '" + *key + "'", "E_DUPLICATE_SWITCH_CASE");
+                // The key is an internal encoding -- "integer:1", "enum:Color.Red"
+                // -- that exists to make two spellings of the same constant
+                // compare equal. Reporting it verbatim showed the user a prefix
+                // their program never mentions.
+                const size_t separator = key->find(':');
+                Report("duplicate case label '" +
+                    (separator == std::string::npos ? *key : key->substr(separator + 1)) + "'",
+                    "E_DUPLICATE_SWITCH_CASE");
             }
             else if (*key == "bool:true") coversTrue = true;
             else if (*key == "bool:false") coversFalse = true;
@@ -423,6 +490,7 @@ namespace Absolute {
         MergeKeepPaths(base, continuingPaths);
         MergeValueFlowPaths(baseValues, continuingValuePaths);
         flowTerminated = exhaustive && continuingPaths.empty();
+        --switchDepth;
     }
 
     void Analyzer::Visit(ThrowStmt* stmt) {
@@ -525,7 +593,8 @@ namespace Absolute {
                 RegisterFlowSymbol(id, {InitializationState::Initialized,
                     PointerValidity::Live, id, TaskState::NotTask});
             }
-            else Report("catch parameter '" + name + "' is already declared");
+            else Report("catch parameter '" + name + "' is already declared",
+                "E_DUPLICATE_DECLARATION");
             if (clause.parameter)
                 Save(clause.parameter.get(), {id, type, true, false, true,
                     InitializationState::Initialized, PointerValidity::Live, id});
@@ -622,7 +691,8 @@ namespace Absolute {
         AcceptAll(stmt->init, *this);
         if (stmt->condition) {
             const Result condition = Evaluate(stmt->condition.get());
-            if (!IsConditionType(condition.type)) Report("for condition must be boolean-compatible");
+            if (!IsConditionType(condition.type)) Report("for condition must be boolean-compatible",
+                "E_CONDITION_TYPE");
         }
         const KeepLifetimeMap beforeLoop = keepLifetimes;
         const ValueFlowMap beforeLoopValues = valueFlow;
@@ -657,7 +727,8 @@ namespace Absolute {
     void Analyzer::Visit(WhileStmt* stmt) {
         if (phase == Phase::CollectDeclarations) return;
         const Result condition = Evaluate(stmt->condition.get());
-        if (!IsConditionType(condition.type)) Report("while condition must be boolean-compatible");
+        if (!IsConditionType(condition.type)) Report("while condition must be boolean-compatible",
+            "E_CONDITION_TYPE");
         const KeepLifetimeMap beforeLoop = keepLifetimes;
         const ValueFlowMap beforeLoopValues = valueFlow;
         loopKeepDepths.push_back(keepScopes.size());
@@ -699,7 +770,8 @@ namespace Absolute {
         const ValueFlowMap afterBodyValues = valueFlow;
         --loopDepth;
         const Result condition = Evaluate(stmt->condition.get());
-        if (!IsConditionType(condition.type)) Report("do-while condition must be boolean-compatible");
+        if (!IsConditionType(condition.type)) Report("do-while condition must be boolean-compatible",
+            "E_CONDITION_TYPE");
         std::vector<KeepLifetimeMap> exits;
         if (bodyContinues) exits.push_back(afterBody);
         exits.insert(exits.end(), loopBreakStates.back().begin(), loopBreakStates.back().end());
@@ -727,7 +799,8 @@ namespace Absolute {
         
         if (isArray) {
             if (ArrayRank(iterable.type) != 1 && iterable.type != "error")
-                Report("for-each currently requires a one-dimensional array or slice");
+                Report("for-each currently requires a one-dimensional array or slice",
+                    "E_FOREACH_SOURCE_RANK");
             else if (iterable.type != "error") elementType = ArrayElementType(iterable.type);
         } else if (iterable.type != "error") {
             const auto iterateMembers = FindMembers(iterable.type, "iterate");
@@ -735,21 +808,26 @@ namespace Absolute {
                 [](const MemberSignature& m) { return m.kind == SymbolKind::Method; });
             
             if (iterateMethod == iterateMembers.end()) {
-                Report("for-each source '" + iterable.type + "' requires an 'iterate()' method or must be an array");
+                Report("for-each source '" + iterable.type + "' requires an 'iterate()' method or must be an array",
+                    "E_FOREACH_SOURCE_NOT_ITERABLE");
             } else {
                 if (iterateMethod->parameterTypes.size() > 0)
-                    Report("'iterate' method on '" + iterable.type + "' must take 0 arguments");
+                    Report("'iterate' method on '" + iterable.type + "' must take 0 arguments",
+                        "E_ITERATE_SIGNATURE");
                 std::string iteratorType = iterateMethod->type;
                 
                 const auto nextMembers = FindMembers(iteratorType, "next");
                 const auto nextMethod = std::find_if(nextMembers.begin(), nextMembers.end(),
                     [](const MemberSignature& m) { return m.kind == SymbolKind::Method; });
                 if (nextMethod == nextMembers.end())
-                    Report("iterator '" + iteratorType + "' requires a 'next()' method");
+                    Report("iterator '" + iteratorType + "' requires a 'next()' method",
+                        "E_ITERATOR_MISSING_NEXT");
                 else if (nextMethod->type != "bool")
-                    Report("'next()' method on '" + iteratorType + "' must return bool");
+                    Report("'next()' method on '" + iteratorType + "' must return bool",
+                        "E_ITERATOR_NEXT_RESULT");
                 else if (nextMethod->parameterTypes.size() > 0)
-                    Report("'next()' method on '" + iteratorType + "' must take 0 arguments");
+                    Report("'next()' method on '" + iteratorType + "' must take 0 arguments",
+                        "E_ITERATOR_NEXT_SIGNATURE");
                 
                 const auto valueMembers = FindMembers(iteratorType, "value");
                 const auto valueProperty = std::find_if(valueMembers.begin(), valueMembers.end(),
@@ -761,10 +839,12 @@ namespace Absolute {
                     elementType = valueProperty->type;
                 } else if (valueMethod != valueMembers.end()) {
                     if (valueMethod->parameterTypes.size() > 0)
-                        Report("'value()' method on '" + iteratorType + "' must take 0 arguments");
+                        Report("'value()' method on '" + iteratorType + "' must take 0 arguments",
+                            "E_ITERATOR_VALUE_SIGNATURE");
                     elementType = valueMethod->type;
                 } else {
-                    Report("iterator '" + iteratorType + "' requires a 'value' property or 'value()' method");
+                    Report("iterator '" + iteratorType + "' requires a 'value' property or 'value()' method",
+                        "E_ITERATOR_MISSING_VALUE");
                 }
             }
         }
@@ -774,7 +854,7 @@ namespace Absolute {
             if (const ExpressionInfo* variable = GetExpressionInfo(*stmt->var)) {
                 if (!IsAssignable(variable->type, elementType))
                     Report("for-each variable has type '" + variable->type +
-                        "', expected '" + elementType + "'");
+                        "', expected '" + elementType + "'", "E_FOREACH_VARIABLE_TYPE");
                 if (auto flow = valueFlow.find(variable->symbol); flow != valueFlow.end())
                     flow->second.initialization = InitializationState::Initialized;
             }
@@ -815,7 +895,8 @@ namespace Absolute {
             Report("continue is not allowed inside finally", "E_FINALLY_CONTROL_TRANSFER");
         if (deferDepth > 0)
             Report("continue is not allowed inside defer", "E_DEFER_CONTROL_TRANSFER");
-        if (loopDepth == 0) Report("continue statement is outside a loop");
+        if (loopDepth == 0) Report("continue statement is outside a loop",
+            "E_CONTINUE_OUTSIDE_LOOP");
         else {
             CheckKeepScopesFrom(loopKeepDepths.back(), "continue");
             CheckTaskScopesFrom(loopKeepDepths.back(), "continue");
@@ -831,7 +912,13 @@ namespace Absolute {
             Report("break is not allowed inside finally", "E_FINALLY_CONTROL_TRANSFER");
         if (deferDepth > 0)
             Report("break is not allowed inside defer", "E_DEFER_CONTROL_TRANSFER");
-        if (loopDepth == 0) Report("break statement is outside a loop");
+        // Naming the switch explicitly, because a C habit puts break at the end
+        // of every arm and "outside a loop" does not explain why it is refused.
+        if (loopDepth == 0)
+            Report(switchDepth > 0
+                ? std::string("break statement is outside a loop; switch and match cases "
+                    "do not fall through, so break is unnecessary")
+                : std::string("break statement is outside a loop"), "E_BREAK_OUTSIDE_LOOP");
         else {
             CheckKeepScopesFrom(loopKeepDepths.back(), "break");
             CheckTaskScopesFrom(loopKeepDepths.back(), "break");
@@ -903,7 +990,8 @@ namespace Absolute {
                 }
             }
             if (!foundAny) {
-                Report("unknown imported namespace '" + stmt->target + "'");
+                Report("unknown imported namespace '" + stmt->target + "'",
+                    "E_UNKNOWN_NAMESPACE");
             }
         }
     }
@@ -915,7 +1003,8 @@ namespace Absolute {
         const std::string namespaceName = Qualify(stmt->name);
         if (phase == Phase::CollectTypeNames && namespaces.insert(namespaceName).second) {
             if (!table.Declare(SymbolKind::Namespace, namespaceName, namespaceName))
-                Report("object '" + namespaceName + "' is already declared in this scope");
+                Report("object '" + namespaceName + "' is already declared in this scope",
+                    "E_DUPLICATE_DECLARATION");
         }
         currentNamespace = namespaceName;
         if (stmt->body) {

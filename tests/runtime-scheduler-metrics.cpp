@@ -34,9 +34,17 @@ enum Metric : std::int32_t {
     StarvationEvents = 11
 };
 
-void require(bool condition) {
-    if (!condition) std::abort();
+// Name the failing check. A bare abort() leaves a CI failure with an empty
+// log and nothing to diagnose.
+void requireAt(bool condition, int line, const char* text) {
+    if (condition) return;
+    std::cerr << "runtime-scheduler-metrics: check failed at line " << line
+        << ": " << text << '\n';
+    std::cerr.flush();
+    std::abort();
 }
+
+#define require(condition) requireAt((condition), __LINE__, #condition)
 
 struct Metrics {
     std::int64_t runnable = 0;
@@ -78,6 +86,22 @@ Metrics snapshot() {
     return result;
 }
 
+// Worker threads publish these counters, so a metric can lag the effect it
+// describes by a scheduling quantum, and a loaded machine gives no guarantee
+// that this thread runs inside any particular window. Wait for the expected
+// state rather than sampling once.
+template <class Predicate>
+Metrics waitForMetrics(Predicate predicate, std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    Metrics current = snapshot();
+    while (!predicate(current) &&
+        std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        current = snapshot();
+    }
+    return current;
+}
+
 struct BlockingContext {
     std::atomic<bool> started{false};
 };
@@ -108,7 +132,7 @@ struct DelayContext {
 void suspendedWorker(void* opaque) {
     auto* context = static_cast<DelayContext*>(opaque);
     context->started.store(true, std::memory_order_release);
-    absolute_task_delay(30);
+    absolute_task_delay(250);
     context->finished = true;
 }
 
@@ -154,22 +178,21 @@ int main() {
     while (!delayed->started.load(std::memory_order_acquire))
         std::this_thread::yield();
 
-    bool observedSuspended = false;
-    const auto suspensionTimeout =
-        std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    while (std::chrono::steady_clock::now() < suspensionTimeout) {
-        if (snapshot().suspended >= 1) {
-            observedSuspended = true;
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    require(observedSuspended);
+    const Metrics suspendedView = waitForMetrics(
+        [](const Metrics& value) { return value.suspended >= 1; },
+        std::chrono::seconds(5));
+    require(suspendedView.suspended >= 1);
     delayed = await<DelayContext>(delayedTask);
     require(delayed->finished);
     delete delayed;
 
-    const Metrics final = snapshot();
+    const Metrics final = waitForMetrics(
+        [&](const Metrics& value) {
+            return value.runnable == 0 && value.suspended == 0 &&
+                value.completed - initial.completed >= 3 &&
+                value.queueSamples - initial.queueSamples >= 3;
+        },
+        std::chrono::seconds(5));
     require(final.runnable == 0);
     require(final.suspended == 0);
     require(final.completed - initial.completed >= 3);

@@ -161,7 +161,10 @@ declarations into a hidden `int32 main()` and appends `return 0`. Functions,
 types, namespaces, imports, and plugin declarations remain at module scope. An
 explicit `main` keeps the traditional mode; combining it with executable
 top-level statements is a compile-time error instead of creating a second
-entry point. Module-level declarations may still accompany an explicit `main`.
+entry point. Module-level declarations may still accompany an explicit `main`,
+but module scope holds only primitives and primitive arrays with constant
+initializers — see [docs/module-scope.md](docs/module-scope.md) for what is
+allowed there and where everything else belongs.
 
 Create application and library projects:
 
@@ -268,6 +271,24 @@ enum matches require every member, and integer/character matches require a
 `default` branch. Ordinary `switch` may be partial; its optional `default`
 branch handles values not listed by a case. Case labels must be compile-time
 boolean, integer, character, or enum constants, and duplicates are rejected.
+
+A member may be given the number it stands for, which is what a C header or a
+protocol fixes; a member without one continues from its predecessor, and the
+first starts at zero. An enum is 32 bits wide, so a member outside that range
+is refused, and two members may not share a number — `match` names every
+member, and two labels of equal value cannot both be reached.
+
+```absolute
+enum Status { Ok = 200, Moved = 301, NotFound = 404 }
+enum Counting { First = 100, Second, Third }   // 100, 101, 102
+
+int32 code = Status.NotFound as int32;         // 404
+```
+
+`as` reads the number out of an enum. It does not go the other way: an integer
+does not convert to an enum, so every value of an enum type is a member some
+case names, which is what makes an exhaustive `match` a guarantee rather than a
+convention.
 
 ## Error model
 
@@ -788,6 +809,14 @@ Use `--sanitize=address` with `--emit-object` or `--build-exe` to instrument uns
 raw memory accesses with AddressSanitizer. The native test suite runs real
 heap-use-after-free and double-free executables through ASan; managed allocation
 leaks are additionally detected by the generation-slot runtime at process exit.
+
+`--sanitize=thread` instruments the same way for ThreadSanitizer, and links a
+copy of the runtime that was itself built for it: TSan reasons about the whole
+program, so an uninstrumented scheduler on the other side of a lock turns every
+guarded access into a reported race. The two are alternatives rather than flags
+— their shadow memory overlaps — and asking for both is refused. Where the host
+cannot build a ThreadSanitizer runtime (Windows, Android/Termux, cross builds),
+the option reports that instead of producing a program that runs unchecked.
 
 The analyzer also performs control-flow dataflow for definite assignment and
 pointer validity. Branch and loop states are merged by `SymbolId`; managed

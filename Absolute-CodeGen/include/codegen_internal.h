@@ -25,8 +25,10 @@ namespace Absolute {
             void Visit(PointerTypeExpr* expr) override {
                 name.clear();
                 if (expr->pointee) expr->pointee->Accept(*this);
-                if (!name.empty()) name = (expr->raw ? "raw " :
-                    (expr->weak ? "weak " : "")) + name + "*";
+                // A third place that spelled out the two qualifiers it knew and
+                // silently dropped the rest.
+                if (!name.empty())
+                    name = CanonicalPointerName(name, expr->ownership);
             }
 
             void Visit(ArrayTypeExpr* expr) override {
@@ -69,30 +71,31 @@ namespace Absolute {
         }
 
         inline bool IsRawPointerTypeName(const std::string& name) {
-            return name.starts_with("raw ") && name.ends_with("*");
+            return CanonicalOwnership(name) == OwnershipKind::Raw;
         }
 
         inline bool IsWeakPointerTypeName(const std::string& name) {
-            return name.starts_with("weak ") && name.ends_with("*");
+            return CanonicalOwnership(name) == OwnershipKind::Weak;
         }
 
         inline bool IsManagedPointerTypeName(const std::string& name) {
-            return !IsRawPointerTypeName(name) && name.ends_with("*");
+            const OwnershipKind kind = CanonicalOwnership(name);
+            return kind != OwnershipKind::None && kind != OwnershipKind::Raw;
         }
 
         inline bool IsStrongManagedPointerTypeName(const std::string& name) {
-            return IsManagedPointerTypeName(name) && !IsWeakPointerTypeName(name);
+            return CanonicalOwnership(name) == OwnershipKind::Unique;
         }
 
         inline bool IsPointerTypeName(const std::string& name) {
-            return IsRawPointerTypeName(name) || IsManagedPointerTypeName(name);
+            return CanonicalOwnership(name) != OwnershipKind::None;
         }
 
-        inline std::string PointerPointeeName(std::string name) {
-            if (IsRawPointerTypeName(name)) name.erase(0, 4);
-            else if (IsWeakPointerTypeName(name)) name.erase(0, 5);
-            if (!name.empty() && name.back() == '*') name.pop_back();
-            return name;
+        // This used to strip `raw ` and `weak ` and nothing else, so a
+        // `shared T*` reaching the backend would have kept its qualifier as
+        // part of the pointee name.
+        inline std::string PointerPointeeName(const std::string& name) {
+            return CanonicalPointeeName(name);
         }
 
         inline std::string EncodeLinkComponent(const std::string& value) {
@@ -113,6 +116,41 @@ namespace Absolute {
             std::string result = name;
             for (const std::string& type : parameterTypes) result += "$" + EncodeLinkComponent(type);
             return result;
+        }
+
+        // Ordinary functions keep their source name as the link name, which
+        // makes an Absolute function named after a C runtime entry point
+        // replace that entry point at link time. The generated code and the
+        // Absolute runtime both call into these, so the program then corrupts
+        // itself instead of failing to link. Such a definition is given a
+        // private link name; `extern`, `export "C"`, and `main` are excluded by
+        // the caller because those deliberately own their C symbol.
+        inline bool IsReservedRuntimeSymbol(const std::string& name) {
+            static const std::unordered_set<std::string> reserved = {
+                // Allocation, which the managed runtime relies on directly.
+                "malloc", "calloc", "realloc", "free", "aligned_alloc",
+                "posix_memalign", "strdup", "strndup",
+                // Block operations LLVM emits for loops, copies, and literals.
+                "memcpy", "memmove", "memset", "memcmp", "bcmp",
+                "strlen", "strcmp", "strncmp", "strcpy", "strncpy", "strcat",
+                // Standard I/O, used by println and the runtime diagnostics.
+                "printf", "fprintf", "sprintf", "snprintf", "vprintf", "vfprintf",
+                "puts", "putchar", "fputs", "fputc", "fwrite", "fread",
+                "fopen", "fclose", "fflush",
+                // Process control, used by assert failures and unhandled errors.
+                "abort", "exit", "_exit", "atexit", "setjmp", "longjmp", "raise",
+                // Math helpers LLVM can materialize from arithmetic.
+                "pow", "powf", "sqrt", "sqrtf", "fmod", "fmodf",
+                "sin", "cos", "tan", "exp", "log", "log2", "log10",
+                // C++ runtime support pulled in by the native runtime library.
+                "__cxa_atexit", "__cxa_throw", "__cxa_begin_catch", "__cxa_end_catch",
+                "_Unwind_Resume",
+            };
+            if (reserved.contains(name)) return true;
+            // The Absolute runtime and the compiler-support libraries own these
+            // whole namespaces.
+            return name.starts_with("absolute_") || name.starts_with("pthread_") ||
+                name.starts_with("llvm.") || name.starts_with("__");
         }
 
         inline bool IsTaskTypeName(const std::string& name) {
@@ -202,10 +240,29 @@ namespace Absolute {
 
             if (type.ends_with("[]"))
                 return SubstituteCodegenType(type.substr(0, type.size() - 2), substitutions) + "[]";
-            if (IsPointerTypeName(type)) {
-                const std::string prefix = IsRawPointerTypeName(type) ? "raw " :
-                    (IsWeakPointerTypeName(type) ? "weak " : "");
-                return prefix + SubstituteCodegenType(PointerPointeeName(type), substitutions) + "*";
+            // `sub T`: written with nothing to apply it to yet, and this is
+            // where there is something -- whatever `T` became. Unless `T`
+            // became `T`: substituting a type variable for itself leaves the
+            // qualifier with nothing to apply to, so it stays written down and
+            // waits, the same way the analyzer keeps it.
+            if (const OwnershipKind openKind = CanonicalOpenOwnership(type);
+                openKind != OwnershipKind::None) {
+                const std::string openBase = CanonicalOpenBaseName(type);
+                const std::string substituted =
+                    SubstituteCodegenType(openBase, substitutions);
+                if (substituted == openBase)
+                    return std::string(CanonicalOwnershipPrefix(openKind)) + substituted;
+                return CanonicalWithOwnership(substituted, openKind);
+            }
+            // The qualifier survives substitution. Spelling the two it knew
+            // about by hand is what silently turned `shared T*` into `T*` on
+            // the way through a generic, which is the whole class of failure
+            // this ownership kind exists to stop.
+            if (const OwnershipKind kind = CanonicalOwnership(type);
+                kind != OwnershipKind::None) {
+                return CanonicalPointerName(
+                    SubstituteCodegenType(CanonicalPointeeName(type), substitutions),
+                    kind);
             }
             const size_t open = type.find('<');
             if (open == std::string::npos || type.empty() || type.back() != '>') return type;

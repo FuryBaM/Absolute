@@ -5,7 +5,10 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
+    # Nightly, and a longer weekly pass on Sundays. The fuzz job reads the day
+    # to pick its budget, so the two share one job definition.
     - cron: "23 2 * * *"
+    - cron: "23 3 * * 0"
 
 concurrency:
   group: test-hardening-${{ github.event.pull_request.number || github.ref }}
@@ -279,16 +282,210 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  runtime-undefined-sanitizer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clang and Ninja
+        id: bootstrap
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              if [[ "$attempt" -lt 3 ]]; then sleep $((attempt * 10)); fi
+            done
+            return 1
+          }
+          retry sudo apt-get update
+          retry sudo apt-get install -y \
+            clang-${ABSOLUTE_LLVM_VERSION} cmake ninja-build
+
+      - name: Build instrumented runtime
+        id: build
+        timeout-minutes: 15
+        run: |
+          cmake -S . -B build-ubsan -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=clang-${ABSOLUTE_LLVM_VERSION} \
+            -DCMAKE_CXX_COMPILER=clang++-${ABSOLUTE_LLVM_VERSION} \
+            -DCMAKE_CXX_FLAGS="-fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -O1 -g" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=undefined" \
+            -DABSOLUTE_ENABLE_LLVM=OFF \
+            -DABSOLUTE_BUILD_EXAMPLE_PLUGINS=OFF \
+            -DBUILD_TESTING=OFF
+          cmake --build build-ubsan --target Absolute-Runtime --parallel 2
+
+      - name: Build ownership harnesses
+        id: build_harness
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          runtime="$(find build-ubsan -maxdepth 2 -type f -name 'libAbsolute-Runtime.a' | head -n 1)"
+          test -n "$runtime"
+          for harness in runtime-managed-memory runtime-scheduler-stress \
+            runtime-concurrent-primitives; do
+            clang++-${ABSOLUTE_LLVM_VERSION} -std=c++20 -O1 -g \
+              -fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+              "tests/${harness}.cpp" "$runtime" \
+              -pthread -ldl -o "build-ubsan/${harness}"
+          done
+
+      - name: Run the managed runtime under UndefinedBehaviorSanitizer
+        id: test
+        timeout-minutes: 15
+        shell: bash
+        env:
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1:log_path=hardening-logs/ubsan-report
+        run: |
+          set -o pipefail
+          mkdir -p hardening-logs
+          for harness in runtime-managed-memory runtime-scheduler-stress \
+            runtime-concurrent-primitives; do
+            echo "UBSan harness ${harness}" | tee -a hardening-logs/ubsan.log
+            timeout 120s "build-ubsan/${harness}" 2>&1 | tee -a hardening-logs/ubsan.log
+          done
+
+      - name: Classify failure phase
+        if: failure()
+        shell: bash
+        env:
+          BOOTSTRAP: ${{ steps.bootstrap.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          BUILD_HARNESS: ${{ steps.build_harness.outcome }}
+          TEST: ${{ steps.test.outcome }}
+        run: |
+          mkdir -p hardening-logs
+          if [[ "$BOOTSTRAP" == failure ]]; then category=platform-bootstrap
+          elif [[ "$BUILD" == failure || "$BUILD_HARNESS" == failure ]]; then category=build-regression
+          elif [[ "$TEST" == failure ]]; then category=sanitizer-regression
+          else category=unknown
+          fi
+          echo "category=$category" > hardening-logs/failure-classification.txt
+
+      - name: Upload UBSan diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-ubsan-diagnostics
+          path: |
+            hardening-logs
+            core
+            core.*
+          if-no-files-found: ignore
+          retention-days: 14
+
+  coverage-guided-fuzzing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clang and Ninja
+        id: bootstrap
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              if [[ "$attempt" -lt 3 ]]; then sleep $((attempt * 10)); fi
+            done
+            return 1
+          }
+          retry sudo apt-get update
+          retry sudo apt-get install -y \
+            clang-${ABSOLUTE_LLVM_VERSION} cmake ninja-build
+
+      - name: Build fuzz targets
+        id: build
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          # libFuzzer ships with Clang's runtime, so CMake only creates these
+          # targets in a Clang build. The rest of the matrix builds with its own
+          # toolchain and never creates them, which is why this job builds its
+          # own tree rather than reusing one.
+          cmake -S . -B build-fuzz -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=clang-${ABSOLUTE_LLVM_VERSION} \
+            -DCMAKE_CXX_COMPILER=clang++-${ABSOLUTE_LLVM_VERSION} \
+            -DBUILD_TESTING=ON \
+            -DABSOLUTE_ENABLE_LLVM=OFF \
+            -DABSOLUTE_BUILD_EXAMPLE_PLUGINS=OFF
+          # Aggregate target, not a list of names: a fuzzer added to CMake is
+          # then built here without this file having to be remembered.
+          cmake --build build-fuzz --parallel 2 --target absolute-fuzzers
+
+      - name: Fuzz lexer, parser and analyzer
+        id: test
+        timeout-minutes: 45
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p hardening-logs
+          # Short on push and pull request so this stays a check rather than a
+          # wait; longer nightly; longest on the Sunday run.
+          budget=60
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            if [[ "$(date -u +%u)" == "7" ]]; then
+              budget=900
+            else
+              budget=300
+            fi
+          fi
+          echo "fuzz budget: ${budget}s per target" | tee hardening-logs/fuzz.log
+          ABSOLUTE_FUZZ_SECONDS="$budget" \
+            ctest --test-dir build-fuzz -C RelWithDebInfo \
+              -R "absolute.fuzz-" --output-on-failure \
+              2>&1 | tee -a hardening-logs/fuzz.log
+
+      - name: Classify failure phase
+        if: failure()
+        shell: bash
+        env:
+          BOOTSTRAP: ${{ steps.bootstrap.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          TEST: ${{ steps.test.outcome }}
+        run: |
+          mkdir -p hardening-logs
+          if [[ "$BOOTSTRAP" == failure ]]; then category=platform-bootstrap
+          elif [[ "$BUILD" == failure ]]; then category=build-regression
+          elif [[ "$TEST" == failure ]]; then category=fuzz-regression
+          else category=unknown
+          fi
+          echo "category=$category" > hardening-logs/failure-classification.txt
+
+      - name: Upload fuzz corpus and reproducers
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-guided-fuzz-diagnostics
+          path: |
+            hardening-logs
+            build-fuzz/fuzz
+          if-no-files-found: ignore
+          retention-days: 14
+
   hardening-required:
     name: Hardening required gate
     if: always()
     needs:
       - language-stress-and-fuzz
       - runtime-thread-sanitizer
+      - runtime-undefined-sanitizer
     runs-on: ubuntu-24.04
     steps:
-      - name: Require stress, fuzz, and TSan
+      - name: Require stress, fuzz, TSan and UBSan
         shell: bash
         run: |
           test "${{ needs.language-stress-and-fuzz.result }}" = "success"
           test "${{ needs.runtime-thread-sanitizer.result }}" = "success"
+          test "${{ needs.runtime-undefined-sanitizer.result }}" = "success"

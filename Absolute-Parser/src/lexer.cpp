@@ -8,11 +8,19 @@
 
 namespace Absolute {
     std::unordered_map<TokenType, std::string> token_spec = {
-        {TokenType::NUMBER, R"(\d+(\.\d+)?)"},
-        {TokenType::KEYWORD, R"(\b(int8|int16|int32|int64|uint8|uint16|uint32|uint64|float|double|char|bool|string|void|dynamic|auto|if|else|switch|match|case|default|for|while|foreach|in|do|break|continue|new|delete|raw|weak|shared|ref|params|using|import|namespace|extern|export|return|true|false|null|class|struct|interface|enum|group|this|public|private|protected|sealed|internal|virtual|override|const|static|extension|async|nothrow|await|spawn|catch|finally|try|throw|defer|yield|get|set|operator|is|as|fn)\b)"},
+        // Bases first: `0` alone is a valid decimal literal, so a leading
+        // decimal alternative would match the `0` of `0xFF` and leave `xFF`
+        // behind as an identifier. Every form accepts `_` between digits but
+        // never at an edge, so `1_000` lexes and `1_` does not.
+        {TokenType::NUMBER,
+            R"(0[xX][0-9a-fA-F](_?[0-9a-fA-F])*)"
+            R"(|0[bB][01](_?[01])*)"
+            R"(|0[oO][0-7](_?[0-7])*)"
+            R"(|\d(_?\d)*(\.\d(_?\d)*)?([eE][+-]?\d(_?\d)*)?)"},
+        {TokenType::KEYWORD, R"(\b(int8|int16|int32|int64|uint8|uint16|uint32|uint64|float|double|char|bool|string|void|dynamic|auto|if|else|switch|match|case|default|for|while|foreach|in|do|break|continue|new|delete|raw|weak|ref|params|using|import|namespace|extern|export|return|true|false|null|class|struct|interface|enum|group|this|public|private|protected|sealed|internal|virtual|override|const|static|extension|async|nothrow|await|spawn|catch|finally|try|throw|defer|yield|get|set|operator|is|as|fn)\b)"},
         {TokenType::IDENTIFIER, R"([_a-zA-Z][_a-zA-Z0-9]*)"},
         {TokenType::COMMENT, R"(\/\*[\s\S]*?\*\/|\/\/.*)"},
-        {TokenType::OPERATOR, R"(=>|->|==|!=|<=|>=|&&|\|\||!|~|<<|>>|\+=|-=|\*=|/=|%=|&=|\|=|\^=|\+\+|--|\?|[+\-*/=<>&%|^:@])"},
+        {TokenType::OPERATOR, R"(=>|->|==|!=|<<=|>>=|<=|>=|&&|\|\||!|~|<<|>>|\+=|-=|\*=|/=|%=|&=|\|=|\^=|\+\+|--|\?|[+\-*/=<>&%|^:@])"},
         {TokenType::DELIMITER, R"([;,.])"},
         {TokenType::STRING, R"("(\\.|[^"\\])*")"},
         {TokenType::CHAR, R"('((\\.)|[^'\\])')"},
@@ -27,7 +35,8 @@ namespace Absolute {
     };
 
     std::unordered_map<std::string, int> precedence = {
-        {"=", 1}, {"+=", 1}, {"-=", 1}, {"*=", 1}, {"/=", 1}, {"%=", 1}, {"&=", 1}, {"|=", 1}, {"^=", 1}, // Присваивание
+        {"=", 1}, {"+=", 1}, {"-=", 1}, {"*=", 1}, {"/=", 1}, {"%=", 1}, {"&=", 1}, {"|=", 1}, {"^=", 1},
+        {"<<=", 1}, {">>=", 1}, // Присваивание
         {"?", 2}, // Тернарный оператор (между `||` и `=`)
         {"||", 3}, // Логическое ИЛИ
         {"&&", 4}, // Логическое И
@@ -76,8 +85,63 @@ namespace Absolute {
             {"-=", OperatorCategory::Assignment}, {"*=", OperatorCategory::Assignment},
             {"/=", OperatorCategory::Assignment}, {"%=", OperatorCategory::Assignment},
             {"&=", OperatorCategory::Assignment}, {"|=", OperatorCategory::Assignment},
-            {"^=", OperatorCategory::Assignment}
+            {"^=", OperatorCategory::Assignment}, {"<<=", OperatorCategory::Assignment},
+            {">>=", OperatorCategory::Assignment}
     };
+
+    bool IsFloatingLiteral(const std::string& literal) {
+        // A base prefix is integer by construction, and its digits may well
+        // contain an `e`: 0xE1 is not an exponent.
+        if (literal.size() > 1 && literal[0] == '0' &&
+            (literal[1] == 'x' || literal[1] == 'X' ||
+             literal[1] == 'b' || literal[1] == 'B' ||
+             literal[1] == 'o' || literal[1] == 'O'))
+            return false;
+        return literal.find('.') != std::string::npos ||
+            literal.find('e') != std::string::npos ||
+            literal.find('E') != std::string::npos;
+    }
+
+    // Digit separators and base prefixes are spelling, not meaning. Everything
+    // downstream -- literal typing, enum values, array sizes, constant folding
+    // and the backend -- reads the token text with std::stoull or std::stod,
+    // so the one place that can strip the spelling without leaving a caller
+    // behind is here. `0xFF` reaching std::stoull as text would parse as 0 and
+    // stop at the `x`: a silent wrong answer, which is exactly what this
+    // normalization prevents.
+    static std::string NormalizeNumericLiteral(const std::string& text, int line, int column) {
+        std::string digits;
+        digits.reserve(text.size());
+        for (char c : text) {
+            if (c != '_') digits.push_back(c);
+        }
+
+        int base = 10;
+        size_t offset = 0;
+        if (digits.size() > 1 && digits[0] == '0') {
+            switch (digits[1]) {
+            case 'x': case 'X': base = 16; offset = 2; break;
+            case 'b': case 'B': base = 2;  offset = 2; break;
+            case 'o': case 'O': base = 8;  offset = 2; break;
+            default: break;
+            }
+        }
+        if (base == 10) return digits;
+
+        unsigned long long value = 0;
+        try {
+            size_t consumed = 0;
+            value = std::stoull(digits.substr(offset), &consumed, base);
+            if (consumed != digits.size() - offset) throw std::invalid_argument("trailing characters");
+        }
+        catch (const std::exception&) {
+            throw std::runtime_error(
+                "Lexical error at line " + std::to_string(line) +
+                ", column " + std::to_string(column) +
+                ": integer literal '" + text + "' does not fit in 64 bits");
+        }
+        return std::to_string(value);
+    }
 
     std::string TokenTypeToString(TokenType type) {
         switch (type) {
@@ -204,10 +268,29 @@ namespace Absolute {
                 std::regex regex_pattern(Absolute::token_spec.at(name));
                 if (std::regex_match(value, regex_pattern)) {
                     if (name != TokenType::COMMENT && name != TokenType::WHITESPACE) {
+                        std::string text = value;
+                        if (name == TokenType::NUMBER) {
+                            // A literal the pattern could only match part of --
+                            // `0xZZ`, `1_`, `1e`, `12abc` -- would otherwise
+                            // split into a number and an identifier and be
+                            // reported as a stray token somewhere later.
+                            size_t end = matchPos + value.length();
+                            size_t tail = end;
+                            while (tail < code.size() &&
+                                (std::isalnum(static_cast<unsigned char>(code[tail])) || code[tail] == '_'))
+                                ++tail;
+                            if (tail != end)
+                                throw std::runtime_error(
+                                    "Lexical error at line " + std::to_string(line) +
+                                    ", column " + std::to_string(column) +
+                                    ": invalid numeric literal '" +
+                                    code.substr(matchPos, tail - matchPos) + "'");
+                            text = NormalizeNumericLiteral(value, line, column);
+                        }
                         const TokenType actualType = name == TokenType::IDENTIFIER && IsSyntaxPluginKeyword(value)
                             ? TokenType::KEYWORD
                             : name;
-                        tokens.emplace_back(actualType, value, line, column);
+                        tokens.emplace_back(actualType, text, line, column);
                     }
 
                     // Обновляем `line` и `column` после обработки токена

@@ -152,8 +152,12 @@ namespace Absolute {
     void CodeGenerator::Visit(SingleStatement* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies || !stmt->expr) return;
         impl->SetDebugLocation(stmt);
+        // An owner produced inside this statement that nothing took is
+        // destroyed when the statement ends.
+        Impl::TemporaryOwnerScope temporaries(*impl);
         impl->valueCreatesArrayOwner = false;
         impl->valueArrayOwner = nullptr;
+        impl->valueArrayOwnedCount = nullptr;
         if (impl->SemanticType(stmt->expr.get()) == "void") stmt->expr->Accept(*this);
         else impl->Evaluate(stmt->expr.get());
         if (impl->valueCreatesArrayOwner)
@@ -176,8 +180,10 @@ namespace Absolute {
     void CodeGenerator::Visit(FunctionCallStmt* stmt) {
         if (impl->phase != Impl::Phase::EmitBodies || !stmt->value) return;
         impl->SetDebugLocation(stmt);
+        Impl::TemporaryOwnerScope temporaries(*impl);
         impl->valueCreatesArrayOwner = false;
         impl->valueArrayOwner = nullptr;
+        impl->valueArrayOwnedCount = nullptr;
         if (impl->SemanticType(stmt->value.get()) == "void") stmt->value->Accept(*this);
         else impl->Evaluate(stmt->value.get());
         if (impl->valueCreatesArrayOwner)
@@ -209,6 +215,16 @@ namespace Absolute {
             impl->builder.CreateRetVoid();
             return;
         }
+        // A `void main()` is emitted returning an int, because the C `main`
+        // returns one and the process exit status is it. A bare `return;`
+        // inside it is a successful exit rather than a value.
+        if (impl->currentReturnTypeName == "void" && !stmt->expr) {
+            impl->EmitTransferCleanups(0, true);
+            if (impl->builder.GetInsertBlock()->getTerminator()) return;
+            impl->builder.CreateRet(
+                llvm::Constant::getNullValue(function->getReturnType()));
+            return;
+        }
         // C ABI bool returns i8 while Absolute evaluation produces i1.
         llvm::Type* expectedReturn = impl->currentReturnStorage
             ? impl->TypeFromName(impl->currentReturnTypeName)
@@ -226,47 +242,45 @@ namespace Absolute {
                 impl->EmitOrExit(owns, "return.requires.owner");
             }
         }
+        // Released by hand rather than by a scope: the statement ends with a
+        // terminator, and nothing may be emitted after one.
+        const size_t temporaryMark = impl->temporaryManagedOwners.size();
         llvm::Value* result = impl->Coerce(
             impl->Evaluate(stmt->expr.get()), expectedReturn,
             impl->SemanticType(stmt->expr.get()), impl->currentReturnTypeName);
-        SymbolId transferredOwner = InvalidSymbolId;
-        if (IsStrongManagedPointerTypeName(impl->currentReturnTypeName)) {
-            const auto* returnedIdentifier = dynamic_cast<IdentifierExpr*>(stmt->expr.get());
-            if (returnedIdentifier) {
-                Impl::Variable& returned = impl->RequireVariable(returnedIdentifier->name);
-                if (returned.managedOwner) transferredOwner = returned.symbol;
-            }
-        }
-        else if (ArrayRankName(impl->currentReturnTypeName) > 0) {
-            if (Impl::Variable* returned = impl->FindVariable(
-                impl->SemanticSymbol(stmt->expr.get()))) {
-                transferredOwner = returned->ownsArrayStorage
-                    ? returned->symbol : returned->arrayOwnerSymbol;
-            }
-        }
-        impl->EmitTransferCleanups(0, true, transferredOwner);
-        if (impl->builder.GetInsertBlock()->getTerminator()) return;
-        if (impl->currentReturnStorage) {
-            impl->builder.CreateStore(result, impl->currentReturnStorage);
-            impl->builder.CreateRetVoid();
-        }
-        else impl->builder.CreateRet(result);
+        // A returned string is handed to the caller, who releases it -- and so
+        // is an aggregate whose parts are counted. A getter that hands back a
+        // struct read out of a container (`return unsafeArrayGet(items,
+        // index);`) copies the bytes and not what they hold, so the caller's
+        // copy named the container's strings without saying so and released
+        // them when it went out of scope. Both are the one question asked in
+        // RetainReturnedValue, which a lambda's expression body asks too.
+        impl->EmitCallableReturn(stmt->expr.get(), result, temporaryMark);
     }
 
     void CodeGenerator::Visit(AssignmentStmt* stmt) {
         impl->SetDebugLocation(stmt);
-        if (impl->phase == Impl::Phase::EmitBodies && stmt->expr) stmt->expr->Accept(*this);
+        if (impl->phase != Impl::Phase::EmitBodies || !stmt->expr) return;
+        Impl::TemporaryOwnerScope temporaries(*impl);
+        stmt->expr->Accept(*this);
     }
 
     void CodeGenerator::Visit(VarDeclStmt* stmt) {
         if (!stmt->expr) return;
         if (impl->phase == Impl::Phase::DeclareFunctions) {
+            // Module scope. Arrays already had storage emitted here; scalars
+            // fell through silently and were then reported as an unknown
+            // variable by whichever expression first read them, which named
+            // the use rather than the declaration that was never emitted.
             if (ArrayRankName(impl->DeclaredTypeName(*stmt->expr)) > 0)
                 impl->DeclareGlobalArray(*stmt->expr);
+            else
+                impl->DeclareGlobalScalar(*stmt->expr);
             return;
         }
         if (!impl->CurrentFunction()) return;
         impl->SetDebugLocation(stmt);
+        Impl::TemporaryOwnerScope temporaries(*impl);
         const Attribute* previousSpawnAttribute = impl->currentSpawnAttribute;
         impl->currentSpawnAttribute = stmt->FindAttribute("spawn");
         stmt->expr->Accept(*this);
@@ -342,7 +356,13 @@ namespace Absolute {
         llvm::BasicBlock* mergeBlock = llvm::BasicBlock::Create(impl->context, "if.end", function);
         for (size_t index = 0; index < stmt->branches.size(); ++index) {
             auto& branch = stmt->branches[index];
-            llvm::Value* condition = impl->AsCondition(impl->Evaluate(branch.condition.get()));
+            llvm::Value* condition = nullptr;
+            {
+                // Released inside the block that tested it, so a condition on
+                // one path does not name a value another path never produced.
+                Impl::TemporaryOwnerScope temporaries(*impl);
+                condition = impl->AsCondition(impl->EvaluateBorrowed(branch.condition.get()));
+            }
             llvm::BasicBlock* bodyBlock = llvm::BasicBlock::Create(impl->context, "if.body", function);
             const bool hasNext = index + 1 < stmt->branches.size() || stmt->elseBranch;
             llvm::BasicBlock* nextBlock = hasNext
@@ -369,7 +389,11 @@ namespace Absolute {
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("switch outside a function");
 
-        llvm::Value* selector = impl->Evaluate(stmt->value.get());
+        llvm::Value* selector = nullptr;
+        {
+            Impl::TemporaryOwnerScope temporaries(*impl);
+            selector = impl->EvaluateBorrowed(stmt->value.get());
+        }
         llvm::Type* selectorType = selector->getType();
         if (!selectorType->isIntegerTy())
             impl->Fail("switch value must lower to an integer");
@@ -402,9 +426,13 @@ namespace Absolute {
         llvm::Value* handle = nullptr;
         llvm::Value* type = nullptr;
         SymbolId transferredOwner = InvalidSymbolId;
+        const size_t temporaryMark = impl->temporaryManagedOwners.size();
         if (stmt->value) {
             const std::string exceptionType = impl->SemanticType(stmt->value.get());
             handle = impl->Evaluate(stmt->value.get());
+            // Before the throw leaves: nothing may be emitted after it. The
+            // thrown owner itself is transferred, not registered.
+            impl->ReleaseTemporaryOwners(temporaryMark);
             llvm::Value* dynamicType = impl->builder.CreateCall(
                 impl->ManagedType(), {handle}, "exception.dynamic.type");
             llvm::Value* staticType = impl->builder.getInt64(
@@ -413,6 +441,7 @@ namespace Absolute {
                 impl->builder.CreateICmpNE(dynamicType, impl->builder.getInt64(0)),
                 dynamicType, staticType, "exception.effective.type");
             transferredOwner = impl->SemanticSymbol(stmt->value.get());
+            impl->EmitErrorDetails(handle, PointerPointeeName(exceptionType));
         }
         else {
             if (impl->caughtExceptions.empty()) impl->Fail("rethrow outside catch");
@@ -442,7 +471,8 @@ namespace Absolute {
         const size_t tryScope = impl->scopes.size();
 
         if (stmt->finallyBody) impl->finallyTargets.push_back({stmt, tryScope});
-        impl->exceptionTargets.push_back({handlerBlock, tryScope});
+        impl->exceptionTargets.push_back({handlerBlock, tryScope,
+            impl->temporaryManagedOwners.size()});
         if (stmt->body) stmt->body->Accept(*this);
         impl->exceptionTargets.pop_back();
         impl->BranchIfNeeded(completionBlock);
@@ -547,7 +577,13 @@ namespace Absolute {
         impl->builder.CreateBr(conditionBlock);
 
         impl->builder.SetInsertPoint(conditionBlock);
-        llvm::Value* condition = stmt->condition ? impl->AsCondition(impl->Evaluate(stmt->condition.get())) : impl->builder.getTrue();
+        llvm::Value* condition = impl->builder.getTrue();
+        if (stmt->condition) {
+            // Inside the condition block: the condition runs once per
+            // iteration, so what it produces is released once per iteration.
+            Impl::TemporaryOwnerScope temporaries(*impl);
+            condition = impl->AsCondition(impl->EvaluateBorrowed(stmt->condition.get()));
+        }
         impl->builder.CreateCondBr(condition, bodyBlock, endBlock);
 
         impl->loops.push_back({updateBlock, endBlock, impl->scopes.size()});
@@ -577,7 +613,12 @@ namespace Absolute {
         impl->builder.CreateBr(conditionBlock);
 
         impl->builder.SetInsertPoint(conditionBlock);
-        impl->builder.CreateCondBr(impl->AsCondition(impl->Evaluate(stmt->condition.get())), bodyBlock, endBlock);
+        llvm::Value* condition = nullptr;
+        {
+            Impl::TemporaryOwnerScope temporaries(*impl);
+            condition = impl->AsCondition(impl->EvaluateBorrowed(stmt->condition.get()));
+        }
+        impl->builder.CreateCondBr(condition, bodyBlock, endBlock);
 
         impl->loops.push_back({conditionBlock, endBlock, impl->scopes.size()});
         impl->builder.SetInsertPoint(bodyBlock);
@@ -622,7 +663,12 @@ namespace Absolute {
         impl->BranchIfNeeded(conditionBlock);
 
         impl->builder.SetInsertPoint(conditionBlock);
-        impl->builder.CreateCondBr(impl->AsCondition(impl->Evaluate(stmt->condition.get())), bodyBlock, endBlock);
+        llvm::Value* condition = nullptr;
+        {
+            Impl::TemporaryOwnerScope temporaries(*impl);
+            condition = impl->AsCondition(impl->EvaluateBorrowed(stmt->condition.get()));
+        }
+        impl->builder.CreateCondBr(condition, bodyBlock, endBlock);
         impl->loops.pop_back();
         impl->builder.SetInsertPoint(endBlock);
     }
@@ -632,6 +678,10 @@ namespace Absolute {
         impl->SetDebugLocation(stmt);
         llvm::Function* function = impl->CurrentFunction();
         if (!function) impl->Fail("foreach outside a function");
+        // The iterable is evaluated once, before the loop, and read on every
+        // iteration, so a temporary source -- `for (x in makeList())` -- has to
+        // outlive the loop and is released after it.
+        Impl::TemporaryOwnerScope temporaries(*impl);
         const std::string iterableType = impl->SemanticType(stmt->iterable.get());
         const bool isArray = iterableType.ends_with("[]");
 
@@ -640,6 +690,42 @@ namespace Absolute {
         stmt->var->Accept(*this);
         const std::string variableName = IdentifierName(stmt->var->name.get());
         Impl::Variable& iterationVariable = impl->RequireVariable(variableName);
+
+        // The iteration variable is a name like any other: it gives back what
+        // it held before taking the next element, and it takes a count of its
+        // own when the element is one the container still names. Without the
+        // first half a loop over a `string[]` released a count it never took,
+        // and iterating the same array twice was a use-after-free; without the
+        // second, a loop over a collection kept the count its iterator handed
+        // over and leaked one string per iteration.
+        //
+        // Only for a value whose copy counts something. An owner has its own
+        // path and a number has nothing to say.
+        const bool countedElement =
+            impl->ValueCountsOnCopy(iterationVariable.typeName);
+        const auto storeIterationValue =
+            [&](llvm::Value* element, bool handedOver) {
+                if (!countedElement) {
+                    impl->builder.CreateStore(
+                        impl->Coerce(element, iterationVariable.type),
+                        iterationVariable.address);
+                    return;
+                }
+                // Counted before the previous value is released, because the
+                // two can be the same bytes.
+                llvm::AllocaInst* incoming = impl->CreateEntryAlloca(
+                    *function, iterationVariable.type, "foreach.incoming");
+                impl->builder.CreateStore(
+                    impl->Coerce(element, iterationVariable.type), incoming);
+                if (!handedOver)
+                    impl->EmitValueRetain(incoming, iterationVariable.typeName);
+                impl->EmitValueCleanup(
+                    iterationVariable.address, iterationVariable.typeName);
+                impl->builder.CreateStore(
+                    impl->builder.CreateLoad(iterationVariable.type, incoming,
+                        "foreach.incoming.value"),
+                    iterationVariable.address);
+            };
 
         llvm::BasicBlock* conditionBlock = llvm::BasicBlock::Create(
             impl->context, "foreach.condition", function);
@@ -651,7 +737,23 @@ namespace Absolute {
             impl->context, "foreach.end", function);
 
         if (isArray) {
+            // Cleared first, because a view of a *named* array is read from
+            // the variable without evaluating anything, and the flags would
+            // otherwise still be answering for whatever ran last.
+            impl->valueCreatesArrayOwner = false;
+            impl->valueArrayOwner = nullptr;
+        impl->valueArrayOwnedCount = nullptr;
             Impl::ArrayView source = impl->ViewOfArray(stmt->iterable.get());
+            // A source the loop header made -- `foreach (x in makeList())`, or
+            // an array literal, which is storage of its own -- is nobody's
+            // otherwise: the scope opened above releases it once the loop is
+            // done with it. The comment there had claimed this for longer than
+            // it was true; the registration every other borrowing position
+            // does was missing here, so every such loop leaked its source.
+            if (impl->valueCreatesArrayOwner && impl->valueArrayOwner)
+                impl->RegisterTemporaryArrayOwner(
+                    impl->BuildArrayDescriptor(source), source.typeName,
+                    impl->valueArrayOwner, impl->valueArrayOwnedCount);
             if (source.dimensions.size() != 1)
                 impl->Fail("foreach requires a one-dimensional array or slice");
 
@@ -672,7 +774,8 @@ namespace Absolute {
                 source.elementType, source.address, current, "foreach.element.address");
             llvm::Value* element = impl->builder.CreateLoad(
                 source.elementType, elementAddress, "foreach.element");
-            impl->builder.CreateStore(impl->Coerce(element, iterationVariable.type), iterationVariable.address);
+            // An element read out of the array: the array still names it.
+            storeIterationValue(element, false);
             if (stmt->body) stmt->body->Accept(*this);
             impl->BranchIfNeeded(updateBlock);
 
@@ -684,7 +787,14 @@ namespace Absolute {
             impl->BranchIfNeeded(conditionBlock);
             impl->loops.pop_back();
         } else {
-            llvm::Value* iterable = impl->Evaluate(stmt->iterable.get());
+            // Once. The value of this first evaluation was never read, and
+            // evaluating the source a second time ran whatever the header
+            // wrote a second time: `foreach (x in makeList())` built two
+            // lists, iterated the second, and left the first with nobody
+            // holding it -- which the runtime reported as a leaked handle per
+            // loop. ObjectPointer borrows what it evaluates and registers a
+            // fresh owner for the end of the statement, which is what releases
+            // the one list there now is.
             llvm::Value* iterablePtr = impl->ObjectPointer(stmt->iterable.get(), iterableType);
 
             auto callMethod = [&](llvm::Value* obj, const std::string& typeName, const std::string& methodName, const std::string& propertyName = "") -> std::pair<llvm::Value*, std::string> {
@@ -782,7 +892,9 @@ namespace Absolute {
             if (!elementResult.first) elementResult = callMethod(iteratorObjPtr, iteratorType, "", "value");
             if (!elementResult.first) impl->Fail("missing value method or property on iterator " + iteratorType);
             
-            impl->builder.CreateStore(impl->Coerce(elementResult.first, iterationVariable.type), iterationVariable.address);
+            // What a getter hands back is already counted for whoever takes
+            // it, the way a call's result is anywhere else.
+            storeIterationValue(elementResult.first, true);
             
             if (stmt->body) stmt->body->Accept(*this);
             impl->BranchIfNeeded(updateBlock);

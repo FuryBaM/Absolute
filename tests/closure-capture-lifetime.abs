@@ -1,0 +1,120 @@
+// What a closure's environment holds.
+//
+// A capture is a copy of a value into storage that outlives the scope the
+// value was read from -- that is what a closure is for. So the environment is
+// a second name for whatever the capture holds, and it has to say so. Only a
+// captured *closure* said so: a captured string was copied as a bare pointer,
+// the scope it came from released it, and the environment held freed bytes
+// for as long as the closure lived. A captured struct holding a string was
+// the same defect one level down.
+//
+// The other half is the return. A lambda with a statement body returns
+// through the same path a function does and was counted. One with an
+// expression body -- `fn() => captured` -- was not: it handed out storage the
+// environment still held, and the caller released what it had never counted.
+// Both bodies ask RetainReturnedValue now.
+//
+// A unique owner is not captured by value at all (E_LAMBDA_CAPTURE_RESOURCE
+// refuses it), which is why the environment counts what is copyable and
+// nothing else: it never holds a borrow it would have to release.
+//
+// Every string here is built at runtime. A literal is never released, so a
+// missed count in a corpus of literals proves nothing.
+
+struct Label { public string text; public int32 tag; }
+
+func<string> namer(int32 index) {
+    string first = format("first-{}", index);
+    string second = format("second-{}", index);
+    return fn() => format("{}/{}", first, second);
+}
+
+func<string> carrier(int32 index) {
+    string held = format("held-{}", index);
+    return fn() => held;
+}
+
+func<string> boxed(int32 index) {
+    Label label;
+    label.text = format("boxed-{}", index);
+    label.tag = index;
+    return fn() => label.text;
+}
+
+func<int32> counted(int32 index) {
+    Label label;
+    label.text = format("tagged-{}", index);
+    label.tag = index;
+    return fn() => label.tag;
+}
+
+// A closure captured by a closure: the inner one is counted by the outer
+// environment, and released with it.
+func<string> nested(int32 index) {
+    func<string> inner = carrier(index);
+    return fn() => inner();
+}
+
+int32 main() {
+    // The captured string outlives the scope it was read from.
+    string carried = "";
+    {
+        func<string> hold = carrier(1);
+        carried = hold();
+    }
+    assert(carried == "held-1", "what the closure handed out survives the closure");
+
+    // A capture read out and kept, then the closure dropped.
+    string kept = "";
+    {
+        func<string> pair = namer(2);
+        kept = pair();
+    }
+    assert(kept == "first-2/second-2", "both captures were held while the closure lived");
+
+    // A struct capture: the walk has to reach a string that is a field.
+    string fromBox = "";
+    {
+        func<string> box = boxed(3);
+        fromBox = box();
+    }
+    assert(fromBox == "boxed-3", "a captured struct holds its parts");
+
+    // A plain field of a captured struct still reads back.
+    func<int32> tag = counted(4);
+    assert(tag() == 4, "and a part with nothing to count");
+
+    // A closure captured by a closure.
+    string through = "";
+    {
+        func<string> outer = nested(5);
+        through = outer();
+    }
+    assert(through == "held-5", "a captured closure lives as long as the one holding it");
+
+    // The same closure called more than once: the capture is not consumed by
+    // being handed out.
+    func<string> repeated = carrier(6);
+    assert(repeated() == "held-6", "the first call");
+    assert(repeated() == "held-6", "and the second reads the same storage");
+    assert(repeated() == "held-6", "and the third");
+
+    // Enough rounds that a count that is one short frees storage a live name
+    // still holds, rather than leaving bytes at exit.
+    int32 round = 0;
+    string last = "";
+    while (round < 2000) {
+        func<string> made = carrier(round);
+        last = made();
+        assert(last != "", "every round hands back what it captured");
+        func<string> two = namer(round);
+        last = two();
+        func<string> three = boxed(round);
+        last = three();
+        round = round + 1;
+    }
+    assert(last == "boxed-1999", "and the last round is intact");
+
+    println("closure-capture-lifetime=ok");
+    return 0;
+}
