@@ -114,7 +114,11 @@ class Catalog {
         }
         int32 id = nextId;
         ids[count] = id;
-        names[count] = name;
+        // The request's `name` dies with the handler. A string[] slot is a
+        // header, not a retain, so storing it as-is leaves GET /item/:id
+        // reading storage that is already gone — create still saw the name
+        // because jsonAt ran while the local was alive.
+        names[count] = std.text.concat(name, "");
         quantities[count] = quantity;
         count += 1;
         nextId += 1;
