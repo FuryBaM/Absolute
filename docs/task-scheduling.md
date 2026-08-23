@@ -129,7 +129,9 @@ fiber starts, it remains pinned to that worker so thread-local state is never
 migrated between OS threads. Waiting for another task, a bounded channel,
 `TransferChannel`, the runtime mutex, or `std.task.delay` suspends the fiber and
 returns its worker to the scheduler. Completion, channel operations, mutex
-unlock, and timer expiry enqueue the suspended task again.
+unlock, and timer expiry enqueue the suspended task again. An idle worker that
+sleeps until the next timer copies that deadline first: the wait unlocks, and
+another worker may grow the timer queue while it sleeps.
 
 The default pool size is the available hardware concurrency capped at 32.
 `ABSOLUTE_SCHEDULER_WORKERS=1..32` overrides it before the first task is spawned;
