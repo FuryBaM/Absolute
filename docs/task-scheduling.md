@@ -17,7 +17,11 @@ async int32 main() {
 }
 ```
 
-- `core` is a zero-based logical processor index. `-1` disables affinity.
+- `core` is a zero-based logical processor index. `-1` disables affinity
+  and leaves placement to the caller. A non-negative core selects worker
+  `core % workerCount` at submit time and is not stolen; the runtime then
+  applies native affinity for that logical processor when the worker runs
+  the task.
 - `priority` is a portable task-queue priority from `-3` through `3`. Higher
   values are dequeued first; equal-priority work is fair across role lanes and
   FIFO inside each lane.
@@ -132,12 +136,14 @@ The default pool size is the available hardware concurrency capped at 32.
 `std.task.workerCount()` reports the selected value. This override is intended
 for constrained hosts and deterministic scheduler tests.
 
-Each worker owns priority and role lanes. External submissions are distributed
-round-robin, while a task's nested spawns enter its worker's local queue. An
-idle worker visits the other queues through a rotating victim cursor and steals
-ready work. Only tasks whose fiber has not started may be stolen. After its
-first execution a fiber is pinned to its owner queue, so a suspended
-continuation cannot migrate across threads or invalidate thread-local state.
+Each worker owns priority and role lanes. External submissions without a core
+are distributed round-robin, while a task's nested spawns without a core enter
+its worker's local ready queue. A spawn that names a core is submitted to that
+worker's pinned lane and is not stolen. An idle worker visits the other queues
+through a rotating victim cursor and steals ready work. Only tasks whose fiber
+has not started, and that did not name a core, may be stolen. After its first
+execution a fiber is pinned to its owner queue, so a suspended continuation
+cannot migrate across threads or invalidate thread-local state.
 
 Runnable priority levels use smooth weighted scheduling. Priorities `-3..3`
 have weights `1, 2, 3, 4, 6, 8, 12`: higher priorities receive a statistical

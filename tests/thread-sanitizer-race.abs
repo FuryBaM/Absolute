@@ -17,7 +17,9 @@ import "std/concurrent.abs";
 // enters the caller's queue, and a fiber that has started stays on that worker.
 // Two racers launched that way can run one after the other on one thread: the
 // first never yields, the second never starts, and the sanitizer sees an order.
-// Naming two cores puts them on two workers before either fiber exists.
+// Naming two cores submits each task to that worker's pinned lane
+// before either fiber exists. The harness also asks for two workers, so
+// a one-core host cannot map both names onto one thread.
 //
 // Both still meet at the counter so the write loops overlap. The loop itself
 // must not yield. delay() takes a lock in the scheduler, and that lock is a
