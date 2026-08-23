@@ -5729,6 +5729,25 @@ if(BUILD_TESTING)
             TIMEOUT 120
         )
         file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/integration-work")
+        add_test(
+            NAME absolute.build-integration-http-server
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/examples/integration/http-server.abs"
+                --build-exe
+                -o "${CMAKE_BINARY_DIR}/integration-http-server${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-integration-http-server PROPERTIES
+            FIXTURES_SETUP absolute-integration-http-server
+        )
+        add_test(
+            NAME absolute.run-integration-http-server
+            COMMAND "${CMAKE_BINARY_DIR}/integration-http-server${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-integration-http-server PROPERTIES
+            FIXTURES_REQUIRED absolute-integration-http-server
+            PASS_REGULAR_EXPRESSION "integration-http-server=ok"
+            TIMEOUT 120
+        )
         set_tests_properties(absolute.run-std-typed-channel PROPERTIES
             FIXTURES_REQUIRED absolute-std-typed-channel-executable
             PASS_REGULAR_EXPRESSION "std-typed-channel=ok"

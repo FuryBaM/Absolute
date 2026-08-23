@@ -1266,6 +1266,14 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   Что программа нашла: см. пункт про глобалы ниже. И собственную ошибку она
   тоже поймала — `getProp` возвращает владельца, два анонимных вызова внутри
   assert утекли, отчёт рантайма на выходе это показал.
+- [x] Добавить HTTP server с routing, JSON, cancellation, timeout и graceful shutdown.
+  `examples/integration/http-server.abs`. Герметик: слушает `127.0.0.1` на
+  эфемерном порту, каталог живёт в изоляте сервера, клиент говорит с ним только
+  по HTTP. Четыре маршрута из контракта — `GET /health`, `GET /item/:id` и
+  `POST /item` как JSON, `GET /slow` для timeout и кооперативной отмены — плюс
+  список, 404/400 и `POST /shutdown`, после которого accept-цикл возвращается
+  и обе задачи join. Атомики вместо передачи token/server через spawn: task
+  не носит string и managed-указатель. Закреплено native CTest, как индексатор.
 - [x] Поддержать переменные уровня модуля в кодогенерации. Хранилище на уровне
   модуля выпускалось только для массивов, скаляры молча проваливались мимо, и
   ошибка всплывала на первом же чтении как `unknown variable or field`, называя
@@ -1416,7 +1424,8 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   присваиваниях и возвратах. Тип расширяется только когда значение не
   помещается в 32 бита, поэтому всё, что работало раньше, сохранило прежний
   тип. Границу с обеих сторон закрепляет `tests/wide-integer-literals.abs`.
-- [ ] Добавить HTTP server с routing, JSON, cancellation, timeout и graceful shutdown.
+- [x] Добавить HTTP server с routing, JSON, cancellation, timeout и graceful shutdown.
+  `examples/integration/http-server.abs`; native CTest `absolute.run-integration-http-server`.
 - [ ] Добавить multithreaded crawler с DNS/HTTP, bounded concurrency и deduplication.
 - [ ] Добавить reusable parsing/serialization library как отдельный package target.
 - [ ] Добавить desktop calculator/editor с persistent settings и file dialogs.
