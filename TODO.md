@@ -1426,7 +1426,17 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   тип. Границу с обеих сторон закрепляет `tests/wide-integer-literals.abs`.
 - [x] Добавить HTTP server с routing, JSON, cancellation, timeout и graceful shutdown.
   `examples/integration/http-server.abs`; native CTest `absolute.run-integration-http-server`.
-- [ ] Добавить multithreaded crawler с DNS/HTTP, bounded concurrency и deduplication.
+- [x] Добавить multithreaded crawler с DNS/HTTP, bounded concurrency и deduplication.
+  `examples/integration/crawler.abs`. Герметик: локальный `HttpServer` на
+  `127.0.0.1` и эфемерном порту отдаёт нумерованный граф `/page/0..15`. Каждая
+  страница ссылается на соседей, на себя, на тот же next несколько раз и на
+  `example.invalid`. Клиент резолвит `localhost` и `127.0.0.1` через
+  `std.net.resolve`, ходит `std.http.fetch` по IPv4, четыре именованные задачи
+  разбирают frontier, семафор на два permit ограничивает одновременные fetch,
+  mutex держит visited/frontier. Страница попадает в таблицу один раз: 16
+  уникальных fetch, детерминированное число duplicate/off-site skip.
+  Async-параметр по-прежнему не носит string, поэтому воркеры принимают числа
+  и собирают URL сами. Native CTest `absolute.run-integration-crawler`.
 - [ ] Добавить reusable parsing/serialization library как отдельный package target.
 - [ ] Добавить desktop calculator/editor с persistent settings и file dialogs.
 - [ ] Добавить полноценную OpenGL/Vulkan/D3D scene вместо одного triangle smoke.

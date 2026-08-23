@@ -5749,6 +5749,26 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "integration-http-server=ok"
             TIMEOUT 120
         )
+        add_test(
+            NAME absolute.build-integration-crawler
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/examples/integration/crawler.abs"
+                --build-exe
+                -o "${CMAKE_BINARY_DIR}/integration-crawler${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-integration-crawler PROPERTIES
+            FIXTURES_SETUP absolute-integration-crawler
+            TIMEOUT 300
+        )
+        add_test(
+            NAME absolute.run-integration-crawler
+            COMMAND "${CMAKE_BINARY_DIR}/integration-crawler${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-integration-crawler PROPERTIES
+            FIXTURES_REQUIRED absolute-integration-crawler
+            PASS_REGULAR_EXPRESSION "integration-crawler=ok"
+            TIMEOUT 120
+        )
         set_tests_properties(absolute.run-std-typed-channel PROPERTIES
             FIXTURES_REQUIRED absolute-std-typed-channel-executable
             PASS_REGULAR_EXPRESSION "std-typed-channel=ok"
