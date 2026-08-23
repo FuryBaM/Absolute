@@ -86,7 +86,7 @@ the rest of the suite: on Debug, `suite-differential` alone occupied the
 whole 50-minute budget as test 12; on Release the remaining tests ran out
 of time around test 750 of 823. CI therefore excludes the label from the
 default Ubuntu, macOS, and Windows LLVM `ctest` invocations (`-LE
-differential`, `--parallel 2`) and runs it on Linux Release in a dedicated
+differential`, `--parallel 4`) and runs it on Linux Release in a dedicated
 step. Debug is omitted there because the comparison is about the shipped
 compiler, and the unoptimized one does not finish under the job cap.
 

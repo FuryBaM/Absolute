@@ -87,7 +87,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cmake --build build --config ${{ matrix.configuration }} --parallel 2 \
+          cmake --build build --config ${{ matrix.configuration }} --parallel 4 \
             2>&1 | tee ci-logs/build.log
 
       - name: Build (Windows)
@@ -108,14 +108,14 @@ jobs:
         # Those rebuild every runnable program at several optimization
         # levels and again for wasm; as test 12 of a serial run they
         # spent the whole 50-minute budget on Debug and left Release
-        # seventy tests short. --parallel 2 matches the build. The
-        # labelled tests still run, on Release, in the next step.
+        # seventy tests short. --parallel 4 matches the four-core runner.
+        # The labelled tests still run, on Release, in the next step.
         timeout-minutes: 40
         shell: bash
         run: |
           set -o pipefail
           ctest --test-dir build -C ${{ matrix.configuration }} \
-            --output-on-failure --timeout 180 --parallel 2 \
+            --output-on-failure --timeout 180 --parallel 4 \
             -LE differential \
             2>&1 | tee ci-logs/ctest.log
 
@@ -421,7 +421,7 @@ jobs:
           set "LLVM_RT=%CD%\.absolute\toolchains\llvm-%ABSOLUTE_LLVM_RELEASE%\lib\clang\18\lib\windows"
           if not exist "%LLVM_RT%\clang_rt.asan_dynamic-x86_64.lib" exit /b 1
           set "LIB=%LLVM_RT%;%LIB%"
-          ctest --test-dir .absolute\build\windows-release -C Release --output-on-failure --timeout 180 --parallel 2 -LE differential > ci-logs\ctest.log 2>&1
+          ctest --test-dir .absolute\build\windows-release -C Release --output-on-failure --timeout 180 --parallel 4 -LE differential > ci-logs\ctest.log 2>&1
           set code=%ERRORLEVEL%
           type ci-logs\ctest.log
           exit /b %code%
@@ -537,7 +537,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cmake --build build --config Release --parallel 2 \
+          cmake --build build --config Release --parallel 4 \
             2>&1 | tee ci-logs/build.log
 
       - name: Test
@@ -547,7 +547,7 @@ jobs:
         run: |
           set -o pipefail
           ctest --test-dir build -C Release --output-on-failure --timeout 180 \
-            --parallel 2 -LE differential \
+            --parallel 4 -LE differential \
             2>&1 | tee ci-logs/ctest.log
 
       - name: Classify failure phase

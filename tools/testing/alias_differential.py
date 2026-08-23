@@ -22,8 +22,10 @@ that could be wrong on its own. A disagreement names a tag that lies.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,12 +34,19 @@ SKIP_MARKERS = (
     "conflict", "legacy", "removed", "sanitizer", "plugin", "desktop",
 )
 
+SHARED_HOST = frozenset({
+    "std-env", "std-fs", "std-http", "std-net", "std-net-udp", "std-process",
+    "concurrency-stress", "wasm-fs", "wasm-full-runtime", "wasm-net",
+    "wasm-wasi-services",
+})
+
 
 @dataclass
 class Outcome:
     label: str
     exit_code: int
     output: str
+    binary: Path | None = None
 
 
 def run(command: list[str], timeout: int) -> subprocess.CompletedProcess:
@@ -58,6 +67,13 @@ def runnable_tests(directory: Path, only: str | None) -> list[Path]:
     return sources
 
 
+def uses_shared_host(source: Path) -> bool:
+    name = source.stem.lower()
+    if source.stem in SHARED_HOST:
+        return True
+    return "concurrency" in name or "task-group" in name
+
+
 def measure(compiler: Path, source: Path, work: Path, level: str,
             aliasing: bool, timeout: int) -> Outcome | None:
     """Build one way and run. None means it does not build, which is the
@@ -71,7 +87,16 @@ def measure(compiler: Path, source: Path, work: Path, level: str,
     if run(command, timeout).returncode != 0:
         return None
     result = run([str(binary)], timeout)
-    return Outcome(label, result.returncode, result.stdout + result.stderr)
+    return Outcome(label, result.returncode, result.stdout + result.stderr,
+                   binary)
+
+
+def rerun(outcome: Outcome, timeout: int) -> Outcome | None:
+    if outcome.binary is None:
+        return None
+    result = run([str(outcome.binary)], timeout)
+    return Outcome(outcome.label, result.returncode,
+                   result.stdout + result.stderr, outcome.binary)
 
 
 def _diff_lines(left: str, right: str, limit: int = 6) -> list[str]:
@@ -90,6 +115,46 @@ def _diff_lines(left: str, right: str, limit: int = 6) -> list[str]:
     return lines
 
 
+def compare_source(source: Path, compiler: Path, work: Path, levels: list[str],
+                   timeout: int) -> tuple[int, int, int, list[str]]:
+    lines: list[str] = []
+    compared = 0
+    unstable = 0
+    disagreements = 0
+    for level in levels:
+        try:
+            tagged = measure(compiler, source, work, level, True, timeout)
+            untagged = measure(compiler, source, work, level, False, timeout)
+        except subprocess.TimeoutExpired:
+            lines.append(f"MISMATCH {source.name}: {level} timed out")
+            disagreements += 1
+            continue
+        if not tagged or not untagged:
+            continue
+
+        try:
+            repeat = rerun(tagged, timeout)
+        except subprocess.TimeoutExpired:
+            repeat = None
+        if repeat and (repeat.output.rstrip() != tagged.output.rstrip() or
+                       repeat.exit_code != tagged.exit_code):
+            unstable += 1
+            continue
+
+        compared += 1
+        if (tagged.exit_code == untagged.exit_code and
+                tagged.output.rstrip() == untagged.output.rstrip()):
+            continue
+        disagreements += 1
+        lines.append(
+            f"MISMATCH {source.name}: {tagged.label} "
+            f"exit={tagged.exit_code} vs {untagged.label} "
+            f"exit={untagged.exit_code}")
+        for line in _diff_lines(tagged.output, untagged.output):
+            lines.append(f"    {line}")
+    return compared, unstable, disagreements, lines
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--compiler", type=Path, required=True)
@@ -100,6 +165,8 @@ def main() -> int:
                              "this, because at -O0 the metadata is unused")
     parser.add_argument("--only", help="substring of the test name")
     parser.add_argument("--timeout", type=int, default=180)
+    parser.add_argument("--jobs", type=int, default=0,
+                        help="programs to compare at once; 0 uses the host cores")
     parser.add_argument("--configuration", default="")
     args = parser.parse_args()
 
@@ -111,49 +178,41 @@ def main() -> int:
         print("alias-differential: no tests matched", file=sys.stderr)
         return 1
 
+    compiler = args.compiler.resolve()
+    jobs = args.jobs if args.jobs > 0 else (os.cpu_count() or 2)
     compared = 0
     unstable = 0
     disagreements = 0
-    for source in sources:
-        for level in levels:
-            try:
-                tagged = measure(args.compiler.resolve(), source, work, level,
-                                 True, args.timeout)
-                untagged = measure(args.compiler.resolve(), source, work, level,
-                                   False, args.timeout)
-            except subprocess.TimeoutExpired:
-                print(f"MISMATCH {source.name}: {level} timed out")
-                disagreements += 1
-                continue
-            if not tagged or not untagged:
-                continue
 
-            # A program that answers differently on two runs of the same build
-            # answers for its own reasons -- a seed, a clock, a thread order --
-            # and cannot say anything about alias information.
-            try:
-                repeat = measure(args.compiler.resolve(), source, work, level,
-                                 True, args.timeout)
-            except subprocess.TimeoutExpired:
-                repeat = None
-            if repeat and (repeat.output.rstrip() != tagged.output.rstrip() or
-                           repeat.exit_code != tagged.exit_code):
-                unstable += 1
-                continue
+    def accumulate(report: tuple[int, int, int, list[str]]) -> None:
+        nonlocal compared, unstable, disagreements
+        extra_compared, extra_unstable, extra_disagreements, lines = report
+        compared += extra_compared
+        unstable += extra_unstable
+        disagreements += extra_disagreements
+        for line in lines:
+            print(line, flush=True)
 
-            compared += 1
-            if (tagged.exit_code == untagged.exit_code and
-                    tagged.output.rstrip() == untagged.output.rstrip()):
-                continue
-            disagreements += 1
-            print(f"MISMATCH {source.name}: {tagged.label} "
-                  f"exit={tagged.exit_code} vs {untagged.label} "
-                  f"exit={untagged.exit_code}")
-            for line in _diff_lines(tagged.output, untagged.output):
-                print(f"    {line}")
+    exclusive = [source for source in sources if uses_shared_host(source)]
+    parallel = [source for source in sources if not uses_shared_host(source)]
+    if jobs <= 1:
+        parallel, exclusive = sources, []
+
+    if parallel:
+        workers = 1 if jobs <= 1 else min(jobs, len(parallel))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                pool.submit(compare_source, source, compiler, work, levels,
+                            args.timeout)
+                for source in parallel
+            ]
+            for future in as_completed(futures):
+                accumulate(future.result())
+    for source in exclusive:
+        accumulate(compare_source(source, compiler, work, levels, args.timeout))
 
     print(f"alias-differential={'ok' if disagreements == 0 else 'failed'} "
-          f"programs={compared} levels={len(levels)} "
+          f"programs={compared} levels={len(levels)} jobs={jobs} "
           f"nondeterministic={unstable} disagreements={disagreements} "
           f"configuration={args.configuration}")
     return 0 if disagreements == 0 else 1

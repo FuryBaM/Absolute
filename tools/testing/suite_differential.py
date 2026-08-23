@@ -19,9 +19,10 @@ one that disagrees across targets has a runtime that does not match.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
-import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -88,6 +89,7 @@ class Outcome:
     label: str
     exit_code: int
     output: str
+    binary: Path | None = None
 
 
 def run(command: list[str], timeout: int) -> subprocess.CompletedProcess:
@@ -113,6 +115,13 @@ def runnable_tests(directory: Path, only: str | None) -> list[Path]:
     return sources
 
 
+def uses_shared_host(source: Path) -> bool:
+    name = source.stem.lower()
+    if source.stem in NEEDS_HOST_FACILITIES:
+        return True
+    return "concurrency" in name or "task-group" in name
+
+
 def measure(compiler: Path, source: Path, work: Path, level: str,
             timeout: int) -> Outcome | None:
     """Build at one optimization level and run. None means it does not build,
@@ -123,7 +132,8 @@ def measure(compiler: Path, source: Path, work: Path, level: str,
     if build.returncode != 0:
         return None
     result = run([str(binary)], timeout)
-    return Outcome(level, result.returncode, result.stdout + result.stderr)
+    return Outcome(level, result.returncode, result.stdout + result.stderr,
+                   binary)
 
 
 def measure_wasm(compiler: Path, source: Path, work: Path, node: Path,
@@ -143,6 +153,62 @@ def measure_wasm(compiler: Path, source: Path, work: Path, node: Path,
     return Outcome("wasm", result.returncode, "\n".join(trace) + "\n")
 
 
+def rerun(outcome: Outcome, timeout: int) -> Outcome | None:
+    if outcome.binary is None:
+        return None
+    result = run([str(outcome.binary)], timeout)
+    return Outcome(outcome.label, result.returncode,
+                   result.stdout + result.stderr, outcome.binary)
+
+
+def compare_source(source: Path, compiler: Path, work: Path, levels: list[str],
+                   timeout: int, runner: Path | None, node: Path | None,
+                   wasm_host: Path | None) -> tuple[int, int, int, list[str]]:
+    lines: list[str] = []
+    outcomes: list[Outcome] = []
+    for level in levels:
+        try:
+            outcome = measure(compiler, source, work, level, timeout)
+        except subprocess.TimeoutExpired:
+            lines.append(f"MISMATCH {source.name}: {level} timed out")
+            return 0, 0, 1, lines
+        if outcome:
+            outcomes.append(outcome)
+    if runner and node and wasm_host and source.stem not in NEEDS_HOST_FACILITIES:
+        try:
+            wasm = measure_wasm(compiler, source, work, node, wasm_host,
+                                runner, timeout)
+        except subprocess.TimeoutExpired:
+            wasm = None
+        if wasm:
+            outcomes.append(wasm)
+    if len(outcomes) < 2:
+        return 0, 0, 0, lines
+
+    # Two runs of the same build, not two rebuilds: a seed, a clock, or a
+    # thread order is not a disagreement between optimization levels.
+    try:
+        repeat = rerun(outcomes[0], timeout)
+    except subprocess.TimeoutExpired:
+        repeat = None
+    if repeat and (repeat.output.rstrip() != outcomes[0].output.rstrip() or
+                   repeat.exit_code != outcomes[0].exit_code):
+        return 0, 1, 0, lines
+
+    first = outcomes[0]
+    for other in outcomes[1:]:
+        if (other.exit_code == first.exit_code and
+                other.output.rstrip() == first.output.rstrip()):
+            continue
+        lines.append(
+            f"MISMATCH {source.name}: {first.label} exit={first.exit_code} "
+            f"vs {other.label} exit={other.exit_code}")
+        for line in _diff_lines(first.output, other.output):
+            lines.append(f"    {line}")
+        return 1, 0, 1, lines
+    return 1, 0, 0, lines
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--compiler", type=Path, required=True)
@@ -153,6 +219,8 @@ def main() -> int:
     parser.add_argument("--only", default=None,
                         help="substring of the test name, for narrowing a hunt")
     parser.add_argument("--timeout", type=int, default=300)
+    parser.add_argument("--jobs", type=int, default=0,
+                        help="programs to compare at once; 0 uses the host cores")
     parser.add_argument("--node", type=Path, default=None,
                         help="also compare the WebAssembly build, run with node")
     parser.add_argument("--wasm-host", type=Path, default=None,
@@ -180,67 +248,50 @@ def main() -> int:
               "the module", file=sys.stderr)
         return 2
     runner = None
+    node = None
+    wasm_host = None
     if args.node and args.wasm_host:
         runner = work / "run-absolute-wasm.js"
         runner.write_text(WASM_RUNNER, encoding="utf-8")
+        node = args.node.resolve()
+        wasm_host = args.wasm_host.resolve()
 
+    compiler = args.compiler.resolve()
+    jobs = args.jobs if args.jobs > 0 else (os.cpu_count() or 2)
     compared = 0
     unstable = 0
     disagreements = 0
-    for source in sources:
-        outcomes = []
-        for level in levels:
-            try:
-                outcome = measure(args.compiler.resolve(), source, work, level,
-                                  args.timeout)
-            except subprocess.TimeoutExpired:
-                print(f"MISMATCH {source.name}: {level} timed out")
-                disagreements += 1
-                outcome = None
-            if outcome:
-                outcomes.append(outcome)
-        if runner and source.stem not in NEEDS_HOST_FACILITIES:
-            try:
-                wasm = measure_wasm(args.compiler.resolve(), source, work,
-                                    args.node.resolve(), args.wasm_host.resolve(),
-                                    runner, args.timeout)
-            except subprocess.TimeoutExpired:
-                wasm = None
-            if wasm:
-                outcomes.append(wasm)
-        if len(outcomes) < 2:
-            continue
 
-        # A program that answers differently on two runs of the same build
-        # answers for its own reasons -- a seed, a clock, a thread order -- and
-        # cannot say anything about optimization levels. Left out rather than
-        # reported, and counted so the number is visible.
-        try:
-            repeat = measure(args.compiler.resolve(), source, work, levels[0],
-                             args.timeout)
-        except subprocess.TimeoutExpired:
-            repeat = None
-        if repeat and (repeat.output.rstrip() != outcomes[0].output.rstrip() or
-                       repeat.exit_code != outcomes[0].exit_code):
-            unstable += 1
-            continue
-        compared += 1
-        first = outcomes[0]
-        for other in outcomes[1:]:
-            # Compared without trailing blank lines: the two runners end their
-            # output differently and that says nothing about the program.
-            if (other.exit_code == first.exit_code and
-                    other.output.rstrip() == first.output.rstrip()):
-                continue
-            disagreements += 1
-            print(f"MISMATCH {source.name}: {first.label} exit={first.exit_code} "
-                  f"vs {other.label} exit={other.exit_code}")
-            for line in _diff_lines(first.output, other.output):
-                print(f"    {line}")
-            break
+    def accumulate(report: tuple[int, int, int, list[str]]) -> None:
+        nonlocal compared, unstable, disagreements
+        extra_compared, extra_unstable, extra_disagreements, lines = report
+        compared += extra_compared
+        unstable += extra_unstable
+        disagreements += extra_disagreements
+        for line in lines:
+            print(line, flush=True)
+
+    exclusive = [source for source in sources if uses_shared_host(source)]
+    parallel = [source for source in sources if not uses_shared_host(source)]
+    if jobs <= 1:
+        parallel, exclusive = sources, []
+
+    if parallel:
+        workers = 1 if jobs <= 1 else min(jobs, len(parallel))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                pool.submit(compare_source, source, compiler, work, levels,
+                            args.timeout, runner, node, wasm_host)
+                for source in parallel
+            ]
+            for future in as_completed(futures):
+                accumulate(future.result())
+    for source in exclusive:
+        accumulate(compare_source(source, compiler, work, levels, args.timeout,
+                                  runner, node, wasm_host))
 
     print(f"suite-differential={'ok' if disagreements == 0 else 'failed'} "
-          f"programs={compared} levels={len(levels)} "
+          f"programs={compared} levels={len(levels)} jobs={jobs} "
           f"{'targets=native+wasm ' if runner else ''}"
           f"nondeterministic={unstable} "
           f"disagreements={disagreements} configuration={args.configuration}")
