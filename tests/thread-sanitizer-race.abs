@@ -13,15 +13,16 @@
 import "std/task.abs";
 import "std/concurrent.abs";
 
-// Both racers wait at the counter until the other has reached it. Without that
-// rendezvous the two tasks can run one after the other on a busy machine, and
-// then the scheduler's own handoff orders their accesses -- ThreadSanitizer
-// sees the ordering, reports nothing, and this case fails for the one reason
-// it must never fail: looking clean.
+// ThreadSanitizer tracks OS threads, not fibers. A nested spawn without a core
+// enters the caller's queue, and a fiber that has started stays on that worker.
+// Two racers launched that way can run one after the other on one thread: the
+// first never yields, the second never starts, and the sanitizer sees an order.
+// Naming two cores puts them on two workers before either fiber exists.
 //
-// The loop itself must not yield. delay() takes a lock in the scheduler, and
-// that lock is a happens-before between one write and the next, which is how
-// a program that is a race by construction used to come back clean.
+// Both still meet at the counter so the write loops overlap. The loop itself
+// must not yield. delay() takes a lock in the scheduler, and that lock is a
+// happens-before between one write and the next, which is how a program that
+// is a race by construction used to come back clean.
 async int64 racer(int64 address, int64 readyAddress, int64 iterations) {
     raw int64* slot = address as raw int64*;
     raw void* ready = readyAddress as raw void*;
@@ -46,7 +47,10 @@ async int32 main() {
     int64 handle = cell as int64;
     std.concurrent.AtomicInt* ready = new std.concurrent.AtomicInt(0);
     int64 readyHandle = ready.nativeHandle() as int64;
+
+    @spawn(core = 0)
     task<int64> first = spawn racer(handle, readyHandle, 40000);
+    @spawn(core = 1)
     task<int64> second = spawn racer(handle, readyHandle, 40000);
     int64 performed = await first + await second;
     delete ready;
