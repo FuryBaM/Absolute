@@ -16,9 +16,41 @@ build/Release/absolutec file.abs --build-exe -o app && ./app
 
 ## 1. Open defects
 
-Nothing is open here. The entry this section opened with -- an indexer that
-could not say its getter borrows and its setter takes -- is fixed, and it is
-the entry directly below.
+One, and it is a decision rather than a patch: what `{}` means for a double.
+The entry this section opened with -- an indexer that could not say its getter
+borrows and its setter takes -- is fixed, and it is the entry below the open
+one.
+
+### Open: printing a double prints six significant digits of it
+
+```absolute
+println(format("{}", 123456789.0));   // 1.23457e+08
+println(format("{}", 1.0 / 3.0));     // 0.333333
+println(format("{}", 0.1 + 0.2));     // 0.3
+```
+
+Code generation lowers a `float` or a `double` to `printf` with `"%g"`, whose
+default precision is six significant digits. So the text a program prints is
+not the value it holds and does not read back as that value. An integral double
+above a million comes out in exponent form. And the third line -- the one a
+person prints precisely in order to see that a double is not a decimal --
+prints `0.3`, which is the one thing the value is not.
+
+This is recorded rather than changed because it is a choice about what the
+language's one formatting placeholder promises, and both answers are defensible:
+`%g` at six digits is what C's `printf` and C++'s `iostream` default to, and
+the shortest text that round-trips is what Rust, Go and Python print. Changing
+it changes the output of every program that prints a real number.
+
+If it is decided in favour of the round trip, the shape of the fix is known.
+`"%.17g"` needs no runtime and always round-trips, but it prints `0.1` as
+`0.10000000000000001`, which is precise and unreadable. The shortest form needs
+`std::to_chars`, which means the value must become text before it reaches
+`printf`: emit the conversion at the call site into an `alloca`'d buffer and
+pass `%s`, one buffer per argument, so two doubles in one `println` cannot
+share one. `PreparePrintable` in `codegen_runtime.cpp` is where both live, and
+`absolute_string_builder_append_double` in `string.cpp` is the second caller
+that would have to agree.
 
 ### Fixed: an indexer is a projection, so its getter borrows and its setter takes
 
@@ -114,7 +146,7 @@ per call. `tests/accessor-owner-temporary.abs` covers both.
 Everything else this section held has been closed, and each entry records what
 the fix was, so a regression is recognizable rather than rediscovered.
 
-An empty list is not the same as no defects, and this file should not be read
+A short list is not the same as no defects, and this file should not be read
 as one. Most of what is recorded below was found *after* the list first
 emptied, by running programs rather than by reading it -- the standard
 library's own containers under AddressSanitizer, with every string built at
@@ -122,8 +154,9 @@ runtime. The last such sweep found twenty-four, six of them in the same gap, and
 section 1's last three entries are that sweep. The one thing it found and did
 not fix -- an indexer that could not say its getter borrows -- is fixed now, at
 the top of this section: it was a decision about what an indexer means rather
-than a patch, which is why it waited to be decided. The place to look next is
-section 5, which says where not to.
+than a patch, which is why it waited to be decided. Section 20 is the newest
+sweep and the one furthest from the language itself; section 5 says where not
+to look again.
 
 Nothing is open elsewhere either. The two things that were -- a name in the
 shared type model answering two questions, and what slicing a temporary array
@@ -1413,6 +1446,25 @@ narrow where to look.
   `tests/global-variables.abs`, `tests/literal-notation.abs`.
 - **Ownership, scheduler, collections, CI matrix.** Findings here came slowly
   and needed real effort; coverage is dense.
+- **Defer, exceptions and what they leave behind: clean.** A deferred body
+  reads its variables when it runs and not when it is written; one registered
+  inside a loop runs once per iteration, including on the iteration that
+  `break`s; `finally` runs exactly once through a `return`; a rethrow, a throw
+  from inside a `catch`, and an unmatched inner handler each reach the right
+  outer one. Under AddressSanitizer at `-O0`, an owner alive when an exception
+  passes through -- in a scope, in a loop, in the middle of an expression, in a
+  constructor that threw after allocating a field, in a property setter that
+  refused its value -- is released exactly once in every case.
+- **Dispatch: clean.** An override is found through a base-typed name, through
+  an interface-typed name, and from inside an interface's own default body.
+- **`match`: clean at the widths.** `2^31`, `2^32`, `int64`'s maximum, `int32`'s
+  minimum and `uint32`'s maximum all select their own arm and nothing else.
+- **`std.binary`: clean.** Every writer/reader pair round-trips, including an
+  empty string, a multibyte one, `int64`'s minimum and a byte of 255; a read
+  past the end returns zero without moving the position.
+- **`std.encoding`: clean.** Base64 padding, non-canonical trailing bits, hex
+  with an odd digit count, and UTF-8's overlong, surrogate and truncated forms
+  are all refused where they should be.
 
 ## 5. Not swept — candidates, in rough order of expected yield
 
@@ -1468,6 +1520,11 @@ they say where not to look again.
    for exactly that reason. Now written down in docs/wasm-target.md, with
    `absolute_channel_receive_checked` as the way to tell the two apart. See
    `tests/wasm-console-libcalls.abs` and `tests/wasm-stdin-eof.abs`.
+   One more disagreement came out later and is worth reading as a limit on this
+   sweep rather than a gap in it: the two targets parsed ISO-8601 timestamps
+   differently, and every test in the corpus agreed anyway, because none of
+   them wrote down an input where the two parsers differ (section 20). Building
+   the same corpus twice proves the corpus, not the target.
 4. ~~**Collection boundaries**~~ — swept. Vector, Deque, Map, Set, HashMap and
    PriorityQueue all hold at their edges: empty and single-element containers,
    reallocation points, a deque whose contents straddle the end of its buffer
@@ -2281,7 +2338,221 @@ claim stays true. These two are the only place in the suite where a *false*
 claim is observable, which is what gives the differential its power; a change
 that removes them would leave the check green and empty.
 
-## 20. The method that worked
+## 20. Beyond the list: text that names a time, and text that names a place
+
+The sweeps so far went after the language. This one went after the two places
+where the standard library turns a *string* into a value with a meaning --
+`std.datetime.parseIso` and `std.uri` -- because the language's own defects
+announce themselves and these do not. Nothing here crashes, nothing leaks, and
+every one of them answers.
+
+Eight defects and one of their consequences, all of the kind this file was
+started for: the program keeps running and the answer is wrong. The seventh
+entry below is the sixth one seen from another module, and it is kept separate
+because that is where a reader would look for it.
+
+### Fixed: a fraction of a second was read as a count of milliseconds
+
+```absolute
+std.datetime.parseIso("2024-01-01T00:00:00.1Z").time.millisecond   // was 1
+```
+
+`.1` is a tenth of a second. It was read as one millisecond, `.12` as twelve,
+and `.1234` was refused outright as "invalid millisecond: 1234" -- a message
+about a field the text does not contain. The runtime read the fraction with
+`sscanf("%d")`, which is a parse of an integer and cannot know how many digits
+it consumed, so only a fraction written with exactly three digits was right.
+Every timestamp a machine writes has three; every timestamp a human writes
+does not.
+
+A fraction is now scaled by the digits it is written with, and digits past the
+third are truncated, because a millisecond is the resolution `Time` has. `.1`
+is 100 ms, `.000999` is 0 ms rather than 999, and `,5` -- the other decimal
+mark ISO-8601 allows -- is 500 ms.
+
+### Fixed: a bare date read its own day as a time zone
+
+```absolute
+std.datetime.parseIso("1999-12-31")   // was 1999-12-31T00:00:00-31:00
+```
+
+Thirty-one hours is not a time zone; no zone on Earth is past ±14:00. The zone
+scan looked for the last `+` or `-` after the `T`, and when there was no `T` it
+looked from the start of the string, where the last `-` is the one in front of
+the day. So a calendar date became a datetime in a zone that does not exist,
+and the instant it named was a day and seven hours off. `2024-06-15` was
+`-15:00`; the further into the month, the further the error.
+
+This and the fraction were one mistake: the parser found its fields by
+scanning for punctuation rather than by reading the grammar, so neither field
+knew where it ended. It reads the grammar now --
+year, `-`, month, `-`, day, and only then an optional time and an optional zone
+-- so the date ends where it ends and there is nothing left for a zone to be
+read out of. A bare date is UTC at midnight.
+
+Reading it as a grammar refuses things the scan accepted by not looking:
+`2024-1-1` (a month that is not two digits), `2024-01-01T00:00:00+99:00` (an
+hour that is not an hour), and trailing text after a value that parsed. What
+was accepted before and still is: a space in place of the `T`, a missing
+seconds field, `Z` in either case, `+0530` as well as `+05:30`, and an expanded
+year longer than four digits.
+
+### Fixed: a second before the epoch rounded the wrong way
+
+```absolute
+std.datetime.toUnixSeconds(instantAt(-500))   // was 0, is -1
+```
+
+`toUnixSeconds` divided milliseconds by 1000, and integer division truncates
+toward zero -- which is the wrong direction on the left of the epoch.
+1969-12-31T23:59:59.500Z came back as second 0, which is 1970-01-01T00:00:00Z:
+half a second in the past became half a second in the future, across the one
+boundary a Unix time has. The round trip through `fromUnixSeconds` landed a
+whole second late and on the other side of it.
+
+It floors now. After the epoch nothing changes, which is why this survived: the
+only values that show it are the ones nobody tests with.
+
+### Fixed: a negative year lost a digit on the way out
+
+`formatIso` printed a year with `"%04d"`, which spends one of its four
+positions on the sign, so year -1 came out as `-001-01-01T00:00:00Z` -- three
+digits, and not something `parseIso` reads back as year -1. The sign is now
+printed separately from the four digits, and `formatIso` -> `parseIso` is the
+identity again.
+
+### Fixed: native and wasm did not agree on what a timestamp is
+
+The wasm shim does not call the C++ runtime; `absolute_wasm_std.c` has its own
+`absolute_datetime_parse_iso`, and the two were never the same parser. The
+shim required a string of at least 19 characters with `T` at index 10 and a
+zone written as `+hh:mm`, which rejected a bare date, a value with no seconds,
+a space in place of the `T`, `+0530` and `+05` -- all of which the native
+parser accepted. It also got the fraction *right* while native got it wrong, so
+`.1` was 100 ms on wasm and 1 ms natively: the same program, the same input,
+two answers.
+
+Section 5's WASM sweep built every test in `tests/` for both backends and
+diffed them, and this survived it, because agreement is only checked on the
+shapes some test writes down and no test wrote down a fraction that was not
+three digits. `tests/datetime-iso-edges.abs` writes them all down now, and it
+is an ordinary member of the corpus, so `tools/testing/suite_differential.py`
+compares its answers on both targets. Porting the fixed grammar into the shim
+was how this entry got closed -- the differential reported it as a mismatch
+first, which is the check doing exactly what section 19 says it is for.
+
+The shim also printed a negative year with `"%04d"`, the same way, and now does
+not.
+
+### Fixed: percent-encoding was a list of four characters
+
+```absolute
+std.uri.decode(std.uri.encode("100%20"))   // was "100 "
+```
+
+`std.uri.encode` replaced a space, a quote, `<` and `>`, in that order, and
+`decode` replaced the four escapes back. Everything else passed through --
+including `%` itself, which is the one character an escape mechanism must
+escape. So encoding was not injective and decoding was not its inverse: text
+that already contained a percent sign came back as something else, and text
+containing `&`, `=`, `?`, `#` or `/` was handed to a URL unescaped, where those
+characters mean something.
+
+Both are RFC 3986 now, over UTF-8 octets: everything outside the unreserved set
+(`A-Z a-z 0-9 - . _ ~`) is `%XX`, and `decode` reverses any valid escape in
+either hex case. A `%` that does not begin an escape stays literal, because a
+decoder that throws on `100%` cannot be used on input from a network.
+
+### Fixed: and so a form body was never decoded
+
+`std.form.parseUrlEncoded` splits a body on `&` and `=` and then calls
+`std.uri.decode` on each half -- which is the right order and the right call,
+and it did nothing, because of the entry above. `email=user%40example.com` came
+back as the string `user%40example.com`. Every form value carrying an at sign,
+an ampersand or a percent sign was wrong, and wrong in a way that reads as the
+user's mistake rather than the parser's.
+
+It was reached by fixing `encode`, not by testing `std.form`, which is the
+lesson section 22 already records: after a fix, ask who else calls it.
+
+### Fixed: an authority is not "everything before the first colon"
+
+```absolute
+std.uri.parse("http://user:pass@example.com/x").host   // was "user"
+std.uri.parse("http://[::1]:8080/x").host              // was "["
+```
+
+The port was taken from the first colon in the authority. Userinfo has one, and
+an IPv6 literal is made of them. So `user:pass@example.com` parsed as host
+`user` on port `parseInt("pass@example.com")`, which is 0 -- and `std.http`
+hands exactly those two to `headers.put("Host", uri.host)` and
+`connectWithRetry(uri.host, uri.port, ...)`. An IPv6 literal parsed as host
+`[`, on port 0 as well.
+
+Userinfo is dropped at the last `@`, a bracketed host is read to its `]`, and
+only the colon after the host introduces a port. Anything else after the host
+is refused where it is written rather than turned into a zero.
+
+### Fixed: a port was dropped because some other scheme implies it
+
+`Uri.toString` omitted the port whenever it was 80 *or* 443, whatever the
+scheme. So `http://example.com:443/x` printed as `http://example.com/x`, which
+is port 80 -- a different endpoint, produced by a round trip through a type
+whose whole job is to survive one. `https://example.com:80/x` lost its port the
+same way.
+
+A port is now omitted only when it is the one its own scheme implies, and
+`defaultPortFor` is the single place that says which that is -- it was already
+being decided twice, once in `parse` and once in `toString`, and the two
+disagreed.
+
+`tests/datetime-iso-edges.abs` and `tests/uri-percent-encoding.abs` pin all of
+them, and both are ordinary members of the corpus, so the suite differential
+runs them at two optimization levels and on both targets. At the boundaries
+that show them: the fraction at one, two, three, four
+and six digits, the instant at -1500, -1000, -500 and +500 ms, the round trip
+through text that already looks encoded, and the authority as a bare host, a
+host with a port, one behind userinfo, and an IPv6 literal with and without a
+port.
+
+## 21. A leak probe that proves nothing
+
+A probe can pass for the wrong reason (section 22), and there is a second way
+for it to do that which costs more than a wrong assertion: the probe can be
+deleted before it runs.
+
+`--build-exe` optimizes. LLVM removes an allocation whose result no program
+point observes, and a leak probe is exactly that shape -- allocate, do not
+free, exit. This one reports nothing:
+
+```absolute
+extern "C" raw int8* malloc(int64 size);
+void leakOne() { raw int8* p = malloc(64); *p = 1; }
+```
+
+A hundred calls, 6400 bytes never freed, and LeakSanitizer is silent: the
+`malloc` is not in the binary. Built with `-O0` the same program reports all
+6400 bytes. The same erasure hides a use-after-free and a double free written
+against `malloc` and `free` directly -- the pair is removed together, so the
+program prints "survived double free" under a sanitizer that would certainly
+have caught it.
+
+So: **build ownership and leak probes at `-O0`**, or reach the allocator
+through something the optimizer cannot reason about. The suite's own sanitizer
+cases are not affected, and it is worth saying why, because it is not luck.
+`sanitizer-uaf` and `sanitizer-double-free` send their pointer through
+`native_pointer_alias`, an external C call, so nothing about the allocation is
+removable and AddressSanitizer reports both. `sanitizer-leak` does not use
+LeakSanitizer at all: it allocates through `absolute_managed_create` and
+asserts on the runtime's own report, `memory.leak.detected`. A probe written by
+hand against libc gets neither protection.
+
+LeakSanitizer has one more way to stay quiet that is worth knowing: it reports
+only what is *unreachable*, so a leaked pointer still sitting in a live stack
+slot at exit is not a leak to it. `malloc` in `main` with the pointer never
+overwritten is clean by construction.
+
+## 22. The method that worked
 
 Worth repeating, because reading code did not find any of this.
 
@@ -2299,7 +2570,7 @@ by another route. The compound-assignment defect was found that way, not by
 sweeping again: `a = a / b` had been fixed while `a /= b` still used an untyped
 overload.
 
-## 21. Environment note
+## 23. Environment note
 
 During this work the container repeatedly reverted the working tree to an older
 commit and deleted the build directory. Pushed commits were never affected, but

@@ -764,6 +764,10 @@ if(BUILD_TESTING)
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-datetime.abs"
     )
     add_test(
+        NAME absolute.datetime-iso-edges-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/datetime-iso-edges.abs"
+    )
+    add_test(
         NAME absolute.std-string-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-string.abs"
     )
@@ -786,6 +790,10 @@ if(BUILD_TESTING)
     add_test(
         NAME absolute.std-uri-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/std-uri.abs"
+    )
+    add_test(
+        NAME absolute.uri-percent-encoding-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/uri-percent-encoding.abs"
     )
     add_test(
         NAME absolute.std-http-semantic
@@ -4585,6 +4593,36 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-std-datetime PROPERTIES
             FIXTURES_REQUIRED absolute-std-datetime-executable
             PASS_REGULAR_EXPRESSION "std-datetime=ok"
+        )
+
+        add_test(
+            NAME absolute.build-datetime-iso-edges
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/datetime-iso-edges.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/datetime-iso-edges-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-datetime-iso-edges PROPERTIES
+            FIXTURES_SETUP absolute-datetime-iso-edges-executable
+        )
+        add_test(NAME absolute.run-datetime-iso-edges
+            COMMAND "${CMAKE_BINARY_DIR}/datetime-iso-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-datetime-iso-edges PROPERTIES
+            FIXTURES_REQUIRED absolute-datetime-iso-edges-executable
+            PASS_REGULAR_EXPRESSION "datetime-iso-edges=ok"
+        )
+
+        add_test(
+            NAME absolute.build-uri-percent-encoding
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/uri-percent-encoding.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/uri-percent-encoding-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-uri-percent-encoding PROPERTIES
+            FIXTURES_SETUP absolute-uri-percent-encoding-executable
+        )
+        add_test(NAME absolute.run-uri-percent-encoding
+            COMMAND "${CMAKE_BINARY_DIR}/uri-percent-encoding-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-uri-percent-encoding PROPERTIES
+            FIXTURES_REQUIRED absolute-uri-percent-encoding-executable
+            PASS_REGULAR_EXPRESSION "uri-percent-encoding=ok"
         )
 
         add_test(

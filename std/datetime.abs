@@ -145,7 +145,14 @@ namespace std.datetime {
     }
 
     int64 toUnixSeconds(DateTime dt) {
-        return toUnixMillis(dt) / (1000 as int64);
+        // Integer division truncates toward zero, which is the wrong direction
+        // before the epoch: -500 ms is second -1, not second 0.
+        int64 millis = toUnixMillis(dt);
+        int64 seconds = millis / (1000 as int64);
+        if (millis % (1000 as int64) != (0 as int64) && millis < (0 as int64)) {
+            seconds = seconds - (1 as int64);
+        }
+        return seconds;
     }
 
     DateTime nowUtc() {
@@ -185,7 +192,11 @@ namespace std.datetime {
         }
         string zoneName = "UTC";
         if (offsetMin != 0) {
-            zoneName = format("{}m", offsetMin);
+            int32 absOffset = offsetMin >= 0 ? offsetMin : -offsetMin;
+            zoneName = format("{}{}:{}",
+                offsetMin >= 0 ? "+" : "-",
+                absOffset / 60 < 10 ? format("0{}", absOffset / 60) : format("{}", absOffset / 60),
+                absOffset % 60 < 10 ? format("0{}", absOffset % 60) : format("{}", absOffset % 60));
         }
         return createDateTime(
             createDate(y, m, d),
