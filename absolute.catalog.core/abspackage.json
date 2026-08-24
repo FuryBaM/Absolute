@@ -1,0 +1,9 @@
+{
+  "name": "absolute.catalog.core",
+  "version": "0.1.0",
+  "type": "lib",
+  "description": "Shared record formula for the catalog workspace",
+  "entry": "src/core.abs",
+  "sources": ["src"],
+  "dependencies": {}
+}

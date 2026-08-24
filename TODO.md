@@ -1452,13 +1452,28 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   носит string, поэтому воркеры принимают номер шарда. Native CTest
   `absolute.run-integration-serde` собирает `.absproj` с зависимостью
   `absolute.serde`, так что прогон оставляет пакет в lockfile.
+- [x] Добавить hermetic event journal: datetime, UUID, URI, form, JSON и fs
+  вместе. `examples/integration/journal.abs`. Каталог событий пишется как
+  JSON lines и как urlencoded-близнец; четыре воркера читают оба, сверяют
+  с формулой генератора. В файле живут ISO-десятая, смещение которое есть
+  epoch, имя с `&`/`%` и порт, который схема не подразумевает. Native CTest
+  `absolute.run-integration-journal`.
+- [x] Добавить workspace с несколькими packages, diamond dependencies и lock-file.
+  Три пакета: `absolute.catalog.core` — формула записи; `absolute.catalog.left`
+  и `absolute.catalog.right` зависят от core и кодируют ту же запись по-разному
+  (pipe и JSON). Приложение зависит от двух листьев. Package manager по-прежнему
+  пишет только lockfile, исходники импортируются как у serde. CTest собирает
+  `.absproj`, проверяет что lockfile называет core один раз, и гоняет четыре
+  воркера: суммы id слева и справа совпадают с core.
+  `examples/integration/workspace`, native CTest
+  `absolute.run-integration-workspace` и
+  `absolute.check-integration-workspace-lockfile`.
 
 - [ ] Добавить desktop calculator/editor с persistent settings и file dialogs.
 - [ ] Добавить полноценную OpenGL/Vulkan/D3D scene вместо одного triangle smoke.
 - [ ] Добавить WASM web app с browser host, async task pool и persistent state.
 - [ ] Добавить end-to-end shader plugin demo с embedded source, diagnostics, reflection
   и несколькими target artifacts.
-- [ ] Добавить workspace с несколькими packages, diamond dependencies и lock-file.
 - [ ] Держать каждый integration project примерно в диапазоне 500–3000 строк,
   собирать и запускать его в CI, а не хранить как мёртвый showcase.
 - [ ] Ввести performance budgets для compile time, peak memory, binary size и runtime.

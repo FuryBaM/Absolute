@@ -1,0 +1,201 @@
+// Integration project: a workspace of three packages in a diamond.
+//
+// App depends on left and on right; each of those depends on core.
+// The package manager still only writes a lockfile — it does not
+// compile a dependency's sources — so this program imports the three
+// libraries the same way serde imports csv.abs. The .absproj lists the
+// two leaves; CTest builds that project, so a passing run also recorded
+// core once in the lockfile, not twice.
+//
+// The two encodings of a record compare equal because they ask core,
+// not because they copied the numbers. Four workers each take a shard
+// id, rebuild their paths, and report through a shared integer array:
+// a task cannot carry a string. Named tasks, all spawned before the
+// first await.
+
+import "../../../../std/fs.abs";
+import "../../../../std/string.abs";
+import "../../../../absolute.catalog.core/src/core.abs";
+import "../../../../absolute.catalog.left/src/left.abs";
+import "../../../../absolute.catalog.right/src/right.abs";
+
+string workRoot() {
+    return "absolute-workspace-work";
+}
+
+string leftPath(int32 shard) {
+    return std.fs.join(workRoot(), format("shard-{}.left", shard));
+}
+
+string rightPath(int32 shard) {
+    return std.fs.join(workRoot(), format("shard-{}.right", shard));
+}
+
+string stripCr(string line) {
+    return std.text.replace(line, "\r", "");
+}
+
+string[] nonEmptyLines(string text) {
+    string[] pieces = std.text.split(text, "\n");
+    int32 count = 0;
+    int32 i = 0;
+    while (i < pieces.length) {
+        if (std.text.trim(stripCr(pieces[i])) != "") {
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    string[] lines = new string[count];
+    int32 filled = 0;
+    i = 0;
+    while (i < pieces.length) {
+        string line = std.text.trim(stripCr(pieces[i]));
+        if (line != "") {
+            lines[filled] = line;
+            filled = filled + 1;
+        }
+        i = i + 1;
+    }
+    return lines;
+}
+
+void writeShard(int32 shard) {
+    std.text.StringBuilder* leftBuf = new std.text.StringBuilder();
+    std.text.StringBuilder* rightBuf = new std.text.StringBuilder();
+    int32 index = 0;
+    while (index < catalog.core.rowsPerShard()) {
+        leftBuf.append(catalog.left.encode(shard, index));
+        leftBuf.append("\n");
+        rightBuf.append(catalog.right.encode(shard, index));
+        rightBuf.append("\n");
+        index = index + 1;
+    }
+    std.fs.writeText(leftPath(shard), leftBuf.toString());
+    std.fs.writeText(rightPath(shard), rightBuf.toString());
+    delete leftBuf;
+    delete rightBuf;
+}
+
+void checkShardFiles(int32 shard) {
+    string[] leftLines = nonEmptyLines(std.fs.readText(leftPath(shard)));
+    string[] rightLines = nonEmptyLines(std.fs.readText(rightPath(shard)));
+    assert(leftLines.length == catalog.core.rowsPerShard(), "left shard has every row");
+    assert(rightLines.length == catalog.core.rowsPerShard(), "right shard has every row");
+    int32 index = 0;
+    while (index < catalog.core.rowsPerShard()) {
+        assert(catalog.left.matches(leftLines[index], shard, index),
+            "left encoding matches core");
+        assert(catalog.right.matches(rightLines[index], shard, index),
+            "right encoding matches core");
+        assert(catalog.left.idOf(leftLines[index]) == catalog.right.idOf(rightLines[index]),
+            "the two views name the same record");
+        assert(catalog.left.idOf(leftLines[index]) == catalog.core.recordId(shard, index),
+            "and that name is core's");
+        index = index + 1;
+    }
+}
+
+async int64 checkShard(int64 shard, int64 resultsAddress) {
+    raw int64* results = resultsAddress as raw int64*;
+    int32 shardIndex = shard as int32;
+    checkShardFiles(shardIndex);
+
+    int64 leftSum = 0 as int64;
+    int64 rightSum = 0 as int64;
+    string[] leftLines = nonEmptyLines(std.fs.readText(leftPath(shardIndex)));
+    string[] rightLines = nonEmptyLines(std.fs.readText(rightPath(shardIndex)));
+    int32 index = 0;
+    while (index < catalog.core.rowsPerShard()) {
+        leftSum = leftSum + (catalog.left.idOf(leftLines[index]) as int64);
+        rightSum = rightSum + (catalog.right.idOf(rightLines[index]) as int64);
+        index = index + 1;
+    }
+
+    int32 base = shardIndex * 3;
+    *(results + base) = catalog.core.rowsPerShard() as int64;
+    *(results + base + 1) = leftSum;
+    *(results + base + 2) = rightSum;
+    return shard;
+}
+
+void removeWorkTree() {
+    if (!std.fs.exists(workRoot())) {
+        return;
+    }
+    int32 shard = 0;
+    while (shard < catalog.core.shardCount()) {
+        if (std.fs.exists(leftPath(shard))) {
+            std.fs.remove(leftPath(shard));
+        }
+        if (std.fs.exists(rightPath(shard))) {
+            std.fs.remove(rightPath(shard));
+        }
+        shard = shard + 1;
+    }
+    std.fs.remove(workRoot());
+}
+
+async int32 main() {
+    removeWorkTree();
+    std.fs.createDirectories(workRoot());
+
+    int64 expectedIdSum = 0 as int64;
+    int32 shard = 0;
+    while (shard < catalog.core.shardCount()) {
+        writeShard(shard);
+        int32 index = 0;
+        while (index < catalog.core.rowsPerShard()) {
+            expectedIdSum = expectedIdSum + (catalog.core.recordId(shard, index) as int64);
+            index = index + 1;
+        }
+        shard = shard + 1;
+    }
+
+    int64[] results = new int64[catalog.core.shardCount() * 3];
+    int32 slot = 0;
+    while (slot < catalog.core.shardCount() * 3) {
+        results[slot] = 0;
+        slot = slot + 1;
+    }
+    raw int64* resultsAddress = &results[0];
+    int64 address = resultsAddress as int64;
+
+    task<int64> worker0 = spawn checkShard(0 as int64, address);
+    task<int64> worker1 = spawn checkShard(1 as int64, address);
+    task<int64> worker2 = spawn checkShard(2 as int64, address);
+    task<int64> worker3 = spawn checkShard(3 as int64, address);
+
+    int64 seen = await worker0;
+    seen = seen + await worker1;
+    seen = seen + await worker2;
+    seen = seen + await worker3;
+    assert(seen == 6, "every worker returned its shard id");
+
+    shard = 0;
+    int64 totalRows = 0 as int64;
+    int64 totalLeft = 0 as int64;
+    int64 totalRight = 0 as int64;
+    while (shard < catalog.core.shardCount()) {
+        int32 base = shard * 3;
+        assert(results[base] == catalog.core.rowsPerShard() as int64,
+            "each shard parsed every row");
+        assert(results[base + 1] == results[base + 2],
+            "left and right sums agree inside the shard");
+        totalRows = totalRows + results[base];
+        totalLeft = totalLeft + results[base + 1];
+        totalRight = totalRight + results[base + 2];
+        shard = shard + 1;
+    }
+    assert(totalRows == (catalog.core.shardCount() * catalog.core.rowsPerShard()) as int64,
+        "all rows were parsed");
+    assert(totalLeft == expectedIdSum && totalRight == expectedIdSum,
+        "both views sum to core's ids");
+
+    removeWorkTree();
+    assert(!std.fs.exists(workRoot()), "the work tree is removed");
+
+    println(format("workspace-stats shards={} rows={} idSum={}",
+        catalog.core.shardCount(), totalRows, totalLeft));
+    println("integration-workspace=ok");
+    return 0;
+}

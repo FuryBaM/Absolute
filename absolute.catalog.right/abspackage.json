@@ -1,0 +1,11 @@
+{
+  "name": "absolute.catalog.right",
+  "version": "0.1.0",
+  "type": "lib",
+  "description": "JSON catalog view; depends on absolute.catalog.core",
+  "entry": "src/right.abs",
+  "sources": ["src"],
+  "dependencies": {
+    "absolute.catalog.core": "^0.1.0"
+  }
+}

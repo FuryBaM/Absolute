@@ -5862,6 +5862,50 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "integration-journal=ok"
             TIMEOUT 120
         )
+        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/integration-workspace-project")
+        file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/integration-workspace-project/WorkspaceApp-$<CONFIG>.absproj" CONTENT
+"{
+  \"name\": \"WorkspaceIntegration\",
+  \"type\": \"app\",
+  \"entry\": \"${PROJECT_SOURCE_DIR}/examples/integration/workspace/src/main.abs\",
+  \"sources\": [\"${PROJECT_SOURCE_DIR}/examples/integration/workspace/src\"],
+  \"registries\": [\"${PROJECT_SOURCE_DIR}\"],
+  \"dependencies\": {
+    \"absolute.catalog.left\": \"^0.1.0\",
+    \"absolute.catalog.right\": \"^0.1.0\"
+  }
+}
+")
+        add_test(
+            NAME absolute.build-integration-workspace
+            COMMAND Absolute-Compiler build
+                "${CMAKE_BINARY_DIR}/integration-workspace-project/WorkspaceApp-$<CONFIG>.absproj"
+                --build-exe
+                -o "${CMAKE_BINARY_DIR}/integration-workspace${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-integration-workspace PROPERTIES
+            FIXTURES_SETUP absolute-integration-workspace
+            TIMEOUT 300
+        )
+        add_test(
+            NAME absolute.check-integration-workspace-lockfile
+            COMMAND ${CMAKE_COMMAND}
+                -DLOCKFILE=${CMAKE_BINARY_DIR}/integration-workspace-project/abspackage.lock
+                -P "${PROJECT_SOURCE_DIR}/tests/check-workspace-lockfile.cmake"
+        )
+        set_tests_properties(absolute.check-integration-workspace-lockfile PROPERTIES
+            FIXTURES_REQUIRED absolute-integration-workspace
+        )
+        add_test(
+            NAME absolute.run-integration-workspace
+            COMMAND "${CMAKE_BINARY_DIR}/integration-workspace${CMAKE_EXECUTABLE_SUFFIX}"
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/integration-work"
+        )
+        set_tests_properties(absolute.run-integration-workspace PROPERTIES
+            FIXTURES_REQUIRED absolute-integration-workspace
+            PASS_REGULAR_EXPRESSION "integration-workspace=ok"
+            TIMEOUT 120
+        )
         set_tests_properties(absolute.run-std-typed-channel PROPERTIES
             FIXTURES_REQUIRED absolute-std-typed-channel-executable
             PASS_REGULAR_EXPRESSION "std-typed-channel=ok"

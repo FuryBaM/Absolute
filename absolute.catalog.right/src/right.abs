@@ -1,0 +1,32 @@
+import "../../std/json.abs";
+import "../../std/string.abs";
+import "../../absolute.catalog.core/src/core.abs";
+
+namespace catalog.right {
+    string encode(int32 shard, int32 index) {
+        std.json.JsonValue* obj = std.json.createObject();
+        obj.setNumber("id", catalog.core.recordId(shard, index) as double);
+        obj.setString("label", catalog.core.recordLabel(shard, index));
+        obj.setNumber("amount", catalog.core.recordAmount(shard, index) as double);
+        string encoded = obj.stringify();
+        delete obj;
+        return encoded;
+    }
+
+    int32 idOf(string line) {
+        std.json.JsonValue* obj = std.json.parse(line);
+        int64 value = obj.getIntOr("id", -1 as int64);
+        delete obj;
+        return value as int32;
+    }
+
+    bool matches(string line, int32 shard, int32 index) {
+        std.json.JsonValue* obj = std.json.parse(line);
+        bool ok = obj.isValid() && obj.isObject() &&
+            obj.getIntOr("id", -1 as int64) == catalog.core.recordId(shard, index) as int64 &&
+            obj.getStringOr("label", "") == catalog.core.recordLabel(shard, index) &&
+            obj.getIntOr("amount", -1 as int64) == catalog.core.recordAmount(shard, index) as int64;
+        delete obj;
+        return ok;
+    }
+}
