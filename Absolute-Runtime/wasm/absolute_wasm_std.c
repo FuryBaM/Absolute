@@ -419,16 +419,38 @@ void* absolute_http_tls_open(
     WasmHttpTlsResponse* response =
         (WasmHttpTlsResponse*)heap_alloc(
             sizeof(WasmHttpTlsResponse));
-    if (!response) return NULL;
+    if (!response) {
+        fs_copy_path(
+            g_http_tls_error, sizeof(g_http_tls_error),
+            "HTTPS receive allocation failed");
+        return NULL;
+    }
     memset(response, 0, sizeof(*response));
-    response->body =
-        (uint8_t*)heap_alloc((size_t)maximumResponseBytes + 1);
-    if (!response->body) {
+    /* RequestOptions defaults to 16 MiB. The wasm arena is 2 MiB, so
+     * asking for that maximum returns NULL and fetch throws with an
+     * empty error. Take the largest buffer the arena will still give. */
+    int32_t cap = maximumResponseBytes;
+    uint8_t* buffer = NULL;
+    while (cap > 0) {
+        buffer = (uint8_t*)heap_alloc((size_t)cap + 1);
+        if (buffer)
+            break;
+        if (cap <= 4096)
+            break;
+        cap /= 4;
+        if (cap < 4096)
+            cap = 4096;
+    }
+    if (!buffer) {
+        fs_copy_path(
+            g_http_tls_error, sizeof(g_http_tls_error),
+            "HTTPS receive allocation failed");
         free(response);
         return NULL;
     }
+    response->body = buffer;
     const int32_t received = absolute_http_get(
-        url, response->body, maximumResponseBytes);
+        url, response->body, cap);
     if (received < 0) {
         fs_copy_path(
             g_http_tls_error, sizeof(g_http_tls_error),

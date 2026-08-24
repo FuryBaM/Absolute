@@ -58,6 +58,7 @@ function assertMarker(logs, label) {
 
 (async () => {
   const bytes = fs.readFileSync(wasmPath);
+  let lastLogs = [];
 
   let browserHost = null;
   try {
@@ -65,6 +66,7 @@ function assertMarker(logs, label) {
       captureLogs: true,
       httpMocks,
     });
+    lastLogs = inst.logs;
     browserHost = inst.host;
     if (typeof inst.exports.main !== 'function') {
       throw new Error('main export missing');
@@ -74,6 +76,9 @@ function assertMarker(logs, label) {
       throw new Error('browser main ' + code + ' ' + JSON.stringify(inst.logs));
     }
     assertMarker(inst.logs, 'browser');
+  } catch (e) {
+    console.error('browser logs ' + JSON.stringify(lastLogs));
+    throw e;
   } finally {
     try { if (browserHost) browserHost.shutdown(); } catch (_) {}
   }
@@ -86,12 +91,16 @@ function assertMarker(logs, label) {
       taskWorkers: 0,
       forceTcpMocks: true,
     });
+    lastLogs = inst.logs;
     nodeHost = inst.host;
     const code = inst.exports.main();
     if (code !== 0) {
       throw new Error('node main ' + code + ' ' + JSON.stringify(inst.logs));
     }
     assertMarker(inst.logs, 'node');
+  } catch (e) {
+    console.error('node logs ' + JSON.stringify(lastLogs));
+    throw e;
   } finally {
     try { if (nodeHost) nodeHost.shutdown(); } catch (_) {}
   }
