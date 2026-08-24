@@ -1469,7 +1469,14 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   `absolute.run-integration-workspace` и
   `absolute.check-integration-workspace-lockfile`.
 
-- [ ] Добавить desktop calculator/editor с persistent settings и file dialogs.
+- [x] Добавить desktop calculator/editor с persistent settings и file dialogs.
+  `examples/integration/calculator.abs`. Герметик: integer-лента (печатать
+  double — открытое решение, section 25), JSON settings, «диалог» это
+  `std.fs.list` (OS-диалога в Desktop нет). Desktop.UiTheme / rgb /
+  measureText / Sprite работают без окна; Window открывается на один кадр,
+  если host его дал, и пропускается на headless. Четыре воркера, каждый
+  со своим shard id. Native CTest `absolute.run-integration-calculator`
+  собирает с `--plugin` desktop.
 - [ ] Добавить полноценную OpenGL/Vulkan/D3D scene вместо одного triangle smoke.
 - [ ] Добавить WASM web app с browser host, async task pool и persistent state.
 - [ ] Добавить end-to-end shader plugin demo с embedded source, diagnostics, reflection

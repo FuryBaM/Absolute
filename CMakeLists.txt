@@ -5906,6 +5906,30 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "integration-workspace=ok"
             TIMEOUT 120
         )
+        if(TARGET Absolute-Desktop-Plugin)
+            add_test(
+                NAME absolute.build-integration-calculator
+                COMMAND Absolute-Compiler
+                    "${PROJECT_SOURCE_DIR}/examples/integration/calculator.abs"
+                    --plugin "$<TARGET_FILE_DIR:Absolute-Desktop-Plugin>/absolute-desktop.absplugin"
+                    --build-exe
+                    -o "${CMAKE_BINARY_DIR}/integration-calculator${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.build-integration-calculator PROPERTIES
+                FIXTURES_SETUP absolute-integration-calculator
+                TIMEOUT 300
+            )
+            add_test(
+                NAME absolute.run-integration-calculator
+                COMMAND "${CMAKE_BINARY_DIR}/integration-calculator${CMAKE_EXECUTABLE_SUFFIX}"
+                WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/integration-work"
+            )
+            set_tests_properties(absolute.run-integration-calculator PROPERTIES
+                FIXTURES_REQUIRED absolute-integration-calculator
+                PASS_REGULAR_EXPRESSION "integration-calculator=ok"
+                TIMEOUT 120
+            )
+        endif()
         set_tests_properties(absolute.run-std-typed-channel PROPERTIES
             FIXTURES_REQUIRED absolute-std-typed-channel-executable
             PASS_REGULAR_EXPRESSION "std-typed-channel=ok"
