@@ -1,5 +1,5 @@
 // INI parse and stringify. Sections, comments, quoted values, and
-// duplicate keys (last write wins on get). Entries live in one
+// duplicate keys (last write wins on getValue). Entries live in one
 // Vector of copyable structs so a document is a single owner, not a
 // tree of section objects.
 
@@ -67,7 +67,7 @@ namespace serde.ini {
             _pairs.push(makePair(section, key, value));
         }
 
-        public void set(string section, string key, string value) {
+        public void setValue(string section, string key, string value) {
             int32 i = _pairs.count - 1;
             while (i >= 0) {
                 IniPair pair = _pairs[i];
@@ -93,7 +93,7 @@ namespace serde.ini {
             return false;
         }
 
-        public string get(string section, string key, string defaultValue) {
+        public string getValue(string section, string key, string defaultValue) {
             int32 i = _pairs.count - 1;
             while (i >= 0) {
                 IniPair pair = _pairs[i];

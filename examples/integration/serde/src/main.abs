@@ -141,21 +141,21 @@ void checkCsvShard(serde.csv.CsvTable* table, int32 shard) {
 }
 
 void checkIniShard(serde.ini.IniDocument* doc, int32 shard) {
-    assert(doc.get("meta", "shard", "") == format("{}", shard),
+    assert(doc.getValue("meta", "shard", "") == format("{}", shard),
         "ini meta.shard matches");
-    assert(doc.get("meta", "count", "") == format("{}", ROWS_PER_SHARD),
+    assert(doc.getValue("meta", "count", "") == format("{}", ROWS_PER_SHARD),
         "ini meta.count matches");
     int32 index = 0;
     while (index < ROWS_PER_SHARD) {
         string section = format("row-{}", index);
         assert(doc.has(section, "name"), "ini row has name");
-        assert(doc.get(section, "id", "") == format("{}", recordId(shard, index)),
+        assert(doc.getValue(section, "id", "") == format("{}", recordId(shard, index)),
             "ini id matches the generator");
-        assert(doc.get(section, "name", "") == recordName(shard, index),
+        assert(doc.getValue(section, "name", "") == recordName(shard, index),
             "ini name matches the generator");
-        assert(doc.get(section, "note", "") == recordNote(shard, index),
+        assert(doc.getValue(section, "note", "") == recordNote(shard, index),
             "ini note matches the generator");
-        assert(doc.get(section, "amount", "") == format("{}", recordAmount(shard, index)),
+        assert(doc.getValue(section, "amount", "") == format("{}", recordAmount(shard, index)),
             "ini amount matches the generator");
         index = index + 1;
     }
@@ -256,9 +256,9 @@ void checkCrlfAndPadding() {
 void checkIniQuotesAndDuplicates() {
     serde.ini.IniDocument* doc = serde.ini.parse(
         "; comment\n# also\n[s]\nname =  spaced  \nname=second\nplain=ok\n");
-    assert(doc.get("s", "plain", "") == "ok", "ini unquoted value");
-    assert(doc.get("s", "name", "") == "second", "ini duplicate keeps the last");
-    assert(doc.get("missing", "x", "fallback") == "fallback", "ini fallback");
+    assert(doc.getValue("s", "plain", "") == "ok", "ini unquoted value");
+    assert(doc.getValue("s", "name", "") == "second", "ini duplicate keeps the last");
+    assert(doc.getValue("missing", "x", "fallback") == "fallback", "ini fallback");
     delete doc;
 
     serde.ini.IniDocument* built = new serde.ini.IniDocument();
@@ -266,9 +266,9 @@ void checkIniQuotesAndDuplicates() {
     built.add("s", "said", "say \"hi\"");
     string text = serde.ini.stringify(built);
     serde.ini.IniDocument* parsed = serde.ini.parse(text);
-    assert(parsed.get("s", "name", "") == " has,comma ",
+    assert(parsed.getValue("s", "name", "") == " has,comma ",
         "ini quoted spaces and comma round-trip");
-    assert(parsed.get("s", "said", "") == "say \"hi\"",
+    assert(parsed.getValue("s", "said", "") == "say \"hi\"",
         "ini quoted quote round-trip");
     delete parsed;
     delete built;
