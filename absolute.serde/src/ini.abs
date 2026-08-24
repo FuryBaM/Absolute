@@ -118,15 +118,15 @@ namespace serde.ini {
         return c == HASH || c == SEMICOLON;
     }
 
-    string unquoteValue(string raw) {
-        int32 n = std.text.codePointCount(raw);
+    string unquoteValue(string source) {
+        int32 n = std.text.codePointCount(source);
         if (n >= 2 &&
-            std.text.codePointAt(raw, 0) == QUOTE &&
-            std.text.codePointAt(raw, n - 1) == QUOTE) {
-            string inner = std.text.substring(raw, 1, n - 2);
+            std.text.codePointAt(source, 0) == QUOTE &&
+            std.text.codePointAt(source, n - 1) == QUOTE) {
+            string inner = std.text.substring(source, 1, n - 2);
             return std.text.replace(inner, "\"\"", "\"");
         }
-        return raw;
+        return source;
     }
 
     bool valueNeedsQuotes(string value) {
@@ -200,14 +200,14 @@ namespace serde.ini {
                         throw new Error("ini: line is not a key=value pair");
                     }
                     string key = std.text.trim(std.text.substring(line, 0, eq));
-                    string raw = std.text.trim(std.text.substring(
+                    string source = std.text.trim(std.text.substring(
                         line,
                         eq + 1,
                         std.text.codePointCount(line) - (eq + 1)));
                     if (key == "") {
                         throw new Error("ini: empty key");
                     }
-                    doc.add(section, key, unquoteValue(raw));
+                    doc.add(section, key, unquoteValue(source));
                 }
             }
             i = i + 1;
