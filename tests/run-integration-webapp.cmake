@@ -133,3 +133,6 @@ endif()
 if(NOT RUN_OUT MATCHES "integration-webapp=ok")
     message(FATAL_ERROR "unexpected output:\n${RUN_OUT}")
 endif()
+# execute_process ate Node's stdout. CTest's PASS_REGULAR_EXPRESSION
+# looks at this script, so the marker has to leave here.
+message("${RUN_OUT}")
