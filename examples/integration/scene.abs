@@ -1,0 +1,410 @@
+// Integration project: a hermetic scene, not a triangle smoke.
+//
+// A catalogue of instances is written as JSON lines next to a cube
+// the program generated. Four workers each take a shard id, rebuild
+// their paths, load the mesh, and check the instances against the
+// same formula that produced them. A task cannot carry a string.
+//
+// GPU is optional. CI has no display and often no device: a window
+// that fails to open, or a backend that is not OpenGL, skips the
+// frame. The mesh and the catalogue still have to agree. Named
+// tasks, all spawned before the first await.
+
+import "../../std/fs.abs";
+import "../../std/json.abs";
+import "../../std/string.abs";
+
+const int32 SHARD_COUNT = 4;
+const int32 INSTANCES_PER_SHARD = 8;
+
+string workRoot() {
+    return "absolute-scene-work";
+}
+
+string cubePath() {
+    return std.fs.join(workRoot(), "cube.obj");
+}
+
+string planePath() {
+    return std.fs.join(workRoot(), "plane.obj");
+}
+
+string shardPath(int32 shard) {
+    return std.fs.join(workRoot(), format("shard-{}.jsonl", shard));
+}
+
+string stripCr(string line) {
+    return std.text.replace(line, "\r", "");
+}
+
+int32 instanceId(int32 shard, int32 index) {
+    return shard * INSTANCES_PER_SHARD + index;
+}
+
+int32 instanceX(int32 shard, int32 index) {
+    return shard * 10 + index;
+}
+
+int32 instanceY(int32 shard, int32 index) {
+    return (shard + index) % 3;
+}
+
+int32 instanceZ(int32 shard, int32 index) {
+    return index - shard;
+}
+
+void writeCube() {
+    std.text.StringBuilder* buf = new std.text.StringBuilder();
+    buf.append("# hermetic unit cube\n");
+    buf.append("v -1 -1 -1\n");
+    buf.append("v 1 -1 -1\n");
+    buf.append("v 1 1 -1\n");
+    buf.append("v -1 1 -1\n");
+    buf.append("v -1 -1 1\n");
+    buf.append("v 1 -1 1\n");
+    buf.append("v 1 1 1\n");
+    buf.append("v -1 1 1\n");
+    buf.append("f 1 2 3 4\n");
+    buf.append("f 5 8 7 6\n");
+    buf.append("f 1 5 6 2\n");
+    buf.append("f 2 6 7 3\n");
+    buf.append("f 3 7 8 4\n");
+    buf.append("f 5 1 4 8\n");
+    std.fs.writeText(cubePath(), buf.toString());
+    delete buf;
+}
+
+void writePlane() {
+    std.text.StringBuilder* buf = new std.text.StringBuilder();
+    buf.append("# hermetic ground plane\n");
+    buf.append("v -2 0 -2\n");
+    buf.append("v 2 0 -2\n");
+    buf.append("v 2 0 2\n");
+    buf.append("v -2 0 2\n");
+    buf.append("f 1 2 3 4\n");
+    std.fs.writeText(planePath(), buf.toString());
+    delete buf;
+}
+
+string jsonLine(int32 shard, int32 index) {
+    std.json.JsonValue* obj = std.json.createObject();
+    obj.setNumber("id", instanceId(shard, index) as double);
+    obj.setNumber("x", instanceX(shard, index) as double);
+    obj.setNumber("y", instanceY(shard, index) as double);
+    obj.setNumber("z", instanceZ(shard, index) as double);
+    obj.setString("mesh", "cube.obj");
+    string encoded = obj.stringify();
+    delete obj;
+    return encoded;
+}
+
+void writeShard(int32 shard) {
+    std.text.StringBuilder* buf = new std.text.StringBuilder();
+    int32 index = 0;
+    while (index < INSTANCES_PER_SHARD) {
+        buf.append(jsonLine(shard, index));
+        buf.append("\n");
+        index = index + 1;
+    }
+    std.fs.writeText(shardPath(shard), buf.toString());
+    delete buf;
+}
+
+string[] nonEmptyLines(string text) {
+    string[] pieces = std.text.split(text, "\n");
+    int32 count = 0;
+    int32 i = 0;
+    while (i < pieces.length) {
+        if (std.text.trim(stripCr(pieces[i])) != "") {
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    string[] lines = new string[count];
+    int32 filled = 0;
+    i = 0;
+    while (i < pieces.length) {
+        string line = std.text.trim(stripCr(pieces[i]));
+        if (line != "") {
+            lines[filled] = line;
+            filled = filled + 1;
+        }
+        i = i + 1;
+    }
+    return lines;
+}
+
+void checkMesh(Desktop.Mesh* mesh) {
+    assert(mesh.isValid(), "the generated cube loads");
+    assert(mesh.strideFloats() == 8, "a vertex is pos3 normal3 uv2");
+    assert(mesh.indexCount() == 36, "six quads become twelve triangles");
+    assert(mesh.vertexFloatCount() > 0, "the cube has vertices");
+    assert(mesh.vertexFloatCount() % 8 == 0, "vertices are whole records");
+}
+
+void checkPlane(Desktop.Mesh* mesh) {
+    assert(mesh.isValid(), "the generated plane loads");
+    assert(mesh.strideFloats() == 8, "the plane uses the same vertex layout");
+    assert(mesh.indexCount() == 6, "one quad becomes two triangles");
+    assert(mesh.vertexFloatCount() % 8 == 0, "plane vertices are whole records");
+}
+
+void checkRejectedMesh() {
+    string emptyPath = std.fs.join(workRoot(), "empty.obj");
+    std.fs.writeText(emptyPath, "# no faces\nv 0 0 0\n");
+    Desktop.Mesh* mesh = new Desktop.Mesh();
+    assert(!mesh.loadObj(emptyPath), "an OBJ without faces is refused");
+    mesh.destroy();
+    std.fs.remove(emptyPath);
+}
+
+void checkBackendIds() {
+    assert(Desktop.Gpu.BackendAuto == 0, "BackendAuto is 0");
+    assert(Desktop.Gpu.BackendOpenGL == 1, "BackendOpenGL is 1");
+    assert(Desktop.Gpu.BackendD3D11 == 2, "BackendD3D11 is 2");
+    assert(Desktop.Gpu.BackendD3D12 == 3, "BackendD3D12 is 3");
+    assert(Desktop.Gpu.BackendVulkan == 4, "BackendVulkan is 4");
+}
+
+void checkDialogSeesCube() {
+    string[] entries = std.fs.list(workRoot());
+    bool foundCube = false;
+    bool foundPlane = false;
+    int32 i = 0;
+    while (i < entries.length) {
+        string name = std.fs.fileName(entries[i]);
+        if (name == "cube.obj") {
+            foundCube = true;
+        }
+        if (name == "plane.obj") {
+            foundPlane = true;
+        }
+        i = i + 1;
+    }
+    assert(foundCube, "the work tree lists the cube");
+    assert(foundPlane, "the work tree lists the plane");
+}
+
+void checkInstance(int32 shard, int32 index, string line) {
+    std.json.JsonValue* obj = std.json.parse(line);
+    assert(obj.isValid() && obj.isObject(), "an instance line is an object");
+    int64 id = obj.getIntOr("id", -1 as int64);
+    int64 x = obj.getIntOr("x", -999 as int64);
+    int64 y = obj.getIntOr("y", -999 as int64);
+    int64 z = obj.getIntOr("z", -999 as int64);
+    string meshName = obj.getStringOr("mesh", "");
+    delete obj;
+    assert(id == instanceId(shard, index) as int64, "instance id matches");
+    assert(x == instanceX(shard, index) as int64, "instance x matches");
+    assert(y == instanceY(shard, index) as int64, "instance y matches");
+    assert(z == instanceZ(shard, index) as int64, "instance z matches");
+    assert(meshName == "cube.obj", "every instance names the cube");
+}
+
+int32 tryOpenGlFrame() {
+    Desktop.Window* window = new Desktop.Window("Absolute Scene", 320, 240, false);
+    if (!window.isOpen()) {
+        window.destroy();
+        return 0;
+    }
+    window.poll();
+
+    Desktop.Gpu* gpu = new Desktop.Gpu(window, Desktop.Gpu.BackendAuto);
+    if (!gpu.isValid()) {
+        gpu.destroy();
+        window.destroy();
+        return 0;
+    }
+
+    string name = gpu.backend();
+    if (!std.text.contains(name, "opengl")) {
+        gpu.destroy();
+        window.destroy();
+        return 0;
+    }
+
+    Desktop.Mesh* mesh = new Desktop.Mesh();
+    if (!mesh.loadObj(cubePath())) {
+        mesh.destroy();
+        gpu.destroy();
+        window.destroy();
+        return 0;
+    }
+
+    string vs = "#version 330 core\nlayout(location=0) in vec3 aPos;\nlayout(location=1) in vec3 aNormal;\nlayout(location=2) in vec2 aUv;\nvoid main(){\n  gl_Position = vec4(aPos.xy * 0.2, 0.0, 1.0);\n}\n";
+    string fs = "#version 330 core\nout vec4 FragColor;\nvoid main(){\n  FragColor = vec4(0.3, 0.6, 0.9, 1.0);\n}\n";
+
+    auto program = gpu.createShader(vs, fs);
+    auto layout = gpu.createLayoutPos3Normal3Uv2();
+    auto vb = gpu.createVertexBufferFromMesh(mesh);
+    auto ib = gpu.createIndexBufferFromMesh(mesh);
+    if (program == null || layout == null || vb == null || ib == null) {
+        mesh.destroy();
+        gpu.destroy();
+        window.destroy();
+        return 0;
+    }
+
+    auto pipeline = gpu.createPipeline(program, layout);
+    if (pipeline == null) {
+        mesh.destroy();
+        gpu.destroy();
+        window.destroy();
+        return 0;
+    }
+
+    gpu.beginFrame();
+    gpu.clear(0.05, 0.06, 0.10, 1.0);
+    gpu.bind(pipeline);
+    gpu.bind(vb);
+    gpu.bind(ib);
+    gpu.drawIndexed(mesh.indexCount());
+    gpu.endFrame();
+    gpu.present();
+
+    mesh.destroy();
+    gpu.destroy();
+    window.destroy();
+    return 1;
+}
+
+async int64 checkShard(int64 shard, int64 resultsAddress) {
+    raw int64* results = resultsAddress as raw int64*;
+    int32 shardIndex = shard as int32;
+
+    Desktop.Mesh* mesh = new Desktop.Mesh();
+    assert(mesh.loadObj(cubePath()), "a worker can load the cube");
+    checkMesh(mesh);
+    mesh.destroy();
+
+    Desktop.Mesh* plane = new Desktop.Mesh();
+    assert(plane.loadObj(planePath()), "a worker can load the plane");
+    checkPlane(plane);
+    plane.destroy();
+
+    string[] lines = nonEmptyLines(std.fs.readText(shardPath(shardIndex)));
+    assert(lines.length == INSTANCES_PER_SHARD, "a shard has every instance");
+
+    int64 idSum = 0 as int64;
+    int64 posSum = 0 as int64;
+    int32 index = 0;
+    while (index < INSTANCES_PER_SHARD) {
+        checkInstance(shardIndex, index, lines[index]);
+        idSum = idSum + (instanceId(shardIndex, index) as int64);
+        posSum = posSum + (instanceX(shardIndex, index) as int64)
+            + (instanceY(shardIndex, index) as int64)
+            + (instanceZ(shardIndex, index) as int64);
+        index = index + 1;
+    }
+
+    int32 base = shardIndex * 3;
+    *(results + base) = INSTANCES_PER_SHARD as int64;
+    *(results + base + 1) = idSum;
+    *(results + base + 2) = posSum;
+    return shard;
+}
+
+void removeWorkTree() {
+    if (!std.fs.exists(workRoot())) {
+        return;
+    }
+    if (std.fs.exists(cubePath())) {
+        std.fs.remove(cubePath());
+    }
+    if (std.fs.exists(planePath())) {
+        std.fs.remove(planePath());
+    }
+    int32 shard = 0;
+    while (shard < SHARD_COUNT) {
+        if (std.fs.exists(shardPath(shard))) {
+            std.fs.remove(shardPath(shard));
+        }
+        shard = shard + 1;
+    }
+    std.fs.remove(workRoot());
+}
+
+async int32 main() {
+    removeWorkTree();
+    std.fs.createDirectories(workRoot());
+    writeCube();
+    writePlane();
+
+    Desktop.Mesh* mesh = new Desktop.Mesh();
+    assert(mesh.loadObj(cubePath()), "the cube the program wrote loads");
+    checkMesh(mesh);
+    mesh.destroy();
+
+    Desktop.Mesh* plane = new Desktop.Mesh();
+    assert(plane.loadObj(planePath()), "the plane the program wrote loads");
+    checkPlane(plane);
+    plane.destroy();
+
+    checkRejectedMesh();
+    checkBackendIds();
+    checkDialogSeesCube();
+
+    int64 expectedIds = 0 as int64;
+    int64 expectedPos = 0 as int64;
+    int32 shard = 0;
+    while (shard < SHARD_COUNT) {
+        writeShard(shard);
+        int32 index = 0;
+        while (index < INSTANCES_PER_SHARD) {
+            expectedIds = expectedIds + (instanceId(shard, index) as int64);
+            expectedPos = expectedPos + (instanceX(shard, index) as int64)
+                + (instanceY(shard, index) as int64)
+                + (instanceZ(shard, index) as int64);
+            index = index + 1;
+        }
+        shard = shard + 1;
+    }
+
+    int64[] results = new int64[SHARD_COUNT * 3];
+    int32 slot = 0;
+    while (slot < SHARD_COUNT * 3) {
+        results[slot] = 0;
+        slot = slot + 1;
+    }
+    raw int64* resultsAddress = &results[0];
+    int64 address = resultsAddress as int64;
+
+    task<int64> worker0 = spawn checkShard(0 as int64, address);
+    task<int64> worker1 = spawn checkShard(1 as int64, address);
+    task<int64> worker2 = spawn checkShard(2 as int64, address);
+    task<int64> worker3 = spawn checkShard(3 as int64, address);
+
+    int64 seen = await worker0;
+    seen = seen + await worker1;
+    seen = seen + await worker2;
+    seen = seen + await worker3;
+    assert(seen == 6, "every worker returned its shard id");
+
+    shard = 0;
+    int64 totalInstances = 0 as int64;
+    int64 totalIds = 0 as int64;
+    int64 totalPos = 0 as int64;
+    while (shard < SHARD_COUNT) {
+        int32 base = shard * 3;
+        assert(results[base] == INSTANCES_PER_SHARD as int64,
+            "each shard parsed every instance");
+        totalInstances = totalInstances + results[base];
+        totalIds = totalIds + results[base + 1];
+        totalPos = totalPos + results[base + 2];
+        shard = shard + 1;
+    }
+    assert(totalInstances == (SHARD_COUNT * INSTANCES_PER_SHARD) as int64,
+        "all instances were parsed");
+    assert(totalIds == expectedIds, "all ids were parsed");
+    assert(totalPos == expectedPos, "all positions were parsed");
+
+    int32 gpuFrames = tryOpenGlFrame();
+
+    removeWorkTree();
+    assert(!std.fs.exists(workRoot()), "the work tree is removed");
+
+    println(format("scene-stats shards={} instances={} ids={} gpu={}",
+        SHARD_COUNT, totalInstances, totalIds, gpuFrames));
+    println("integration-scene=ok");
+    return 0;
+}

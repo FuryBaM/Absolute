@@ -5929,6 +5929,28 @@ if(BUILD_TESTING)
                 PASS_REGULAR_EXPRESSION "integration-calculator=ok"
                 TIMEOUT 120
             )
+            add_test(
+                NAME absolute.build-integration-scene
+                COMMAND Absolute-Compiler
+                    "${PROJECT_SOURCE_DIR}/examples/integration/scene.abs"
+                    --plugin "$<TARGET_FILE_DIR:Absolute-Desktop-Plugin>/absolute-desktop.absplugin"
+                    --build-exe
+                    -o "${CMAKE_BINARY_DIR}/integration-scene${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.build-integration-scene PROPERTIES
+                FIXTURES_SETUP absolute-integration-scene
+                TIMEOUT 300
+            )
+            add_test(
+                NAME absolute.run-integration-scene
+                COMMAND "${CMAKE_BINARY_DIR}/integration-scene${CMAKE_EXECUTABLE_SUFFIX}"
+                WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/integration-work"
+            )
+            set_tests_properties(absolute.run-integration-scene PROPERTIES
+                FIXTURES_REQUIRED absolute-integration-scene
+                PASS_REGULAR_EXPRESSION "integration-scene=ok"
+                TIMEOUT 120
+            )
         endif()
         set_tests_properties(absolute.run-std-typed-channel PROPERTIES
             FIXTURES_REQUIRED absolute-std-typed-channel-executable

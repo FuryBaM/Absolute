@@ -1477,7 +1477,12 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   если host его дал, и пропускается на headless. Четыре воркера, каждый
   со своим shard id. Native CTest `absolute.run-integration-calculator`
   собирает с `--plugin` desktop.
-- [ ] Добавить полноценную OpenGL/Vulkan/D3D scene вместо одного triangle smoke.
+- [x] Добавить полноценную OpenGL/Vulkan/D3D scene вместо одного triangle smoke.
+  `examples/integration/scene.abs`. Герметик: программа пишет cube.obj и
+  JSON-каталог инстансов (4 шарда × 8), четыре воркера грузят mesh и
+  сверяют id/позиции с формулой. GPU-кадр один и только если Window
+  открылся и backend — OpenGL; иначе skip, каталог всё равно должен
+  сойтись. Native CTest `absolute.run-integration-scene`.
 - [ ] Добавить WASM web app с browser host, async task pool и persistent state.
 - [ ] Добавить end-to-end shader plugin demo с embedded source, diagnostics, reflection
   и несколькими target artifacts.
