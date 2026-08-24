@@ -5841,6 +5841,27 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "integration-serde=ok"
             TIMEOUT 120
         )
+        add_test(
+            NAME absolute.build-integration-journal
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/examples/integration/journal.abs"
+                --build-exe
+                -o "${CMAKE_BINARY_DIR}/integration-journal${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-integration-journal PROPERTIES
+            FIXTURES_SETUP absolute-integration-journal
+            TIMEOUT 300
+        )
+        add_test(
+            NAME absolute.run-integration-journal
+            COMMAND "${CMAKE_BINARY_DIR}/integration-journal${CMAKE_EXECUTABLE_SUFFIX}"
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/integration-work"
+        )
+        set_tests_properties(absolute.run-integration-journal PROPERTIES
+            FIXTURES_REQUIRED absolute-integration-journal
+            PASS_REGULAR_EXPRESSION "integration-journal=ok"
+            TIMEOUT 120
+        )
         set_tests_properties(absolute.run-std-typed-channel PROPERTIES
             FIXTURES_REQUIRED absolute-std-typed-channel-executable
             PASS_REGULAR_EXPRESSION "std-typed-channel=ok"
