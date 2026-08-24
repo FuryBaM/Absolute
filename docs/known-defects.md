@@ -2822,6 +2822,26 @@ Excluding a test from the wasm comparison excludes the pure part of it too.
 `tests/path-lexical-edges.abs` is the pure part, in its own file, so it is
 compared.
 
+### Fixed: a JSON string was the next JSON string
+
+```absolute
+string id = obj.getStringOr("id", "");
+string url = obj.getStringOr("url", "");
+delete obj;
+std.uuid.parse(id)   // native parsed the url; wasm parsed freed bytes
+```
+
+`absolute_json_as_string` and `stringify` each handed back a pointer into
+storage the next call, or the free of the node, would reuse. Native kept one
+thread-local `std::string`; wasm pointed at the node's own bytes and at a
+`g_json_result` it `free`d on the next write. The journal kept four fields,
+deleted the object, and parsed the first: the error was `UUID must use the
+canonical 8-4-4-4-12 form` because the first field was by then the fourth.
+
+The same `absolute_string_alloc` the uri/http receive path already uses. Both
+targets, both producers. `tests/json-text-edges.abs` keeps two strings, frees
+the object, and reads them back.
+
 ### Open: there is no routine that turns a real number into text
 
 This is one defect with three faces, and the reason it is recorded rather than

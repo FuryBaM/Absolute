@@ -812,7 +812,6 @@ struct WasmJsonNode {
 };
 
 static char g_json_error[160];
-static char* g_json_result;
 
 static char* json_copy(const char* text) {
     size_t size = strlen(text ? text : "");
@@ -871,7 +870,7 @@ double absolute_json_as_number(const void* handle) {
 }
 const char* absolute_json_as_string(const void* handle) {
     const WasmJsonNode* node = (const WasmJsonNode*)handle;
-    return node && node->string ? node->string : "";
+    return wasm_string_copy(node && node->string ? node->string : "");
 }
 int32_t absolute_json_size(const void* handle) {
     const WasmJsonNode* node = (const WasmJsonNode*)handle;
@@ -1198,11 +1197,10 @@ void* absolute_json_parse(const char* text) {
     return node;
 }
 const char* absolute_json_stringify(const void* handle, int32_t pretty) {
-    free(g_json_result); g_json_result = NULL;
     JsonBuffer buffer = {0};
     json_stringify_node(&buffer, (const WasmJsonNode*)handle, pretty != 0, 0);
-    if (!buffer.data) buffer.data = json_copy("null");
-    g_json_result = buffer.data;
-    return g_json_result;
+    const char* durable = wasm_string_copy(buffer.data ? buffer.data : "null");
+    free(buffer.data);
+    return durable;
 }
 const char* absolute_json_get_last_error(void) { return g_json_error; }

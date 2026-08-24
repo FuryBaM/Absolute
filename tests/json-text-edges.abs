@@ -74,6 +74,24 @@ int32 main() {
     assert(reparse("{\"x\":0.1}") == "{\"x\":0.1}", "and a short decimal keeps its own");
     assert(reparse("{\"x\":-0.5}") == "{\"x\":-0.5}", "sign included");
 
+    // Two strings from one object. Native kept them in one thread-local
+    // buffer, so the first became the second as soon as the second was
+    // read; wasm pointed at the node's own bytes, which died when the
+    // node did. The journal kept four fields, deleted the object, and
+    // parsed the first: the error named a UUID because the first field
+    // was by then the fourth.
+    std.json.JsonValue* pair = std.json.createObject();
+    pair.setString("id", "550e8400-e29b-41d4-a716-446655440000");
+    pair.setString("url", "http://journal.test/e");
+    string id = pair.getStringOr("id", "");
+    string url = pair.getStringOr("url", "");
+    string writtenPair = pair.stringify();
+    delete pair;
+    assert(id == "550e8400-e29b-41d4-a716-446655440000",
+        "the first string survives the second read and the free");
+    assert(url == "http://journal.test/e", "and so does the second");
+    assert(std.json.parse(writtenPair) != null, "stringify outlives the node");
+
     println("json-text-edges=ok");
     return 0;
 }

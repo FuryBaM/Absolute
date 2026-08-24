@@ -3,6 +3,7 @@
 #include <map>
 #include <sstream>
 #include <cstdint>
+#include <cstring>
 #include <cctype>
 #include <cerrno>
 #include <cstdlib>
@@ -35,9 +36,24 @@ struct AbsoluteJsonNode {
     }
 };
 
+// Allocated behind a reference-counted header, like every other string the
+// language hands out; see Absolute-Runtime/src/string.cpp. A thread-local
+// buffer is invalidated by the next as_string/stringify, which is how the
+// journal's first field became its fourth.
+extern "C" char* absolute_string_alloc(std::size_t bytes);
+
 namespace {
     thread_local std::string lastJsonError;
-    thread_local std::string lastJsonResult;
+
+    const char* DurableJsonCopy(const std::string& value) {
+        char* copy = absolute_string_alloc(value.size());
+        if (!copy) {
+            lastJsonError = "string allocation failed";
+            return "";
+        }
+        std::memcpy(copy, value.c_str(), value.size());
+        return copy;
+    }
 
     class JsonParser {
         std::string src;
@@ -549,9 +565,9 @@ extern "C" {
     }
 
     const char* absolute_json_as_string(const void* handle) {
-        if (!handle) return "";
-        lastJsonResult = static_cast<const AbsoluteJsonNode*>(handle)->stringValue;
-        return lastJsonResult.c_str();
+        if (!handle) return DurableJsonCopy(std::string());
+        return DurableJsonCopy(
+            static_cast<const AbsoluteJsonNode*>(handle)->stringValue);
     }
 
     int32_t absolute_json_size(const void* handle) {
@@ -623,11 +639,10 @@ extern "C" {
     }
 
     const char* absolute_json_stringify(const void* handle, int32_t pretty) {
-        if (!handle) return "null";
+        if (!handle) return DurableJsonCopy(std::string("null"));
         std::ostringstream ss;
         stringifyHelper(static_cast<const AbsoluteJsonNode*>(handle), ss, pretty != 0);
-        lastJsonResult = ss.str();
-        return lastJsonResult.c_str();
+        return DurableJsonCopy(ss.str());
     }
 
     const char* absolute_json_get_last_error() {
