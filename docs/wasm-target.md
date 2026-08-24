@@ -116,6 +116,7 @@ Common triples:
 - browser session stack → `absolute.run-wasm-browser-session` (COOP headers + Atomics protocol)
 - shared-memory smoke → `absolute.run-wasm-shared-memory`
 - shared-instance tasks → `absolute.run-wasm-shared-tasks` (`wasm-task-mt` + shared pool)
+- integration board → `absolute.run-integration-webapp` (`examples/integration/webapp.abs`: origin mocks, VFS settings, four workers, a second session)
 - IR/object checks
 
 ## Host import

@@ -1483,7 +1483,13 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   сверяют id/позиции с формулой. GPU-кадр один и только если Window
   открылся и backend — OpenGL; иначе skip, каталог всё равно должен
   сойтись. Native CTest `absolute.run-integration-scene`.
-- [ ] Добавить WASM web app с browser host, async task pool и persistent state.
+- [x] Добавить WASM web app с browser host, async task pool и persistent state.
+  `examples/integration/webapp.abs`, проект `examples/wasm/Board.absproj`.
+  Герметик: origin — HTTP-моки `board.test` (health, settings, catalog), заметки —
+  JSONL в виртуальном FS, четыре воркера читают шарды и пишут save-as.
+  На UI-потоке пул размера 0, поэтому spawn в том же инстансе и вторая
+  сессия читает то, что записала первая. Native CTest не нужен: это wasm.
+  `absolute.run-integration-webapp` гоняет browser host и Node host.
 - [ ] Добавить end-to-end shader plugin demo с embedded source, diagnostics, reflection
   и несколькими target artifacts.
 - [ ] Держать каждый integration project примерно в диапазоне 500–3000 строк,

@@ -36,6 +36,9 @@ function setStatus(text) {
 function defaultHttpMocks() {
   return window.__ABSOLUTE_HTTP_MOCKS || {
     'https://example.test/hello': 'hello-from-browser',
+    'https://board.test/api/health': 'board-ok',
+    'https://board.test/api/settings': '{"theme":"night","revision":7}',
+    'https://board.test/api/catalog': '["shard-0.jsonl","shard-1.jsonl","shard-2.jsonl","shard-3.jsonl"]',
   };
 }
 
