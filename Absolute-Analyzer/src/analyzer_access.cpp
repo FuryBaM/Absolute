@@ -104,6 +104,34 @@ namespace Absolute {
             Save(expr, {InvalidSymbolId, "error", false});
             return;
         }
+        // A lambda written in a field initializer has no `this` to capture:
+        // the initializer runs inside a constructor, but nothing in scope
+        // there names the object, and a closure that outlived the constructor
+        // would be holding a raw pointer to it. The same lambda one line down,
+        // in a method body, is refused by the capture rules with a file and a
+        // line -- this one reached the backend and came back as "unknown
+        // variable or field", naming neither.
+        if (phase == Phase::ResolveBodies && fieldInitializerDepth > 0 &&
+            !lambdaContexts.empty() && IsInstanceFieldOfCurrentType(expr->name)) {
+            Report("a lambda in a field initializer cannot read field '" +
+                expr->name + "'; there is no object to capture yet, so build "
+                "the closure in a constructor",
+                "E_FIELD_INITIALIZER_LAMBDA_CAPTURE");
+            Save(expr, {InvalidSymbolId, "error", false});
+            return;
+        }
+        // Initializers run in declaration order, so a field declared further
+        // down still holds its zero here. Reading it would answer a question
+        // the program did not ask -- `int64 first = second + 1;` is 1, not 3 --
+        // so it is refused at its own line instead.
+        if (phase == Phase::ResolveBodies && IsUnreachedInstanceField(expr->name))
+            Report(expr->name == currentFieldInitializerName
+                ? "field '" + expr->name + "' cannot read its own value here; "
+                  "its initializer is what gives it one"
+                : "field '" + expr->name + "' is declared after this initializer "
+                  "and has not been given its value yet; move its declaration above, "
+                  "or set this field in a constructor",
+                "E_FIELD_INITIALIZER_FORWARD_REFERENCE");
         if (currentMethodStatic &&
             (symbol->kind == SymbolKind::Field || symbol->kind == SymbolKind::Property) &&
             !symbol->isStatic)

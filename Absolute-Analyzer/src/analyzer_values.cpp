@@ -287,24 +287,17 @@ namespace Absolute {
         const size_t arrayRank = declaratorIndexes.size();
         if (arrayRank > 0) type = ArrayType(std::move(type), arrayRank);
         const bool fieldDeclaration = !currentType.empty() && functionDepth == 0;
-        // An instance field's initializer was parsed, collected, and then
-        // dropped on the floor: the backend zero-initializes an object's
-        // storage and nothing ever ran what was written here, so
-        // `private int64 n = 5;` read back 0 and a string field read back
-        // null. A missing feature that fails loudly is not the same problem as
-        // a wrong answer nobody notices, so it says so. Reported while
-        // declarations are collected, which is the phase a field's declaration
-        // is visited in.
-        //
-        // Not implemented rather than unwanted: what it would mean for a
-        // struct is an open question -- a struct's storage is made without a
-        // constructor, and an element of `new S[n]` is zeroed with nothing to
-        // run -- and answering it is a language decision rather than a backend
-        // one. See section 2 of docs/known-defects.md.
+        // A class runs its instance field initializers at the top of every
+        // constructor, after the base call and in declaration order. A struct
+        // does not have one to run them in -- its storage is made by declaring
+        // it, and an element of `new S[n]` is zeroed with nothing to run at
+        // all -- so there the initializer is still refused, at its own line,
+        // rather than quietly dropped. See section 2 of docs/known-defects.md.
         if (fieldDeclaration && !expr->isStatic && expr->value &&
-            phase == Phase::CollectDeclarations)
+            phase == Phase::CollectDeclarations && !EnclosingTypeRunsInitializers())
             Report("field '" + name + "' cannot have an initializer here; "
-                "assign it in a constructor",
+                "a struct has no constructor to run it in, so assign it where "
+                "the value is made",
                 "E_FIELD_INITIALIZER_UNSUPPORTED");
         if (phase == Phase::CollectDeclarations) {
             if (currentType.empty()) {
@@ -407,7 +400,16 @@ namespace Absolute {
         // with an interface inside it.
         if (type != "auto") CheckInterfaceValueType(type, "variable '" + name + "'");
         Result value;
-        if (expr->value) value = EvaluateExpected(expr->value.get(), type == "auto" ? std::string{} : type);
+        if (expr->value) {
+            const bool instanceField = fieldDeclaration && !expr->isStatic;
+            const std::string outerField = currentFieldInitializerName;
+            if (instanceField) { ++fieldInitializerDepth; currentFieldInitializerName = name; }
+            value = EvaluateExpected(expr->value.get(), type == "auto" ? std::string{} : type);
+            if (instanceField) { --fieldInitializerDepth; currentFieldInitializerName = outerField; }
+        }
+        // Declared now, so the next field's initializer may name it and this
+        // one's may not name itself.
+        if (fieldDeclaration && !expr->isStatic) fieldsDeclaredSoFar.insert(name);
         if (type == "auto") {
             if (!expr->value) Report("auto variable '" + name + "' requires an initializer",
                 "E_AUTO_REQUIRES_INITIALIZER");
@@ -1037,9 +1039,10 @@ namespace Absolute {
         const std::string type = ResolveType(expr->constructType.get());
         const bool fieldDeclaration = !currentType.empty() && functionDepth == 0;
         if (fieldDeclaration && !expr->isStatic && expr->value &&
-            phase == Phase::CollectDeclarations)
+            phase == Phase::CollectDeclarations && !EnclosingTypeRunsInitializers())
             Report("field '" + name + "' cannot have an initializer here; "
-                "assign it in a constructor",
+                "a struct has no constructor to run it in, so assign it where "
+                "the value is made",
                 "E_FIELD_INITIALIZER_UNSUPPORTED");
         if (phase == Phase::CollectDeclarations) {
             if (currentType.empty()) {
@@ -1094,7 +1097,14 @@ namespace Absolute {
             }
         }
         Result value;
-        if (expr->value) value = Evaluate(expr->value.get());
+        if (expr->value) {
+            const bool instanceField = fieldDeclaration && !expr->isStatic;
+            const std::string outerField = currentFieldInitializerName;
+            if (instanceField) { ++fieldInitializerDepth; currentFieldInitializerName = name; }
+            value = Evaluate(expr->value.get());
+            if (instanceField) { --fieldInitializerDepth; currentFieldInitializerName = outerField; }
+        }
+        if (fieldDeclaration && !expr->isStatic) fieldsDeclaredSoFar.insert(name);
         // A declaration written with a generic parameter's own name parses as
         // this one rather than as a VarDeclExpr, so the rule that asks what a
         // borrow may be bound to is asked here too. `T key = vec[i];` inside a

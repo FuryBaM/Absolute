@@ -2248,6 +2248,29 @@ namespace Absolute {
         (void)kind;
     }
 
+    bool Analyzer::EnclosingTypeRunsInitializers() const {
+        if (currentType.empty()) return false;
+        const auto found = types.find(currentType);
+        return found != types.end() && found->second.kind == TypeKind::Class;
+    }
+
+    bool Analyzer::IsInstanceFieldOfCurrentType(const std::string& name) const {
+        if (currentType.empty()) return false;
+        const auto type = types.find(currentType);
+        if (type == types.end()) return false;
+        const auto member = type->second.members.find(name);
+        if (member == type->second.members.end()) return false;
+        for (const MemberSignature& overload : member->second)
+            if (overload.kind == SymbolKind::Field && !overload.isStatic) return true;
+        return false;
+    }
+
+    bool Analyzer::IsUnreachedInstanceField(const std::string& name) const {
+        if (fieldInitializerDepth == 0) return false;
+        if (fieldsDeclaredSoFar.contains(name)) return false;
+        return IsInstanceFieldOfCurrentType(name);
+    }
+
     void Analyzer::DeclareType(const std::string& name, TypeKind kind) {
         const std::string qualifiedName = Qualify(name);
         if (types.contains(qualifiedName)) {

@@ -868,6 +868,7 @@ namespace Absolute {
 
     bool CodeGenerator::Impl::ClassNeedsConstructor(const ClassInfo& info) const {
         if (!info.constructors.empty()) return true;
+        if (ClassHasFieldInitializers(info)) return true;
         if (info.baseClass.empty()) return false;
         const auto base = classes.find(info.baseClass);
         return base != classes.end() && ClassNeedsConstructor(base->second);

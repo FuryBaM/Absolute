@@ -158,7 +158,10 @@ namespace Absolute {
                     }
                 }
             }
-        for (const auto& member : stmt->members) if (member) member->Accept(*this);
+        {
+            FieldDeclarationScope fields(*this);
+            for (const auto& member : stmt->members) if (member) member->Accept(*this);
+        }
         table.ExitScope();
         currentType = old;
         if (!genericScope.empty()) genericTypeScopes.pop_back();
@@ -237,7 +240,10 @@ namespace Absolute {
                     }
                 }
             }
-        if (stmt->body) stmt->body->Accept(*this);
+        {
+            FieldDeclarationScope fields(*this);
+            if (stmt->body) stmt->body->Accept(*this);
+        }
         if (types[typeName].constructors.empty()) {
             const std::string baseClass = DirectBaseClass(typeName);
             const auto baseParameters = ConstructorParameterTypes(baseClass);

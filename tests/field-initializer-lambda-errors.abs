@@ -1,0 +1,16 @@
+// A field initializer runs inside a constructor, but nothing in scope there
+// names the object, so a lambda written in one has no `this` to capture -- and
+// a closure that outlived the constructor would be holding a raw pointer to it
+// anyway. The same lambda in a method body is refused by the capture rules,
+// with a file and a line. This one used to reach the backend and come back as
+// "LLVM codegen: unknown variable or field 'early'", naming neither, so it is
+// refused here instead. A lambda that reads no field is fine and is next door.
+class Closing {
+    private int64 early = 5;
+    private func<int64> reader = fn() => early * 2;
+}
+
+int32 main() {
+    Closing* closing = new Closing();
+    return 0;
+}

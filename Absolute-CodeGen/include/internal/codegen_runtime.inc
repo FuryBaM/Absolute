@@ -258,6 +258,10 @@
         // The runtime's shared real-to-text routine, so that printing a
         // number does not depend on the C library the target happens to have.
         static constexpr int kRealTextCapacity = 32;
+        Expression* InstanceFieldInitializer(
+            Statement* member, std::string& fieldName) const;
+        bool ClassHasFieldInitializers(const ClassInfo& info) const;
+        void EmitFieldInitializers(ClassInfo& info);
         llvm::FunctionCallee DoubleText();
         llvm::FunctionCallee FloatText();
         llvm::FunctionCallee Printf();

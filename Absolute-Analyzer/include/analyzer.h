@@ -700,6 +700,42 @@ namespace Absolute {
         void DeclareGlobalFunction(FunctionDeclStmt& statement);
         void ResolveFunction(FunctionDeclStmt& statement, SymbolKind kind);
         void DeclareType(const std::string& name, TypeKind kind = TypeKind::Other);
+        // Whether the type a field is being declared in has a constructor to
+        // run that field's initializer in. A class does; a struct does not.
+        bool EnclosingTypeRunsInitializers() const;
+        // Whether `name` is an instance field of the type now being analyzed.
+        bool IsInstanceFieldOfCurrentType(const std::string& name) const;
+        // ...and one the walk has not reached yet -- a field whose initializer
+        // has not run at the point the reference would read it.
+        bool IsUnreachedInstanceField(const std::string& name) const;
+        // Instance fields of the current type the walk has already passed.
+        // Initializers run in declaration order, so an initializer may name
+        // these and no others: a later field still holds its zero, and reading
+        // it answers a question the program did not ask. Inherited fields are
+        // not in here and are not checked -- the base constructor has already
+        // run by then.
+        std::unordered_set<std::string> fieldsDeclaredSoFar;
+        // One type body's fields, kept out of another's. Types nest -- a
+        // struct may be declared between two fields of a class -- so this is a
+        // stack rather than a reset: without the restore, the fields declared
+        // before the inner type would be forgotten and the ones after it would
+        // be told their own neighbours are out of reach.
+        struct FieldDeclarationScope {
+            explicit FieldDeclarationScope(Analyzer& owner)
+                : analyzer(owner), outer(std::move(owner.fieldsDeclaredSoFar)) {
+                analyzer.fieldsDeclaredSoFar.clear();
+            }
+            FieldDeclarationScope(const FieldDeclarationScope&) = delete;
+            FieldDeclarationScope& operator=(const FieldDeclarationScope&) = delete;
+            ~FieldDeclarationScope() { analyzer.fieldsDeclaredSoFar = std::move(outer); }
+
+            Analyzer& analyzer;
+            std::unordered_set<std::string> outer;
+        };
+        // Nonzero while an instance field's initializer is being analyzed, and
+        // the name of the field whose initializer it is.
+        int fieldInitializerDepth = 0;
+        std::string currentFieldInitializerName;
         void DeclareMember(const std::string& owner, std::string name, MemberSignature signature);
         std::vector<MemberSignature> FindMembers(const std::string& owner, const std::string& name);
         std::vector<MemberSignature> FindInheritedMembers(

@@ -1314,11 +1314,12 @@ line and column instead of a number followed by a stray identifier.
 
 Covered by `tests/literal-notation.abs` and `tests/literal-notation-errors.abs`.
 
-### A field's initializer is refused rather than ignored
+### Fixed: a field's initializer is run, in a class, in declaration order
 
 ```absolute
 class Counter {
-    private int64 seen = 5;      // E_FIELD_INITIALIZER_UNSUPPORTED
+    private int64 seen = 5;      // was 0
+    private string label = "start";   // was null
 }
 ```
 
@@ -1328,14 +1329,86 @@ back 0 and a string field read back null. A wrong answer with no diagnostic, on
 notation anybody would write -- and a static field's initializer has always
 worked, which is exactly what would lead someone to write the instance one.
 
-Refused rather than implemented, because the part that is missing is a language
-decision rather than a backend one. For a class it is clear enough: run the
-initializers at the top of every constructor, after the base call, in
-declaration order. For a struct there is no constructor to run them in -- a
-struct's storage is made by declaring it, and an element of `new S[n]` is zeroed
-with nothing to run at all -- and picking an answer there quietly is worse than
-saying it is not there. `tests/field-initializer.abs` keeps the two forms that
-do work; `tests/field-initializer-errors.abs` is the refusal.
+It was refused first, because the part that was missing was a language decision
+rather than a backend one, and a refusal at the right line is better than a
+silent zero. The decision it was waiting on is made now, and it is the one the
+refusal already named:
+
+**A class runs its instance field initializers at the top of every constructor,
+after the base call, in declaration order. A struct does not have them.**
+
+Both halves are load-bearing, and each was checked by asking a program a
+question with one right answer:
+
+| Question | Answer |
+|---|---|
+| a class with no constructor written at all | one is emitted for the initializers to run in -- otherwise the initializer is written and never runs, which is the original defect wearing a new coat |
+| a class with several constructors | each runs them once, before its own body, so `Several(3)` starts from 7 and assigns 10 |
+| a derived class | the base's initializers ran in the base constructor, so an inherited field already holds its value when the derived ones run |
+| a field that owns something | released exactly once -- `tests/field-initializer.abs` is in the AddressSanitizer corpus, and builds a string, an array and an object two thousand times |
+| an initializer that throws | the exception leaves the constructor and the fields already initialized are released; nothing is half-dropped |
+| a struct | still `E_FIELD_INITIALIZER_UNSUPPORTED`, at its own line |
+
+The struct half did not change, and the reason did not either: a struct's
+storage is made by declaring it, and an element of `new S[n]` is zeroed with
+nothing to run at all. Picking an answer there quietly is worse than saying it
+is not there.
+
+The backend half is not optional. Narrowing the analyzer's refusal to structs
+and stopping there was tried, on purpose, to see what it gave: the program
+compiled and printed `seen=0 label=<null>` -- the exact wrong answer the
+refusal existed to prevent, now with the diagnostic removed. Two changes, or
+none.
+
+**One wrong answer the feature brought with it, found by probing the order.**
+Initializers run in declaration order, so a field declared further down still
+holds its zero when an earlier one's initializer reads it:
+
+```absolute
+class Late {
+    private int64 first = second + 1;   // 1, not 3
+    private int64 second = 2;
+}
+```
+
+`first` is 1. Nothing said so. That is the same shape as the defect this
+section is about -- notation anybody would write, answered wrongly and
+silently -- so the reference is refused instead
+(`E_FIELD_INITIALIZER_FORWARD_REFERENCE`), and so is a field reading its own
+value. A reference to a field declared *above* is fine and is the useful case:
+`second = first + 1` is 3. An inherited field is not checked at all, because
+the base constructor has already run by then.
+
+**A second thing the probing turned up: a lambda in a field initializer failed
+in the backend, with no line.**
+
+```absolute
+class Closing {
+    private int64 early = 5;
+    private func<int64> reader = fn() => early * 2;
+}
+```
+
+An initializer runs inside a constructor, but nothing in scope there names the
+object, so the lambda has no `this` to capture -- and a closure outliving the
+constructor would be holding a raw pointer to it anyway. Written one line down,
+in a method body, the same lambda is refused by the capture rules with a file
+and a line (`E_LAMBDA_CAPTURE_RESOURCE`). Written here it reached the backend
+and came back as `LLVM codegen: unknown variable or field 'early'`, naming
+neither the file nor the line. It is refused in the analyzer now, at its own
+column. A lambda that reads no field has nothing to capture and is allowed.
+
+Note in passing, not a defect: `this` does not resolve inside a field
+initializer, so `this.second` is `E_UNKNOWN_OBJECT` where the bare `second`
+works. A refusal rather than a wrong answer, and the same everywhere outside a
+method body.
+
+`tests/field-initializer.abs` is the feature -- no constructor, several
+constructors, inheritance, declaration order, a vtable, an explicit `base(...)`,
+a generic instantiated twice, owners, a closure, statics;
+`tests/field-initializer-errors.abs` is the struct refusal;
+`tests/field-initializer-order-errors.abs` is the forward reference and the
+self reference; `tests/field-initializer-lambda-errors.abs` is the lambda.
 
 Found while writing the test for that refusal: **comparing a string field of a
 zeroed value was a segmentation fault.** `strcmp` reads through what it is

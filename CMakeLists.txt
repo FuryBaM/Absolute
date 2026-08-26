@@ -1344,6 +1344,20 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "E_FIELD_INITIALIZER_UNSUPPORTED"
     )
     add_test(
+        NAME absolute.field-initializer-order-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/field-initializer-order-errors.abs"
+    )
+    set_tests_properties(absolute.field-initializer-order-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_FIELD_INITIALIZER_FORWARD_REFERENCE"
+    )
+    add_test(
+        NAME absolute.field-initializer-lambda-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/field-initializer-lambda-errors.abs"
+    )
+    set_tests_properties(absolute.field-initializer-lambda-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_FIELD_INITIALIZER_LAMBDA_CAPTURE"
+    )
+    add_test(
         NAME absolute.owned-aggregates-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/owned-aggregates.abs"
     )

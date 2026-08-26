@@ -915,6 +915,34 @@ or raw pointer value. They cannot cross async/C-ABI/closure boundaries or borrow
 resource-owning aggregates; overlapping mutable arguments are rejected. See
 [docs/value-references.md](docs/value-references.md).
 
+## Field initializers
+
+A class field may be given its value where it is declared. The initializers run
+at the top of every constructor, after the `base(...)` call and in declaration
+order, so a class with no declared constructor still gets one to run them in:
+
+```absolute
+class Counter {
+    private int64 seen = 5;
+    private string label = "start";
+    private int64 doubled = seen * 2;   // reads the field above it
+
+    public Counter() { }                 // seen is 5 here
+    public Counter(int64 start) { seen = start; }
+}
+```
+
+An initializer may name a field declared above it; naming one declared below is
+rejected, because that field still holds its zero at that point and reading it
+would answer a question the program did not ask. A field cannot read its own
+value either. Inherited fields are always readable: the base constructor has
+already run.
+
+Structs do not have field initializers. A struct's storage is made by declaring
+it and an element of `new S[n]` is zeroed with nothing to run, so an initializer
+there is rejected rather than silently ignored; assign the field where the value
+is made. Static field initializers are a separate mechanism -- see below.
+
 ## Static members
 
 Classes, structs, and interfaces support static fields and methods. Access them

@@ -1,21 +1,108 @@
-// The two forms that do work, so the refusal next door cannot spread to them:
-// a static field's initializer, and a field assigned by a constructor.
+// A class runs its instance field initializers at the top of every
+// constructor, after the base call and in declaration order. This file is what
+// that promise means, at the places where it could plausibly mean something
+// else: with no constructor at all, with several, under inheritance, and for a
+// field that owns something and has to be released exactly once.
+//
+// The initializers used to be parsed, collected, and then dropped: `private
+// int64 n = 5;` read back 0 and a string field read back null. Wrong answers,
+// no diagnostic, on notation anybody would write. See section 2 of
+// docs/known-defects.md.
 
-class Counter {
+class Silent {
+    // No constructor is written, so one is emitted for these to run in.
+    private int64 seen = 5;
+    private string label = "start";
+    public int64 reading() { return seen; }
+    public string name() { return label; }
+}
+
+class Several {
+    private int64 value = 7;
+    // Every overload runs them, once, before its own body -- so the body's
+    // assignment is what survives and the initializer is what it starts from.
+    public Several() { }
+    public Several(int64 extra) { value = value + extra; }
+    public int64 reading() { return value; }
+}
+
+class Base {
+    protected int64 first = 1;
+    public int64 readFirst() { return first; }
+}
+
+class Derived : Base {
+    // Runs after the base constructor, so `first` already holds its value.
+    private int64 second = 2;
+    public int64 readSecond() { return second; }
+}
+
+class Ordered {
+    // Declaration order, so an earlier field is readable and a later one is
+    // refused next door.
+    private int64 first = 2;
+    private int64 second = first + 1;
+    private int64 third = second * 10;
+    public int64 a() { return first; }
+    public int64 b() { return second; }
+    public int64 c() { return third; }
+}
+
+class Owning {
+    // A lambda that reads no field of its own class has nothing to capture and
+    // is allowed; one that reads a field is refused next door. There is no way
+    // to call it back from here -- a method cannot yet declare `func<T>` as its
+    // return type -- so what this asserts is that the closure the initializer
+    // made is released with the object, which the sanitizer run answers.
+    private func<int64> reader = fn() => 6;
+    private string fixed = "literal";
+    private string built = format("a{}b", 1);
+    private int64[] block = new int64[4];
+    private Base* held = new Base();
+    public string one() { return fixed; }
+    public string two() { return built; }
+    public int64 count() { return block.length; }
+    public int64 inner() { return held.readFirst(); }
+}
+
+interface Shape { public int64 sides(); }
+
+class Square : Shape {
+    // A class that carries a vtable: the initializer runs alongside whatever
+    // the constructor does to set it up.
+    private int64 count = 4;
+    public int64 sides() { return count; }
+}
+
+class Root {
+    protected int64 room = 1;
+    public Root(int64 extra) { room = room + extra; }
+}
+
+class Child : Root {
+    // An explicit base(...) with arguments, which is emitted differently from
+    // the implicit one: the base's initializer, then the base's body, then
+    // this one's initializer, then this one's body.
+    private int64 own = 9;
+    public Child() { base(2); }
+    public int64 readRoom() { return room; }
+    public int64 readOwn() { return own; }
+}
+
+class Cell<T> {
+    // Every instantiation gets its own constructor, and each runs them.
+    private int64 stamp = 3;
+    private string tag = "cell";
+    public int64 s() { return stamp; }
+    public string t() { return tag; }
+}
+
+class Static {
+    // A static field's initializer is a different mechanism -- a constant in a
+    // global -- and is unaffected by any of the above.
     public static int64 seen = 5;
     public const static int64 stride = 7;
     public static string label = "static";
-
-    private int64 held;
-    private string text;
-
-    public Counter(int64 start) {
-        held = start;
-        text = format("c{}", start);
-    }
-
-    public int64 reading() { return held; }
-    public string reading_text() { return text; }
 }
 
 struct Point {
@@ -24,16 +111,56 @@ struct Point {
 }
 
 int32 main() {
-    assert(Counter.seen == 5, "a static field takes its initializer");
-    assert(Counter.stride == 7, "and a constant one");
-    assert(Counter.label == "static", "including a string");
+    assert(Static.seen == 5, "a static field takes its initializer");
+    assert(Static.stride == 7, "and a constant one");
+    assert(Static.label == "static", "including a string");
 
+    Silent* silent = new Silent();
+    assert(silent.reading() == 5, "a class with no constructor still runs them");
+    assert(silent.name() == "start", "including a string field");
+
+    Several* plain = new Several();
+    Several* extra = new Several(3);
+    assert(plain.reading() == 7, "every overload starts from the initializer");
+    assert(extra.reading() == 10, "and the body assigns on top of it");
+
+    Derived* derived = new Derived();
+    assert(derived.readFirst() == 1, "the base's initializer ran in the base");
+    assert(derived.readSecond() == 2, "and the derived one after it");
+
+    Ordered* ordered = new Ordered();
+    assert(ordered.a() == 2, "declaration order: the first field");
+    assert(ordered.b() == 3, "an initializer sees the field above it");
+    assert(ordered.c() == 30, "and the one above that, already computed");
+
+    Shape* shape = new Square();
+    assert(shape.sides() == 4, "a class with a vtable, read through the interface");
+
+    Child* child = new Child();
+    assert(child.readRoom() == 3, "the base initializer, then the base body");
+    assert(child.readOwn() == 9, "then the derived initializer");
+
+    Cell<int64>* numbers = new Cell<int64>();
+    Cell<string>* words = new Cell<string>();
+    assert(numbers.s() == 3, "each instantiation runs them");
+    assert(words.s() == 3, "including the second one");
+    assert(numbers.t() == "cell", "and the strings among them");
+    assert(words.t() == "cell", "in every instantiation");
+
+    // Repeated, because an owner released twice or not at all is what a single
+    // pass does not show. The suite runs this under the leak and use-after-free
+    // sanitizers as well.
     int32 round = 0;
     while (round < 2000) {
-        Counter* counter = new Counter(round);
-        assert(counter.reading() == round, "a constructor assigns the field");
-        assert(counter.reading_text() != "", "and one that holds bytes");
-        delete counter;
+        Owning* owning = new Owning();
+        assert(owning.one() == "literal", "a literal string field");
+        assert(owning.two() == "a1b", "a string the initializer built");
+        assert(owning.count() == 4, "an array the initializer made");
+        assert(owning.inner() == 1, "and an object it owns");
+
+        Silent* counted = new Silent();
+        assert(counted.reading() == 5, "the same values every time round");
+        delete counted;
 
         // A struct without a constructor starts zeroed, which is what the
         // refusal next door leaves in place. A string field zeroed that way

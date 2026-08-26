@@ -946,6 +946,98 @@ namespace Absolute {
         builder.ClearInsertionPoint();
     }
 
+    // One member of a class body, seen as a field with an initializer, or not
+    // one at all. The two shapes are what the parser leaves behind for the two
+    // ways a field can be written; a static field is not one of these, it has
+    // a global with a constant and never runs in a constructor.
+    Expression* CodeGenerator::Impl::InstanceFieldInitializer(
+        Statement* member, std::string& fieldName) const {
+        if (auto* declaration = dynamic_cast<VarDeclStmt*>(member)) {
+            VarDeclExpr* field = declaration->expr.get();
+            if (!field || field->isStatic || !field->value) return nullptr;
+            fieldName = IdentifierName(field->name.get());
+            return field->value.get();
+        }
+        if (auto* single = dynamic_cast<SingleStatement*>(member)) {
+            auto* field = dynamic_cast<InstanceDeclExpr*>(single->expr.get());
+            if (!field || field->isStatic || !field->value) return nullptr;
+            fieldName = IdentifierName(field->identifierName.get());
+            return field->value.get();
+        }
+        return nullptr;
+    }
+
+    // Whether this class has anything for a constructor to run. A class with
+    // no constructor and no base still needs one emitted if a field carries an
+    // initializer, or the initializer is written and never runs -- which reads
+    // as the field silently keeping its zero.
+    bool CodeGenerator::Impl::ClassHasFieldInitializers(const ClassInfo& info) const {
+        auto* body = info.statement
+            ? dynamic_cast<CompoundStmt*>(info.statement->body.get()) : nullptr;
+        if (!body) return false;
+        for (const auto& member : body->statements) {
+            std::string fieldName;
+            if (InstanceFieldInitializer(member.get(), fieldName) && !fieldName.empty())
+                return true;
+        }
+        return false;
+    }
+
+    // A class's instance field initializers, walked in declaration order
+    // because that is the order they are written in and the order a later one
+    // may depend on an earlier one having run. They are emitted at the top of
+    // every constructor, after the base call: before it, no field of this
+    // class exists yet, and a base that throws must not find this class's
+    // fields half-written.
+    //
+    // The slot is freshly zeroed when this runs, so there is nothing to
+    // release first -- unlike an assignment in a constructor's body, which
+    // gives back whatever the field was holding. What the value *takes* is
+    // counted the same way a local declaration counts it: a fresh string or
+    // closure already counts as held once, and anything else is one more name
+    // for storage somebody already holds.
+    void CodeGenerator::Impl::EmitFieldInitializers(ClassInfo& info) {
+        auto* body = info.statement
+            ? dynamic_cast<CompoundStmt*>(info.statement->body.get()) : nullptr;
+        if (!body) return;
+        for (const auto& member : body->statements) {
+            std::string fieldName;
+            Expression* initializer = InstanceFieldInitializer(member.get(), fieldName);
+            if (!initializer || fieldName.empty()) continue;
+
+            const auto field = info.fieldByName.find(fieldName);
+            if (field == info.fieldByName.end()) continue;
+            // Each initializer is a statement of its own, so a value made only
+            // in order to compute this field is released at the end of it --
+            // not carried to the end of the constructor with every other
+            // field's leftovers.
+            TemporaryOwnerScope temporaries(*this);
+            const std::string typeName = field->second.typeName;
+            llvm::Value* storage = FieldAddress(currentThis, info, field->second);
+            if (!storage) Fail("missing storage for field '" + fieldName + "'");
+
+            SetDebugLocation(initializer);
+            llvm::Value* value = Evaluate(initializer);
+            if (!value) Fail("field '" + fieldName + "' has an empty initializer");
+
+            std::string closureReturn;
+            std::vector<std::string> closureParameters;
+            if (ParseCodegenFunctionType(typeName, closureReturn, closureParameters) &&
+                !CreatesFreshString(initializer))
+                builder.CreateCall(ClosureRetain(), {value});
+            if (typeName == "string")
+                value = RetainStoredString(initializer, value);
+            value = Coerce(value, TypeFromName(typeName),
+                SemanticType(initializer), typeName);
+            builder.CreateStore(value, storage);
+            const TypeSemantics semantics = SemanticsOfTypeName(typeName);
+            if (semantics.dropKind == DropKind::TupleValue &&
+                !CreatesFreshString(initializer))
+                EmitValueRetain(storage, typeName);
+            EmitExceptionCheck();
+        }
+    }
+
     void CodeGenerator::Impl::EmitConstructorOverload(
         ClassInfo& info, ConstructorDeclStmt* constructor) {
         llvm::Function* function = DeclareConstructorFunction(info, constructor);
@@ -1078,6 +1170,7 @@ namespace Absolute {
         // The base is established; from here a throw must release this object's
         // own fields, including the inherited ones the base finished building.
         currentConstructorClass = info.name;
+        EmitFieldInitializers(info);
         if (constructor && constructor->body) constructor->body->Accept(visitor);
         FinishClassCallable(*function);
         PopScope();
