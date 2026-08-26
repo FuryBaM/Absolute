@@ -255,6 +255,11 @@
 
         bool IsBuiltinFunction(const std::string& name) const;
 
+        // The runtime's shared real-to-text routine, so that printing a
+        // number does not depend on the C library the target happens to have.
+        static constexpr int kRealTextCapacity = 32;
+        llvm::FunctionCallee DoubleText();
+        llvm::FunctionCallee FloatText();
         llvm::FunctionCallee Printf();
 
         llvm::FunctionCallee Snprintf();

@@ -109,6 +109,17 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "runtime-scheduler-v2=ok"
         TIMEOUT 30)
 
+    add_executable(absolute-runtime-real-text-test
+        tests/runtime-real-text.cpp)
+    target_link_libraries(absolute-runtime-real-text-test
+        PRIVATE Absolute-Runtime)
+    add_test(
+        NAME absolute.runtime-real-text
+        COMMAND absolute-runtime-real-text-test)
+    set_tests_properties(absolute.runtime-real-text PROPERTIES
+        PASS_REGULAR_EXPRESSION "runtime-real-text=ok"
+        TIMEOUT 300)
+
     add_executable(absolute-runtime-managed-memory-test
         tests/runtime-managed-memory.cpp)
     target_link_libraries(absolute-runtime-managed-memory-test
@@ -782,6 +793,10 @@ if(BUILD_TESTING)
     add_test(
         NAME absolute.json-text-edges-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/json-text-edges.abs"
+    )
+    add_test(
+        NAME absolute.real-text-edges-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/real-text-edges.abs"
     )
     add_test(
         NAME absolute.path-lexical-edges-semantic
@@ -4616,6 +4631,21 @@ if(BUILD_TESTING)
         set_tests_properties(absolute.run-path-lexical-edges PROPERTIES
             FIXTURES_REQUIRED absolute-path-lexical-edges-executable
             PASS_REGULAR_EXPRESSION "path-lexical-edges=ok"
+        )
+
+        add_test(
+            NAME absolute.build-real-text-edges
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/real-text-edges.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/real-text-edges-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-real-text-edges PROPERTIES
+            FIXTURES_SETUP absolute-real-text-edges-executable
+        )
+        add_test(NAME absolute.run-real-text-edges
+            COMMAND "${CMAKE_BINARY_DIR}/real-text-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-real-text-edges PROPERTIES
+            FIXTURES_REQUIRED absolute-real-text-edges-executable
+            PASS_REGULAR_EXPRESSION "real-text-edges=ok"
         )
 
         add_test(

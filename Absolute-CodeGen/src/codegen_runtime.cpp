@@ -1445,6 +1445,20 @@ namespace Absolute {
     }
 
 
+    llvm::FunctionCallee CodeGenerator::Impl::DoubleText() {
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getInt32Ty(),
+            {builder.getDoubleTy(), builder.getPtrTy(), builder.getInt32Ty()}, false);
+        return module->getOrInsertFunction("absolute_double_text", type);
+    }
+
+    llvm::FunctionCallee CodeGenerator::Impl::FloatText() {
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getInt32Ty(),
+            {builder.getFloatTy(), builder.getPtrTy(), builder.getInt32Ty()}, false);
+        return module->getOrInsertFunction("absolute_float_text", type);
+    }
+
     llvm::FunctionCallee CodeGenerator::Impl::Printf() {
         llvm::FunctionType* type = llvm::FunctionType::get(
             builder.getInt32Ty(), {builder.getPtrTy()}, true);
@@ -1865,10 +1879,20 @@ namespace Absolute {
                 return {unsignedInteger ? "%llu" : "%lld", source};
             return {unsignedInteger ? "%u" : "%d", source};
         }
-        if (type->isFloatTy()) {
-            return {"%g", builder.CreateFPExt(source, builder.getDoubleTy(), "float.promoted")};
+        // A real number becomes text before it reaches printf, through the
+        // runtime's shared routine, and is printed as a string. "%g" is six
+        // significant digits of the value rather than the value, and the wasm
+        // shim's freestanding formatter has no float directive at all -- it
+        // printed the two characters "%g". One routine, one answer on both
+        // targets. docs/known-defects.md section 22.
+        if (type->isFloatTy() || type->isDoubleTy()) {
+            llvm::Value* buffer = CreateEntryAlloca(*CurrentFunction(),
+                llvm::ArrayType::get(builder.getInt8Ty(), kRealTextCapacity),
+                "real.text");
+            builder.CreateCall(type->isFloatTy() ? FloatText() : DoubleText(),
+                {source, buffer, builder.getInt32(kRealTextCapacity)});
+            return {"%s", buffer};
         }
-        if (type->isDoubleTy()) return {"%g", source};
         if (type->isPointerTy()) {
             llvm::Value* nullText = EmitStringConstant("<null>", "null.text");
             llvm::Value* safeText = builder.CreateSelect(

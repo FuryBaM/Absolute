@@ -11,6 +11,11 @@
 // how many names are holding it. The pointer handed back is the first byte of
 // the text, so every consumer -- including `printf` and the C ABI -- sees the
 // same bare `const char*` it always saw.
+// Declared, not included: real_text.h defines its functions, and it belongs
+// to exactly one translation unit per build (real_text.cpp here).
+#define ABSOLUTE_REAL_TEXT_CAPACITY 32
+extern "C" std::int32_t absolute_double_text(double value, char* out, std::int32_t capacity);
+
 extern "C" char* absolute_string_alloc(std::size_t bytes);
 extern "C" const char* absolute_string_retain(const char* text);
 extern "C" void absolute_string_release(const char* text);
@@ -383,9 +388,11 @@ extern "C" void absolute_string_builder_append_int(void* handle, int64_t value) 
 
 extern "C" void absolute_string_builder_append_double(void* handle, double value) {
     if (handle) {
-        char buf[64];
-        std::snprintf(buf, sizeof(buf), "%g", value);
-        static_cast<std::string*>(handle)->append(buf);
+        // The shared routine, not "%g": six significant digits is not the
+        // value, and the wasm builder writes the same text this one does.
+        char text[ABSOLUTE_REAL_TEXT_CAPACITY];
+        absolute_double_text(value, text, static_cast<std::int32_t>(sizeof(text)));
+        static_cast<std::string*>(handle)->append(text);
     }
 }
 

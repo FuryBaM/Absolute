@@ -1,0 +1,78 @@
+// What `{}` means for a real number, at the values where the answer used to
+// depend on the backend. Nothing in the corpus printed a real number before,
+// which is why the wasm target could print the two characters "%g" for every
+// one of them and every differential run still agreed. This file prints them,
+// so the suite differential compares the text on both targets.
+//
+// The rule: the shortest decimal that reads back as the same value, laid out
+// the way ECMA-262 lays a Number out, because JSON is the other consumer.
+
+void same(string got, string want, string what) {
+    if (got != want) {
+        println(format("MISMATCH {}: got [{}] want [{}]", what, got, want));
+    }
+    assert(got == want, what);
+}
+
+int32 main() {
+    // A value that is exactly a short decimal keeps that decimal.
+    same(format("{}", 0.0), "0", "zero");
+    same(format("{}", 1.0), "1", "one");
+    same(format("{}", -1.0), "-1", "minus one");
+    same(format("{}", 3.5), "3.5", "a half");
+    same(format("{}", 0.25), "0.25", "a quarter");
+    same(format("{}", -2.75), "-2.75", "negative");
+
+    // ...and one that is not gets every digit it needs, not six of them.
+    same(format("{}", 1.0 / 3.0), "0.3333333333333333", "a third");
+    same(format("{}", 0.1 + 0.2), "0.30000000000000004",
+        "the sum a person prints in order to see it");
+    same(format("{}", 123456789.25), "123456789.25",
+        "an integral part with more than six digits");
+    same(format("{}", 2.0 / 3.0), "0.6666666666666666", "two thirds");
+
+    // The shortest text that reads back, so a literal survives being printed.
+    same(format("{}", 0.1), "0.1", "one tenth is one tenth");
+    same(format("{}", 0.2), "0.2", "and two tenths is two tenths");
+    same(format("{}", 0.3), "0.3", "and three tenths");
+
+    // Where the layout switches to an exponent, and where it does not.
+    same(format("{}", 1e20), "100000000000000000000", "twenty zeros are written out");
+    same(format("{}", 1e21), "1e+21", "twenty-one are not");
+    same(format("{}", 1e-6), "0.000001", "six places are written out");
+    same(format("{}", 1e-7), "1e-7", "seven are not");
+    same(format("{}", 2.5e-10), "2.5e-10", "an exponent keeps its digits");
+    same(format("{}", 1.7976931348623157e308), "1.7976931348623157e+308",
+        "the largest double");
+
+    // A float is shortest for a float, not for the double it widens to.
+    float narrow = 1.1;
+    same(format("{}", narrow), "1.1", "1.1 as a float is 1.1");
+    float third = 1.0 / 3.0;
+    same(format("{}", third), "0.33333334", "and a float third has a float's digits");
+    float quarter = 0.25;
+    same(format("{}", quarter), "0.25", "an exact float is exact");
+
+    // Not a number, and no number at all.
+    double zero = 0.0;
+    same(format("{}", 1.0 / zero), "inf", "infinity");
+    same(format("{}", -1.0 / zero), "-inf", "negative infinity");
+    same(format("{}", zero / zero), "nan", "not a number");
+    same(format("{}", -0.0), "-0", "negative zero keeps its sign");
+
+    // Interpolation, toString and the string builder are the same routine.
+    double value = 1.0 / 3.0;
+    same("${value}", "0.3333333333333333", "interpolation");
+    same(format("a{}b", value), "a0.3333333333333333b", "format");
+    same(toString(value), "0.3333333333333333", "toString");
+
+    // An assertion message built with format() has to compile. It did not:
+    // the message is made on the failing path and its cleanup was emitted on
+    // the passing one, which LLVM refused. Any format, any argument type.
+    assert(value > 0.0, format("value={} should be positive", value));
+    assert(1 < 2, format("{} {}", "text", 7));
+    assert(true, "a plain literal, which always worked");
+
+    println("real-text-edges=ok");
+    return 0;
+}

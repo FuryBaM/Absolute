@@ -523,33 +523,9 @@ void absolute_string_builder_append_int(void* handle, int64_t value) {
 }
 
 void absolute_string_builder_append_double(void* handle, double value) {
-    char text[64];
-    size_t length = 0;
-    if (value != value) {
-        wasm_builder_append_bytes((WasmStringBuilder*)handle, "nan", 3);
-        return;
-    }
-    if (value < 0) {
-        text[length++] = '-';
-        value = -value;
-    }
-    int64_t whole = (int64_t)value;
-    length += wasm_i64_text(whole, text + length);
-    double fraction = value - (double)whole;
-    if (fraction > 0.0000005) {
-        text[length++] = '.';
-        size_t fraction_start = length;
-        for (int i = 0; i < 6; ++i) {
-            fraction *= 10.0;
-            int digit = (int)fraction;
-            text[length++] = (char)('0' + digit);
-            fraction -= digit;
-        }
-        while (length > fraction_start && text[length - 1] == '0')
-            --length;
-    }
-    text[length] = '\0';
-    wasm_builder_append_bytes((WasmStringBuilder*)handle, text, length);
+    char text[ABSOLUTE_REAL_TEXT_CAPACITY];
+    int32_t length = AbsoluteDoubleTextImpl(value, text, (int32_t)sizeof(text));
+    wasm_builder_append_bytes((WasmStringBuilder*)handle, text, (size_t)length);
 }
 
 void absolute_string_builder_append_bool(void* handle, int32_t value) {

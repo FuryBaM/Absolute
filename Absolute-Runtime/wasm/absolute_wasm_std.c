@@ -701,6 +701,16 @@ void absolute_byte_buffer_compact(void* p, int64_t position, int64_t remaining) 
     memmove(buf->data, buf->data + position, (size_t)remaining);
 }
 
+/* ---------- real numbers as text ---------- */
+
+int32_t absolute_double_text(double value, char* out, int32_t capacity) {
+    return AbsoluteDoubleTextImpl(value, out, capacity);
+}
+
+int32_t absolute_float_text(float value, char* out, int32_t capacity) {
+    return AbsoluteFloatTextImpl(value, out, capacity);
+}
+
 /* ---------- datetime ---------- */
 
 static char g_datetime_error[96], g_datetime_scratch[96];
@@ -950,10 +960,6 @@ static void json_buffer_text(JsonBuffer* buffer, const char* text) {
 static void json_buffer_indent(JsonBuffer* buffer, int depth) {
     for (int i = 0; i < depth * 2; ++i) json_buffer_char(buffer, ' ');
 }
-static int json_is_negative_zero(double value) {
-    /* No signbit() here; 1/-0.0 is -inf and 1/+0.0 is +inf. */
-    return value == 0.0 && (1.0 / value) < 0.0;
-}
 static void json_stringify_string(JsonBuffer* buffer, const char* text) {
     static const char hex[] = "0123456789abcdef";
     json_buffer_char(buffer, '"');
@@ -976,50 +982,15 @@ static void json_stringify_node(JsonBuffer* buffer, const WasmJsonNode* node, in
     if (!node || node->type == 0) { json_buffer_text(buffer, "null"); return; }
     if (node->type == 1) { json_buffer_text(buffer, node->boolean ? "true" : "false"); return; }
     if (node->type == 2) {
-        /* This shim has no float formatter -- the freestanding snprintf has no
-         * %g -- so a number it cannot write in full is written as null rather
-         * than as text that is not JSON. What it used to write: 1e19 became
-         * "-9223372036854775808." (an undefined cast, then a bare trailing
-         * dot) and 1e-7 became "0.", and its own parser refused both.
-         * docs/known-defects.md section 22 has what needs building. */
-        char number[64];
+        char number[ABSOLUTE_REAL_TEXT_CAPACITY];
         double value = node->number;
-        int64_t integer;
-        double fraction;
-        uint64_t decimals;
-        size_t length;
+        /* JSON has no infinity and no NaN; JavaScript writes null for both. */
         if (value != value || value > 1.7976931348623157e308 ||
             value < -1.7976931348623157e308) {
-            json_buffer_text(buffer, "null"); return;   /* nan, inf */
-        }
-        if (!(value >= -9223372036854775808.0 && value < 9223372036854775808.0)) {
-            json_buffer_text(buffer, "null"); return;   /* the cast would be undefined */
-        }
-        integer = (int64_t)value;
-        if ((double)integer == value) {
-            if (value == 0.0 && json_is_negative_zero(value))
-                json_buffer_text(buffer, "-0");
-            else {
-                snprintf(number, sizeof(number), "%lld", (long long)integer);
-                json_buffer_text(buffer, number);
-            }
-            return;
-        }
-        fraction = value - (double)integer;
-        if (fraction < 0) fraction = -fraction;
-        decimals = (uint64_t)(fraction * 1000000.0 + 0.5);
-        if (decimals == 0 || decimals >= 1000000) {
-            /* Six decimal places cannot say what this value is. */
             json_buffer_text(buffer, "null"); return;
         }
-        if (integer == 0 && value < 0)
-            snprintf(number, sizeof(number), "-0.%06llu", (unsigned long long)decimals);
-        else
-            snprintf(number, sizeof(number), "%lld.%06llu", (long long)integer,
-                (unsigned long long)decimals);
-        length = strlen(number);
-        while (length > 1 && number[length - 1] == '0' && number[length - 2] != '.')
-            number[--length] = '\0';
+        /* The shared routine, which is what the host runtime writes too. */
+        AbsoluteDoubleTextImpl(value, number, (int32_t)sizeof(number));
         json_buffer_text(buffer, number); return;
     }
     if (node->type == 3) { json_stringify_string(buffer, node->string); return; }
@@ -1155,27 +1126,45 @@ static WasmJsonNode* json_parse_value(JsonParser* parser) {
     }
     if (text[0] == '[') return json_parse_collection(parser, 0);
     if (text[0] == '{') return json_parse_collection(parser, 1);
-    size_t p = parser->position;
-    int sign = 1;
-    if (parser->text[p] == '-') { sign = -1; ++p; }
-    if (parser->text[p] < '0' || parser->text[p] > '9') { parser->error = "unexpected JSON token"; return NULL; }
-    double number = 0.0;
-    if (parser->text[p] == '0') ++p;
-    else while (parser->text[p] >= '0' && parser->text[p] <= '9') number = number * 10.0 + parser->text[p++] - '0';
-    if (parser->text[p] == '.') {
-        ++p; double place = 0.1;
-        if (parser->text[p] < '0' || parser->text[p] > '9') { parser->error = "invalid JSON number"; return NULL; }
-        while (parser->text[p] >= '0' && parser->text[p] <= '9') { number += (parser->text[p++] - '0') * place; place *= 0.1; }
+    {
+        /* The shared, exactly-rounded conversion. Accumulating
+         * `number * 10 + digit` and then multiplying by ten `exponent` times
+         * built a different double than the host's strtod for anything with an
+         * exponent: "1e-7" read as 1.0000000000000002e-7 here and as 1e-7
+         * there, so a document did not survive a round trip between the two
+         * targets. docs/known-defects.md section 22. */
+        const char* start = parser->text + parser->position;
+        const char* stop = start;
+        double number = 0.0;
+        size_t p = parser->position;
+        if (parser->text[p] == '-') ++p;
+        if (parser->text[p] < '0' || parser->text[p] > '9') {
+            parser->error = "unexpected JSON token"; return NULL;
+        }
+        /* JSON's own grammar checks, which the conversion does not make. */
+        if (parser->text[p] == '0') ++p;
+        else while (parser->text[p] >= '0' && parser->text[p] <= '9') ++p;
+        if (parser->text[p] == '.') {
+            ++p;
+            if (parser->text[p] < '0' || parser->text[p] > '9') {
+                parser->error = "invalid JSON number"; return NULL;
+            }
+            while (parser->text[p] >= '0' && parser->text[p] <= '9') ++p;
+        }
+        if (parser->text[p] == 'e' || parser->text[p] == 'E') {
+            ++p;
+            if (parser->text[p] == '+' || parser->text[p] == '-') ++p;
+            if (parser->text[p] < '0' || parser->text[p] > '9') {
+                parser->error = "invalid JSON exponent"; return NULL;
+            }
+            while (parser->text[p] >= '0' && parser->text[p] <= '9') ++p;
+        }
+        if (!AbsoluteParseDecimal(start, &stop, &number)) {
+            parser->error = "invalid JSON number"; return NULL;
+        }
+        parser->position = p;
+        return absolute_json_create_number(number);
     }
-    if (parser->text[p] == 'e' || parser->text[p] == 'E') {
-        ++p; int exponent_sign = 1, exponent = 0;
-        if (parser->text[p] == '+' || parser->text[p] == '-') { if (parser->text[p++] == '-') exponent_sign = -1; }
-        if (parser->text[p] < '0' || parser->text[p] > '9') { parser->error = "invalid JSON exponent"; return NULL; }
-        while (parser->text[p] >= '0' && parser->text[p] <= '9') exponent = exponent * 10 + parser->text[p++] - '0';
-        while (exponent-- > 0) number = exponent_sign > 0 ? number * 10.0 : number / 10.0;
-    }
-    parser->position = p;
-    return absolute_json_create_number(number * sign);
 }
 void* absolute_json_parse(const char* text) {
     g_json_error[0] = '\0';

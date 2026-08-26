@@ -8,6 +8,12 @@
 #include <cstdlib>
 #include <cmath>
 
+// The shared real-to-text routine (Absolute-Runtime/src/real_text.h, given
+// external linkage by real_text.cpp). A JSON number written at six
+// significant digits does not survive being read back.
+#define ABSOLUTE_REAL_TEXT_CAPACITY 32
+extern "C" std::int32_t absolute_double_text(double value, char* out, std::int32_t capacity);
+
 enum JsonNodeType {
     JSON_NULL = 0,
     JSON_BOOL = 1,
@@ -359,18 +365,14 @@ namespace {
                 ss << "null";
                 break;
             }
-            // The range test comes first: converting a double that does not
-            // fit an int64 is undefined, and on wasm the same cast really did
-            // hand back INT64_MIN for 1e19.
-            const bool fitsInt64 =
-                d >= -9223372036854775808.0 && d < 9223372036854775808.0 &&
-                d == static_cast<double>(static_cast<int64_t>(d));
-            if (fitsInt64) {
-                if (d == 0.0 && std::signbit(d)) ss << "-0";
-                else ss << static_cast<int64_t>(d);
-            } else {
-                ss << d;
-            }
+            // One routine for every finite value, integral or not. The cast
+            // that used to decide between two paths was undefined out of
+            // int64's range, and on wasm it really did hand back INT64_MIN
+            // for 1e19; the routine writes "10000000000000000000" without
+            // needing to ask.
+            char text[ABSOLUTE_REAL_TEXT_CAPACITY];
+            absolute_double_text(d, text, static_cast<std::int32_t>(sizeof(text)));
+            ss << text;
             break;
         }
         case JSON_STRING: {

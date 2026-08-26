@@ -74,6 +74,24 @@ int32 main() {
     assert(reparse("{\"x\":0.1}") == "{\"x\":0.1}", "and a short decimal keeps its own");
     assert(reparse("{\"x\":-0.5}") == "{\"x\":-0.5}", "sign included");
 
+    // A document survives being read and written. It did not before: the
+    // writer spent six significant digits on a value and the wasm reader built
+    // a different double than the host's from the same text.
+    assert(reparse("{\"x\":0.1234567890123}") == "{\"x\":0.1234567890123}",
+        "thirteen significant digits");
+    assert(reparse("{\"x\":123456789.25}") == "{\"x\":123456789.25}",
+        "an integral part past six digits");
+    assert(reparse("{\"x\":1e-7}") == "{\"x\":1e-7}", "a small exponent");
+    assert(reparse("{\"x\":1e+300}") == "{\"x\":1e+300}", "a large one");
+    assert(reparse("{\"x\":1e-300}") == "{\"x\":1e-300}", "and a very small one");
+    assert(reparse("{\"x\":5e-7}") == "{\"x\":5e-7}",
+        "a value the six-decimal writer used to round to twice itself");
+    assert(reparse("{\"x\":0.30000000000000004}") == "{\"x\":0.30000000000000004}",
+        "seventeen significant digits");
+    assert(reparse("{\"x\":1.7976931348623157e+308}") ==
+        "{\"x\":1.7976931348623157e+308}", "the largest double");
+    assert(reparse("{\"x\":5e-324}") == "{\"x\":5e-324}", "and the smallest");
+
     println("json-text-edges=ok");
     return 0;
 }

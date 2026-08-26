@@ -67,6 +67,14 @@ namespace Absolute {
             llvm::BasicBlock* failure = llvm::BasicBlock::Create(context, "assert.failure", function);
             builder.CreateCondBr(condition, success, failure);
             builder.SetInsertPoint(failure);
+            // The message is built here, on the path that is about to abort,
+            // so whatever building it allocated has to be released here too.
+            // Leaving it to the statement's own cleanup put a call to
+            // absolute_string_release in the success block, naming storage
+            // allocated in this one -- which does not dominate it, and LLVM
+            // refused the function. `assert(c, format(...))` did not compile
+            // at all, whatever the format's arguments were.
+            const size_t messageMark = temporaryManagedOwners.size();
             std::vector<PrintableValue> values;
             std::string format = "Assertion failed";
             if (expression.arguments.size() == 2) {
@@ -76,6 +84,7 @@ namespace Absolute {
             }
             format += '\n';
             EmitPrintf(format, values);
+            ReleaseTemporaryOwners(messageMark);
             // abort() does not flush stdio, and stdout is fully buffered
             // whenever it is not a terminal -- a pipe, a file, a CI log. The
             // message was written into that buffer and died there, so a failing

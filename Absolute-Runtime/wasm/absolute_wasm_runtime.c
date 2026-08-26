@@ -1399,6 +1399,13 @@ void absolute_task_group_destroy(void* handle) {
 }
 
 /* Platform services: virtual FS, env, process, network stubs, capsules. */
+/* The same real-to-text algorithm the host runtime compiles, included before
+ * the platform and std layers because both of them write numbers. The two
+ * targets agree by construction rather than by matching each other's
+ * rounding; before it existed, the formatter above had no float directive and
+ * printed the text "%g". See docs/known-defects.md section 22. */
+#include "../src/real_text.h"
+
 #include "absolute_wasm_platform.c"
 
 /* Remaining std runtime services implemented without a native libc. */

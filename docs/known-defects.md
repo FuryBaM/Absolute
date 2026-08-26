@@ -16,51 +16,51 @@ build/Release/absolutec file.abs --build-exe -o app && ./app
 
 ## 1. Open defects
 
-One, and it is a decision rather than a patch: what `{}` means for a double.
-Section 22 found two more faces of it -- wasm prints no number at all, and the
-two targets write JSON numbers differently -- and they are recorded there,
-with the one component that answers all three. The entry this section opened
-with -- an indexer that could not say its getter borrows and its setter takes
--- is fixed, and it is the entry below the open one.
+Nothing is open here. The entry that stood here -- what `{}` means for a
+double -- is decided and built, and it is the entry directly below; the one
+this section opened with originally, an indexer that could not say its getter
+borrows and its setter takes, is the entry after it.
 
-### Open: printing a double prints six significant digits of it
+### Fixed: printing a real number printed six significant digits of it, or none
 
 ```absolute
-println(format("{}", 123456789.0));   // 1.23457e+08
-println(format("{}", 1.0 / 3.0));     // 0.333333
-println(format("{}", 0.1 + 0.2));     // 0.3
+println(format("{}", 123456789.0));   // was 1.23457e+08, now 123456789
+println(format("{}", 1.0 / 3.0));     // was 0.333333, now 0.3333333333333333
+println(format("{}", 0.1 + 0.2));     // was 0.3, now 0.30000000000000004
 ```
 
-Code generation lowers a `float` or a `double` to `printf` with `"%g"`, whose
-default precision is six significant digits. So the text a program prints is
-not the value it holds and does not read back as that value. An integral double
-above a million comes out in exponent form. And the third line -- the one a
-person prints precisely in order to see that a double is not a decimal --
-prints `0.3`, which is the one thing the value is not.
+Code generation lowered a `float` or a `double` to `printf` with `"%g"`, whose
+default precision is six significant digits, so the text a program printed was
+not the value it held and did not read back as that value. The third line is
+the one a person prints precisely in order to see that a double is not a
+decimal, and it printed the one thing the value is not.
 
-This is recorded rather than changed because it is a choice about what the
-language's one formatting placeholder promises, and both answers are defensible:
-`%g` at six digits is what C's `printf` and C++'s `iostream` default to, and
-the shortest text that round-trips is what Rust, Go and Python print. Changing
-it changes the output of every program that prints a real number.
+This was recorded rather than patched, because which text `{}` should produce
+is a decision about what the language's one placeholder promises rather than a
+bug with an obvious fix, and section 22 then found the rest of it: on wasm the
+same code printed the literal characters `%g`, because the shim's freestanding
+formatter has no float directive at all, and in JSON -- where six digits are
+data loss rather than a house style -- the two targets wrote different text for
+the same number. Three faces, one missing piece.
 
-Section 22 found the rest of this, and it makes the choice less free than it
-looks here. The wasm target prints the literal text `%g`, because its
-freestanding formatter has no float directive at all; and in JSON, where the
-six digits are data loss rather than a house style, native and wasm write
-different text for the same number. All three are the same missing piece -- one
-shortest-round-trip routine both runtimes call -- and section 22 says what
-building it involves.
+The decision is **the shortest decimal that reads back as the same value**,
+which is what Rust, Go, Python and JavaScript print and what a serializer
+needs, and the piece is `Absolute-Runtime/src/real_text.h`: one routine,
+compiled into both runtimes, so the targets agree by construction rather than
+by matching each other's rounding. `%g` is gone from the print path entirely --
+`PreparePrintable` converts the value to text at the call site and passes
+`%s`, so `print`, `println`, `format`, `toString`, an interpolated `${value}`
+and an assertion message all go through it, as does
+`absolute_string_builder_append_double` and both JSON writers.
 
-If it is decided in favour of the round trip, the shape of the fix is known.
-`"%.17g"` needs no runtime and always round-trips, but it prints `0.1` as
-`0.10000000000000001`, which is precise and unreadable. The shortest form needs
-`std::to_chars`, which means the value must become text before it reaches
-`printf`: emit the conversion at the call site into an `alloca`'d buffer and
-pass `%s`, one buffer per argument, so two doubles in one `println` cannot
-share one. `PreparePrintable` in `codegen_runtime.cpp` is where both live, and
-`absolute_string_builder_append_double` in `string.cpp` is the second caller
-that would have to agree.
+A `float` is shortest for a `float`, not for the double it widens to: `1.1f`
+prints `1.1`, not `1.100000023841858`. The layout thresholds are ECMA-262's for
+`Number::toString`, because JSON is the other consumer and JavaScript is its
+reference reader: a plain decimal while the point sits within or near the
+digits, an exponent past twenty-one places up or seven down.
+
+Section 22 has the algorithm, what it cost, and the conversion in the other
+direction that it forced.
 
 ### Fixed: an indexer is a projection, so its getter borrows and its setter takes
 
@@ -164,10 +164,10 @@ runtime. The last such sweep found twenty-four, six of them in the same gap, and
 section 1's last three entries are that sweep. The one thing it found and did
 not fix -- an indexer that could not say its getter borrows -- is fixed now, at
 the top of this section: it was a decision about what an indexer means rather
-than a patch, which is why it waited to be decided. Sections 20 and 22 are the
-newest sweeps and the ones furthest from the language itself -- 22 is where to
-start, because it names a shape rather than a module; section 5 says where not
-to look again.
+than a patch, which is why it waited to be decided; so was what `{}` means for
+a double, at the top of this section. Sections 20 and 22 are the newest sweeps
+and the ones furthest from the language itself -- 22 is where to start, because
+it names a shape rather than a module; section 5 says where not to look again.
 
 Nothing is open elsewhere either. The two things that were -- a name in the
 shared type model answering two questions, and what slicing a temporary array
@@ -1480,6 +1480,17 @@ narrow where to look.
   refuses a misplaced dash, a short string and a non-hex digit; a generated
   value is version 4 with the RFC variant bits, and it survives a round trip
   through its own text.
+- **Real numbers as text: swept and now covered.** The shortest round-trip
+  routine is checked against the C library over every power of ten and of two
+  and their neighbours, sweeps of small integers and simple fractions, millions
+  of random bit patterns including subnormals, and a stride through the whole
+  32-bit float space: each must read back as itself, must not be reachable by
+  anything shorter, and must be the nearest of its own length. The conversion
+  the other way is checked against `strtod` over the classic hard cases and the
+  formatter's own output. `tests/runtime-real-text.cpp` runs all of it on every
+  build -- 4,972,505 values in eight seconds -- with no disagreements. See also
+  `tests/real-text-edges.abs` for the language-level text, and section 22 for
+  what the sweep found in the first draft.
 - **`std.fs` path helpers: swept and now covered.** Five of them answered
   differently on the two targets; all fixed, at `tests/path-lexical-edges.abs`.
   The rest -- `join` with an absolute or empty side, `stem` and `extensionOf`
@@ -2584,14 +2595,16 @@ place the runtime is written twice** -- once in C++ for the host and once in
 `Absolute-Runtime/wasm/` for the shim -- and asked the two copies the same
 question.
 
-Nine defects. In seven of them the two copies disagree, and in five of those
+Twelve defects. In nine of them the two copies disagree, and in five of those
 the wasm copy is the correct one, which is worth saying plainly: the shim is
 not a reduced version of the runtime, it is a second implementation, and it is
 sometimes the better one.
 
-The one thing this sweep found and did not fix is at the end, and it is the
-largest: **there is no routine that turns a real number into text.** Native
-borrows the C library's, and wasm has none at all.
+The largest is at the end, and it was recorded before it was built: **there
+was no routine that turns a real number into text**, so the host borrowed the
+C library's and wasm had none at all. Building it exposed the thirteenth, in
+the conversion the other way, and testing it exposed an assertion that could
+not say why it failed. All three are closed.
 
 ### Fixed: a JSON document could contain a byte no parser accepts
 
@@ -2662,6 +2675,28 @@ tested before the cast, on both targets. Section 19 read the emitted IR for
 undefined behaviour and found the language clean; this is the same question
 asked of the runtime, where the answer was different.
 
+### Fixed: an assertion could not say why it failed
+
+```absolute
+assert(a < b, format("a={} b={}", a, b));
+```
+
+This did not compile. Not "printed the wrong thing" -- the compiler refused
+the function: *Instruction does not dominate all uses*, naming a call to
+`absolute_string_release`. Any argument type, any format; a plain string
+literal was fine and anything built was not.
+
+The message is evaluated on the failing path, in the block that ends in
+`abort()`. Whatever building it allocated was registered as a temporary of the
+enclosing *statement*, and the statement's cleanup is emitted wherever the
+builder has got to by then -- the success block, which the failure block does
+not dominate. So the release named storage that, on that path, does not exist.
+
+The message's temporaries are released where they are made now, after the
+`printf` and before the abort. Found by writing an assertion with a formatted
+message while testing something else, which is the second time in this file a
+defect has been found by using the thing rather than by aiming at it.
+
 ### Fixed: five path helpers, five disagreements, five times wasm was right
 
 `std.fs`'s lexical helpers touch no filesystem, and native and wasm answered
@@ -2692,72 +2727,137 @@ Excluding a test from the wasm comparison excludes the pure part of it too.
 `tests/path-lexical-edges.abs` is the pure part, in its own file, so it is
 compared.
 
-### Open: there is no routine that turns a real number into text
+### Fixed: there was no routine that turns a real number into text
 
-This is one defect with three faces, and the reason it is recorded rather than
-patched is that every available patch trades one wrong answer for another.
+This was one defect with three faces, recorded rather than patched at first
+because every patch smaller than the real fix traded one wrong answer for
+another. It is built now, and the three faces closed together.
 
-**On wasm, printing a real number prints `%g`.**
+**On wasm, printing a real number printed `%g`.**
 
 ```absolute
 println(format("double {}", 3.5));    // native: double 3.5
                                       // wasm:   double %g
 ```
 
-Code generation lowers a `float` or a `double` to `printf("%g", ...)`. The
+Code generation lowered a `float` or a `double` to `printf("%g", ...)`. The
 shim's freestanding formatter (`format_into` in `absolute_wasm_runtime.c`)
 implements `%s`, `%c`, `%d`, `%i`, `%u` and `%x`, and prints any other
 directive literally, on purpose, so that an unsupported one stays visible.
-`%g` is unsupported. Every real number printed by a wasm program is the text
-`%g`.
+`%g` is unsupported. Every real number printed by a wasm program was the text
+`%g` -- in `print`, in `format`, in `toString`, in an interpolated `${value}`
+and in an assertion message, because the parser desugars interpolation into
+`format` and all of them go through one place.
 
 Section 5's WASM sweep built every test in `tests/` for both targets and diffed
-the output; this survived it because no test in the corpus prints a real
-number. That is the same limit section 20 recorded, and it is now recorded
-twice, which is the point at which it stops being a coincidence: **building the
-same corpus twice proves the corpus.**
+the output; this survived it because no test in the corpus printed a real
+number. That is the same limit section 20 recorded, and finding it twice is
+what makes it a rule rather than a coincidence: **building the same corpus
+twice proves the corpus.** `tests/real-text-edges.abs` prints them now.
 
-**The two targets write JSON numbers differently.** Native uses
-`std::ostringstream` at its default precision; wasm hand-rolls six decimal
-places. For `123456789.25`, native writes `1.23457e+08` and wasm writes
-`123456789.25`. Both are legal JSON; they are not the same text.
+**The two targets wrote JSON numbers differently**, native through
+`std::ostringstream` at its default precision and wasm through six hand-rolled
+decimal places, so `123456789.25` was `1.23457e+08` on one and `123456789.25`
+on the other.
 
 **Six significant digits is data loss in a serializer.** `0.1234567890123`
-round-trips through `parse` and `stringify` as `0.123457`. For `println` this
-is a matter of taste -- section 1 has that entry, and both answers are
-defensible. For a data interchange format it is not: a document is supposed to
-survive being read and written.
+came back from `parse` and `stringify` as `0.123457`.
 
-What the patches would cost, which is why none of them is here. Making wasm
-print *something* for `%g` means writing a float formatter; making it match
-glibc's `%g` digit for digit is the hard part of writing one, and a formatter
-that is close but not identical replaces a loud `%g` with a last digit that
-quietly differs between targets -- worse, because it is not discoverable.
-Making wasm's JSON writer refuse to write a number it cannot write exactly
-turns `1.0 / 3.0` into `null`, which is a different kind of data loss.
+#### What was built
 
-The thing that is actually missing is one shortest-round-trip double-to-text
-routine, compiled into both runtimes, used by `PreparePrintable`, by
-`absolute_string_builder_append_double`, and by both JSON writers. Then the
-targets agree by construction rather than by matching each other's rounding,
-and section 1's open entry is answered at the same time. On the host that is
-`std::to_chars`; in the shim it is Dragon4 or Ryu plus a correctly rounded
-decimal parser to check against, and that is a component, not a patch.
+`Absolute-Runtime/src/real_text.h`: Steele & White's Dragon4 in the Burger &
+Dybvig formulation, in the common subset of C11 and C++20, freestanding. The
+host runtime gives it external linkage from `real_text.cpp` and the wasm shim
+includes the same file. Exact integer arithmetic over the value's rounding
+interval -- a small fixed-width bignum, no division beyond a single decimal
+digit at a time, no table of powers, no libm -- emitting digits until what has
+been emitted can only read back as this value and no other. So the text is at
+once the shortest that round-trips and correctly rounded, and both targets get
+it from the same source rather than by matching each other.
 
-Until it exists, the invalid output and the undefined behaviour are gone --
-wasm writes `null` where it cannot write the number, rather than `0.` -- and
-what remains is a value that is imprecise and a target that prints `%g`. Both
-are visible, and neither pretends to be right.
+It replaced `%g` at every site: `PreparePrintable` in `codegen_runtime.cpp`
+converts at the call site into an `alloca`'d 32-byte buffer and passes `%s`,
+`absolute_string_builder_append_double` calls it on both targets, and so do
+both JSON writers.
 
-One thing the shim still does that is wrong, left alone for the same reason:
-`5e-7` writes as `0.000001`, because rounding to six decimal places is all its
-number path can do. That is a wrong number rather than invalid text, which is
-the trade named above.
+Cost, measured: 0.27 µs for the values a program actually prints, 5.4 µs worst
+case over random bit patterns, against roughly 0.5 µs for glibc's `%g`. The
+worst case is the whole exponent range at once; nothing that prints a price or
+an average is near it.
 
-`tests/json-text-edges.abs` and `tests/path-lexical-edges.abs` pin the eight
-that are fixed, on both targets: the escapes, the surrogate pair and each half
-of it on its own, the non-finite values, `1e19` and `1e-7` past the cast, and
-each path spelling above.
+Proof, because "it looked right" is not one: `real_text.h` compiled natively
+and checked against the C library over every power of ten and of two and their
+neighbours, sweeps of small integers and simple fractions, millions of random
+bit patterns including subnormals, and a stride through the whole 32-bit float
+space. Three properties on each -- the text reads back as the value it came
+from, nothing shorter reads back as it, and among the representations of its
+own length it is the nearest. `tests/runtime-real-text.cpp` is that check, and
+it is an ordinary ctest entry rather than a thing that was run once:
+**4,972,505 values every run**, in eight seconds. The sweep that found the
+defects below ran the same properties at a finer float stride, 32,198,388
+values. Zero disagreements in either.
+
+Two of those three found a defect in the first draft, and both are the kind
+that a smaller check would have shipped:
+
+- **`1e23` hung the formatter.** The scaling step that settles the estimate was
+  written as one loop that could step either way, and a value whose upper bound
+  is exactly a power of ten -- 1e23's is exactly 2·10^23 -- makes both steps
+  apply, for ever. The two directions run one after the other now and cannot
+  alternate. It was found because the check swept every power of ten rather
+  than a handful.
+- **An exact tie rounded the wrong way, twice.** Where a value sits exactly
+  between the two representations of its length, the first draft rounded down
+  and the second rounded up; the answer is neither, it is to the even digit,
+  which is what the arithmetic itself rounds by and what the C library prints
+  these by. Ninety-five values in a million disagreed, and none of them would
+  have appeared in a test written by hand.
+
+Writing the reference check took a correction of its own, and it is worth
+recording because it is a fact about the problem rather than about the code:
+the nearest k-digit decimal to a value is **not** always the one that reads
+back as it. Where a value sits just above a power of two its rounding interval
+is lopsided -- half a step below, a whole step above -- so the nearest k-digit
+decimal can fall outside it while the next one along falls inside. A check that
+only tries the nearest one reports a correct answer as too long, 197 times in a
+million.
+
+#### And the conversion in the other direction, which it forced
+
+Making the two formatters agree exposed the next defect immediately: the two
+*parsers* did not agree either.
+
+```absolute
+std.json.parse("{\"x\":1e-7}")   // native 1e-7, wasm 1.0000000000000002e-7
+```
+
+The wasm JSON scanner built its numbers by accumulating `number * 10 + digit`,
+then `number += digit * place` with `place *= 0.1`, then multiplying by ten as
+many times as the exponent said. Every one of those steps rounds. The host uses
+`strtod`, which is correctly rounded, so the same document read as different
+values on the two targets -- invisible while both formatters were throwing away
+the difference at six digits, and plain the moment they stopped.
+
+So `real_text.h` grew the other direction: the nearest double to a decimal,
+by comparing the value against candidate doubles exactly. The comparison is a
+cross-multiplication into big integers, `M * 10^K` against `s * 2^e`, with no
+division at all; an estimate from the exact powers of ten walks one ulp at a
+time until it brackets, and the midpoint decides, with an exact tie going to
+the even significand. The wasm JSON parser calls it, keeping its own grammar
+checks.
+
+Tested the same way, against `strtod`, in the same file: the classic hard
+conversions for this problem, every power of ten with a leading-digit sweep,
+and the formatter's own output fed back in, which is the round trip both
+directions exist for. No disagreement. The one documented limit is the 400 significant digits it keeps
+exactly; past that the input is marked "and more", which decides a tie but not
+a value crafted to sit within 10^-400 of a rounding boundary.
+
+`tests/real-text-edges.abs` and `tests/json-text-edges.abs` pin both
+directions, and both are ordinary members of the corpus, so the suite
+differential compares their text at two optimization levels and on both
+targets -- which is the check that was empty before, because nothing printed a
+real number.
 
 ## 23. The method that worked
 

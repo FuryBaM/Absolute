@@ -18,6 +18,8 @@ set(ABSOLUTE_RUNTIME_SOURCES
     src/pointers.cpp
     src/process.cpp
     src/random.cpp
+    src/real_text.cpp
+    src/real_text.h
     src/scheduler_fiber.h
     src/scheduler_io.h
     src/socket_reactor.cpp
@@ -215,6 +217,7 @@ if(ABSOLUTE_WASM_CLANG)
         DEPENDS "${ABSOLUTE_WASM_RT_SOURCE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/wasm/absolute_wasm_platform.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/wasm/absolute_wasm_std.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/real_text.h"
         COMMENT "Building Absolute wasm runtime (host env.absolute_log)"
         VERBATIM
     )
@@ -229,6 +232,7 @@ if(ABSOLUTE_WASM_CLANG)
         DEPENDS "${ABSOLUTE_WASM_RT_SOURCE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/wasm/absolute_wasm_platform.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/wasm/absolute_wasm_std.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/real_text.h"
         COMMENT "Building Absolute wasm runtime (WASI fd_write console)"
         VERBATIM
     )
@@ -242,6 +246,7 @@ if(ABSOLUTE_WASM_CLANG)
         DEPENDS "${ABSOLUTE_WASM_RT_SOURCE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/wasm/absolute_wasm_platform.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/wasm/absolute_wasm_std.c"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/real_text.h"
         COMMENT "Building Absolute wasm runtime (shared-memory + atomics heap lock)"
         VERBATIM
     )
