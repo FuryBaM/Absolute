@@ -104,15 +104,26 @@ Metrics waitForMetrics(Predicate predicate, std::chrono::milliseconds timeout) {
 
 struct BlockingContext {
     std::atomic<bool> started{false};
+    std::atomic<bool> release{false};
 };
 
+// Occupy the one worker until the test says to stop, rather than for a
+// wall-clock window of this task's own choosing. Everything the window
+// exists to make observable -- a queued task that cannot be dequeued, a
+// queue latency past the starvation threshold -- is observed from main,
+// so a window that expires on its own is a window the observer can be
+// descheduled straight through. The spin stays a spin because worker
+// busy time is one of the metrics under test, and the deadline is a
+// safety net, kept well under this test's 30-second CTest TIMEOUT so a
+// release that never arrives still ends in a named failure rather than
+// a bare timeout with nothing in the log.
 void blockingWorker(void* opaque) {
     auto* context = static_cast<BlockingContext*>(opaque);
     context->started.store(true, std::memory_order_release);
     const auto deadline =
-        std::chrono::steady_clock::now() +
-        std::chrono::milliseconds(150);
-    while (std::chrono::steady_clock::now() < deadline)
+        std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!context->release.load(std::memory_order_acquire) &&
+        std::chrono::steady_clock::now() < deadline)
         std::atomic_signal_fence(std::memory_order_seq_cst);
 }
 
@@ -163,8 +174,25 @@ int main() {
     auto* probe = new ProbeContext;
     void* probeTask = absolute_task_spawn_config(
         queuedProbe, probe, -1, -3, "metrics-starved");
-    const Metrics queued = snapshot();
+
+    // The blocking task holds the only worker until released, so a
+    // queued probe stays queued: this is a state to wait for, not a
+    // sample to catch between two other events.
+    const Metrics queued = waitForMetrics(
+        [](const Metrics& value) { return value.runnable >= 1; },
+        std::chrono::seconds(5));
     require(queued.runnable >= 1);
+
+    // The probe was already in the queue when the wait above observed
+    // it, so holding the worker from here puts a known lower bound on
+    // the probe's queue latency. The runtime counts a starvation event
+    // at 100ms, and queueLatencyMax and starvationEvents are both
+    // asserted below; sleeping past that threshold with margin makes
+    // those assertions follow from this delay rather than from how long
+    // anything before it happened to take. Oversleeping under load only
+    // lengthens the wait, which is the harmless direction.
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    blocking->release.store(true, std::memory_order_release);
 
     blocking = await<BlockingContext>(blockingTask);
     probe = await<ProbeContext>(probeTask);
