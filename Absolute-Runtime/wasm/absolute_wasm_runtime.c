@@ -1403,7 +1403,7 @@ void absolute_task_group_destroy(void* handle) {
  * the platform and std layers because both of them write numbers. The two
  * targets agree by construction rather than by matching each other's
  * rounding; before it existed, the formatter above had no float directive and
- * printed the text "%g". See docs/known-defects.md section 22. */
+ * printed the text "%g". See docs/known-defects.md section 25. */
 #include "../src/real_text.h"
 
 #include "absolute_wasm_platform.c"

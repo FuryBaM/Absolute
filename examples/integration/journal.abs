@@ -1,0 +1,450 @@
+// Integration project: a hermetic event journal.
+//
+// Exercises std.datetime, std.uuid, std.uri, std.form, std.json, std.fs
+// and tasks together: the interesting failures live between the parts.
+// Section 20's ISO-8601 and form-body defects, and section 24's UUID
+// and URI edges, each have their own tests; this program is the place
+// they meet, written to disk and read back by a worker that was given
+// only an integer.
+//
+// The program is hermetic. It generates a small catalogue of events,
+// writes each shard as JSON lines and as a form-urlencoded sibling,
+// parses both back, and checks the cells against the same formula that
+// produced them. Four workers each take a shard id, rebuild their
+// paths, and report through a shared integer array: a task cannot
+// carry a string. Named tasks, all spawned before the first await.
+
+import "../../std/fs.abs";
+import "../../std/json.abs";
+import "../../std/string.abs";
+import "../../std/datetime.abs";
+import "../../std/uuid.abs";
+import "../../std/uri.abs";
+import "../../std/form.abs";
+import "../../std/encoding.abs";
+import "../../std/hash.abs";
+
+const int32 SHARD_COUNT = 4;
+const int32 EVENTS_PER_SHARD = 8;
+
+string workRoot() {
+    return "absolute-journal-work";
+}
+
+string jsonPath(int32 shard) {
+    return std.fs.join(workRoot(), format("shard-{}.jsonl", shard));
+}
+
+string formPath(int32 shard) {
+    return std.fs.join(workRoot(), format("shard-{}.form", shard));
+}
+
+string stripCr(string line) {
+    return std.text.replace(line, "\r", "");
+}
+
+int32 eventAmount(int32 shard, int32 index) {
+    return 1000 + shard * 100 + index;
+}
+
+string eventName(int32 shard, int32 index) {
+    int32 flavor = (shard + index) % 5;
+    if (flavor == 0) {
+        return format("plain-{}-{}", shard, index);
+    }
+    if (flavor == 1) {
+        return format("has space {}-{}", shard, index);
+    }
+    if (flavor == 2) {
+        return format("a&b={}={}", shard, index);
+    }
+    if (flavor == 3) {
+        return format("pct-{}%", shard);
+    }
+    return format("é-{}-{}", shard, index);
+}
+
+Uuid eventId(int32 shard, int32 index) {
+    uint8[] bytes = new uint8[16];
+    int32 i = 0;
+    while (i < 16) {
+        int32 value = ((i + 1) * 19 + shard * 3 + index * 7) % 256;
+        bytes[i] = value as uint8;
+        i = i + 1;
+    }
+    bytes[6] = (((bytes[6] as int32) & 15) | 64) as uint8;
+    bytes[8] = (((bytes[8] as int32) & 63) | 128) as uint8;
+    return std.uuid.fromBytes(bytes);
+}
+
+DateTime eventTime(int32 shard, int32 index) {
+    TimeZone utc = std.datetime.utcZone();
+    int32 stamp = (shard * 3 + index) % 8;
+    if (stamp == 0) {
+        return std.datetime.createDateTime(
+            std.datetime.createDate(2024, 1, 1),
+            std.datetime.createTime(0, 0, 0, 0),
+            utc);
+    }
+    if (stamp == 1) {
+        return std.datetime.createDateTime(
+            std.datetime.createDate(2024, 1, 1),
+            std.datetime.createTime(0, 0, 0, 100),
+            utc);
+    }
+    if (stamp == 2) {
+        return std.datetime.createDateTime(
+            std.datetime.createDate(2024, 1, 1),
+            std.datetime.createTime(0, 0, 0, 120),
+            utc);
+    }
+    if (stamp == 3) {
+        return std.datetime.createDateTime(
+            std.datetime.createDate(1970, 1, 1),
+            std.datetime.createTime(5, 30, 0, 0),
+            std.datetime.createZone(330, "+05:30"));
+    }
+    if (stamp == 4) {
+        return std.datetime.createDateTime(
+            std.datetime.createDate(1969, 12, 31),
+            std.datetime.createTime(16, 0, 0, 0),
+            std.datetime.createZone(-480, "-08:00"));
+    }
+    if (stamp == 5) {
+        return std.datetime.fromUnixMillis(-500 as int64, utc);
+    }
+    if (stamp == 6) {
+        return std.datetime.createDateTime(
+            std.datetime.createDate(2024, 2, 29),
+            std.datetime.createTime(12, 0, 0, 0),
+            utc);
+    }
+    return std.datetime.createDateTime(
+        std.datetime.createDate(2024, 1, 1),
+        std.datetime.createTime(23, 59, 59, 999),
+        utc);
+}
+
+string eventUrl(int32 shard, int32 index) {
+    return format("http://journal.test:8080/e/{}?name={}",
+        std.uuid.toString(eventId(shard, index)),
+        std.uri.encode(eventName(shard, index)));
+}
+
+string jsonLine(int32 shard, int32 index) {
+    std.json.JsonValue* obj = std.json.createObject();
+    obj.setString("id", std.uuid.toString(eventId(shard, index)));
+    obj.setString("at", std.datetime.formatIso(eventTime(shard, index)));
+    obj.setString("name", eventName(shard, index));
+    obj.setNumber("amount", eventAmount(shard, index) as double);
+    obj.setString("url", eventUrl(shard, index));
+    string encoded = obj.stringify();
+    delete obj;
+    return encoded;
+}
+
+string formLine(int32 shard, int32 index) {
+    return format("id={}&at={}&name={}&amount={}&url={}",
+        std.uri.encode(std.uuid.toString(eventId(shard, index))),
+        std.uri.encode(std.datetime.formatIso(eventTime(shard, index))),
+        std.uri.encode(eventName(shard, index)),
+        eventAmount(shard, index),
+        std.uri.encode(eventUrl(shard, index)));
+}
+
+void checkInstant(int32 shard, int32 index, DateTime parsed) {
+    DateTime expected = eventTime(shard, index);
+    assert(std.datetime.toUnixMillis(parsed) == std.datetime.toUnixMillis(expected),
+        "the instant survives the file");
+    assert(parsed.date.year == expected.date.year &&
+        parsed.date.month == expected.date.month &&
+        parsed.date.day == expected.date.day,
+        "the civil date survives the file");
+    assert(parsed.time.hour == expected.time.hour &&
+        parsed.time.minute == expected.time.minute &&
+        parsed.time.second == expected.time.second &&
+        parsed.time.millisecond == expected.time.millisecond,
+        "the civil time survives the file");
+    assert(parsed.timeZone.offsetMinutes == expected.timeZone.offsetMinutes,
+        "the offset survives the file");
+
+    int32 stamp = (shard * 3 + index) % 8;
+    if (stamp == 1) {
+        assert(parsed.time.millisecond == 100, ".1 is 100 ms in the file too");
+    }
+    if (stamp == 2) {
+        assert(parsed.time.millisecond == 120, ".12 is 120 ms in the file too");
+    }
+    if (stamp == 3 || stamp == 4) {
+        assert(std.datetime.toUnixMillis(parsed) == 0 as int64,
+            "the offset names the same instant as the epoch");
+    }
+    if (stamp == 5) {
+        assert(std.datetime.toUnixMillis(parsed) == -500 as int64,
+            "a fraction before the epoch survives the file");
+        assert(std.datetime.toUnixSeconds(parsed) == -1 as int64,
+            "and floors to second -1");
+    }
+    if (stamp == 6) {
+        assert(std.datetime.dayOfYear(parsed.date) == 60, "leap day is day 60");
+    }
+}
+
+void checkEventUrl(int32 shard, int32 index, string urlText) {
+    std.uri.Uri* uri = std.uri.parse(urlText);
+    assert(uri.scheme == "http", "the catalogue is http");
+    assert(uri.host == "journal.test", "the host");
+    assert(uri.port == 8080, "a non-default port survives");
+    assert(uri.path == format("/e/{}", std.uuid.toString(eventId(shard, index))),
+        "the path is the uuid");
+    assert(uri.query == format("name={}", std.uri.encode(eventName(shard, index))),
+        "the query is the encoded name");
+    delete uri;
+}
+
+void checkJsonLine(int32 shard, int32 index, string line) {
+    std.json.JsonValue* obj = std.json.parse(line);
+    assert(obj.isValid() && obj.isObject(), "an event line is an object");
+
+    string idText = obj.getStringOr("id", "");
+    string atText = obj.getStringOr("at", "");
+    string nameText = obj.getStringOr("name", "");
+    int64 amount = obj.getIntOr("amount", -1 as int64);
+    string urlText = obj.getStringOr("url", "");
+    delete obj;
+
+    Uuid id = std.uuid.parse(idText);
+    assert(std.uuid.equals(id, eventId(shard, index)), "json id matches the generator");
+    assert(std.uuid.toString(id) == idText, "json id is canonical");
+    assert(std.uuid.version(id) == 4 && std.uuid.variant(id) == 2,
+        "the generator set the RFC bits");
+    assert(nameText == eventName(shard, index), "json name matches the generator");
+    assert(amount == eventAmount(shard, index) as int64, "json amount matches");
+    assert(atText == std.datetime.formatIso(eventTime(shard, index)),
+        "json at is the spelling formatIso wrote");
+    checkInstant(shard, index, std.datetime.parseIso(atText));
+    assert(urlText == eventUrl(shard, index), "json url matches the generator");
+    checkEventUrl(shard, index, urlText);
+}
+
+void checkFormLine(int32 shard, int32 index, string line) {
+    std.form.FormData* form = std.form.parseUrlEncoded(line);
+    assert(form.size() == 5, "a form event has five fields");
+    assert(form.getValue("id") == std.uuid.toString(eventId(shard, index)),
+        "form id matches");
+    assert(form.getValue("at") == std.datetime.formatIso(eventTime(shard, index)),
+        "form at matches, plus sign included");
+    assert(form.getValue("name") == eventName(shard, index),
+        "form name round-trips separators");
+    assert(form.getValue("amount") == format("{}", eventAmount(shard, index)),
+        "form amount matches");
+    assert(form.getValue("url") == eventUrl(shard, index),
+        "form url survives a second encoding");
+    delete form;
+}
+
+string[] nonEmptyLines(string text) {
+    string[] pieces = std.text.split(text, "\n");
+    int32 count = 0;
+    int32 i = 0;
+    while (i < pieces.length) {
+        if (std.text.trim(stripCr(pieces[i])) != "") {
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    string[] lines = new string[count];
+    int32 filled = 0;
+    i = 0;
+    while (i < pieces.length) {
+        string line = std.text.trim(stripCr(pieces[i]));
+        if (line != "") {
+            lines[filled] = line;
+            filled = filled + 1;
+        }
+        i = i + 1;
+    }
+    return lines;
+}
+
+void checkShardFiles(int32 shard) {
+    string[] jsonLines = nonEmptyLines(std.fs.readText(jsonPath(shard)));
+    string[] formLines = nonEmptyLines(std.fs.readText(formPath(shard)));
+    assert(jsonLines.length == EVENTS_PER_SHARD, "json shard has every event");
+    assert(formLines.length == EVENTS_PER_SHARD, "form shard has every event");
+    int32 index = 0;
+    while (index < EVENTS_PER_SHARD) {
+        checkJsonLine(shard, index, jsonLines[index]);
+        checkFormLine(shard, index, formLines[index]);
+        index = index + 1;
+    }
+}
+
+async int64 checkShard(int64 shard, int64 resultsAddress) {
+    raw int64* results = resultsAddress as raw int64*;
+    int32 shardIndex = shard as int32;
+    checkShardFiles(shardIndex);
+
+    int64 amountSum = 0 as int64;
+    int64 hashSum = 0 as int64;
+    int32 index = 0;
+    while (index < EVENTS_PER_SHARD) {
+        amountSum = amountSum + (eventAmount(shardIndex, index) as int64);
+        hashSum = hashSum + std.hash.stringCode(eventName(shardIndex, index));
+        index = index + 1;
+    }
+
+    int32 base = shardIndex * 3;
+    *(results + base) = EVENTS_PER_SHARD as int64;
+    *(results + base + 1) = amountSum;
+    *(results + base + 2) = hashSum;
+    return shard;
+}
+
+void checkRejectedInput() {
+    bool rejected = false;
+    try {
+        std.datetime.parseIso("2024-01-01T00:00:00.");
+    } catch (Error* error) {
+        rejected = true;
+    }
+    assert(rejected, "a decimal mark with no fraction is refused");
+
+    rejected = false;
+    try {
+        std.uuid.parse("550e8400e29b41d4a716446655440000");
+    } catch (Error* error) {
+        rejected = true;
+    }
+    assert(rejected, "a uuid without separators is refused");
+
+    rejected = false;
+    try {
+        std.uri.Uri* uri = std.uri.parse("http://journal.test:8080abc/e");
+        delete uri;
+    } catch (Error* error) {
+        rejected = true;
+    }
+    assert(rejected, "trailing text on a port is refused");
+}
+
+void checkKnownSpellings() {
+    assert(std.datetime.dayOfWeek(std.datetime.createDate(2024, 1, 1)) == 1,
+        "2024-01-01 is a Monday");
+
+    Uuid known = eventId(0, 0);
+    string text = std.uuid.toString(known);
+    string compact = std.text.replace(text, "-", "");
+    assert(std.encoding.hexEncode(std.uuid.toBytes(known)) == compact,
+        "the canonical spelling is the bytes in hex");
+    assert(std.uuid.equals(known, std.uuid.parse(std.text.toUpper(text))),
+        "parse accepts either case and toString writes lower");
+
+    DateTime tenth = eventTime(0, 1);
+    assert((0 * 3 + 1) % 8 == 1, "shard 0 index 1 is the tenth-of-a-second stamp");
+    assert(std.datetime.parseIso("2024-01-01T00:00:00.1Z").time.millisecond ==
+        tenth.time.millisecond,
+        "the generator's tenth is the ISO tenth");
+}
+
+void writeShard(int32 shard) {
+    std.text.StringBuilder* jsonBuf = new std.text.StringBuilder();
+    std.text.StringBuilder* formBuf = new std.text.StringBuilder();
+    int32 index = 0;
+    while (index < EVENTS_PER_SHARD) {
+        jsonBuf.append(jsonLine(shard, index));
+        jsonBuf.append("\n");
+        formBuf.append(formLine(shard, index));
+        formBuf.append("\n");
+        index = index + 1;
+    }
+    std.fs.writeText(jsonPath(shard), jsonBuf.toString());
+    std.fs.writeText(formPath(shard), formBuf.toString());
+    delete jsonBuf;
+    delete formBuf;
+}
+
+void removeWorkTree() {
+    if (!std.fs.exists(workRoot())) {
+        return;
+    }
+    int32 shard = 0;
+    while (shard < SHARD_COUNT) {
+        if (std.fs.exists(jsonPath(shard))) {
+            std.fs.remove(jsonPath(shard));
+        }
+        if (std.fs.exists(formPath(shard))) {
+            std.fs.remove(formPath(shard));
+        }
+        shard = shard + 1;
+    }
+    std.fs.remove(workRoot());
+}
+
+async int32 main() {
+    removeWorkTree();
+    std.fs.createDirectories(workRoot());
+
+    int64 expectedAmount = 0 as int64;
+    int64 expectedHash = 0 as int64;
+    int32 shard = 0;
+    while (shard < SHARD_COUNT) {
+        writeShard(shard);
+        int32 index = 0;
+        while (index < EVENTS_PER_SHARD) {
+            expectedAmount = expectedAmount + (eventAmount(shard, index) as int64);
+            expectedHash = expectedHash + std.hash.stringCode(eventName(shard, index));
+            index = index + 1;
+        }
+        shard = shard + 1;
+    }
+
+    checkKnownSpellings();
+    checkRejectedInput();
+
+    int64[] results = new int64[SHARD_COUNT * 3];
+    int32 slot = 0;
+    while (slot < SHARD_COUNT * 3) {
+        results[slot] = 0;
+        slot = slot + 1;
+    }
+    raw int64* resultsAddress = &results[0];
+    int64 address = resultsAddress as int64;
+
+    task<int64> worker0 = spawn checkShard(0 as int64, address);
+    task<int64> worker1 = spawn checkShard(1 as int64, address);
+    task<int64> worker2 = spawn checkShard(2 as int64, address);
+    task<int64> worker3 = spawn checkShard(3 as int64, address);
+
+    int64 seen = await worker0;
+    seen = seen + await worker1;
+    seen = seen + await worker2;
+    seen = seen + await worker3;
+    assert(seen == 6, "every worker returned its shard id");
+
+    shard = 0;
+    int64 totalEvents = 0 as int64;
+    int64 totalAmount = 0 as int64;
+    int64 totalHash = 0 as int64;
+    while (shard < SHARD_COUNT) {
+        int32 base = shard * 3;
+        assert(results[base] == EVENTS_PER_SHARD as int64,
+            "each shard parsed every event");
+        totalEvents = totalEvents + results[base];
+        totalAmount = totalAmount + results[base + 1];
+        totalHash = totalHash + results[base + 2];
+        shard = shard + 1;
+    }
+    assert(totalEvents == (SHARD_COUNT * EVENTS_PER_SHARD) as int64,
+        "all events were parsed");
+    assert(totalAmount == expectedAmount, "all amounts were parsed");
+    assert(totalHash == expectedHash, "all names hashed as the generator did");
+
+    removeWorkTree();
+    assert(!std.fs.exists(workRoot()), "the work tree is removed");
+
+    println(format("journal-stats shards={} events={} amount={}",
+        SHARD_COUNT, totalEvents, totalAmount));
+    println("integration-journal=ok");
+    return 0;
+}

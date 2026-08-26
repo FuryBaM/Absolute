@@ -1,0 +1,11 @@
+{
+  "name": "WorkspaceIntegration",
+  "type": "app",
+  "entry": "src/main.abs",
+  "sources": ["src"],
+  "registries": ["../../.."],
+  "dependencies": {
+    "absolute.catalog.left": "^0.1.0",
+    "absolute.catalog.right": "^0.1.0"
+  }
+}

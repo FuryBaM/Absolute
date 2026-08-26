@@ -37,7 +37,7 @@ decimal, and it printed the one thing the value is not.
 
 This was recorded rather than patched, because which text `{}` should produce
 is a decision about what the language's one placeholder promises rather than a
-bug with an obvious fix, and section 22 then found the rest of it: on wasm the
+bug with an obvious fix, and section 25 then found the rest of it: on wasm the
 same code printed the literal characters `%g`, because the shim's freestanding
 formatter has no float directive at all, and in JSON -- where six digits are
 data loss rather than a house style -- the two targets wrote different text for
@@ -59,7 +59,7 @@ prints `1.1`, not `1.100000023841858`. The layout thresholds are ECMA-262's for
 reference reader: a plain decimal while the point sits within or near the
 digits, an exponent past twenty-one places up or seven down.
 
-Section 22 has the algorithm, what it cost, and the conversion in the other
+Section 25 has the algorithm, what it cost, and the conversion in the other
 direction that it forced.
 
 ### Fixed: an indexer is a projection, so its getter borrows and its setter takes
@@ -165,9 +165,10 @@ section 1's last three entries are that sweep. The one thing it found and did
 not fix -- an indexer that could not say its getter borrows -- is fixed now, at
 the top of this section: it was a decision about what an indexer means rather
 than a patch, which is why it waited to be decided; so was what `{}` means for
-a double, at the top of this section. Sections 20 and 22 are the newest sweeps
-and the ones furthest from the language itself -- 22 is where to start, because
-it names a shape rather than a module; section 5 says where not to look again.
+a double, at the top of this section. Sections 20, 24 and 25 are the newest
+sweeps and the ones furthest from the language itself -- 25 is where to start,
+because it names a shape rather than a module; section 5 says where not to look
+again.
 
 Nothing is open elsewhere either. The two things that were -- a name in the
 shared type model answering two questions, and what slicing a temporary array
@@ -1489,7 +1490,7 @@ narrow where to look.
   the other way is checked against `strtod` over the classic hard cases and the
   formatter's own output. `tests/runtime-real-text.cpp` runs all of it on every
   build -- 4,972,505 values in eight seconds -- with no disagreements. See also
-  `tests/real-text-edges.abs` for the language-level text, and section 22 for
+  `tests/real-text-edges.abs` for the language-level text, and section 25 for
   what the sweep found in the first draft.
 - **`std.fs` path helpers: swept and now covered.** Five of them answered
   differently on the two targets; all fixed, at `tests/path-lexical-edges.abs`.
@@ -1551,14 +1552,15 @@ they say where not to look again.
    for exactly that reason. Now written down in docs/wasm-target.md, with
    `absolute_channel_receive_checked` as the way to tell the two apart. See
    `tests/wasm-console-libcalls.abs` and `tests/wasm-stdin-eof.abs`.
-   Two more disagreements came out later, and they are worth reading as a limit
-   on this sweep rather than a gap in it: the two targets parsed ISO-8601
-   timestamps differently (section 20), and they still print real numbers
-   differently -- one of them not at all (section 22). Every test in the corpus
-   agreed anyway, because none of them wrote down an input where the two
-   implementations differ. Building the same corpus twice proves the corpus,
-   not the target. What finds these is asking the two copies the same question
-   directly, which is what section 22 did.
+   The disagreements that came out later are worth reading as a limit on this
+   sweep rather than a gap in it: the two targets parsed ISO-8601 timestamps
+   differently (section 20), and printed real numbers differently -- one of
+   them not at all, as the literal text `%g` (section 25). Every test in the
+   corpus agreed anyway, because none of them wrote down an input where the two
+   implementations differ, and none of them printed a real number. Building the
+   same corpus twice proves the corpus, not the target. What finds these is
+   asking the two copies the same question directly, which is what sections 24
+   and 25 did.
 4. ~~**Collection boundaries**~~ — swept. Vector, Deque, Map, Set, HashMap and
    PriorityQueue all hold at their edges: empty and single-element containers,
    reallocation points, a deque whose contents straddle the end of its buffer
@@ -2507,7 +2509,7 @@ an ampersand or a percent sign was wrong, and wrong in a way that reads as the
 user's mistake rather than the parser's.
 
 It was reached by fixing `encode`, not by testing `std.form`, which is the
-lesson section 23 already records: after a fix, ask who else calls it.
+lesson section 22 already records: after a fix, ask who else calls it.
 
 ### Fixed: an authority is not "everything before the first colon"
 
@@ -2551,7 +2553,7 @@ port.
 
 ## 21. A leak probe that proves nothing
 
-A probe can pass for the wrong reason (section 23), and there is a second way
+A probe can pass for the wrong reason (section 22), and there is a second way
 for it to do that which costs more than a wrong assertion: the probe can be
 deleted before it runs.
 
@@ -2586,14 +2588,150 @@ only what is *unreachable*, so a leaked pointer still sitting in a live stack
 slot at exit is not a leak to it. `malloc` in `main` with the pointer never
 overwritten is clean by construction.
 
-## 22. Beyond the list: one thing said twice, and the two answers
+## 22. The method that worked
+
+Worth repeating, because reading code did not find any of this.
+
+Write small programs whose correct answer is unambiguous, run them, compare
+against the expected value. Probe **boundaries**, not typical values.
+
+The trap to avoid: a probe can pass for the wrong reason. The first unsigned
+test divided `4294967295` by 2 and asserted `2147483647` — whose top bit is
+clear, so a signed widening looked identical and a second defect hid behind the
+passing test. Choose values where the wrong behaviour must show: above the
+signed maximum of the width, at `2^31`, at `2^32`, at the type's minimum.
+
+And when a fix lands in one path, ask which other callers reach the same code
+by another route. The compound-assignment defect was found that way, not by
+sweeping again: `a = a / b` had been fixed while `a /= b` still used an untyped
+overload.
+
+## 23. Environment note
+
+During this work the container repeatedly reverted the working tree to an older
+commit and deleted the build directory. Pushed commits were never affected, but
+a stale build silently produced misleading results once — probe values read as
+zero because the compiler predated a fix, which looked like a defect and was
+not.
+
+Check `git log --oneline -1` before trusting a probe, and rebuild after any
+unexplained result.
+
+## 24. Beyond the list: the two copies, again
+
+Section 20 found that native and the wasm shim each had an ISO-8601 parser and
+that the two were never the same one. The next sweep of that shape -- JSON
+strings and lexical paths -- is section 25. This one asked the
+same question of the copies that sweep did not reach.
+
+Nine defects. Seven of them are disagreements. In four of those the wasm copy
+was the correct one; in two the native copy was; in one neither was, because
+both special-cased the empty string as missing from lastIndexOf while
+indexOf already answered 0.
+
+### Fixed: the wasm generator was not the generator
+
+```absolute
+std.random.Rng* rng = new std.random.Rng(42);
+rng.i32()   // native: 360188718, wasm: -1109970394
+```
+
+`docs/random.md` says xoshiro256** produces the same sequence for the same
+seed on every target. The native runtime does. The shim ran SplitMix64 on a
+single word. The golden assertion in `tests/std-random.abs` would have caught
+it on wasm, and the suite differential would have compared the two answers,
+except the test printed `entropy()` onto stdout -- a different number every
+run, on both targets -- so the corpus excluded itself from the comparison the
+way section 20's timestamps did.
+
+Two more disagreements rode along:
+
+- `new Rng(0)` replaced a zero seed with entropy on wasm, so the one seed that
+  looks like "not a seed" was not a seed there and was a seed natively.
+- `range(lo, hi)` computed the span as `(uint64_t)(hi - lo)`. The subtraction
+  is signed and overflows a span wider than `2^31`; native subtracts in
+  64 bits and rejects biased residues. `range(-2000000000, 2000000000)` was a
+  different interval on the two targets, when it was defined at all.
+
+The shim now has the same four-word xoshiro256**, the same SplitMix64
+expansion of whatever seed it is given -- zero included -- and the same
+unbiased range. The test no longer prints entropy.
+
+### Fixed: a JSON number that is not a number
+
+RFC 8259 does not allow a leading zero, a trailing decimal point, or an
+exponent with no digits. The native parser scanned with `isdigit` and handed
+the slice to `strtod`, so `"01"` was 1, `"1."` was 1, and `"1e"` was 1. The
+wasm parser already refused all three, accidentally: leftover digits looked
+like trailing text. Native reads the grammar now.
+
+### Fixed: a JSON key was not a JSON string
+
+```absolute
+obj.setNumber("a\"b", 1);
+obj.stringify()   // native was {"a"b":1}, which is not JSON
+```
+
+The native writer escaped quotes and backslashes in *values* and then wrote
+keys with `'"' << key << '"'`. A name containing either produced a document
+this library's own parser refused. Wasm already ran the value escaper on
+keys. One `writeJsonString` now writes both.
+
+Pretty-print was the same function, asked a second question: native wrote the
+compact form with a space after each comma, wasm wrote indented lines. The
+name is `stringifyPretty`. Native indents now.
+
+And a second `"a"` in `{"a":1,"a":2}` overwrote the pointer to the first
+value without deleting it. Wasm already freed the occupant. Native does too.
+
+### Fixed: lastIndexOf("") said the empty string was missing
+
+`indexOf("abc", "")` is 0 -- the empty string occurs at the start, which is
+what `strstr` and the wasm finder both answer. `lastIndexOf("abc", "")` was
+-1, because both copies special-cased an empty needle as not found. The empty
+string occurs at every index, including the end; lastIndexOf is 3, and 6 for
+`"Привет"`, because the index is in code points.
+
+### Fixed: dayOfWeek of year -1 was -1
+
+Sakamoto's formula uses `y/4 - y/100 + y/400`. Absolute division truncates
+toward zero, so a year at or before 0 is not the floor the formula needs:
+1 January of year 0 came back as Sunday instead of Saturday, and 1 January of
+year -1 came back as -1, which is not a weekday. It now asks the civil
+conversion for a day number -- the same Hinnant algorithm both runtimes
+already share -- and takes that modulo 7.
+
+### Fixed: an 8 KB scratch was a string, until it wasn't
+
+The wasm binary reader returned `readString` through a static 8192-byte
+buffer and truncated anything longer, then advanced by the full length, so a
+9000-character round trip came back short. `toHexString` of a payload over
+4095 bytes stopped after 4095. Native has neither limit. The shim allocates
+what it needs.
+
+### Fixed: a port was whatever parseInt would take
+
+`std.uri.parse("http://example.com:8080abc/x")` set port 8080, because
+`parseInt` keeps the digits before other text. `:65536` became 65536, which
+is not a port; `:-1` became -1. A port is now digits that fit in 0..65535, or
+a refusal.
+
+`tests/json-grammar-edges.abs`, `tests/datetime-weekday-edges.abs`,
+`tests/text-search-edges.abs`, `tests/binary-payload-edges.abs` pin the new
+ones; `tests/std-random.abs` and `tests/uri-percent-encoding.abs` grew the
+cases that show the old answers. All of them are ordinary members of the
+corpus, so the suite differential compares them on both targets.
+
+## 25. Beyond the list: one thing said twice, and the two answers
 
 Section 20 fixed an ISO-8601 parser that native and wasm had each implemented
 separately, and the entry noted why the WASM sweep in section 5 had not caught
-it. That is a shape, not an accident, so this sweep went looking for it: **every
-place the runtime is written twice** -- once in C++ for the host and once in
-`Absolute-Runtime/wasm/` for the shim -- and asked the two copies the same
-question.
+it. Section 24 asked the same question of the copies that sweep did not reach.
+This one is the sweep that was waiting: **every remaining place the runtime is
+written twice** -- once in C++ for the host and once in
+`Absolute-Runtime/wasm/` for the shim -- asked the two copies the same
+question, this time of JSON strings, of lexical paths, and of the one thing
+neither copy could do.
 
 Twelve defects. In nine of them the two copies disagree, and in five of those
 the wasm copy is the correct one, which is worth saying plainly: the shim is
@@ -2858,32 +2996,3 @@ directions, and both are ordinary members of the corpus, so the suite
 differential compares their text at two optimization levels and on both
 targets -- which is the check that was empty before, because nothing printed a
 real number.
-
-## 23. The method that worked
-
-Worth repeating, because reading code did not find any of this.
-
-Write small programs whose correct answer is unambiguous, run them, compare
-against the expected value. Probe **boundaries**, not typical values.
-
-The trap to avoid: a probe can pass for the wrong reason. The first unsigned
-test divided `4294967295` by 2 and asserted `2147483647` — whose top bit is
-clear, so a signed widening looked identical and a second defect hid behind the
-passing test. Choose values where the wrong behaviour must show: above the
-signed maximum of the width, at `2^31`, at `2^32`, at the type's minimum.
-
-And when a fix lands in one path, ask which other callers reach the same code
-by another route. The compound-assignment defect was found that way, not by
-sweeping again: `a = a / b` had been fixed while `a /= b` still used an untyped
-overload.
-
-## 24. Environment note
-
-During this work the container repeatedly reverted the working tree to an older
-commit and deleted the build directory. Pushed commits were never affected, but
-a stale build silently produced misleading results once — probe values read as
-zero because the compiler predated a fix, which looked like a defect and was
-not.
-
-Check `git log --oneline -1` before trusting a probe, and rebuild after any
-unexplained result.

@@ -1,0 +1,244 @@
+// INI parse and stringify. Sections, comments, quoted values, and
+// duplicate keys (last write wins on getValue). Entries live in one
+// Vector of copyable structs so a document is a single owner, not a
+// tree of section objects.
+
+import "../../std/string.abs";
+import "../../std/collections/vector.abs";
+
+namespace serde.ini {
+    const int32 HASH = 35;
+    const int32 SEMICOLON = 59;
+    const int32 LBRACKET = 91;
+    const int32 RBRACKET = 93;
+    const int32 EQUALS = 61;
+    const int32 QUOTE = 34;
+    const int32 SPACE = 32;
+    const int32 TAB = 9;
+
+    struct IniPair {
+        public string section;
+        public string key;
+        public string value;
+
+        public IniPair clone() const {
+            IniPair pair;
+            pair.section = section;
+            pair.key = key;
+            pair.value = value;
+            return pair;
+        }
+    }
+
+    IniPair makePair(string section, string key, string value) {
+        IniPair pair;
+        pair.section = section;
+        pair.key = key;
+        pair.value = value;
+        return pair;
+    }
+
+    class IniDocument {
+        private std.collections.Vector<IniPair>* _pairs;
+
+        public IniDocument() {
+            _pairs = new std.collections.Vector<IniPair>();
+        }
+
+        public void destroy() {
+            if (_pairs != null) {
+                _pairs = null;
+            }
+        }
+
+        public void dispose() {
+            destroy();
+        }
+
+        public int32 count {
+            get { return _pairs.count; }
+        }
+
+        public IniPair pairAt(int32 index) {
+            return _pairs[index];
+        }
+
+        public void add(string section, string key, string value) {
+            _pairs.push(makePair(section, key, value));
+        }
+
+        public void setValue(string section, string key, string value) {
+            int32 i = _pairs.count - 1;
+            while (i >= 0) {
+                IniPair pair = _pairs[i];
+                if (pair.section == section && pair.key == key) {
+                    IniPair updated = makePair(section, key, value);
+                    _pairs[i] = updated;
+                    return;
+                }
+                i = i - 1;
+            }
+            add(section, key, value);
+        }
+
+        public bool has(string section, string key) {
+            int32 i = _pairs.count - 1;
+            while (i >= 0) {
+                IniPair pair = _pairs[i];
+                if (pair.section == section && pair.key == key) {
+                    return true;
+                }
+                i = i - 1;
+            }
+            return false;
+        }
+
+        public string getValue(string section, string key, string defaultValue) {
+            int32 i = _pairs.count - 1;
+            while (i >= 0) {
+                IniPair pair = _pairs[i];
+                if (pair.section == section && pair.key == key) {
+                    return pair.value;
+                }
+                i = i - 1;
+            }
+            return defaultValue;
+        }
+    }
+
+    string stripCr(string line) {
+        return std.text.replace(line, "\r", "");
+    }
+
+    bool isCommentOrBlank(string line) {
+        if (line == "") {
+            return true;
+        }
+        int32 c = std.text.codePointAt(line, 0);
+        return c == HASH || c == SEMICOLON;
+    }
+
+    string unquoteValue(string source) {
+        int32 n = std.text.codePointCount(source);
+        if (n >= 2 &&
+            std.text.codePointAt(source, 0) == QUOTE &&
+            std.text.codePointAt(source, n - 1) == QUOTE) {
+            string inner = std.text.substring(source, 1, n - 2);
+            return std.text.replace(inner, "\"\"", "\"");
+        }
+        return source;
+    }
+
+    bool valueNeedsQuotes(string value) {
+        int32 n = std.text.codePointCount(value);
+        if (n == 0) {
+            return true;
+        }
+        int32 first = std.text.codePointAt(value, 0);
+        int32 last = std.text.codePointAt(value, n - 1);
+        if (first == SPACE || first == TAB || last == SPACE || last == TAB) {
+            return true;
+        }
+        int32 i = 0;
+        while (i < n) {
+            int32 c = std.text.codePointAt(value, i);
+            if (c == HASH || c == SEMICOLON || c == EQUALS || c == QUOTE ||
+                c == LBRACKET || c == RBRACKET || c == 10 || c == 13) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+
+    string quoteValue(string value) {
+        if (!valueNeedsQuotes(value)) {
+            return value;
+        }
+        std.text.StringBuilder* buf = new std.text.StringBuilder();
+        buf.appendChar(QUOTE);
+        int32 n = std.text.codePointCount(value);
+        int32 i = 0;
+        while (i < n) {
+            int32 c = std.text.codePointAt(value, i);
+            if (c == QUOTE) {
+                buf.appendChar(QUOTE);
+                buf.appendChar(QUOTE);
+            } else {
+                buf.appendChar(c);
+            }
+            i = i + 1;
+        }
+        buf.appendChar(QUOTE);
+        string out = buf.toString();
+        delete buf;
+        return out;
+    }
+
+    IniDocument* parse(string text) {
+        IniDocument* doc = new IniDocument();
+        if (text == "") {
+            return doc;
+        }
+        string[] lines = std.text.split(text, "\n");
+        string section = "";
+        int32 i = 0;
+        while (i < lines.length) {
+            string line = std.text.trim(stripCr(lines[i]));
+            if (!isCommentOrBlank(line)) {
+                int32 first = std.text.codePointAt(line, 0);
+                if (first == LBRACKET) {
+                    int32 close = std.text.lastIndexOf(line, "]");
+                    if (close <= 0) {
+                        throw new Error("ini: unclosed section header");
+                    }
+                    section = std.text.trim(
+                        std.text.substring(line, 1, close - 1));
+                } else {
+                    int32 eq = std.text.indexOf(line, "=");
+                    if (eq < 0) {
+                        throw new Error("ini: line is not a key=value pair");
+                    }
+                    string key = std.text.trim(std.text.substring(line, 0, eq));
+                    string source = std.text.trim(std.text.substring(
+                        line,
+                        eq + 1,
+                        std.text.codePointCount(line) - (eq + 1)));
+                    if (key == "") {
+                        throw new Error("ini: empty key");
+                    }
+                    doc.add(section, key, unquoteValue(source));
+                }
+            }
+            i = i + 1;
+        }
+        return doc;
+    }
+
+    string stringify(IniDocument* doc) {
+        std.text.StringBuilder* buf = new std.text.StringBuilder();
+        string current = "";
+        bool started = false;
+        int32 i = 0;
+        while (i < doc.count) {
+            IniPair pair = doc.pairAt(i);
+            if (!started || pair.section != current) {
+                if (pair.section != "") {
+                    buf.append("[");
+                    buf.append(pair.section);
+                    buf.append("]\n");
+                }
+                current = pair.section;
+                started = true;
+            }
+            buf.append(pair.key);
+            buf.append("=");
+            buf.append(quoteValue(pair.value));
+            buf.append("\n");
+            i = i + 1;
+        }
+        string out = buf.toString();
+        delete buf;
+        return out;
+    }
+}

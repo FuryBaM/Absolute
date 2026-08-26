@@ -1,0 +1,11 @@
+{
+  "name": "absolute.catalog.left",
+  "version": "0.1.0",
+  "type": "lib",
+  "description": "Pipe-separated catalog view; depends on absolute.catalog.core",
+  "entry": "src/left.abs",
+  "sources": ["src"],
+  "dependencies": {
+    "absolute.catalog.core": "^0.1.0"
+  }
+}

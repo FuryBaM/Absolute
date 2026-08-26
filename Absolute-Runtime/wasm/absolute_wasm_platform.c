@@ -420,8 +420,12 @@ int32_t absolute_string_index_of(const char* text, const char* sub) {
 }
 
 int32_t absolute_string_last_index_of(const char* text, const char* sub) {
-    if (!text || !sub || !*sub)
+    if (!text || !sub)
         return -1;
+    /* The empty string occurs at every index, including the end. indexOf("")
+       already answered 0; lastIndexOf("") answered -1, as if it were absent. */
+    if (!*sub)
+        return absolute_string_code_point_count(text);
     const char* last = NULL;
     const char* cursor = text;
     while ((cursor = wasm_string_find(cursor, sub)) != NULL) {
@@ -2271,8 +2275,12 @@ void absolute_time_date_str(char* buffer, int32_t bufferSize) {
 }
 
 typedef struct WasmRng {
-    uint64_t state;
+    uint64_t values[4];
 } WasmRng;
+
+static uint64_t wasm_rotl64(uint64_t value, int amount) {
+    return (value << amount) | (value >> (64 - amount));
+}
 
 static uint64_t wasm_splitmix64(uint64_t* state) {
     uint64_t z = (*state += 0x9E3779B97F4A7C15ULL);
@@ -2280,6 +2288,11 @@ static uint64_t wasm_splitmix64(uint64_t* state) {
     z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
     return z ^ (z >> 31);
 }
+
+/* The same xoshiro256** the native runtime runs. docs/random.md says a seed
+   produces one sequence on every target; the shim used to run SplitMix64 on a
+   single word instead, so seed 42's first i32 was -1109970394 here and
+   360188718 natively. */
 
 uint64_t absolute_random_entropy(void) {
 #if defined(ABSOLUTE_WASM_USE_WASI)
@@ -2319,12 +2332,15 @@ int32_t absolute_random_fill(uint8_t* output, int32_t length) {
 
 uint64_t* absolute_random_create(uint64_t seed) {
     WasmRng* rng = (WasmRng*)heap_alloc(sizeof(WasmRng));
+    int index = 0;
     if (!rng)
         return NULL;
-    if (seed == 0)
-        seed = absolute_random_entropy();
-    rng->state = seed;
-    return &rng->state;
+    /* Seed 0 is a seed. Replacing it with entropy made `new Rng(0)` a
+       different generator on every run, and a different generator from the
+       native one. */
+    for (; index < 4; ++index)
+        rng->values[index] = wasm_splitmix64(&seed);
+    return rng->values;
 }
 
 void absolute_random_destroy(uint64_t* handle) {
@@ -2333,9 +2349,19 @@ void absolute_random_destroy(uint64_t* handle) {
 }
 
 uint64_t absolute_random_u64(uint64_t* handle) {
+    uint64_t result;
+    uint64_t shift;
     if (!handle)
         return 0;
-    return wasm_splitmix64(handle);
+    result = wasm_rotl64(handle[1] * 5, 7) * 9;
+    shift = handle[1] << 17;
+    handle[2] ^= handle[0];
+    handle[3] ^= handle[1];
+    handle[1] ^= handle[2];
+    handle[0] ^= handle[3];
+    handle[2] ^= shift;
+    handle[3] = wasm_rotl64(handle[3], 45);
+    return result;
 }
 
 int32_t absolute_random_i32(uint64_t* handle) {
@@ -2343,13 +2369,22 @@ int32_t absolute_random_i32(uint64_t* handle) {
 }
 
 int32_t absolute_random_range(uint64_t* handle, int32_t lo, int32_t hi) {
-    if (hi <= lo)
+    uint64_t span;
+    uint64_t threshold;
+    uint64_t value;
+    if (!handle || hi <= lo)
         return lo;
-    uint64_t span = (uint64_t)(hi - lo);
-    return lo + (int32_t)(absolute_random_u64(handle) % span);
+    /* The span is a 64-bit difference. `(uint64_t)(hi - lo)` overflowed the
+       signed subtraction first, so a range that spans more than 2^31 values
+       was a different interval on wasm than on native. */
+    span = (uint64_t)((int64_t)hi - (int64_t)lo);
+    threshold = (0 - span) % span;
+    do value = absolute_random_u64(handle); while (value < threshold);
+    return (int32_t)((int64_t)lo + (int64_t)(value % span));
 }
 
 double absolute_random_real(uint64_t* handle) {
-    const uint64_t bits = absolute_random_u64(handle) >> 11;
-    return (double)bits / (double)(1ULL << 53);
+    if (!handle)
+        return 0.0;
+    return (double)(absolute_random_u64(handle) >> 11) * 0x1.0p-53;
 }

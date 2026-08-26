@@ -1,0 +1,30 @@
+// The formula both leaves of the diamond call. Left and right encode a
+// record differently; they agree because they ask this file, not because
+// they copied the numbers.
+
+import "../../std/string.abs";
+
+namespace catalog.core {
+    const int32 SHARD_COUNT = 4;
+    const int32 ROWS_PER_SHARD = 8;
+
+    int32 shardCount() {
+        return SHARD_COUNT;
+    }
+
+    int32 rowsPerShard() {
+        return ROWS_PER_SHARD;
+    }
+
+    int32 recordId(int32 shard, int32 index) {
+        return shard * ROWS_PER_SHARD + index;
+    }
+
+    int32 recordAmount(int32 shard, int32 index) {
+        return 1000 + shard * 100 + index;
+    }
+
+    string recordLabel(int32 shard, int32 index) {
+        return format("row-{}-{}", shard, index);
+    }
+}

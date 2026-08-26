@@ -1,0 +1,490 @@
+// Integration project: a hermetic wasm board, not a smoke module.
+//
+// The browser host is the page: HTTP mocks are the origin, the virtual
+// filesystem is the persistent store, and spawn is the task pool. On
+// the UI thread that pool is size 0, so a worker runs inside the same
+// instance and the notes it writes are the notes the next session
+// reads. A task cannot carry a string; four named workers take a
+// shard id, rebuild their paths, and report through a shared integer
+// array. Named tasks, all spawned before the first await.
+//
+// Printing a real number is an open language decision (known-defects
+// section 25), so scores are integers. Two JSON strings are kept
+// after the object that produced them is gone, because that used to
+// be the next string.
+
+import "../../std/fs.abs";
+import "../../std/json.abs";
+import "../../std/string.abs";
+import "../../std/hash.abs";
+import "../../std/http.abs";
+
+const int32 SHARD_COUNT = 4;
+const int32 NOTES_PER_SHARD = 8;
+const int32 ORIGIN_REVISION = 7;
+
+string workRoot() {
+    return "/board";
+}
+
+string settingsPath() {
+    return std.fs.join(workRoot(), "settings.json");
+}
+
+string shardName(int32 shard) {
+    return format("shard-{}.jsonl", shard);
+}
+
+string shardPath(int32 shard) {
+    return std.fs.join(workRoot(), shardName(shard));
+}
+
+string savedPath(int32 shard) {
+    return std.fs.join(workRoot(), format("shard-{}.saved.jsonl", shard));
+}
+
+string originHealthUrl() {
+    return "https://board.test/api/health";
+}
+
+string originSettingsUrl() {
+    return "https://board.test/api/settings";
+}
+
+string originCatalogUrl() {
+    return "https://board.test/api/catalog";
+}
+
+string stripCr(string line) {
+    return std.text.replace(line, "\r", "");
+}
+
+int32 noteId(int32 shard, int32 index) {
+    return shard * NOTES_PER_SHARD + index;
+}
+
+int32 noteScore(int32 shard, int32 index) {
+    return 100 + shard * 10 + index;
+}
+
+bool notePinned(int32 shard, int32 index) {
+    return ((shard + index) % 3) == 0;
+}
+
+int32 pinnedCount(int32 shard) {
+    int32 count = 0;
+    int32 index = 0;
+    while (index < NOTES_PER_SHARD) {
+        if (notePinned(shard, index)) {
+            count = count + 1;
+        }
+        index = index + 1;
+    }
+    return count;
+}
+
+string noteTitle(int32 shard, int32 index) {
+    int32 flavor = (shard + index) % 6;
+    if (flavor == 0) {
+        return format("plain-{}-{}", shard, index);
+    }
+    if (flavor == 1) {
+        return format("has space {}-{}", shard, index);
+    }
+    if (flavor == 2) {
+        return format("quote \"{}\"", index);
+    }
+    if (flavor == 3) {
+        return format("slash-{}\\{}", shard, index);
+    }
+    if (flavor == 4) {
+        return format("😀-{}-{}", shard, index);
+    }
+    return format("a&b={}={}", shard, index);
+}
+
+string jsonLine(int32 shard, int32 index) {
+    std.json.JsonValue* obj = std.json.createObject();
+    obj.setNumber("id", noteId(shard, index) as double);
+    obj.setString("title", noteTitle(shard, index));
+    obj.setNumber("score", noteScore(shard, index) as double);
+    obj.setBool("pinned", notePinned(shard, index));
+    string encoded = obj.stringify();
+    delete obj;
+    return encoded;
+}
+
+void checkJsonLine(int32 shard, int32 index, string line) {
+    std.json.JsonValue* obj = std.json.parse(line);
+    assert(obj.isValid() && obj.isObject(), "a note line is an object");
+
+    int64 idValue = obj.getIntOr("id", -1 as int64);
+    string titleText = obj.getStringOr("title", "");
+    int64 scoreValue = obj.getIntOr("score", -1 as int64);
+    bool pinnedValue = obj.getBoolOr("pinned", false);
+    delete obj;
+
+    assert(idValue == noteId(shard, index) as int64, "json id matches the generator");
+    assert(titleText == noteTitle(shard, index), "json title matches the generator");
+    assert(scoreValue == noteScore(shard, index) as int64, "json score matches");
+    assert(pinnedValue == notePinned(shard, index), "json pinned matches");
+}
+
+string[] nonEmptyLines(string text) {
+    string[] pieces = std.text.split(text, "\n");
+    int32 count = 0;
+    int32 i = 0;
+    while (i < pieces.length) {
+        if (std.text.trim(stripCr(pieces[i])) != "") {
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    string[] lines = new string[count];
+    int32 filled = 0;
+    i = 0;
+    while (i < pieces.length) {
+        string line = std.text.trim(stripCr(pieces[i]));
+        if (line != "") {
+            lines[filled] = line;
+            filled = filled + 1;
+        }
+        i = i + 1;
+    }
+    return lines;
+}
+
+void writeShard(int32 shard) {
+    std.text.StringBuilder* buf = new std.text.StringBuilder();
+    int32 index = 0;
+    while (index < NOTES_PER_SHARD) {
+        buf.append(jsonLine(shard, index));
+        buf.append("\n");
+        index = index + 1;
+    }
+    std.fs.writeText(shardPath(shard), buf.toString());
+    delete buf;
+}
+
+void checkShardFiles(int32 shard, string path) {
+    string[] lines = nonEmptyLines(std.fs.readText(path));
+    assert(lines.length == NOTES_PER_SHARD, "a shard has every note");
+    int32 index = 0;
+    while (index < NOTES_PER_SHARD) {
+        checkJsonLine(shard, index, lines[index]);
+        index = index + 1;
+    }
+}
+
+string settingsJson(string theme, int32 revision, int32 lastShard) {
+    std.json.JsonValue* obj = std.json.createObject();
+    obj.setString("theme", theme);
+    obj.setNumber("revision", revision as double);
+    obj.setNumber("lastShard", lastShard as double);
+    string encoded = obj.stringify();
+    delete obj;
+    return encoded;
+}
+
+void writeSettings(string theme, int32 revision, int32 lastShard) {
+    std.fs.writeText(settingsPath(), settingsJson(theme, revision, lastShard));
+}
+
+void checkSettings(string theme, int32 revision, int32 lastShard) {
+    std.json.JsonValue* obj = std.json.parse(std.fs.readText(settingsPath()));
+    assert(obj.isValid() && obj.isObject(), "settings are an object");
+    string themeText = obj.getStringOr("theme", "");
+    int64 revisionValue = obj.getIntOr("revision", -1 as int64);
+    int64 lastValue = obj.getIntOr("lastShard", -1 as int64);
+    delete obj;
+    assert(themeText == theme, "the theme survived the store");
+    assert(revisionValue == revision as int64, "the revision survived the store");
+    assert(lastValue == lastShard as int64, "the last shard survived the store");
+}
+
+void pullOrigin() {
+    std.http.HttpResponse* health = std.http.fetch(originHealthUrl());
+    int32 healthCode = health.statusCode;
+    string healthBody = health.body;
+    delete health;
+    assert(healthCode == 200, "the origin answered");
+    assert(healthBody == "board-ok", "the health mock is the body, not a document");
+
+    std.http.HttpResponse* settings = std.http.fetch(originSettingsUrl());
+    int32 settingsCode = settings.statusCode;
+    string settingsBody = settings.body;
+    delete settings;
+    assert(settingsCode == 200, "settings came from the origin");
+
+    std.json.JsonValue* obj = std.json.parse(settingsBody);
+    assert(obj.isValid() && obj.isObject(), "origin settings are an object");
+    string themeText = obj.getStringOr("theme", "");
+    int64 revisionValue = obj.getIntOr("revision", -1 as int64);
+    delete obj;
+    assert(themeText == "night", "the origin named the theme");
+    assert(revisionValue == ORIGIN_REVISION as int64, "the origin named the revision");
+
+    writeSettings(themeText, ORIGIN_REVISION, 0);
+    checkSettings("night", ORIGIN_REVISION, 0);
+
+    std.http.HttpResponse* catalog = std.http.fetch(originCatalogUrl());
+    int32 catalogCode = catalog.statusCode;
+    string catalogBody = catalog.body;
+    delete catalog;
+    assert(catalogCode == 200, "the catalog came from the origin");
+    std.json.JsonValue* names = std.json.parse(catalogBody);
+    assert(names.isValid() && names.isArray(), "the catalog is an array");
+    assert(names.size() == SHARD_COUNT, "the catalog names every shard");
+    int32 i = 0;
+    while (i < SHARD_COUNT) {
+        std.json.JsonValue* item = names.getAt(i);
+        assert(item.isValid() && item.isString(), "a catalog entry is a name");
+        assert(item.asString() == shardName(i), "the catalog names the shard");
+        delete item;
+        i = i + 1;
+    }
+    delete names;
+}
+
+void checkLexicalPaths() {
+    assert(std.fs.normalize("a/b/..") == "a", "a trailing separator is not a component");
+    assert(std.fs.normalize("a/") == "a", "normalize drops a trailing separator");
+    assert(std.fs.join("a", "b/..") == "a", "join of a climb is the left side");
+    assert(std.fs.parent("/board/") == "/", "parent of a trailing-slash board is root");
+    assert(std.fs.fileName("/board/") == "board", "the name is the last component");
+    assert(std.fs.join(workRoot(), shardName(0)) == shardPath(0),
+        "the board's own paths go through join");
+}
+
+void checkRejectedInput() {
+    assert(std.json.parse("{\"title\":\"unterminated") == null,
+        "an unclosed string is not a note");
+    assert(std.json.parse("{\"score\":01}") == null,
+        "a leading zero is not a JSON number");
+    assert(std.json.parse("{\"title\":\"a\\qb\"}") == null,
+        "an unknown escape is refused");
+}
+
+void checkKnownSpellings() {
+    string quoted = jsonLine(0, 2);
+    assert((0 + 2) % 6 == 2, "shard 0 index 2 is the quoted title");
+    std.json.JsonValue* obj = std.json.parse(quoted);
+    string titleText = obj.getStringOr("title", "");
+    string again = obj.getStringOr("title", "");
+    delete obj;
+    assert(titleText == "quote \"2\"", "a quote in a title is a quote");
+    assert(again == titleText, "the second read is the same string");
+
+    string face = jsonLine(0, 4);
+    assert((0 + 4) % 6 == 4, "shard 0 index 4 is the emoji title");
+    obj = std.json.parse(face);
+    string faceTitle = obj.getStringOr("title", "");
+    delete obj;
+    assert(std.text.codePointCount(faceTitle) == 5, "the emoji is one character");
+    assert(std.text.startsWith(faceTitle, "😀"), "the emoji survived stringify");
+}
+
+void checkListing() {
+    string[] names = std.fs.list(workRoot());
+    int32 seenSettings = 0;
+    int32 seenShards = 0;
+    int32 seenSaved = 0;
+    int32 i = 0;
+    while (i < names.length) {
+        string name = std.fs.fileName(names[i]);
+        if (name == "settings.json") {
+            seenSettings = seenSettings + 1;
+        }
+        int32 shard = 0;
+        while (shard < SHARD_COUNT) {
+            if (name == shardName(shard)) {
+                seenShards = seenShards + 1;
+            }
+            if (name == std.fs.fileName(savedPath(shard))) {
+                seenSaved = seenSaved + 1;
+            }
+            shard = shard + 1;
+        }
+        i = i + 1;
+    }
+    assert(seenSettings == 1, "the dialog lists settings");
+    assert(seenShards == SHARD_COUNT, "the dialog lists every shard");
+    assert(seenSaved == 0, "save-as has not run yet");
+}
+
+void checkSavedListing() {
+    string[] names = std.fs.list(workRoot());
+    int32 seenSaved = 0;
+    int32 i = 0;
+    while (i < names.length) {
+        int32 shard = 0;
+        while (shard < SHARD_COUNT) {
+            if (std.fs.fileName(names[i]) == std.fs.fileName(savedPath(shard))) {
+                seenSaved = seenSaved + 1;
+            }
+            shard = shard + 1;
+        }
+        i = i + 1;
+    }
+    assert(seenSaved == SHARD_COUNT, "the dialog lists every save");
+}
+
+async int64 checkShard(int64 shard, int64 resultsAddress) {
+    raw int64* results = resultsAddress as raw int64*;
+    int32 shardIndex = shard as int32;
+    checkShardFiles(shardIndex, shardPath(shardIndex));
+
+    string loaded = std.fs.readText(shardPath(shardIndex));
+    std.text.StringBuilder* saved = new std.text.StringBuilder();
+    saved.append(loaded);
+    if (!std.text.endsWith(loaded, "\n")) {
+        saved.append("\n");
+    }
+    std.json.JsonValue* marker = std.json.createObject();
+    marker.setNumber("id", -1 as double);
+    marker.setString("title", format("saved {}", shardIndex));
+    marker.setNumber("score", 0 as double);
+    marker.setBool("pinned", false);
+    saved.append(marker.stringify());
+    saved.append("\n");
+    delete marker;
+    std.fs.writeText(savedPath(shardIndex), saved.toString());
+    delete saved;
+
+    string[] savedLines = nonEmptyLines(std.fs.readText(savedPath(shardIndex)));
+    assert(savedLines.length == NOTES_PER_SHARD + 1, "save-as kept the notes and a marker");
+    int32 index = 0;
+    while (index < NOTES_PER_SHARD) {
+        checkJsonLine(shardIndex, index, savedLines[index]);
+        index = index + 1;
+    }
+
+    int64 scoreSum = 0 as int64;
+    int64 hashSum = 0 as int64;
+    int64 pinned = 0 as int64;
+    index = 0;
+    while (index < NOTES_PER_SHARD) {
+        scoreSum = scoreSum + (noteScore(shardIndex, index) as int64);
+        hashSum = hashSum + std.hash.stringCode(noteTitle(shardIndex, index));
+        if (notePinned(shardIndex, index)) {
+            pinned = pinned + 1;
+        }
+        index = index + 1;
+    }
+    assert(pinned == pinnedCount(shardIndex) as int64, "pinned notes match the formula");
+
+    int32 base = shardIndex * 3;
+    *(results + base) = NOTES_PER_SHARD as int64;
+    *(results + base + 1) = scoreSum;
+    *(results + base + 2) = hashSum;
+    return shard;
+}
+
+void reloadSession(int32 lastShard) {
+    assert(std.fs.exists(settingsPath()), "a second session finds settings");
+    checkSettings("night", ORIGIN_REVISION, lastShard);
+
+    int32 shard = 0;
+    while (shard < SHARD_COUNT) {
+        assert(std.fs.exists(shardPath(shard)), "a second session finds the shard");
+        assert(std.fs.exists(savedPath(shard)), "a second session finds the save");
+        checkShardFiles(shard, shardPath(shard));
+        shard = shard + 1;
+    }
+}
+
+void removeWorkTree() {
+    if (!std.fs.exists(workRoot())) {
+        return;
+    }
+    int32 shard = 0;
+    while (shard < SHARD_COUNT) {
+        if (std.fs.exists(shardPath(shard))) {
+            std.fs.remove(shardPath(shard));
+        }
+        if (std.fs.exists(savedPath(shard))) {
+            std.fs.remove(savedPath(shard));
+        }
+        shard = shard + 1;
+    }
+    if (std.fs.exists(settingsPath())) {
+        std.fs.remove(settingsPath());
+    }
+    std.fs.remove(workRoot());
+}
+
+async int32 main() {
+    removeWorkTree();
+    std.fs.createDirectories(workRoot());
+
+    checkLexicalPaths();
+    checkRejectedInput();
+    pullOrigin();
+
+    int64 expectedScore = 0 as int64;
+    int64 expectedHash = 0 as int64;
+    int32 shard = 0;
+    while (shard < SHARD_COUNT) {
+        writeShard(shard);
+        int32 index = 0;
+        while (index < NOTES_PER_SHARD) {
+            expectedScore = expectedScore + (noteScore(shard, index) as int64);
+            expectedHash = expectedHash + std.hash.stringCode(noteTitle(shard, index));
+            index = index + 1;
+        }
+        shard = shard + 1;
+    }
+
+    checkKnownSpellings();
+    checkListing();
+
+    int64[] results = new int64[SHARD_COUNT * 3];
+    int32 slot = 0;
+    while (slot < SHARD_COUNT * 3) {
+        results[slot] = 0;
+        slot = slot + 1;
+    }
+    raw int64* resultsAddress = &results[0];
+    int64 address = resultsAddress as int64;
+
+    task<int64> worker0 = spawn checkShard(0 as int64, address);
+    task<int64> worker1 = spawn checkShard(1 as int64, address);
+    task<int64> worker2 = spawn checkShard(2 as int64, address);
+    task<int64> worker3 = spawn checkShard(3 as int64, address);
+
+    int64 seen = await worker0;
+    seen = seen + await worker1;
+    seen = seen + await worker2;
+    seen = seen + await worker3;
+    assert(seen == 6, "every worker returned its shard id");
+
+    shard = 0;
+    int64 totalNotes = 0 as int64;
+    int64 totalScore = 0 as int64;
+    int64 totalHash = 0 as int64;
+    while (shard < SHARD_COUNT) {
+        int32 base = shard * 3;
+        assert(results[base] == NOTES_PER_SHARD as int64,
+            "each shard parsed every note");
+        totalNotes = totalNotes + results[base];
+        totalScore = totalScore + results[base + 1];
+        totalHash = totalHash + results[base + 2];
+        shard = shard + 1;
+    }
+    assert(totalNotes == (SHARD_COUNT * NOTES_PER_SHARD) as int64,
+        "all notes were parsed");
+    assert(totalScore == expectedScore, "all scores were parsed");
+    assert(totalHash == expectedHash, "all titles hashed as the generator did");
+
+    writeSettings("night", ORIGIN_REVISION, SHARD_COUNT - 1);
+    checkSavedListing();
+    reloadSession(SHARD_COUNT - 1);
+
+    removeWorkTree();
+    assert(!std.fs.exists(workRoot()), "the work tree is removed");
+
+    println(format("webapp-stats shards={} notes={} score={}",
+        SHARD_COUNT, totalNotes, totalScore));
+    println("integration-webapp=ok");
+    return 0;
+}

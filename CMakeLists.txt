@@ -244,6 +244,14 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "suite-differential=ok"
             LABELS differential
             TIMEOUT 3600)
+        # The `differential` label is the one-command exclusion the
+        # registration comments promise: CI's default Ubuntu/macOS/Windows
+        # LLVM steps run `-LE differential` and Linux Release runs the
+        # labelled tests in a step of their own. They rebuild the suite
+        # at several optimization levels (and native versus wasm) and
+        # cannot share the serial CTest budget with the rest of the
+        # corpus.
+
         # The alias information the backend attaches to field and element
         # accesses is a promise to the optimizer, and a wrong promise is
         # undefined behaviour it acts on rather than a slow program. Neither
@@ -777,6 +785,22 @@ if(BUILD_TESTING)
     add_test(
         NAME absolute.datetime-iso-edges-semantic
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/datetime-iso-edges.abs"
+    )
+    add_test(
+        NAME absolute.datetime-weekday-edges-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/datetime-weekday-edges.abs"
+    )
+    add_test(
+        NAME absolute.json-grammar-edges-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/json-grammar-edges.abs"
+    )
+    add_test(
+        NAME absolute.text-search-edges-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/text-search-edges.abs"
+    )
+    add_test(
+        NAME absolute.binary-payload-edges-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/binary-payload-edges.abs"
     )
     add_test(
         NAME absolute.std-string-semantic
@@ -3219,6 +3243,21 @@ if(BUILD_TESTING)
                         -P "${PROJECT_SOURCE_DIR}/tests/run-wasm-browser-task-pool.cmake"
                 )
                 add_test(
+                    NAME absolute.run-integration-webapp
+                    COMMAND "${CMAKE_COMMAND}"
+                        -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
+                        -DSOURCE=${PROJECT_SOURCE_DIR}/examples/integration/webapp.abs
+                        -DOUTPUT=${CMAKE_BINARY_DIR}/integration-webapp.wasm
+                        -DNODE=${ABSOLUTE_NODE_FOR_WASM}
+                        -DHOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-host.js
+                        -DBROWSER_HOST_JS=${PROJECT_SOURCE_DIR}/tools/absolute-wasm-browser-host.js
+                        -P "${PROJECT_SOURCE_DIR}/tests/run-integration-webapp.cmake"
+                )
+                set_tests_properties(absolute.run-integration-webapp PROPERTIES
+                    PASS_REGULAR_EXPRESSION "integration-webapp=ok"
+                    TIMEOUT 300
+                )
+                add_test(
                     NAME absolute.run-wasm-net
                     COMMAND "${CMAKE_COMMAND}"
                         -DABSOLUTEC=$<TARGET_FILE:Absolute-Compiler>
@@ -4679,6 +4718,66 @@ if(BUILD_TESTING)
         )
 
         add_test(
+            NAME absolute.build-datetime-weekday-edges
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/datetime-weekday-edges.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/datetime-weekday-edges-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-datetime-weekday-edges PROPERTIES
+            FIXTURES_SETUP absolute-datetime-weekday-edges-executable
+        )
+        add_test(NAME absolute.run-datetime-weekday-edges
+            COMMAND "${CMAKE_BINARY_DIR}/datetime-weekday-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-datetime-weekday-edges PROPERTIES
+            FIXTURES_REQUIRED absolute-datetime-weekday-edges-executable
+            PASS_REGULAR_EXPRESSION "datetime-weekday-edges=ok"
+        )
+
+        add_test(
+            NAME absolute.build-json-grammar-edges
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/json-grammar-edges.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/json-grammar-edges-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-json-grammar-edges PROPERTIES
+            FIXTURES_SETUP absolute-json-grammar-edges-executable
+        )
+        add_test(NAME absolute.run-json-grammar-edges
+            COMMAND "${CMAKE_BINARY_DIR}/json-grammar-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-json-grammar-edges PROPERTIES
+            FIXTURES_REQUIRED absolute-json-grammar-edges-executable
+            PASS_REGULAR_EXPRESSION "json-grammar-edges=ok"
+        )
+
+        add_test(
+            NAME absolute.build-text-search-edges
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/text-search-edges.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/text-search-edges-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-text-search-edges PROPERTIES
+            FIXTURES_SETUP absolute-text-search-edges-executable
+        )
+        add_test(NAME absolute.run-text-search-edges
+            COMMAND "${CMAKE_BINARY_DIR}/text-search-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-text-search-edges PROPERTIES
+            FIXTURES_REQUIRED absolute-text-search-edges-executable
+            PASS_REGULAR_EXPRESSION "text-search-edges=ok"
+        )
+
+        add_test(
+            NAME absolute.build-binary-payload-edges
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/binary-payload-edges.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/binary-payload-edges-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-binary-payload-edges PROPERTIES
+            FIXTURES_SETUP absolute-binary-payload-edges-executable
+        )
+        add_test(NAME absolute.run-binary-payload-edges
+            COMMAND "${CMAKE_BINARY_DIR}/binary-payload-edges-app${CMAKE_EXECUTABLE_SUFFIX}")
+        set_tests_properties(absolute.run-binary-payload-edges PROPERTIES
+            FIXTURES_REQUIRED absolute-binary-payload-edges-executable
+            PASS_REGULAR_EXPRESSION "binary-payload-edges=ok"
+        )
+
+        add_test(
             NAME absolute.build-uri-percent-encoding
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/uri-percent-encoding.abs"
                 --build-exe -o "${CMAKE_BINARY_DIR}/uri-percent-encoding-app${CMAKE_EXECUTABLE_SUFFIX}"
@@ -5713,6 +5812,191 @@ if(BUILD_TESTING)
             TIMEOUT 120
         )
         file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/integration-work")
+        add_test(
+            NAME absolute.build-integration-http-server
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/examples/integration/http-server.abs"
+                --build-exe
+                -o "${CMAKE_BINARY_DIR}/integration-http-server${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-integration-http-server PROPERTIES
+            FIXTURES_SETUP absolute-integration-http-server
+            TIMEOUT 300
+        )
+        add_test(
+            NAME absolute.run-integration-http-server
+            COMMAND "${CMAKE_BINARY_DIR}/integration-http-server${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-integration-http-server PROPERTIES
+            FIXTURES_REQUIRED absolute-integration-http-server
+            PASS_REGULAR_EXPRESSION "integration-http-server=ok"
+            TIMEOUT 120
+        )
+        add_test(
+            NAME absolute.build-integration-crawler
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/examples/integration/crawler.abs"
+                --build-exe
+                -o "${CMAKE_BINARY_DIR}/integration-crawler${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-integration-crawler PROPERTIES
+            FIXTURES_SETUP absolute-integration-crawler
+            TIMEOUT 300
+        )
+        add_test(
+            NAME absolute.run-integration-crawler
+            COMMAND "${CMAKE_BINARY_DIR}/integration-crawler${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-integration-crawler PROPERTIES
+            FIXTURES_REQUIRED absolute-integration-crawler
+            PASS_REGULAR_EXPRESSION "integration-crawler=ok"
+            TIMEOUT 120
+        )
+        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/integration-serde-project")
+        file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/integration-serde-project/SerdeApp-$<CONFIG>.absproj" CONTENT
+"{
+  \"name\": \"SerdeIntegration\",
+  \"type\": \"app\",
+  \"entry\": \"${PROJECT_SOURCE_DIR}/examples/integration/serde/src/main.abs\",
+  \"sources\": [\"${PROJECT_SOURCE_DIR}/examples/integration/serde/src\"],
+  \"registries\": [\"${PROJECT_SOURCE_DIR}\"],
+  \"dependencies\": {
+    \"absolute.serde\": \"^0.1.0\"
+  }
+}
+")
+        add_test(
+            NAME absolute.build-integration-serde
+            COMMAND Absolute-Compiler build
+                "${CMAKE_BINARY_DIR}/integration-serde-project/SerdeApp-$<CONFIG>.absproj"
+                --build-exe
+                -o "${CMAKE_BINARY_DIR}/integration-serde${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-integration-serde PROPERTIES
+            FIXTURES_SETUP absolute-integration-serde
+            TIMEOUT 300
+        )
+        add_test(
+            NAME absolute.run-integration-serde
+            COMMAND "${CMAKE_BINARY_DIR}/integration-serde${CMAKE_EXECUTABLE_SUFFIX}"
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/integration-work"
+        )
+        set_tests_properties(absolute.run-integration-serde PROPERTIES
+            FIXTURES_REQUIRED absolute-integration-serde
+            PASS_REGULAR_EXPRESSION "integration-serde=ok"
+            TIMEOUT 120
+        )
+        add_test(
+            NAME absolute.build-integration-journal
+            COMMAND Absolute-Compiler
+                "${PROJECT_SOURCE_DIR}/examples/integration/journal.abs"
+                --build-exe
+                -o "${CMAKE_BINARY_DIR}/integration-journal${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-integration-journal PROPERTIES
+            FIXTURES_SETUP absolute-integration-journal
+            TIMEOUT 300
+        )
+        add_test(
+            NAME absolute.run-integration-journal
+            COMMAND "${CMAKE_BINARY_DIR}/integration-journal${CMAKE_EXECUTABLE_SUFFIX}"
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/integration-work"
+        )
+        set_tests_properties(absolute.run-integration-journal PROPERTIES
+            FIXTURES_REQUIRED absolute-integration-journal
+            PASS_REGULAR_EXPRESSION "integration-journal=ok"
+            TIMEOUT 120
+        )
+        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/integration-workspace-project")
+        file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/integration-workspace-project/WorkspaceApp-$<CONFIG>.absproj" CONTENT
+"{
+  \"name\": \"WorkspaceIntegration\",
+  \"type\": \"app\",
+  \"entry\": \"${PROJECT_SOURCE_DIR}/examples/integration/workspace/src/main.abs\",
+  \"sources\": [\"${PROJECT_SOURCE_DIR}/examples/integration/workspace/src\"],
+  \"registries\": [\"${PROJECT_SOURCE_DIR}\"],
+  \"dependencies\": {
+    \"absolute.catalog.left\": \"^0.1.0\",
+    \"absolute.catalog.right\": \"^0.1.0\"
+  }
+}
+")
+        add_test(
+            NAME absolute.build-integration-workspace
+            COMMAND Absolute-Compiler build
+                "${CMAKE_BINARY_DIR}/integration-workspace-project/WorkspaceApp-$<CONFIG>.absproj"
+                --build-exe
+                -o "${CMAKE_BINARY_DIR}/integration-workspace${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-integration-workspace PROPERTIES
+            FIXTURES_SETUP absolute-integration-workspace
+            TIMEOUT 300
+        )
+        add_test(
+            NAME absolute.check-integration-workspace-lockfile
+            COMMAND ${CMAKE_COMMAND}
+                -DLOCKFILE=${CMAKE_BINARY_DIR}/integration-workspace-project/abspackage.lock
+                -P "${PROJECT_SOURCE_DIR}/tests/check-workspace-lockfile.cmake"
+        )
+        set_tests_properties(absolute.check-integration-workspace-lockfile PROPERTIES
+            FIXTURES_REQUIRED absolute-integration-workspace
+        )
+        add_test(
+            NAME absolute.run-integration-workspace
+            COMMAND "${CMAKE_BINARY_DIR}/integration-workspace${CMAKE_EXECUTABLE_SUFFIX}"
+            WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/integration-work"
+        )
+        set_tests_properties(absolute.run-integration-workspace PROPERTIES
+            FIXTURES_REQUIRED absolute-integration-workspace
+            PASS_REGULAR_EXPRESSION "integration-workspace=ok"
+            TIMEOUT 120
+        )
+        if(TARGET Absolute-Desktop-Plugin)
+            add_test(
+                NAME absolute.build-integration-calculator
+                COMMAND Absolute-Compiler
+                    "${PROJECT_SOURCE_DIR}/examples/integration/calculator.abs"
+                    --plugin "$<TARGET_FILE_DIR:Absolute-Desktop-Plugin>/absolute-desktop.absplugin"
+                    --build-exe
+                    -o "${CMAKE_BINARY_DIR}/integration-calculator${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.build-integration-calculator PROPERTIES
+                FIXTURES_SETUP absolute-integration-calculator
+                TIMEOUT 300
+            )
+            add_test(
+                NAME absolute.run-integration-calculator
+                COMMAND "${CMAKE_BINARY_DIR}/integration-calculator${CMAKE_EXECUTABLE_SUFFIX}"
+                WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/integration-work"
+            )
+            set_tests_properties(absolute.run-integration-calculator PROPERTIES
+                FIXTURES_REQUIRED absolute-integration-calculator
+                PASS_REGULAR_EXPRESSION "integration-calculator=ok"
+                TIMEOUT 120
+            )
+            add_test(
+                NAME absolute.build-integration-scene
+                COMMAND Absolute-Compiler
+                    "${PROJECT_SOURCE_DIR}/examples/integration/scene.abs"
+                    --plugin "$<TARGET_FILE_DIR:Absolute-Desktop-Plugin>/absolute-desktop.absplugin"
+                    --build-exe
+                    -o "${CMAKE_BINARY_DIR}/integration-scene${CMAKE_EXECUTABLE_SUFFIX}"
+            )
+            set_tests_properties(absolute.build-integration-scene PROPERTIES
+                FIXTURES_SETUP absolute-integration-scene
+                TIMEOUT 300
+            )
+            add_test(
+                NAME absolute.run-integration-scene
+                COMMAND "${CMAKE_BINARY_DIR}/integration-scene${CMAKE_EXECUTABLE_SUFFIX}"
+                WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/integration-work"
+            )
+            set_tests_properties(absolute.run-integration-scene PROPERTIES
+                FIXTURES_REQUIRED absolute-integration-scene
+                PASS_REGULAR_EXPRESSION "integration-scene=ok"
+                TIMEOUT 120
+            )
+        endif()
         set_tests_properties(absolute.run-std-typed-channel PROPERTIES
             FIXTURES_REQUIRED absolute-std-typed-channel-executable
             PASS_REGULAR_EXPRESSION "std-typed-channel=ok"

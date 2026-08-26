@@ -1,0 +1,578 @@
+// Integration project: a hermetic multithreaded crawler.
+//
+// Exercises DNS, HTTP, tasks, a semaphore and a mutex together: one task
+// owns a local site, four workers crawl it, and they meet only through
+// HTTP plus a handful of atomics and a shared integer table. That is the
+// isolation model, not a workaround. A task cannot carry a string or a
+// managed pointer, so workers take integers, rebuild URLs from page ids,
+// and report through the table.
+//
+// The site is a numbered graph served on 127.0.0.1 at an ephemeral port.
+// Each page links to neighbours, to itself, to the same neighbour more
+// than once, and off-site. Workers bound concurrent fetches with a
+// semaphore, skip a page id that is already in the table, and refuse
+// hosts that are not the local crawl. The run is deterministic: unique
+// fetches equal the page count, duplicate and off-site skips equal the
+// hrefs the generator emitted.
+
+import "../../std/http.abs";
+import "../../std/net.abs";
+import "../../std/uri.abs";
+import "../../std/task.abs";
+import "../../std/concurrent.abs";
+import "../../std/string.abs";
+
+const int32 PAGE_COUNT = 16;
+const int32 CONCURRENCY = 2;
+const int32 LOCAL_LINKS_PER_PAGE = 8;
+const int32 OFFSITE_LINKS_PER_PAGE = 1;
+
+const int32 HREF_IGNORE = -1;
+const int32 HREF_OFFSITE = -2;
+
+// Shared table: visited flags, fetch counts, ring buffer, then counters.
+const int32 OFF_VISITED = 0;
+const int32 OFF_FETCHED = 16;
+const int32 OFF_FRONTIER = 32;
+const int32 OFF_COUNTS = 48;
+const int32 STATE_SIZE = 59;
+
+const int32 COUNT_HEAD = 0;
+const int32 COUNT_TAIL = 1;
+const int32 COUNT_LEN = 2;
+const int32 COUNT_INFLIGHT = 3;
+const int32 COUNT_FETCHED = 4;
+const int32 COUNT_DUP = 5;
+const int32 COUNT_OFFSITE = 6;
+const int32 COUNT_ERRORS = 7;
+const int32 COUNT_PEAK = 8;
+const int32 COUNT_ACTIVE = 9;
+const int32 COUNT_RESOLVES = 10;
+
+int32 nextPage(int32 id) {
+    return (id + 1) % PAGE_COUNT;
+}
+
+int32 jumpPage(int32 id) {
+    return (id * 7 + 3) % PAGE_COUNT;
+}
+
+int32 prevPage(int32 id) {
+    return (id + PAGE_COUNT - 1) % PAGE_COUNT;
+}
+
+string requestPath(string url) {
+    int32 query = std.text.indexOf(url, "?");
+    string path = url;
+    if (query >= 0) {
+        path = std.text.substring(url, 0, query);
+    }
+    int32 hash = std.text.indexOf(path, "#");
+    if (hash >= 0) {
+        return std.text.substring(path, 0, hash);
+    }
+    return path;
+}
+
+bool pathIs(string url, string expected) {
+    return requestPath(url) == expected;
+}
+
+string pathAfter(string url, string prefix) {
+    string path = requestPath(url);
+    if (!std.text.startsWith(path, prefix)) {
+        return "";
+    }
+    int32 n = std.text.codePointCount(prefix);
+    return std.text.substring(path, n, std.text.codePointCount(path) - n);
+}
+
+void appendAnchor(std.text.StringBuilder* body, string href, string label) {
+    body.append("<a href='");
+    body.append(href);
+    body.append("'>");
+    body.append(label);
+    body.append("</a>");
+}
+
+// Eight local hrefs and one off-site href. Duplicate next-links and a
+// self-link are the dedup case; example.invalid is the host the crawler
+// must refuse. Keep LOCAL_LINKS_PER_PAGE in sync with this list.
+string pageHtml(int32 id, int32 port) {
+    int32 next = nextPage(id);
+    int32 jump = jumpPage(id);
+    int32 prev = prevPage(id);
+    std.text.StringBuilder* body = new std.text.StringBuilder();
+    defer delete body;
+    body.append("<html><body><h1>page ");
+    body.appendInt(id as int64);
+    body.append("</h1>");
+    appendAnchor(body, format("/page/{}", next), "next");
+    appendAnchor(body, format("/page/{}", jump), "jump");
+    appendAnchor(body, format("/page/{}", prev), "prev");
+    appendAnchor(body, format("/page/{}", id), "self");
+    appendAnchor(body, format("/page/{}", next), "next-again");
+    appendAnchor(body, format("http://127.0.0.1:{}/page/{}", port, next),
+        "abs-next");
+    appendAnchor(body, format("/page/{}?from={}", next, id), "query-next");
+    appendAnchor(body, format("http://localhost:{}/page/{}", port, jump),
+        "local-jump");
+    appendAnchor(body, "http://example.invalid/away", "offsite");
+    body.append("</body></html>");
+    return body.toString();
+}
+
+int32 pageIdFromPath(string path) {
+    if (!std.text.startsWith(path, "/page/")) {
+        return HREF_IGNORE;
+    }
+    string rest = pathAfter(path, "/page/");
+    if (rest == "") {
+        return HREF_IGNORE;
+    }
+    int32 id = std.text.parseInt(rest);
+    if (rest != format("{}", id) || id < 0 || id >= PAGE_COUNT) {
+        return HREF_IGNORE;
+    }
+    return id;
+}
+
+// Local page id, HREF_OFFSITE, or HREF_IGNORE. Relative hrefs stay on
+// the crawl; only 127.0.0.1 and localhost are accepted as hosts.
+int32 classifyHref(string href) {
+    if (href == "") {
+        return HREF_IGNORE;
+    }
+    if (std.text.startsWith(href, "http://") ||
+        std.text.startsWith(href, "https://")) {
+        std.uri.Uri* uri = std.uri.parse(href);
+        defer delete uri;
+        string host = uri.host;
+        if (host != "" && host != "127.0.0.1" && host != "localhost") {
+            return HREF_OFFSITE;
+        }
+        return pageIdFromPath(uri.path);
+    }
+    return pageIdFromPath(requestPath(href));
+}
+
+string takeHref(string html, raw int64* cursor) {
+    int32 n = std.text.codePointCount(html);
+    int32 start = (*cursor) as int32;
+    if (start >= n) {
+        *cursor = n as int64;
+        return "";
+    }
+    string rest = std.text.substring(html, start, n - start);
+    int32 rel = std.text.indexOf(rest, "href='");
+    if (rel < 0) {
+        *cursor = n as int64;
+        return "";
+    }
+    int32 urlStart = start + rel + 6;
+    if (urlStart >= n) {
+        *cursor = n as int64;
+        return "";
+    }
+    string after = std.text.substring(html, urlStart, n - urlStart);
+    int32 endRel = std.text.indexOf(after, "'");
+    if (endRel < 0) {
+        *cursor = n as int64;
+        return "";
+    }
+    *cursor = (urlStart + endRel + 1) as int64;
+    return std.text.substring(html, urlStart, endRel);
+}
+
+int64 loadSlot(raw int64* state, int32 offset) {
+    return *(state + offset);
+}
+
+void storeSlot(raw int64* state, int32 offset, int64 value) {
+    *(state + offset) = value;
+}
+
+int64 loadCount(raw int64* state, int32 which) {
+    return loadSlot(state, OFF_COUNTS + which);
+}
+
+void storeCount(raw int64* state, int32 which, int64 value) {
+    storeSlot(state, OFF_COUNTS + which, value);
+}
+
+void addCount(raw int64* state, int32 which, int64 delta) {
+    storeCount(state, which, loadCount(state, which) + delta);
+}
+
+void pushPage(raw int64* state, int32 id) {
+    int32 tail = loadCount(state, COUNT_TAIL) as int32;
+    storeSlot(state, OFF_FRONTIER + tail, id as int64);
+    storeCount(state, COUNT_TAIL, ((tail + 1) % PAGE_COUNT) as int64);
+    addCount(state, COUNT_LEN, 1);
+}
+
+int32 popPage(raw int64* state) {
+    int32 head = loadCount(state, COUNT_HEAD) as int32;
+    int32 id = loadSlot(state, OFF_FRONTIER + head) as int32;
+    storeCount(state, COUNT_HEAD, ((head + 1) % PAGE_COUNT) as int64);
+    addCount(state, COUNT_LEN, -1);
+    return id;
+}
+
+void ingestId(raw int64* state, int32 id) {
+    if (loadSlot(state, OFF_VISITED + id) != 0) {
+        addCount(state, COUNT_DUP, 1);
+        return;
+    }
+    storeSlot(state, OFF_VISITED + id, 1);
+    pushPage(state, id);
+}
+
+void seedStart(raw int64* state) {
+    storeSlot(state, OFF_VISITED, 1);
+    pushPage(state, 0);
+}
+
+int32 waitForPort(int64 startedHandle, int64 portHandle) {
+    raw void* startedAtom = startedHandle as raw void*;
+    raw void* portAtom = portHandle as raw void*;
+    int32 waited = 0;
+    while (absolute_atomic_load(startedAtom) == 0 && waited < 2000) {
+        std.task.delay(5);
+        waited += 1;
+    }
+    if (absolute_atomic_load(startedAtom) == 0) {
+        return 0;
+    }
+    return absolute_atomic_load(portAtom) as int32;
+}
+
+void sendText(
+    std.http.HttpContext* context, int32 status, string type, string body) {
+    context.send(status, type, body);
+}
+
+bool handleRequest(
+    std.http.HttpContext* context, int32 port, int64 shutdownHandle) {
+    raw void* shutdownAtom = shutdownHandle as raw void*;
+    string method = context.request.method;
+    string url = context.request.url;
+
+    if (method == "GET" && pathIs(url, "/health")) {
+        sendText(context, 200, "text/plain", "ok");
+        return true;
+    }
+
+    if (method == "GET" && std.text.startsWith(requestPath(url), "/page/")) {
+        int32 id = pageIdFromPath(requestPath(url));
+        if (id < 0) {
+            sendText(context, 404, "text/plain", "not found");
+            return true;
+        }
+        sendText(context, 200, "text/html", pageHtml(id, port));
+        return true;
+    }
+
+    if (method == "POST" && pathIs(url, "/shutdown")) {
+        sendText(context, 200, "text/plain", "ok");
+        absolute_atomic_store(shutdownAtom, 1);
+        return false;
+    }
+
+    sendText(context, 404, "text/plain", "not found");
+    return true;
+}
+
+async int32 serve(
+    int64 portHandle,
+    int64 startedHandle,
+    int64 shutdownHandle) {
+    raw void* portAtom = portHandle as raw void*;
+    raw void* startedAtom = startedHandle as raw void*;
+    raw void* shutdownAtom = shutdownHandle as raw void*;
+
+    std.http.HttpServer* server = new std.http.HttpServer();
+    if (!server.listen("127.0.0.1", 0)) {
+        delete server;
+        return 0;
+    }
+    absolute_atomic_store(portAtom, server.port() as int64);
+    absolute_atomic_store(startedAtom, 1);
+
+    while (absolute_atomic_load(shutdownAtom) == 0) {
+        std.http.HttpContext* context = server.accept();
+        if (context == null) {
+            if (absolute_atomic_load(shutdownAtom) != 0) {
+                break;
+            }
+            std.task.delay(10);
+            continue;
+        }
+        bool keepGoing = handleRequest(context, server.port(), shutdownHandle);
+        delete context;
+        if (!keepGoing) {
+            break;
+        }
+    }
+
+    server.close();
+    delete server;
+    return 1;
+}
+
+string fetchPage(int32 port, int32 id) {
+    string ip = std.net.resolve("127.0.0.1");
+    if (ip == "") {
+        return "";
+    }
+    std.http.RequestOptions* options = new std.http.RequestOptions();
+    defer delete options;
+    options.timeoutMilliseconds = 2000;
+    options.followRedirects = false;
+    string url = format("http://{}:{}/page/{}", ip, port, id);
+    std.http.HttpResponse* response = std.http.fetch(url, options);
+    if (response == null) {
+        return "";
+    }
+    string body = "";
+    if (response.statusCode == 200) {
+        body = std.text.concat(response.body, "");
+    }
+    delete response;
+    return body;
+}
+
+async int32 crawlWorker(
+    int64 portHandle,
+    int64 startedHandle,
+    int64 shutdownHandle,
+    int64 mutexHandle,
+    int64 semaphoreHandle,
+    int64 stateAddress) {
+    raw void* shutdownAtom = shutdownHandle as raw void*;
+    raw void* mutex = mutexHandle as raw void*;
+    raw void* semaphore = semaphoreHandle as raw void*;
+    raw int64* state = stateAddress as raw int64*;
+    int32 port = waitForPort(startedHandle, portHandle);
+    if (port <= 0) {
+        return 0;
+    }
+
+    int64[] scan = new int64[1];
+    int32 idle = 0;
+    while (absolute_atomic_load(shutdownAtom) == 0 && idle < 4000) {
+        absolute_mutex_lock(mutex);
+        int32 id = -1;
+        if (loadCount(state, COUNT_LEN) > 0) {
+            id = popPage(state);
+            addCount(state, COUNT_INFLIGHT, 1);
+        }
+        int64 inFlight = loadCount(state, COUNT_INFLIGHT);
+        int64 fetched = loadCount(state, COUNT_FETCHED);
+        absolute_mutex_unlock(mutex);
+
+        if (id < 0) {
+            if (inFlight == 0 && fetched == PAGE_COUNT as int64) {
+                return 1;
+            }
+            idle += 1;
+            std.task.delay(5);
+            continue;
+        }
+
+        idle = 0;
+        absolute_semaphore_acquire(semaphore);
+
+        absolute_mutex_lock(mutex);
+        addCount(state, COUNT_ACTIVE, 1);
+        int64 active = loadCount(state, COUNT_ACTIVE);
+        if (active > loadCount(state, COUNT_PEAK)) {
+            storeCount(state, COUNT_PEAK, active);
+        }
+        absolute_mutex_unlock(mutex);
+
+        string body = "";
+        bool fetchedOk = false;
+        try {
+            body = fetchPage(port, id);
+            fetchedOk = body != "" && std.text.contains(body, "href=");
+        }
+        catch (Error* error) {
+            fetchedOk = false;
+        }
+
+        absolute_mutex_lock(mutex);
+        addCount(state, COUNT_ACTIVE, -1);
+        absolute_mutex_unlock(mutex);
+        absolute_semaphore_release(semaphore, 1);
+
+        absolute_mutex_lock(mutex);
+        addCount(state, COUNT_RESOLVES, 1);
+        if (fetchedOk) {
+            storeSlot(state, OFF_FETCHED + id,
+                loadSlot(state, OFF_FETCHED + id) + 1);
+            addCount(state, COUNT_FETCHED, 1);
+            scan[0] = 0;
+            while (true) {
+                string href = takeHref(body, &scan[0]);
+                if (href == "") {
+                    break;
+                }
+                int32 classified = classifyHref(href);
+                if (classified == HREF_OFFSITE) {
+                    addCount(state, COUNT_OFFSITE, 1);
+                } else {
+                    if (classified >= 0) {
+                        ingestId(state, classified);
+                    }
+                }
+            }
+        } else {
+            addCount(state, COUNT_ERRORS, 1);
+        }
+        addCount(state, COUNT_INFLIGHT, -1);
+        absolute_mutex_unlock(mutex);
+    }
+
+    return 0;
+}
+
+async int32 main() {
+    string loopback = std.net.resolve("127.0.0.1");
+    assert(loopback == "127.0.0.1", "loopback resolves to itself");
+    string localName = std.net.resolve("localhost");
+    assert(localName != "", "localhost resolves");
+    assert(localName == "127.0.0.1", "localhost is the IPv4 loopback");
+
+    std.concurrent.AtomicInt* port = new std.concurrent.AtomicInt(0);
+    std.concurrent.AtomicInt* started = new std.concurrent.AtomicInt(0);
+    std.concurrent.AtomicInt* shutdown = new std.concurrent.AtomicInt(0);
+    std.concurrent.Mutex* mutex = new std.concurrent.Mutex();
+    std.concurrent.Semaphore* semaphore =
+        new std.concurrent.Semaphore(CONCURRENCY, CONCURRENCY);
+    int64[] table = new int64[STATE_SIZE];
+    int32 slot = 0;
+    while (slot < STATE_SIZE) {
+        table[slot] = 0;
+        slot += 1;
+    }
+    raw int64* state = &table[0];
+    seedStart(state);
+
+    int64 portHandle = port.nativeHandle() as int64;
+    int64 startedHandle = started.nativeHandle() as int64;
+    int64 shutdownHandle = shutdown.nativeHandle() as int64;
+    int64 mutexHandle = mutex.nativeHandle() as int64;
+    int64 semaphoreHandle = semaphore.nativeHandle() as int64;
+    int64 stateAddress = state as int64;
+
+    // Named cores so the accept loop and the crawlers are distinct
+    // workers from submit time. A nested spawn without a name sits on
+    // the caller's queue, and if the first task never yields the rest
+    // never start.
+    @spawn(core = 0)
+    task<int32> serverTask = spawn serve(
+        portHandle, startedHandle, shutdownHandle);
+    @spawn(core = 1)
+    task<int32> worker0 = spawn crawlWorker(
+        portHandle,
+        startedHandle,
+        shutdownHandle,
+        mutexHandle,
+        semaphoreHandle,
+        stateAddress);
+    @spawn(core = 2)
+    task<int32> worker1 = spawn crawlWorker(
+        portHandle,
+        startedHandle,
+        shutdownHandle,
+        mutexHandle,
+        semaphoreHandle,
+        stateAddress);
+    @spawn(core = 3)
+    task<int32> worker2 = spawn crawlWorker(
+        portHandle,
+        startedHandle,
+        shutdownHandle,
+        mutexHandle,
+        semaphoreHandle,
+        stateAddress);
+    @spawn(core = 4)
+    task<int32> worker3 = spawn crawlWorker(
+        portHandle,
+        startedHandle,
+        shutdownHandle,
+        mutexHandle,
+        semaphoreHandle,
+        stateAddress);
+
+    int32 w0 = await worker0;
+    int32 w1 = await worker1;
+    int32 w2 = await worker2;
+    int32 w3 = await worker3;
+
+    println(format(
+        "crawler-stats fetched={} dups={} offsite={} errors={} peak={} resolves={} workers={}/{}/{}/{}",
+        loadCount(state, COUNT_FETCHED) as int32,
+        loadCount(state, COUNT_DUP) as int32,
+        loadCount(state, COUNT_OFFSITE) as int32,
+        loadCount(state, COUNT_ERRORS) as int32,
+        loadCount(state, COUNT_PEAK) as int32,
+        loadCount(state, COUNT_RESOLVES) as int32,
+        w0, w1, w2, w3));
+
+    int32 published = waitForPort(startedHandle, portHandle);
+    assert(published > 0, "server published an ephemeral port");
+    std.http.HttpResponse* stopping = std.http.post(
+        format("http://127.0.0.1:{}/shutdown", published),
+        "",
+        "text/plain");
+    assert(stopping != null, "shutdown response");
+    assert(stopping.statusCode == 200, "shutdown accepted");
+    delete stopping;
+
+    int32 serverOk = await serverTask;
+    assert(w0 == 1, "worker 0 finished the crawl");
+    assert(w1 == 1, "worker 1 finished the crawl");
+    assert(w2 == 1, "worker 2 finished the crawl");
+    assert(w3 == 1, "worker 3 finished the crawl");
+    assert(serverOk == 1, "server joined after shutdown");
+
+    int32 expectedLocal =
+        PAGE_COUNT * LOCAL_LINKS_PER_PAGE;
+    int32 expectedDups = expectedLocal - (PAGE_COUNT - 1);
+    int32 expectedOffsite = PAGE_COUNT * OFFSITE_LINKS_PER_PAGE;
+
+    assert(loadCount(state, COUNT_FETCHED) == PAGE_COUNT as int64,
+        "every page was fetched");
+    assert(loadCount(state, COUNT_ERRORS) == 0, "no fetch failed");
+    assert(loadCount(state, COUNT_DUP) == expectedDups as int64,
+        "duplicate hrefs were skipped");
+    assert(loadCount(state, COUNT_OFFSITE) == expectedOffsite as int64,
+        "off-site hrefs were refused");
+    assert(loadCount(state, COUNT_LEN) == 0, "frontier drained");
+    assert(loadCount(state, COUNT_INFLIGHT) == 0, "no fetch left in flight");
+    assert(loadCount(state, COUNT_PEAK) >= 1, "at least one fetch ran");
+    assert(loadCount(state, COUNT_PEAK) <= CONCURRENCY as int64,
+        "the semaphore bounded concurrent fetches");
+    assert(loadCount(state, COUNT_RESOLVES) == PAGE_COUNT as int64,
+        "each fetch resolved its host");
+
+    int32 page = 0;
+    while (page < PAGE_COUNT) {
+        assert(loadSlot(state, OFF_VISITED + page) == 1,
+            "every page was discovered");
+        assert(loadSlot(state, OFF_FETCHED + page) == 1,
+            "every page was fetched once");
+        page += 1;
+    }
+
+    delete semaphore;
+    delete mutex;
+    delete shutdown;
+    delete started;
+    delete port;
+
+    println("integration-crawler=ok");
+    return 0;
+}

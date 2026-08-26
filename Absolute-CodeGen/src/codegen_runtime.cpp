@@ -1884,7 +1884,7 @@ namespace Absolute {
         // significant digits of the value rather than the value, and the wasm
         // shim's freestanding formatter has no float directive at all -- it
         // printed the two characters "%g". One routine, one answer on both
-        // targets. docs/known-defects.md section 22.
+        // targets. docs/known-defects.md section 25.
         if (type->isFloatTy() || type->isDoubleTy()) {
             llvm::Value* buffer = CreateEntryAlloca(*CurrentFunction(),
                 llvm::ArrayType::get(builder.getInt8Ty(), kRealTextCapacity),

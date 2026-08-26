@@ -41,6 +41,15 @@ extern "C" void absolute_managed_destroy(std::uint64_t handle);
 extern "C" void absolute_capsule_destroy(void* capsule);
 extern "C" bool absolute_channel_receive_checked(void* channel, std::int64_t* value);
 
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define ABSOLUTE_TSAN_BUILD 1
+#endif
+#endif
+#if defined(__SANITIZE_THREAD__)
+#define ABSOLUTE_TSAN_BUILD 1
+#endif
+
 namespace {
     using TaskEntry = void (*)(void*);
     using FiberContext = Absolute::RuntimeDetail::FiberContext;
@@ -266,6 +275,12 @@ namespace {
 
     public:
         explicit ScopedAffinity(int core) {
+#ifdef ABSOLUTE_TSAN_BUILD
+            // A named core still selects a worker. Pinning that worker to one
+            // CPU under TSan lets the other starve until the first racer
+            // finishes, and the scheduler's handoff is then a happens-before.
+            (void)core;
+#else
             const AffinityCapabilities& capabilities =
                 GetAffinityCapabilities();
             if (!capabilities.CoreAvailable(core)) return;
@@ -292,6 +307,7 @@ namespace {
             }
 #else
             (void)core;
+#endif
 #endif
         }
 
@@ -680,7 +696,8 @@ namespace {
                             available.wait(lock);
                         }
                         else {
-                            available.wait_until(lock, timers.top().deadline);
+                            const auto deadline = timers.top().deadline;
+                            available.wait_until(lock, deadline);
                         }
                     }
                     if (stopping && queued == 0) break;
@@ -744,12 +761,20 @@ namespace {
             task->state = TaskState::Runnable;
             {
                 std::lock_guard lock(mutex);
-                size_t queueIndex =
-                    nextSubmissionQueue++ % queues.size();
-                if (currentScheduler == this && currentWorkerIndex >= 0)
-                    queueIndex = static_cast<size_t>(currentWorkerIndex);
-                EnqueueReadyLocked(queueIndex, {
-                    task, entry, core, priority, std::move(role)});
+                if (core >= 0) {
+                    const size_t queueIndex =
+                        static_cast<size_t>(core) % queues.size();
+                    task->ownerWorker = static_cast<int>(queueIndex);
+                    EnqueueLaneLocked(queues[queueIndex].pinned, {
+                        task, entry, core, priority, std::move(role)});
+                } else {
+                    size_t queueIndex =
+                        nextSubmissionQueue++ % queues.size();
+                    if (currentScheduler == this && currentWorkerIndex >= 0)
+                        queueIndex = static_cast<size_t>(currentWorkerIndex);
+                    EnqueueReadyLocked(queueIndex, {
+                        task, entry, core, priority, std::move(role)});
+                }
             }
             NotifyProgress();
         }
@@ -1729,6 +1754,11 @@ extern "C" bool absolute_atomic_compare_exchange(void* atomic, std::int64_t expe
 extern "C" void absolute_atomic_destroy(void* atomic) {
     if (!atomic) return;
     delete static_cast<std::atomic<std::int64_t>*>(atomic);
+}
+
+extern "C" void absolute_keep(std::int64_t value) {
+    thread_local volatile std::int64_t sink = 0;
+    sink = value;
 }
 
 extern "C" void* absolute_mutex_create() {

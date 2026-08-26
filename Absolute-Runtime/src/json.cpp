@@ -3,6 +3,7 @@
 #include <map>
 #include <sstream>
 #include <cstdint>
+#include <cstring>
 #include <cctype>
 #include <cerrno>
 #include <cstdlib>
@@ -41,9 +42,24 @@ struct AbsoluteJsonNode {
     }
 };
 
+// Allocated behind a reference-counted header, like every other string the
+// language hands out; see Absolute-Runtime/src/string.cpp. A thread-local
+// buffer is invalidated by the next as_string/stringify, which is how the
+// journal's first field became its fourth.
+extern "C" char* absolute_string_alloc(std::size_t bytes);
+
 namespace {
     thread_local std::string lastJsonError;
-    thread_local std::string lastJsonResult;
+
+    const char* DurableJsonCopy(const std::string& value) {
+        char* copy = absolute_string_alloc(value.size());
+        if (!copy) {
+            lastJsonError = "string allocation failed";
+            return "";
+        }
+        std::memcpy(copy, value.c_str(), value.size());
+        return copy;
+    }
 
     class JsonParser {
         std::string src;
@@ -110,16 +126,61 @@ namespace {
 
         AbsoluteJsonNode* parseNumber() {
             size_t start = pos;
-            if (src[pos] == '-') pos++;
-            while (pos < src.size() && std::isdigit(static_cast<unsigned char>(src[pos]))) pos++;
+            if (src[pos] == '-') {
+                pos++;
+                if (pos >= src.size() ||
+                    !std::isdigit(static_cast<unsigned char>(src[pos]))) {
+                    error = "Invalid number";
+                    return nullptr;
+                }
+            }
+            if (pos >= src.size() ||
+                !std::isdigit(static_cast<unsigned char>(src[pos]))) {
+                error = "Invalid number";
+                return nullptr;
+            }
+            // RFC 8259: a leading zero is only legal as the number zero itself.
+            // The wasm parser already refused "01"; this one handed it to
+            // strtod and kept 1.
+            if (src[pos] == '0') {
+                pos++;
+                if (pos < src.size() &&
+                    std::isdigit(static_cast<unsigned char>(src[pos]))) {
+                    error = "Leading zero in number";
+                    return nullptr;
+                }
+            } else {
+                while (pos < src.size() &&
+                    std::isdigit(static_cast<unsigned char>(src[pos]))) {
+                    pos++;
+                }
+            }
             if (pos < src.size() && src[pos] == '.') {
                 pos++;
-                while (pos < src.size() && std::isdigit(static_cast<unsigned char>(src[pos]))) pos++;
+                if (pos >= src.size() ||
+                    !std::isdigit(static_cast<unsigned char>(src[pos]))) {
+                    error = "Invalid fractional number";
+                    return nullptr;
+                }
+                while (pos < src.size() &&
+                    std::isdigit(static_cast<unsigned char>(src[pos]))) {
+                    pos++;
+                }
             }
             if (pos < src.size() && (src[pos] == 'e' || src[pos] == 'E')) {
                 pos++;
-                if (pos < src.size() && (src[pos] == '+' || src[pos] == '-')) pos++;
-                while (pos < src.size() && std::isdigit(static_cast<unsigned char>(src[pos]))) pos++;
+                if (pos < src.size() && (src[pos] == '+' || src[pos] == '-')) {
+                    pos++;
+                }
+                if (pos >= src.size() ||
+                    !std::isdigit(static_cast<unsigned char>(src[pos]))) {
+                    error = "Invalid exponent";
+                    return nullptr;
+                }
+                while (pos < src.size() &&
+                    std::isdigit(static_cast<unsigned char>(src[pos]))) {
+                    pos++;
+                }
             }
             std::string numStr = src.substr(start, pos - start);
             // strtod, not std::stod: stod throws whenever the C library flags
@@ -326,6 +387,12 @@ namespace {
                     delete node;
                     return nullptr;
                 }
+                // A second "a" is a replacement, not a second name. Overwriting
+                // the pointer leaked the first value; wasm already freed it.
+                auto existing = node->objectProperties.find(key);
+                if (existing != node->objectProperties.end()) {
+                    delete existing->second;
+                }
                 node->objectProperties[key] = valNode;
 
                 skipWhitespace();
@@ -348,6 +415,24 @@ namespace {
 
         std::string getError() const { return error; }
     };
+
+    void writeJsonString(std::ostringstream& ss, const std::string& text) {
+        static const char hex[] = "0123456789abcdef";
+        ss << '"';
+        for (char raw : text) {
+            const unsigned char c = static_cast<unsigned char>(raw);
+            if (c == '"') ss << "\\\"";
+            else if (c == '\\') ss << "\\\\";
+            else if (c == '\b') ss << "\\b";
+            else if (c == '\f') ss << "\\f";
+            else if (c == '\n') ss << "\\n";
+            else if (c == '\r') ss << "\\r";
+            else if (c == '\t') ss << "\\t";
+            else if (c < 0x20) ss << "\\u00" << hex[c >> 4] << hex[c & 15];
+            else ss << raw;
+        }
+        ss << '"';
+    }
 
     void stringifyHelper(const AbsoluteJsonNode* node, std::ostringstream& ss, bool pretty = false, int indent = 2, int currentIndent = 0) {
         if (!node) {
@@ -375,32 +460,20 @@ namespace {
             ss << text;
             break;
         }
-        case JSON_STRING: {
-            static const char hex[] = "0123456789abcdef";
-            ss << '"';
-            for (char raw : node->stringValue) {
-                const unsigned char c = static_cast<unsigned char>(raw);
-                if (c == '"') ss << "\\\"";
-                else if (c == '\\') ss << "\\\\";
-                else if (c == '\b') ss << "\\b";
-                else if (c == '\f') ss << "\\f";
-                else if (c == '\n') ss << "\\n";
-                else if (c == '\r') ss << "\\r";
-                else if (c == '\t') ss << "\\t";
-                // RFC 8259 forbids an unescaped code point below U+0020. These
-                // reached the output as themselves, so a document that had come
-                // in as "\u0001" went out as a byte no other parser accepts.
-                else if (c < 0x20) ss << "\\u00" << hex[c >> 4] << hex[c & 15];
-                else ss << raw;
-            }
-            ss << '"';
+        case JSON_STRING:
+            writeJsonString(ss, node->stringValue);
             break;
-        }
         case JSON_ARRAY: {
             ss << '[';
             for (size_t idx = 0; idx < node->arrayElements.size(); ++idx) {
-                if (idx > 0) ss << (pretty ? ", " : ",");
+                if (idx > 0) ss << ',';
+                if (pretty) {
+                    ss << '\n' << std::string(static_cast<size_t>(currentIndent + indent), ' ');
+                }
                 stringifyHelper(node->arrayElements[idx], ss, pretty, indent, currentIndent + indent);
+            }
+            if (pretty && !node->arrayElements.empty()) {
+                ss << '\n' << std::string(static_cast<size_t>(currentIndent), ' ');
             }
             ss << ']';
             break;
@@ -409,11 +482,21 @@ namespace {
             ss << '{';
             size_t idx = 0;
             for (const auto& pair : node->objectProperties) {
-                if (idx > 0) ss << (pretty ? ", " : ",");
-                ss << '"' << pair.first << "\":";
+                if (idx > 0) ss << ',';
+                if (pretty) {
+                    ss << '\n' << std::string(static_cast<size_t>(currentIndent + indent), ' ');
+                }
+                // A key is a JSON string. Writing it raw meant a quote or a
+                // backslash in the name produced a document that was not JSON;
+                // wasm already ran the same escaper it uses for values.
+                writeJsonString(ss, pair.first);
+                ss << ':';
                 if (pretty) ss << ' ';
                 stringifyHelper(pair.second, ss, pretty, indent, currentIndent + indent);
                 idx++;
+            }
+            if (pretty && !node->objectProperties.empty()) {
+                ss << '\n' << std::string(static_cast<size_t>(currentIndent), ' ');
             }
             ss << '}';
             break;
@@ -484,9 +567,9 @@ extern "C" {
     }
 
     const char* absolute_json_as_string(const void* handle) {
-        if (!handle) return "";
-        lastJsonResult = static_cast<const AbsoluteJsonNode*>(handle)->stringValue;
-        return lastJsonResult.c_str();
+        if (!handle) return DurableJsonCopy(std::string());
+        return DurableJsonCopy(
+            static_cast<const AbsoluteJsonNode*>(handle)->stringValue);
     }
 
     int32_t absolute_json_size(const void* handle) {
@@ -558,11 +641,10 @@ extern "C" {
     }
 
     const char* absolute_json_stringify(const void* handle, int32_t pretty) {
-        if (!handle) return "null";
+        if (!handle) return DurableJsonCopy(std::string("null"));
         std::ostringstream ss;
         stringifyHelper(static_cast<const AbsoluteJsonNode*>(handle), ss, pretty != 0);
-        lastJsonResult = ss.str();
-        return lastJsonResult.c_str();
+        return DurableJsonCopy(ss.str());
     }
 
     const char* absolute_json_get_last_error() {

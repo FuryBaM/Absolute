@@ -1,0 +1,552 @@
+// Integration project: a hermetic HTTP server.
+//
+// Exercises std.http, std.json, cancellation, timeouts and tasks together:
+// one task owns the listener and the catalogue, another drives the client,
+// and they meet only through HTTP and a handful of atomics. That is the
+// isolation model, not a workaround: a task cannot carry a string, a managed
+// pointer or the server object itself, so the catalogue stays in the server
+// isolate and the client checks it by talking to it.
+//
+// The program binds 127.0.0.1 on an ephemeral port, so nothing in the
+// environment has to be listening and two copies can run at once. It seeds
+// nothing on disk. When the client is done it posts /shutdown, the accept
+// loop returns, and both tasks join.
+
+import "../../std/http.abs";
+import "../../std/json.abs";
+import "../../std/task.abs";
+import "../../std/concurrent.abs";
+import "../../std/string.abs";
+
+const int32 CATALOG_CAPACITY = 16;
+const int32 SLOW_TICKS = 16;
+const int32 SLOW_TICK_MS = 50;
+
+string errorJson(string message) {
+    std.json.JsonValue* body = std.json.createObject();
+    body.setBool("ok", false);
+    body.setString("error", message);
+    string text = body.stringify();
+    delete body;
+    return text;
+}
+
+string healthJson() {
+    std.json.JsonValue* body = std.json.createObject();
+    body.setBool("ok", true);
+    string text = body.stringify();
+    delete body;
+    return text;
+}
+
+string itemJson(int32 id, string name, int32 quantity) {
+    std.json.JsonValue* body = std.json.createObject();
+    body.setNumber("id", id as double);
+    body.setString("name", name);
+    body.setNumber("quantity", quantity as double);
+    string text = body.stringify();
+    delete body;
+    return text;
+}
+
+string sleptJson() {
+    std.json.JsonValue* body = std.json.createObject();
+    body.setString("status", "slept");
+    string text = body.stringify();
+    delete body;
+    return text;
+}
+
+string requestPath(string url) {
+    int32 query = std.text.indexOf(url, "?");
+    if (query >= 0) {
+        return std.text.substring(url, 0, query);
+    }
+    return url;
+}
+
+bool pathIs(string url, string expected) {
+    return requestPath(url) == expected;
+}
+
+string pathAfter(string url, string prefix) {
+    string path = requestPath(url);
+    if (!std.text.startsWith(path, prefix)) {
+        return "";
+    }
+    int32 n = std.text.codePointCount(prefix);
+    return std.text.substring(path, n, std.text.codePointCount(path) - n);
+}
+
+void sendJson(std.http.HttpContext* context, int32 status, string body) {
+    context.send(status, "application/json", body);
+}
+
+class Catalog {
+    public int32[] ids;
+    public string[] names;
+    public int32[] quantities;
+    public int32 count;
+    public int32 nextId;
+
+    public Catalog() {
+        ids = new int32[CATALOG_CAPACITY];
+        names = new string[CATALOG_CAPACITY];
+        quantities = new int32[CATALOG_CAPACITY];
+        count = 0;
+        nextId = 1;
+    }
+
+    public int32 slotOf(int32 id) {
+        int32 index = 0;
+        while (index < count) {
+            if (ids[index] == id) {
+                return index;
+            }
+            index += 1;
+        }
+        return -1;
+    }
+
+    public int32 add(string name, int32 quantity) {
+        if (count >= CATALOG_CAPACITY) {
+            return -1;
+        }
+        int32 id = nextId;
+        ids[count] = id;
+        // The request's `name` dies with the handler. A string[] slot is a
+        // header, not a retain, so storing it as-is leaves GET /item/:id
+        // reading storage that is already gone — create still saw the name
+        // because jsonAt ran while the local was alive.
+        names[count] = std.text.concat(name, "");
+        quantities[count] = quantity;
+        count += 1;
+        nextId += 1;
+        return id;
+    }
+
+    public string jsonAt(int32 index) {
+        return itemJson(ids[index], names[index], quantities[index]);
+    }
+
+    public string listJson() {
+        std.json.JsonValue* items = std.json.createArray();
+        int32 index = 0;
+        while (index < count) {
+            std.json.JsonValue* item = std.json.createObject();
+            item.setNumber("id", ids[index] as double);
+            item.setString("name", names[index]);
+            item.setNumber("quantity", quantities[index] as double);
+            items.add(item);
+            delete item;
+            index += 1;
+        }
+        std.json.JsonValue* body = std.json.createObject();
+        body.setProp("items", items);
+        delete items;
+        string text = body.stringify();
+        delete body;
+        return text;
+    }
+}
+
+// Returns false when the accept loop should stop. The slow route waits in
+// 50 ms steps so a cancellation flag posted by another task is observed
+// rather than only after the whole sleep; delay yields, so a one-worker
+// host can still run the client while this is parked.
+bool handleRequest(
+    std.http.HttpContext* context,
+    Catalog* catalog,
+    int64 shutdownHandle,
+    int64 slowCancelHandle,
+    int64 slowEnteredHandle) {
+    raw void* shutdownAtom = shutdownHandle as raw void*;
+    raw void* slowCancelAtom = slowCancelHandle as raw void*;
+    raw void* slowEnteredAtom = slowEnteredHandle as raw void*;
+
+    string method = context.request.method;
+    string url = context.request.url;
+
+    if (method == "GET" && pathIs(url, "/health")) {
+        sendJson(context, 200, healthJson());
+        return true;
+    }
+
+    if (method == "GET" && pathIs(url, "/items")) {
+        sendJson(context, 200, catalog.listJson());
+        return true;
+    }
+
+    if (method == "GET" && std.text.startsWith(requestPath(url), "/item/")) {
+        string rest = pathAfter(url, "/item/");
+        int32 id = std.text.parseInt(rest);
+        if (rest == "" || rest != format("{}", id) || id <= 0) {
+            sendJson(context, 404, errorJson("not found"));
+            return true;
+        }
+        int32 slot = catalog.slotOf(id);
+        if (slot < 0) {
+            sendJson(context, 404, errorJson("not found"));
+            return true;
+        }
+        sendJson(context, 200, catalog.jsonAt(slot));
+        return true;
+    }
+
+    if (method == "POST" && pathIs(url, "/item")) {
+        std.json.JsonValue* parsed = std.json.parse(context.request.body);
+        if (parsed == null || !parsed.isValid() || !parsed.isObject()) {
+            if (parsed != null) {
+                delete parsed;
+            }
+            sendJson(context, 400, errorJson("invalid json"));
+            return true;
+        }
+        string name = parsed.getStringOr("name", "");
+        int64 quantityValue = parsed.getIntOr("quantity", 1);
+        delete parsed;
+        if (name == "" || quantityValue <= 0 || quantityValue > (1000000 as int64)) {
+            sendJson(context, 400, errorJson("invalid item"));
+            return true;
+        }
+        int32 id = catalog.add(name, quantityValue as int32);
+        if (id < 0) {
+            sendJson(context, 503, errorJson("full"));
+            return true;
+        }
+        int32 slot = catalog.slotOf(id);
+        sendJson(context, 201, catalog.jsonAt(slot));
+        return true;
+    }
+
+    if (method == "GET" && pathIs(url, "/slow")) {
+        absolute_atomic_store(slowEnteredAtom, 1);
+        int32 ticks = 0;
+        bool cancelled = false;
+        while (ticks < SLOW_TICKS) {
+            if (absolute_atomic_load(shutdownAtom) != 0) {
+                cancelled = true;
+                break;
+            }
+            if (absolute_atomic_load(slowCancelAtom) != 0) {
+                cancelled = true;
+                break;
+            }
+            std.task.delay(SLOW_TICK_MS);
+            ticks += 1;
+        }
+        absolute_atomic_store(slowEnteredAtom, 0);
+        absolute_atomic_store(slowCancelAtom, 0);
+        if (cancelled) {
+            sendJson(context, 503, errorJson("cancelled"));
+            return true;
+        }
+        sendJson(context, 200, sleptJson());
+        return true;
+    }
+
+    if (method == "POST" && pathIs(url, "/shutdown")) {
+        sendJson(context, 200, healthJson());
+        absolute_atomic_store(shutdownAtom, 1);
+        return false;
+    }
+
+    sendJson(context, 404, errorJson("not found"));
+    return true;
+}
+
+async int32 serve(
+    int64 portHandle,
+    int64 startedHandle,
+    int64 shutdownHandle,
+    int64 slowCancelHandle,
+    int64 slowEnteredHandle,
+    int64 servedHandle) {
+    raw void* portAtom = portHandle as raw void*;
+    raw void* startedAtom = startedHandle as raw void*;
+    raw void* shutdownAtom = shutdownHandle as raw void*;
+    raw void* servedAtom = servedHandle as raw void*;
+
+    std.http.HttpServer* server = new std.http.HttpServer();
+    Catalog* catalog = new Catalog();
+    if (!server.listen("127.0.0.1", 0)) {
+        delete catalog;
+        delete server;
+        return 0;
+    }
+    absolute_atomic_store(portAtom, server.port() as int64);
+    absolute_atomic_store(startedAtom, 1);
+
+    while (absolute_atomic_load(shutdownAtom) == 0) {
+        std.http.HttpContext* context = server.accept();
+        if (context == null) {
+            if (absolute_atomic_load(shutdownAtom) != 0) {
+                break;
+            }
+            std.task.delay(10);
+            continue;
+        }
+        bool keepGoing = handleRequest(
+            context,
+            catalog,
+            shutdownHandle,
+            slowCancelHandle,
+            slowEnteredHandle);
+        delete context;
+        absolute_atomic_fetch_add(servedAtom, 1);
+        if (!keepGoing) {
+            break;
+        }
+    }
+
+    server.close();
+    delete catalog;
+    delete server;
+    return 1;
+}
+
+// Posted onto the server's core so it can run during /slow's delay: the
+// client is blocked in receive, and a task cannot carry the cancellation
+// token across the isolate, so the flag is an atomic the handler already
+// knows how to read.
+async int32 watchAndCancel(
+    int64 slowEnteredHandle,
+    int64 slowCancelHandle,
+    int64 shutdownHandle) {
+    raw void* enteredAtom = slowEnteredHandle as raw void*;
+    raw void* cancelAtom = slowCancelHandle as raw void*;
+    raw void* shutdownAtom = shutdownHandle as raw void*;
+    int32 waited = 0;
+    while (absolute_atomic_load(enteredAtom) == 0 && waited < 2000) {
+        if (absolute_atomic_load(shutdownAtom) != 0) {
+            return 0;
+        }
+        std.task.delay(5);
+        waited += 1;
+    }
+    if (absolute_atomic_load(enteredAtom) == 0) {
+        return 0;
+    }
+    std.task.delay(20);
+    absolute_atomic_store(cancelAtom, 1);
+    return 1;
+}
+
+std.http.HttpResponse* getPath(int32 port, string path, int32 timeoutMs) {
+    std.http.RequestOptions* options = new std.http.RequestOptions();
+    defer delete options;
+    options.timeoutMilliseconds = timeoutMs;
+    options.followRedirects = false;
+    string url = format("http://127.0.0.1:{}{}", port, path);
+    return std.http.fetch(url, options);
+}
+
+std.http.HttpResponse* postJson(int32 port, string path, string body) {
+    string url = format("http://127.0.0.1:{}{}", port, path);
+    return std.http.post(url, body, "application/json");
+}
+
+int32 waitForPort(int64 startedHandle, int64 portHandle) {
+    raw void* startedAtom = startedHandle as raw void*;
+    raw void* portAtom = portHandle as raw void*;
+    int32 waited = 0;
+    while (absolute_atomic_load(startedAtom) == 0 && waited < 2000) {
+        std.task.delay(5);
+        waited += 1;
+    }
+    if (absolute_atomic_load(startedAtom) == 0) {
+        return 0;
+    }
+    return absolute_atomic_load(portAtom) as int32;
+}
+
+void waitUntilServed(int64 servedHandle, int64 previous) {
+    raw void* servedAtom = servedHandle as raw void*;
+    int32 waited = 0;
+    while (absolute_atomic_load(servedAtom) <= previous && waited < 1000) {
+        std.task.delay(10);
+        waited += 1;
+    }
+}
+
+async int32 drive(
+    int64 portHandle,
+    int64 startedHandle,
+    int64 shutdownHandle,
+    int64 slowCancelHandle,
+    int64 slowEnteredHandle,
+    int64 servedHandle) {
+    raw void* servedAtom = servedHandle as raw void*;
+    int32 port = waitForPort(startedHandle, portHandle);
+    assert(port > 0, "server published an ephemeral port");
+
+    std.http.HttpResponse* health = getPath(port, "/health", 2000);
+    assert(health != null, "health response");
+    assert(health.statusCode == 200, "health status");
+    std.json.JsonValue* healthBody = std.json.parse(health.body);
+    assert(healthBody != null && healthBody.isValid(), "health json");
+    assert(healthBody.getBoolOr("ok", false), "health ok");
+    delete healthBody;
+    delete health;
+
+    std.http.HttpResponse* missing = getPath(port, "/item/1", 2000);
+    assert(missing.statusCode == 404, "empty catalogue is a 404");
+    delete missing;
+
+    std.http.HttpResponse* created = postJson(
+        port, "/item", "{\"name\":\"bolt\",\"quantity\":3}");
+    assert(created.statusCode == 201, "create status");
+    std.json.JsonValue* createdBody = std.json.parse(created.body);
+    assert(createdBody != null && createdBody.isValid(), "create json");
+    assert(createdBody.getIntOr("id", 0) == 1, "first item is id 1");
+    assert(createdBody.getStringOr("name", "") == "bolt", "created name");
+    assert(createdBody.getIntOr("quantity", 0) == 3, "created quantity");
+    delete createdBody;
+    delete created;
+
+    std.http.HttpResponse* fetched = getPath(port, "/item/1", 2000);
+    assert(fetched.statusCode == 200, "fetch created item");
+    std.json.JsonValue* fetchedBody = std.json.parse(fetched.body);
+    assert(fetchedBody.getStringOr("name", "") == "bolt", "fetched name");
+    assert(fetchedBody.getIntOr("quantity", 0) == 3, "fetched quantity");
+    delete fetchedBody;
+    delete fetched;
+
+    std.http.HttpResponse* second = postJson(
+        port, "/item", "{\"name\":\"nut\",\"quantity\":10}");
+    assert(second.statusCode == 201, "second create");
+    std.json.JsonValue* secondBody = std.json.parse(second.body);
+    assert(secondBody.getIntOr("id", 0) == 2, "second item is id 2");
+    delete secondBody;
+    delete second;
+
+    std.http.HttpResponse* listed = getPath(port, "/items", 2000);
+    assert(listed.statusCode == 200, "list status");
+    std.json.JsonValue* listedBody = std.json.parse(listed.body);
+    std.json.JsonValue* items = listedBody.getProp("items");
+    assert(items != null && items.isArray(), "list items");
+    assert(items.size() == 2, "list contains both created items");
+    delete items;
+    delete listedBody;
+    delete listed;
+
+    std.http.HttpResponse* unknown = getPath(port, "/item/99", 2000);
+    assert(unknown.statusCode == 404, "unknown id");
+    delete unknown;
+
+    std.http.HttpResponse* noName = postJson(port, "/item", "{\"quantity\":1}");
+    assert(noName.statusCode == 400, "item without a name");
+    delete noName;
+
+    std.http.HttpResponse* garbage = postJson(port, "/item", "not-json");
+    assert(garbage.statusCode == 400, "item that is not json");
+    delete garbage;
+
+    std.http.HttpResponse* noRoute = getPath(port, "/no-such-route", 2000);
+    assert(noRoute.statusCode == 404, "unknown route");
+    delete noRoute;
+
+    std.http.RequestOptions* cancelled = new std.http.RequestOptions();
+    cancelled.timeoutMilliseconds = 2000;
+    cancelled.cancellation.cancel();
+    bool cancelCaught = false;
+    try {
+        std.http.HttpResponse* unexpected = std.http.fetch(
+            format("http://127.0.0.1:{}/health", port), cancelled);
+        delete unexpected;
+    }
+    catch (Error* error) {
+        cancelCaught = true;
+    }
+    delete cancelled;
+    assert(cancelCaught, "cancelled token is observed against a live server");
+
+    int64 servedBeforeSlow = absolute_atomic_load(servedAtom);
+    bool timedOut = false;
+    try {
+        std.http.HttpResponse* slow = getPath(port, "/slow", 150);
+        delete slow;
+    }
+    catch (Error* error) {
+        timedOut = true;
+    }
+    assert(timedOut, "a slow route times out at the client");
+    waitUntilServed(servedHandle, servedBeforeSlow);
+    assert(absolute_atomic_load(servedAtom) > servedBeforeSlow,
+        "the timed-out request still left the accept loop");
+
+    absolute_atomic_store(slowCancelHandle as raw void*, 0);
+    absolute_atomic_store(slowEnteredHandle as raw void*, 0);
+
+    @spawn(core = 0)
+    task<int32> canceller = spawn watchAndCancel(
+        slowEnteredHandle, slowCancelHandle, shutdownHandle);
+    std.http.HttpResponse* aborted = getPath(port, "/slow", 5000);
+    assert(aborted.statusCode == 503, "in-flight slow route is cancelled");
+    std.json.JsonValue* abortedBody = std.json.parse(aborted.body);
+    assert(abortedBody.getStringOr("error", "") == "cancelled",
+        "cancelled body");
+    delete abortedBody;
+    delete aborted;
+    assert(await canceller == 1, "canceller saw the slow route enter");
+
+    std.http.HttpResponse* stillUp = getPath(port, "/health", 2000);
+    assert(stillUp.statusCode == 200, "server survives timeout and cancel");
+    delete stillUp;
+
+    std.http.HttpResponse* stopping = postJson(port, "/shutdown", "");
+    assert(stopping.statusCode == 200, "shutdown accepted");
+    delete stopping;
+    return 1;
+}
+
+async int32 main() {
+    std.concurrent.AtomicInt* port = new std.concurrent.AtomicInt(0);
+    std.concurrent.AtomicInt* started = new std.concurrent.AtomicInt(0);
+    std.concurrent.AtomicInt* shutdown = new std.concurrent.AtomicInt(0);
+    std.concurrent.AtomicInt* slowCancel = new std.concurrent.AtomicInt(0);
+    std.concurrent.AtomicInt* slowEntered = new std.concurrent.AtomicInt(0);
+    std.concurrent.AtomicInt* served = new std.concurrent.AtomicInt(0);
+
+    int64 portHandle = port.nativeHandle() as int64;
+    int64 startedHandle = started.nativeHandle() as int64;
+    int64 shutdownHandle = shutdown.nativeHandle() as int64;
+    int64 slowCancelHandle = slowCancel.nativeHandle() as int64;
+    int64 slowEnteredHandle = slowEntered.nativeHandle() as int64;
+    int64 servedHandle = served.nativeHandle() as int64;
+
+    // Named cores so the accept loop and the client are two workers from
+    // submit time. A nested spawn without a name sits on the caller's queue,
+    // and if the first task never yields the second never starts.
+    @spawn(core = 0)
+    task<int32> serverTask = spawn serve(
+        portHandle,
+        startedHandle,
+        shutdownHandle,
+        slowCancelHandle,
+        slowEnteredHandle,
+        servedHandle);
+    @spawn(core = 1)
+    task<int32> clientTask = spawn drive(
+        portHandle,
+        startedHandle,
+        shutdownHandle,
+        slowCancelHandle,
+        slowEnteredHandle,
+        servedHandle);
+
+    int32 clientOk = await clientTask;
+    int32 serverOk = await serverTask;
+    assert(clientOk == 1, "client finished the script");
+    assert(serverOk == 1, "server joined after shutdown");
+
+    delete served;
+    delete slowEntered;
+    delete slowCancel;
+    delete shutdown;
+    delete started;
+    delete port;
+
+    println("integration-http-server=ok");
+    return 0;
+}

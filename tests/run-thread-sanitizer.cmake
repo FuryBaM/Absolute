@@ -19,9 +19,19 @@ endif()
 # rather than the first; exitcode is what turns any report into a failure.
 set(tsan_options "halt_on_error=0:exitcode=66:history_size=4")
 
+# The deliberate race names two cores so the two writers start on two
+# workers. A one-worker pool maps both cores onto the same thread, the
+# first racer never yields, and ThreadSanitizer sees an order.
+if(EXPECT_RACE)
+    set(scheduler_workers "ABSOLUTE_SCHEDULER_WORKERS=2")
+else()
+    set(scheduler_workers "")
+endif()
+
 execute_process(
     COMMAND "${CMAKE_COMMAND}" -E env
         "TSAN_OPTIONS=${tsan_options}"
+        ${scheduler_workers}
         "${EXECUTABLE}"
     TIMEOUT "${TIMEOUT_SECONDS}"
     RESULT_VARIABLE result

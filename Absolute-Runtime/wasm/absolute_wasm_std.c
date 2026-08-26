@@ -419,16 +419,38 @@ void* absolute_http_tls_open(
     WasmHttpTlsResponse* response =
         (WasmHttpTlsResponse*)heap_alloc(
             sizeof(WasmHttpTlsResponse));
-    if (!response) return NULL;
+    if (!response) {
+        fs_copy_path(
+            g_http_tls_error, sizeof(g_http_tls_error),
+            "HTTPS receive allocation failed");
+        return NULL;
+    }
     memset(response, 0, sizeof(*response));
-    response->body =
-        (uint8_t*)heap_alloc((size_t)maximumResponseBytes + 1);
-    if (!response->body) {
+    /* RequestOptions defaults to 16 MiB. The wasm arena is 2 MiB, so
+     * asking for that maximum returns NULL and fetch throws with an
+     * empty error. Take the largest buffer the arena will still give. */
+    int32_t cap = maximumResponseBytes;
+    uint8_t* buffer = NULL;
+    while (cap > 0) {
+        buffer = (uint8_t*)heap_alloc((size_t)cap + 1);
+        if (buffer)
+            break;
+        if (cap <= 4096)
+            break;
+        cap /= 4;
+        if (cap < 4096)
+            cap = 4096;
+    }
+    if (!buffer) {
+        fs_copy_path(
+            g_http_tls_error, sizeof(g_http_tls_error),
+            "HTTPS receive allocation failed");
         free(response);
         return NULL;
     }
+    response->body = buffer;
     const int32_t received = absolute_http_get(
-        url, response->body, maximumResponseBytes);
+        url, response->body, cap);
     if (received < 0) {
         fs_copy_path(
             g_http_tls_error, sizeof(g_http_tls_error),
@@ -521,7 +543,6 @@ int32_t absolute_process_set_cwd(const char* path) {
 
 typedef struct WasmBinaryWriter { uint8_t* data; size_t size; size_t capacity; } WasmBinaryWriter;
 typedef struct WasmBinaryReader { uint8_t* data; size_t size; size_t position; } WasmBinaryReader;
-static char g_binary_scratch[8192];
 
 static int binary_reserve(WasmBinaryWriter* writer, size_t extra) {
     if (!writer || extra > (size_t)-1 - writer->size) return 0;
@@ -565,17 +586,23 @@ int64_t absolute_binary_writer_size(const void* p) {
 const void* absolute_binary_writer_get_data(const void* p) {
     return p ? ((const WasmBinaryWriter*)p)->data : NULL;
 }
+static char* g_binary_result;
+
 const char* absolute_binary_writer_to_hex(const void* p) {
     static const char digits[] = "0123456789abcdef";
     const WasmBinaryWriter* writer = (const WasmBinaryWriter*)p;
     if (!writer) return "";
     size_t count = writer->size;
-    if (count * 2 + 1 > sizeof(g_binary_scratch)) count = (sizeof(g_binary_scratch) - 1) / 2;
+    char* out = (char*)heap_alloc(count * 2 + 1);
+    if (!out) return "";
     for (size_t i = 0; i < count; ++i) {
-        g_binary_scratch[i * 2] = digits[writer->data[i] >> 4];
-        g_binary_scratch[i * 2 + 1] = digits[writer->data[i] & 15];
+        out[i * 2] = digits[writer->data[i] >> 4];
+        out[i * 2 + 1] = digits[writer->data[i] & 15];
     }
-    g_binary_scratch[count * 2] = '\0'; return g_binary_scratch;
+    out[count * 2] = '\0';
+    free(g_binary_result);
+    g_binary_result = out;
+    return g_binary_result;
 }
 void* absolute_binary_reader_create(const void* data, int64_t size) {
     WasmBinaryReader* reader = (WasmBinaryReader*)calloc(1, sizeof(WasmBinaryReader));
@@ -605,9 +632,10 @@ const char* absolute_binary_reader_read_string(void* p) {
     WasmBinaryReader* reader = (WasmBinaryReader*)p;
     int32_t size = absolute_binary_reader_read_i32(p);
     if (!reader || size < 0 || reader->position + (size_t)size > reader->size) return "";
-    size_t copy = (size_t)size < sizeof(g_binary_scratch)-1 ? (size_t)size : sizeof(g_binary_scratch)-1;
-    memcpy(g_binary_scratch, reader->data + reader->position, copy);
-    g_binary_scratch[copy] = '\0'; reader->position += (size_t)size; return g_binary_scratch;
+    const char* copy = wasm_string_copy_range(
+        (const char*)(reader->data + reader->position), (size_t)size);
+    reader->position += (size_t)size;
+    return copy;
 }
 int64_t absolute_binary_reader_read_bytes(void* p, void* out, int64_t size) {
     WasmBinaryReader* reader=(WasmBinaryReader*)p;
@@ -617,7 +645,9 @@ int64_t absolute_binary_reader_read_bytes(void* p, void* out, int64_t size) {
 }
 int64_t absolute_binary_reader_position(const void* p) { return p?(int64_t)((const WasmBinaryReader*)p)->position:0; }
 int64_t absolute_binary_reader_remaining(const void* p) {
-    const WasmBinaryReader* r=(const WasmBinaryReader*)p; return r?(int64_t)(r->size-r->position):0;
+    const WasmBinaryReader* r=(const WasmBinaryReader*)p;
+    if (!r || r->position >= r->size) return 0;
+    return (int64_t)(r->size-r->position);
 }
 int32_t absolute_binary_reader_is_eof(const void* p) {
     const WasmBinaryReader* r=(const WasmBinaryReader*)p; return !r||r->position>=r->size;
@@ -814,7 +844,6 @@ struct WasmJsonNode {
 };
 
 static char g_json_error[160];
-static char* g_json_result;
 
 static char* json_copy(const char* text) {
     size_t size = strlen(text ? text : "");
@@ -873,7 +902,7 @@ double absolute_json_as_number(const void* handle) {
 }
 const char* absolute_json_as_string(const void* handle) {
     const WasmJsonNode* node = (const WasmJsonNode*)handle;
-    return node && node->string ? node->string : "";
+    return wasm_string_copy(node && node->string ? node->string : "");
 }
 int32_t absolute_json_size(const void* handle) {
     const WasmJsonNode* node = (const WasmJsonNode*)handle;
@@ -1132,7 +1161,7 @@ static WasmJsonNode* json_parse_value(JsonParser* parser) {
          * built a different double than the host's strtod for anything with an
          * exponent: "1e-7" read as 1.0000000000000002e-7 here and as 1e-7
          * there, so a document did not survive a round trip between the two
-         * targets. docs/known-defects.md section 22. */
+         * targets. docs/known-defects.md section 25. */
         const char* start = parser->text + parser->position;
         const char* stop = start;
         double number = 0.0;
@@ -1179,11 +1208,10 @@ void* absolute_json_parse(const char* text) {
     return node;
 }
 const char* absolute_json_stringify(const void* handle, int32_t pretty) {
-    free(g_json_result); g_json_result = NULL;
     JsonBuffer buffer = {0};
     json_stringify_node(&buffer, (const WasmJsonNode*)handle, pretty != 0, 0);
-    if (!buffer.data) buffer.data = json_copy("null");
-    g_json_result = buffer.data;
-    return g_json_result;
+    const char* durable = wasm_string_copy(buffer.data ? buffer.data : "null");
+    free(buffer.data);
+    return durable;
 }
 const char* absolute_json_get_last_error(void) { return g_json_error; }

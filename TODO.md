@@ -780,6 +780,19 @@ Task-isolate, закрытый message envelope и transfer capsule описан
     публикация счётчика `completed` наблюдались одним сэмплом, что под нагрузкой
     давало ложное падение. Теперь состояние ожидается с таймаутом, а `require`
     печатает файл, строку и текст проверки вместо немого `abort()`.
+  - [x] Убрать остаток той же гонки: окно, внутри которого probe обязан стоять
+    в очереди, задавал сам blocking-task своими 150 мс, а наблюдает это окно
+    main. Пауза main дольше окна — и blocking успевает отработать: probe
+    попадает на свободный воркер, его queue latency около нуля, порог
+    starvation в 100 мс (`tasks.cpp`) не достигнут. На windows-llvm-release
+    это дало `0xC0000409` на `queueLatencyMaxNanoseconds >= 100'000'000`.
+    Теперь blocking держит единственный воркер, пока main не отпустит его
+    флагом, а main отпускает через 250 мс после того, как сам увидел probe
+    в очереди: нижняя граница latency следует из этой задержки, а не из
+    того, сколько заняло всё предыдущее. Spin остался spin'ом — worker busy
+    time тоже под тестом; deadline в 10 с — предохранитель под CTest TIMEOUT
+    30 с. Проверено инъекцией паузы: старый тест 0/10, новый 10/10 на той же
+    паузе, 8/8 на паузе 2 с, 50/50 под восьмикратной нагрузкой CPU.
   - [x] Убрать в `runtime-scheduler-stress` требование, что каждый leaf вложенной
     группы наблюдает отмену. Отмена кооперативная и достаётся только тем детям,
     которые группа держит в момент вызова, а родитель добавляет детей до
@@ -1266,6 +1279,14 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   Что программа нашла: см. пункт про глобалы ниже. И собственную ошибку она
   тоже поймала — `getProp` возвращает владельца, два анонимных вызова внутри
   assert утекли, отчёт рантайма на выходе это показал.
+- [x] Добавить HTTP server с routing, JSON, cancellation, timeout и graceful shutdown.
+  `examples/integration/http-server.abs`. Герметик: слушает `127.0.0.1` на
+  эфемерном порту, каталог живёт в изоляте сервера, клиент говорит с ним только
+  по HTTP. Четыре маршрута из контракта — `GET /health`, `GET /item/:id` и
+  `POST /item` как JSON, `GET /slow` для timeout и кооперативной отмены — плюс
+  список, 404/400 и `POST /shutdown`, после которого accept-цикл возвращается
+  и обе задачи join. Атомики вместо передачи token/server через spawn: task
+  не носит string и managed-указатель. Закреплено native CTest, как индексатор.
 - [x] Поддержать переменные уровня модуля в кодогенерации. Хранилище на уровне
   модуля выпускалось только для массивов, скаляры молча проваливались мимо, и
   ошибка всплывала на первом же чтении как `unknown variable or field`, называя
@@ -1416,15 +1437,74 @@ Task-isolate, закрытый message envelope и transfer capsule описан
   присваиваниях и возвратах. Тип расширяется только когда значение не
   помещается в 32 бита, поэтому всё, что работало раньше, сохранило прежний
   тип. Границу с обеих сторон закрепляет `tests/wide-integer-literals.abs`.
-- [ ] Добавить HTTP server с routing, JSON, cancellation, timeout и graceful shutdown.
-- [ ] Добавить multithreaded crawler с DNS/HTTP, bounded concurrency и deduplication.
-- [ ] Добавить reusable parsing/serialization library как отдельный package target.
-- [ ] Добавить desktop calculator/editor с persistent settings и file dialogs.
-- [ ] Добавить полноценную OpenGL/Vulkan/D3D scene вместо одного triangle smoke.
-- [ ] Добавить WASM web app с browser host, async task pool и persistent state.
+- [x] Добавить HTTP server с routing, JSON, cancellation, timeout и graceful shutdown.
+  `examples/integration/http-server.abs`; native CTest `absolute.run-integration-http-server`.
+- [x] Добавить multithreaded crawler с DNS/HTTP, bounded concurrency и deduplication.
+  `examples/integration/crawler.abs`. Герметик: локальный `HttpServer` на
+  `127.0.0.1` и эфемерном порту отдаёт нумерованный граф `/page/0..15`. Каждая
+  страница ссылается на соседей, на себя, на тот же next несколько раз и на
+  `example.invalid`. Клиент резолвит `localhost` и `127.0.0.1` через
+  `std.net.resolve`, ходит `std.http.fetch` по IPv4, четыре именованные задачи
+  разбирают frontier, семафор на два permit ограничивает одновременные fetch,
+  mutex держит visited/frontier. Страница попадает в таблицу один раз: 16
+  уникальных fetch, детерминированное число duplicate/off-site skip.
+  Async-параметр по-прежнему не носит string, поэтому воркеры принимают числа
+  и собирают URL сами. Native CTest `absolute.run-integration-crawler`.
+- [x] Добавить reusable parsing/serialization library как отдельный package target.
+  `absolute.serde` — CSV (RFC 4180, разделитель задаётся) и INI
+  (секции, комментарии, кавычки, last-write-wins). Это не `std.*`: JSON и
+  binary там уже есть, а CSV/TOML в std остаются отдельным P1. Пакет
+  `type: lib`, приложение его импортирует как исходники — `--build-library`
+  отверг бы DOM на C ABI, а package manager пока пишет только lockfile,
+  исходники зависимости сам не компилирует.
+  `examples/integration/serde`. Герметик: сам строит каталог, пишет CSV и
+  INI, четыре воркера читают свои шарды, сверяют ячейки с формулой
+  генератора и гоняют parse(stringify(...)). Плюс кавычки с запятой и
+  переводом строки, CR LF, padding, semicolon/tab, JSON рядом с CSV,
+  отказ на незакрытой кавычке и широкой строке. Async по-прежнему не
+  носит string, поэтому воркеры принимают номер шарда. Native CTest
+  `absolute.run-integration-serde` собирает `.absproj` с зависимостью
+  `absolute.serde`, так что прогон оставляет пакет в lockfile.
+- [x] Добавить hermetic event journal: datetime, UUID, URI, form, JSON и fs
+  вместе. `examples/integration/journal.abs`. Каталог событий пишется как
+  JSON lines и как urlencoded-близнец; четыре воркера читают оба, сверяют
+  с формулой генератора. В файле живут ISO-десятая, смещение которое есть
+  epoch, имя с `&`/`%` и порт, который схема не подразумевает. Native CTest
+  `absolute.run-integration-journal`.
+- [x] Добавить workspace с несколькими packages, diamond dependencies и lock-file.
+  Три пакета: `absolute.catalog.core` — формула записи; `absolute.catalog.left`
+  и `absolute.catalog.right` зависят от core и кодируют ту же запись по-разному
+  (pipe и JSON). Приложение зависит от двух листьев. Package manager по-прежнему
+  пишет только lockfile, исходники импортируются как у serde. CTest собирает
+  `.absproj`, проверяет что lockfile называет core один раз, и гоняет четыре
+  воркера: суммы id слева и справа совпадают с core.
+  `examples/integration/workspace`, native CTest
+  `absolute.run-integration-workspace` и
+  `absolute.check-integration-workspace-lockfile`.
+
+- [x] Добавить desktop calculator/editor с persistent settings и file dialogs.
+  `examples/integration/calculator.abs`. Герметик: integer-лента (печатать
+  double — открытое решение, section 25), JSON settings, «диалог» это
+  `std.fs.list` (OS-диалога в Desktop нет). Desktop.UiTheme / rgb /
+  measureText / Sprite работают без окна; Window открывается на один кадр,
+  если host его дал, и пропускается на headless. Четыре воркера, каждый
+  со своим shard id. Native CTest `absolute.run-integration-calculator`
+  собирает с `--plugin` desktop.
+- [x] Добавить полноценную OpenGL/Vulkan/D3D scene вместо одного triangle smoke.
+  `examples/integration/scene.abs`. Герметик: программа пишет cube.obj и
+  JSON-каталог инстансов (4 шарда × 8), четыре воркера грузят mesh и
+  сверяют id/позиции с формулой. GPU-кадр один и только если Window
+  открылся и backend — OpenGL; иначе skip, каталог всё равно должен
+  сойтись. Native CTest `absolute.run-integration-scene`.
+- [x] Добавить WASM web app с browser host, async task pool и persistent state.
+  `examples/integration/webapp.abs`, проект `examples/wasm/Board.absproj`.
+  Герметик: origin — HTTP-моки `board.test` (health, settings, catalog), заметки —
+  JSONL в виртуальном FS, четыре воркера читают шарды и пишут save-as.
+  На UI-потоке пул размера 0, поэтому spawn в том же инстансе и вторая
+  сессия читает то, что записала первая. Native CTest не нужен: это wasm.
+  `absolute.run-integration-webapp` гоняет browser host и Node host.
 - [ ] Добавить end-to-end shader plugin demo с embedded source, diagnostics, reflection
   и несколькими target artifacts.
-- [ ] Добавить workspace с несколькими packages, diamond dependencies и lock-file.
 - [ ] Держать каждый integration project примерно в диапазоне 500–3000 строк,
   собирать и запускать его в CI, а не хранить как мёртвый showcase.
 - [ ] Ввести performance budgets для compile time, peak memory, binary size и runtime.

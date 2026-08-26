@@ -12,12 +12,13 @@
 #include <unistd.h>
 
 #include "socket_reactor.h"
+#endif
 
 // A string the runtime handed out is reference counted behind its first
 // byte, so it is released rather than freed; see
-// Absolute-Runtime/src/string.cpp.
+// Absolute-Runtime/src/string.cpp. TCP/UDP tests call this on Windows
+// as well as on POSIX, so the name cannot live in the POSIX #if.
 extern "C" void absolute_string_release(const char* text);
-#endif
 
 extern "C" {
 void* absolute_task_spawn_config(

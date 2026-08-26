@@ -1,0 +1,31 @@
+// dayOfWeek used truncating division, so a year at or before 0 was not a
+// weekday. Year -1 January 1 came back as -1.
+import "../std/datetime.abs";
+
+int32 main() {
+    assert(std.datetime.dayOfWeek(std.datetime.createDate(1970, 1, 1)) == 4,
+        "the epoch is Thursday");
+    assert(std.datetime.dayOfWeek(std.datetime.createDate(2026, 7, 23)) == 4,
+        "2026-07-23 is Thursday");
+    assert(std.datetime.dayOfWeek(std.datetime.createDate(2000, 1, 1)) == 6,
+        "2000-01-01 is Saturday");
+    assert(std.datetime.dayOfWeek(std.datetime.createDate(1, 1, 1)) == 1,
+        "1 January AD 1 is Monday");
+    assert(std.datetime.dayOfWeek(std.datetime.createDate(1969, 12, 31)) == 3,
+        "the day before the epoch is Wednesday");
+
+    // Astronomical year 0 is 1 BCE. 1 January of that year is Saturday in
+    // the proleptic Gregorian calendar the civil conversion uses.
+    assert(std.datetime.dayOfWeek(std.datetime.createDate(0, 1, 1)) == 6,
+        "year 0 January 1 is Saturday, not Sunday");
+    assert(std.datetime.dayOfWeek(std.datetime.createDate(-1, 1, 1)) == 5,
+        "year -1 January 1 is Friday, not -1");
+    assert(std.datetime.dayOfWeek(std.datetime.createDate(0, 2, 29)) == 2,
+        "the leap day of year 0 is Tuesday");
+
+    int32 w = std.datetime.dayOfWeek(std.datetime.createDate(-1, 1, 1));
+    assert(w >= 1 && w <= 7, "a weekday is a weekday");
+
+    println("datetime-weekday-edges=ok");
+    return 0;
+}

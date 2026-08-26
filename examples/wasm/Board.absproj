@@ -1,0 +1,7 @@
+{
+  "name": "Board",
+  "type": "app",
+  "entry": "../integration/webapp.abs",
+  "target": "wasm32-unknown-unknown",
+  "runtime": "browser"
+}

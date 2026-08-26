@@ -1,0 +1,512 @@
+// Integration project: a hermetic desktop calculator and tape editor.
+//
+// Exercises Desktop.UiTheme / rgb / measureText / Sprite together with
+// std.fs, std.json and tasks. There is no OS file-dialog API: the
+// "dialog" is a directory listing, and a task cannot carry a string,
+// so a worker is given a shard id, rebuilds the tape path, checks the
+// listing contains that name, loads the editor, and evaluates every
+// line. Persistent settings are a JSON sibling of the tapes.
+//
+// Expressions are integers. Printing a real number is an open language
+// decision (known-defects section 25), so the calculator never asks
+// that question. Named tasks, all spawned before the first await.
+// A window is opened for one frame when the host has a display, and
+// skipped when create returns 0 (headless CI, no DISPLAY).
+
+import "../../std/fs.abs";
+import "../../std/json.abs";
+import "../../std/string.abs";
+import "../../std/hash.abs";
+
+const int32 SHARD_COUNT = 4;
+const int32 ROWS_PER_SHARD = 8;
+
+string workRoot() {
+    return "absolute-calculator-work";
+}
+
+string tapeName(int32 shard) {
+    return format("tape-{}.calc", shard);
+}
+
+string tapePath(int32 shard) {
+    return std.fs.join(workRoot(), tapeName(shard));
+}
+
+string savedPath(int32 shard) {
+    return std.fs.join(workRoot(), format("tape-{}.saved", shard));
+}
+
+string settingsPath() {
+    return std.fs.join(workRoot(), "settings.json");
+}
+
+string stripCr(string line) {
+    return std.text.replace(line, "\r", "");
+}
+
+int32 termA(int32 shard, int32 index) {
+    return 10 + shard * 3 + index;
+}
+
+int32 termB(int32 shard, int32 index) {
+    return 4 + index;
+}
+
+int32 termC(int32 shard, int32 index) {
+    return 2 + shard;
+}
+
+string expressionOf(int32 shard, int32 index) {
+    int32 a = termA(shard, index);
+    int32 b = termB(shard, index);
+    int32 c = termC(shard, index);
+    int32 flavor = (shard + index) % 6;
+    if (flavor == 0) {
+        return format("{} + {}", a, b);
+    }
+    if (flavor == 1) {
+        return format("{}-{}", a, b);
+    }
+    if (flavor == 2) {
+        return format("{}*{}", a, b);
+    }
+    if (flavor == 3) {
+        return format("{}/{}", a * b, a);
+    }
+    if (flavor == 4) {
+        return format("(({}+{})*{})", a, b, c);
+    }
+    return format("-{}", a);
+}
+
+int64 expectedOf(int32 shard, int32 index) {
+    int64 a = termA(shard, index) as int64;
+    int64 b = termB(shard, index) as int64;
+    int64 c = termC(shard, index) as int64;
+    int32 flavor = (shard + index) % 6;
+    if (flavor == 0) {
+        return a + b;
+    }
+    if (flavor == 1) {
+        return a - b;
+    }
+    if (flavor == 2) {
+        return a * b;
+    }
+    if (flavor == 3) {
+        return b;
+    }
+    if (flavor == 4) {
+        return (a + b) * c;
+    }
+    return 0 as int64 - a;
+}
+
+class Scan {
+    public string source;
+    public int32 pos;
+
+    public Scan(string text) {
+        source = text;
+        pos = 0;
+    }
+}
+
+void skipSpaces(Scan* scan) {
+    while (scan.pos < std.text.codePointCount(scan.source)) {
+        int32 cp = std.text.codePointAt(scan.source, scan.pos);
+        if (cp != 32 && cp != 9) {
+            return;
+        }
+        scan.pos = scan.pos + 1;
+    }
+}
+
+int32 peekAt(Scan* scan) {
+    skipSpaces(scan);
+    if (scan.pos >= std.text.codePointCount(scan.source)) {
+        return -1;
+    }
+    return std.text.codePointAt(scan.source, scan.pos);
+}
+
+void take(Scan* scan) {
+    scan.pos = scan.pos + 1;
+}
+
+int64 parseNumber(Scan* scan) {
+    skipSpaces(scan);
+    int64 value = 0 as int64;
+    bool found = false;
+    while (scan.pos < std.text.codePointCount(scan.source)) {
+        int32 cp = std.text.codePointAt(scan.source, scan.pos);
+        if (cp < 48 || cp > 57) {
+            break;
+        }
+        value = value * (10 as int64) + ((cp - 48) as int64);
+        found = true;
+        take(scan);
+    }
+    if (!found) {
+        throw new Error("expected a number");
+    }
+    return value;
+}
+
+int64 parsePrimary(Scan* scan) {
+    int32 cp = peekAt(scan);
+    if (cp == 40) {
+        take(scan);
+        int64 inner = parseExpression(scan);
+        if (peekAt(scan) != 41) {
+            throw new Error("expected a closing parenthesis");
+        }
+        take(scan);
+        return inner;
+    }
+    return parseNumber(scan);
+}
+
+int64 parseUnary(Scan* scan) {
+    if (peekAt(scan) == 45) {
+        take(scan);
+        return (0 as int64) - parseUnary(scan);
+    }
+    return parsePrimary(scan);
+}
+
+int64 parseTerm(Scan* scan) {
+    int64 left = parseUnary(scan);
+    int32 cp = peekAt(scan);
+    while (cp == 42 || cp == 47) {
+        take(scan);
+        int64 right = parseUnary(scan);
+        if (cp == 42) {
+            left = left * right;
+        } else {
+            if (right == 0) {
+                throw new Error("division by zero");
+            }
+            left = left / right;
+        }
+        cp = peekAt(scan);
+    }
+    return left;
+}
+
+int64 parseExpression(Scan* scan) {
+    int64 left = parseTerm(scan);
+    int32 cp = peekAt(scan);
+    while (cp == 43 || cp == 45) {
+        take(scan);
+        int64 right = parseTerm(scan);
+        if (cp == 43) {
+            left = left + right;
+        } else {
+            left = left - right;
+        }
+        cp = peekAt(scan);
+    }
+    return left;
+}
+
+int64 evaluate(string text) {
+    Scan* scan = new Scan(text);
+    defer delete scan;
+    int64 value = parseExpression(scan);
+    if (peekAt(scan) != -1) {
+        throw new Error("trailing text after expression");
+    }
+    return value;
+}
+
+bool isComment(string line) {
+    if (std.text.codePointCount(line) == 0) {
+        return true;
+    }
+    return std.text.codePointAt(line, 0) == 35;
+}
+
+string[] editorLines(string text) {
+    string[] pieces = std.text.split(text, "\n");
+    int32 count = 0;
+    int32 i = 0;
+    while (i < pieces.length) {
+        string line = std.text.trim(stripCr(pieces[i]));
+        if (line != "" && !isComment(line)) {
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    string[] lines = new string[count];
+    int32 filled = 0;
+    i = 0;
+    while (i < pieces.length) {
+        string line = std.text.trim(stripCr(pieces[i]));
+        if (line != "" && !isComment(line)) {
+            lines[filled] = line;
+            filled = filled + 1;
+        }
+        i = i + 1;
+    }
+    return lines;
+}
+
+string dialogPick(string directory, string fileName) {
+    string[] entries = std.fs.list(directory);
+    int32 i = 0;
+    while (i < entries.length) {
+        if (std.fs.fileName(entries[i]) == fileName) {
+            return entries[i];
+        }
+        i = i + 1;
+    }
+    throw new Error(format("the dialog did not list {}", fileName));
+}
+
+void writeTape(int32 shard) {
+    std.text.StringBuilder* buf = new std.text.StringBuilder();
+    buf.append(format("# tape {}\n", shard));
+    int32 index = 0;
+    while (index < ROWS_PER_SHARD) {
+        buf.append(expressionOf(shard, index));
+        buf.append("\n");
+        index = index + 1;
+    }
+    std.fs.writeText(tapePath(shard), buf.toString());
+    delete buf;
+}
+
+void writeSettings(string lastFile, int64 lastResult, int32 scale) {
+    std.json.JsonValue* obj = std.json.createObject();
+    obj.setString("lastFile", lastFile);
+    obj.setNumber("lastResult", lastResult as double);
+    obj.setNumber("scale", scale as double);
+    std.fs.writeText(settingsPath(), obj.stringify());
+    delete obj;
+}
+
+void checkSettings(string lastFile, int64 lastResult, int32 scale) {
+    std.json.JsonValue* obj = std.json.parse(std.fs.readText(settingsPath()));
+    assert(obj.isValid() && obj.isObject(), "settings is an object");
+    string fileText = obj.getStringOr("lastFile", "");
+    int64 result = obj.getIntOr("lastResult", -1 as int64);
+    int64 storedScale = obj.getIntOr("scale", -1 as int64);
+    delete obj;
+    assert(fileText == lastFile, "settings remember the last tape");
+    assert(result == lastResult, "settings remember the last result");
+    assert(storedScale == scale as int64, "settings remember the text scale");
+}
+
+void checkRejectedInput() {
+    bool rejected = false;
+    try {
+        evaluate("1+");
+    } catch (Error* error) {
+        rejected = true;
+    }
+    assert(rejected, "a trailing operator is refused");
+
+    rejected = false;
+    try {
+        evaluate("(1");
+    } catch (Error* error) {
+        rejected = true;
+    }
+    assert(rejected, "an unclosed parenthesis is refused");
+
+    rejected = false;
+    try {
+        evaluate("1 1");
+    } catch (Error* error) {
+        rejected = true;
+    }
+    assert(rejected, "trailing text after an expression is refused");
+
+    rejected = false;
+    try {
+        evaluate("1/0");
+    } catch (Error* error) {
+        rejected = true;
+    }
+    assert(rejected, "division by zero is refused");
+}
+
+void checkDesktopSurface() {
+    Desktop.UiTheme* theme = new Desktop.UiTheme();
+    uint32 background = Desktop.rgb(18, 22, 32);
+    uint32 text = Desktop.rgb(236, 240, 250);
+    assert(theme.background == background, "the theme background is rgb(18,22,32)");
+    assert(theme.text == text, "the theme text is rgb(236,240,250)");
+
+    int32 scale = 2;
+    string sample = "42";
+    int32 width = Desktop.measureText(sample, scale);
+    assert(width == Desktop.fontGlyphWidth() * 2 * scale,
+        "measureText is glyph width times length times scale");
+
+    Desktop.Sprite* tape = new Desktop.Sprite(160, 24);
+    assert(tape.isValid(), "a software sprite does not need a window");
+    tape.clear(background);
+    tape.drawText(0, 0, sample, text, scale);
+    tape.destroy();
+
+    Desktop.Window* window = new Desktop.Window("Absolute Calculator", 320, 240, false);
+    if (window.isOpen()) {
+        window.clear(background);
+        window.drawText(8, 8, sample, text, scale);
+        window.present();
+    }
+    window.destroy();
+
+    delete theme;
+}
+
+void checkKnownSpellings() {
+    assert(evaluate("10 + 4") == 14 as int64, "spaces around plus");
+    assert(evaluate("((10+4)*2)") == 28 as int64, "nested parentheses");
+    assert(evaluate("-10") == -10 as int64, "unary minus");
+    assert(evaluate("40/10") == 4 as int64, "exact division");
+    assert(evaluate(expressionOf(0, 0)) == expectedOf(0, 0),
+        "the generator and the parser agree on shard 0 index 0");
+}
+
+int64 evalTapeText(string text, int32 shard) {
+    string[] lines = editorLines(text);
+    assert(lines.length == ROWS_PER_SHARD, "a tape has every expression");
+    int64 total = 0 as int64;
+    int32 index = 0;
+    while (index < ROWS_PER_SHARD) {
+        assert(lines[index] == expressionOf(shard, index),
+            "the editor kept the generator's spelling");
+        int64 value = evaluate(lines[index]);
+        assert(value == expectedOf(shard, index),
+            "the editor's line evaluates to the generator's result");
+        total = total + value;
+        index = index + 1;
+    }
+    return total;
+}
+
+async int64 checkShard(int64 shard, int64 resultsAddress) {
+    raw int64* results = resultsAddress as raw int64*;
+    int32 shardIndex = shard as int32;
+
+    string listed = dialogPick(workRoot(), tapeName(shardIndex));
+    assert(std.fs.fileName(listed) == tapeName(shardIndex),
+        "the dialog names the tape the editor wrote");
+
+    string loaded = std.fs.readText(tapePath(shardIndex));
+    int64 total = evalTapeText(loaded, shardIndex);
+
+    std.text.StringBuilder* saved = new std.text.StringBuilder();
+    saved.append(loaded);
+    if (!std.text.endsWith(loaded, "\n")) {
+        saved.append("\n");
+    }
+    saved.append(format("# saved {}\n", shardIndex));
+    std.fs.writeText(savedPath(shardIndex), saved.toString());
+    delete saved;
+    assert(evalTapeText(std.fs.readText(savedPath(shardIndex)), shardIndex) == total,
+        "a save-as round-trips after a comment line");
+
+    int32 base = shardIndex * 3;
+    *(results + base) = ROWS_PER_SHARD as int64;
+    *(results + base + 1) = total;
+    *(results + base + 2) = std.hash.stringCode(expressionOf(shardIndex, 0));
+    return shard;
+}
+
+void removeWorkTree() {
+    if (!std.fs.exists(workRoot())) {
+        return;
+    }
+    int32 shard = 0;
+    while (shard < SHARD_COUNT) {
+        if (std.fs.exists(tapePath(shard))) {
+            std.fs.remove(tapePath(shard));
+        }
+        if (std.fs.exists(savedPath(shard))) {
+            std.fs.remove(savedPath(shard));
+        }
+        shard = shard + 1;
+    }
+    if (std.fs.exists(settingsPath())) {
+        std.fs.remove(settingsPath());
+    }
+    std.fs.remove(workRoot());
+}
+
+async int32 main() {
+    removeWorkTree();
+    std.fs.createDirectories(workRoot());
+
+    int64 expectedTotal = 0 as int64;
+    int32 shard = 0;
+    while (shard < SHARD_COUNT) {
+        writeTape(shard);
+        int32 index = 0;
+        while (index < ROWS_PER_SHARD) {
+            expectedTotal = expectedTotal + expectedOf(shard, index);
+            index = index + 1;
+        }
+        shard = shard + 1;
+    }
+
+    int32 scale = 2;
+    writeSettings(tapeName(0), 0 as int64, scale);
+    checkSettings(tapeName(0), 0 as int64, scale);
+
+    checkKnownSpellings();
+    checkRejectedInput();
+    checkDesktopSurface();
+
+    int64[] results = new int64[SHARD_COUNT * 3];
+    int32 slot = 0;
+    while (slot < SHARD_COUNT * 3) {
+        results[slot] = 0;
+        slot = slot + 1;
+    }
+    raw int64* resultsAddress = &results[0];
+    int64 address = resultsAddress as int64;
+
+    task<int64> worker0 = spawn checkShard(0 as int64, address);
+    task<int64> worker1 = spawn checkShard(1 as int64, address);
+    task<int64> worker2 = spawn checkShard(2 as int64, address);
+    task<int64> worker3 = spawn checkShard(3 as int64, address);
+
+    int64 seen = await worker0;
+    seen = seen + await worker1;
+    seen = seen + await worker2;
+    seen = seen + await worker3;
+    assert(seen == 6, "every worker returned its shard id");
+
+    shard = 0;
+    int64 totalRows = 0 as int64;
+    int64 totalValue = 0 as int64;
+    while (shard < SHARD_COUNT) {
+        int32 base = shard * 3;
+        assert(results[base] == ROWS_PER_SHARD as int64,
+            "each shard evaluated every row");
+        totalRows = totalRows + results[base];
+        totalValue = totalValue + results[base + 1];
+        assert(results[base + 2] == std.hash.stringCode(expressionOf(shard, 0)),
+            "the first expression hashed as the generator did");
+        shard = shard + 1;
+    }
+    assert(totalRows == (SHARD_COUNT * ROWS_PER_SHARD) as int64,
+        "all rows were evaluated");
+    assert(totalValue == expectedTotal, "all tapes evaluate to the generator");
+
+    writeSettings(tapeName(SHARD_COUNT - 1), totalValue, scale);
+    checkSettings(tapeName(SHARD_COUNT - 1), totalValue, scale);
+
+    removeWorkTree();
+    assert(!std.fs.exists(workRoot()), "the work tree is removed");
+
+    println(format("calculator-stats shards={} rows={} total={}",
+        SHARD_COUNT, totalRows, totalValue));
+    println("integration-calculator=ok");
+    return 0;
+}

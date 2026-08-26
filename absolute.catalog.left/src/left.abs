@@ -1,0 +1,21 @@
+import "../../std/string.abs";
+import "../../absolute.catalog.core/src/core.abs";
+
+namespace catalog.left {
+    string encode(int32 shard, int32 index) {
+        return format("{}|{}|{}",
+            catalog.core.recordId(shard, index),
+            catalog.core.recordLabel(shard, index),
+            catalog.core.recordAmount(shard, index));
+    }
+
+    int32 idOf(string line) {
+        int32 bar = std.text.indexOf(line, "|");
+        assert(bar > 0, "left: a record has an id");
+        return std.text.parseInt(std.text.substring(line, 0, bar));
+    }
+
+    bool matches(string line, int32 shard, int32 index) {
+        return line == encode(shard, index);
+    }
+}

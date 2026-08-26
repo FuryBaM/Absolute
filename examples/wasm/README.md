@@ -19,6 +19,15 @@ absolutec tests\wasm-http.abs --target wasm32-unknown-unknown --build-exe -o exa
 absolutec tests\wasm-net.abs --target wasm32-unknown-unknown --build-exe -o examples\wasm\module.wasm
 ```
 
+The integration board (`examples/integration/webapp.abs`, project
+`examples/wasm/Board.absproj`) is a small persistent app: origin HTTP mocks,
+JSON settings in the virtual filesystem, four workers, a second session that
+reads what the first wrote.
+
+```bat
+absolutec examples\integration\webapp.abs --target wasm32-unknown-unknown --build-exe -o examples\wasm\module.wasm
+```
+
 ## Serve locally
 
 For **worker mode** and SharedArrayBuffer (WebSocket TCP path), use the COOP/COEP server:
