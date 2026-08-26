@@ -77,6 +77,17 @@ unless they set a longer CMake `TIMEOUT`; stress/fuzz tools additionally
 enforce their own shorter per-process limits. The job timeout is a final
 containment boundary, not the primary timeout.
 
+The default Ubuntu CTest step budgets Debug and Release separately, because
+they are not the same length of run. 210 of those tests invoke the compiler
+to build an executable, and an unoptimized compiler takes roughly seven
+times as long to do it: Release finishes the suite in about five and a half
+minutes where Debug takes close to forty. A single flat budget therefore
+tracks Debug and leaves Release a cap it can never approach. Debug is given
+room for the suite to keep growing -- a budget that only just fits ends a
+green run at the second-to-last test, as one did at 845 of 853 -- and
+Release keeps a tight one, where a step that runs long is a hang worth
+stopping rather than a suite that grew.
+
 The tests labelled `differential` (`absolute.suite-differential`,
 `absolute.alias-differential`, `absolute.codegen-fuzz`) rebuild the runnable
 corpus at several optimization levels, and the suite differential also

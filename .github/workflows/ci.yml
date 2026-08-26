@@ -110,7 +110,20 @@ jobs:
         # spent the whole 50-minute budget on Debug and left Release
         # seventy tests short. --parallel 4 matches the four-core runner.
         # The labelled tests still run, on Release, in the next step.
-        timeout-minutes: 40
+        #
+        # The budget is per configuration because the two are not the
+        # same length of run. 210 of these tests invoke the compiler to
+        # build an executable, and an unoptimized compiler takes about
+        # seven times as long to do it: Release finishes the 853 in five
+        # and a half minutes, Debug took thirty-eight minutes and
+        # fifty-two seconds on the last run that fit. One flat 40 left
+        # Debug sixty-eight seconds of headroom, so the next three tests
+        # the suite gained -- integration-webapp, and the two halves of
+        # integration-scene -- were enough to end the step at test 845
+        # of 853 with nothing having failed. Debug gets a budget with
+        # room for the suite to keep growing; Release keeps a tight one,
+        # where a step that runs long is a hang worth stopping.
+        timeout-minutes: ${{ matrix.configuration == 'Debug' && 75 || 25 }}
         shell: bash
         run: |
           set -o pipefail
