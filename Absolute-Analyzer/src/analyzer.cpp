@@ -363,6 +363,22 @@ namespace Absolute {
                         "E_ORDERING_OPERAND_TYPE", InvalidSymbolId);
                 continue;
             }
+            if (fact.shape == GenericBodyFact::Shape::ComparesValues) {
+                // Still open: `Deque<T>` written inside another generic body
+                // substitutes `T` for `T`. The question is not answerable here
+                // and the instantiation that closes the outer parameter asks
+                // it again.
+                if (actual == fact.parameterType) continue;
+                if (!IsEquatableType(actual) && !HasEqualityOperator(actual))
+                    ReportAtLocation(fact.file, fact.line, fact.column,
+                        "operator '" + fact.detail + "' compares numbers, characters, "
+                        "booleans, enum members, strings, pointers and function values; "
+                        "at '" + base + "<" + actual + ">' the operand is '" + actual +
+                        "'; declare 'static bool operator==(" + actual + ", " + actual +
+                        ")' to say what it means",
+                        "E_EQUALITY_OPERAND_TYPE", InvalidSymbolId);
+                continue;
+            }
             if (fact.shape == GenericBodyFact::Shape::CopiesElements) {
                 // Not only an owner: anything with a drop is duplicated by a
                 // block copy, and two of them then release the same thing.
@@ -401,6 +417,7 @@ namespace Absolute {
             case GenericBodyFact::Shape::DeletesValue:
             case GenericBodyFact::Shape::CopiesElements:
             case GenericBodyFact::Shape::OrdersValues:
+            case GenericBodyFact::Shape::ComparesValues:
             case GenericBodyFact::Shape::InterfaceValue:
                 break;
             }
@@ -995,7 +1012,11 @@ namespace Absolute {
                     (produced(conditional->trueExpr.get()) &&
                      produced(conditional->falseExpr.get()));
             }
-            else if (symbol)
+            // An operator that resolved to a callable says so itself, before
+            // getting here: an expression is not a call to look at, but the
+            // result is as fresh as one, and a string it hands back is held
+            // once and released by whoever takes it.
+            else if (symbol && !value.producesFreshValue)
                 value.producesFreshValue =
                     symbol->kind == SymbolKind::Property ||
                     symbol->kind == SymbolKind::Indexer;
@@ -1125,6 +1146,40 @@ namespace Absolute {
     bool Analyzer::IsOrderableType(const std::string& name) const {
         return name == "error" || name == "dynamic" || name == "null" ||
             IsNumeric(name) || IsEnumType(name) || IsRawPointerType(name);
+    }
+
+    // What `==` can be lowered to. Everything here is a single value the
+    // backend has an instruction or a runtime call for: a number, a character,
+    // a boolean, an enum member, a pointer of any kind, a function value, and
+    // a string, which is compared by its bytes. An aggregate is not one of
+    // them -- there is nothing to compare a struct's bytes against, since two
+    // equal values may differ in padding and in what their string fields
+    // point at -- so it is refused unless its type says what equality means.
+    bool Analyzer::IsEquatableType(const std::string& name) const {
+        if (IsOrderableType(name)) return true;
+        if (name == "bool" || name == "string" || name == "char") return true;
+        if (IsPointerType(name) || IsWeakPointerType(name)) return true;
+        std::string callableReturn;
+        std::vector<std::string> callableParameters;
+        if (ParseCFunctionType(name, callableReturn, callableParameters) ||
+            ParseFunctionType(name, callableReturn, callableParameters)) return true;
+        // Inside a generic body the operand is still a name. Whether that name
+        // can be compared is asked of each instantiation, where it is a type.
+        return IsOpenGenericParameter(name);
+    }
+
+    bool Analyzer::HasEqualityOperator(const std::string& name) const {
+        const std::string owner = OperatorLookupType(name);
+        const auto definition = types.find(owner);
+        if (definition == types.end()) return false;
+        if (definition->second.kind != TypeKind::Class &&
+            definition->second.kind != TypeKind::Struct) return false;
+        const auto member = definition->second.members.find("operator==");
+        if (member == definition->second.members.end()) return false;
+        for (const MemberSignature& overload : member->second)
+            if (overload.kind == SymbolKind::Method && overload.isStatic &&
+                overload.parameterTypes.size() == 2) return true;
+        return false;
     }
 
     bool Analyzer::IsInteger(const std::string& name) const {
@@ -1959,6 +2014,7 @@ namespace Absolute {
         const bool staticMethod = HasModifier(statement, "static");
         const std::vector<std::string> declaredParameterTypes =
             ResolveParameterTypes(statement.parameters);
+        CheckOperatorDeclaration(statement, kind, staticMethod, declaredParameterTypes);
         const SymbolId oldCallable = currentCallable;
         currentCallable = InvalidSymbolId;
         if (kind == SymbolKind::Function) {
@@ -2252,6 +2308,139 @@ namespace Absolute {
         if (currentType.empty()) return false;
         const auto found = types.find(currentType);
         return found != types.end() && found->second.kind == TypeKind::Class;
+    }
+
+    // What a declaration has to be for `a op b` to ever reach it. Every rule
+    // here is the difference between a refusal at the declaration's own line
+    // and a body that compiles, links, and is never called -- which is the
+    // shape this whole file's neighbours exist to prevent.
+    void Analyzer::CheckOperatorDeclaration(const FunctionDeclStmt& statement,
+        SymbolKind kind, bool staticMethod,
+        const std::vector<std::string>& parameterTypes) {
+        if (!statement.name) return;
+        const std::string& name = statement.name->value;
+        if (name.rfind("operator", 0) != 0 || name.size() <= 8) return;
+        const std::string op = name.substr(8);
+        if (!IsOverloadableOperator(op)) return;
+        // Declared where no type owns it, an operator is a global function
+        // whose name happens to start with "operator" and which nothing can
+        // ever call: the lookup starts from the operand types.
+        const auto refuse = [&](const std::string& message, const std::string& code) {
+            // The declaration's own node: the enclosing type is what the
+            // diagnostic stack has here, and pointing at the class rather than
+            // at the line the operator is written on is the whole difference
+            // between a message someone can act on and one they have to search
+            // for.
+            ReportAt(statement.name ? static_cast<const ASTNode*>(&statement) : nullptr,
+                message, code, InvalidSymbolId);
+        };
+        if (kind != SymbolKind::Method || currentType.empty()) {
+            refuse("operator '" + op + "' must be declared inside the class or "
+                "struct it works on; a call finds it through its operand's type",
+                "E_OPERATOR_NOT_A_MEMBER");
+            return;
+        }
+        const auto definition = types.find(currentType);
+        if (definition != types.end() && definition->second.kind != TypeKind::Class &&
+            definition->second.kind != TypeKind::Struct) {
+            refuse("operator '" + op + "' can only be declared in a class or a struct",
+                "E_OPERATOR_NOT_A_MEMBER");
+            return;
+        }
+        if (!staticMethod) {
+            // Both operands are arguments, so `Vec2 * double` and
+            // `double * Vec2` are two declarations that read the same way.
+            // An instance method could only ever be the first of them.
+            refuse("operator '" + op + "' must be static; both operands are its "
+                "parameters, so '" + currentType + " " + op + " double' can be "
+                "written as plainly as 'double " + op + " " + currentType + "'",
+                "E_OPERATOR_NOT_STATIC");
+            return;
+        }
+        const bool unaryForm = op == "!" || op == "~" || op == "-";
+        const bool binaryForm = op != "!" && op != "~";
+        const size_t arity = parameterTypes.size();
+        if (!(arity == 1 && unaryForm) && !(arity == 2 && binaryForm)) {
+            const std::string wanted = unaryForm && binaryForm ? "one parameter or two"
+                : unaryForm ? "one parameter" : "two parameters";
+            refuse("operator '" + op + "' takes " + wanted + ", not " +
+                std::to_string(arity), "E_OPERATOR_PARAMETER_COUNT");
+            return;
+        }
+        // At least one operand has to be the declaring type, or the
+        // declaration claims an operator on types it does not own: an
+        // `operator+(int32, int32)` in some struct would be a body nothing can
+        // reach, because `1 + 2` is answered by the built-in rule.
+        for (const std::string& parameter : parameterTypes)
+            if (OperatorLookupType(parameter) == currentType) {
+                if (statement.parameters.size() != arity) return;
+                for (const auto& parameter2 : statement.parameters)
+                    if (parameter2 && parameter2->value)
+                        refuse("operator '" + op + "' cannot have a default argument; "
+                            "an operator is written with all of its operands",
+                            "E_OPERATOR_DEFAULT_ARGUMENT");
+                return;
+            }
+        refuse("operator '" + op + "' must take '" + currentType +
+            "' as one of its operands; as written nothing can reach it, because "
+            "an operator is found through the types it is applied to",
+            "E_OPERATOR_OPERAND_TYPE");
+    }
+
+    std::string Analyzer::OperatorLookupType(const std::string& typeName) const {
+        std::string name = typeName;
+        // A pointer does not declare operators; the type it points at does, so
+        // `Node* a + Node* b` finds what `Node` declares. An array does not
+        // declare them either, and neither does an unknown type.
+        while (IsPointerType(name)) name = PointerPointee(name);
+        std::string base;
+        std::vector<std::string> arguments;
+        if (ParseGenericTypeName(name, base, arguments)) name = base;
+        return name;
+    }
+
+    std::optional<Analyzer::MemberSignature> Analyzer::FindOperatorOverload(
+        const std::string& op, const std::vector<std::string>& operandTypes) {
+        const std::string name = "operator" + op;
+        std::vector<std::string> owners;
+        for (const std::string& operand : operandTypes) {
+            const std::string owner = OperatorLookupType(operand);
+            if (owner.empty() || owner == "error") continue;
+            const auto definition = types.find(owner);
+            if (definition == types.end()) continue;
+            if (definition->second.kind != TypeKind::Class &&
+                definition->second.kind != TypeKind::Struct) continue;
+            if (std::find(owners.begin(), owners.end(), owner) == owners.end())
+                owners.push_back(owner);
+        }
+        // Exact operand types first, across every owner, before any conversion
+        // is considered anywhere: otherwise `Vec2 * double` could be answered
+        // by an `operator*(Vec2, Vec2)` that a conversion happens to reach,
+        // while the exact one sits in the other operand's type.
+        for (int pass = 0; pass < 2; ++pass) {
+            std::optional<MemberSignature> found;
+            for (const std::string& owner : owners)
+                for (const MemberSignature& member : FindMembers(owner, name)) {
+                    if (member.kind != SymbolKind::Method || !member.isStatic) continue;
+                    if (member.parameterTypes.size() != operandTypes.size()) continue;
+                    bool matches = true;
+                    for (size_t index = 0; index < operandTypes.size() && matches; ++index)
+                        matches = pass == 0
+                            ? member.parameterTypes[index] == operandTypes[index]
+                            : IsAssignable(member.parameterTypes[index], operandTypes[index]);
+                    if (!matches) continue;
+                    if (found && found->symbol != member.symbol) {
+                        Report("operator '" + op + "' is ambiguous for '" +
+                            operandTypes.front() + "'" +
+                            (operandTypes.size() > 1 ? " and '" + operandTypes.back() + "'" : ""),
+                            "E_OPERATOR_AMBIGUOUS");
+                        return std::nullopt;
+                    }
+                    if (!found) found = member;
+                }
+            if (found) return found;
+        }
+        return std::nullopt;
     }
 
     bool Analyzer::IsInstanceFieldOfCurrentType(const std::string& name) const {

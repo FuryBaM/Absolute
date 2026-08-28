@@ -915,6 +915,44 @@ or raw pointer value. They cannot cross async/C-ABI/closure boundaries or borrow
 resource-owning aggregates; overlapping mutable arguments are rejected. See
 [docs/value-references.md](docs/value-references.md).
 
+## Operator overloading
+
+A class or struct may say what an operator means on it. The declaration is a
+static method whose name is `operator` followed by the operator:
+
+```absolute
+struct Vec2 {
+    public double x;
+    public double y;
+
+    public static Vec2 of(double x, double y) { Vec2 r; r.x = x; r.y = y; return r; }
+
+    public static Vec2 operator+(Vec2 a, Vec2 b) { return Vec2.of(a.x + b.x, a.y + b.y); }
+    public static Vec2 operator*(Vec2 a, double k) { return Vec2.of(a.x * k, a.y * k); }
+    public static Vec2 operator*(double k, Vec2 a) { return Vec2.of(a.x * k, a.y * k); }
+    public static bool operator==(Vec2 a, Vec2 b) { return a.x == b.x && a.y == b.y; }
+    public static Vec2 operator-(Vec2 a) { return Vec2.of(0.0 - a.x, 0.0 - a.y); }
+}
+```
+
+`+ - * / %`, `== != < > <= >=`, `& | ^ << >>` take two parameters; `- ! ~` take
+one. Assignment, `&&`, `||` and `?:` cannot be overloaded — the last three
+decide whether to evaluate their right side at all, and a call cannot
+short-circuit. The compound forms follow from the binary ones: declaring `+`
+gives `+=`, and `<<` gives `<<=`.
+
+Both operands are parameters, which is why the declaration is static: `Vec2 *
+double` and `double * Vec2` are two declarations that read the same way. A call
+finds the operator through its operand types, so at least one parameter must be
+the declaring type — an `operator+(int32, int32)` is rejected rather than
+compiled into a body nothing can reach, and `1 + 2` always means what it has
+always meant. Overload resolution, access control, and the ABI are the method's,
+so a `private` operator is private and an operator that throws throws.
+
+Operands are borrowed like any other argument; what an operator returns is as
+fresh as any call's result. Generic types cannot declare operators yet, because
+they cannot declare static members yet.
+
 ## Field initializers
 
 A class field may be given its value where it is declared. The initializers run

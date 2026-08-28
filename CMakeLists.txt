@@ -1344,6 +1344,24 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "E_FIELD_INITIALIZER_UNSUPPORTED"
     )
     add_test(
+        NAME absolute.operator-overloading-semantic
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/operator-overloading.abs"
+    )
+    add_test(
+        NAME absolute.operator-overloading-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/operator-overloading-errors.abs"
+    )
+    set_tests_properties(absolute.operator-overloading-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_OPERATOR_NOT_STATIC"
+    )
+    add_test(
+        NAME absolute.equality-operand-errors
+        COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/equality-operand-errors.abs"
+    )
+    set_tests_properties(absolute.equality-operand-errors PROPERTIES
+        PASS_REGULAR_EXPRESSION "E_EQUALITY_OPERAND_TYPE"
+    )
+    add_test(
         NAME absolute.field-initializer-order-errors
         COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/field-initializer-order-errors.abs"
     )
@@ -3791,6 +3809,7 @@ if(BUILD_TESTING)
             "conditional-values=conditional-values=ok"
             "owned-aggregates=owned-aggregates=ok"
             "field-initializer=field-initializer=ok"
+            "operator-overloading=operator-overloading=ok"
             "generic-resource-aggregates=generic-resource-aggregates=ok"
             "foreach-temporary-source=foreach-temporary-source=ok"
             "shared-value-handoff=shared-value-handoff=ok"

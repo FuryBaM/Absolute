@@ -32,6 +32,16 @@ namespace Absolute {
         // two elements and stores a pointer. Checking the value against the
         // target rejected the whole notation, even though `p = p + 2` was
         // accepted and lowered correctly.
+        // `a += b` stores `a + b`, so when a type gives `+` its own meaning the
+        // compound form has it too -- and what is stored is the operator's
+        // result, which is what has to fit in the target. Asking whether `b`
+        // fits would refuse `scale *= 2.0` on a type whose `operator*` takes a
+        // number and returns the type.
+        std::optional<MemberSignature> compoundOverload;
+        if (expr->op != "=" && expr->op.size() > 1 && target.type != "error" &&
+            value.type != "error")
+            compoundOverload = FindOperatorOverload(
+                expr->op.substr(0, expr->op.size() - 1), {target.type, value.type});
         const bool pointerCompound = expr->op != "=" && IsRawPointerType(target.type);
         const bool pointerStep = pointerCompound &&
             (expr->op == "+=" || expr->op == "-=") && IsInteger(value.type);
@@ -43,6 +53,16 @@ namespace Absolute {
                 Report("a raw pointer supports only '+=' and '-=' with an integer step, "
                     "but the operator is '" + expr->op + "' and the step has type '" +
                     value.type + "'", "E_RAW_POINTER_COMPOUND_ASSIGNMENT");
+        }
+        else if (compoundOverload) {
+            RequireAccess(compoundOverload->access, compoundOverload->owner,
+                compoundOverload->owner + "." + "operator" +
+                    expr->op.substr(0, expr->op.size() - 1),
+                compoundOverload->symbol);
+            if (!IsAssignable(target.type, compoundOverload->type))
+                Report("operator '" + expr->op.substr(0, expr->op.size() - 1) +
+                    "' gives '" + compoundOverload->type + "', which cannot be stored in '" +
+                    target.type + "'", "E_ASSIGNMENT_TYPE_MISMATCH");
         }
         else if (!IsAssignable(target.type, value.type))
             Report("cannot assign '" + value.type + "' to '" + target.type + "'",
@@ -60,7 +80,8 @@ namespace Absolute {
         // before reaching its own rules, and whether the compound form should
         // reach a plugin at all is a question about plugins rather than about
         // this check.
-        if (expr->op != "=" && !pointerCompound && target.type != "error" &&
+        if (expr->op != "=" && !pointerCompound && !compoundOverload &&
+            target.type != "error" &&
             value.type != "error" && ArrayRank(target.type) == 0 &&
             !FindPluginBinaryOperator(target.type,
                 expr->op.substr(0, expr->op.size() - 1), value.type)) {
@@ -261,13 +282,18 @@ namespace Absolute {
             flow->second.taskState = IsTaskType(target.type)
                 ? value.taskState : TaskState::NotTask;
         }
-        Save(expr, {target.symbol, target.type, false, false, false,
+        Result assignment{target.symbol, target.type, false, false, false,
             InitializationState::Initialized,
             IsPointerType(target.type) ? value.pointerValidity : PointerValidity::NotPointer,
             IsManagedPointerType(target.type)
                 ? (value.createsManagedOwner ? target.symbol : value.pointerOwner)
                 : InvalidSymbolId,
-            IsTaskType(target.type) ? value.taskState : TaskState::NotTask});
+            IsTaskType(target.type) ? value.taskState : TaskState::NotTask};
+        Save(expr, assignment);
+        // Which operator the compound form resolved to. There is no binary
+        // expression here for the backend to ask about, so the answer is
+        // recorded on the assignment itself.
+        if (compoundOverload) expressionInfo[expr].calleeSymbol = compoundOverload->symbol;
     }
 
     void Analyzer::Visit(VarDeclExpr* expr) {
@@ -1249,6 +1275,22 @@ namespace Absolute {
                 Save(expr, {InvalidSymbolId, PointerPointee(operand.type), true});
             }
             return;
+        }
+        // A type's own unary operator, on the three that can carry one. `*`,
+        // `&`, `++` and `--` are not among them: the first two are the pointer
+        // model and the last two write to their operand, which a call cannot.
+        if (expr->op == "-" || expr->op == "!" || expr->op == "~") {
+            if (const auto overload = FindOperatorOverload(expr->op, {operand.type})) {
+                RequireAccess(overload->access, overload->owner,
+                    overload->owner + ".operator" + expr->op, overload->symbol);
+                const bool managedResult = IsManagedPointerType(overload->type);
+                Result call{overload->symbol, overload->type, false, managedResult, false,
+                    InitializationState::Initialized,
+                    managedResult ? PointerValidity::Live : PointerValidity::NotPointer};
+                call.producesFreshValue = true;
+                Save(expr, std::move(call));
+                return;
+            }
         }
         if (expr->op == "++" || expr->op == "--") {
             // A raw pointer steps by one element, the same rule `p + 1`

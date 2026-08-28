@@ -83,6 +83,25 @@ namespace Absolute {
                 managedResult ? PointerValidity::Live : PointerValidity::NotPointer});
             return;
         }
+        // A type may give the operator its own meaning. Looked up after the
+        // plugin table, which is what a program built against a plugin already
+        // depends on, and before every built-in rule -- but only for operand
+        // types that name a class or a struct, so nothing here can change what
+        // `1 + 2` means.
+        if (const auto overload = FindOperatorOverload(op, {left.type, right.type})) {
+            RequireAccess(overload->access, overload->owner,
+                overload->owner + "." + "operator" + op, overload->symbol);
+            const bool managedResult = IsManagedPointerType(overload->type);
+            Result call{overload->symbol, overload->type, false, managedResult, false,
+                InitializationState::Initialized,
+                managedResult ? PointerValidity::Live : PointerValidity::NotPointer};
+            // The operator made what it hands back, the same as the call it
+            // is. Without this a string an operator returned was named by the
+            // variable that took it and released by nobody.
+            call.producesFreshValue = true;
+            Save(expr, std::move(call));
+            return;
+        }
         const bool leftPointer = IsPointerType(left.type);
         const bool rightPointer = IsPointerType(right.type);
         if ((leftPointer || rightPointer) && (op == "+" || op == "-")) {
@@ -141,25 +160,47 @@ namespace Absolute {
             // orders exactly when `T` does. Unwrapped rather than refused, or
             // a container's own algorithms would be judged on the qualifier
             // its indexer hands back rather than on the element.
-            const auto judge = [&](const std::string& type) {
+            const auto judge = [&](GenericBodyFact::Shape shape,
+                const std::string& type) {
                 const std::string asked =
                     CanonicalOpenOwnership(type) == OwnershipKind::None
                         ? type : CanonicalOpenBaseName(type);
                 if (IsOpenGenericParameter(asked)) {
-                    RecordGenericBodyFact(GenericBodyFact::Shape::OrdersValues,
-                        asked, op, expr);
+                    RecordGenericBodyFact(shape, asked, op, expr);
                     return true;
                 }
-                return IsOrderableType(asked);
+                return shape == GenericBodyFact::Shape::OrdersValues
+                    ? IsOrderableType(asked)
+                    : IsEquatableType(asked) || HasEqualityOperator(asked);
             };
             if (op != "==" && op != "!=" && !managedOperand) {
-                const bool leftOrders = judge(left.type);
-                const bool rightOrders = judge(right.type);
+                const bool leftOrders = judge(GenericBodyFact::Shape::OrdersValues, left.type);
+                const bool rightOrders = judge(GenericBodyFact::Shape::OrdersValues, right.type);
                 if (!leftOrders || !rightOrders)
                     Report("operator '" + op + "' orders numbers, characters, "
                         "enum members and raw pointers, not '" +
                         left.type + "' and '" + right.type + "'",
                         "E_ORDERING_OPERAND_TYPE");
+            }
+            // Equality asked only whether the two types were assignable to
+            // one another, and a struct is assignable to itself: `a == b` on
+            // two struct values passed the analyzer and reached the backend,
+            // which failed with "binary operator requires numeric operands" --
+            // its own mechanism, no file, no line -- while `a + b` on the same
+            // two values was refused properly. The same question ordering
+            // already asks, asked of equality too.
+            if (op == "==" || op == "!=") {
+                const bool leftCompares =
+                    judge(GenericBodyFact::Shape::ComparesValues, left.type);
+                const bool rightCompares =
+                    judge(GenericBodyFact::Shape::ComparesValues, right.type);
+                if (!leftCompares || !rightCompares)
+                    Report("operator '" + op + "' compares numbers, characters, "
+                        "booleans, enum members, strings, pointers and function "
+                        "values, not '" + left.type + "' and '" + right.type +
+                        "'; declare 'static bool operator" + op + "(" + left.type +
+                        ", " + right.type + ")' to say what it means",
+                        "E_EQUALITY_OPERAND_TYPE");
             }
             if (!IsAssignable(left.type, right.type) && !IsAssignable(right.type, left.type))
                 Report("cannot compare '" + left.type + "' with '" + right.type + "'",

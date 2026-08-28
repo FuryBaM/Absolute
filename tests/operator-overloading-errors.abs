@@ -1,0 +1,34 @@
+// Every shape of `operator` declaration that nothing could ever reach. Each is
+// refused at its own line rather than compiled into a body that links and is
+// never called -- which is what an unchecked declaration would be, and the
+// same wrong-answer-with-no-diagnostic shape the rest of this corpus exists to
+// prevent.
+struct Thing {
+    public int64 x;
+
+    // Both operands are parameters, so an instance method could only ever be
+    // the first of `Thing * double` and `double * Thing`.
+    public Thing operator+(Thing other) { return other; }
+
+    // Neither operand is the declaring type, so `1 - 2` would still be the
+    // built-in and this body would be unreachable.
+    public static int64 operator-(int64 a, int64 b) { return 999; }
+
+    // '!' has no binary form.
+    public static bool operator!(Thing a, Thing b) { return true; }
+
+    // '*' has no unary form.
+    public static Thing operator*(Thing a) { return a; }
+
+    // An operator is written with all of its operands, so there is no call
+    // site that could leave one out.
+    public static Thing operator/(Thing a, int64 step = 1) { return a; }
+}
+
+// Declared where no type owns it: the lookup starts from the operand's type,
+// so nothing would find this.
+Thing operator%(Thing a, Thing b) { return a; }
+
+int32 main() {
+    return 0;
+}

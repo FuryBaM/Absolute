@@ -1407,6 +1407,57 @@ namespace Absolute {
         return CallableKey(symbol.name, symbol.parameterTypes);
     }
 
+    CodeGenerator::Impl::OperatorOverload
+    CodeGenerator::Impl::ResolvedOperator(Expression* expression) const {
+        if (!analyzer || !expression) return {};
+        const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
+        if (!info) return {};
+        const Symbol* symbol = analyzer->GetSymbol(info->symbol);
+        if (!symbol || symbol->kind != SymbolKind::Method) return {};
+        if (symbol->name.find(".operator") == std::string::npos) return {};
+        llvm::Function* function = module->getFunction(
+            CallableKey(symbol->name, symbol->parameterTypes));
+        if (!function) return {};
+        return {function, symbol->type, symbol->parameterTypes};
+    }
+
+    // The operator a compound assignment resolved to. `a += b` has no binary
+    // expression of its own, so the analyzer records the callable on the
+    // assignment and this reads it back.
+    CodeGenerator::Impl::OperatorOverload
+    CodeGenerator::Impl::ResolvedCompoundOperator(Expression* expression) const {
+        if (!analyzer || !expression) return {};
+        const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression);
+        if (!info || info->calleeSymbol == InvalidSymbolId) return {};
+        const Symbol* symbol = analyzer->GetSymbol(info->calleeSymbol);
+        if (!symbol || symbol->kind != SymbolKind::Method) return {};
+        if (symbol->name.find(".operator") == std::string::npos) return {};
+        llvm::Function* function = module->getFunction(
+            CallableKey(symbol->name, symbol->parameterTypes));
+        if (!function) return {};
+        return {function, symbol->type, symbol->parameterTypes};
+    }
+
+    // One operand pair through a type's own operator, wherever the lowering
+    // would otherwise have reached for a machine instruction.
+    llvm::Value* CodeGenerator::Impl::EmitOperatorCall(
+        const OperatorOverload& overload,
+        const std::vector<llvm::Value*>& operands,
+        const std::vector<std::string>& operandTypes) {
+        std::vector<llvm::Value*> arguments;
+        arguments.reserve(operands.size());
+        for (size_t index = 0; index < operands.size(); ++index)
+            arguments.push_back(Coerce(operands[index],
+                TypeFromName(overload.parameterTypes[index]),
+                operandTypes[index], overload.parameterTypes[index]));
+        llvm::Value* result = EmitAbiCall(
+            overload.function->getFunctionType(), overload.function,
+            overload.returnType, {}, overload.parameterTypes, arguments,
+            "operator.result");
+        EmitExceptionCheck();
+        return result;
+    }
+
     std::string CodeGenerator::Impl::ResolvedName(Expression* expression) const {
         if (analyzer && expression) {
             if (const ExpressionInfo* info = analyzer->GetExpressionInfo(*expression)) {

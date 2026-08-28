@@ -252,6 +252,19 @@
         std::string FunctionLinkName(const Symbol& symbol) const;
 
         std::string ResolvedName(Expression* expression) const;
+        // What the analyzer resolved an operator expression to, or an empty
+        // one. The declared parameter types come with it: an operand may need
+        // the same conversion an ordinary argument would.
+        struct OperatorOverload {
+            llvm::Function* function = nullptr;
+            std::string returnType;
+            std::vector<std::string> parameterTypes;
+        };
+        OperatorOverload ResolvedOperator(Expression* expression) const;
+        OperatorOverload ResolvedCompoundOperator(Expression* expression) const;
+        llvm::Value* EmitOperatorCall(const OperatorOverload& overload,
+            const std::vector<llvm::Value*>& operands,
+            const std::vector<std::string>& operandTypes);
 
         bool IsBuiltinFunction(const std::string& name) const;
 

@@ -1,5 +1,6 @@
 #include "parser_pch.h"
 #include "parser.h"
+#include <optional>
 
 namespace Absolute {
     std::unique_ptr<LambdaExpr> Parser::ParseLambdaExpr()
@@ -63,6 +64,14 @@ namespace Absolute {
         while (index + 1 < tokens.size() && tokens[index].type == TokenType::BRACKET &&
             tokens[index].value == "[" && tokens[index + 1].type == TokenType::BRACKET &&
             tokens[index + 1].value == "]") index += 2;
+        // `operator+` stands where a name would: the declaration is a callable
+        // like any other, and everything downstream -- overload resolution,
+        // link names, the call itself -- keys on the name it ends up with.
+        if (index + 1 < tokens.size() && tokens[index].type == TokenType::KEYWORD &&
+            tokens[index].value == "operator" &&
+            IsOverloadableOperator(tokens[index + 1].value))
+            return index + 2 < tokens.size() && tokens[index + 2].type == TokenType::BRACKET &&
+                tokens[index + 2].value == "(";
         if (index >= tokens.size() || tokens[index].type != TokenType::IDENTIFIER) return false;
         ++index;
         if (index < tokens.size() && tokens[index].value == "<") {
@@ -92,8 +101,29 @@ namespace Absolute {
         std::vector<Token> modifiers = this->modifiers;
         std::vector<Attribute> attributes = this->attributes;
         std::unique_ptr<TypeExpr> returnType = ParseType();
-        Token* identifier = Consume(TokenType::IDENTIFIER);
-        std::vector<Token> templateParams = ParseTemplateParameters();
+        std::optional<Token> operatorName;
+        Token* identifier = nullptr;
+        std::vector<Token> templateParams;
+        if (CurrentToken() && CurrentToken()->type == TokenType::KEYWORD &&
+            CurrentToken()->value == "operator") {
+            // The name is the two tokens together. Keeping it as one string
+            // from here means an operator is a callable with an unusual name
+            // and nothing downstream needs a second notion of what it is.
+            operatorName.emplace(*Consume(TokenType::KEYWORD, "operator"));
+            Token* symbol = CurrentToken();
+            if (!symbol || !IsOverloadableOperator(symbol->value)) {
+                ReportSyntaxError(symbol, "Expected an overloadable operator after 'operator'");
+                throw std::runtime_error("Expected an overloadable operator");
+            }
+            operatorName->value = "operator" + symbol->value;
+            operatorName->type = TokenType::IDENTIFIER;
+            Consume(TokenType::OPERATOR);
+            identifier = &*operatorName;
+        }
+        else {
+            identifier = Consume(TokenType::IDENTIFIER);
+            templateParams = ParseTemplateParameters();
+        }
 
         std::vector<std::unique_ptr<VarDeclExpr>> parameters = ParseParameters();
 

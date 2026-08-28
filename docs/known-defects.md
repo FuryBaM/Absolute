@@ -3069,3 +3069,125 @@ directions, and both are ordinary members of the corpus, so the suite
 differential compares their text at two optimization levels and on both
 targets -- which is the check that was empty before, because nothing printed a
 real number.
+
+## 26. Beyond the list: what building operator overloading found
+
+A type can now say what an operator means on it. That is a feature rather than
+a defect, and it is here because of what building it turned up: one wrong
+answer that had nothing to do with operators and had been there all along, and
+one that the feature brought with it.
+
+### The feature, and why it is one mechanism rather than two
+
+```absolute
+struct Vec2 {
+    public static Vec2 operator+(Vec2 a, Vec2 b) { ... }
+    public static Vec2 operator*(Vec2 a, double k) { ... }
+    public static Vec2 operator*(double k, Vec2 a) { ... }
+}
+```
+
+An operator declaration is a static method whose name is `operator` followed by
+the operator. That is the whole of it: the parser reads the two tokens as one
+name, and from there overload resolution, access control, the link name, the
+ABI and the ownership rules are the ones a method already has. The plugin
+operator table had established the same shape from the other side -- a rule
+that says `L op R` is answered by a call -- so the analyzer's lookup sits next
+to it, and the backend's call is the one the plugin path already emits.
+
+Static, because both operands are parameters: `Vec2 * double` and
+`double * Vec2` are two declarations that read the same way, and an instance
+method could only ever be the first of them.
+
+The compound forms follow from the binary ones rather than being declared:
+`a += b` stores `a + b`, so declaring `+` gives `+=`. Three lowering sites --
+a plain target, a property, an indexer -- reach the same call, because a
+compound assignment has no binary expression of its own for the backend to ask
+about; the analyzer records which operator it resolved to on the assignment.
+
+### The one thing a type may not do: change what `1 + 2` means
+
+At least one operand must be the declaring type. Without that rule,
+
+```absolute
+struct Sneaky {
+    public static int32 operator+(int32 a, int32 b) { return 999; }
+}
+```
+
+compiles, links, and is never called -- `1 + 2` is answered by the built-in
+rule before any lookup happens -- which is a body written and never run, the
+same shape as the field initializer in section 2. It is refused at its own
+line. So are: an operator declared outside a type, a non-static one, one with
+the wrong number of parameters for its operator, and one with a default
+argument, since there is no call site that could leave an operand out.
+
+### Found while probing: `==` on two structs died in the backend
+
+This one is older than the feature and independent of it.
+
+```absolute
+struct P { public int64 x; }
+P a; P b;
+a == b;   // was: Error: LLVM codegen: binary operator requires numeric operands
+a + b;    // was, and is: E_NUMERIC_OPERAND_REQUIRED, at its own line
+```
+
+Ordering (`<`, `<=`, `>`, `>=`) already asked whether the backend could order
+the operands, and refused a string or a struct with a file and a line. Equality
+asked only whether the two types were assignable to one another -- and a struct
+is assignable to itself. So `a == b` on two struct values passed the analyzer
+and reached the backend, which failed with the name of its own mechanism, no
+file and no line, on notation anybody would write next to a comparison that
+works.
+
+Equality now asks the same question ordering does, and the message says what
+the type can do about it: declare `static bool operator==`. What can be
+compared is a number, a character, a boolean, an enum member, a string, a
+pointer of any kind, and a function value -- each of them one value the backend
+has an instruction or a runtime call for. An aggregate is not one: two equal
+struct values may differ in their padding and in what their string fields point
+at, so there is nothing to compare their bytes against.
+
+A generic body asks it once per instantiation, the way ordering does, so
+`Set<Point>` is refused where `Set<int32>` is not -- and where `Set<Point>`
+used to reach the backend. Recording the fact needed one extra guard the
+ordering rule did not: `Deque<T>` written inside another generic body
+substitutes `T` for `T`, so the question is not answerable at that
+instantiation and the outer one asks it again.
+
+### Brought in by the feature: a returned string with no owner
+
+An operator's result is produced by a call, but the expression is not written
+as one, and the rule that decides whether a value arrives already held once
+looks at the shape of the expression. So
+
+```absolute
+string joined = left + right;    // operator+ returns format(...)
+```
+
+named storage nobody released: 500 iterations, 500 leaked allocations under
+LeakSanitizer, while the same call written as `Tag.join(left, right)` was
+clean. The operator paths say so themselves now, rather than being inferred
+from the expression's shape.
+
+Probed, not read: the leak showed up only because the probe ran the operator a
+thousand times under the sanitizer and compared it against the spelled-out
+call. A single pass prints the right answer.
+
+### What is not there
+
+Generic types cannot declare operators, because they cannot declare static
+members -- `E_STATIC_GENERIC_UNSUPPORTED`, at its own line, which is a loud
+failure rather than a wrong answer. Assignment, `&&`, `||` and `?:` are not
+overloadable: the last three decide whether to evaluate their right side at
+all, and a call cannot short-circuit, so overloading them would quietly change
+when an operand runs.
+
+`tests/operator-overloading.abs` is the feature -- both operand orders,
+chaining and precedence, the compound forms, a unary operator, a class reached
+through a managed pointer, an operator that throws, and a thousand rounds under
+AddressSanitizer for what an operator's result owns.
+`tests/operator-overloading-errors.abs` is every declaration nothing could
+reach; `tests/equality-operand-errors.abs` is the struct comparison, at the
+line and at the instantiation.

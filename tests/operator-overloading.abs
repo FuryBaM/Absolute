@@ -1,0 +1,136 @@
+// A type may say what an operator means on it. The declaration is a static
+// method with an unusual name, and everything downstream -- overload
+// resolution, access control, the link name, the call -- is the method's, so
+// there is one mechanism here rather than two.
+//
+// What is checked below is the part that is not obvious from the declaration:
+// which operand's type is asked, what an operator's result owns, that the
+// compound form follows from the binary one, and that nothing here changes
+// what `1 + 2` means.
+
+struct Vec2 {
+    public double x;
+    public double y;
+
+    public static Vec2 of(double x, double y) { Vec2 r; r.x = x; r.y = y; return r; }
+
+    public static Vec2 operator+(Vec2 a, Vec2 b) { return Vec2.of(a.x + b.x, a.y + b.y); }
+    public static Vec2 operator-(Vec2 a, Vec2 b) { return Vec2.of(a.x - b.x, a.y - b.y); }
+    // Two declarations, not one: both operands are parameters, so the type on
+    // the left is written as plainly as the type on the right.
+    public static Vec2 operator*(Vec2 a, double k) { return Vec2.of(a.x * k, a.y * k); }
+    public static Vec2 operator*(double k, Vec2 a) { return Vec2.of(a.x * k, a.y * k); }
+    public static bool operator==(Vec2 a, Vec2 b) { return a.x == b.x && a.y == b.y; }
+    public static bool operator!=(Vec2 a, Vec2 b) { return a.x != b.x || a.y != b.y; }
+    public static Vec2 operator-(Vec2 a) { return Vec2.of(0.0 - a.x, 0.0 - a.y); }
+}
+
+struct Bits {
+    public int64 mask;
+    public static Bits of(int64 m) { Bits r; r.mask = m; return r; }
+    public static Bits operator&(Bits a, Bits b) { return Bits.of(a.mask & b.mask); }
+    public static Bits operator|(Bits a, Bits b) { return Bits.of(a.mask | b.mask); }
+    public static Bits operator^(Bits a, Bits b) { return Bits.of(a.mask ^ b.mask); }
+    public static Bits operator<<(Bits a, int64 n) { return Bits.of(a.mask << n); }
+    public static Bits operator~(Bits a) { return Bits.of(~a.mask); }
+    public static bool operator<(Bits a, Bits b) { return a.mask < b.mask; }
+}
+
+// A class, reached through a managed pointer: the operator is found through
+// the type the pointer points at, and its operands are borrowed like any
+// other argument.
+class Tag {
+    public string text;
+    public static Tag* make(string t) { Tag* v = new Tag(); v.text = t; return v; }
+    public static string operator+(Tag* a, Tag* b) { return format("{}{}", a.text, b.text); }
+    public static bool operator==(Tag* a, Tag* b) { return a.text == b.text; }
+}
+
+struct Fussy {
+    public int64 x;
+    public static Fussy operator/(Fussy a, Fussy b) {
+        if (b.x == 0) { throw new Error("divide by zero"); }
+        Fussy r; r.x = a.x / b.x; return r;
+    }
+}
+
+int32 main() {
+    // Nothing here changes what the built-in operators mean.
+    assert(1 + 2 == 3, "integers are still integers");
+    assert(2.5 * 2.0 == 5.0, "and reals still reals");
+    assert("a" != "b", "and strings still compare by their bytes");
+
+    Vec2 a = Vec2.of(1.0, 2.0);
+    Vec2 b = Vec2.of(10.0, 20.0);
+    Vec2 sum = a + b;
+    assert(sum.x == 11.0 && sum.y == 22.0, "a type's own '+'");
+    Vec2 difference = b - a;
+    assert(difference.x == 9.0 && difference.y == 18.0, "and its '-'");
+
+    // Whichever side the type is on.
+    Vec2 right = a * 3.0;
+    Vec2 left = 3.0 * a;
+    assert(right.x == 3.0 && left.x == 3.0, "both orders of a mixed operand");
+
+    // Precedence and associativity are the parser's and did not move.
+    Vec2 chained = a + b + a;
+    assert(chained.x == 12.0, "chained left to right");
+    Vec2 mixed = a + b * 2.0;
+    assert(mixed.x == 21.0, "'*' still binds tighter than '+'");
+
+    // The compound form is the binary one, so declaring '+' gives '+='.
+    Vec2 accumulated = a;
+    accumulated += b;
+    assert(accumulated.x == 11.0 && accumulated.y == 22.0, "'+=' follows from '+'");
+    Vec2 scaled = a;
+    scaled *= 4.0;
+    assert(scaled.x == 4.0, "'*=' with an operand of another type");
+
+    assert(a == Vec2.of(1.0, 2.0), "equality is what the type says it is");
+    assert(a != b, "and so is inequality");
+    Vec2 negated = -a;
+    assert(negated.x == -1.0 && negated.y == -2.0, "a unary operator");
+
+    Bits mask = Bits.of(12);
+    Bits other = Bits.of(10);
+    assert((mask & other).mask == 8, "'&'");
+    assert((mask | other).mask == 14, "'|'");
+    assert((mask ^ other).mask == 6, "'^'");
+    assert((mask << 2).mask == 48, "'<<' with a count of another type");
+    assert((~mask).mask == -13, "'~'");
+    assert(other < mask, "'<' says what ordering means");
+    Bits shifted = mask;
+    shifted <<= 1;
+    assert(shifted.mask == 24, "'<<=' follows from '<<'");
+
+    // Repeated, because an owner released twice or not at all is what a single
+    // pass does not show. An operator's operands are arguments and are
+    // borrowed; what it returns is as fresh as any call's result, and a string
+    // it hands back is released by whoever takes it.
+    int32 round = 0;
+    while (round < 1000) {
+        Tag* first = Tag.make("l");
+        string joined = first + Tag.make("r");
+        assert(joined == "lr", "a string an operator built");
+        assert(first == Tag.make("l"), "and a comparison through a pointer");
+        assert(Tag.make("x") != first, "either way round");
+        round = round + 1;
+    }
+
+    Fussy ten; ten.x = 10;
+    Fussy two; two.x = 2;
+    assert((ten / two).x == 5, "an operator that can throw, when it does not");
+    Fussy zero; zero.x = 0;
+    bool caught = false;
+    try {
+        Fussy bad = ten / zero;
+        assert(false, "the throw did not leave the operator");
+    }
+    catch (Error* problem) {
+        caught = problem.message == "divide by zero";
+    }
+    assert(caught, "and the exception it throws reaches the caller");
+
+    println("operator-overloading=ok");
+    return 0;
+}

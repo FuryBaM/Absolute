@@ -27,8 +27,13 @@ namespace Absolute {
             if (expr->op != "=") {
                 llvm::Value* current = impl->EmitPropertyAccessor(receiver, receiverType,
                     CallableKey(PropertyGetterName(propertyName), {}), {});
-                assigned = impl->ApplyBinary(
-                    expr->op.substr(0, expr->op.size() - 1), current, assigned);
+                const Impl::OperatorOverload overload =
+                    impl->ResolvedCompoundOperator(expr);
+                assigned = overload.function
+                    ? impl->EmitOperatorCall(overload, {current, assigned},
+                        {targetTypeName, impl->SemanticType(expr->value.get())})
+                    : impl->ApplyBinary(
+                        expr->op.substr(0, expr->op.size() - 1), current, assigned);
             }
             assigned = impl->Coerce(assigned, impl->TypeFromName(targetTypeName),
                 impl->SemanticType(expr->value.get()), targetTypeName);
@@ -57,8 +62,13 @@ namespace Absolute {
                 llvm::Value* current = impl->EmitPropertyAccessor(
                     indexer->base.get(), receiverType,
                     CallableKey(IndexerGetterName(), targetInfo->parameterTypes), arguments);
-                assigned = impl->ApplyBinary(
-                    expr->op.substr(0, expr->op.size() - 1), current, assigned);
+                const Impl::OperatorOverload overload =
+                    impl->ResolvedCompoundOperator(expr);
+                assigned = overload.function
+                    ? impl->EmitOperatorCall(overload, {current, assigned},
+                        {targetTypeName, impl->SemanticType(expr->value.get())})
+                    : impl->ApplyBinary(
+                        expr->op.substr(0, expr->op.size() - 1), current, assigned);
             }
             assigned = impl->Coerce(assigned, impl->TypeFromName(targetTypeName),
                 impl->SemanticType(expr->value.get()), targetTypeName);
@@ -102,6 +112,13 @@ namespace Absolute {
             // have to treat the address as one.
             llvm::Value* current = impl->builder.CreateLoad(targetType, targetAddress, "assignment.current");
             assigned = impl->PointerOffset(current, targetTypeName, assigned, expr->op == "-=");
+        }
+        else if (const Impl::OperatorOverload overload = impl->ResolvedCompoundOperator(expr);
+            expr->op != "=" && overload.function) {
+            llvm::Value* current =
+                impl->builder.CreateLoad(targetType, targetAddress, "assignment.current");
+            assigned = impl->EmitOperatorCall(overload, {current, assigned},
+                {targetTypeName, impl->SemanticType(expr->value.get())});
         }
         else if (expr->op != "=") {
             llvm::Value* current = impl->builder.CreateLoad(targetType, targetAddress, "assignment.current");
@@ -1089,6 +1106,27 @@ namespace Absolute {
             impl->value = impl->builder.CreateLoad(
                 impl->TypeFromName(pointeeName), pointeeAddress, "pointer.value");
             impl->valueCreatesManagedOwner = false;
+            return;
+        }
+        // A type's own unary operator, resolved by the analyzer to a static
+        // method of one argument. The same call the binary form makes.
+        if (const Impl::OperatorOverload overload = impl->ResolvedOperator(expr);
+            overload.function && overload.parameterTypes.size() == 1) {
+            const std::string operandType = impl->SemanticType(expr->operand.get());
+            llvm::Value* operand = impl->Evaluate(expr->operand.get());
+            const bool operandCreatesManagedOwner = impl->valueCreatesManagedOwner;
+            impl->value = impl->EmitAbiCall(
+                overload.function->getFunctionType(), overload.function,
+                overload.returnType, {}, overload.parameterTypes,
+                {impl->Coerce(operand, impl->TypeFromName(overload.parameterTypes[0]),
+                    operandType, overload.parameterTypes[0])},
+                "operator.result");
+            impl->EmitExceptionCheck();
+            if (operandCreatesManagedOwner)
+                impl->RegisterTemporaryOwner(operand, operandType);
+            impl->RegisterIfFreshString(expr->operand.get(), operand);
+            impl->valueCreatesManagedOwner = IsStrongManagedPointerTypeName(overload.returnType);
+            impl->valueManagedPointee = nullptr;
             return;
         }
         if (expr->op == "++" || expr->op == "--") {

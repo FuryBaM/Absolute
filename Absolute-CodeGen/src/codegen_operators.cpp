@@ -80,6 +80,34 @@ namespace Absolute {
             return;
         }
 
+        // A type's own operator. The analyzer resolved it to a static method,
+        // so the call is the one it would emit for `Vec2.operator+(a, b)`
+        // written out -- the name, the ABI and the ownership rules are the
+        // method's, not a second mechanism beside them.
+        if (const Impl::OperatorOverload overload = impl->ResolvedOperator(expr);
+            overload.function) {
+            std::vector<llvm::Value*> arguments{
+                impl->Coerce(left, impl->TypeFromName(overload.parameterTypes[0]),
+                    leftType, overload.parameterTypes[0]),
+                impl->Coerce(right, impl->TypeFromName(overload.parameterTypes[1]),
+                    rightType, overload.parameterTypes[1])};
+            impl->value = impl->EmitAbiCall(
+                overload.function->getFunctionType(), overload.function,
+                overload.returnType, {}, overload.parameterTypes,
+                arguments, "operator.result");
+            impl->EmitExceptionCheck();
+            // The operands are arguments, not gifts: an owner one of them made
+            // is released with the statement, the same as for a method call
+            // written by hand.
+            if (leftCreatesManagedOwner) impl->RegisterTemporaryOwner(left, leftType);
+            if (rightCreatesManagedOwner) impl->RegisterTemporaryOwner(right, rightType);
+            impl->RegisterIfFreshString(expr->left.get(), left);
+            impl->RegisterIfFreshString(expr->right.get(), right);
+            impl->valueCreatesManagedOwner = IsStrongManagedPointerTypeName(overload.returnType);
+            impl->valueManagedPointee = nullptr;
+            return;
+        }
+
         // Everything from here borrows its operands: a comparison, a pointer
         // difference, arithmetic. None of them takes the owner, so an operand
         // that produced one -- `make() != null` -- waits for the end of the

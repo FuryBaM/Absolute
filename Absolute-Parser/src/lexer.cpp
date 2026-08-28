@@ -172,6 +172,15 @@ namespace Absolute {
         return primitiveTypes.find(value) != primitiveTypes.end();
     }
 
+    bool IsOverloadableOperator(const std::string& op) {
+        static const std::unordered_set<std::string> overloadable{
+            "+", "-", "*", "/", "%",
+            "==", "!=", "<", ">", "<=", ">=",
+            "&", "|", "^", "<<", ">>",
+            "!", "~"};
+        return overloadable.count(op) > 0;
+    }
+
     bool IsPrefixUnary(const Token& token) {
         return (token.type == TokenType::OPERATOR && prefixUnaryOps.count(token.value) > 0) ||
             (token.type == TokenType::KEYWORD &&

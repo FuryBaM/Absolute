@@ -356,6 +356,7 @@ namespace Absolute {
                 CopiesElements,      // array elements duplicated as bytes
                 ElementFromNonOwner, // a slot filled from something not fresh
                 OrdersValues,        // `<`, `<=`, `>` or `>=` on the parameter
+                ComparesValues,      // `==` or `!=` on the parameter
                 InterfaceValue,      // the parameter used as a value, not a handle
                 BorrowsAsOwner       // `sub T` bound to a name written `T`
             };
@@ -687,6 +688,25 @@ namespace Absolute {
         void ValidateAccessModifiers(const Statement& statement,
             bool memberDeclaration, const std::string& target);
         bool CanAccess(AccessLevel access, const std::string& owner) const;
+        // Whether `==` on this type is something the backend can lower.
+        bool IsEquatableType(const std::string& name) const;
+        // ...or something the type itself gives a meaning.
+        bool HasEqualityOperator(const std::string& name) const;
+        // Whether a declaration named `operator<op>` can ever be reached, and
+        // the refusal at its own line when it cannot.
+        void CheckOperatorDeclaration(const FunctionDeclStmt& statement,
+            SymbolKind kind, bool staticMethod,
+            const std::vector<std::string>& parameterTypes);
+        // The static `operator op` a type declares for these two operand
+        // types, or nothing. Both operands are asked, in that order, because
+        // `Vec2 * double` and `double * Vec2` are two declarations and only
+        // one of them can live in `Vec2`.
+        std::optional<MemberSignature> FindOperatorOverload(
+            const std::string& op, const std::vector<std::string>& operandTypes);
+        // The type whose body a member named `name` would be looked up in:
+        // `Box<int32>` is declared as `Box`, and a pointer is not a type that
+        // declares operators, its pointee is.
+        std::string OperatorLookupType(const std::string& typeName) const;
         void RequireAccess(AccessLevel access, const std::string& owner,
             const std::string& member, SymbolId symbol = InvalidSymbolId);
         void RequireAccess(const MemberSignature& member, const std::string& name);

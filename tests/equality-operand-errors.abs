@@ -1,0 +1,25 @@
+// `==` asked only whether its two operands were assignable to one another, and
+// a struct is assignable to itself: `a == b` on two struct values passed the
+// analyzer and reached the backend, which failed with "binary operator
+// requires numeric operands" -- its own mechanism, no file, no line -- while
+// `a + b` on the same two values was refused properly, at its own line.
+//
+// Ordering already asked the question that equality did not. Now equality asks
+// it too, and the message says what the type can do about it: declare what
+// equality means. A generic container asks it once per instantiation, so
+// `Set<Point>` is refused where `Set<int32>` is not.
+import "../std/collections/set.abs";
+
+struct Point {
+    public int64 x;
+    public int64 y;
+}
+
+int32 main() {
+    Point a;
+    Point b;
+    println(format("{}", a == b));
+    println(format("{}", a != b));
+    std.collections.Set<Point>* seen = new std.collections.Set<Point>();
+    return 0;
+}

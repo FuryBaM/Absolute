@@ -60,6 +60,12 @@ namespace Absolute {
 	// the only spelling: `1e-9` has no dot and is not an integer.
 	bool IsFloatingLiteral(const std::string& literal);
 	bool IsEndOfStatement(const Token& token);
+	// The operators a type may give its own meaning. Assignment is not among
+	// them, nor are `&&`, `||` and `?:`, which decide whether to evaluate their
+	// right side at all -- a call cannot short-circuit, so overloading them
+	// would quietly change when the operand runs. The compound forms are not
+	// here either: `a += b` is `a = a + b`, so it follows from `+`.
+	bool IsOverloadableOperator(const std::string& op);
 	OperatorCategory GetOperatorCategory(const std::string& op);
 	std::vector<Token> lexer(const std::string& code);
 }
