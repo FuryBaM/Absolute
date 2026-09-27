@@ -26,7 +26,8 @@ mangling, overloads, classes, C++ exceptions) is **not** supported.
 | `float` / `double` | IEEE → `float` / `double` | |
 | `bool` | C `_Bool` → **`i8`** at the C boundary | Internal Absolute bool remains `i1` |
 | `void` | `void` | Return only |
-| `string` | `char*` / `const char*` → `ptr` | Caller owns the buffer; no automatic free |
+| `string` parameter | `const char*` → `ptr` | Absolute→C is borrowed; C→`export "C"` is copied on entry |
+| `string` return | `const char*` → `ptr` | Reserved for functions that return Absolute counted-string storage |
 | `raw T*` | pointer → `ptr` | Including `raw void*` |
 | enum | fixed `i32` | C enum size is platform-dependent; expose `int32` in C headers. Give members explicit numbers to match the C constants they stand for |
 
@@ -56,12 +57,30 @@ contiguous buffer, or pass `raw` only from unsafe code). See also
 
 ## Strings
 
-`string` at the C boundary is a raw C string pointer:
+The pointer representation is C-compatible, but the ownership contracts are
+directional:
 
-- Absolute → C: pass the internal UTF-8 `char*` (caller retains ownership).
-- C → Absolute: treat returned `char*` as a borrowed or documented native
-  lifetime; do not assume Absolute will free native heap unless a companion
-  free function is part of the API.
+- Absolute → C parameter: `string` passes its UTF-8 bytes as a borrowed
+  `const char*`. Native code must not retain or free that pointer.
+- C → `export "C"` parameter: the generated entry point immediately copies
+  the incoming NUL-terminated C string into Absolute counted storage. The body
+  therefore sees an ordinary managed `string`, even when the native pointer
+  had no Absolute header.
+- Generic C `const char*` return: declare it as `raw int8*`. The pointer
+  keeps the lifetime promised by the native API. Use
+  `std.text.fromCString(pointer)` to make an Absolute-owned copy before
+  storing it as a `string`.
+- `extern "C" string` return is a stronger ABI contract, reserved for a
+  function that deliberately returns Absolute counted-string storage with one
+  owned count. Absolute's own runtime uses this convention. Do not use it for
+  an arbitrary library function returning a conventional C string.
+- `export "C" string` hands the native caller an Absolute counted string. A
+  native consumer that keeps the value owns that returned count and must pair it
+  with `absolute_string_release`.
+
+This split is intentional: probing bytes before an arbitrary foreign
+`const char*` to guess whether an Absolute header exists is undefined
+behaviour. Provenance is established at the ABI boundary instead.
 
 Prefer length-aware APIs (`raw int8*`, `int32 length`) when embedded nulls or
 non-terminated buffers are possible.
@@ -209,7 +228,8 @@ The tool uses `clang -Xclang -ast-dump=json` (portable LLVM under
 |---|----------|
 | fixed-width integers / `float` / `double` / `bool` | matching Absolute scalar |
 | `void*` / opaque typedef pointers | `raw void*` or `using Handle = raw void*` |
-| `const char*` | `string` (caller-owned) |
+| `const char*` parameter | `string` (borrowed for the duration of the call) |
+| `const char*` return | `raw int8*` (copy with `std.text.fromCString` when ownership is needed) |
 | `T*` for scalars | `raw T*` |
 | function pointers | `cfunc<...>` when argument types map |
 | variadic / incomplete aggregates | skipped with a comment |

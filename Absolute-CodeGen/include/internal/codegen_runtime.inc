@@ -291,6 +291,7 @@
         llvm::FunctionCallee StringAlloc();
         llvm::FunctionCallee StringRetain();
         llvm::FunctionCallee StringRelease();
+        llvm::FunctionCallee StringCopyCString();
 
         // Array storage is zero-initialized, which is what the language
         // promises and what `malloc` does not do. calloc rather than a memset

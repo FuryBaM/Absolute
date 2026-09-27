@@ -1544,6 +1544,12 @@ namespace Absolute {
         return module->getOrInsertFunction("absolute_string_release", type);
     }
 
+    llvm::FunctionCallee CodeGenerator::Impl::StringCopyCString() {
+        llvm::FunctionType* type = llvm::FunctionType::get(
+            builder.getPtrTy(), {builder.getPtrTy()}, false);
+        return module->getOrInsertFunction("absolute_string_copy_cstr", type);
+    }
+
     llvm::IntegerType* CodeGenerator::Impl::SizeType() {
         return builder.getIntNTy(module->getDataLayout().getPointerSizeInBits());
     }

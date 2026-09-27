@@ -19,6 +19,7 @@ extern "C" std::int32_t absolute_double_text(double value, char* out, std::int32
 extern "C" char* absolute_string_alloc(std::size_t bytes);
 extern "C" const char* absolute_string_retain(const char* text);
 extern "C" void absolute_string_release(const char* text);
+extern "C" const char* absolute_string_copy_cstr(const char* text);
 
 namespace {
     thread_local std::string lastStringError;
@@ -34,11 +35,12 @@ namespace {
     // copies the pointer, and two names for the same bytes is the ordinary
     // case rather than an error. The count says how many of them there are.
     //
-    // The magic word is not decoration. A `const char*` can also arrive from
-    // outside -- a plugin, a C function, a literal in a library built before
-    // this -- and releasing one of those would free storage the language never
-    // allocated. A header that does not say so is not ours and nothing
-    // happens.
+    // The magic word diagnoses corruption or ABI misuse. Retain/release only
+    // accept pointers that already obey the Absolute string ABI; arbitrary C
+    // strings are copied first with absolute_string_copy_cstr. Looking behind
+    // an unrelated foreign pointer merely to test a magic word would itself be
+    // undefined behaviour, so the C boundary must establish provenance before
+    // a value reaches HeaderOf.
     constexpr std::uint32_t StringMagic = 0x41425331u;   // "ABS1"
     constexpr std::uint32_t StringStatic = 0xFFFFFFFFu;  // never released
 
@@ -61,7 +63,7 @@ namespace {
         char* copy = absolute_string_alloc(value.size());
         if (!copy) {
             lastStringError = "string allocation failed";
-            return "";
+            return nullptr;
         }
         std::memcpy(copy, value.c_str(), value.size());
         return copy;
@@ -73,7 +75,7 @@ namespace {
         char* copy = absolute_string_alloc(length);
         if (!copy) {
             lastStringError = "string allocation failed";
-            return "";
+            return nullptr;
         }
         std::memcpy(copy, value, length);
         return copy;
@@ -473,12 +475,16 @@ extern "C" void absolute_string_release(const char* text) {
     std::free(header);
 }
 
-// A string that the language did not allocate -- a literal, a plugin's buffer,
-// anything static -- can still be handed to code that retains and releases,
-// as long as it says it is not to be freed. Copying it is the alternative and
-// it is not always available: the pointer may be the only thing there is.
+// Bridge a conventional NUL-terminated C string into the language's counted
+// representation. The source remains owned by native code; the returned value
+// owns one Absolute string count.
+extern "C" const char* absolute_string_copy_cstr(const char* text) {
+    return DurableCString(text);
+}
+
+// Kept for source/binary compatibility with early runtimes. "Adopting" an
+// arbitrary pointer by reading memory before it is not memory-safe, so the
+// compatibility entry point now performs the same copy as the explicit bridge.
 extern "C" const char* absolute_string_adopt_static(const char* text) {
-    if (StringHeader* header = HeaderOf(text))
-        header->refs.store(StringStatic, std::memory_order_relaxed);
-    return text;
+    return DurableCString(text);
 }

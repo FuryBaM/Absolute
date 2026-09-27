@@ -18,6 +18,7 @@ extern "C" int32 absolute_string_index_of(string text, string sub);
 extern "C" int32 absolute_string_last_index_of(string text, string sub);
 extern "C" string absolute_string_replace(string text, string fromText, string toText);
 extern "C" string absolute_string_substring(string text, int32 start, int32 length);
+extern "C" string absolute_string_copy_cstr(raw int8* text);
 
 extern "C" raw void* absolute_string_builder_create();
 extern "C" void absolute_string_builder_free(raw void* handle);
@@ -31,6 +32,12 @@ extern "C" int32 absolute_string_builder_length(raw void* handle);
 extern "C" string absolute_string_builder_to_string(raw void* handle);
 
 namespace std.text {
+    // Copy a conventional NUL-terminated native C string into Absolute-owned
+    // counted storage. The native pointer remains borrowed.
+    string fromCString(raw int8* text) {
+        return absolute_string_copy_cstr(text);
+    }
+
     class StringBuilder {
         private raw void* handle;
 

@@ -6,6 +6,10 @@ export "C" void absolute_increment(raw int32* value) {
     *value += 1;
 }
 
+export "C" int32 absolute_string_probe(string text) {
+    return text == "native" ? 6 : 0;
+}
+
 int32 main() {
     int32 value = absolute_add(20, 21);
     absolute_increment(&value);

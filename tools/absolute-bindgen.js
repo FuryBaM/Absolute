@@ -109,13 +109,15 @@ function mapCType(qualType, options) {
     // Function pointer: Ret (*)(Args) or Ret (Name*)(Args)
     const fnPtr = t.match(/^(.+?)\s*\(\s*\*?\s*[^)]*\)\s*\((.*)\)$/);
     if (fnPtr) {
-        const ret = mapCType(fnPtr[1].trim(), options);
+        const ret = mapCType(
+            fnPtr[1].trim(), { ...options, returnPosition: true });
         if (!ret.ok) return ret;
         const argsRaw = fnPtr[2].trim();
         if (!argsRaw || argsRaw === 'void') {
             return { ok: true, abs: `cfunc<${ret.abs}>` };
         }
-        const args = splitTopLevel(argsRaw, ',').map(a => mapCType(a.trim(), options));
+        const args = splitTopLevel(argsRaw, ',').map(a =>
+            mapCType(a.trim(), { ...options, returnPosition: false }));
         for (const a of args) if (!a.ok) return a;
         return { ok: true, abs: `cfunc<${ret.abs}, ${args.map(a => a.abs).join(', ')}>` };
     }
@@ -134,8 +136,18 @@ function mapCType(qualType, options) {
 
         if (base === 'void') return { ok: true, abs: 'raw void*' };
         if (base === 'char' || base === 'signed char') {
-            if (isConst && !options.keepConstCharAsRaw)
-                return { ok: true, abs: 'string', note: 'const char* -> string (caller-owned UTF-8)' };
+            if (isConst && !options.keepConstCharAsRaw && !options.returnPosition)
+                return {
+                    ok: true,
+                    abs: 'string',
+                    note: 'const char* parameter -> borrowed UTF-8 string view'
+                };
+            if (isConst && options.returnPosition)
+                return {
+                    ok: true,
+                    abs: 'raw int8*',
+                    note: 'const char* return -> borrowed native pointer; copy with std.text.fromCString'
+                };
             return { ok: true, abs: 'raw int8*' };
         }
         if (base === 'unsigned char' || base === 'uint8_t')
@@ -320,7 +332,9 @@ function collectFromAst(ast, headerPath, options) {
         for (const child of node.inner || []) {
             if (child.kind !== 'ParmVarDecl') continue;
             const qual = child.type && (child.type.qualType || child.type.desugaredQualType);
-            const mapped = mapCType(qual, { ...options, typedefs, pointerAliases });
+            const mapped = mapCType(qual, {
+                ...options, typedefs, pointerAliases, returnPosition: false
+            });
             const pname = sanitizeIdent(child.name, `arg${params.length}`);
             if (!mapped.ok) {
                 skipped.push({
@@ -340,7 +354,9 @@ function collectFromAst(ast, headerPath, options) {
             const idx = typeQual.indexOf('(');
             returnQual = idx === -1 ? typeQual : typeQual.slice(0, idx).trim();
         }
-        const ret = mapCType(returnQual, { ...options, typedefs, pointerAliases });
+        const ret = mapCType(returnQual, {
+            ...options, typedefs, pointerAliases, returnPosition: true
+        });
         if (!ret.ok) {
             skipped.push({ kind: 'function', name: node.name, reason: `return: ${ret.reason}` });
             return;

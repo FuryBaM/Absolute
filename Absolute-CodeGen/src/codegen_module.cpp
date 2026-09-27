@@ -701,8 +701,15 @@ namespace Absolute {
         // back. It carries no role argument precisely because there is nothing
         // to decide -- a string is shared, so the answer is the same every
         // call, which is what `staticallyOwns` means.
+        // A body with the C ABI is an exported function. A native caller may
+        // hand it any valid C string, which has no Absolute header. Copy that
+        // buffer at the boundary so every string used by the body obeys the
+        // normal counted-string invariant.
+        const bool copiesCAbiString =
+            external && !valueReference && typeName == "string";
         const bool staticallyOwns = rolePolymorphic ||
-            (!external && !valueReference && typeName == "string");
+            ((!external || copiesCAbiString) &&
+                !valueReference && typeName == "string");
         auto bindOwnershipFlag = [&](Variable& variable) {
             if (!rolePolymorphic) return;
             if (!ownershipArgument)
@@ -790,7 +797,10 @@ namespace Absolute {
         // bytes. Emitted here, in the body, which is why an external function
         // needs nothing: it has no body, and its caller releases what it made.
         llvm::Value* stored = Coerce(&argument, storageType);
-        if (!external && !valueReference && typeName == "string")
+        if (copiesCAbiString)
+            stored = builder.CreateCall(
+                StringCopyCString(), {stored}, "parameter.c_string.copy");
+        else if (!external && !valueReference && typeName == "string")
             stored = builder.CreateCall(StringRetain(), {stored}, "parameter.retained");
         builder.CreateStore(stored, address);
         Variable variable{address, storageType, typeName, false, false, nullptr, {},
@@ -808,8 +818,10 @@ namespace Absolute {
             ValueCountsOnCopy(typeName))
             EmitValueRetain(address, typeName);
         variable.ownsAggregateResources =
-            (staticallyOwns || (!external && !valueReference &&
-                ValueCountsOnCopy(typeName))) && TypeNeedsCleanup(typeName);
+            (staticallyOwns || copiesCAbiString ||
+                (!external && !valueReference &&
+                    ValueCountsOnCopy(typeName))) &&
+            TypeNeedsCleanup(typeName);
         bindOwnershipFlag(variable);
         if (!scopes.back().emplace(name, std::move(variable)).second)
             Fail("duplicate parameter '" + name + "'");

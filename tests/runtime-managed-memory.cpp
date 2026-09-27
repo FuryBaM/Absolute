@@ -1,6 +1,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <thread>
 #include <vector>
@@ -14,6 +15,10 @@ extern "C" void absolute_managed_destroy(std::uint64_t handle);
 extern "C" void* absolute_capsule_create_typed(
     std::uint64_t handle, void (*deleter)(void*));
 extern "C" void absolute_capsule_destroy(void* capsule);
+extern "C" const char* absolute_string_copy_cstr(const char* text);
+extern "C" const char* absolute_string_retain(const char* text);
+extern "C" void absolute_string_release(const char* text);
+extern "C" const char* absolute_string_adopt_static(const char* text);
 
 namespace {
     std::atomic<int> storageDeletes{0};
@@ -37,6 +42,24 @@ namespace {
 }
 
 int main() {
+    const char foreignText[] = "native-owned";
+    const char* copiedText = absolute_string_copy_cstr(foreignText);
+    Require(copiedText != nullptr && std::strcmp(copiedText, foreignText) == 0,
+        "C string bridge did not preserve text");
+    Require(copiedText != foreignText,
+        "C string bridge aliased native storage instead of copying it");
+    absolute_string_retain(copiedText);
+    absolute_string_release(copiedText);
+    absolute_string_release(copiedText);
+
+    const char* compatibilityCopy = absolute_string_adopt_static(foreignText);
+    Require(compatibilityCopy != nullptr &&
+        std::strcmp(compatibilityCopy, foreignText) == 0,
+        "legacy string adopt bridge did not preserve text");
+    Require(compatibilityCopy != foreignText,
+        "legacy string adopt still touched foreign storage instead of copying");
+    absolute_string_release(compatibilityCopy);
+
     void* external = std::malloc(32);
     Require(external != nullptr, "external allocation failed");
     const std::uint64_t adopted =

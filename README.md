@@ -664,8 +664,10 @@ Demo.exe
 ```
 
 The generated `.obj` is retained next to the executable so it can be inspected
-or linked manually. Current FFI types map primitive scalars directly; `string`
-is passed as a C `char*`. Ownership stays with the caller. Native exceptions
+or linked manually. Current FFI types map primitive scalars directly. A `string`
+parameter is passed as a borrowed C `char*`; an incoming C string to an exported
+Absolute function is copied on entry. Generic native `const char*` returns stay
+`raw int8*` and can be copied explicitly with `std.text.fromCString`. Native exceptions
 must not enter `extern "C"`, and Absolute errors must be handled before leaving
 an `export "C"` function.
 

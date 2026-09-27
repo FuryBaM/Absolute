@@ -68,7 +68,7 @@ void absolute_string_release(const char* text) {
 static const char* wasm_string_copy_range(const char* text, size_t length) {
     char* result = absolute_string_alloc(length);
     if (!result)
-        return "";
+        return NULL;
     if (text && length)
         memcpy(result, text, length);
     return result;
@@ -76,6 +76,10 @@ static const char* wasm_string_copy_range(const char* text, size_t length) {
 
 static const char* wasm_string_copy(const char* text) {
     return wasm_string_copy_range(text ? text : "", text ? strlen(text) : 0);
+}
+
+const char* absolute_string_copy_cstr(const char* text) {
+    return wasm_string_copy(text ? text : "");
 }
 
 static uint32_t wasm_utf8_decode(const char** cursor) {
@@ -193,7 +197,7 @@ static const char* wasm_string_map_case(const char* text, int upper) {
     size_t capacity = strlen(text) + 1;
     char* result = (char*)heap_alloc(capacity);
     if (!result)
-        return "";
+        return NULL;
     const char* cursor = text;
     size_t length = 0;
     while (*cursor) {
@@ -206,7 +210,7 @@ static const char* wasm_string_map_case(const char* text, int upper) {
             char* next = (char*)heap_alloc(next_capacity);
             if (!next) {
                 free(result);
-                return "";
+                return NULL;
             }
             memcpy(next, result, length);
             free(result);
@@ -372,7 +376,7 @@ const char* absolute_string_concat(const char* left, const char* right) {
     size_t right_length = right ? strlen(right) : 0;
     char* result = absolute_string_alloc(left_length + right_length);
     if (!result)
-        return "";
+        return NULL;
     if (left_length)
         memcpy(result, left, left_length);
     if (right_length)
@@ -458,7 +462,7 @@ const char* absolute_string_replace(const char* text, const char* from, const ch
         result_length -= matches * (from_length - to_length);
     char* result = absolute_string_alloc(result_length);
     if (!result)
-        return "";
+        return NULL;
     cursor = text;
     size_t written = 0;
     while ((found = wasm_string_find(cursor, from)) != NULL) {
@@ -1090,7 +1094,7 @@ const char* absolute_fs_read_text(const char* path) {
     int id = fs_find(path);
     if (id < 0 || g_vfs[id].is_dir || !g_vfs[id].data) {
         fs_set_error("file not found");
-        return "";
+        return NULL;
     }
     fs_clear_error();
     return g_vfs[id].data;
@@ -1202,13 +1206,13 @@ const char* absolute_fs_file_read_line(void* handle) {
     VfsHandle* file = (VfsHandle*)handle;
     if (!file || !file->used) {
         fs_set_error("invalid handle");
-        return "";
+        return NULL;
     }
     VfsNode* node = &g_vfs[file->node];
     if (!node->data || file->pos >= node->length) {
         file->eof = 1;
         fs_clear_error();
-        return "";
+        return NULL;
     }
     size_t start = file->pos;
     size_t end = start;
@@ -1231,7 +1235,7 @@ const char* absolute_fs_file_read_all(void* handle) {
     VfsHandle* file = (VfsHandle*)handle;
     if (!file || !file->used) {
         fs_set_error("invalid handle");
-        return "";
+        return NULL;
     }
     VfsNode* node = &g_vfs[file->node];
     fs_clear_error();
@@ -1346,11 +1350,11 @@ const char* absolute_fs_directory_next(void* value) {
     VfsDirectoryHandle* handle = (VfsDirectoryHandle*)value;
     if (!handle) {
         fs_set_error("directory iterator is closed");
-        return "";
+        return NULL;
     }
     if (handle->position >= handle->count) {
         fs_clear_error();
-        return "";
+        return NULL;
     }
     int node = handle->nodes[handle->position++];
     fs_clear_error();
@@ -1390,7 +1394,7 @@ static const char* fs_create_temp_path(const char* prefix, int directory) {
         break;
     }
     fs_set_error("temporary path creation failed");
-    return "";
+    return NULL;
 }
 
 const char* absolute_fs_create_temp_file(const char* prefix) {
@@ -1476,7 +1480,7 @@ const char* absolute_fs_watcher_path(void* value) {
     VfsWatcher* watcher = (VfsWatcher*)value;
     if (!watcher) {
         fs_set_error("watcher is closed");
-        return "";
+        return NULL;
     }
     fs_clear_error();
     return watcher->current_path;
@@ -1538,7 +1542,7 @@ const char* absolute_env_get(const char* name) {
     env_clear_error();
     if (!name) {
         env_set_error("null name");
-        return "";
+        return NULL;
     }
     for (int i = 0; i < ABSOLUTE_ENV_MAX; ++i) {
         if (g_env[i].used && fs_streq(g_env[i].key, name)) {
@@ -1547,7 +1551,7 @@ const char* absolute_env_get(const char* name) {
         }
     }
     env_set_error("not found");
-    return "";
+    return NULL;
 }
 
 int32_t absolute_env_set(const char* name, const char* value) {
@@ -1729,7 +1733,7 @@ int32_t absolute_process_run(const char* command) {
 }
 const char* absolute_process_run_capture(const char* command) {
     (void)command;
-    return "";
+    return NULL;
 }
 int32_t absolute_process_args_count(void) {
 #if defined(ABSOLUTE_WASM_USE_WASI)
@@ -1743,12 +1747,12 @@ const char* absolute_process_arg_at(int32_t index) {
 #if defined(ABSOLUTE_WASM_USE_WASI)
     wasi_load_args();
     if (index < 0 || index >= g_wasi_argc || !g_wasi_argv[index])
-        return "";
+        return NULL;
     return g_wasi_argv[index];
 #else
     if (index < 0 || absolute_host_process_arg_copy(index, g_process_arg_scratch,
             (int32_t)sizeof(g_process_arg_scratch)) < 0)
-        return "";
+        return NULL;
     return g_process_arg_scratch;
 #endif
 }
@@ -1888,7 +1892,7 @@ const char* absolute_net_tcp_receive(void* handle, int32_t maximumBytes) {
     NetHandle* socket = (NetHandle*)handle;
     if (!socket) {
         net_set_error("null socket");
-        return "";
+        return NULL;
     }
     int32_t cap = maximumBytes;
     if (cap <= 0 || cap >= (int32_t)sizeof(g_net_recv_scratch))
@@ -1935,7 +1939,7 @@ void absolute_net_tcp_close(void* handle) {
 const char* absolute_net_resolve_host(const char* hostname) {
     if (!hostname) {
         net_set_error("null hostname");
-        return "";
+        return NULL;
     }
     /* Host may rewrite; default echo the name for mock hosts. */
     fs_copy_path(g_net_resolve_scratch, sizeof(g_net_resolve_scratch), hostname);
@@ -1956,7 +1960,7 @@ int32_t absolute_net_udp_send_to(void* handle, const char* host, int32_t port, c
 }
 const char* absolute_net_udp_receive_from(void* handle, int32_t maxBytes) {
     (void)handle; (void)maxBytes;
-    return "";
+    return NULL;
 }
 void absolute_net_udp_close(void* handle) { (void)handle; }
 

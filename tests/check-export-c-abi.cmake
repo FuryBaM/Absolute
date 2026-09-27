@@ -12,7 +12,8 @@ endif()
 
 foreach(SIGNATURE IN ITEMS
         "${EXPORT_PREFIX} i32 @absolute_add(i32 %left, i32 %right)"
-        "${EXPORT_PREFIX} void @absolute_increment(ptr %value)")
+        "${EXPORT_PREFIX} void @absolute_increment(ptr %value)"
+        "${EXPORT_PREFIX} i32 @absolute_string_probe(ptr %text)")
     string(FIND "${IR}" "${SIGNATURE}" POSITION)
     if(POSITION EQUAL -1)
         message(FATAL_ERROR "Expected exported C ABI signature was not emitted: ${SIGNATURE}")
@@ -26,4 +27,10 @@ endif()
 string(FIND "${IR}" "call i32 @absolute_add(i32 20, i32 21)" CALL_POSITION)
 if(CALL_POSITION EQUAL -1)
     message(FATAL_ERROR "Absolute call site does not use the exported C ABI symbol")
+endif()
+
+
+string(FIND "${IR}" "call ptr @absolute_string_copy_cstr(ptr %text)" STRING_COPY_POSITION)
+if(STRING_COPY_POSITION EQUAL -1)
+    message(FATAL_ERROR "export C string parameter was not copied into Absolute-owned storage")
 endif()
