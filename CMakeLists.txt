@@ -131,6 +131,24 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "runtime-managed-memory=ok"
         TIMEOUT 30)
 
+    # The production generation field is 32 bits, so reaching its terminal
+    # value in a test would take billions of cycles. Compile the pointer runtime
+    # once with a tiny generation ceiling and exercise the exact retirement and
+    # transfer-rehome paths instead.
+    add_executable(absolute-runtime-managed-generation-wrap-test
+        tests/runtime-managed-generation-wrap.cpp
+        Absolute-Runtime/src/pointers.cpp)
+    target_compile_features(absolute-runtime-managed-generation-wrap-test
+        PRIVATE cxx_std_20)
+    target_compile_definitions(absolute-runtime-managed-generation-wrap-test
+        PRIVATE ABSOLUTE_MANAGED_GENERATION_LIMIT=4)
+    add_test(
+        NAME absolute.runtime-managed-generation-wrap
+        COMMAND absolute-runtime-managed-generation-wrap-test)
+    set_tests_properties(absolute.runtime-managed-generation-wrap PROPERTIES
+        PASS_REGULAR_EXPRESSION "runtime-managed-generation-wrap=ok"
+        TIMEOUT 30)
+
     add_executable(absolute-runtime-concurrent-primitives-test
         tests/runtime-concurrent-primitives.cpp)
     target_link_libraries(absolute-runtime-concurrent-primitives-test

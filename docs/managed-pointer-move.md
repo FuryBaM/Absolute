@@ -77,3 +77,17 @@ The analyzer also rejects moving a subscriber, weak pointer, const source,
 invalid pointer, or discarding a move result. None of these rules adds a runtime
 pointer kind: managed moves reuse the existing 64-bit `(slot, generation)`
 handle and its normal validity checks.
+
+
+## Generation exhaustion
+
+A managed handle never wraps its generation back to an earlier nonzero value.
+Generation zero is reserved as an invalid tombstone. If destruction reaches the
+largest representable generation, that slot is retired permanently rather than
+returned to the free list. If a live owner reaches the limit during
+`seal(move(owner))` or another runtime transfer, the runtime rehomes the slot
+entry and invalidates the exhausted slot; the pointee allocation itself does
+not move.
+
+This keeps the stale-handle invariant true even for a process that performs
+more than 2^32 lifecycle or transfer events against the same hot slot.

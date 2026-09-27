@@ -28,6 +28,15 @@ namespace {
     // local, and 55 seconds against 1.5.
     constexpr std::uint32_t SlotsPerChunk = 4096;
     constexpr std::uint32_t MaxChunks = 65536;
+#ifdef ABSOLUTE_MANAGED_GENERATION_LIMIT
+    constexpr std::uint32_t MaxGeneration =
+        static_cast<std::uint32_t>(ABSOLUTE_MANAGED_GENERATION_LIMIT);
+    static_assert(MaxGeneration > 0,
+        "managed pointer generation limit must leave generation zero reserved");
+#else
+    constexpr std::uint32_t MaxGeneration =
+        std::numeric_limits<std::uint32_t>::max();
+#endif
 
     std::mutex slotsMutex;
     std::once_flag leakCheckRegistration;
@@ -69,33 +78,46 @@ namespace {
             HandleGeneration(handle) ? slot : nullptr;
     }
 
+    // Called with slotsMutex held. Generation zero is a tombstone: an exhausted
+    // slot is retired permanently and is never placed on freeSlots again.
+    std::uint32_t AcquireSlotLocked() {
+        if (!freeSlots.empty()) {
+            const std::uint32_t id = freeSlots.back();
+            freeSlots.pop_back();
+            Slot* slot = SlotAt(id);
+            if (!slot ||
+                slot->generation.load(std::memory_order_relaxed) == 0 ||
+                slot->pointer.load(std::memory_order_relaxed) != nullptr) {
+                std::cerr << "Absolute runtime error: corrupt managed pointer free list\n";
+                std::abort();
+            }
+            return id;
+        }
+
+        const std::uint32_t id = slotCount.load(std::memory_order_relaxed);
+        if (id / SlotsPerChunk >= MaxChunks) {
+            std::cerr << "Absolute runtime error: managed pointer slot table is full\n";
+            std::abort();
+        }
+        const std::uint32_t chunk = id / SlotsPerChunk;
+        if (!slotChunks[chunk].load(std::memory_order_relaxed)) {
+            Slot* base = new (std::nothrow) Slot[SlotsPerChunk];
+            if (!base) {
+                std::cerr << "Absolute runtime error: managed pointer slot table allocation failed\n";
+                std::abort();
+            }
+            slotChunks[chunk].store(base, std::memory_order_release);
+        }
+        // Published after the chunk, so a reader that sees the count sees
+        // storage to read it from.
+        slotCount.store(id + 1, std::memory_order_release);
+        return id;
+    }
+
     std::uint64_t RegisterAllocation(
         void* allocation, void (*deleter)(void*)) {
         std::lock_guard<std::mutex> lock(slotsMutex);
-        std::uint32_t id;
-        if (!freeSlots.empty()) {
-            id = freeSlots.back();
-            freeSlots.pop_back();
-        }
-        else {
-            id = slotCount.load(std::memory_order_relaxed);
-            if (id / SlotsPerChunk >= MaxChunks) {
-                std::cerr << "Absolute runtime error: managed pointer slot table is full\n";
-                std::abort();
-            }
-            const std::uint32_t chunk = id / SlotsPerChunk;
-            if (!slotChunks[chunk].load(std::memory_order_relaxed)) {
-                Slot* base = new (std::nothrow) Slot[SlotsPerChunk];
-                if (!base) {
-                    std::cerr << "Absolute runtime error: managed pointer slot table allocation failed\n";
-                    std::abort();
-                }
-                slotChunks[chunk].store(base, std::memory_order_release);
-            }
-            // Published after the chunk, so a reader that sees the count sees
-            // storage to read it from.
-            slotCount.store(id + 1, std::memory_order_release);
-        }
+        const std::uint32_t id = AcquireSlotLocked();
         Slot* slot = SlotAt(id);
         slot->type.store(0, std::memory_order_relaxed);
         slot->deleter = deleter ? deleter : DefaultDeleter;
@@ -200,12 +222,21 @@ extern "C" void absolute_managed_destroy(std::uint64_t handle) {
         slot->pointer.store(nullptr, std::memory_order_release);
         slot->type.store(0, std::memory_order_relaxed);
         slot->deleter = nullptr;
-        std::uint32_t next = slot->generation.load(std::memory_order_relaxed) + 1;
-        if (next == 0) next = 1;
-        // Published last: a reader that has already read this generation reads
-        // it again after the pointer and sees the change.
-        slot->generation.store(next, std::memory_order_release);
-        freeSlots.push_back(id);
+        const std::uint32_t current =
+            slot->generation.load(std::memory_order_relaxed);
+        // Generation zero is permanently invalid. Once the last representable
+        // generation has been observed, retire this slot instead of wrapping
+        // and eventually making a years-old stale handle valid again.
+        if (current == MaxGeneration) {
+            slot->generation.store(0, std::memory_order_release);
+        }
+        else {
+            const std::uint32_t next = current + 1;
+            // Published last: a reader that has already read this generation
+            // reads it again after the pointer and sees the change.
+            slot->generation.store(next, std::memory_order_release);
+            freeSlots.push_back(id);
+        }
     }
     deleter(pointer);
 }
@@ -218,10 +249,36 @@ extern "C" std::uint64_t absolute_managed_transfer(std::uint64_t handle) {
         std::abort();
     }
     const std::uint32_t id = HandleId(handle);
-    std::uint32_t next = slot->generation.load(std::memory_order_relaxed) + 1;
-    if (next == 0) next = 1;
-    slot->generation.store(next, std::memory_order_release);
-    return MakeHandle(id, next);
+    const std::uint32_t current =
+        slot->generation.load(std::memory_order_relaxed);
+    if (current < MaxGeneration) {
+        const std::uint32_t next = current + 1;
+        slot->generation.store(next, std::memory_order_release);
+        return MakeHandle(id, next);
+    }
+
+    // A transfer must invalidate the sender immediately, but wrapping the
+    // generation would let an ancient handle for this slot become current
+    // again. Rehome the live allocation into another slot instead. The object
+    // itself does not move: only the table entry that names it does.
+    void* pointer = slot->pointer.load(std::memory_order_relaxed);
+    const std::uint64_t type = slot->type.load(std::memory_order_relaxed);
+    void (*deleter)(void*) = slot->deleter ? slot->deleter : DefaultDeleter;
+    const std::uint32_t destinationId = AcquireSlotLocked();
+    Slot* destination = SlotAt(destinationId);
+    const std::uint32_t destinationGeneration =
+        destination->generation.load(std::memory_order_relaxed);
+
+    destination->type.store(type, std::memory_order_relaxed);
+    destination->deleter = deleter;
+
+    slot->pointer.store(nullptr, std::memory_order_release);
+    slot->type.store(0, std::memory_order_relaxed);
+    slot->deleter = nullptr;
+    slot->generation.store(0, std::memory_order_release);
+
+    destination->pointer.store(pointer, std::memory_order_release);
+    return MakeHandle(destinationId, destinationGeneration);
 }
 
 namespace {

@@ -58,3 +58,18 @@ continuation or channel message.
 Plugin resources are task-local by default. A plugin must explicitly implement
 immutable-message copying or atomic detach/rehome hooks before its resource can
 cross an isolate boundary.
+
+
+## Native handle concurrency
+
+The generation check on a managed handle validates a lookup; it is not a
+lifetime pin. `absolute_managed_get` may return an address that would become
+invalid if unrelated native code destroyed the same owner after the call.
+Ordinary managed handles therefore remain task/domain-local at the native
+boundary as well: plugins must not use the handle bits as a shared cross-thread
+reference.
+
+Code that needs shared mutable access uses a synchronized capability. Code that
+needs to move an owner between domains uses the sealed transfer path. A future
+native pin/guard API would be a separate capability with an explicit lifetime;
+the current managed lookup API does not imply one.
