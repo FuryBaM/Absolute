@@ -186,7 +186,7 @@ namespace {
 }
 
 extern "C" const char* absolute_string_error() {
-    return lastStringError.c_str();
+    return absolute_string_copy_cstr(lastStringError.c_str());
 }
 
 extern "C" int32_t absolute_string_code_point_count(const char* text) {
