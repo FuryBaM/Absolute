@@ -137,6 +137,45 @@
   массивы неизменяемы вглубь, pointer binding остаётся shallow, а const-метод не
   меняет поля и не вызывает non-const методы.
 
+### P1 — следующий слой выразительности
+
+- [ ] Добавить tagged/discriminated unions с payload-значениями и exhaustive
+  `match`: варианты вида `Ok(T)` / `Error(E)`, destructuring payload,
+  корректные copy/move/drop для resource-owning вариантов и проверка полноты
+  без обязательного `default`.
+- [ ] Добавить в stdlib обычные generic-типы `Option<T>` и `Result<T, E>`
+  для отсутствующего значения и ожидаемых ошибок. На первом этапе без новой
+  специальной syntax: базовые constructors/match и combinators `map`,
+  `andThen`, `mapError`, `valueOr`; unchecked exceptions оставить для
+  аварийных ошибок.
+- [ ] Добавить generic constraints/traits: проверку требований при
+  инстанцировании, ограничения по interfaces/operators, участие constraints в
+  overload resolution и static abstract interface members без скрытой runtime
+  dispatch.
+- [ ] Добавить associated types для generic interfaces/traits, чтобы протоколы
+  вроде iterator/collection могли объявлять `Item`/другие связанные типы без
+  протаскивания лишних generic-параметров через весь API.
+- [ ] Добавить ограниченную compile-time reflection и `derive`-механику для
+  типовых операций вроде Debug/Equals/Hash/serialization. Генерация должна быть
+  детерминированной и type-checked обычным Analyzer, без обязательной полной
+  runtime reflection для каждого типа.
+- [ ] Добавить restricted constant evaluation для pure функций и построения
+  compile-time constants/tables. Не превращать это в отдельный произвольный
+  macro-язык: тот же Absolute, те же типы и diagnostics, только вычисление до
+  runtime там, где результат доказуемо константен.
+- [ ] Добавить lazy iterator/range combinators (`map`, `filter`, `take`,
+  `zip`, `enumerate` и композицию) с allocation-free lowering/fusion там,
+  где это возможно, и с теми же ownership/drop правилами, что у обычного
+  `foreach`.
+- [ ] Добавить явный freeze/read-only snapshot для передаваемого object graph:
+  после freeze граф нельзя мутировать, его можно безопасно разделять между
+  task-isolates как immutable message; resource/plugin fields допускаются
+  только при наличии явной immutable/copy capability.
+- [ ] Улучшить ownership diagnostics до объяснения нарушенного правила и
+  конкретного исправления: показывать owner/source place и lifetime/escape
+  причину, предлагать `weak` вместо долгоживущего borrow, `move` для передачи
+  владения или `raw` только как явный выход из safe-модели.
+
 ### Типы и ООП
 
 - [x] Value-типы `struct`, поля, конструкторы и методы.
