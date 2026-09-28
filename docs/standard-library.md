@@ -185,6 +185,13 @@ and returns an opaque one-shot capsule handle. A successful send empties the
 typed `Transfer<T>` capsule; a rejected send restores it. Closing or destroying a transfer
 channel destroys every queued owner that was not received.
 
+On the native scheduler, `Channel<T>` and `TransferChannel<T>` use opaque
+monotonic capability IDs rather than exposing the address of their mutex-bearing
+runtime state. Destroy invalidates the ID first, closes the channel, wakes
+blocked senders/receivers, and lets operations already in flight finish against
+retained state. Reusing a stale channel handle therefore fails instead of
+becoming a use-after-free or aliasing a later channel.
+
 ### Synchronization primitives
 
 `std.concurrent` provides resource-owning `Mutex`, `Semaphore`, `RwLock`,
