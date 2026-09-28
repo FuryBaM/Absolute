@@ -1185,7 +1185,9 @@ namespace {
     // already in flight release their shared_ptr. Stale IDs are never reused.
     enum class CapabilityKind {
         Channel,
-        TransferChannel
+        TransferChannel,
+        AtomicInt,
+        CancellationToken
     };
 
     struct CapabilityEntry {
@@ -1377,23 +1379,29 @@ extern "C" void absolute_task_when_all(void** handles, std::int32_t count) {
 }
 
 extern "C" void* absolute_cancellation_token_create() {
-    return new CancellationTokenImpl();
+    return RegisterCapability(
+        CapabilityKind::CancellationToken,
+        std::make_shared<CancellationTokenImpl>());
 }
 
 extern "C" void absolute_cancellation_token_cancel(void* token) {
-    if (!token) return;
-    static_cast<CancellationTokenImpl*>(token)->cancelled.store(true);
+    auto state = ResolveCapability<CancellationTokenImpl>(
+        token, CapabilityKind::CancellationToken);
+    if (!state) return;
+    state->cancelled.store(true, std::memory_order_release);
     NotifySchedulerProgress();
 }
 
 extern "C" bool absolute_cancellation_token_is_cancelled(void* token) {
-    if (!token) return false;
-    return static_cast<CancellationTokenImpl*>(token)->cancelled.load();
+    auto state = ResolveCapability<CancellationTokenImpl>(
+        token, CapabilityKind::CancellationToken);
+    return state &&
+        state->cancelled.load(std::memory_order_acquire);
 }
 
 extern "C" void absolute_cancellation_token_destroy(void* token) {
-    if (!token) return;
-    delete static_cast<CancellationTokenImpl*>(token);
+    (void)TakeCapability<CancellationTokenImpl>(
+        token, CapabilityKind::CancellationToken);
 }
 
 extern "C" void absolute_task_cancel(void* handle) {
@@ -1843,38 +1851,52 @@ extern "C" void absolute_transfer_channel_destroy(void* ch) {
 }
 
 extern "C" void* absolute_atomic_create(std::int64_t initialValue) {
-    return new std::atomic<std::int64_t>(initialValue);
+    return RegisterCapability(
+        CapabilityKind::AtomicInt,
+        std::make_shared<std::atomic<std::int64_t>>(initialValue));
 }
 
 extern "C" std::int64_t absolute_atomic_fetch_add(void* atomic, std::int64_t val) {
-    if (!atomic) return 0;
-    return static_cast<std::atomic<std::int64_t>*>(atomic)->fetch_add(val);
+    auto state = ResolveCapability<std::atomic<std::int64_t>>(
+        atomic, CapabilityKind::AtomicInt);
+    return state
+        ? state->fetch_add(val, std::memory_order_acq_rel) : 0;
 }
 
 extern "C" std::int64_t absolute_atomic_fetch_sub(void* atomic, std::int64_t val) {
-    if (!atomic) return 0;
-    return static_cast<std::atomic<std::int64_t>*>(atomic)->fetch_sub(val);
+    auto state = ResolveCapability<std::atomic<std::int64_t>>(
+        atomic, CapabilityKind::AtomicInt);
+    return state
+        ? state->fetch_sub(val, std::memory_order_acq_rel) : 0;
 }
 
 extern "C" std::int64_t absolute_atomic_load(void* atomic) {
-    if (!atomic) return 0;
-    return static_cast<std::atomic<std::int64_t>*>(atomic)->load();
+    auto state = ResolveCapability<std::atomic<std::int64_t>>(
+        atomic, CapabilityKind::AtomicInt);
+    return state ? state->load(std::memory_order_acquire) : 0;
 }
 
 extern "C" void absolute_atomic_store(void* atomic, std::int64_t val) {
-    if (!atomic) return;
-    static_cast<std::atomic<std::int64_t>*>(atomic)->store(val);
+    auto state = ResolveCapability<std::atomic<std::int64_t>>(
+        atomic, CapabilityKind::AtomicInt);
+    if (state) state->store(val, std::memory_order_release);
 }
 
-extern "C" bool absolute_atomic_compare_exchange(void* atomic, std::int64_t expected, std::int64_t desired) {
-    if (!atomic) return false;
+extern "C" bool absolute_atomic_compare_exchange(
+    void* atomic, std::int64_t expected, std::int64_t desired) {
+    auto state = ResolveCapability<std::atomic<std::int64_t>>(
+        atomic, CapabilityKind::AtomicInt);
+    if (!state) return false;
     std::int64_t exp = expected;
-    return static_cast<std::atomic<std::int64_t>*>(atomic)->compare_exchange_strong(exp, desired);
+    return state->compare_exchange_strong(
+        exp, desired,
+        std::memory_order_acq_rel,
+        std::memory_order_acquire);
 }
 
 extern "C" void absolute_atomic_destroy(void* atomic) {
-    if (!atomic) return;
-    delete static_cast<std::atomic<std::int64_t>*>(atomic);
+    (void)TakeCapability<std::atomic<std::int64_t>>(
+        atomic, CapabilityKind::AtomicInt);
 }
 
 extern "C" void absolute_keep(std::int64_t value) {

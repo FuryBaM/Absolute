@@ -7,6 +7,16 @@
 #include <vector>
 
 extern "C" {
+void* absolute_atomic_create(std::int64_t);
+std::int64_t absolute_atomic_fetch_add(void*, std::int64_t);
+std::int64_t absolute_atomic_load(void*);
+void absolute_atomic_destroy(void*);
+
+void* absolute_cancellation_token_create();
+void absolute_cancellation_token_cancel(void*);
+bool absolute_cancellation_token_is_cancelled(void*);
+void absolute_cancellation_token_destroy(void*);
+
 void* absolute_mutex_create();
 void absolute_mutex_lock(void*);
 void absolute_mutex_unlock(void*);
@@ -43,6 +53,48 @@ void require(bool condition) {
 }
 
 int main() {
+    // Atomic and cancellation handles are deliberately destroyed while other
+    // threads are resolving them. An operation that already resolved the
+    // handle keeps the state alive; a later operation sees a stale opaque ID
+    // and returns its neutral result instead of touching freed storage.
+    void* atomicHandle = absolute_atomic_create(0);
+    require(atomicHandle != nullptr);
+    std::atomic<bool> runAtomic{true};
+    std::vector<std::thread> atomicThreads;
+    for (std::int32_t index = 0; index < 8; ++index) {
+        atomicThreads.emplace_back([&] {
+            while (runAtomic.load(std::memory_order_acquire)) {
+                absolute_atomic_fetch_add(atomicHandle, 1);
+                (void)absolute_atomic_load(atomicHandle);
+            }
+        });
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    absolute_atomic_destroy(atomicHandle);
+    runAtomic.store(false, std::memory_order_release);
+    for (auto& thread : atomicThreads) thread.join();
+    require(absolute_atomic_load(atomicHandle) == 0);
+
+    void* cancellation = absolute_cancellation_token_create();
+    require(cancellation != nullptr);
+    std::atomic<bool> runCancellation{true};
+    std::vector<std::thread> cancellationThreads;
+    for (std::int32_t index = 0; index < 4; ++index) {
+        cancellationThreads.emplace_back([&, index] {
+            while (runCancellation.load(std::memory_order_acquire)) {
+                if ((index & 1) == 0)
+                    absolute_cancellation_token_cancel(cancellation);
+                else
+                    (void)absolute_cancellation_token_is_cancelled(cancellation);
+            }
+        });
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    absolute_cancellation_token_destroy(cancellation);
+    runCancellation.store(false, std::memory_order_release);
+    for (auto& thread : cancellationThreads) thread.join();
+    require(!absolute_cancellation_token_is_cancelled(cancellation));
+
     void* semaphore = absolute_semaphore_create(0, 8);
     require(semaphore != nullptr);
     std::atomic<std::int32_t> passed{0};
