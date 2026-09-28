@@ -28,6 +28,11 @@ DEFAULT_BUDGET_SECONDS = 30
 
 
 def run(command: list[str], timeout: float | None) -> subprocess.CompletedProcess[str]:
+    environment = os.environ.copy()
+    # Be explicit rather than relying on the platform defaults. The fuzz job is
+    # Linux/Clang, where LeakSanitizer is available through ASan.
+    environment.setdefault("ASAN_OPTIONS", "detect_leaks=1:halt_on_error=1")
+    environment.setdefault("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
     return subprocess.run(
         command,
         capture_output=True,
@@ -35,7 +40,7 @@ def run(command: list[str], timeout: float | None) -> subprocess.CompletedProces
         encoding="utf-8",
         errors="replace",
         timeout=timeout,
-        env=os.environ.copy(),
+        env=environment,
     )
 
 
@@ -145,6 +150,7 @@ def main() -> int:
         "-timeout=25",
         "-rss_limit_mb=2048",
         "-print_final_stats=1",
+        "-detect_leaks=1",
         f"-artifact_prefix={artifacts}/",
     ]
     try:
@@ -179,6 +185,15 @@ def main() -> int:
             )
         return 1
 
+    # libFuzzer writes useful coverage/final counters to stderr. They used to
+    # be captured and discarded on every successful run, making a collapsed
+    # coverage signal indistinguishable from a healthy one in CI.
+    stats = [
+        line for line in result.stderr.splitlines()
+        if "stat::" in line or (" cov:" in line and " corp:" in line)
+    ]
+    if stats:
+        print("\n".join(stats[-8:]))
     print(
         f"fuzz-{args.name}=ok seeds={seeds} budget={budget}s "
         f"corpus={len(list(corpus.iterdir()))}"

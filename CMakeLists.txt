@@ -50,6 +50,8 @@ endif()
 # because it slows everything down.
 option(ABSOLUTE_FUZZ_COVERAGE
     "Instrument the build for source-level fuzzing coverage reports" OFF)
+option(ABSOLUTE_FUZZ_INSTRUMENT_FRONTEND
+    "Instrument parser/analyzer libraries for libFuzzer + ASan + UBSan" OFF)
 if(ABSOLUTE_FUZZ_COVERAGE)
     add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
     add_link_options(-fprofile-instr-generate -fcoverage-mapping)
@@ -342,10 +344,27 @@ if(BUILD_TESTING)
         unset(CMAKE_REQUIRED_FLAGS)
     endif()
     if(ABSOLUTE_HAS_LIBFUZZER)
-        # ASan and UBSan report the corruption a crash would otherwise only
-        # hint at, and the fuzzer needs the coverage instrumentation anyway.
+        # A sanitizer flag on the tiny harness alone does not instrument the
+        # parser/analyzer static libraries it calls. In the dedicated fuzz
+        # build, compile those libraries with fuzzer-no-link so libFuzzer sees
+        # their edges and ASan/UBSan instrument their actual memory accesses.
+        if(ABSOLUTE_FUZZ_INSTRUMENT_FRONTEND)
+            set(ABSOLUTE_FUZZ_FRONTEND_FLAGS
+                -fsanitize=fuzzer-no-link,address,undefined
+                -fno-sanitize-recover=undefined
+                -fno-omit-frame-pointer -g)
+            foreach(frontend_target IN ITEMS Absolute-Parser Absolute-Analyzer)
+                if(TARGET ${frontend_target})
+                    target_compile_options(${frontend_target}
+                        PRIVATE ${ABSOLUTE_FUZZ_FRONTEND_FLAGS})
+                endif()
+            endforeach()
+        endif()
+
+        # The executable provides libFuzzer's main and the sanitizer runtimes.
         set(ABSOLUTE_FUZZ_FLAGS
             -fsanitize=fuzzer,address,undefined
+            -fno-sanitize-recover=undefined
             -fno-omit-frame-pointer -g -O1)
 
         set(ABSOLUTE_FUZZ_TARGETS lexer parser)
@@ -3705,9 +3724,10 @@ if(BUILD_TESTING)
                     --compiler "$<TARGET_FILE:Absolute-Compiler>"
                     --work-dir "${CMAKE_BINARY_DIR}/differential/codegen-fuzz/$<CONFIG>"
                     --std-dir "${PROJECT_SOURCE_DIR}/std"
-                    # One case per shape, so a run covers all of them rather
-                    # than repeating a few.
-                    --cases 19
+                    # Zero means exactly one case per registered shape.
+                    # The Python list is the source of truth, so adding a new
+                    # shape cannot silently leave the last one out of CI.
+                    --cases 0
                     --detect-leaks ${ABSOLUTE_SANITIZER_DETECT_LEAKS}
                     --configuration "$<CONFIG>")
             set_tests_properties(absolute.codegen-fuzz PROPERTIES

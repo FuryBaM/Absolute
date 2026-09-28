@@ -419,6 +419,10 @@ namespace Absolute {
             case GenericBodyFact::Shape::OrdersValues:
             case GenericBodyFact::Shape::ComparesValues:
             case GenericBodyFact::Shape::InterfaceValue:
+            case GenericBodyFact::Shape::BorrowsAsOwner:
+                // Handled by the early branches above. Keeping every enum value
+                // explicit here makes adding a new shape trigger a useful
+                // compiler warning instead of hiding among existing noise.
                 break;
             }
         }

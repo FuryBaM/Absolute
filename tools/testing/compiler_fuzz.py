@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Small deterministic grammar/mutation fuzzer for absolutec.
 
-The valid corpus must pass both parsing and semantic analysis. Mutated inputs may be
-accepted or rejected, but the compiler must not crash, hang, or be killed by a signal.
+The valid corpus must pass both parsing and semantic analysis. Mutated inputs run
+through the normal parser+analyzer path; they may be accepted or rejected, but the
+compiler must not crash, hang, or be killed by a signal.
 Every failure is written to the reproducer directory together with stdout/stderr.
 """
 
@@ -216,7 +217,11 @@ def main() -> int:
             source = mutate(rng, valid_program(rng, case_id))
             path = root / f"mutated-{case_id:05d}.abs"
             path.write_text(source, encoding="utf-8", errors="surrogatepass")
-            command = [str(compiler), str(path), "--parse-only"]
+            # Use the normal front-end path, not parse-only. Most mutations
+            # are rejected by the parser, but syntactically valid mutations must
+            # reach semantic analysis too; that is where ownership/type-state
+            # crashes otherwise hide behind a green parser fuzz result.
+            command = [str(compiler), str(path)]
             try:
                 result = run_compiler(command, args.timeout)
             except subprocess.TimeoutExpired:
