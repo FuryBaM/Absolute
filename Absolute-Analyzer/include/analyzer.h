@@ -295,6 +295,43 @@ namespace Absolute {
             PointerRole pointerRole = PointerRole::None;
             bool createsArrayOwner = false;
             bool producesFreshValue = false;
+
+            Result() = default;
+            Result(SymbolId resultSymbol, std::string resultType, bool resultIsLValue,
+                bool resultCreatesManagedOwner = false,
+                bool resultReferencesManagedOwner = false,
+                InitializationState resultInitialization = InitializationState::Initialized,
+                PointerValidity resultPointerValidity = PointerValidity::NotPointer,
+                SymbolId resultPointerOwner = InvalidSymbolId,
+                TaskState resultTaskState = TaskState::NotTask,
+                bool resultCreatesTask = false,
+                bool resultAsyncCall = false,
+                bool resultCreatesRawOwner = false,
+                bool resultIsMoveResult = false,
+                ValueCategory resultCategory = ValueCategory::Value,
+                PlaceInfo resultPlaceInfo = {},
+                PointerRole resultPointerRole = PointerRole::None,
+                bool resultCreatesArrayOwner = false,
+                bool resultProducesFreshValue = false)
+                : symbol(resultSymbol),
+                  type(std::move(resultType)),
+                  isLValue(resultIsLValue),
+                  createsManagedOwner(resultCreatesManagedOwner),
+                  referencesManagedOwner(resultReferencesManagedOwner),
+                  initialization(resultInitialization),
+                  pointerValidity(resultPointerValidity),
+                  pointerOwner(resultPointerOwner),
+                  taskState(resultTaskState),
+                  createsTask(resultCreatesTask),
+                  asyncCall(resultAsyncCall),
+                  createsRawOwner(resultCreatesRawOwner),
+                  isMoveResult(resultIsMoveResult),
+                  category(resultCategory),
+                  placeInfo(resultPlaceInfo),
+                  pointerRole(resultPointerRole),
+                  createsArrayOwner(resultCreatesArrayOwner),
+                  producesFreshValue(resultProducesFreshValue) {
+            }
         };
 
         enum class KeepState {

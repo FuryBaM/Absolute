@@ -526,8 +526,8 @@ namespace Absolute {
             const std::string type = parameter ? ResolveDeclaredType(*parameter) : "error";
             if (parameter)
                 ValidateValueReferenceParameter(*parameter, type, currentType + ".__ctor");
-            if (parameter)
-            if (const auto declared = table.Declare(SymbolKind::Parameter, name, type)) {
+            if (parameter) {
+                if (const auto declared = table.Declare(SymbolKind::Parameter, name, type)) {
                 Symbol* symbol = table.Get(*declared);
                 symbol->isConst = parameter && parameter->isConst;
                 symbol->valueReference = parameter && parameter->isReference;
@@ -548,9 +548,10 @@ namespace Absolute {
                     symbol->rolePolymorphic && IsStrongManagedPointerType(type)
                         ? *declared : InvalidSymbolId,
                     IsTaskType(type) ? TaskState::Unknown : TaskState::NotTask});
+                }
+                else Report("parameter '" + name + "' is already declared",
+                    "E_DUPLICATE_PARAMETER");
             }
-            else Report("parameter '" + name + "' is already declared",
-                "E_DUPLICATE_PARAMETER");
         }
         const std::string baseClass = DirectBaseClass(currentType);
         if (stmt->hasExplicitBaseCall && baseClass.empty()) {

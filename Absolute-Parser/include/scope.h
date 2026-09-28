@@ -3,8 +3,8 @@ namespace Absolute {
     enum class ScopeType { Global, Class, Struct, Interface, Enum, Group, Function, Namespace };
 
     struct Scope {
-        ScopeType type;      // “ип области (Class, Function, Struct и т. д.)
-        std::string name;    // »м€ области (MyClass, myFunction и т. д.)
+        ScopeType type;      // Scope kind (Class, Function, Struct, etc.)
+        std::string name;    // Scope name (MyClass, myFunction, etc.)
 
         Scope(ScopeType t, std::string n = "") : type(t), name(std::move(n)) {}
     };

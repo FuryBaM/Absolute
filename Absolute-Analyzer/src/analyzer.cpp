@@ -73,7 +73,6 @@ namespace Absolute {
         phase = Phase::ResolveBodies;
         for (Program* program : programs) if (program) AnalyzeProgram(*program);
         ValidateDeferredOwnershipCalls();
-        const size_t startCount = instantiatedGenericTypes.size();
         bool addedNew = true;
         while (addedNew) {
             const size_t beforeCount = instantiatedGenericTypes.size();
