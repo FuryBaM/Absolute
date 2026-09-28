@@ -1121,14 +1121,17 @@ namespace {
         std::condition_variable available;
         std::deque<Task*> waiters;
         bool locked = false;
+        bool closing = false;
     };
 
     struct SemaphoreImpl {
         std::mutex mutex;
         std::condition_variable available;
         std::deque<Task*> waiters;
+        std::int32_t nativeWaiters = 0;
         std::int32_t permits = 0;
         std::int32_t maximum = 1;
+        bool closing = false;
     };
 
     struct RwLockImpl {
@@ -1187,7 +1190,9 @@ namespace {
         Channel,
         TransferChannel,
         AtomicInt,
-        CancellationToken
+        CancellationToken,
+        Mutex,
+        Semaphore
     };
 
     struct CapabilityEntry {
@@ -1246,6 +1251,12 @@ namespace {
             static_cast<T*>(found->second.state.get()));
         capabilityRegistry.erase(found);
         return state;
+    }
+
+    [[noreturn]] void CapabilityLifetimeError(const char* name) {
+        std::cerr << "Absolute runtime error: " << name
+                  << " was destroyed while still in use\n";
+        std::abort();
     }
 }
 
@@ -1906,20 +1917,28 @@ extern "C" void absolute_keep(std::int64_t value) {
 }
 
 extern "C" void* absolute_mutex_create() {
-    return new MutexImpl();
+    return RegisterCapability(
+        CapabilityKind::Mutex, std::make_shared<MutexImpl>());
 }
 
 extern "C" void absolute_mutex_lock(void* mutex) {
-    if (!mutex) return;
-    MutexImpl* state = static_cast<MutexImpl*>(mutex);
+    auto state = ResolveCapability<MutexImpl>(
+        mutex, CapabilityKind::Mutex);
+    if (!state) {
+        if (mutex) CapabilityLifetimeError("mutex");
+        return;
+    }
     while (true) {
         std::unique_lock lock(state->mutex);
+        if (state->closing) CapabilityLifetimeError("mutex");
         if (!state->locked) {
             state->locked = true;
             return;
         }
         if (!currentTask) {
-            state->available.wait(lock, [&] { return !state->locked; });
+            state->available.wait(lock, [&] {
+                return state->closing || !state->locked;
+            });
             continue;
         }
         state->waiters.push_back(currentTask);
@@ -1930,33 +1949,45 @@ extern "C" void absolute_mutex_lock(void* mutex) {
 }
 
 extern "C" void absolute_mutex_unlock(void* mutex) {
-    if (!mutex) return;
-    MutexImpl* state = static_cast<MutexImpl*>(mutex);
+    auto state = ResolveCapability<MutexImpl>(
+        mutex, CapabilityKind::Mutex);
+    if (!state) return;
     Task* waiter = nullptr;
     {
         std::lock_guard lock(state->mutex);
+        if (!state->locked) return;
         state->locked = false;
         if (!state->waiters.empty()) {
             waiter = state->waiters.front();
             state->waiters.pop_front();
         }
     }
-    state->available.notify_one();
+    state->available.notify_all();
     ResumeSchedulerTask(waiter);
 }
 
 extern "C" bool absolute_mutex_try_lock(void* mutex) {
-    if (!mutex) return false;
-    MutexImpl* state = static_cast<MutexImpl*>(mutex);
+    auto state = ResolveCapability<MutexImpl>(
+        mutex, CapabilityKind::Mutex);
+    if (!state) return false;
     std::lock_guard lock(state->mutex);
-    if (state->locked) return false;
+    if (state->closing || state->locked) return false;
     state->locked = true;
     return true;
 }
 
 extern "C" void absolute_mutex_destroy(void* mutex) {
-    if (!mutex) return;
-    delete static_cast<MutexImpl*>(mutex);
+    auto state = ResolveCapability<MutexImpl>(
+        mutex, CapabilityKind::Mutex);
+    if (!state) return;
+    {
+        std::lock_guard lock(state->mutex);
+        if (state->locked || !state->waiters.empty())
+            CapabilityLifetimeError("mutex");
+        state->closing = true;
+    }
+    (void)TakeCapability<MutexImpl>(
+        mutex, CapabilityKind::Mutex);
 }
 
 extern "C" void* absolute_semaphore_create(
@@ -1965,24 +1996,34 @@ extern "C" void* absolute_semaphore_create(
         initialPermits > maximumPermits) {
         return nullptr;
     }
-    SemaphoreImpl* semaphore = new SemaphoreImpl();
+    auto semaphore = std::make_shared<SemaphoreImpl>();
     semaphore->permits = initialPermits;
     semaphore->maximum = maximumPermits;
-    return semaphore;
+    return RegisterCapability(
+        CapabilityKind::Semaphore, std::move(semaphore));
 }
 
 extern "C" void absolute_semaphore_acquire(void* handle) {
-    if (!handle) return;
-    SemaphoreImpl* semaphore = static_cast<SemaphoreImpl*>(handle);
+    auto semaphore = ResolveCapability<SemaphoreImpl>(
+        handle, CapabilityKind::Semaphore);
+    if (!semaphore) {
+        if (handle) CapabilityLifetimeError("semaphore");
+        return;
+    }
     while (true) {
         std::unique_lock lock(semaphore->mutex);
+        if (semaphore->closing)
+            CapabilityLifetimeError("semaphore");
         if (semaphore->permits > 0) {
             --semaphore->permits;
             return;
         }
         if (!currentTask) {
-            semaphore->available.wait(
-                lock, [&] { return semaphore->permits > 0; });
+            ++semaphore->nativeWaiters;
+            semaphore->available.wait(lock, [&] {
+                return semaphore->closing || semaphore->permits > 0;
+            });
+            --semaphore->nativeWaiters;
             continue;
         }
         semaphore->waiters.push_back(currentTask);
@@ -1993,21 +2034,26 @@ extern "C" void absolute_semaphore_acquire(void* handle) {
 }
 
 extern "C" bool absolute_semaphore_try_acquire(void* handle) {
-    if (!handle) return false;
-    SemaphoreImpl* semaphore = static_cast<SemaphoreImpl*>(handle);
+    auto semaphore = ResolveCapability<SemaphoreImpl>(
+        handle, CapabilityKind::Semaphore);
+    if (!semaphore) return false;
     std::lock_guard lock(semaphore->mutex);
-    if (semaphore->permits <= 0) return false;
+    if (semaphore->closing || semaphore->permits <= 0)
+        return false;
     --semaphore->permits;
     return true;
 }
 
 extern "C" bool absolute_semaphore_release(
     void* handle, std::int32_t permits) {
-    if (!handle || permits <= 0) return false;
-    SemaphoreImpl* semaphore = static_cast<SemaphoreImpl*>(handle);
+    if (permits <= 0) return false;
+    auto semaphore = ResolveCapability<SemaphoreImpl>(
+        handle, CapabilityKind::Semaphore);
+    if (!semaphore) return false;
     std::vector<Task*> resumed;
     {
         std::lock_guard lock(semaphore->mutex);
+        if (semaphore->closing) return false;
         if (permits > semaphore->maximum - semaphore->permits)
             return false;
         semaphore->permits += permits;
@@ -2023,15 +2069,27 @@ extern "C" bool absolute_semaphore_release(
 }
 
 extern "C" std::int32_t absolute_semaphore_available(void* handle) {
-    if (!handle) return 0;
-    SemaphoreImpl* semaphore = static_cast<SemaphoreImpl*>(handle);
+    auto semaphore = ResolveCapability<SemaphoreImpl>(
+        handle, CapabilityKind::Semaphore);
+    if (!semaphore) return 0;
     std::lock_guard lock(semaphore->mutex);
-    return semaphore->permits;
+    return semaphore->closing ? 0 : semaphore->permits;
 }
 
 extern "C" void absolute_semaphore_destroy(void* handle) {
-    if (!handle) return;
-    delete static_cast<SemaphoreImpl*>(handle);
+    auto semaphore = ResolveCapability<SemaphoreImpl>(
+        handle, CapabilityKind::Semaphore);
+    if (!semaphore) return;
+    {
+        std::lock_guard lock(semaphore->mutex);
+        if (semaphore->nativeWaiters != 0 ||
+            !semaphore->waiters.empty())
+            CapabilityLifetimeError("semaphore");
+        semaphore->closing = true;
+    }
+    semaphore->available.notify_all();
+    (void)TakeCapability<SemaphoreImpl>(
+        handle, CapabilityKind::Semaphore);
 }
 
 extern "C" void* absolute_rwlock_create() {

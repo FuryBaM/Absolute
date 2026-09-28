@@ -20,11 +20,14 @@ void absolute_cancellation_token_destroy(void*);
 void* absolute_mutex_create();
 void absolute_mutex_lock(void*);
 void absolute_mutex_unlock(void*);
+bool absolute_mutex_try_lock(void*);
 void absolute_mutex_destroy(void*);
 
 void* absolute_semaphore_create(std::int32_t, std::int32_t);
 void absolute_semaphore_acquire(void*);
+bool absolute_semaphore_try_acquire(void*);
 bool absolute_semaphore_release(void*, std::int32_t);
+std::int32_t absolute_semaphore_available(void*);
 void absolute_semaphore_destroy(void*);
 
 void* absolute_rwlock_create();
@@ -94,6 +97,18 @@ int main() {
     runCancellation.store(false, std::memory_order_release);
     for (auto& thread : cancellationThreads) thread.join();
     require(!absolute_cancellation_token_is_cancelled(cancellation));
+
+    void* staleMutex = absolute_mutex_create();
+    require(staleMutex != nullptr);
+    absolute_mutex_destroy(staleMutex);
+    require(!absolute_mutex_try_lock(staleMutex));
+
+    void* staleSemaphore = absolute_semaphore_create(1, 1);
+    require(staleSemaphore != nullptr);
+    absolute_semaphore_destroy(staleSemaphore);
+    require(!absolute_semaphore_try_acquire(staleSemaphore));
+    require(!absolute_semaphore_release(staleSemaphore, 1));
+    require(absolute_semaphore_available(staleSemaphore) == 0);
 
     void* semaphore = absolute_semaphore_create(0, 8);
     require(semaphore != nullptr);
