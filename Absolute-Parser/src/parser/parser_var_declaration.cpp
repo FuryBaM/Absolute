@@ -15,11 +15,18 @@ namespace Absolute {
         // Обрабатываем `*` и `&` перед именем переменной
         std::unique_ptr<Expression> nameExpr = ParsePrimaryExpr();
 
+        // A declaration cannot end immediately after the expression parsed
+        // as its name. Malformed input can reach this point at EOF (for example
+        // "int32 ((((1))))"); never dereference CurrentToken() to discover that.
+        Token* current = CurrentToken();
+        if (!current) {
+            ReportSyntaxError(nullptr,
+                "Unexpected end of file; expected ';' or variable initializer");
+            throw std::runtime_error("Incomplete variable declaration");
+        }
+
         // Объявление переменной без инициализации.
-        // Источник может закончиться прямо здесь, поэтому токена может не быть;
-        // тогда объявление не завершено и ошибку выдаёт разбор инициализатора.
-        if (CurrentToken() && (IsEndOfStatement(*CurrentToken()) ||
-            CurrentToken()->type == TokenType::KEYWORD)) {
+        if (IsEndOfStatement(*current) || current->type == TokenType::KEYWORD) {
             auto declaration = std::make_unique<VarDeclExpr>(
                 std::move(type), std::move(nameExpr), nullptr);
             if (start) {
@@ -30,7 +37,7 @@ namespace Absolute {
             return declaration;
         }
         // Объявление переменной с инициализацией
-        else if (CurrentToken()->type == TokenType::OPERATOR) {
+        if (current->type == TokenType::OPERATOR) {
             Consume(TokenType::OPERATOR);
             std::unique_ptr<Expression> value = ParseExpression();
             auto declaration = std::make_unique<VarDeclExpr>(
