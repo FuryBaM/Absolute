@@ -469,23 +469,23 @@ const char* absolute_http_tls_headers(void* p) {
         fs_copy_path(
             g_http_tls_error, sizeof(g_http_tls_error),
             "HTTPS response is closed");
-        return "";
+        return wasm_string_copy("");
     }
     g_http_tls_error[0] = '\0';
-    return g_http_tls_headers;
+    return wasm_string_copy(g_http_tls_headers);
 }
 
 const char* absolute_http_tls_receive(
     void* p, int32_t maximumBytes) {
     WasmHttpTlsResponse* response = (WasmHttpTlsResponse*)p;
-    if (!response || maximumBytes <= 0) return "";
+    if (!response || maximumBytes <= 0) return wasm_string_copy("");
     const int32_t remaining =
         response->length - response->offset;
     const int32_t count =
         remaining < maximumBytes ? remaining : maximumBytes;
     if (count <= 0) {
         g_http_tls_error[0] = '\0';
-        return "";
+        return wasm_string_copy("");
     }
     if (response->scratchCapacity < count + 1) {
         char* next = (char*)realloc(
@@ -494,7 +494,7 @@ const char* absolute_http_tls_receive(
             fs_copy_path(
                 g_http_tls_error, sizeof(g_http_tls_error),
                 "HTTPS receive allocation failed");
-            return "";
+            return wasm_string_copy("");
         }
         response->scratch = next;
         response->scratchCapacity = count + 1;
@@ -506,7 +506,7 @@ const char* absolute_http_tls_receive(
     response->scratch[count] = '\0';
     response->offset += count;
     g_http_tls_error[0] = '\0';
-    return response->scratch;
+    return wasm_string_copy(response->scratch);
 }
 
 void absolute_http_tls_close(void* p) {
@@ -518,7 +518,7 @@ void absolute_http_tls_close(void* p) {
 }
 
 const char* absolute_http_tls_error(void) {
-    return g_http_tls_error;
+    return wasm_string_copy(g_http_tls_error);
 }
 
 void absolute_task_delay(int32_t milliseconds) {
@@ -591,10 +591,10 @@ static char* g_binary_result;
 const char* absolute_binary_writer_to_hex(const void* p) {
     static const char digits[] = "0123456789abcdef";
     const WasmBinaryWriter* writer = (const WasmBinaryWriter*)p;
-    if (!writer) return "";
+    if (!writer) return wasm_string_copy("");
     size_t count = writer->size;
     char* out = (char*)heap_alloc(count * 2 + 1);
-    if (!out) return "";
+    if (!out) return wasm_string_copy("");
     for (size_t i = 0; i < count; ++i) {
         out[i * 2] = digits[writer->data[i] >> 4];
         out[i * 2 + 1] = digits[writer->data[i] & 15];
@@ -602,7 +602,7 @@ const char* absolute_binary_writer_to_hex(const void* p) {
     out[count * 2] = '\0';
     free(g_binary_result);
     g_binary_result = out;
-    return g_binary_result;
+    return wasm_string_copy(g_binary_result);
 }
 void* absolute_binary_reader_create(const void* data, int64_t size) {
     WasmBinaryReader* reader = (WasmBinaryReader*)calloc(1, sizeof(WasmBinaryReader));
@@ -631,7 +631,7 @@ double absolute_binary_reader_read_double(void* p) { double v=0; binary_read(p,&
 const char* absolute_binary_reader_read_string(void* p) {
     WasmBinaryReader* reader = (WasmBinaryReader*)p;
     int32_t size = absolute_binary_reader_read_i32(p);
-    if (!reader || size < 0 || reader->position + (size_t)size > reader->size) return "";
+    if (!reader || size < 0 || reader->position + (size_t)size > reader->size) return wasm_string_copy("");
     const char* copy = wasm_string_copy_range(
         (const char*)(reader->data + reader->position), (size_t)size);
     reader->position += (size_t)size;
@@ -755,9 +755,9 @@ static void wasm_civil_from_days(int64_t z,int32_t* y,int32_t* m,int32_t* d) {
     uint32_t doy=doe-(365*yoe+yoe/4-yoe/100),mp=(5*doy+2)/153;
     *d=(int32_t)(doy-(153*mp+2)/5+1); *m=(int32_t)(mp<10?mp+3:mp-9); *y=(int32_t)(yy+(*m<=2));
 }
-const char* absolute_datetime_error(void){return g_datetime_error;}
+const char* absolute_datetime_error(void){return wasm_string_copy(g_datetime_error);}
 int32_t absolute_datetime_local_offset_minutes(void){return 0;}
-const char* absolute_datetime_local_zone_name(void){return "UTC";}
+const char* absolute_datetime_local_zone_name(void){return wasm_string_copy("UTC");}
 void absolute_datetime_civil_from_unix_millis(int64_t value,int32_t offset,int32_t*y,int32_t*m,int32_t*d,int32_t*h,int32_t*mi,int32_t*s,int32_t*ms){
     int64_t adjusted=value+(int64_t)offset*60000,sec=adjusted/1000; int32_t milli=(int32_t)(adjusted%1000);
     if(milli<0){milli+=1000;--sec;} int64_t days=sec/86400; int32_t sod=(int32_t)(sec%86400);
@@ -778,7 +778,7 @@ const char* absolute_datetime_format_iso(int32_t y,int32_t m,int32_t d,int32_t h
     else{int32_t a=off>=0?off:-off;snprintf(zone,sizeof(zone),"%c%02d:%02d",off>=0?'+':'-',a/60,a%60);}
     if(ms) snprintf(g_datetime_scratch,sizeof(g_datetime_scratch),"%s-%02d-%02dT%02d:%02d:%02d.%03d%s",yearText,m,d,h,mi,s,ms,zone);
     else snprintf(g_datetime_scratch,sizeof(g_datetime_scratch),"%s-%02d-%02dT%02d:%02d:%02d%s",yearText,m,d,h,mi,s,zone);
-    return g_datetime_scratch;
+    return wasm_string_copy(g_datetime_scratch);
 }
 static int parse_digits(const char* p,int count,int32_t*out){int32_t v=0;for(int i=0;i<count;++i){if(p[i]<'0'||p[i]>'9')return 0;v=v*10+p[i]-'0';}*out=v;return 1;}
 static int datetime_fail(const char* message){fs_copy_path(g_datetime_error,sizeof(g_datetime_error),message);return 0;}
@@ -1214,4 +1214,4 @@ const char* absolute_json_stringify(const void* handle, int32_t pretty) {
     free(buffer.data);
     return durable;
 }
-const char* absolute_json_get_last_error(void) { return g_json_error; }
+const char* absolute_json_get_last_error(void) { return wasm_string_copy(g_json_error); }

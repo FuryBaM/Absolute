@@ -47,6 +47,7 @@ struct AbsoluteJsonNode {
 // buffer is invalidated by the next as_string/stringify, which is how the
 // journal's first field became its fourth.
 extern "C" char* absolute_string_alloc(std::size_t bytes);
+extern "C" const char* absolute_string_copy_cstr(const char* text);
 
 namespace {
     thread_local std::string lastJsonError;
@@ -55,7 +56,7 @@ namespace {
         char* copy = absolute_string_alloc(value.size());
         if (!copy) {
             lastJsonError = "string allocation failed";
-            return "";
+            return absolute_string_copy_cstr("");
         }
         std::memcpy(copy, value.c_str(), value.size());
         return copy;
@@ -648,6 +649,6 @@ extern "C" {
     }
 
     const char* absolute_json_get_last_error() {
-        return lastJsonError.c_str();
+        return absolute_string_copy_cstr(lastJsonError.c_str());
     }
 }

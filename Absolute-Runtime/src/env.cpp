@@ -10,6 +10,8 @@
 #include <unistd.h>
 #endif
 
+extern "C" const char* absolute_string_copy_cstr(const char* text);
+
 namespace {
     thread_local std::string lastEnvError;
     thread_local std::string lastEnvResult;
@@ -41,7 +43,7 @@ namespace {
 }
 
 extern "C" const char* absolute_env_error() {
-    return lastEnvError.c_str();
+    return absolute_string_copy_cstr(lastEnvError.c_str());
 }
 
 extern "C" int32_t absolute_env_has(const char* name) {
@@ -59,7 +61,7 @@ extern "C" const char* absolute_env_get(const char* name) {
     lastEnvError.clear();
     if (!name || !*name) {
         lastEnvResult.clear();
-        return lastEnvResult.c_str();
+        return absolute_string_copy_cstr(lastEnvResult.c_str());
     }
 #if defined(_WIN32)
     const std::wstring wName = Utf8ToWide(name);
@@ -71,22 +73,22 @@ extern "C" const char* absolute_env_get(const char* name) {
             lastEnvError = "Failed to query environment variable";
         }
         lastEnvResult.clear();
-        return lastEnvResult.c_str();
+        return absolute_string_copy_cstr(lastEnvResult.c_str());
     }
     std::wstring buffer(required, L'\0');
     GetEnvironmentVariableW(wName.c_str(), buffer.data(), required);
     if (!buffer.empty() && buffer.back() == L'\0') buffer.pop_back();
     lastEnvResult = WideToUtf8(buffer);
-    return lastEnvResult.c_str();
+    return absolute_string_copy_cstr(lastEnvResult.c_str());
 #else
     const char* val = getenv(name);
     if (!val) {
         lastEnvError = "Environment variable not found";
         lastEnvResult.clear();
-        return lastEnvResult.c_str();
+        return absolute_string_copy_cstr(lastEnvResult.c_str());
     }
     lastEnvResult = val;
-    return lastEnvResult.c_str();
+    return absolute_string_copy_cstr(lastEnvResult.c_str());
 #endif
 }
 

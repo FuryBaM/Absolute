@@ -40,6 +40,7 @@ extern "C" const char* absolute_error_message();
 extern "C" void absolute_managed_destroy(std::uint64_t handle);
 extern "C" void absolute_capsule_destroy(void* capsule);
 extern "C" bool absolute_channel_receive_checked(void* channel, std::int64_t* value);
+extern "C" const char* absolute_string_copy_cstr(const char* text);
 
 #if defined(__has_feature)
 #if __has_feature(thread_sanitizer)
@@ -1033,7 +1034,7 @@ extern "C" std::int32_t absolute_task_current_core() { return currentCore; }
 
 extern "C" std::int32_t absolute_task_current_priority() { return currentPriority; }
 
-extern "C" const char* absolute_task_current_role() { return currentRole.c_str(); }
+extern "C" const char* absolute_task_current_role() { return absolute_string_copy_cstr(currentRole.c_str()); }
 
 extern "C" bool absolute_task_current_role_is(const char* role) {
     return role && currentRole == role;

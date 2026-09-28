@@ -24,6 +24,8 @@
 #include <windows.h>
 #endif
 
+extern "C" const char* absolute_string_copy_cstr(const char* text);
+
 namespace {
     struct FileState {
         std::FILE* stream = nullptr;
@@ -374,7 +376,7 @@ extern "C" const char* absolute_fs_current_directory() {
     lastFileSystemError = std::move(errorText);
     if (!success) return nullptr;
     lastFileSystemResult = std::move(result);
-    return lastFileSystemResult.c_str();
+    return absolute_string_copy_cstr(lastFileSystemResult.c_str());
 }
 
 extern "C" const char* absolute_fs_absolute(const char* path) {
@@ -402,14 +404,14 @@ extern "C" const char* absolute_fs_absolute(const char* path) {
     lastFileSystemError = std::move(errorText);
     if (!success) return nullptr;
     lastFileSystemResult = std::move(result);
-    return lastFileSystemResult.c_str();
+    return absolute_string_copy_cstr(lastFileSystemResult.c_str());
 }
 
 extern "C" const char* absolute_fs_path_separator() {
 #if defined(_WIN32)
-    return "\\";
+    return absolute_string_copy_cstr("\\");
 #else
-    return "/";
+    return absolute_string_copy_cstr("/");
 #endif
 }
 
@@ -421,7 +423,7 @@ extern "C" const char* absolute_fs_path_join(const char* left, const char* right
         : (rhs.empty() ? lhs : lhs / rhs);
     lastFileSystemResult = PreferredPath(CanonicalPath(combined));
     ClearError();
-    return lastFileSystemResult.c_str();
+    return absolute_string_copy_cstr(lastFileSystemResult.c_str());
 }
 
 extern "C" const char* absolute_fs_path_normalize(const char* path) {
@@ -431,7 +433,7 @@ extern "C" const char* absolute_fs_path_normalize(const char* path) {
     }
     lastFileSystemResult = PreferredPath(CanonicalPath(NativePath(path)));
     ClearError();
-    return lastFileSystemResult.c_str();
+    return absolute_string_copy_cstr(lastFileSystemResult.c_str());
 }
 
 extern "C" const char* absolute_fs_path_parent(const char* path) {
@@ -442,7 +444,7 @@ extern "C" const char* absolute_fs_path_parent(const char* path) {
     lastFileSystemResult = PreferredPath(
         CanonicalPath(NativePath(path)).parent_path());
     ClearError();
-    return lastFileSystemResult.c_str();
+    return absolute_string_copy_cstr(lastFileSystemResult.c_str());
 }
 
 extern "C" const char* absolute_fs_path_filename(const char* path) {
@@ -453,7 +455,7 @@ extern "C" const char* absolute_fs_path_filename(const char* path) {
     lastFileSystemResult = PortablePath(
         CanonicalPath(NativePath(path)).filename());
     ClearError();
-    return lastFileSystemResult.c_str();
+    return absolute_string_copy_cstr(lastFileSystemResult.c_str());
 }
 
 extern "C" const char* absolute_fs_path_stem(const char* path) {
@@ -464,7 +466,7 @@ extern "C" const char* absolute_fs_path_stem(const char* path) {
     lastFileSystemResult = PortablePath(
         CanonicalPath(NativePath(path)).stem());
     ClearError();
-    return lastFileSystemResult.c_str();
+    return absolute_string_copy_cstr(lastFileSystemResult.c_str());
 }
 
 extern "C" const char* absolute_fs_path_extension(const char* path) {
@@ -475,7 +477,7 @@ extern "C" const char* absolute_fs_path_extension(const char* path) {
     lastFileSystemResult = PortablePath(
         CanonicalPath(NativePath(path)).extension());
     ClearError();
-    return lastFileSystemResult.c_str();
+    return absolute_string_copy_cstr(lastFileSystemResult.c_str());
 }
 
 extern "C" std::int32_t absolute_fs_path_is_absolute(const char* path) {
@@ -528,7 +530,7 @@ extern "C" const char* absolute_fs_read_text(const char* path) {
     lastFileSystemError = std::move(errorText);
     if (!success) return nullptr;
     lastFileSystemResult = std::move(result);
-    return lastFileSystemResult.c_str();
+    return absolute_string_copy_cstr(lastFileSystemResult.c_str());
 }
 
 extern "C" std::int32_t absolute_fs_write_text(
@@ -602,7 +604,7 @@ extern "C" const char* absolute_fs_file_read_line(void* handle) {
             return nullptr;
         }
         ClearError();
-        return state->readBuffer.c_str();
+        return absolute_string_copy_cstr(state->readBuffer.c_str());
     });
 }
 
@@ -626,7 +628,7 @@ extern "C" const char* absolute_fs_file_read_all(void* handle) {
             return nullptr;
         }
         ClearError();
-        return state->readBuffer.c_str();
+        return absolute_string_copy_cstr(state->readBuffer.c_str());
     });
 }
 
@@ -772,11 +774,11 @@ extern "C" const char* absolute_fs_directory_next(void* handle) {
     }
     if (state->index >= state->entries.size()) {
         ClearError();
-        return "";
+        return absolute_string_copy_cstr("");
     }
     state->current = PortablePath(state->entries[state->index++]);
     ClearError();
-    return state->current.c_str();
+    return absolute_string_copy_cstr(state->current.c_str());
 }
 
 extern "C" void absolute_fs_directory_close(void* handle) {
@@ -794,7 +796,7 @@ extern "C" const char* absolute_fs_temp_directory() {
         path = path.parent_path();
     lastFileSystemResult = PortablePath(path);
     ClearError();
-    return lastFileSystemResult.c_str();
+    return absolute_string_copy_cstr(lastFileSystemResult.c_str());
 }
 
 extern "C" const char* absolute_fs_create_temp_file(const char* prefix) {
@@ -810,7 +812,7 @@ extern "C" const char* absolute_fs_create_temp_file(const char* prefix) {
     }
     lastFileSystemResult = PortablePath(path);
     ClearError();
-    return lastFileSystemResult.c_str();
+    return absolute_string_copy_cstr(lastFileSystemResult.c_str());
 }
 
 extern "C" const char* absolute_fs_create_temp_directory(const char* prefix) {
@@ -824,7 +826,7 @@ extern "C" const char* absolute_fs_create_temp_directory(const char* prefix) {
     }
     lastFileSystemResult = PortablePath(path);
     ClearError();
-    return lastFileSystemResult.c_str();
+    return absolute_string_copy_cstr(lastFileSystemResult.c_str());
 }
 
 extern "C" void* absolute_fs_watcher_open(
@@ -908,7 +910,7 @@ extern "C" const char* absolute_fs_watcher_path(void* handle) {
         return nullptr;
     }
     ClearError();
-    return state->currentPath.c_str();
+    return absolute_string_copy_cstr(state->currentPath.c_str());
 }
 
 extern "C" void absolute_fs_watcher_close(void* handle) {
@@ -916,5 +918,5 @@ extern "C" void absolute_fs_watcher_close(void* handle) {
 }
 
 extern "C" const char* absolute_fs_error() {
-    return lastFileSystemError.c_str();
+    return absolute_string_copy_cstr(lastFileSystemError.c_str());
 }

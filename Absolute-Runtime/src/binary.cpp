@@ -5,6 +5,8 @@
 #include <sstream>
 #include <iomanip>
 
+extern "C" const char* absolute_string_copy_cstr(const char* text);
+
 struct BinaryWriterImpl {
     std::vector<uint8_t> buffer;
 };
@@ -101,14 +103,14 @@ extern "C" {
     }
 
     const char* absolute_binary_writer_to_hex(const void* handle) {
-        if (!handle) return "";
+        if (!handle) return absolute_string_copy_cstr("");
         auto writer = static_cast<const BinaryWriterImpl*>(handle);
         std::ostringstream ss;
         for (uint8_t b : writer->buffer) {
             ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(b);
         }
         lastBinaryResult = ss.str();
-        return lastBinaryResult.c_str();
+        return absolute_string_copy_cstr(lastBinaryResult.c_str());
     }
 
     void* absolute_binary_reader_create(const void* data, int64_t size) {
@@ -184,16 +186,16 @@ extern "C" {
     }
 
     const char* absolute_binary_reader_read_string(void* handle) {
-        if (!handle) return "";
+        if (!handle) return absolute_string_copy_cstr("");
         auto reader = static_cast<BinaryReaderImpl*>(handle);
         int32_t len = absolute_binary_reader_read_i32(handle);
         if (len <= 0 || reader->pos + len > reader->buffer.size()) {
-            return "";
+            return absolute_string_copy_cstr("");
         }
         std::string s(reinterpret_cast<const char*>(&reader->buffer[reader->pos]), len);
         reader->pos += len;
         lastBinaryResult = s;
-        return lastBinaryResult.c_str();
+        return absolute_string_copy_cstr(lastBinaryResult.c_str());
     }
 
     int64_t absolute_binary_reader_read_bytes(void* handle, void* dest, int64_t size) {

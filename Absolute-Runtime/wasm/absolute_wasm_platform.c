@@ -1014,32 +1014,32 @@ int32_t absolute_fs_copy_file(const char* source, const char* destination, int32
 
 const char* absolute_fs_current_directory(void) {
     fs_clear_error();
-    return g_fs_cwd;
+    return wasm_string_copy(g_fs_cwd);
 }
 
 const char* absolute_fs_absolute(const char* path) {
     fs_clear_error();
     fs_path_normalize_into(path, g_fs_string_scratch,
         sizeof(g_fs_string_scratch), 1);
-    return g_fs_string_scratch;
+    return wasm_string_copy(g_fs_string_scratch);
 }
 
 const char* absolute_fs_path_separator(void) {
-    return "/";
+    return wasm_string_copy("/");
 }
 
 const char* absolute_fs_path_join(const char* left, const char* right) {
     fs_clear_error();
     fs_path_join_into(left, right, g_fs_string_scratch,
         sizeof(g_fs_string_scratch));
-    return g_fs_string_scratch;
+    return wasm_string_copy(g_fs_string_scratch);
 }
 
 const char* absolute_fs_path_normalize(const char* path) {
     fs_clear_error();
     fs_path_normalize_into(path, g_fs_string_scratch,
         sizeof(g_fs_string_scratch), 0);
-    return g_fs_string_scratch;
+    return wasm_string_copy(g_fs_string_scratch);
 }
 
 const char* absolute_fs_path_parent(const char* path) {
@@ -1071,8 +1071,8 @@ const char* absolute_fs_path_filename(const char* path) {
 
 const char* absolute_fs_path_stem(const char* path) {
     const char* name = absolute_fs_path_filename(path);
-    if (fs_streq(name, ".") || fs_streq(name, ".."))
-        return wasm_string_copy(name);
+    if (!name)
+        return NULL;
     size_t length = strlen(name);
     size_t dot = length;
     while (dot > 0 && name[dot - 1] != '.')
@@ -1080,21 +1080,29 @@ const char* absolute_fs_path_stem(const char* path) {
     if (dot <= 1)
         dot = length + 1;
     fs_clear_error();
-    return wasm_string_copy_range(name, dot - 1);
+    const char* result =
+        (fs_streq(name, ".") || fs_streq(name, ".."))
+        ? wasm_string_copy(name)
+        : wasm_string_copy_range(name, dot - 1);
+    absolute_string_release(name);
+    return result;
 }
 
 const char* absolute_fs_path_extension(const char* path) {
     const char* name = absolute_fs_path_filename(path);
-    if (fs_streq(name, ".") || fs_streq(name, ".."))
-        return wasm_string_copy("");
+    if (!name)
+        return NULL;
     size_t length = strlen(name);
     size_t dot = length;
     while (dot > 0 && name[dot - 1] != '.')
         --dot;
     fs_clear_error();
-    if (dot <= 1)
-        return wasm_string_copy("");
-    return wasm_string_copy_range(name + dot - 1, length - dot + 1);
+    const char* result =
+        (fs_streq(name, ".") || fs_streq(name, "..") || dot <= 1)
+        ? wasm_string_copy("")
+        : wasm_string_copy_range(name + dot - 1, length - dot + 1);
+    absolute_string_release(name);
+    return result;
 }
 
 int32_t absolute_fs_path_is_absolute(const char* path) {
@@ -1109,7 +1117,7 @@ const char* absolute_fs_read_text(const char* path) {
         return NULL;
     }
     fs_clear_error();
-    return g_vfs[id].data;
+    return wasm_string_copy(g_vfs[id].data);
 }
 
 int32_t absolute_fs_write_text(const char* path, const char* text, int32_t append) {
@@ -1240,7 +1248,7 @@ const char* absolute_fs_file_read_line(void* handle) {
     if (file->pos >= node->length)
         file->eof = 1;
     fs_clear_error();
-    return g_fs_string_scratch;
+    return wasm_string_copy(g_fs_string_scratch);
 }
 
 const char* absolute_fs_file_read_all(void* handle) {
@@ -1253,7 +1261,7 @@ const char* absolute_fs_file_read_all(void* handle) {
     fs_clear_error();
     file->pos = node->length;
     file->eof = 1;
-    return node->data ? node->data : "";
+    return wasm_string_copy(node->data ? node->data : "");
 }
 
 int32_t absolute_fs_file_write(void* handle, const char* text) {
@@ -1370,7 +1378,7 @@ const char* absolute_fs_directory_next(void* value) {
     }
     int node = handle->nodes[handle->position++];
     fs_clear_error();
-    return g_vfs[node].path;
+    return wasm_string_copy(g_vfs[node].path);
 }
 
 void absolute_fs_directory_close(void* value) {
@@ -1382,13 +1390,14 @@ const char* absolute_fs_temp_directory(void) {
     if (!absolute_fs_is_directory("/tmp"))
         absolute_fs_create_directories("/tmp");
     fs_clear_error();
-    return "/tmp";
+    return wasm_string_copy("/tmp");
 }
 
 static const char* fs_create_temp_path(const char* prefix, int directory) {
     if (!prefix || !*prefix)
         prefix = "absolute-";
-    absolute_fs_temp_directory();
+    if (!absolute_fs_is_directory("/tmp"))
+        absolute_fs_create_directories("/tmp");
     for (int attempt = 0; attempt < 128; ++attempt) {
         snprintf(g_fs_string_scratch, sizeof(g_fs_string_scratch),
             "/tmp/%s%llu%s", prefix,
@@ -1410,11 +1419,13 @@ static const char* fs_create_temp_path(const char* prefix, int directory) {
 }
 
 const char* absolute_fs_create_temp_file(const char* prefix) {
-    return fs_create_temp_path(prefix, 0);
+    const char* path = fs_create_temp_path(prefix, 0);
+    return path ? wasm_string_copy(path) : NULL;
 }
 
 const char* absolute_fs_create_temp_directory(const char* prefix) {
-    return fs_create_temp_path(prefix, 1);
+    const char* path = fs_create_temp_path(prefix, 1);
+    return path ? wasm_string_copy(path) : NULL;
 }
 
 void* absolute_fs_watcher_open(const char* path, int32_t recursive) {
@@ -1495,7 +1506,7 @@ const char* absolute_fs_watcher_path(void* value) {
         return NULL;
     }
     fs_clear_error();
-    return watcher->current_path;
+    return wasm_string_copy(watcher->current_path);
 }
 
 void absolute_fs_watcher_close(void* value) {
@@ -1504,7 +1515,7 @@ void absolute_fs_watcher_close(void* value) {
 }
 
 const char* absolute_fs_error(void) {
-    return g_fs_error;
+    return wasm_string_copy(g_fs_error);
 }
 
 /* ---------- env ---------- */
@@ -1533,7 +1544,7 @@ static void env_set_error(const char* m) {
     g_env_error[i] = '\0';
 }
 
-const char* absolute_env_error(void) { return g_env_error; }
+const char* absolute_env_error(void) { return wasm_string_copy(g_env_error); }
 
 int32_t absolute_env_has(const char* name) {
 #if defined(ABSOLUTE_WASM_USE_WASI)
@@ -1559,7 +1570,7 @@ const char* absolute_env_get(const char* name) {
     for (int i = 0; i < ABSOLUTE_ENV_MAX; ++i) {
         if (g_env[i].used && fs_streq(g_env[i].key, name)) {
             fs_copy_path(g_env_scratch, sizeof(g_env_scratch), g_env[i].value);
-            return g_env_scratch;
+            return wasm_string_copy(g_env_scratch);
         }
     }
     env_set_error("not found");
@@ -1707,7 +1718,7 @@ static void wasi_seed_environ(void) {
 }
 #endif
 
-const char* absolute_process_error(void) { return g_process_error; }
+const char* absolute_process_error(void) { return wasm_string_copy(g_process_error); }
 int32_t absolute_process_pid(void) { return 1; }
 void absolute_process_exit(int32_t code) {
 #if defined(ABSOLUTE_WASM_USE_WASI)
@@ -1728,15 +1739,15 @@ const char* absolute_process_executable_path(void) {
 #if defined(ABSOLUTE_WASM_USE_WASI)
     wasi_load_args();
     if (g_wasi_argc > 0 && g_wasi_argv[0] && g_wasi_argv[0][0])
-        return g_wasi_argv[0];
+        return wasm_string_copy(g_wasi_argv[0]);
 #else
     if (absolute_host_process_arg_copy(0, g_process_arg_scratch,
             (int32_t)sizeof(g_process_arg_scratch)) >= 0)
-        return g_process_arg_scratch;
+        return wasm_string_copy(g_process_arg_scratch);
 #endif
-    return g_process_exe;
+    return wasm_string_copy(g_process_exe);
 }
-const char* absolute_process_hostname(void) { return g_process_host; }
+const char* absolute_process_hostname(void) { return wasm_string_copy(g_process_host); }
 int32_t absolute_process_run(const char* command) {
     (void)command;
     g_process_error[0] = '\0';
@@ -1760,12 +1771,12 @@ const char* absolute_process_arg_at(int32_t index) {
     wasi_load_args();
     if (index < 0 || index >= g_wasi_argc || !g_wasi_argv[index])
         return NULL;
-    return g_wasi_argv[index];
+    return wasm_string_copy(g_wasi_argv[index]);
 #else
     if (index < 0 || absolute_host_process_arg_copy(index, g_process_arg_scratch,
             (int32_t)sizeof(g_process_arg_scratch)) < 0)
         return NULL;
-    return g_process_arg_scratch;
+    return wasm_string_copy(g_process_arg_scratch);
 #endif
 }
 
@@ -1827,7 +1838,7 @@ static void net_set_error(const char* message) {
     g_net_error[i] = '\0';
 }
 
-const char* absolute_net_error(void) { return g_net_error; }
+const char* absolute_net_error(void) { return wasm_string_copy(g_net_error); }
 
 void* absolute_net_tcp_connect(const char* host, int32_t port) {
     int32_t id = absolute_host_tcp_connect(host, port);
@@ -1913,11 +1924,11 @@ const char* absolute_net_tcp_receive(void* handle, int32_t maximumBytes) {
     if (n < 0) {
         net_set_error("tcp receive failed");
         g_net_recv_scratch[0] = '\0';
-        return g_net_recv_scratch;
+        return wasm_string_copy(g_net_recv_scratch);
     }
     g_net_recv_scratch[n] = '\0';
     g_net_error[0] = '\0';
-    return g_net_recv_scratch;
+    return wasm_string_copy(g_net_recv_scratch);
 }
 
 int32_t absolute_net_tcp_set_timeout(void* handle, int32_t milliseconds) {
@@ -1956,7 +1967,7 @@ const char* absolute_net_resolve_host(const char* hostname) {
     /* Host may rewrite; default echo the name for mock hosts. */
     fs_copy_path(g_net_resolve_scratch, sizeof(g_net_resolve_scratch), hostname);
     g_net_error[0] = '\0';
-    return g_net_resolve_scratch;
+    return wasm_string_copy(g_net_resolve_scratch);
 }
 
 void* absolute_net_udp_bind(const char* host, int32_t port) {

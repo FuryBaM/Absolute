@@ -122,6 +122,17 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "runtime-real-text=ok"
         TIMEOUT 300)
 
+    add_executable(absolute-runtime-string-return-abi-test
+        tests/runtime-string-return-abi.cpp)
+    target_link_libraries(absolute-runtime-string-return-abi-test
+        PRIVATE Absolute-Runtime)
+    add_test(
+        NAME absolute.runtime-string-return-abi
+        COMMAND absolute-runtime-string-return-abi-test)
+    set_tests_properties(absolute.runtime-string-return-abi PROPERTIES
+        PASS_REGULAR_EXPRESSION "runtime-string-return-abi=ok"
+        TIMEOUT 30)
+
     add_executable(absolute-runtime-managed-memory-test
         tests/runtime-managed-memory.cpp)
     target_link_libraries(absolute-runtime-managed-memory-test

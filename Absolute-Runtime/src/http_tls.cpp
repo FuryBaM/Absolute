@@ -14,6 +14,7 @@
 // belongs to every target: receive copies the body into that storage on
 // Windows as well as on the POSIX path.
 extern "C" char* absolute_string_alloc(std::size_t bytes);
+extern "C" const char* absolute_string_copy_cstr(const char* text);
 
 #if defined(_WIN32)
 #define NOMINMAX
@@ -513,10 +514,10 @@ extern "C" const char* absolute_http_tls_headers(void* handle) {
     HttpTlsState* state = static_cast<HttpTlsState*>(handle);
     if (!state) {
         lastTlsError = "HTTPS response is closed";
-        return "";
+        return absolute_string_copy_cstr("");
     }
     lastTlsError.clear();
-    return state->headers.c_str();
+    return absolute_string_copy_cstr(state->headers.c_str());
 }
 
 extern "C" const char* absolute_http_tls_receive(
@@ -524,7 +525,7 @@ extern "C" const char* absolute_http_tls_receive(
     HttpTlsState* state = static_cast<HttpTlsState*>(handle);
     if (!state || maximumBytes <= 0) {
         if (!state) lastTlsError = "HTTPS response is closed";
-        return "";
+        return absolute_string_copy_cstr("");
     }
     return RunTlsIo<const char*>([&]() -> const char* {
         std::string receivedText;
@@ -566,5 +567,5 @@ extern "C" void absolute_http_tls_close(void* handle) {
 }
 
 extern "C" const char* absolute_http_tls_error() {
-    return lastTlsError.c_str();
+    return absolute_string_copy_cstr(lastTlsError.c_str());
 }

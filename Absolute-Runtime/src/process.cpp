@@ -20,6 +20,8 @@
 #endif
 #endif
 
+extern "C" const char* absolute_string_copy_cstr(const char* text);
+
 namespace {
     thread_local std::string lastProcessError;
     thread_local std::string lastProcessResult;
@@ -104,7 +106,7 @@ namespace {
 }
 
 extern "C" const char* absolute_process_error() {
-    return lastProcessError.c_str();
+    return absolute_string_copy_cstr(lastProcessError.c_str());
 }
 
 extern "C" int32_t absolute_process_pid() {
@@ -131,10 +133,10 @@ extern "C" const char* absolute_process_executable_path() {
     if (len == 0) {
         lastProcessError = "GetModuleFileNameW failed";
         lastProcessResult.clear();
-        return lastProcessResult.c_str();
+        return absolute_string_copy_cstr(lastProcessResult.c_str());
     }
     lastProcessResult = WideToUtf8(std::wstring(buf, len));
-    return lastProcessResult.c_str();
+    return absolute_string_copy_cstr(lastProcessResult.c_str());
 #elif defined(__APPLE__)
     char buf[1024];
     uint32_t size = sizeof(buf);
@@ -144,17 +146,17 @@ extern "C" const char* absolute_process_executable_path() {
         lastProcessError = "_NSGetExecutablePath failed";
         lastProcessResult.clear();
     }
-    return lastProcessResult.c_str();
+    return absolute_string_copy_cstr(lastProcessResult.c_str());
 #else
     std::error_code ec;
     auto path = std::filesystem::read_symlink("/proc/self/exe", ec);
     if (ec) {
         lastProcessError = ec.message();
         lastProcessResult.clear();
-        return lastProcessResult.c_str();
+        return absolute_string_copy_cstr(lastProcessResult.c_str());
     }
     lastProcessResult = path.string();
-    return lastProcessResult.c_str();
+    return absolute_string_copy_cstr(lastProcessResult.c_str());
 #endif
 }
 
@@ -169,7 +171,7 @@ extern "C" const char* absolute_process_hostname() {
         lastProcessError = "GetComputerNameW failed";
         lastProcessResult.clear();
     }
-    return lastProcessResult.c_str();
+    return absolute_string_copy_cstr(lastProcessResult.c_str());
 #else
     char buf[256];
     if (gethostname(buf, sizeof(buf)) == 0) {
@@ -179,7 +181,7 @@ extern "C" const char* absolute_process_hostname() {
         lastProcessError = strerror(errno);
         lastProcessResult.clear();
     }
-    return lastProcessResult.c_str();
+    return absolute_string_copy_cstr(lastProcessResult.c_str());
 #endif
 }
 
@@ -191,7 +193,7 @@ extern "C" int32_t absolute_process_run(const char* command) {
 extern "C" const char* absolute_process_run_capture(const char* command) {
     lastProcessError.clear();
     lastProcessResult.clear();
-    if (!command || !*command) return lastProcessResult.c_str();
+    if (!command || !*command) return absolute_string_copy_cstr(lastProcessResult.c_str());
 
 #if defined(_WIN32)
     const std::wstring wCmd = Utf8ToWide(command);
@@ -201,7 +203,7 @@ extern "C" const char* absolute_process_run_capture(const char* command) {
 #endif
     if (!pipe) {
         lastProcessError = "Failed to open process pipe";
-        return lastProcessResult.c_str();
+        return absolute_string_copy_cstr(lastProcessResult.c_str());
     }
     char buffer[256];
     while (std::fgets(buffer, sizeof(buffer), pipe) != nullptr) {
@@ -212,7 +214,7 @@ extern "C" const char* absolute_process_run_capture(const char* command) {
 #else
     pclose(pipe);
 #endif
-    return lastProcessResult.c_str();
+    return absolute_string_copy_cstr(lastProcessResult.c_str());
 }
 
 extern "C" int32_t absolute_process_args_count() {
@@ -224,9 +226,9 @@ extern "C" const char* absolute_process_arg_at(int32_t index) {
     const auto& args = CachedArgs();
     if (index < 0 || static_cast<size_t>(index) >= args.size()) {
         lastProcessResult.clear();
-        return lastProcessResult.c_str();
+        return absolute_string_copy_cstr(lastProcessResult.c_str());
     }
-    return args[static_cast<size_t>(index)].c_str();
+    return absolute_string_copy_cstr(args[static_cast<size_t>(index)].c_str());
 }
 
 extern "C" int32_t absolute_process_set_cwd(const char* path) {

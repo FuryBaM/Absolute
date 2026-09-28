@@ -23,6 +23,7 @@
 
 size_t strlen(const char* text);
 int strncmp(const char* a, const char* b, size_t n);
+const char* absolute_string_copy_cstr(const char* text);
 void abort(void);
 
 #if defined(ABSOLUTE_WASM_USE_WASI)
@@ -1139,13 +1140,13 @@ int32_t absolute_task_current_priority(void) {
 }
 
 const char* absolute_task_current_role(void) {
-    return g_task_role ? g_task_role : "";
+    return absolute_string_copy_cstr(g_task_role ? g_task_role : "");
 }
 
 uint8_t absolute_task_current_role_is(const char* role) {
     if (!role)
         return 0;
-    const char* current = absolute_task_current_role();
+    const char* current = g_task_role ? g_task_role : "";
     while (*role && *role == *current) {
         ++role;
         ++current;

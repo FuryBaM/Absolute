@@ -11,6 +11,9 @@
 #include "scheduler_io.h"
 #include "socket_reactor.h"
 
+extern "C" char* absolute_string_alloc(std::size_t bytes);
+extern "C" const char* absolute_string_copy_cstr(const char* text);
+
 #if defined(_WIN32)
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
@@ -27,9 +30,6 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-// Allocated behind a reference-counted header, like every other string the
-// language hands out; see Absolute-Runtime/src/string.cpp.
-extern "C" char* absolute_string_alloc(std::size_t bytes);
 #endif
 
 namespace {
@@ -919,7 +919,7 @@ extern "C" const char* absolute_net_resolve_host(const char* hostname) {
         const char* hostname = name.empty() ? nullptr : name.c_str();
         if (!EnsureSockets() || !hostname || !*hostname) {
             lastNetworkError = "hostname is empty";
-            return "";
+            return absolute_string_copy_cstr("");
         }
         addrinfo hints{};
         hints.ai_family = AF_INET;
@@ -929,7 +929,7 @@ extern "C" const char* absolute_net_resolve_host(const char* hostname) {
         if (status != 0 || !result) {
             lastNetworkError =
                 "Failed to resolve hostname: " + std::string(hostname);
-            return "";
+            return absolute_string_copy_cstr("");
         }
         char ipBuffer[INET_ADDRSTRLEN] = {0};
         sockaddr_in* ipv4 = reinterpret_cast<sockaddr_in*>(result->ai_addr);
@@ -941,7 +941,7 @@ extern "C" const char* absolute_net_resolve_host(const char* hostname) {
         char* durable = absolute_string_alloc(size);
         if (!durable) {
             lastNetworkError = "resolve host allocation failed";
-            return "";
+            return absolute_string_copy_cstr("");
         }
         std::memcpy(durable, ipBuffer, size);
         lastNetworkError.clear();
@@ -1131,5 +1131,5 @@ extern "C" void absolute_net_udp_close(void* handle) {
 }
 
 extern "C" const char* absolute_net_error() {
-    return lastNetworkError.c_str();
+    return absolute_string_copy_cstr(lastNetworkError.c_str());
 }

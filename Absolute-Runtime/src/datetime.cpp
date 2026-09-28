@@ -11,6 +11,8 @@
 #include <time.h>
 #endif
 
+extern "C" const char* absolute_string_copy_cstr(const char* text);
+
 namespace {
     thread_local std::string lastDateTimeError;
     thread_local std::string lastDateTimeResult;
@@ -40,7 +42,7 @@ namespace {
 }
 
 extern "C" const char* absolute_datetime_error() {
-    return lastDateTimeError.c_str();
+    return absolute_string_copy_cstr(lastDateTimeError.c_str());
 }
 
 extern "C" int32_t absolute_datetime_local_offset_minutes() {
@@ -67,7 +69,7 @@ extern "C" const char* absolute_datetime_local_zone_name() {
     int32_t mins = absOff % 60;
     std::snprintf(buf, sizeof(buf), "%s%02d:%02d", offset >= 0 ? "+" : "-", hrs, mins);
     lastDateTimeResult = buf;
-    return lastDateTimeResult.c_str();
+    return absolute_string_copy_cstr(lastDateTimeResult.c_str());
 }
 
 extern "C" void absolute_datetime_civil_from_unix_millis(
@@ -150,7 +152,7 @@ extern "C" const char* absolute_datetime_format_iso(
             yearText, month, day, hour, minute, second, zone);
     }
     lastDateTimeResult = buf;
-    return lastDateTimeResult.c_str();
+    return absolute_string_copy_cstr(lastDateTimeResult.c_str());
 }
 
 namespace {
