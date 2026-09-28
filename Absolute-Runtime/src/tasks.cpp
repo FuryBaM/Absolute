@@ -1142,6 +1142,7 @@ namespace {
         std::int32_t readers = 0;
         std::int32_t waitingWriters = 0;
         bool writer = false;
+        bool closing = false;
     };
 
     struct ConditionVariableImpl {
@@ -1150,6 +1151,7 @@ namespace {
         std::deque<Task*> taskWaiters;
         std::uint64_t generation = 0;
         std::int32_t nativeWaiters = 0;
+        bool closing = false;
     };
 
     struct OnceImpl {
@@ -1157,6 +1159,7 @@ namespace {
         std::condition_variable available;
         std::deque<Task*> waiters;
         std::int32_t state = 0; // 0 = idle, 1 = running, 2 = complete
+        bool closing = false;
     };
 
     struct ChannelImpl {
@@ -1192,7 +1195,10 @@ namespace {
         AtomicInt,
         CancellationToken,
         Mutex,
-        Semaphore
+        Semaphore,
+        RwLock,
+        ConditionVariable,
+        Once
     };
 
     struct CapabilityEntry {
@@ -2093,21 +2099,28 @@ extern "C" void absolute_semaphore_destroy(void* handle) {
 }
 
 extern "C" void* absolute_rwlock_create() {
-    return new RwLockImpl();
+    return RegisterCapability(
+        CapabilityKind::RwLock, std::make_shared<RwLockImpl>());
 }
 
 extern "C" void absolute_rwlock_lock_read(void* handle) {
-    if (!handle) return;
-    RwLockImpl* rwlock = static_cast<RwLockImpl*>(handle);
+    auto rwlock = ResolveCapability<RwLockImpl>(
+        handle, CapabilityKind::RwLock);
+    if (!rwlock) {
+        if (handle) CapabilityLifetimeError("rwlock");
+        return;
+    }
     while (true) {
         std::unique_lock lock(rwlock->mutex);
+        if (rwlock->closing) CapabilityLifetimeError("rwlock");
         if (!rwlock->writer && rwlock->waitingWriters == 0) {
             ++rwlock->readers;
             return;
         }
         if (!currentTask) {
             rwlock->available.wait(lock, [&] {
-                return !rwlock->writer && rwlock->waitingWriters == 0;
+                return rwlock->closing ||
+                    (!rwlock->writer && rwlock->waitingWriters == 0);
             });
             continue;
         }
@@ -2119,17 +2132,21 @@ extern "C" void absolute_rwlock_lock_read(void* handle) {
 }
 
 extern "C" bool absolute_rwlock_try_lock_read(void* handle) {
-    if (!handle) return false;
-    RwLockImpl* rwlock = static_cast<RwLockImpl*>(handle);
+    auto rwlock = ResolveCapability<RwLockImpl>(
+        handle, CapabilityKind::RwLock);
+    if (!rwlock) return false;
     std::lock_guard lock(rwlock->mutex);
-    if (rwlock->writer || rwlock->waitingWriters > 0) return false;
+    if (rwlock->closing || rwlock->writer ||
+        rwlock->waitingWriters > 0)
+        return false;
     ++rwlock->readers;
     return true;
 }
 
 extern "C" void absolute_rwlock_unlock_read(void* handle) {
-    if (!handle) return;
-    RwLockImpl* rwlock = static_cast<RwLockImpl*>(handle);
+    auto rwlock = ResolveCapability<RwLockImpl>(
+        handle, CapabilityKind::RwLock);
+    if (!rwlock) return;
     Task* writer = nullptr;
     {
         std::lock_guard lock(rwlock->mutex);
@@ -2145,11 +2162,20 @@ extern "C" void absolute_rwlock_unlock_read(void* handle) {
 }
 
 extern "C" void absolute_rwlock_lock_write(void* handle) {
-    if (!handle) return;
-    RwLockImpl* rwlock = static_cast<RwLockImpl*>(handle);
+    auto rwlock = ResolveCapability<RwLockImpl>(
+        handle, CapabilityKind::RwLock);
+    if (!rwlock) {
+        if (handle) CapabilityLifetimeError("rwlock");
+        return;
+    }
     bool registered = false;
     while (true) {
         std::unique_lock lock(rwlock->mutex);
+        if (rwlock->closing) {
+            if (registered && rwlock->waitingWriters > 0)
+                --rwlock->waitingWriters;
+            CapabilityLifetimeError("rwlock");
+        }
         if (!registered) {
             ++rwlock->waitingWriters;
             registered = true;
@@ -2161,7 +2187,8 @@ extern "C" void absolute_rwlock_lock_write(void* handle) {
         }
         if (!currentTask) {
             rwlock->available.wait(lock, [&] {
-                return !rwlock->writer && rwlock->readers == 0;
+                return rwlock->closing ||
+                    (!rwlock->writer && rwlock->readers == 0);
             });
             continue;
         }
@@ -2173,17 +2200,21 @@ extern "C" void absolute_rwlock_lock_write(void* handle) {
 }
 
 extern "C" bool absolute_rwlock_try_lock_write(void* handle) {
-    if (!handle) return false;
-    RwLockImpl* rwlock = static_cast<RwLockImpl*>(handle);
+    auto rwlock = ResolveCapability<RwLockImpl>(
+        handle, CapabilityKind::RwLock);
+    if (!rwlock) return false;
     std::lock_guard lock(rwlock->mutex);
-    if (rwlock->writer || rwlock->readers != 0) return false;
+    if (rwlock->closing || rwlock->writer ||
+        rwlock->readers != 0)
+        return false;
     rwlock->writer = true;
     return true;
 }
 
 extern "C" void absolute_rwlock_unlock_write(void* handle) {
-    if (!handle) return;
-    RwLockImpl* rwlock = static_cast<RwLockImpl*>(handle);
+    auto rwlock = ResolveCapability<RwLockImpl>(
+        handle, CapabilityKind::RwLock);
+    if (!rwlock) return;
     Task* writer = nullptr;
     std::vector<Task*> readers;
     {
@@ -2206,22 +2237,43 @@ extern "C" void absolute_rwlock_unlock_write(void* handle) {
 }
 
 extern "C" void absolute_rwlock_destroy(void* handle) {
-    if (!handle) return;
-    delete static_cast<RwLockImpl*>(handle);
+    auto rwlock = ResolveCapability<RwLockImpl>(
+        handle, CapabilityKind::RwLock);
+    if (!rwlock) return;
+    {
+        std::lock_guard lock(rwlock->mutex);
+        if (rwlock->writer || rwlock->readers != 0 ||
+            rwlock->waitingWriters != 0 ||
+            !rwlock->readerWaiters.empty() ||
+            !rwlock->writerWaiters.empty())
+            CapabilityLifetimeError("rwlock");
+        rwlock->closing = true;
+    }
+    rwlock->available.notify_all();
+    (void)TakeCapability<RwLockImpl>(
+        handle, CapabilityKind::RwLock);
 }
 
 extern "C" void* absolute_condition_create() {
-    return new ConditionVariableImpl();
+    return RegisterCapability(
+        CapabilityKind::ConditionVariable,
+        std::make_shared<ConditionVariableImpl>());
 }
 
 extern "C" void absolute_condition_wait(
     void* conditionHandle, void* mutexHandle) {
-    if (!conditionHandle || !mutexHandle) return;
-    ConditionVariableImpl* condition =
-        static_cast<ConditionVariableImpl*>(conditionHandle);
+    auto condition = ResolveCapability<ConditionVariableImpl>(
+        conditionHandle, CapabilityKind::ConditionVariable);
+    if (!condition) {
+        if (conditionHandle) CapabilityLifetimeError("condition variable");
+        return;
+    }
+    if (!mutexHandle) return;
     if (currentTask) {
         {
             std::lock_guard lock(condition->mutex);
+            if (condition->closing)
+                CapabilityLifetimeError("condition variable");
             condition->taskWaiters.push_back(currentTask);
             currentScheduler->PrepareSuspend();
             absolute_mutex_unlock(mutexHandle);
@@ -2231,24 +2283,32 @@ extern "C" void absolute_condition_wait(
         return;
     }
     std::unique_lock lock(condition->mutex);
+    if (condition->closing)
+        CapabilityLifetimeError("condition variable");
     const std::uint64_t observed = condition->generation;
     ++condition->nativeWaiters;
     absolute_mutex_unlock(mutexHandle);
     condition->available.wait(
-        lock, [&] { return condition->generation != observed; });
+        lock, [&] {
+            return condition->closing ||
+                condition->generation != observed;
+        });
     --condition->nativeWaiters;
+    if (condition->closing)
+        CapabilityLifetimeError("condition variable");
     lock.unlock();
     absolute_mutex_lock(mutexHandle);
 }
 
 extern "C" void absolute_condition_notify_one(void* handle) {
-    if (!handle) return;
-    ConditionVariableImpl* condition =
-        static_cast<ConditionVariableImpl*>(handle);
+    auto condition = ResolveCapability<ConditionVariableImpl>(
+        handle, CapabilityKind::ConditionVariable);
+    if (!condition) return;
     Task* waiter = nullptr;
     bool notifyNative = false;
     {
         std::lock_guard lock(condition->mutex);
+        if (condition->closing) return;
         if (!condition->taskWaiters.empty()) {
             waiter = condition->taskWaiters.front();
             condition->taskWaiters.pop_front();
@@ -2262,13 +2322,14 @@ extern "C" void absolute_condition_notify_one(void* handle) {
 }
 
 extern "C" void absolute_condition_notify_all(void* handle) {
-    if (!handle) return;
-    ConditionVariableImpl* condition =
-        static_cast<ConditionVariableImpl*>(handle);
+    auto condition = ResolveCapability<ConditionVariableImpl>(
+        handle, CapabilityKind::ConditionVariable);
+    if (!condition) return;
     std::vector<Task*> waiters;
     bool notifyNative = false;
     {
         std::lock_guard lock(condition->mutex);
+        if (condition->closing) return;
         while (!condition->taskWaiters.empty()) {
             waiters.push_back(condition->taskWaiters.front());
             condition->taskWaiters.pop_front();
@@ -2283,26 +2344,42 @@ extern "C" void absolute_condition_notify_all(void* handle) {
 }
 
 extern "C" void absolute_condition_destroy(void* handle) {
-    if (!handle) return;
-    delete static_cast<ConditionVariableImpl*>(handle);
+    auto condition = ResolveCapability<ConditionVariableImpl>(
+        handle, CapabilityKind::ConditionVariable);
+    if (!condition) return;
+    {
+        std::lock_guard lock(condition->mutex);
+        if (condition->nativeWaiters != 0 ||
+            !condition->taskWaiters.empty())
+            CapabilityLifetimeError("condition variable");
+        condition->closing = true;
+    }
+    condition->available.notify_all();
+    (void)TakeCapability<ConditionVariableImpl>(
+        handle, CapabilityKind::ConditionVariable);
 }
 
 extern "C" void* absolute_once_create() {
-    return new OnceImpl();
+    return RegisterCapability(
+        CapabilityKind::Once, std::make_shared<OnceImpl>());
 }
 
 extern "C" bool absolute_once_begin(void* handle) {
-    if (!handle) return false;
-    OnceImpl* once = static_cast<OnceImpl*>(handle);
+    auto once = ResolveCapability<OnceImpl>(
+        handle, CapabilityKind::Once);
+    if (!once) return false;
     while (true) {
         std::unique_lock lock(once->mutex);
+        if (once->closing) return false;
         if (once->state == 2) return false;
         if (once->state == 0) {
             once->state = 1;
             return true;
         }
         if (!currentTask) {
-            once->available.wait(lock, [&] { return once->state != 1; });
+            once->available.wait(lock, [&] {
+                return once->closing || once->state != 1;
+            });
             continue;
         }
         once->waiters.push_back(currentTask);
@@ -2313,12 +2390,13 @@ extern "C" bool absolute_once_begin(void* handle) {
 }
 
 extern "C" void absolute_once_complete(void* handle) {
-    if (!handle) return;
-    OnceImpl* once = static_cast<OnceImpl*>(handle);
+    auto once = ResolveCapability<OnceImpl>(
+        handle, CapabilityKind::Once);
+    if (!once) return;
     std::vector<Task*> waiters;
     {
         std::lock_guard lock(once->mutex);
-        if (once->state != 1) return;
+        if (once->closing || once->state != 1) return;
         once->state = 2;
         while (!once->waiters.empty()) {
             waiters.push_back(once->waiters.front());
@@ -2330,12 +2408,13 @@ extern "C" void absolute_once_complete(void* handle) {
 }
 
 extern "C" void absolute_once_reset(void* handle) {
-    if (!handle) return;
-    OnceImpl* once = static_cast<OnceImpl*>(handle);
+    auto once = ResolveCapability<OnceImpl>(
+        handle, CapabilityKind::Once);
+    if (!once) return;
     std::vector<Task*> waiters;
     {
         std::lock_guard lock(once->mutex);
-        if (once->state != 1) return;
+        if (once->closing || once->state != 1) return;
         once->state = 0;
         while (!once->waiters.empty()) {
             waiters.push_back(once->waiters.front());
@@ -2347,13 +2426,25 @@ extern "C" void absolute_once_reset(void* handle) {
 }
 
 extern "C" bool absolute_once_is_complete(void* handle) {
-    if (!handle) return false;
-    OnceImpl* once = static_cast<OnceImpl*>(handle);
+    auto once = ResolveCapability<OnceImpl>(
+        handle, CapabilityKind::Once);
+    if (!once) return false;
     std::lock_guard lock(once->mutex);
-    return once->state == 2;
+    return !once->closing && once->state == 2;
 }
 
 extern "C" void absolute_once_destroy(void* handle) {
-    if (!handle) return;
-    delete static_cast<OnceImpl*>(handle);
+    auto once = ResolveCapability<OnceImpl>(
+        handle, CapabilityKind::Once);
+    if (!once) return;
+    {
+        std::lock_guard lock(once->mutex);
+        if (once->state == 1 || !once->waiters.empty())
+            CapabilityLifetimeError("once");
+        once->closing = true;
+    }
+    once->available.notify_all();
+    (void)TakeCapability<OnceImpl>(
+        handle, CapabilityKind::Once);
 }
+

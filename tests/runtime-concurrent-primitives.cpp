@@ -32,14 +32,17 @@ void absolute_semaphore_destroy(void*);
 
 void* absolute_rwlock_create();
 void absolute_rwlock_lock_read(void*);
+bool absolute_rwlock_try_lock_read(void*);
 void absolute_rwlock_unlock_read(void*);
 void absolute_rwlock_lock_write(void*);
+bool absolute_rwlock_try_lock_write(void*);
 void absolute_rwlock_unlock_write(void*);
 void absolute_rwlock_destroy(void*);
 
 void* absolute_condition_create();
 void absolute_condition_wait(void*, void*);
 void absolute_condition_notify_one(void*);
+void absolute_condition_notify_all(void*);
 void absolute_condition_destroy(void*);
 
 void* absolute_once_create();
@@ -126,6 +129,24 @@ int main() {
     for (auto& thread : semaphoreThreads) thread.join();
     require(passed.load(std::memory_order_relaxed) == 8);
     absolute_semaphore_destroy(semaphore);
+
+    void* staleRwLock = absolute_rwlock_create();
+    require(staleRwLock != nullptr);
+    absolute_rwlock_destroy(staleRwLock);
+    require(!absolute_rwlock_try_lock_read(staleRwLock));
+    require(!absolute_rwlock_try_lock_write(staleRwLock));
+
+    void* staleCondition = absolute_condition_create();
+    require(staleCondition != nullptr);
+    absolute_condition_destroy(staleCondition);
+    absolute_condition_notify_one(staleCondition);
+    absolute_condition_notify_all(staleCondition);
+
+    void* staleOnce = absolute_once_create();
+    require(staleOnce != nullptr);
+    absolute_once_destroy(staleOnce);
+    require(!absolute_once_begin(staleOnce));
+    require(!absolute_once_is_complete(staleOnce));
 
     void* rwlock = absolute_rwlock_create();
     require(rwlock != nullptr);
