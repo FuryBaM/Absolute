@@ -1759,6 +1759,7 @@ extern "C" void absolute_atomic_destroy(void* atomic) {
 extern "C" void absolute_keep(std::int64_t value) {
     thread_local volatile std::int64_t sink = 0;
     sink = value;
+    (void)sink;
 }
 
 extern "C" void* absolute_mutex_create() {

@@ -635,7 +635,7 @@ static double AbsoluteDecimalToDouble(const AbsoluteBig* decimal, uint64_t head,
  * and sets *end past the number on success, 0 if the text does not start with
  * one.
  */
-static int AbsoluteParseDecimal(const char* text, const char** end, double* result) {
+static inline int AbsoluteParseDecimal(const char* text, const char** end, double* result) {
     AbsoluteBig decimal;
     const char* cursor = text;
     uint64_t head = 0;
