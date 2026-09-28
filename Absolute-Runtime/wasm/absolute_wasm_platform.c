@@ -36,11 +36,18 @@ static AbsoluteStringHeader* wasm_string_header(const char* text) {
 }
 
 char* absolute_string_alloc(size_t bytes) {
+    const size_t overhead = sizeof(AbsoluteStringHeader) + 1;
+    if (bytes > SIZE_MAX - overhead) {
+        host_log_cstr("Absolute runtime error: string allocation size overflow\n");
+        abort();
+    }
     AbsoluteStringHeader* header =
-        (AbsoluteStringHeader*)heap_alloc(sizeof(AbsoluteStringHeader) + bytes + 1);
+        (AbsoluteStringHeader*)heap_alloc(overhead + bytes);
     char* text;
-    if (!header)
-        return NULL;
+    if (!header) {
+        host_log_cstr("Absolute runtime error: string allocation failed\n");
+        abort();
+    }
     header->magic = ABSOLUTE_STRING_MAGIC;
     header->refs = 1;
     text = (char*)(header + 1);
@@ -50,8 +57,13 @@ char* absolute_string_alloc(size_t bytes) {
 
 const char* absolute_string_retain(const char* text) {
     AbsoluteStringHeader* header = wasm_string_header(text);
-    if (header && header->refs != ABSOLUTE_STRING_STATIC)
+    if (header && header->refs != ABSOLUTE_STRING_STATIC) {
+        if (header->refs >= ABSOLUTE_STRING_STATIC - 1) {
+            host_log_cstr("Absolute runtime error: string reference count overflow\n");
+            abort();
+        }
         ++header->refs;
+    }
     return text;
 }
 

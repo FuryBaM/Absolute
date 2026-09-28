@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -443,8 +444,16 @@ extern "C" int32_t absolute_string_parse_int(const char* text) {
 }
 
 extern "C" char* absolute_string_alloc(std::size_t bytes) {
-    void* block = std::malloc(sizeof(StringHeader) + bytes + 1);
-    if (!block) return nullptr;
+    constexpr std::size_t overhead = sizeof(StringHeader) + 1;
+    if (bytes > std::numeric_limits<std::size_t>::max() - overhead) {
+        std::cerr << "Absolute runtime error: string allocation size overflow\n";
+        std::abort();
+    }
+    void* block = std::malloc(overhead + bytes);
+    if (!block) {
+        std::cerr << "Absolute runtime error: string allocation failed\n";
+        std::abort();
+    }
     auto* header = static_cast<StringHeader*>(block);
     header->magic = StringMagic;
     header->refs.store(1, std::memory_order_relaxed);
@@ -455,10 +464,21 @@ extern "C" char* absolute_string_alloc(std::size_t bytes) {
 
 extern "C" const char* absolute_string_retain(const char* text) {
     if (StringHeader* header = HeaderOf(text)) {
-        // A static string is written once and never released; incrementing its
-        // count would eventually wrap it into an ordinary one.
-        if (header->refs.load(std::memory_order_relaxed) != StringStatic)
-            header->refs.fetch_add(1, std::memory_order_relaxed);
+        // Static storage never participates in counting. A dynamic count must
+        // never reach the same sentinel value, or a heavily aliased string
+        // would become immortal after one more retain.
+        std::uint32_t current = header->refs.load(std::memory_order_relaxed);
+        while (current != StringStatic) {
+            if (current >= StringStatic - 1) {
+                std::cerr << "Absolute runtime error: string reference count overflow\n";
+                std::abort();
+            }
+            if (header->refs.compare_exchange_weak(
+                    current, current + 1,
+                    std::memory_order_relaxed,
+                    std::memory_order_relaxed))
+                break;
+        }
     }
     return text;
 }

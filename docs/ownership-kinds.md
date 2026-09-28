@@ -285,6 +285,11 @@ sort of owner in front of every reader of every type.
    value the expression made itself already holds one and is released by the
    statement that made it.
 
+   The dynamic count is prevented from reaching the static-string sentinel.
+   Allocation size arithmetic is checked before the hidden header is allocated,
+   and string OOM is fail-fast rather than returning a headerless C literal that
+   later cleanup could mistake for managed storage.
+
    The caller/callee split is the part that took three attempts, and both
    failures were instructive. Having the caller retain each argument breaks at
    the external C boundary, where there is no body to release in. Having the
