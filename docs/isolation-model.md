@@ -69,7 +69,14 @@ Ordinary managed handles therefore remain task/domain-local at the native
 boundary as well: plugins must not use the handle bits as a shared cross-thread
 reference.
 
-Code that needs shared mutable access uses a synchronized capability. Code that
-needs to move an owner between domains uses the sealed transfer path. A future
-native pin/guard API would be a separate capability with an explicit lifetime;
-the current managed lookup API does not imply one.
+Code that needs shared mutable access uses a synchronized capability. Native
+concurrent capabilities are represented by opaque monotonic registry tokens,
+not by the address of their internal state. Each operation retains the resolved
+state for the duration of the call, and destroy removes the token before the
+last retained state can disappear. Channels additionally close and wake their
+waiters. Synchronization primitives whose API cannot report cancellation
+(`Mutex`, `Semaphore`, `RwLock`, `ConditionVariable`, `Once`) reject
+destruction while busy instead of freeing state that another task/thread still
+uses. Code that needs to move an owner between domains uses the sealed transfer
+path. A future native pin/guard API would be a separate capability with an
+explicit lifetime; the current managed lookup API does not imply one.

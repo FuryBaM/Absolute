@@ -224,9 +224,17 @@ another caller to retry.
 
 The owning wrapper must outlive every task or thread using `nativeHandle()`.
 All waiters must finish and every acquired permit/lock must be released before
-the wrapper is destroyed. Shared-memory WebAssembly uses atomic wait/notify;
-non-shared WebAssembly only has meaningful uncontended synchronization because
-there is no concurrent memory agent.
+the wrapper is destroyed. On the native runtime `nativeHandle()` is an opaque
+monotonic capability token, not the address of the mutex-bearing object.
+Operations resolve that token to retained state before touching it, so a
+destroy racing an already-started atomic/cancellation/channel operation cannot
+free storage out from under the operation. Channel destruction closes the
+channel and wakes blocked senders/receivers. Destroying a busy `Mutex`,
+`Semaphore`, `RwLock`, `ConditionVariable`, or running `Once` is a
+runtime lifetime error rather than undefined behaviour; stale tokens are never
+reused. Shared-memory WebAssembly uses atomic wait/notify; non-shared
+WebAssembly only has meaningful uncontended synchronization because there is
+no concurrent memory agent.
 
 ### Launch arguments through `std.env`
 
