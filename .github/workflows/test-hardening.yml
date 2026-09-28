@@ -211,8 +211,6 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" \
             -DABSOLUTE_ENABLE_LLVM=OFF \
             -DABSOLUTE_BUILD_EXAMPLE_PLUGINS=OFF \
-            -DABSOLUTE_FUZZ_INSTRUMENT_FRONTEND=ON \
-            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DBUILD_TESTING=OFF
           cmake --build build-tsan --target Absolute-Runtime --parallel 2
 
@@ -423,7 +421,9 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++-${ABSOLUTE_LLVM_VERSION} \
             -DBUILD_TESTING=ON \
             -DABSOLUTE_ENABLE_LLVM=OFF \
-            -DABSOLUTE_BUILD_EXAMPLE_PLUGINS=OFF
+            -DABSOLUTE_BUILD_EXAMPLE_PLUGINS=OFF \
+            -DABSOLUTE_FUZZ_INSTRUMENT_FRONTEND=ON \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
           # Aggregate target, not a list of names: a fuzzer added to CMake is
           # then built here without this file having to be remembered.
           cmake --build build-fuzz --parallel 2 --target absolute-fuzzers

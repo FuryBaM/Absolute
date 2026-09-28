@@ -2243,7 +2243,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--compiler", type=Path, required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
-    parser.add_argument("--cases", type=int, default=12)
+    parser.add_argument(
+        "--cases", type=int, default=0,
+        help="number of generated cases; 0 runs each registered shape once")
     parser.add_argument("--seed", type=int, default=20260818)
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--configuration", default="")
@@ -2271,21 +2273,26 @@ def main() -> int:
     std = args.std_dir.resolve() if args.std_dir else None
     shapes = [shape for shape in SHAPES
               if std or shape[0] not in NEEDS_STANDARD_LIBRARY]
+    if args.cases < 0:
+        parser.error("--cases must be zero or positive")
+    case_count = args.cases if args.cases > 0 else len(shapes)
 
     failures = 0
-    for index in range(args.cases):
+    for index in range(case_count):
         seed = args.seed + index
         shape, program, leaksByDesign = generate(seed, shapes, std)
         source = work / f"case-{seed}-{shape}.abs"
         source.write_text(program, encoding="utf-8")
 
         answers = {}
-        for level, sanitize in (("O0", True), ("O3", False)):
+        for level in ("O0", "O3"):
             binary = work / f"case-{seed}-{level}"
             command = [str(compiler), str(source), f"-{level}", "--build-exe",
                        "-o", str(binary)]
-            if sanitize:
-                command.insert(2, "--sanitize=address")
+            # O0 keeps otherwise-dead allocations observable to LSan; O3 is
+            # sanitized too because optimizer-specific UAF/OOB/UB is precisely
+            # the class of defect an unsanitized comparison can miss.
+            command.insert(2, "--sanitize=address")
             build = run(command, args.timeout)
             if build.returncode != 0:
                 print(f"BUILD FAILED seed={seed} shape={shape} level={level}")
@@ -2311,7 +2318,7 @@ def main() -> int:
                 failures += 1
 
     print(f"codegen-fuzz={'ok' if failures == 0 else 'failed'} "
-          f"cases={args.cases} shapes={len(shapes)} "
+          f"cases={case_count} shapes={len(shapes)} "
           f"seed={args.seed} failures={failures} "
           f"configuration={args.configuration}")
     return 0 if failures == 0 else 1
