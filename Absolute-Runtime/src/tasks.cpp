@@ -1176,6 +1176,74 @@ namespace {
         std::int32_t capacity = 0;
         bool closed = false;
     };
+
+    // Concurrent capabilities use opaque monotonic IDs rather than exposing
+    // the address of their mutex-bearing state. An operation resolves the ID
+    // to a shared_ptr before touching the object; destroy removes the ID first,
+    // closes/wakes the state, and the storage disappears only after operations
+    // already in flight release their shared_ptr. Stale IDs are never reused.
+    enum class CapabilityKind {
+        Channel,
+        TransferChannel
+    };
+
+    struct CapabilityEntry {
+        CapabilityKind kind;
+        std::shared_ptr<void> state;
+    };
+
+    std::mutex capabilityRegistryMutex;
+    std::unordered_map<std::uintptr_t, CapabilityEntry> capabilityRegistry;
+    std::uintptr_t nextCapabilityId = 1;
+
+    template <typename T>
+    void* RegisterCapability(
+        CapabilityKind kind, std::shared_ptr<T> state) {
+        std::lock_guard lock(capabilityRegistryMutex);
+        if (nextCapabilityId == 0 ||
+            nextCapabilityId == std::numeric_limits<std::uintptr_t>::max()) {
+            std::cerr << "Absolute runtime error: capability handle space exhausted\n";
+            std::abort();
+        }
+        const std::uintptr_t id = nextCapabilityId++;
+        capabilityRegistry.emplace(
+            id, CapabilityEntry{kind, std::move(state)});
+        return reinterpret_cast<void*>(id);
+    }
+
+    template <typename T>
+    std::shared_ptr<T> ResolveCapability(
+        void* handle, CapabilityKind kind) {
+        if (!handle) return {};
+        const std::uintptr_t id =
+            reinterpret_cast<std::uintptr_t>(handle);
+        std::lock_guard lock(capabilityRegistryMutex);
+        const auto found = capabilityRegistry.find(id);
+        if (found == capabilityRegistry.end() ||
+            found->second.kind != kind)
+            return {};
+        return std::shared_ptr<T>(
+            found->second.state,
+            static_cast<T*>(found->second.state.get()));
+    }
+
+    template <typename T>
+    std::shared_ptr<T> TakeCapability(
+        void* handle, CapabilityKind kind) {
+        if (!handle) return {};
+        const std::uintptr_t id =
+            reinterpret_cast<std::uintptr_t>(handle);
+        std::lock_guard lock(capabilityRegistryMutex);
+        const auto found = capabilityRegistry.find(id);
+        if (found == capabilityRegistry.end() ||
+            found->second.kind != kind)
+            return {};
+        std::shared_ptr<T> state(
+            found->second.state,
+            static_cast<T*>(found->second.state.get()));
+        capabilityRegistry.erase(found);
+        return state;
+    }
 }
 
 extern "C" void absolute_task_delay(std::int32_t ms) {
@@ -1422,14 +1490,16 @@ extern "C" void absolute_task_group_destroy(void* handle) {
 }
 
 extern "C" void* absolute_channel_create(std::int32_t capacity) {
-    ChannelImpl* ch = new ChannelImpl();
-    ch->capacity = capacity > 0 ? capacity : 0;
-    return ch;
+    auto channel = std::make_shared<ChannelImpl>();
+    channel->capacity = capacity > 0 ? capacity : 0;
+    return RegisterCapability(
+        CapabilityKind::Channel, std::move(channel));
 }
 
 extern "C" bool absolute_channel_send(void* ch, std::int64_t val) {
-    if (!ch) return false;
-    ChannelImpl* channel = static_cast<ChannelImpl*>(ch);
+    auto channel = ResolveCapability<ChannelImpl>(
+        ch, CapabilityKind::Channel);
+    if (!channel) return false;
     while (true) {
         Task* receiver = nullptr;
         std::unique_lock lock(channel->mutex);
@@ -1461,12 +1531,14 @@ extern "C" bool absolute_channel_send(void* ch, std::int64_t val) {
 }
 
 extern "C" bool absolute_channel_try_send(void* ch, std::int64_t val) {
-    if (!ch) return false;
-    ChannelImpl* channel = static_cast<ChannelImpl*>(ch);
+    auto channel = ResolveCapability<ChannelImpl>(
+        ch, CapabilityKind::Channel);
+    if (!channel) return false;
     Task* receiver = nullptr;
     std::unique_lock lock(channel->mutex);
     if (channel->closed) return false;
-    if (channel->capacity > 0 && static_cast<std::int32_t>(channel->queue.size()) >= channel->capacity)
+    if (channel->capacity > 0 &&
+        static_cast<std::int32_t>(channel->queue.size()) >= channel->capacity)
         return false;
     channel->queue.push_back(val);
     if (!channel->receiveWaiters.empty()) {
@@ -1486,8 +1558,10 @@ extern "C" std::int64_t absolute_channel_receive(void* ch) {
 }
 
 extern "C" bool absolute_channel_receive_checked(void* ch, std::int64_t* outVal) {
-    if (!ch || !outVal) return false;
-    ChannelImpl* channel = static_cast<ChannelImpl*>(ch);
+    if (!outVal) return false;
+    auto channel = ResolveCapability<ChannelImpl>(
+        ch, CapabilityKind::Channel);
+    if (!channel) return false;
     while (true) {
         Task* sender = nullptr;
         std::unique_lock lock(channel->mutex);
@@ -1518,8 +1592,10 @@ extern "C" bool absolute_channel_receive_checked(void* ch, std::int64_t* outVal)
 }
 
 extern "C" bool absolute_channel_try_receive(void* ch, std::int64_t* outVal) {
-    if (!ch || !outVal) return false;
-    ChannelImpl* channel = static_cast<ChannelImpl*>(ch);
+    if (!outVal) return false;
+    auto channel = ResolveCapability<ChannelImpl>(
+        ch, CapabilityKind::Channel);
+    if (!channel) return false;
     Task* sender = nullptr;
     std::unique_lock lock(channel->mutex);
     if (channel->queue.empty()) return false;
@@ -1536,8 +1612,9 @@ extern "C" bool absolute_channel_try_receive(void* ch, std::int64_t* outVal) {
 }
 
 extern "C" void absolute_channel_close(void* ch) {
-    if (!ch) return;
-    ChannelImpl* channel = static_cast<ChannelImpl*>(ch);
+    auto channel = ResolveCapability<ChannelImpl>(
+        ch, CapabilityKind::Channel);
+    if (!channel) return;
     std::deque<Task*> waiters;
     {
         std::lock_guard lock(channel->mutex);
@@ -1554,33 +1631,53 @@ extern "C" void absolute_channel_close(void* ch) {
 }
 
 extern "C" bool absolute_channel_is_closed(void* ch) {
-    if (!ch) return true;
-    ChannelImpl* channel = static_cast<ChannelImpl*>(ch);
+    auto channel = ResolveCapability<ChannelImpl>(
+        ch, CapabilityKind::Channel);
+    if (!channel) return true;
     std::lock_guard lock(channel->mutex);
     return channel->closed;
 }
 
 extern "C" std::int32_t absolute_channel_count(void* ch) {
-    if (!ch) return 0;
-    ChannelImpl* channel = static_cast<ChannelImpl*>(ch);
+    auto channel = ResolveCapability<ChannelImpl>(
+        ch, CapabilityKind::Channel);
+    if (!channel) return 0;
     std::lock_guard lock(channel->mutex);
     return static_cast<std::int32_t>(channel->queue.size());
 }
 
 extern "C" void absolute_channel_destroy(void* ch) {
-    if (!ch) return;
-    delete static_cast<ChannelImpl*>(ch);
+    auto channel = TakeCapability<ChannelImpl>(
+        ch, CapabilityKind::Channel);
+    if (!channel) return;
+
+    std::deque<Task*> waiters;
+    {
+        std::lock_guard lock(channel->mutex);
+        channel->closed = true;
+        waiters.swap(channel->sendWaiters);
+        waiters.insert(waiters.end(),
+            channel->receiveWaiters.begin(), channel->receiveWaiters.end());
+        channel->receiveWaiters.clear();
+    }
+    channel->cv_recv.notify_all();
+    channel->cv_send.notify_all();
+    for (Task* waiter : waiters)
+        ResumeSchedulerTask(waiter);
 }
 
 extern "C" void* absolute_transfer_channel_create(std::int32_t capacity) {
-    TransferChannelImpl* channel = new TransferChannelImpl();
+    auto channel = std::make_shared<TransferChannelImpl>();
     channel->capacity = capacity > 0 ? capacity : 0;
-    return channel;
+    return RegisterCapability(
+        CapabilityKind::TransferChannel, std::move(channel));
 }
 
 extern "C" bool absolute_transfer_channel_send(void* ch, void* capsule) {
-    if (!ch || !capsule) return false;
-    TransferChannelImpl* channel = static_cast<TransferChannelImpl*>(ch);
+    if (!capsule) return false;
+    auto channel = ResolveCapability<TransferChannelImpl>(
+        ch, CapabilityKind::TransferChannel);
+    if (!channel) return false;
     while (true) {
         Task* receiver = nullptr;
         std::unique_lock lock(channel->mutex);
@@ -1612,8 +1709,10 @@ extern "C" bool absolute_transfer_channel_send(void* ch, void* capsule) {
 }
 
 extern "C" bool absolute_transfer_channel_try_send(void* ch, void* capsule) {
-    if (!ch || !capsule) return false;
-    TransferChannelImpl* channel = static_cast<TransferChannelImpl*>(ch);
+    if (!capsule) return false;
+    auto channel = ResolveCapability<TransferChannelImpl>(
+        ch, CapabilityKind::TransferChannel);
+    if (!channel) return false;
     Task* receiver = nullptr;
     std::unique_lock lock(channel->mutex);
     if (channel->closed) return false;
@@ -1632,8 +1731,9 @@ extern "C" bool absolute_transfer_channel_try_send(void* ch, void* capsule) {
 }
 
 extern "C" void* absolute_transfer_channel_receive(void* ch) {
-    if (!ch) return nullptr;
-    TransferChannelImpl* channel = static_cast<TransferChannelImpl*>(ch);
+    auto channel = ResolveCapability<TransferChannelImpl>(
+        ch, CapabilityKind::TransferChannel);
+    if (!channel) return nullptr;
     while (true) {
         Task* sender = nullptr;
         std::unique_lock lock(channel->mutex);
@@ -1664,8 +1764,9 @@ extern "C" void* absolute_transfer_channel_receive(void* ch) {
 }
 
 extern "C" void* absolute_transfer_channel_try_receive(void* ch) {
-    if (!ch) return nullptr;
-    TransferChannelImpl* channel = static_cast<TransferChannelImpl*>(ch);
+    auto channel = ResolveCapability<TransferChannelImpl>(
+        ch, CapabilityKind::TransferChannel);
+    if (!channel) return nullptr;
     Task* sender = nullptr;
     std::unique_lock lock(channel->mutex);
     if (channel->queue.empty()) return nullptr;
@@ -1682,8 +1783,9 @@ extern "C" void* absolute_transfer_channel_try_receive(void* ch) {
 }
 
 extern "C" void absolute_transfer_channel_close(void* ch) {
-    if (!ch) return;
-    TransferChannelImpl* channel = static_cast<TransferChannelImpl*>(ch);
+    auto channel = ResolveCapability<TransferChannelImpl>(
+        ch, CapabilityKind::TransferChannel);
+    if (!channel) return;
     std::deque<Task*> waiters;
     {
         std::lock_guard lock(channel->mutex);
@@ -1700,25 +1802,43 @@ extern "C" void absolute_transfer_channel_close(void* ch) {
 }
 
 extern "C" bool absolute_transfer_channel_is_closed(void* ch) {
-    if (!ch) return true;
-    TransferChannelImpl* channel = static_cast<TransferChannelImpl*>(ch);
+    auto channel = ResolveCapability<TransferChannelImpl>(
+        ch, CapabilityKind::TransferChannel);
+    if (!channel) return true;
     std::lock_guard lock(channel->mutex);
     return channel->closed;
 }
 
 extern "C" std::int32_t absolute_transfer_channel_count(void* ch) {
-    if (!ch) return 0;
-    TransferChannelImpl* channel = static_cast<TransferChannelImpl*>(ch);
+    auto channel = ResolveCapability<TransferChannelImpl>(
+        ch, CapabilityKind::TransferChannel);
+    if (!channel) return 0;
     std::lock_guard lock(channel->mutex);
     return static_cast<std::int32_t>(channel->queue.size());
 }
 
 extern "C" void absolute_transfer_channel_destroy(void* ch) {
-    if (!ch) return;
-    TransferChannelImpl* channel = static_cast<TransferChannelImpl*>(ch);
-    for (void* capsule : channel->queue)
+    auto channel = TakeCapability<TransferChannelImpl>(
+        ch, CapabilityKind::TransferChannel);
+    if (!channel) return;
+
+    std::deque<Task*> waiters;
+    std::deque<void*> queued;
+    {
+        std::lock_guard lock(channel->mutex);
+        channel->closed = true;
+        waiters.swap(channel->sendWaiters);
+        waiters.insert(waiters.end(),
+            channel->receiveWaiters.begin(), channel->receiveWaiters.end());
+        channel->receiveWaiters.clear();
+        queued.swap(channel->queue);
+    }
+    channel->cv_recv.notify_all();
+    channel->cv_send.notify_all();
+    for (Task* waiter : waiters)
+        ResumeSchedulerTask(waiter);
+    for (void* capsule : queued)
         absolute_capsule_destroy(capsule);
-    delete channel;
 }
 
 extern "C" void* absolute_atomic_create(std::int64_t initialValue) {

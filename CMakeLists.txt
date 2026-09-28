@@ -162,6 +162,17 @@ if(BUILD_TESTING)
         PASS_REGULAR_EXPRESSION "runtime-concurrent-primitives=ok"
         TIMEOUT 30)
 
+    add_executable(absolute-runtime-channel-lifetime-test
+        tests/runtime-channel-lifetime.cpp)
+    target_link_libraries(absolute-runtime-channel-lifetime-test
+        PRIVATE Absolute-Runtime)
+    add_test(
+        NAME absolute.runtime-channel-lifetime
+        COMMAND absolute-runtime-channel-lifetime-test)
+    set_tests_properties(absolute.runtime-channel-lifetime PROPERTIES
+        PASS_REGULAR_EXPRESSION "runtime-channel-lifetime=ok"
+        TIMEOUT 30)
+
     add_executable(absolute-runtime-scheduler-work-stealing-test
         tests/runtime-scheduler-work-stealing.cpp)
     target_link_libraries(absolute-runtime-scheduler-work-stealing-test

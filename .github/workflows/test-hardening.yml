@@ -229,6 +229,10 @@ jobs:
             -fsanitize=thread -fno-omit-frame-pointer \
             tests/runtime-scheduler-stress.cpp "$runtime" \
             -pthread -ldl -o build-tsan/runtime-scheduler-stress
+          clang++-${ABSOLUTE_LLVM_VERSION} -std=c++20 -O1 -g \
+            -fsanitize=thread -fno-omit-frame-pointer \
+            tests/runtime-channel-lifetime.cpp "$runtime" \
+            -pthread -ldl -o build-tsan/runtime-channel-lifetime
 
       - name: Run scheduler under ThreadSanitizer
         id: test
@@ -248,6 +252,8 @@ jobs:
             timeout 90s build-tsan/runtime-scheduler-tsan \
               2>&1 | tee -a hardening-logs/tsan.log
             timeout 90s build-tsan/runtime-scheduler-stress \
+              2>&1 | tee -a hardening-logs/tsan.log
+            timeout 90s build-tsan/runtime-channel-lifetime \
               2>&1 | tee -a hardening-logs/tsan.log
           done
 
@@ -277,6 +283,7 @@ jobs:
             hardening-logs
             build-tsan/runtime-scheduler-tsan
             build-tsan/runtime-scheduler-stress
+            build-tsan/runtime-channel-lifetime
             core
             core.*
           if-no-files-found: ignore
