@@ -212,6 +212,7 @@ jobs:
             -DABSOLUTE_ENABLE_LLVM=OFF \
             -DABSOLUTE_BUILD_EXAMPLE_PLUGINS=OFF \
             -DABSOLUTE_FUZZ_INSTRUMENT_FRONTEND=ON \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DBUILD_TESTING=OFF
           cmake --build build-tsan --target Absolute-Runtime --parallel 2
 
@@ -383,7 +384,9 @@ jobs:
 
   coverage-guided-fuzzing:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # Sunday uses 900 seconds for each of four targets: an hour of fuzzing
+    # before build/upload overhead. Keep the job ceiling above that budget.
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
@@ -430,15 +433,33 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for library_name in Absolute-Parser Absolute-Analyzer; do
-            library="$(find build-fuzz -type f -name "lib${library_name}.a" -print -quit)"
-            test -n "$library"
-            symbols="$(nm -A "$library")"
-            grep -q "__asan_" <<<"$symbols"
-            grep -q "__ubsan_" <<<"$symbols"
-            grep -q "__sanitizer_cov_" <<<"$symbols"
-            echo "$library_name instrumentation=ok"
-          done
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          database = json.loads(Path("build-fuzz/compile_commands.json").read_text())
+          required = (
+              "-fsanitize=fuzzer-no-link,address,undefined",
+              "-fno-sanitize-recover=undefined",
+          )
+          for component in ("Absolute-Parser/", "Absolute-Analyzer/"):
+              commands = [
+                  entry["command"]
+                  for entry in database
+                  if component in entry["file"].replace("\\", "/")
+              ]
+              if not commands:
+                  raise SystemExit(f"{component} has no compile commands")
+              missing = [
+                  command for command in commands
+                  if any(flag not in command for flag in required)
+              ]
+              if missing:
+                  raise SystemExit(
+                      f"{component} has {len(missing)} uninstrumented translation units"
+                  )
+              print(f"{component} instrumentation=ok units={len(commands)}")
+          PY
 
       - name: Fuzz lexer, parser and analyzer
         id: test
