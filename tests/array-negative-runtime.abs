@@ -1,0 +1,9 @@
+int64 negativeSize() {
+    return -1;
+}
+
+int32 main() {
+    int64 count = negativeSize();
+    int32[] values = new int32[count];
+    return values.length;
+}

@@ -1,0 +1,5 @@
+int32 main() {
+    int64 count = 9223372036854775807;
+    int64[] values = new int64[count];
+    return values.length;
+}

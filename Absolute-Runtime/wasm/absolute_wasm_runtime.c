@@ -23,6 +23,7 @@
 
 size_t strlen(const char* text);
 int strncmp(const char* a, const char* b, size_t n);
+void abort(void);
 
 #if defined(ABSOLUTE_WASM_USE_WASI)
 /* WASI preview1 — wasmtime / Node WASI / wasmer without a custom Absolute host. */
@@ -316,13 +317,37 @@ void* malloc(uint64_t size) {
 }
 
 void* calloc(uint64_t count, uint64_t size) {
+    if (size != 0 && count > UINT64_MAX / size)
+        return NULL;
     uint64_t total = count * size;
+    if (total > (uint64_t)SIZE_MAX)
+        return NULL;
     void* memory = heap_alloc((size_t)(total == 0 ? 1 : total));
     if (!memory)
         return NULL;
     unsigned char* bytes = (unsigned char*)memory;
     for (size_t i = 0; i < (size_t)total; ++i)
         bytes[i] = 0;
+    return memory;
+}
+
+void* absolute_array_calloc(int64_t count, uint64_t element_size) {
+    if (count < 0) {
+        host_log_cstr("Absolute runtime error: array size must not be negative\n");
+        abort();
+    }
+    const uint64_t elements = (uint64_t)count;
+    if (element_size > (uint64_t)SIZE_MAX ||
+        (element_size != 0 &&
+            elements > (uint64_t)SIZE_MAX / element_size)) {
+        host_log_cstr("Absolute runtime error: array allocation size overflow\n");
+        abort();
+    }
+    void* memory = calloc(elements, element_size);
+    if (!memory) {
+        host_log_cstr("Absolute runtime error: array allocation failed\n");
+        abort();
+    }
     return memory;
 }
 

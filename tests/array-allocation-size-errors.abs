@@ -27,5 +27,9 @@ int32 main() {
     int32[] source = new int32[2];
     int32[] fromArray = new int32[source];
 
-    return fromText.length + fromReal.length + fromFlag.length + fromArray.length;
+    // A negative heap size is invalid even though zero is legal.
+    int32[] negative = new int32[-1];
+
+    return fromText.length + fromReal.length + fromFlag.length +
+        fromArray.length + negative.length;
 }

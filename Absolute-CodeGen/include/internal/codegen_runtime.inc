@@ -293,11 +293,9 @@
         llvm::FunctionCallee StringRelease();
         llvm::FunctionCallee StringCopyCString();
 
-        // Array storage is zero-initialized, which is what the language
-        // promises and what `malloc` does not do. calloc rather than a memset
-        // because a large allocation then costs zero pages from the operating
-        // system instead of a write over every byte.
-        llvm::FunctionCallee Calloc();
+        // Heap-array allocation validates the signed element count,
+        // checked byte size and OOM in the runtime, then returns zeroed storage.
+        llvm::FunctionCallee ArrayCalloc();
 
         llvm::FunctionCallee Free();
 

@@ -27,6 +27,12 @@ of the allocation and is the only pointer passed to `free`.
   where an owner is expected -- and whoever ends up holding it frees it. Which
   of the two forms above an author gets is in the declaration rather than in
   the element type.
+- `new T[n]` accepts zero but not a negative size. Runtime-sized allocations
+  validate the signed count, checked `count * sizeof(T)`, and allocation
+  success before constructing the descriptor. A zero-length heap array still
+  receives a distinct non-null owner allocation, so `owner == null` continues
+  to mean borrowed/static storage rather than depending on libc's
+  implementation-defined `calloc(0, n)` result.
 - Global arrays use static storage and have a null owner. A literal
   initializing one is laid out statically rather than evaluated.
 - `copy(arrayOrSlice)` allocates a new buffer and returns an owning descriptor.

@@ -5629,6 +5629,40 @@ if(BUILD_TESTING)
             PASS_REGULAR_EXPRESSION "array-zero-initialization=ok"
         )
         add_test(
+            NAME absolute.build-array-negative-runtime
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-negative-runtime.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/array-negative-runtime-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-array-negative-runtime PROPERTIES
+            FIXTURES_SETUP absolute-array-negative-runtime-executable
+        )
+        add_test(
+            NAME absolute.run-array-negative-runtime
+            COMMAND "${CMAKE_BINARY_DIR}/array-negative-runtime-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-array-negative-runtime PROPERTIES
+            FIXTURES_REQUIRED absolute-array-negative-runtime-executable
+            WILL_FAIL TRUE
+            PASS_REGULAR_EXPRESSION "array size must not be negative"
+        )
+        add_test(
+            NAME absolute.build-array-allocation-overflow-runtime
+            COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/array-allocation-overflow-runtime.abs"
+                --build-exe -o "${CMAKE_BINARY_DIR}/array-allocation-overflow-runtime-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.build-array-allocation-overflow-runtime PROPERTIES
+            FIXTURES_SETUP absolute-array-allocation-overflow-runtime-executable
+        )
+        add_test(
+            NAME absolute.run-array-allocation-overflow-runtime
+            COMMAND "${CMAKE_BINARY_DIR}/array-allocation-overflow-runtime-app${CMAKE_EXECUTABLE_SUFFIX}"
+        )
+        set_tests_properties(absolute.run-array-allocation-overflow-runtime PROPERTIES
+            FIXTURES_REQUIRED absolute-array-allocation-overflow-runtime-executable
+            WILL_FAIL TRUE
+            PASS_REGULAR_EXPRESSION "array allocation size overflow"
+        )
+        add_test(
             NAME absolute.build-index-expression-context
             COMMAND Absolute-Compiler "${PROJECT_SOURCE_DIR}/tests/index-expression-context.abs"
                 --build-exe -o "${CMAKE_BINARY_DIR}/index-expression-context-app${CMAKE_EXECUTABLE_SUFFIX}"

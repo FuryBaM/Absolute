@@ -14,6 +14,7 @@ set(ABSOLUTE_RUNTIME_SOURCES
     src/http_tls.cpp
     src/json.cpp
     src/libraries.cpp
+    src/memory.cpp
     src/network.cpp
     src/pointers.cpp
     src/process.cpp

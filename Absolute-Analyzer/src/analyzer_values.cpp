@@ -847,20 +847,29 @@ namespace Absolute {
                 if (!IsInteger(resolved.type) && resolved.type != "error")
                     ReportAt(size.get(), "array size must be an integer, got '" +
                         resolved.type + "'", "E_ARRAY_SIZE_TYPE");
-                // Only the type and the range. Zero is a size a heap
-                // allocation may have -- `new int32[0]` is an array with
-                // nothing to read, which tests/array-zero-initialization.abs
-                // relies on -- and it is the declarator form, where the
-                // storage is the frame's, that requires a positive one.
-                else if (const auto* literal =
-                    dynamic_cast<const NumberLiteralExpr*>(size.get())) {
-                    try {
-                        (void)std::stoll(literal->value);
-                    }
-                    catch (const std::exception&) {
+                // Zero is legal for heap storage, but a negative literal can
+                // be refused before codegen. A computed negative value is
+                // checked again by absolute_array_calloc at runtime.
+                else {
+                    const auto* unary =
+                        dynamic_cast<const PrefixUnaryExpr*>(size.get());
+                    if (unary && unary->op == "-" &&
+                        dynamic_cast<const NumberLiteralExpr*>(
+                            unary->operand.get())) {
                         ReportAt(size.get(),
-                            "array size is outside the supported integer range",
-                            "E_ARRAY_SIZE_OUT_OF_RANGE");
+                            "heap array size must not be negative",
+                            "E_ARRAY_SIZE_NEGATIVE");
+                    }
+                    else if (const auto* literal =
+                        dynamic_cast<const NumberLiteralExpr*>(size.get())) {
+                        try {
+                            (void)std::stoll(literal->value);
+                        }
+                        catch (const std::exception&) {
+                            ReportAt(size.get(),
+                                "array size is outside the supported integer range",
+                                "E_ARRAY_SIZE_OUT_OF_RANGE");
+                        }
                     }
                 }
             }
