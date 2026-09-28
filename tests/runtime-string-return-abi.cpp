@@ -21,6 +21,7 @@ const char* absolute_datetime_format_iso(
 const char* absolute_json_get_last_error();
 const char* absolute_net_error();
 const char* absolute_http_tls_error();
+const char* absolute_load_error();
 const char* absolute_task_current_role();
 
 void* absolute_binary_writer_create();
@@ -79,6 +80,7 @@ int main() {
     Release(absolute_json_get_last_error());
     Release(absolute_net_error());
     Release(absolute_http_tls_error());
+    Release(absolute_load_error());
     Release(absolute_task_current_role());
 
     std::cout << "runtime-string-return-abi=ok\n";

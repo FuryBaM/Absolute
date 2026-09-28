@@ -10,6 +10,8 @@
 #include <dlfcn.h>
 #endif
 
+extern "C" const char* absolute_string_copy_cstr(const char* text);
+
 namespace {
 #if defined(_WIN32)
     using LibraryHandle = HMODULE;
@@ -121,5 +123,5 @@ extern "C" std::int32_t absolute_library_is_loaded(const char* path) {
 }
 
 extern "C" const char* absolute_load_error() {
-    return lastLibraryError.c_str();
+    return absolute_string_copy_cstr(lastLibraryError.c_str());
 }

@@ -882,7 +882,7 @@ int32_t absolute_library_is_loaded(const char* path) {
 }
 
 const char* absolute_load_error(void) {
-    return g_load_error;
+    return absolute_string_copy_cstr(g_load_error);
 }
 
 /* ---------- tasks: sync scheduler or host worker pool ---------- */

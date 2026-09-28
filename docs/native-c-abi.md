@@ -74,6 +74,9 @@ directional:
   function that deliberately returns Absolute counted-string storage with one
   owned count. Absolute's own runtime uses this convention. Do not use it for
   an arbitrary library function returning a conventional C string.
+  All language-facing runtime/stdlib string producers follow the same rule:
+  scratch buffers, static literals, and `std::string::c_str()` are copied before
+  they cross this boundary.
 - `export "C" string` hands the native caller an Absolute counted string. A
   native consumer that keeps the value owns that returned count and must pair it
   with `absolute_string_release`.
